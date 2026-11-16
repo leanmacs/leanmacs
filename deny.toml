@@ -100,7 +100,15 @@
 # another crate, it fails ("crate 'etagere = 0.3.0' is explicitly
 # banned"). `swash` (2026-11-14): the same way ("crate 'swash = 0.2.10'
 # is explicitly banned"). `png` (2026-11-14), a dev-dependency: the same
-# way ("crate 'png = 0.18.1' is explicitly banned"). `wgpu` and
+# way ("crate 'png = 0.18.1' is explicitly banned"). It became a normal
+# dependency of `editor-render-wgpu` in the theming roadmap's phase 3
+# (2026-11-16), for the shipped themes' pictures `editor-ffi` reads and
+# writes for Lean's `ffi-test`, and its reason was rewritten; its one
+# wrapper is unchanged, and the library Lean links holds it since. In the
+# same phase the reasons of `editor-shape-parley`'s and
+# `editor-render-wgpu`'s entries were rewritten for `editor-ffi`'s new
+# uses of each, a display over one font file and its picture, with their
+# wrappers unchanged. `wgpu` and
 # `pollster` (2026-11-14): the same way ("crate 'wgpu = 30.0.2' is
 # explicitly banned", "crate 'pollster = 1.0.1' is explicitly banned").
 # wgpu's own crates (`wgpu-core`, `wgpu-hal`, `wgpu-types`, `naga`) have
@@ -205,7 +213,11 @@
 # For the objc2 crates (2026-11-15, the macOS app's phase 5), whose
 # entries came in the commit in which `editor-platform-winit` came to name
 # AppKit, for the application delegate that receives the files the system
-# asks the app to open. Each entry's wrappers are that adapter and the
+# asks the app to open. Since the theming roadmap's phase 6 (2026-11-16) the
+# adapter names AppKit and Foundation for a second thing as well, the
+# window's corner clearance (src/corner.rs: `NSView`, `NSViewLayoutRegion`
+# and `NSEdgeInsets`); that added features to the pins and no crate, and
+# the wrappers are unchanged. Each entry's wrappers are that adapter and the
 # third-party crates that depend on the crate in the resolved graph
 # (`cargo tree --target all -i <crate> -e normal,build,dev --depth 1`), so
 # that no other crate of the workspace can. With `objc2-app-kit`,
@@ -269,9 +281,9 @@ multiple-versions = "allow"
 deny = [
   { crate = "winit", wrappers = ["editor-platform-winit"], reason = "winit stays behind the window port: only its adapter crate may name its types" },
   { crate = "raw-window-handle", wrappers = ["winit", "winit-android", "winit-appkit", "winit-core", "winit-orbital", "winit-uikit", "winit-wayland", "winit-web", "winit-win32", "winit-x11", "wgpu", "wgpu-core", "wgpu-hal", "wgpu-types", "ndk"], reason = "a window's handles cross between the window adapter and the renderer as the port's own data (`editor_platform::NativeWindow`): each adapter reaches this crate through the library it wraps (`winit::raw_window_handle`, `wgpu::rwh`), and no crate of the workspace depends on it; the wrappers are the third-party crates that do: winit, its back-end crates and `ndk`, and wgpu's four" },
-  { crate = "objc2-app-kit", wrappers = ["editor-platform-winit", "arboard", "winit-appkit"], reason = "AppKit is named by the window adapter alone, for its application delegate (src/delegate.rs), which receives the files the system asks the app to open; every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
-  { crate = "objc2-foundation", wrappers = ["editor-platform-winit", "arboard", "fontique", "objc2-app-kit", "objc2-metal", "objc2-quartz-core", "objc2-ui-kit", "raw-window-metal", "wgpu-hal", "winit-appkit", "winit-common", "winit-uikit"], reason = "Foundation is named by the window adapter alone, for its application delegate's URLs and defaults; every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
-  { crate = "objc2", wrappers = ["editor-platform-winit", "arboard", "block2", "dispatch2", "fontique", "objc2-app-kit", "objc2-core-foundation", "objc2-core-graphics", "objc2-foundation", "objc2-metal", "objc2-quartz-core", "objc2-ui-kit", "raw-window-metal", "wgpu-hal", "winit-appkit", "winit-common", "winit-uikit"], reason = "the Objective-C runtime is named by the window adapter alone, to define its application delegate; every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
+  { crate = "objc2-app-kit", wrappers = ["editor-platform-winit", "arboard", "winit-appkit"], reason = "AppKit is named by the window adapter alone, for its application delegate (src/delegate.rs), which receives the files the system asks the app to open and its asks to terminate, and makes the terminate reply, for the menu bar (src/menu_bar.rs), and for the reading of the window's corner clearance from its content view's layout region (src/corner.rs); every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
+  { crate = "objc2-foundation", wrappers = ["editor-platform-winit", "arboard", "fontique", "objc2-app-kit", "objc2-metal", "objc2-quartz-core", "objc2-ui-kit", "raw-window-metal", "wgpu-hal", "winit-appkit", "winit-common", "winit-uikit"], reason = "Foundation is named by the window adapter alone, for its application delegate's URLs and defaults and the edge insets of the corner clearance's reading (src/corner.rs), and by its contract example, to send the quit Apple Event; every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
+  { crate = "objc2", wrappers = ["editor-platform-winit", "arboard", "block2", "dispatch2", "fontique", "objc2-app-kit", "objc2-core-foundation", "objc2-core-graphics", "objc2-foundation", "objc2-metal", "objc2-quartz-core", "objc2-ui-kit", "raw-window-metal", "wgpu-hal", "winit-appkit", "winit-common", "winit-uikit"], reason = "the Objective-C runtime is named by the window adapter alone, to define its application delegate, which also answers the system's asks to terminate; every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
   { crate = "editor-platform-winit", wrappers = ["editor-ffi"], reason = "the window adapter is linked only by the crate that wires the library together; everything else reaches a window through the port" },
   { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit", "editor-platform-arboard", "editor-render-wgpu"], reason = "the window port has two users, its adapter and the crate that runs it onto the event queue; the clipboard port beside it has one, its adapter; and the crate of the renderer's real adapters takes one type of it, `NativeWindow`, to make a surface on a window; another is a decision, so it is made here" },
   { crate = "arboard", wrappers = ["editor-platform-arboard"], reason = "arboard stays behind the clipboard port: only its adapter crate may name its types" },
@@ -282,9 +294,9 @@ deny = [
   { crate = "editor-render", wrappers = ["editor-render-wgpu", "editor-ffi"], reason = "the Renderer port and the render loop have two users: the crate of the port's real adapters, which implements it and runs its contract, and the crate that wires the library together, which starts the render thread and turns what a window tells into words left with the loop; a third is a decision, so it is made here" },
   { crate = "etagere", wrappers = ["editor-render-wgpu"], reason = "the atlas packer stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
   { crate = "swash", wrappers = ["editor-render-wgpu"], reason = "the glyph rasteriser stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
-  { crate = "png", wrappers = ["editor-render-wgpu"], reason = "an image file is read and written only by the renderer's reference-image test and the example that makes the image" },
-  { crate = "editor-shape-parley", wrappers = ["editor-render-wgpu", "editor-ffi"], reason = "the real shaper has two users: the renderer's two wiring tests and its examples lay real text out with it, by a dev-dependency; and the crate that wires the library together links it into the library Lean links, for the display Lean's window mode lays out in the machine's fonts; a third is a decision, so it is made here" },
-  { crate = "editor-render-wgpu", wrappers = ["editor-ffi"], reason = "the renderer's real adapters have one user: the crate that wires the library together, which links them into the library Lean links, for the headless mode's render session and the process's window, and whose example draws in a real window; another user is a decision, so it is made here" },
+  { crate = "png", wrappers = ["editor-render-wgpu"], reason = "a picture is read and written as a PNG file only behind the renderer's crate (Image::from_png, Image::to_png), for the reference images: the renderer's own test and the example that makes it, and the shipped themes' pictures editor-ffi hands to Lean's ffi-test; it is a normal dependency, so the library Lean links holds it, and no type of it is public" },
+  { crate = "editor-shape-parley", wrappers = ["editor-render-wgpu", "editor-ffi"], reason = "the real shaper has two users: the renderer's two wiring tests and its examples lay real text out with it, by a dev-dependency; and the crate that wires the library together links it into the library Lean links, for the display Lean's window mode lays out in the machine's fonts and the display tests lay out over one font file they give it; a third is a decision, so it is made here" },
+  { crate = "editor-render-wgpu", wrappers = ["editor-ffi"], reason = "the renderer's real adapters have one user: the crate that wires the library together, which links them into the library Lean links, for the headless mode's render session, the process's window and the pictures of a display tests draw and compare as PNG files, and whose example draws in a real window; another user is a decision, so it is made here" },
   { crate = "wgpu", wrappers = ["editor-render-wgpu"], reason = "wgpu stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
   { crate = "pollster", wrappers = ["editor-render-wgpu"], reason = "blocking on wgpu's futures is the renderer's own business: only the crate of the Renderer port's real adapters does it" },
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },

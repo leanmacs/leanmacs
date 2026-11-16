@@ -9,7 +9,7 @@
 //! expanded, up to the tab width times longer, so the row here has none.
 
 use editor_layout::Layout;
-use editor_layout::scene::{Cursor, Rect, Scene, TextKey, TextRef, View, ViewId};
+use editor_layout::scene::{Cursor, Padding, Rect, Scene, TextKey, TextRef, View, ViewId};
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::tabs::SEGMENT_BYTES;
 use editor_text::Text;
@@ -76,7 +76,7 @@ fn the_rows_shown_from_the_middle_of_a_long_row_shape_at_most_two_segments() {
     let mut first = None;
     let bytes = shaped(|layout| {
         let rows = layout
-            .rows_shown(&text, 800.0, 20.0 * 16.0, anchor)
+            .rows_shown(&text, 800.0, 20.0 * 16.0, Padding::default(), anchor)
             .unwrap();
         first = rows.first().copied();
     });
@@ -94,7 +94,7 @@ fn a_move_in_the_middle_of_a_long_row_shapes_at_most_two_segments() {
         let bytes = shaped(|layout| {
             moved = Some(
                 layout
-                    .lines_from(&text, 800.0, anchor, lines, None)
+                    .lines_from(&text, 800.0, 0, anchor, lines, None)
                     .unwrap(),
             );
         });

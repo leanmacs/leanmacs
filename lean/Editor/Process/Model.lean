@@ -26,6 +26,9 @@ runner's process service is this model behind a reference
   job's child.
 - **A stream past the limit** answers `outputTooLarge`, standard output
   looked at first, in place of the script's reply.
+- **A run with a time limit** (`runWithin`) whose script takes longer than
+  the limit answers `timedOut`, moves the clock on by the limit alone, and
+  is recorded as killed. One within the limit is a run.
 
 The contract (`JobContract.processProperties`, `Editor/Job/Contract.lean`)
 is what says the model, the fake and the library agree: each property
@@ -272,10 +275,6 @@ end ProcessModel.Child
 
 namespace ProcessModel
 
-/-- Whether `program` names a directory without being absolute. -/
-def relativeProgram (program : String) : Bool :=
-  program.contains '/' && !program.startsWith "/"
-
 /-- What a run of `command` under `limit` answers when the command is
 scripted to answer `reply`: a stream past the limit, standard output first,
 is too large. -/
@@ -290,33 +289,54 @@ def put (model : ProcessModel) (child : Child) : ProcessModel :=
   { model with
     children := model.children.map fun held => if held.id == child.id then child else held }
 
+/-- The model's answer to a run of `command` under `limit` made at `now` by
+a job cancelled at `cancelAt`, ended by its time limit `time` if it has one
+and its script takes longer: the reply, the model after it, and the clock
+after it. -/
+def runFor (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) (command : Process.Command)
+    (limit : Nat) (time : Option Nat) : Except ProcessError Process.Ran × ProcessModel × Nat :=
+  if !command.directory.isAbsolute then (.error .relativeDirectory, model, now)
+  else
+    if command.namesRelative then (.error .relativeProgram, model, now)
+    else
+      match model.scripts.find? (·.command == command) with
+      | none =>
+        (.error
+            (.notFound
+              s!"cannot start `{command.program}` in {command.directory}: the model has no script for it"),
+          model, now)
+      | some script =>
+        let started := { model with started := model.started.push command }
+        match time with
+        | some time =>
+          if script.takes > time then
+            -- The limit kills it, whether or not a cancel comes first.
+            (.error (.timedOut time), { started with killed := started.killed.push command },
+              now + time)
+          else
+            let after := now + script.takes
+            let killed := cancelAt.any fun instant => now < instant && instant ≤ after
+            (limited limit script.reply,
+              if killed then { started with killed := started.killed.push command } else started,
+              after)
+        | none =>
+          let after := now + script.takes
+          let killed := cancelAt.any fun instant => now < instant && instant ≤ after
+          (limited limit script.reply,
+            if killed then { started with killed := started.killed.push command } else started,
+            after)
+
 /-- The model's answer to `request` made at `now` on the job clock, by a job
 cancelled at `cancelAt` if it ever is: the reply, the model after it, and
 the clock after it. -/
 def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
     (request : ProcessRequest) → request.Reply × ProcessModel × Nat
-  | .run command limit =>
-    if !command.directory.isAbsolute then (.error .relativeDirectory, model, now)
-    else
-      if relativeProgram command.program then (.error .relativeProgram, model, now)
-      else
-        match model.scripts.find? (·.command == command) with
-        | none =>
-          (.error
-              (.notFound
-                s!"cannot start `{command.program}` in {command.directory}: the model has no script for it"),
-            model, now)
-        | some script =>
-          let after := now + script.takes
-          let started := { model with started := model.started.push command }
-          let killed := cancelAt.any fun instant => now < instant && instant ≤ after
-          (limited limit script.reply,
-            if killed then { started with killed := started.killed.push command } else started,
-            after)
+  | .run command limit => model.runFor now cancelAt command limit none
+  | .runWithin command limit time => model.runFor now cancelAt command limit (some time)
   | .start command streaming =>
     if !command.directory.isAbsolute then (.error .relativeDirectory, model, now)
     else
-      if relativeProgram command.program then (.error .relativeProgram, model, now)
+      if command.namesRelative then (.error .relativeProgram, model, now)
       else
         match model.streams.find? (·.command == command) with
         | none =>

@@ -2,7 +2,8 @@
 //! scene.
 //!
 //! For each view, the visual rows it shows from its scroll anchor, as many
-//! as fit its rectangle, each with its `y`, its glyphs (shared with the
+//! as fit its rectangle less its padding, each with its `x` and `y`, its
+//! glyphs (shared with the
 //! line store, never copied), its runs and a content hash; and the
 //! geometry of its cursors and of its selections. Geometry is in pixels
 //! from the view's top left.
@@ -14,19 +15,93 @@
 //! height has a height of 0 and the row after it has its `y`.
 //!
 //! **The mode line.** A view with at least one status field has a status
-//! row ([`StatusRow`]): its fields' texts one after another with no
-//! separator, shaped through the `Shaper` port as one unbroken line, each
-//! field in its face over the face `mode-line` over the default face. A
-//! tab, a carriage return or a line feed in a field is shaped as a space.
-//! The row is at the bottom of the view's rectangle and exactly
-//! [`Heights::status`] tall ([`Layout::heights`]: the mode line's line
-//! height, rounded up to a whole pixel), whatever height its line was
-//! shaped at. A glyph of a field whose face is taller runs past the row's
-//! foot, which is the view's, and the renderer draws nothing of a view
-//! outside its rectangle. The view's text rows are those that fit whole
-//! in the whole pixels that remain, and none when the status row is
-//! taller than the view. A view with no status field gives its whole
-//! height to its text.
+//! row ([`StatusRow`]) at the bottom of its rectangle. Each field is
+//! shaped through the `Shaper` port as a line of its own, in its face over
+//! the view's status face ([`View::status_face`], an unselected window's
+//! `mode-line.inactive`) over the face `mode-line` over the default face.
+//! A tab, a carriage return or a line feed in a field is shaped as a
+//! space. There is no separator glyph: fields are told apart by their
+//! padding and their background.
+//!
+//! - **Sides and padding.** A field has a side and a horizontal padding
+//!   in points ([`StatusField::side`], [`StatusField::padding`]), which
+//!   layout multiplies by its scale. A field's box is its line's width
+//!   plus its padding on each side, and its glyphs start its padding in.
+//!   The left fields, in the scene's order, run from the row's start, each
+//!   box from the end of the one before. The right fields, in the scene's
+//!   order, are laid out the same way and end at the row's end. The row's
+//!   start and end are the view's padding across in from its left and
+//!   right edges ("The padding", below): 0 and the view's width when it
+//!   has none.
+//! - **When both do not fit**, the right side keeps its place: every left
+//!   glyph that would end past the right side's start is dropped, and the
+//!   left boxes are cut there (a box with nothing left is dropped). A right
+//!   side wider than the row starts at the row's start, and what of it runs
+//!   past the row's end is drawn on into the padding, and what runs past
+//!   the view's edge is outside the view, which draws nothing outside its
+//!   rectangle. With no right field nothing is cut.
+//! - **Boxes.** The row carries each field's box ([`StatusBox`]) in the
+//!   background of the field's face over the row's faces, so a padding,
+//!   which has no glyph in it, is painted as data. The row's own
+//!   background, across the view, is the status face's over the mode
+//!   line's.
+//! - **The row's line.** Its glyphs are the fields' lines placed, their
+//!   clusters bytes of the fields' texts one after another; it is as tall
+//!   as its tallest field's line, on the lowest field baseline, and an
+//!   empty row's is the mode line's font's.
+//! - **Height.** The row is exactly [`Heights::status`] tall
+//!   ([`Layout::heights`]: the mode line's line height and its vertical
+//!   padding above and below, rounded up to a whole pixel), whatever height
+//!   its line was shaped at, and its line sits below the mode line's
+//!   vertical padding, rounded down to a whole pixel. The status face
+//!   neither makes the row taller nor moves its line. A glyph of a field
+//!   whose face is taller runs past the row's foot, which is the view's,
+//!   and the renderer draws nothing of a view outside its rectangle.
+//!
+//! The view's text rows are those that fit whole in the whole pixels that
+//! remain less the view's padding down twice, and none when the status row
+//! is taller than the view. A view with no status field gives its whole
+//! height to its text, less that padding.
+//!
+//! **The padding.** A view's [`View::padding`] insets its content from its
+//! edges, in whole points that layout turns into pixels at its scale with
+//! one function, [`Layout::padding_pixels`]: the points times the scale,
+//! unrounded, as a status field's padding is. So 8 points are 8 pixels at
+//! scale 1, 16 at scale 2 and 12 at scale 1.5, and 3 points are 4½ at 1.5.
+//! Below, `across`, `down` and `top` are those pixels.
+//!
+//! - **The text** is laid out in the rectangle less `across` at the left
+//!   and right, `top` and `down` at the top, and `down` above the status
+//!   row (or the bottom, with none): it wraps at the view's width less
+//!   twice `across`, and its rows are those that fit whole in its height
+//!   less its status row less twice `down` and once `top`, which may be a
+//!   fractional number of pixels. Each extent is at 0 at least, and a
+//!   width of 0 is a view narrower than a cell. `top` is what a window's
+//!   title bar covers of a view along the frame's top edge
+//!   ([`Padding::top`](crate::scene::Padding::top)), so the first row
+//!   starts below it and the padding; it is 0 for any other view.
+//! - **A row** starts `top` and `down` from the view's top, and its [`FrameRow::x`]
+//!   is `across`: its glyphs keep their `x` from the row's start, shared
+//!   with the line store and never copied. A row's hash leaves out its `x`
+//!   and its `y`, so a change of padding rebuilds no row.
+//! - **A cursor and a selection area** are `across` further right than
+//!   their cells on the row, and at the row's `y`.
+//! - **The status row** keeps its background across the whole view, so the
+//!   padding beside its fields is the mode line's colour, and its fields
+//!   run between `across` in from each edge ("The mode line", above). It
+//!   takes no `down`: it is at the view's foot.
+//! - **The view's background** (the default face's) fills its rectangle,
+//!   so the padding round the text is paper, not a border.
+//!
+//! The echo's view, [`ECHO_VIEW`], has no padding of its own: its fields
+//! are inset [`Scene::echo_padding`] points from the frame's left and
+//! right edges, by the same function. A padding of 0, a scene's default,
+//! lays out as before there was one.
+//!
+//! The rows query takes a padding off by the same rule
+//! ([`Layout::rows_shown`], [`Layout::lines_from`]), so a caller that asks
+//! with a view's padding at its height less its bottom row is answered
+//! with the rows its frame shows (`tests/padding.rs`, `tests/heights.rs`).
 //!
 //! **The bottom row.** A view whose rectangle reaches the frame's bottom
 //! edge (its foot at or below the scene's height) and that has a status
@@ -47,7 +122,9 @@
 //! [`ECHO_VIEW`]. Its rectangle is that row across the scene's width, it
 //! has no text rows, no cursor and no selection, and its one status row is
 //! the echo, shaped as a status row is, in the face `echo-area` over the
-//! default face, not `mode-line`. An empty echo, a frame of no width or no
+//! default face, not `mode-line`, its line below the echo area's vertical
+//! padding, and its text inset [`Scene::echo_padding`] from the frame's
+//! left and right edges ("The padding", below). An empty echo, a frame of no width or no
 //! height, and a bottom row any view covers any of, give no such view: the
 //! row then shows what the views there draw, or the target's clear
 //! colour.
@@ -88,8 +165,8 @@
 //!
 //! A row's hash covers its glyphs (each with its font's id and the offset
 //! its outline is drawn at), its runs (their bytes and their paint) and
-//! its height and baseline, all relative to the row's start: never its `y`
-//! or an absolute offset. So scrolling,
+//! its height and baseline, all relative to the row's start: never its `x`,
+//! its `y` or an absolute offset. So scrolling,
 //! and an edit on another row, leave it as it was, and a renderer reuses
 //! what it built for a row whose hash it has seen. A change of a face's
 //! colour changes the hash of the rows drawn in it and of no other. A
@@ -114,15 +191,16 @@ use editor_text::{Selection, SelectionRange, Snapshot};
 use crate::Layout;
 use std::collections::HashMap;
 
-use crate::cache::{StatusKept, state};
+use crate::cache::{FieldKept, StatusKept, state};
 use crate::decoration::{DecorationSource, FaceSpanSource, SelectionSource, Span, fonts_of, merge};
 use crate::face::{
     Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
 };
 use crate::query::{Visual, Walker};
-use crate::scene::{CursorShape, Rect, Scene, Size, StatusField, TextKey, View, ViewId};
+use crate::scene::{CursorShape, Rect, Scene, Side, Size, StatusField, TextKey, View, ViewId};
 use crate::shaper::{
-    FontRun, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper, VisualLine,
+    FontId, FontRun, Glyph, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
+    VisualLine,
 };
 use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
@@ -143,6 +221,9 @@ pub struct Area {
 /// One visual row of a view's frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameRow {
+    /// Its left, from the view's left: the view's padding across, in
+    /// pixels (module docs, "The padding"). Its glyphs' `x` are from here.
+    pub x: f32,
     /// Its top, from the view's top.
     pub y: f32,
     /// How far down it is.
@@ -181,8 +262,8 @@ pub struct CursorBox {
     pub paint: Paint,
 }
 
-/// The status row of a view: its status fields, one after another, as one
-/// line at the view's bottom.
+/// The status row of a view: its status fields, each on its side, as one
+/// line at the view's bottom (module docs, "The mode line").
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusRow {
     /// Its top, from the view's top: the view's height less its own, and
@@ -191,21 +272,51 @@ pub struct StatusRow {
     /// How far down it is: [`Heights::status`], or [`Heights::message`]
     /// at the frame's bottom edge (module docs, "The bottom row").
     pub height: f32,
-    /// Its baseline, from its top.
+    /// Its baseline, from its top: the mode line's vertical padding, in
+    /// whole pixels, and its line's baseline.
     pub baseline: f32,
-    /// Its glyphs: the fields' texts shaped as one unbroken line. Their
-    /// clusters are bytes of that text.
+    /// Its glyphs: each field's text shaped as a line of its own and
+    /// placed on its side, left fields first. Their clusters are bytes of
+    /// the fields' texts one after another.
     pub line: Arc<VisualLine>,
     /// Its runs, as bytes of that text, each with the paint of its
-    /// field's face over the mode line's over the default face's;
-    /// neighbours of one paint are one run.
+    /// field's face over the view's status face, over the mode line's,
+    /// over the default face's; neighbours of one paint are one run.
     pub runs: Vec<(Range<usize>, Paint)>,
-    /// The colour behind it, across the view: the mode line face's
-    /// background.
+    /// The colour behind it, across the view: the status face's background
+    /// over the mode line face's.
     pub background: Color,
+    /// The box of each field that kept any width, left fields first:
+    /// where the field's padding and text are, in its face's background.
+    pub boxes: Vec<StatusBox>,
     /// The content hash: its glyphs, its runs, its height and baseline,
-    /// and its background.
+    /// its background and its boxes.
     pub hash: u64,
+}
+
+/// A status field on its way to its row: its side, its padding in pixels,
+/// its first byte in the row's text, its line (none for an empty text)
+/// and the background of its face.
+struct Placed {
+    side: Side,
+    padding: f32,
+    start: usize,
+    line: Option<Arc<VisualLine>>,
+    background: Color,
+}
+
+/// The box of one status field across its row: its padding each side of
+/// its text, cut where the right side starts when both sides do not fit.
+/// It is as tall as the row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StatusBox {
+    /// Where it starts, in pixels from the view's left.
+    pub x: f32,
+    /// How far across it is, in pixels.
+    pub width: f32,
+    /// The colour it is filled with: the background of the field's face
+    /// over the row's faces over the default face.
+    pub background: Color,
 }
 
 /// The frame of one view.
@@ -266,6 +377,8 @@ impl Frame {
     /// selections. No hash, and neither the generation nor the table of
     /// fonts.
     ///
+    /// - A row is `row`, then ` x <x>` when its `x` is not 0 (a padded
+    ///   view's), then its `y`, its height, its baseline and its bytes.
     /// - A colour is its eight hexadecimal digits, `rrggbbaa`.
     /// - A glyph is `id@x`, with `^dx,dy` after it when its outline is
     ///   drawn off its pen position, and then `#font` when it is drawn in
@@ -273,6 +386,8 @@ impl Frame {
     /// - A run is `start..end:paint`, and a paint is
     ///   `foreground/background`, then `+style:colour` when it has an
     ///   underline and `+strike` when it is struck through.
+    /// - A status row's boxes follow its runs, after ` boxes`, each
+    ///   `x+width:colour`.
     ///
     /// A font's id is its shaper's, given in the order the shaper first
     /// drew a glyph in each font (on the fake, the order it was first
@@ -296,9 +411,13 @@ impl Frame {
                 view.selection.0
             );
             for row in &view.rows {
+                out.push_str("  row");
+                if row.x != 0.0 {
+                    let _ = write!(out, " x {}", row.x);
+                }
                 let _ = write!(
                     out,
-                    "  row y {} height {} baseline {} bytes {}..{}",
+                    " y {} height {} baseline {} bytes {}..{}",
                     row.y, row.height, row.baseline, row.bytes.start, row.bytes.end
                 );
                 describe_line(&mut out, &row.line, &row.runs);
@@ -310,6 +429,16 @@ impl Frame {
                     status.y, status.height, status.baseline, status.background.0
                 );
                 describe_line(&mut out, &status.line, &status.runs);
+                out.pop();
+                out.push_str(" boxes");
+                for status_box in &status.boxes {
+                    let _ = write!(
+                        out,
+                        " {}+{}:{:08x}",
+                        status_box.x, status_box.width, status_box.background.0
+                    );
+                }
+                out.push('\n');
             }
             for cursor in &view.cursors {
                 let shape = match cursor.shape {
@@ -391,17 +520,20 @@ pub const KEPT_VIEW_HEIGHTS: usize = 4;
 pub const ECHO_VIEW: ViewId = ViewId(u64::MAX);
 
 /// The heights of the rows a frame is built of, in whole physical pixels
-/// at the layout's scale, each its line height rounded up and at least 1
+/// at the layout's scale, each its line height, and for a status row its
+/// face's vertical padding above and below, rounded up and at least 1
 /// ([`Layout::heights`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Heights {
-    /// One text row in the default face.
+    /// One text row in the default face. The default face's vertical
+    /// padding is no text row's.
     pub text: u32,
-    /// A window's status row: the face `mode-line` over the default face.
+    /// A window's status row: the face `mode-line` over the default face,
+    /// its line and its vertical padding twice.
     pub status: u32,
     /// The frame's bottom row, where the echo text or a prompt is drawn:
     /// the taller of the face `echo-area` and the face `mode-line`, each
-    /// over the default face.
+    /// over the default face and each with its vertical padding twice.
     pub message: u32,
 }
 
@@ -427,15 +559,20 @@ impl<S: Shaper> Layout<S> {
     pub fn heights(&mut self) -> Heights {
         let mode_line = self.styles.intern(MODE_LINE_FACE);
         let echo_area = self.styles.intern(ECHO_AREA_FACE);
-        let line_of = |stack: &[FaceId]| {
-            let font = self.styles.style(&self.shaper, stack).font;
-            whole_pixels(self.shaper.metrics(font).line_height)
+        let line_of = |stack: &[FaceId], padded: bool| {
+            let style = self.styles.style(&self.shaper, stack);
+            let padding = if padded {
+                2.0 * style.vertical_padding.as_pixels()
+            } else {
+                0.0
+            };
+            whole_pixels(self.shaper.metrics(style.font).line_height + padding)
         };
-        let status = line_of(&[mode_line]);
+        let status = line_of(&[mode_line], true);
         Heights {
-            text: line_of(&[]),
+            text: line_of(&[], false),
             status,
-            message: status.max(line_of(&[echo_area])),
+            message: status.max(line_of(&[echo_area], true)),
         }
     }
     /// Lays `scene` out into a frame, in the faces it carries, or in those
@@ -527,10 +664,12 @@ impl<S: Shaper> Layout<S> {
             status: vec![StatusField {
                 text: scene.echo.clone(),
                 face: ECHO_AREA_FACE.to_owned(),
+                ..StatusField::default()
             }],
             ..View::default()
         };
-        let status = self.status_row(&view, ECHO_AREA_FACE, tall);
+        let inset = self.padding_pixels(scene.echo_padding);
+        let status = self.status_row(&view, ECHO_AREA_FACE, tall, inset);
         let selection = self.styles.intern(SELECTION_FACE);
         let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
         Some(ViewFrame {
@@ -545,98 +684,228 @@ impl<S: Shaper> Layout<S> {
         })
     }
 
-    /// The status row of `view`, when it has a status field: its fields'
-    /// texts one after another, with no separator, shaped as one unbroken
-    /// line, each field in its face over the mode line's over the default
-    /// face's. A tab, a carriage return and a line feed in a field are
-    /// shaped as a space each, so the row is one line and holds no tab.
+    /// The status row of `view`, when it has a status field (module docs,
+    /// "The mode line"): each field's text shaped as a line of its own, in
+    /// its face over the view's status face over the face `base` over the
+    /// default face's, and placed on its side with its padding each side.
+    /// A tab, a carriage return and a line feed in a field are shaped as a
+    /// space each, so the row is one line and holds no tab.
     ///
-    /// The line is kept per view, and shaped again only when its text, its
-    /// font runs or the shaper's generation change: a change of paint
-    /// shapes nothing.
+    /// Each field's line is kept per view, and shaped again only when its
+    /// text, its font or the shaper's generation change: a change of paint
+    /// shapes nothing, and a change of one field shapes that field alone.
     ///
-    /// The row is exactly as tall as `height`, whatever height its line was
-    /// shaped at, and sits at the view's bottom. Its fields are over the
-    /// face `base`: the mode line for a view's status row, and the echo
-    /// area for the echo's.
-    fn status_row(&mut self, view: &View, base: &str, height: u32) -> Option<StatusRow> {
+    /// The row is exactly as tall as `height`, whatever height its lines
+    /// were shaped at, and sits at the view's bottom, its line below the
+    /// vertical padding of the face `base`: the mode line for a view's
+    /// status row, and the echo area for the echo's. Its fields are inset
+    /// `inset` pixels from the view's left and right edges, and its
+    /// background is not.
+    fn status_row(
+        &mut self,
+        view: &View,
+        base: &str,
+        height: u32,
+        inset: f32,
+    ) -> Option<StatusRow> {
         if view.status.is_empty() {
             self.status.remove(&view.id);
             return None;
         }
-        let mode_line = self.styles.intern(base);
-        let mut text = String::new();
-        let mut fonts: Vec<FontRun> = Vec::new();
-        let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
-        for field in &view.status {
-            let face = self.styles.intern(&field.face);
-            let style = self.styles.style(&self.shaper, &[mode_line, face]);
-            let start = text.len();
-            text.extend(field.text.chars().map(|character| match character {
-                '\t' | '\r' | '\n' => ' ',
-                other => other,
-            }));
-            let bytes = start..text.len();
-            if bytes.is_empty() {
-                continue;
-            }
-            match fonts.last_mut() {
-                Some(last) if last.font == style.font => last.bytes.end = bytes.end,
-                _ => fonts.push(FontRun {
-                    bytes: bytes.clone(),
-                    font: style.font,
-                }),
-            }
-            match runs.last_mut() {
-                Some((last, paint)) if *paint == style.paint => last.end = bytes.end,
-                _ => runs.push((bytes, style.paint)),
-            }
+        let base_face = self.styles.intern(base);
+        let mut stack = vec![base_face];
+        if let Some(face) = &view.status_face {
+            stack.push(self.styles.intern(face));
         }
-        let mode = self.styles.style(&self.shaper, &[mode_line]);
-        // An empty row is as tall as the mode line's font.
-        if fonts.is_empty() {
-            fonts.push(FontRun {
-                bytes: 0..0,
-                font: mode.font,
+        let row = self.styles.style(&self.shaper, &stack);
+        // The line sits below the row face's padding, in whole pixels.
+        let padding = self
+            .styles
+            .style(&self.shaper, &[base_face])
+            .vertical_padding
+            .as_pixels()
+            .floor();
+        let scale = self.styles.scale();
+        let generation = self.shaper.generation();
+        let kept = self
+            .status
+            .remove(&view.id)
+            .filter(|kept| kept.generation == generation)
+            .map(|kept| kept.fields)
+            .unwrap_or_default();
+        let mut fields_kept: Vec<FieldKept> = Vec::new();
+        let mut text_len = 0;
+        let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
+        let mut placed: Vec<Placed> = Vec::new();
+        for field in &view.status {
+            let mut field_stack = stack.clone();
+            field_stack.push(self.styles.intern(&field.face));
+            let style = self.styles.style(&self.shaper, &field_stack);
+            let text: String = field
+                .text
+                .chars()
+                .map(|character| match character {
+                    '\t' | '\r' | '\n' => ' ',
+                    other => other,
+                })
+                .collect();
+            let bytes = text_len..text_len + text.len();
+            text_len = bytes.end;
+            let line = if bytes.is_empty() {
+                None
+            } else {
+                match runs.last_mut() {
+                    Some((last, paint)) if *paint == style.paint => last.end = bytes.end,
+                    _ => runs.push((bytes.clone(), style.paint)),
+                }
+                self.field_line(text, style.font, &kept, &mut fields_kept)
+            };
+            placed.push(Placed {
+                side: field.side,
+                padding: field.padding as f32 * scale,
+                start: bytes.start,
+                line,
+                background: style.paint.background,
             });
         }
-        let generation = self.shaper.generation();
-        let line = match self.status.get(&view.id) {
-            Some(kept)
-                if kept.text == text && kept.runs == fonts && kept.generation == generation =>
-            {
-                Arc::clone(&kept.line)
-            }
-            _ => {
-                let shaped = self.shaper.shape(&ShapeInput {
-                    text: text.clone(),
-                    runs: fonts.clone(),
-                });
-                let line = Arc::new(shaped.break_lines(None).into_iter().next()?);
-                let kept = StatusKept {
-                    text,
-                    runs: fonts,
-                    generation,
-                    line: Arc::clone(&line),
-                };
-                self.status.insert(view.id, kept);
-                line
-            }
+        // The row's line is as tall as its tallest field's, on the lowest
+        // baseline; an empty row is as tall as the row face's font.
+        let mut lines: Vec<Arc<VisualLine>> = placed
+            .iter()
+            .filter_map(|field| field.line.clone())
+            .collect();
+        if lines.is_empty() {
+            lines.extend(self.field_line(String::new(), row.font, &kept, &mut fields_kept));
+        }
+        let line_height = lines.iter().map(|line| line.height).fold(0.0, f32::max);
+        let line_baseline = lines.iter().map(|line| line.baseline).fold(0.0, f32::max);
+        self.status.insert(
+            view.id,
+            StatusKept {
+                generation,
+                fields: fields_kept,
+            },
+        );
+        let width = view.rect.width as f32;
+        let span = |field: &Placed| {
+            2.0 * field.padding + field.line.as_ref().map_or(0.0, |line| line.width)
         };
-        let background = mode.paint.background;
+        let right: f32 = placed
+            .iter()
+            .filter(|field| field.side == Side::Right)
+            .map(span)
+            .sum();
+        let has_right = placed.iter().any(|field| field.side == Side::Right);
+        // The fields run between the insets.
+        let end = (width - inset).max(inset);
+        // Where the right side starts, and so where the left side is cut;
+        // with no right side nothing is cut.
+        let cut = if has_right {
+            (end - right).max(inset)
+        } else {
+            f32::INFINITY
+        };
+        let mut glyphs = Vec::new();
+        let mut boxes = Vec::new();
+        for (side, from) in [(Side::Left, inset), (Side::Right, cut.min(end))] {
+            let mut x = from;
+            for field in placed.iter().filter(|field| field.side == side) {
+                let across = span(field);
+                let stop = match side {
+                    Side::Left => (x + across).min(cut),
+                    Side::Right => x + across,
+                };
+                if stop > x {
+                    boxes.push(StatusBox {
+                        x,
+                        width: stop - x,
+                        background: field.background,
+                    });
+                }
+                if let Some(line) = &field.line {
+                    let offset = x + field.padding;
+                    glyphs.extend(
+                        line.glyphs
+                            .iter()
+                            .map(|glyph| Glyph {
+                                x: glyph.x + offset,
+                                cluster: glyph.cluster + field.start,
+                                ..*glyph
+                            })
+                            .filter(|glyph| side == Side::Right || glyph.x + glyph.advance <= cut),
+                    );
+                }
+                x += across;
+            }
+        }
+        let line = Arc::new(VisualLine {
+            bytes: 0..text_len,
+            width: glyphs
+                .iter()
+                .map(|glyph| glyph.x + glyph.advance)
+                .fold(0.0, f32::max),
+            glyphs,
+            height: line_height,
+            baseline: line_baseline,
+        });
+        let background = row.paint.background;
+        let baseline = padding + line.baseline;
+        let height = height as f32;
         Some(StatusRow {
-            y: view.rect.height.saturating_sub(height) as f32,
-            height: height as f32,
-            baseline: line.baseline,
+            y: view.rect.height.saturating_sub(height as u32) as f32,
+            height,
+            baseline,
             hash: {
                 let mut hasher = DefaultHasher::new();
                 (hash(&line, &runs), background).hash(&mut hasher);
+                (height.to_bits(), baseline.to_bits()).hash(&mut hasher);
+                for status_box in &boxes {
+                    (status_box.x.to_bits(), status_box.width.to_bits()).hash(&mut hasher);
+                    status_box.background.hash(&mut hasher);
+                }
                 hasher.finish()
             },
             line,
             runs,
             background,
+            boxes,
         })
+    }
+
+    /// The line of a status field of `text` in `font`: the one kept in
+    /// `kept` or already in `fields` for that text and font, or else
+    /// shaped. It is added to `fields`, the row's kept lines, once.
+    fn field_line(
+        &self,
+        text: String,
+        font: FontId,
+        kept: &[FieldKept],
+        fields: &mut Vec<FieldKept>,
+    ) -> Option<Arc<VisualLine>> {
+        let runs = vec![FontRun {
+            bytes: 0..text.len(),
+            font,
+        }];
+        let same = |field: &&FieldKept| field.text == text && field.runs == runs;
+        if let Some(field) = fields.iter().find(same) {
+            return Some(Arc::clone(&field.line));
+        }
+        let line = match kept.iter().find(same) {
+            Some(field) => Arc::clone(&field.line),
+            None => {
+                let shaped = self.shaper.shape(&ShapeInput {
+                    text: text.clone(),
+                    runs: runs.clone(),
+                });
+                Arc::new(shaped.break_lines(None).into_iter().next()?)
+            }
+        };
+        fields.push(FieldKept {
+            text,
+            runs,
+            line: Arc::clone(&line),
+        });
+        Some(line)
     }
 
     /// The frame of `view`, with `extra` sources of spans under its
@@ -657,12 +926,17 @@ impl<S: Shaper> Layout<S> {
         } else {
             heights.status
         };
-        let status = self.status_row(view, MODE_LINE_FACE, bottom);
-        // What is left for the text above the status row, in whole pixels.
+        let across = self.padding_pixels(view.padding.across);
+        let first_row = self.first_row(view.padding);
+        let status = self.status_row(view, MODE_LINE_FACE, bottom, across);
+        // What is left for the text above the status row, in whole pixels,
+        // less the padding above and below it (module docs, "The padding").
         let text_height = match status {
             Some(_) => view.rect.height.saturating_sub(bottom),
             None => view.rect.height,
         } as f32;
+        let text_height = self.text_height(text_height, view.padding);
+        let text_width = self.inset(view.rect.width as f32, view.padding.across);
         let cursor_face = self.styles.intern(&view.cursor.face);
         let selection_face = self.styles.intern(SELECTION_FACE);
         let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
@@ -716,12 +990,7 @@ impl<S: Shaper> Layout<S> {
         };
         let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
         let fonts = |bytes: Range<usize>| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
-        let mut held = state(
-            &mut self.texts,
-            text,
-            self.tab_width,
-            Some(view.rect.width as f32),
-        );
+        let mut held = state(&mut self.texts, text, self.tab_width, Some(text_width));
         let state = &mut *held;
         let mut seen: HashMap<(usize, usize), Outcome> = HashMap::new();
         let mut walker = Walker {
@@ -735,7 +1004,7 @@ impl<S: Shaper> Layout<S> {
         };
         let anchor = boundary_at_or_before(snapshot, view.scroll);
         let shown = walker.rows_shown(text_height, anchor).unwrap_or_default();
-        let mut y = 0.0;
+        let mut y = first_row;
         for &visual in &shown {
             let Some(entry) = walker.entry(visual.row, visual.segment) else {
                 continue;
@@ -775,7 +1044,7 @@ impl<S: Shaper> Layout<S> {
                 let covered = entry.cells(visual.line).map(|cells| cells.covered(held));
                 for (left, right) in covered.unwrap_or_default() {
                     frame.selections.push(Area {
-                        x: left,
+                        x: across + left,
                         y,
                         width: right - left,
                         height: line.height,
@@ -794,6 +1063,7 @@ impl<S: Shaper> Layout<S> {
                 }
             }
             frame.rows.push(FrameRow {
+                x: across,
                 y,
                 height: line.height,
                 baseline: line.baseline,
@@ -840,7 +1110,7 @@ impl<S: Shaper> Layout<S> {
                 .map_or(advance, |cell| cell.width);
             frame.cursors.push(CursorBox {
                 area: Area {
-                    x,
+                    x: row.x + x,
                     y: row.y,
                     width,
                     height: row.height,
@@ -893,19 +1163,20 @@ mod tests {
 
     use editor_text::{Selection, SelectionRange, Shape, Snapshot, Text};
 
-    use super::{Area, Frame, FrameRow, ViewFrame};
+    use super::{Area, Frame, FrameRow, StatusRow, ViewFrame};
     use crate::Layout;
     use crate::decoration::{DecorationSource, Span};
     use crate::face::{
         BASE_BACKGROUND, BASE_FOREGROUND, Color, Face, FaceDef, Paint, Underline, UnderlineStyle,
     };
     use crate::scene::{
-        Cursor, CursorShape, Decoration, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId,
+        Cursor, CursorShape, Decoration, Padding, Rect, Scene, Side, StatusField, TextKey, TextRef,
+        View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
     use crate::shaper::scripted::{ScriptedShaper, glyph, line};
     use crate::shaper::{
-        FontId, FontSpec, Glyph, Length, ResolvedFontId, Shaper, VisualLine, Weight,
+        FontId, FontSpec, Glyph, Length, LineHeight, ResolvedFontId, Shaper, VisualLine, Weight,
     };
 
     const RED: Color = Color::rgb(0xcc, 0, 0);
@@ -1033,6 +1304,8 @@ mod tests {
             },
             decorations: vec![],
             status: vec![],
+            status_face: None,
+            padding: Padding::default(),
         }
     }
 
@@ -1072,8 +1345,20 @@ mod tests {
         // The rows query fits them by their heights too, in the fonts of
         // the last frame that showed the text.
         let text = tall.text.unwrap();
-        assert_eq!(layout.rows_shown(&text, 40.0, 63.0, 0).unwrap().len(), 2);
-        assert_eq!(layout.rows_shown(&text, 40.0, 64.0, 0).unwrap().len(), 3);
+        assert_eq!(
+            layout
+                .rows_shown(&text, 40.0, 63.0, Padding::default(), 0)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            layout
+                .rows_shown(&text, 40.0, 64.0, Padding::default(), 0)
+                .unwrap()
+                .len(),
+            3
+        );
     }
 
     #[test]
@@ -1102,7 +1387,9 @@ mod tests {
         let at_top = frame(&mut layout, view(text, 4, 160, 0, &[]));
         let snapshot = TextRef::fixed(key(text), Text::from(text).snapshot());
         for n in 1..=5 {
-            let moved = layout.lines_from(&snapshot, 40.0, 0, n, Some(0.0)).unwrap();
+            let moved = layout
+                .lines_from(&snapshot, 40.0, 0, 0, n, Some(0.0))
+                .unwrap();
             let scrolled = frame(&mut layout, view(text, 4, 160, moved.position, &[]));
             let expected = &at_top.rows[usize::try_from(n).unwrap()];
             let first = &scrolled.rows[0];
@@ -1135,7 +1422,7 @@ mod tests {
                 for (n, expected) in at_top.rows.iter().enumerate() {
                     let lines = i64::try_from(n).unwrap();
                     let moved = layout
-                        .lines_from(&snapshot, width, 0, lines, Some(0.0))
+                        .lines_from(&snapshot, width, 0, 0, lines, Some(0.0))
                         .unwrap();
                     let scrolled =
                         frame(&mut layout, view(text, columns, 1600, moved.position, &[]));
@@ -2045,6 +2332,7 @@ mod tests {
             .map(|(text, face)| StatusField {
                 text: (*text).to_owned(),
                 face: (*face).to_owned(),
+                ..StatusField::default()
             })
             .collect();
         view
@@ -2349,9 +2637,279 @@ mod tests {
              row y 0 height 16 baseline 12 bytes 0..2 glyphs 97@0 98@10 \
              runs 0..2:000000ff/808080ff\n  \
              status y 24 height 16 baseline 24 background 0000ccff glyphs 120@0 121@10#1 \
-             runs 0..1:cc0000ff/0000ccff 1..2:00cc00ff/0000ccff\n  \
+             runs 0..1:cc0000ff/0000ccff 1..2:00cc00ff/0000ccff \
+             boxes 0+10:0000ccff 10+20:0000ccff\n  \
              cursor block paint 000000ff/808080ff at 10 0 10 16\n"
         );
+    }
+
+    /// A status field: `text` in the face `face`, on `side`, padded
+    /// `padding` points each side.
+    fn field(text: &str, face: &str, side: Side, padding: u32) -> StatusField {
+        StatusField {
+            text: text.to_owned(),
+            face: face.to_owned(),
+            side,
+            padding,
+        }
+    }
+
+    /// `view` with the status fields `fields`.
+    fn with_fields(mut view: View, fields: Vec<StatusField>) -> View {
+        view.status = fields;
+        view
+    }
+
+    /// Each box of `status`: its x, its width and its background.
+    fn boxes_of(status: &StatusRow) -> Vec<(f32, f32, Color)> {
+        status
+            .boxes
+            .iter()
+            .map(|status_box| (status_box.x, status_box.width, status_box.background))
+            .collect()
+    }
+
+    /// The x of each glyph of `line`, and where the last one ends.
+    fn xs_and_end(line: &VisualLine) -> (Vec<f32>, f32) {
+        let xs = line.glyphs.iter().map(|glyph| glyph.x).collect();
+        let end = line
+            .glyphs
+            .last()
+            .map_or(0.0, |glyph| glyph.x + glyph.advance);
+        (xs, end)
+    }
+
+    #[test]
+    fn left_fields_start_at_the_status_rows_start() {
+        let mut layout = layout_with(&status_faces());
+        let fields = vec![
+            field("ab", "name", Side::Left, 2),
+            field("cd", "x", Side::Left, 2),
+        ];
+        let shown = frame(&mut layout, with_fields(view("ab", 20, 80, 0, &[]), fields));
+        let status = shown.status.expect("a status row");
+        // The first box at the row's start, its first glyph the padding
+        // in; the second box from the first's end.
+        assert_eq!(
+            boxes_of(&status),
+            vec![(0.0, 24.0, BLUE), (24.0, 24.0, BLUE)]
+        );
+        assert_eq!(
+            glyphs_of(&status.line),
+            vec![
+                (u32::from('a'), 2.0),
+                (u32::from('b'), 12.0),
+                (u32::from('c'), 26.0),
+                (u32::from('d'), 36.0)
+            ]
+        );
+        // The fields' bytes, one after another, each in its face.
+        assert_eq!(status.line.bytes, 0..4);
+        assert_eq!(
+            status.runs,
+            vec![(0..2, paint(RED, BLUE)), (2..4, paint(GREEN, BLUE))]
+        );
+    }
+
+    #[test]
+    fn right_fields_end_at_the_status_rows_end() {
+        let mut layout = layout_with(&status_faces());
+        let fields = vec![
+            field("a.rs", "name", Side::Left, 0),
+            field("1:2", "x", Side::Right, 2),
+            field("All", "name", Side::Right, 2),
+        ];
+        let shown = frame(&mut layout, with_fields(view("ab", 20, 80, 0, &[]), fields));
+        let status = shown.status.expect("a status row");
+        // The view is 200 across: the last box ends there, and the right
+        // fields keep their order.
+        assert_eq!(
+            boxes_of(&status),
+            vec![(0.0, 40.0, BLUE), (132.0, 34.0, BLUE), (166.0, 34.0, BLUE)]
+        );
+        let (xs, end) = xs_and_end(&status.line);
+        assert_eq!(
+            xs,
+            vec![
+                0.0, 10.0, 20.0, 30.0, 134.0, 144.0, 154.0, 168.0, 178.0, 188.0
+            ]
+        );
+        // The last glyph ends the padding short of the row's end.
+        assert_eq!(end, 198.0);
+        let ids: String = status
+            .line
+            .glyphs
+            .iter()
+            .filter_map(|glyph| char::from_u32(glyph.id))
+            .collect();
+        assert_eq!(ids, "a.rs1:2All");
+        // Each glyph's cluster is its byte of the row's text.
+        let clusters: Vec<usize> = status
+            .line
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.cluster)
+            .collect();
+        assert_eq!(clusters, (0..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_fields_padding_is_drawn_in_its_faces_background() {
+        let mut faces = status_faces();
+        faces.push(def("lit", bg(RED)));
+        let mut layout = layout_with(&faces);
+        let fields = vec![
+            field("ab", "lit", Side::Left, 3),
+            field("c", "name", Side::Left, 1),
+            field("d", "x", Side::Right, 0),
+        ];
+        let shown = frame(
+            &mut layout,
+            with_fields(view("ab", 20, 80, 0, &[]), fields.clone()),
+        );
+        let status = shown.status.expect("a status row");
+        // Each box is twice its padding and its text across: in its face's
+        // background, in the mode line's where its face sets none.
+        assert_eq!(
+            boxes_of(&status),
+            vec![(0.0, 26.0, RED), (26.0, 12.0, BLUE), (190.0, 10.0, BLUE)]
+        );
+        // With no mode line background either: the default face's.
+        let mut layout = layout_with(&[def("default", bg(GREY)), def("lit", bg(RED))]);
+        let shown = frame(&mut layout, with_fields(view("ab", 20, 80, 0, &[]), fields));
+        let status = shown.status.expect("a status row");
+        assert_eq!(
+            boxes_of(&status),
+            vec![(0.0, 26.0, RED), (26.0, 12.0, GREY), (190.0, 10.0, GREY)]
+        );
+        assert_eq!(status.background, GREY);
+    }
+
+    #[test]
+    fn when_both_sides_do_not_fit_the_right_side_is_whole_and_the_left_ends_where_it_begins() {
+        let mut layout = layout_with(&status_faces());
+        let right = || vec![field("xyz", "x", Side::Right, 2)];
+        // The right side alone, in a view 100 across: 34 wide, from 66.
+        let alone = frame(
+            &mut layout,
+            with_fields(view("ab", 10, 80, 0, &[]), right()),
+        );
+        let alone = alone.status.expect("a status row");
+        assert_eq!(boxes_of(&alone), vec![(66.0, 34.0, BLUE)]);
+        // Three left fields that would reach 112: the first fits, the
+        // second is cut at 66 and the third, wholly past it, is not drawn.
+        let mut fields = vec![
+            field("abcdef", "name", Side::Left, 2),
+            field("gh", "name", Side::Left, 2),
+            field("ij", "x", Side::Left, 2),
+        ];
+        fields.extend(right());
+        let shown = frame(&mut layout, with_fields(view("ab", 10, 80, 0, &[]), fields));
+        let status = shown.status.expect("a status row");
+        assert_eq!(
+            boxes_of(&status),
+            vec![(0.0, 64.0, BLUE), (64.0, 2.0, BLUE), (66.0, 34.0, BLUE)]
+        );
+        let (xs, end) = xs_and_end(&status.line);
+        assert_eq!(
+            xs,
+            vec![2.0, 12.0, 22.0, 32.0, 42.0, 52.0, 68.0, 78.0, 88.0]
+        );
+        assert_eq!(end, 98.0);
+        // No left glyph passes the right side's start, and the right side
+        // is as it was alone.
+        let right_glyphs = |line: &VisualLine| -> Vec<(u32, f32, f32)> {
+            line.glyphs
+                .iter()
+                .filter(|glyph| glyph.x >= 66.0)
+                .map(|glyph| (glyph.id, glyph.x, glyph.advance))
+                .collect()
+        };
+        assert_eq!(right_glyphs(&status.line), right_glyphs(&alone.line));
+        assert!(
+            status
+                .line
+                .glyphs
+                .iter()
+                .filter(|glyph| glyph.x < 66.0)
+                .all(|glyph| glyph.x + glyph.advance <= 66.0)
+        );
+        // A right side wider than the row starts at its start, and the
+        // left side has nothing left: what runs past the row's end is
+        // outside the view, which draws nothing outside its rectangle.
+        let mut fields = vec![field("ab", "name", Side::Left, 0)];
+        fields.extend(right());
+        let shown = frame(&mut layout, with_fields(view("ab", 2, 80, 0, &[]), fields));
+        let status = shown.status.expect("a status row");
+        assert_eq!(boxes_of(&status), vec![(0.0, 34.0, BLUE)]);
+        assert_eq!(xs_and_end(&status.line), (vec![2.0, 12.0, 22.0], 32.0));
+    }
+
+    #[test]
+    fn an_unselected_views_status_face_is_under_its_fields_and_its_rows_background() {
+        const DIM: Color = Color::rgb(0x11, 0x22, 0x33);
+        let mut faces = status_faces();
+        // A status face that would make the row taller, were it read for
+        // the height.
+        faces.push(def(
+            "dim",
+            Face {
+                foreground: Some(GREY),
+                background: Some(DIM),
+                line_height: Some(LineHeight::Pixels(Length::pixels(40))),
+                vertical_padding: Some(Length::pixels(9)),
+                ..Face::default()
+            },
+        ));
+        let mut layout = layout_with(&faces);
+        let fields = vec![
+            field("a", "name", Side::Left, 1),
+            field("b", "unset", Side::Right, 1),
+        ];
+        let mut dimmed = with_fields(view("ab", 20, 80, 0, &[]), fields);
+        dimmed.status_face = Some("dim".to_owned());
+        let shown = frame(&mut layout, dimmed);
+        let status = shown.status.expect("a status row");
+        assert_eq!(status.background, DIM);
+        // A field's face is over it, and what the field sets nothing of is
+        // the status face's, over the mode line's.
+        assert_eq!(
+            status.runs,
+            vec![(0..1, paint(RED, DIM)), (1..2, paint(GREY, DIM))]
+        );
+        assert_eq!(
+            boxes_of(&status),
+            vec![(0.0, 12.0, DIM), (188.0, 12.0, DIM)]
+        );
+        // The row keeps the mode line's height, and its line is not moved
+        // down by the status face's padding. The status face's line height
+        // is under every field's face, so the fields are shaped in it, as
+        // in a taller field's face: their line's baseline is 30 of its 40,
+        // and what runs past the row's foot is not drawn.
+        assert_eq!(
+            (status.y, status.height, status.baseline),
+            (64.0, 16.0, 30.0)
+        );
+        assert_eq!(layout.heights().status, 16);
+    }
+
+    #[test]
+    fn a_change_of_one_field_reshapes_that_field_alone() {
+        let mut layout = layout_with(&status_faces());
+        let shaped = |layout: &mut Layout<CellShaper>, position: &str| {
+            let before = layout.shaper().bytes_shaped();
+            let fields = vec![
+                field("a.rs", "name", Side::Left, 4),
+                field(position, "x", Side::Right, 4),
+            ];
+            frame(layout, with_fields(view("ab", 20, 80, 0, &[]), fields));
+            layout.shaper().bytes_shaped() - before
+        };
+        // The text's row and both fields.
+        assert_eq!(shaped(&mut layout, "1:2"), 2 + 4 + 3);
+        assert_eq!(shaped(&mut layout, "1:2"), 0);
+        // Another position: that field's bytes alone.
+        assert_eq!(shaped(&mut layout, "10:2"), 4);
     }
 
     #[test]

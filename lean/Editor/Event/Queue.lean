@@ -83,19 +83,11 @@ def scalars : Reader String := do
     text := text.push (← char (← word))
   return text
 
-/-- The modifiers a word's bits hold. -/
+/-- The modifiers a word's bits hold (`Ffi.modifiersOfBits?`). -/
 def modifiers (bits : UInt64) : Except String Modifiers :=
-  if bits &&& ~~~15 != 0 then .error s!"the modifier bits {bits} have a bit past super"
-  else
-    .ok
-      { shift := bits &&& 1 != 0, control := bits &&& 2 != 0, alt := bits &&& 4 != 0,
-        superKey := bits &&& 8 != 0 }
-
-/-- The bits of `modifiers`. -/
-def modifierBits (modifiers : Modifiers) : UInt64 :=
-  (if modifiers.shift then 1 else 0) ||| (if modifiers.control then 2 else 0) |||
-    (if modifiers.alt then 4 else 0) |||
-    (if modifiers.superKey then 8 else 0)
+  match Ffi.modifiersOfBits? bits with
+  | some modifiers => .ok modifiers
+  | none => .error s!"the modifier bits {bits} have a bit past super"
 
 /-- The words of a string's scalar values: their count, then each. -/
 def scalarWords (text : String) : Array UInt64 :=
@@ -156,7 +148,7 @@ def keyWords (key : Key) : Array UInt64 :=
     match key.physical with
     | .unidentified => #[0, 0]
     | .code name => #[1] ++ scalarWords name
-  logicalWords key.logical ++ physical |>.push (modifierBits key.modifiers)
+  logicalWords key.logical ++ physical |>.push (Ffi.modifierBits key.modifiers)
 
 /-- A key's code: bit 0 pressed, bit 1 repeat, bit 2 dead. The interrupt
 mark, bit 3, is the library's to set and is never posted. -/
@@ -180,8 +172,8 @@ held. So shift is left out of the mask for a character, which already says
 whether it is shifted, and is in it for a named key. -/
 def interruptWords (key : Key) : Array UInt64 :=
   let every : Modifiers := { shift := true, control := true, alt := true, superKey := true }
-  let mask := modifierBits ({ key with modifiers := every } : Key).chord.modifiers
-  logicalWords key.logical ++ #[modifierBits key.chord.modifiers, mask]
+  let mask := Ffi.modifierBits ({ key with modifiers := every } : Key).chord.modifiers
+  logicalWords key.logical ++ #[Ffi.modifierBits key.chord.modifiers, mask]
 
 /-- A pointer's words, with its code as the action. -/
 def pointer (code : UInt64) : Reader Pointer := do
@@ -245,7 +237,8 @@ def pointerWords (pointer : Pointer) : UInt64 × Array UInt64 :=
     | some .back => (4, 0)
     | some .forward => (5, 0)
     | some (.other number) => (6, number.toUInt64)
-  (code, #[pointer.x.toBits, pointer.y.toBits, tag, other, modifierBits pointer.modifiers] ++ delta)
+  (code,
+    #[pointer.x.toBits, pointer.y.toBits, tag, other, Ffi.modifierBits pointer.modifiers] ++ delta)
 
 /-- A count of paths, then each path's characters as `scalars` reads them:
 the words of files to open. The count is checked against the words left, as
@@ -338,13 +331,13 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
         throw s!"{repr Ffi.EventKind.resize} has no code {code}"
       else
         match event.words with
-        | #[width, height, scale] =>
+        | #[width, height, scale, corner, top] =>
           pure
               (.resize
                 { width := width.toNat, height := height.toNat, scale := Float.ofBits scale
-                  fullscreen := code == 1 })
+                  fullscreen := code == 1, corner := corner.toNat, top := top.toNat })
         | _ =>
-          throw "a resize has three words"
+          throw "a resize has five words"
     | .closeRequested, 0 =>
       none .closeRequested
     | .openFiles, 0 =>
@@ -352,6 +345,14 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
         Event.openFiles <$> EventWords.readAll EventWords.paths event.words
       else
         throw "files to open have no text"
+    | .quitRequested, 0 =>
+      if event.text.isEmpty then
+        none .quitRequested
+      else
+        throw "a quit the system asked has no text"
+    | .menu, 0 =>
+      -- An empty name crosses as it is: the loop says no such command.
+      none (.menu event.text)
     | kind, code =>
       throw s!"{repr kind} has no code {code}"
   return { event := decoded, stamp := event.stamp, interrupt }
@@ -375,9 +376,12 @@ def Event.post : Event → IO Bool
     Ffi.postInput .pointer code "" words
   | .resize size =>
     Ffi.postInput .resize (if size.fullscreen then 1 else 0) ""
-      #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits]
+      #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits, size.corner.toUInt64,
+        size.top.toUInt64]
   | .closeRequested => Ffi.postInput .closeRequested 0 "" #[]
   | .openFiles paths => Ffi.postInput .openFiles 0 "" (EventWords.pathWords paths)
+  | .quitRequested => Ffi.postInput .quitRequested 0 "" #[]
+  | .menu command => Ffi.postInput .menu 0 command #[]
   | .message .. | .completion .. | .quit => pure false
 
 /-- Tells the library which key is the interrupt key, or that there is none:

@@ -162,6 +162,7 @@ pub(crate) fn sentence() -> (Frame, Target) {
         strike_through: false,
     };
     let row = FrameRow {
+        x: 0.0,
         y: 0.0,
         height: height as f32,
         baseline,

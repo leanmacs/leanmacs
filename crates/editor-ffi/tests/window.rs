@@ -18,11 +18,12 @@ use std::thread;
 use std::time::Duration;
 
 use editor_ffi::events::{Event, EventKind, QueueId, RawEvent, editor_ffi_events_next};
+use editor_ffi::log::RawWords;
 use editor_ffi::text::editor_ffi_text_free;
 use editor_ffi::window::{
     self, PlatformId, RawRefusal, SCRIPTED_FAILURE, SCRIPTED_NO_RENDERER, WINDOW_RAN,
     WINDOW_REFUSED, WINDOW_UNDRAWN, editor_ffi_input_clock_now, editor_ffi_window_close,
-    editor_ffi_window_post_input, editor_ffi_window_run,
+    editor_ffi_window_opened_with, editor_ffi_window_post_input, editor_ffi_window_run,
 };
 use editor_platform::{Input, Key, LogicalKey, Modifiers, PhysicalKey, ScriptedPlatform};
 
@@ -104,12 +105,13 @@ fn next_event() -> Seen {
 /// ran and closed, with why nothing drew in it when nothing did, and `Err`
 /// with the reason when it did not run; each reason copied out of the
 /// record and the buffer handed back.
-fn run_blocking(platform: u8, composition: bool) -> Result<Option<String>, String> {
+fn run_blocking(platform: u8, composition: bool, title_bar: u8) -> Result<Option<String>, String> {
     let mut refusal = MaybeUninit::<RawRefusal>::uninit();
     // SAFETY: `refusal` is writable for one record. No present mode or
     // frame latency is asked for (0 and 0).
-    let status =
-        unsafe { editor_ffi_window_run(platform, composition, 0, 0, refusal.as_mut_ptr()) };
+    let status = unsafe {
+        editor_ffi_window_run(platform, composition, title_bar, 0, 0, refusal.as_mut_ptr())
+    };
     if status == WINDOW_RAN {
         return Ok(None);
     }
@@ -133,14 +135,48 @@ fn run_blocking(platform: u8, composition: bool) -> Result<Option<String>, Strin
     }
 }
 
-/// Starts [`run_blocking`] on a detached thread and returns where its result
-/// arrives.
+/// Starts [`run_blocking`] on a detached thread, with the themed title
+/// bar, and returns where its result arrives.
 fn run(platform: u8, composition: bool) -> Receiver<Result<Option<String>, String>> {
+    run_with(platform, composition, THEMED)
+}
+
+/// Starts [`run_blocking`] on a detached thread, with the title bar tagged
+/// `title_bar`, and returns where its result arrives.
+fn run_with(
+    platform: u8,
+    composition: bool,
+    title_bar: u8,
+) -> Receiver<Result<Option<String>, String>> {
     let (finished, done) = mpsc::channel();
     thread::spawn(move || {
-        let _ = finished.send(run_blocking(platform, composition));
+        let _ = finished.send(run_blocking(platform, composition, title_bar));
     });
     done
+}
+
+/// The tags of the themed and the standard title bar.
+const THEMED: u8 = 0;
+const STANDARD: u8 = 1;
+
+/// What `editor_ffi_window_opened_with` writes for the platform tagged
+/// `platform`: its status and its words.
+fn opened_with(platform: u8) -> (u64, Vec<u64>) {
+    let mut raw = MaybeUninit::<RawWords>::uninit();
+    // SAFETY: `raw` is writable for one record.
+    unsafe { editor_ffi_window_opened_with(platform, raw.as_mut_ptr()) };
+    // SAFETY: the library filled it.
+    let raw = unsafe { raw.assume_init() };
+    // SAFETY: the buffer is `len` bytes, owned here until handed back.
+    let bytes = unsafe { slice::from_raw_parts(raw.words, raw.len) }.to_vec();
+    // SAFETY: the buffer came from the library, and is handed back once.
+    unsafe { editor_ffi_text_free(raw.words, raw.len) };
+    let (words, rest) = bytes.as_chunks::<8>();
+    assert!(rest.is_empty(), "whole words");
+    (
+        raw.status,
+        words.iter().copied().map(u64::from_le_bytes).collect(),
+    )
 }
 
 /// What the scripted platform's window reports with composition allowed or
@@ -238,6 +274,26 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
         done.recv_timeout(DEADLINE),
         Ok(Ok(Some(SCRIPTED_NO_RENDERER.to_owned())))
     );
+
+    // The title bar asked reaches the platform: the scripted platform says
+    // what its latest run was opened with, composition and the title
+    // bar's tag. A tag that names no title bar is refused, and runs
+    // nothing.
+    assert_eq!(opened_with(SCRIPTED), (0, vec![0, THEMED.into()]));
+    let done = run_with(SCRIPTED, true, STANDARD);
+    assert_arrives(sample(true));
+    assert_eq!(opened_with(SCRIPTED), (0, vec![1, STANDARD.into()]));
+    assert!(editor_ffi_window_close(SCRIPTED));
+    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
+    let refused = run_with(SCRIPTED, true, 2)
+        .recv_timeout(DEADLINE)
+        .expect("a refused run returns at once");
+    assert!(refused.is_err_and(|reason| !reason.is_empty()));
+    assert_eq!(opened_with(SCRIPTED), (0, vec![1, STANDARD.into()]));
+    // The real platform records nothing, and a tag that names none is no
+    // platform.
+    assert_eq!(opened_with(PlatformId::Winit.tag()).0, 1);
+    assert_eq!(opened_with(NO_PLATFORM).0, 1);
 
     // The scripted platform that cannot open a window is refused with its
     // reason, at once and on every run, and a close of it does nothing.

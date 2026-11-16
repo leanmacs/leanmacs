@@ -16,9 +16,11 @@
 //! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 a dead logical key, bit 3 the interrupt mark | What the key produced, or empty | The logical key, the physical key, the modifiers |
 //! | `Composition` | `Composition` | 0 enabled, 1 preedit, 2 commit, 3 disabled | The preedit or the committed text | None |
 //! | `Pointer` | `Pointer` | 0 press, 1 drag, 2 release, 3 wheel | Empty | The position, the button, the modifiers, the wheel's delta |
-//! | `Resized` | `Resize` | Bit 0 in fullscreen ([`RESIZE_FULLSCREEN`]) | Empty | The width, the height, the scale |
+//! | `Resized` | `Resize` | Bit 0 in fullscreen ([`RESIZE_FULLSCREEN`]) | Empty | The width, the height, the scale, the corner clearance, the top inset |
 //! | `CloseRequested` | `CloseRequested` | 0 | Empty | None |
 //! | `OpenFiles` | `OpenFiles` | 0 | Empty | The paths |
+//! | `QuitRequested` | `QuitRequested` | 0 | Empty | None |
+//! | `Menu` | `Menu` | 0 | The chosen item's command name | None |
 //!
 //! The words (`words.rs`) of each kind that has them:
 //!
@@ -33,7 +35,10 @@
 //!   5 forward and 6 another, whose number is `other` (0 for the rest). The
 //!   delta tags are 0 none (with `dx` and `dy` 0), 1 lines and 2 pixels, for
 //!   a wheel.
-//! - **Resize**: `[width, height, scale]`.
+//! - **Resize**: `[width, height, scale, corner clearance, top inset]`.
+//!   The corner clearance and the top inset are in whole logical points
+//!   (`editor-platform`'s `Resize::corner_clearance` and
+//!   `Resize::top_inset`), and a word no `u32` holds is refused.
 //! - **OpenFiles**: `[n, then for each of the n paths: m, m scalars]`, a
 //!   path's characters laid out as a key's names are. An empty list is `[0]`;
 //!   it is encoded and read back, though no platform reports one.
@@ -64,13 +69,16 @@
 //! [`editor_ffi_window_close`].
 //!
 //! **Lean asks things of the window** with [`editor_ffi_window_request`]:
-//! a platform's tag and a request's, 0 enter fullscreen, 1 leave fullscreen
-//! and 2 minimise ([`request_of`]). It never blocks, and it goes through
+//! a platform's tag and a request's, 0 enter fullscreen, 1 leave
+//! fullscreen, 2 minimise, 4 keep running, the answer to a quit the
+//! system asked when the editor does not quit, and 6 and 7 the light and
+//! the dark appearance ([`request_of`]). It never blocks, and it goes through
 //! the window's own loop ([`Platform::request`]), not the main-thread
 //! service, which still answers nothing else while the window runs. No tag
-//! names a title: the title is a field of the scene Lean publishes, and
-//! reaches the window from the presenter ([`crate::render`], "What reaches
-//! the window: the title"). What a scripted window was asked is read back
+//! names a title or a menu bar: each is a field of the scene Lean
+//! publishes, and reaches the window from the presenter ([`crate::render`],
+//! "What reaches the window: the title and the menu"). What a scripted
+//! window was asked is read back
 //! for tests with [`editor_ffi_window_asked`] ([`asked_words`]).
 //!
 //! What draws in the process's window is a render session over the
@@ -100,9 +108,9 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Instant;
 
 use editor_platform::{
-    Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers, NativeWindow,
-    PhysicalKey, Platform, Pointer, PointerAction, Report, Request as WindowRequest, Resize,
-    ScriptedPlatform, WheelDelta, WindowOptions,
+    Appearance, Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
+    NativeWindow, PhysicalKey, Platform, Pointer, PointerAction, Report, Request as WindowRequest,
+    Resize, ScriptedPlatform, TitleBar, WheelDelta, WindowOptions,
 };
 use editor_platform_winit::WinitPlatform;
 use editor_render::fake::RecordingRenderer;
@@ -151,6 +159,21 @@ const REQUEST_MINIMISE: u8 = 2;
 /// The tag of a title in what a scripted window was asked. No request
 /// from Lean has it: the title is a field of the scene.
 const REQUEST_TITLE: u64 = 3;
+/// The tag of keeping running: the editor's answer to a quit the system
+/// asked, when it does not quit. It is 4 and not 3, which is the title's.
+const REQUEST_KEEP_RUNNING: u8 = 4;
+/// The tag of a menu bar in what a scripted window was asked. No request
+/// from Lean has it: the menu is a field of the scene, as the title is.
+const REQUEST_MENU: u64 = 5;
+/// The tags of the light and the dark appearance: after the menu bar's,
+/// which no request from Lean has.
+const REQUEST_APPEARANCE_LIGHT: u8 = 6;
+const REQUEST_APPEARANCE_DARK: u8 = 7;
+
+/// The tags of a title bar, as `editor_ffi_window_run` takes them and
+/// `editor_ffi_window_opened_with` writes them.
+const TITLE_BAR_THEMED: u8 = 0;
+const TITLE_BAR_STANDARD: u8 = 1;
 
 /// The bit of a modifier word that is set when shift is held.
 pub const MODIFIER_SHIFT: u64 = 1;
@@ -307,7 +330,13 @@ pub fn event(input: Input, stamp: u64) -> Event {
                 0
             },
             String::new(),
-            vec![resize.width, resize.height, resize.scale.to_bits()],
+            vec![
+                resize.width,
+                resize.height,
+                resize.scale.to_bits(),
+                u64::from(resize.corner_clearance),
+                u64::from(resize.top_inset),
+            ],
         ),
         Input::OpenFiles(paths) => {
             let mut words = vec![words::word(paths.len())];
@@ -317,6 +346,8 @@ pub fn event(input: Input, stamp: u64) -> Event {
             (EventKind::OpenFiles, 0, String::new(), words)
         }
         Input::CloseRequested => (EventKind::CloseRequested, 0, String::new(), Vec::new()),
+        Input::QuitRequested => (EventKind::QuitRequested, 0, String::new(), Vec::new()),
+        Input::Menu(command) => (EventKind::Menu, 0, command, Vec::new()),
     };
     Event {
         source: Source {
@@ -466,12 +497,23 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
                 height: reader.word()?,
                 scale: f64::from_bits(reader.word()?),
                 fullscreen,
+                corner_clearance: u32::try_from(reader.word()?).ok()?,
+                top_inset: u32::try_from(reader.word()?).ok()?,
             })
         }
         EventKind::CloseRequested => {
             no_text()?;
             (code == 0).then_some(())?;
             Input::CloseRequested
+        }
+        EventKind::QuitRequested => {
+            no_text()?;
+            (code == 0).then_some(())?;
+            Input::QuitRequested
+        }
+        EventKind::Menu => {
+            (code == 0).then_some(())?;
+            Input::Menu(text.to_owned())
         }
         EventKind::OpenFiles => {
             no_text()?;
@@ -491,7 +533,7 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
 
 /// The modifiers the word `bits` holds; `None` with a bit past the system
 /// key's.
-fn read_modifiers(bits: u64) -> Option<Modifiers> {
+pub(crate) fn read_modifiers(bits: u64) -> Option<Modifiers> {
     (bits & !MODIFIERS == 0).then_some(Modifiers {
         shift: bits & MODIFIER_SHIFT != 0,
         control: bits & MODIFIER_CONTROL != 0,
@@ -1038,13 +1080,15 @@ pub const WINDOW_REFUSED: u8 = 1;
 pub const WINDOW_UNDRAWN: u8 = 2;
 
 /// Runs the process's window on the platform `platform`, with composition
-/// allowed or not, and blocks the calling thread until the window has
-/// closed: the main-thread service runs it. Returns how it went:
+/// allowed or not and the title bar tagged `title_bar` ([`title_bar_of`]),
+/// and blocks the calling thread until the window has closed: the
+/// main-thread service runs it. Returns how it went:
 ///
 /// - [`WINDOW_RAN`] when the window ran and something drew in it. `out` is
 ///   left alone.
 /// - [`WINDOW_REFUSED`], with `out` filled with the reason, when `platform`
-///   names no platform or the platform could not open a window.
+///   names no platform, `title_bar` names no title bar, or the platform
+///   could not open a window.
 /// - [`WINDOW_UNDRAWN`], with `out` filled with the reason, when the window
 ///   ran but nothing drew in it: its renderer could not be made, or the
 ///   render thread did not end well.
@@ -1058,17 +1102,25 @@ pub const WINDOW_UNDRAWN: u8 = 2;
 pub unsafe extern "C" fn editor_ffi_window_run(
     platform: u8,
     composition: bool,
+    title_bar: u8,
     present_mode: u8,
     frame_latency: u32,
     out: *mut RawRefusal,
 ) -> u8 {
-    let (status, reason) = match PlatformId::from_tag(platform) {
-        None => (
+    let (status, reason) = match (PlatformId::from_tag(platform), title_bar_of(title_bar)) {
+        (None, _) => (
             WINDOW_REFUSED,
             "the Rust library knows no such platform".to_owned(),
         ),
-        Some(platform) => {
-            let options = WindowOptions { composition };
+        (_, None) => (
+            WINDOW_REFUSED,
+            "the Rust library knows no such title bar".to_owned(),
+        ),
+        (Some(platform), Some(title_bar)) => {
+            let options = WindowOptions {
+                composition,
+                title_bar,
+            };
             let presentation = asked_presentation(present_mode, frame_latency);
             let request = Request::RunWindow {
                 platform,
@@ -1094,6 +1146,54 @@ pub unsafe extern "C" fn editor_ffi_window_run(
     status
 }
 
+/// The title bar Lean's tag `tag` names: 0 themed, 1 standard.
+pub fn title_bar_of(tag: u8) -> Option<TitleBar> {
+    match tag {
+        TITLE_BAR_THEMED => Some(TitleBar::Themed),
+        TITLE_BAR_STANDARD => Some(TitleBar::Standard),
+        _ => None,
+    }
+}
+
+/// The tag of `title_bar`, as [`title_bar_of`] reads it.
+fn title_bar_tag(title_bar: TitleBar) -> u8 {
+    match title_bar {
+        TitleBar::Themed => TITLE_BAR_THEMED,
+        TitleBar::Standard => TITLE_BAR_STANDARD,
+    }
+}
+
+/// Writes to `out` what the scripted window of `platform` was opened with
+/// in its latest run ([`ScriptedPlatform::runs`]): status 0 and the words
+/// `[composition, title bar]`, composition 1 when allowed and the title
+/// bar's tag ([`title_bar_of`]); no words before any run. For the real
+/// platform, which records nothing, and for a tag that names no platform,
+/// status 1 and no words. For tests.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawWords`](crate::log::RawWords).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_window_opened_with(
+    platform: u8,
+    out: *mut crate::log::RawWords,
+) {
+    let scripted = PlatformId::from_tag(platform).and_then(PlatformId::scripted);
+    let raw = match scripted {
+        None => crate::log::RawWords::with_status(1, Vec::new()),
+        Some(scripted) => {
+            let mut writer = words::Writer::with_capacity(2);
+            if let Some(options) = scripted.runs().last() {
+                writer.word(u64::from(options.composition));
+                writer.word(u64::from(title_bar_tag(options.title_bar)));
+            }
+            crate::log::RawWords::with_status(0, writer.finish())
+        }
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+}
+
 /// Asks the window the platform `platform` is running to close, from any
 /// thread, and returns whether `platform` names a platform. It does nothing
 /// when that platform runs no window.
@@ -1107,12 +1207,17 @@ pub extern "C" fn editor_ffi_window_close(platform: u8) -> bool {
 }
 
 /// The request Lean's tag `tag` names: 0 enter fullscreen, 1 leave
-/// fullscreen, 2 minimise. No tag names a title.
+/// fullscreen, 2 minimise, 4 keep running, 6 the light appearance and 7
+/// the dark one. No tag names a title or a menu bar, so 3 and 5 name
+/// nothing.
 pub fn request_of(tag: u8) -> Option<WindowRequest> {
     match tag {
         REQUEST_ENTER_FULLSCREEN => Some(WindowRequest::EnterFullscreen),
         REQUEST_LEAVE_FULLSCREEN => Some(WindowRequest::LeaveFullscreen),
         REQUEST_MINIMISE => Some(WindowRequest::Minimise),
+        REQUEST_KEEP_RUNNING => Some(WindowRequest::KeepRunning),
+        REQUEST_APPEARANCE_LIGHT => Some(WindowRequest::Appearance(Appearance::Light)),
+        REQUEST_APPEARANCE_DARK => Some(WindowRequest::Appearance(Appearance::Dark)),
         _ => None,
     }
 }
@@ -1133,25 +1238,49 @@ pub extern "C" fn editor_ffi_window_request(platform: u8, request: u8) -> bool {
 }
 
 /// The words of what a window was asked, oldest first: for each request its
-/// tag, and for a title the tag 3 followed by the count and the scalar
-/// values of its characters.
+/// tag, for a title the tag 3 followed by the count and the scalar values
+/// of its characters, and for a menu bar the tag 5 followed by its layout
+/// ([`crate::menu`]), each text in it written as a title's is.
 ///
 /// The match on [`WindowRequest`] is exhaustive on purpose: this crate must
-/// give every variant its words.
+/// give every variant its words, since a request with none could not be
+/// read back by Lean's tests, and a new one would cross unseen.
 pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
-    let mut words = Vec::new();
+    use crate::menu::Sink;
+    /// The words, with each text as its count and its scalar values.
+    struct Asked(Vec<u64>);
+    impl Sink for Asked {
+        fn word(&mut self, word: u64) {
+            self.0.push(word);
+        }
+        fn text(&mut self, text: &str) {
+            push_scalars(&mut self.0, text);
+        }
+    }
+    let mut words = Asked(Vec::new());
     for request in asked {
         match request {
-            WindowRequest::EnterFullscreen => words.push(u64::from(REQUEST_ENTER_FULLSCREEN)),
-            WindowRequest::LeaveFullscreen => words.push(u64::from(REQUEST_LEAVE_FULLSCREEN)),
-            WindowRequest::Minimise => words.push(u64::from(REQUEST_MINIMISE)),
+            WindowRequest::EnterFullscreen => words.word(u64::from(REQUEST_ENTER_FULLSCREEN)),
+            WindowRequest::LeaveFullscreen => words.word(u64::from(REQUEST_LEAVE_FULLSCREEN)),
+            WindowRequest::Minimise => words.word(u64::from(REQUEST_MINIMISE)),
+            WindowRequest::KeepRunning => words.word(u64::from(REQUEST_KEEP_RUNNING)),
+            WindowRequest::Appearance(Appearance::Light) => {
+                words.word(u64::from(REQUEST_APPEARANCE_LIGHT));
+            }
+            WindowRequest::Appearance(Appearance::Dark) => {
+                words.word(u64::from(REQUEST_APPEARANCE_DARK));
+            }
             WindowRequest::Title(title) => {
-                words.push(REQUEST_TITLE);
-                push_scalars(&mut words, title);
+                words.word(REQUEST_TITLE);
+                words.text(title);
+            }
+            WindowRequest::Menu(menu) => {
+                words.word(REQUEST_MENU);
+                crate::menu::write(&mut words, menu);
             }
         }
     }
-    words
+    words.0
 }
 
 /// Writes to `out` what the scripted window of `platform` was asked in its
@@ -1368,6 +1497,8 @@ mod tests {
                 height: 600,
                 scale: 2.0,
                 fullscreen: false,
+                corner_clearance: 0,
+                top_inset: 0,
             }),
             Input::CloseRequested,
         ];
@@ -1629,20 +1760,55 @@ mod tests {
     }
 
     #[test]
-    fn a_resize_is_its_width_its_height_and_the_bits_of_its_scale() {
+    fn a_resize_is_its_width_its_height_the_bits_of_its_scale_its_corner_clearance_and_its_top_inset()
+     {
+        let resize = Resize {
+            width: 800,
+            height: 600,
+            scale: 2.0,
+            fullscreen: false,
+            corner_clearance: 16,
+            top_inset: 32,
+        };
         assert_eq!(
-            encoded(Input::Resized(Resize {
-                width: 800,
-                height: 600,
-                scale: 2.0,
-                fullscreen: false,
-            })),
+            encoded(Input::Resized(resize)),
             (
                 EventKind::Resize,
                 0,
                 String::new(),
-                vec![800, 600, bits(2.0)]
+                vec![800, 600, bits(2.0), 16, 32]
             )
+        );
+        assert_eq!(
+            read(EventKind::Resize, 0, "", &[800, 600, bits(2.0), 16, 32]),
+            Some(Input::Resized(resize))
+        );
+    }
+
+    #[test]
+    fn a_resize_of_four_words_or_a_top_inset_past_a_u32_is_refused() {
+        assert_eq!(read(EventKind::Resize, 0, "", &[800, 600, bits(2.0)]), None);
+        assert_eq!(
+            read(EventKind::Resize, 0, "", &[800, 600, bits(2.0), 16]),
+            None
+        );
+        assert_eq!(
+            read(
+                EventKind::Resize,
+                0,
+                "",
+                &[800, 600, bits(2.0), u64::from(u32::MAX) + 1, 0]
+            ),
+            None
+        );
+        assert_eq!(
+            read(
+                EventKind::Resize,
+                0,
+                "",
+                &[800, 600, bits(2.0), 16, u64::from(u32::MAX) + 1]
+            ),
+            None
         );
     }
 
@@ -1655,12 +1821,14 @@ mod tests {
                 height: 900,
                 scale: 2.0,
                 fullscreen: true,
+                corner_clearance: 0,
+                top_inset: 0,
             })),
             (
                 EventKind::Resize,
                 RESIZE_FULLSCREEN,
                 String::new(),
-                vec![1440, 900, bits(2.0)]
+                vec![1440, 900, bits(2.0), 0, 0]
             )
         );
     }
@@ -1705,7 +1873,30 @@ mod tests {
         assert_eq!(request_of(2), Some(WindowRequest::Minimise));
         // No tag names a title: Lean never asks for one.
         assert_eq!(request_of(3), None);
+        assert_eq!(request_of(4), Some(WindowRequest::KeepRunning));
+        // Nor a menu bar: it is a field of the scene, as the title is.
+        assert_eq!(request_of(5), None);
+        assert_eq!(
+            request_of(6),
+            Some(WindowRequest::Appearance(Appearance::Light))
+        );
+        assert_eq!(
+            request_of(7),
+            Some(WindowRequest::Appearance(Appearance::Dark))
+        );
+        assert_eq!(request_of(8), None);
         assert_eq!(request_of(u8::MAX), None);
+    }
+
+    #[test]
+    fn each_title_bar_is_its_tag_and_an_unknown_tag_is_refused() {
+        assert_eq!(title_bar_of(0), Some(TitleBar::Themed));
+        assert_eq!(title_bar_of(1), Some(TitleBar::Standard));
+        assert_eq!(title_bar_of(2), None);
+        assert_eq!(title_bar_of(u8::MAX), None);
+        for title_bar in [TitleBar::Themed, TitleBar::Standard] {
+            assert_eq!(title_bar_of(title_bar_tag(title_bar)), Some(title_bar));
+        }
     }
 
     #[test]
@@ -1715,7 +1906,7 @@ mod tests {
         // A platform that names one, with a request that names none.
         assert!(!editor_ffi_window_request(
             PlatformId::ScriptedFailing.tag(),
-            3
+            5
         ));
         // Both name something: asked of a platform that runs no window, it
         // does nothing.
@@ -1753,9 +1944,12 @@ mod tests {
                 WindowRequest::Minimise,
                 WindowRequest::Title("é😀".into()),
                 WindowRequest::LeaveFullscreen,
+                WindowRequest::Appearance(Appearance::Light),
                 WindowRequest::Title(String::new()),
+                WindowRequest::Appearance(Appearance::Dark),
+                WindowRequest::KeepRunning,
             ]),
-            [0, 2, 3, 2, 0xe9, 0x1_f600, 1, 3, 0]
+            [0, 2, 3, 2, 0xe9, 0x1_f600, 1, 6, 3, 0, 7, 4]
         );
         // A scripted platform answers what its latest run was asked: this
         // one has never run.
@@ -1775,9 +1969,97 @@ mod tests {
             Input::Focus(true),
             Input::Composition(Composition::Preedit("´".into())),
             Input::CloseRequested,
+            Input::QuitRequested,
         ] {
             assert_eq!(encoded(input).3, Vec::<u64>::new());
         }
+    }
+
+    #[test]
+    fn a_menu_choice_crosses_as_kind_12_code_0_with_its_name_as_the_text() {
+        assert_eq!(
+            encoded(Input::Menu("undo".into())),
+            (EventKind::Menu, 0, "undo".to_owned(), vec![])
+        );
+        assert_eq!(EventKind::Menu.tag(), 12);
+        assert_eq!(
+            read(EventKind::Menu, 0, "undo", &[]),
+            Some(Input::Menu("undo".into()))
+        );
+        assert_eq!(
+            read(EventKind::Menu, 0, "", &[]),
+            Some(Input::Menu(String::new())),
+            "an empty name crosses as it is"
+        );
+        assert_eq!(read(EventKind::Menu, 1, "undo", &[]), None);
+        assert_eq!(read(EventKind::Menu, 0, "undo", &[0]), None);
+    }
+
+    #[test]
+    fn the_words_of_a_menu_asked_are_tag_5_and_its_structure() {
+        use editor_platform::menu::{Action, Item, KeyEquivalent, Role, Submenu, System};
+        let menu = editor_platform::Menu {
+            menus: vec![
+                Submenu {
+                    title: "A".into(),
+                    role: Some(Role::App),
+                    items: vec![
+                        Item::Entry {
+                            title: "Q".into(),
+                            key: Some(KeyEquivalent {
+                                character: 'q',
+                                modifiers: held(false, false, false, true),
+                            }),
+                            action: Action::System(System::Quit),
+                        },
+                        Item::Separator,
+                    ],
+                },
+                Submenu {
+                    title: "é".into(),
+                    role: Some(Role::Window),
+                    items: vec![Item::Entry {
+                        title: String::new(),
+                        key: None,
+                        action: Action::Command("u".into()),
+                    }],
+                },
+                Submenu {
+                    title: String::new(),
+                    role: None,
+                    items: vec![],
+                },
+            ],
+        };
+        assert_eq!(
+            asked_words(&[WindowRequest::Menu(menu), WindowRequest::Minimise]),
+            [
+                5, 3, // the tag, and three menus
+                1, 0x41, 1, 2, // "A", the app's, two items
+                2, 1, 0x51, 1, 0x71, 8, 5, // Quit, "Q", s-q
+                0, // a separator
+                1, 0xe9, 2, 1, // "é", the windows menu, one item
+                1, 0, 0, 0, 0, 1, 0x75, // command "u", untitled, no key
+                0, 0, 0, // untitled, plain, no items
+                2, // then the minimise
+            ]
+        );
+    }
+
+    #[test]
+    fn a_quit_asked_by_the_system_crosses_as_its_kind_with_no_code_text_or_words() {
+        assert_eq!(
+            encoded(Input::QuitRequested),
+            (EventKind::QuitRequested, 0, String::new(), vec![])
+        );
+        assert_eq!(EventKind::QuitRequested.tag(), 11);
+        assert_eq!(
+            read(EventKind::QuitRequested, 0, "", &[]),
+            Some(Input::QuitRequested)
+        );
+        assert_eq!(read(EventKind::QuitRequested, 1, "", &[]), None);
+        assert_eq!(read(EventKind::QuitRequested, 0, "x", &[]), None);
+        assert_eq!(read(EventKind::QuitRequested, 0, "", &[0]), None);
     }
 
     /// One of each row of the table in the module docs, and of each value
@@ -1847,16 +2129,22 @@ mod tests {
                 height: 600,
                 scale: 2.0,
                 fullscreen: false,
+                corner_clearance: 16,
+                top_inset: 0,
             }),
             Input::Resized(Resize {
                 width: 1440,
                 height: 900,
                 scale: 1.0,
                 fullscreen: true,
+                corner_clearance: 0,
+                top_inset: 0,
             }),
             Input::OpenFiles(vec!["/Users/me/notes.txt".into(), "/tmp/é ü.lean".into()]),
             Input::OpenFiles(vec![]),
             Input::CloseRequested,
+            Input::QuitRequested,
+            Input::Menu("toggle-fullscreen".into()),
         ]
     }
 
@@ -1954,7 +2242,7 @@ mod tests {
             read(EventKind::Pointer, 4, "", &[0, 0, 0, 0, 0, 0, 0, 0]),
             None
         );
-        assert_eq!(read(EventKind::Resize, 2, "", &[1, 1, 0]), None);
+        assert_eq!(read(EventKind::Resize, 2, "", &[1, 1, 0, 0]), None);
     }
 
     #[test]
@@ -2006,6 +2294,8 @@ mod tests {
             height: 2,
             scale: 1.5,
             fullscreen: false,
+            corner_clearance: 0,
+            top_inset: 0,
         });
         let posted = event(input, 0);
         let bytes = crate::words::tests::buffer(&posted.words);
@@ -2184,7 +2474,10 @@ mod tests {
     fn the_platform_is_run_with_the_options_it_was_given_and_a_close_ends_the_run() {
         let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
         let queue = Arc::new(Queue::new());
-        let options = WindowOptions { composition: false };
+        let options = WindowOptions {
+            composition: false,
+            ..WindowOptions::default()
+        };
 
         let done = start(&platform, options, &queue);
         assert_eq!(pull(&queue, 1).len(), 1);
@@ -2205,6 +2498,8 @@ mod tests {
             height: 120,
             scale: 2.0,
             fullscreen: false,
+            corner_clearance: 0,
+            top_inset: 0,
         })]));
         let queue = Arc::new(Queue::new());
         // Which kind of thing the drawer was told, in order: the thing
@@ -2534,6 +2829,8 @@ mod tests {
             height: 600,
             scale: 2.0,
             fullscreen: false,
+            corner_clearance: 0,
+            top_inset: 0,
         };
         let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(resized)]));
         let queue = Arc::new(Queue::new());

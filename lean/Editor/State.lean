@@ -1,4 +1,5 @@
 import Editor.Display
+import Editor.Face
 import Editor.File
 import Editor.Invocation
 import Editor.Scene
@@ -69,7 +70,25 @@ the frame shows.
 laid out in the whole frame, with the minibuffer's view while a prompt is
 open. It is the one definition the scene's views and a command's question
 about its view (`EditorState.rect?`) are both read from, so a command is
-answered with the rectangle the next scene gives its view.
+answered with the rectangle the next scene gives its view. The rectangles
+tile the frame: a view's padding is inside its rectangle, not between
+rectangles.
+
+**The padding of the views** is in whole points, which the display
+multiplies by its scale (Lean handles no scale). `EditorState.padding` is
+the frame padding the last publish laid out with, set from config
+(`framePadding`, `Editor/Setup.lean`) through the loop's keys. Each view's
+is `EditorState.paddingOf`: a window is padded across and down by it, each
+window of a split its own; the minibuffer's view is padded across by the
+bottom row's inset (`EditorState.bottomInset`: the padding, and at least
+the window's corner clearance, `Frame.corner`, outside fullscreen) and not
+down, since its place must stay exactly a text row and the bottom row
+tall. A window along the frame's top edge (its rectangle at `y` 0) is
+padded further at the top by the top inset (`EditorState.topInset`: what
+the window's title bar covers of the frame, `Frame.top`, and none in
+fullscreen), so its text starts below the title bar; any other is not. The echo is inset by the same bottom inset (`Scene.echoPadding`). A
+command's question about its view carries the view's padding
+(`Scroll.Area.ofRect`), so it is answered with the rows the frame shows.
 
 The invariants are part of the model (`EditorState.wellFormed`). They are
 stated over the state's views (`EditorState.views`): the tree's windows,
@@ -457,6 +476,12 @@ A command asks the editor to quit, and the editor quits once it can
     was refused, so `settleQuit` alone would let the editor leave with
     the save's refusal unseen. The state does not keep which save a quit
     waits for: any save that is refused withdraws it.
+- **The system's quit is remembered until it is answered**
+  (`EditorState.systemQuit`), set by the loop when the system asks
+  (`Event.quitRequested`) before it runs `quit`. `answerSystemQuit` answers
+  it once the editor is not asked to quit: the quit was refused, or
+  withdrawn in one of the two places above. While the editor is asked, it
+  waits or leaves, and the system is not answered.
 
 ## A buffer's modes
 
@@ -688,6 +713,16 @@ structure Frame where
   (`Event.Resize.fullscreen`). A command reads it, and nothing but a resize
   changes it. -/
   fullscreen : Bool := false
+  /-- How far in from the window's left and right edges its rounded bottom
+  corners reach, in whole points, as the window last said on a resize
+  (`Event.Resize.corner`): what the bottom row keeps clear of
+  (`EditorState.bottomInset`). Nothing but a resize changes it. -/
+  corner : Nat := 0
+  /-- How far down from the window's top edge its title bar covers it, in
+  whole points, as the window last said on a resize (`Event.Resize.top`):
+  what the views along the frame's top edge start their text below
+  (`EditorState.topInset`). Nothing but a resize changes it. -/
+  top : Nat := 0
   deriving DecidableEq, Repr
 
 /-- A job a command asked to be started: the name it is registered under,
@@ -872,9 +907,15 @@ structure EditorState where
   /-- Whether a command asked the editor to quit ("Quit", in the module
   docs). -/
   quitting : Bool := false
+  /-- Whether the system asked the program to quit and has not been
+  answered (`Event.quitRequested`; "Quit", in the module docs). -/
+  systemQuit : Bool := false
   /-- Whether a command asked for the config to be reloaded, which the loop
   has not yet handed to its host. -/
   reload : Bool := false
+  /-- The theme a command asked to be loaded, the latest if it asked more
+  than once, which the loop has not yet handed to its host. -/
+  theme : Option String := none
   /-- The registers, each under its name, in the order each name was first
   set ("Registers", in the module docs). No name is here twice. -/
   registers : Array (String × Register) := #[]
@@ -893,6 +934,11 @@ structure EditorState where
   docs). A publish asks them again (`Loop.publish`); before the first, a
   16-pixel cell's. -/
   heights : Display.Heights := { text := 16, status := 16, message := 16 }
+  /-- The frame padding the last publish laid the views out with, in whole
+  points: what every view's content is inset by ("The padding of the
+  views", in the module docs). A publish sets it from what it is handed
+  (`Loop.publish`), as it sets `heights`; 0 before the first. -/
+  padding : Nat := 0
   /-- The open buffers in the order they were last used, most recent first,
   each once, without the minibuffer's ("Most recently used", in the module
   docs). -/
@@ -982,6 +1028,17 @@ inductive JobRefusal where
 /-- Why a job was not started, as a sentence for the echo area. -/
 def JobRefusal.describe : JobRefusal → String
   | .noSuchJob name => s!"no job is registered under {name}"
+
+/-- Why a theme was not loaded. -/
+inductive ThemeRefusal where
+  /-- No theme is registered under this name. -/
+  | noSuchTheme (name : String)
+  deriving DecidableEq, Repr
+
+/-- Why a theme was not loaded, as a sentence for the echo area
+(`Theme.unknown`). -/
+def ThemeRefusal.describe : ThemeRefusal → String
+  | .noSuchTheme name => Theme.unknown name
 
 /-- Why setting a mode was refused. -/
 inductive ModeRefusal where
@@ -1158,6 +1215,21 @@ def rects (state : EditorState) : Array (ViewId × Rect) :=
   frame.tree.rects { x := 0, y := 0, width := frame.size.width, height := frame.size.height }
     state.minibufferView? state.minibufferPlace
 
+/-- How far the frame's bottom row, where the echo and a prompt are drawn,
+is inset from the frame's left and right edges, in points: the frame
+padding, and at least the window's corner clearance outside fullscreen, so
+that its first glyph is clear of the rounded corner. In fullscreen the
+window has square corners, so it is the padding alone, whatever the window
+last said of its corners. -/
+def bottomInset (state : EditorState) : Nat :=
+  if state.frame.fullscreen then state.padding else max state.padding state.frame.corner
+
+/-- How far down the window's title bar covers the frame, in points: what
+the window last said outside fullscreen, and none in fullscreen, where no
+title bar covers the content, whatever the window last said. -/
+def topInset (state : EditorState) : Nat :=
+  if state.frame.fullscreen then 0 else state.frame.top
+
 /-- How tall the bottom row of the view `id` is: the frame's bottom row for
 the minibuffer's view, which holds the prompt, and a window's status row
 for any other (`heights`). A view's rows are asked with its height less
@@ -1170,6 +1242,20 @@ that is not laid out: one with no window in the tree, and the minibuffer's
 when no prompt is open. -/
 def rect? (state : EditorState) (id : ViewId) : Option Rect :=
   (state.rects.find? (·.1 == id)).map (·.2)
+
+/-- The padding of the view `id`, in points ("The padding of the views", in
+the module docs): the frame padding across and down for a window, with the
+top inset (`topInset`) at the top of a window along the frame's top edge;
+and for the minibuffer's view the bottom row's inset across
+(`bottomInset`) and none down, since its place is exactly a text row and
+the bottom row (`minibufferPlace`) and must stay that tall. Each window has
+its own: two windows of a split are each padded, with no gap of their own
+between them. -/
+def paddingOf (state : EditorState) (id : ViewId) : Padding :=
+  if state.minibufferView? == some id then { across := state.bottomInset, down := 0 }
+  else
+    let top := if (state.rect? id).any (·.y == 0) then state.topInset else 0
+    { across := state.padding, down := state.padding, top }
 
 /-- Whether the state keeps the layout invariants, over its views
 (`views`: the tree's windows, then the open prompt's view): the focused
@@ -1335,6 +1421,16 @@ a buffer has unsaved changes, it is no longer asked. Any other state is as
 it was. -/
 def settleQuit (state : EditorState) : EditorState :=
   if state.quitting && state.unsaved.isSome then { state with quitting := false } else state
+
+/-- Whether the system's quit is to be answered now, and `state` with it
+answered ("Quit", in the module docs): when the system asked and the editor
+is not asked to quit, the quit was refused or withdrawn, so the answer is
+to keep running, `true`, and the system's quit is no longer pending. While
+the editor is asked to quit, it is waiting or leaving, and nothing is
+answered yet. With no system quit pending nothing is answered. -/
+def answerSystemQuit (state : EditorState) : EditorState × Bool :=
+  if state.systemQuit && !state.quitting then ({ state with systemQuit := false }, true)
+  else (state, false)
 
 /-- An editor with no buffer and no window, in a frame of no size whose tree
 is the minibuffer's place alone. It is not well formed: nothing is focused.

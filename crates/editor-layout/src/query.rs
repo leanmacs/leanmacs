@@ -314,7 +314,7 @@ mod tests {
 
     use super::{Moved, QueryError, RowRange};
     use crate::Layout;
-    use crate::scene::{TextKey, TextRef};
+    use crate::scene::{Padding, TextKey, TextRef};
     use crate::shaper::fake::CellShaper;
     use crate::shaper::scripted::{ScriptedShaper, glyph, line};
     use crate::tabs::SEGMENT_BYTES;
@@ -329,7 +329,13 @@ mod tests {
     fn rows(text: &str, columns: u32, rows: u32, anchor: usize) -> Vec<(usize, usize)> {
         let snapshot = TextRef::fixed(TextKey(1), Text::from(text).snapshot());
         layout()
-            .rows_shown(&snapshot, columns as f32 * 10.0, rows as f32 * 16.0, anchor)
+            .rows_shown(
+                &snapshot,
+                columns as f32 * 10.0,
+                rows as f32 * 16.0,
+                Padding::default(),
+                anchor,
+            )
             .unwrap()
             .into_iter()
             .map(|RowRange { start, stop }| (start, stop))
@@ -341,7 +347,7 @@ mod tests {
     fn moved(text: &str, columns: u32, position: usize, lines: i64, goal: Option<f32>) -> Moved {
         let snapshot = TextRef::fixed(TextKey(1), Text::from(text).snapshot());
         layout()
-            .lines_from(&snapshot, columns as f32 * 10.0, position, lines, goal)
+            .lines_from(&snapshot, columns as f32 * 10.0, 0, position, lines, goal)
             .unwrap()
     }
 
@@ -359,7 +365,10 @@ mod tests {
         assert_eq!(rows("ab\ncd", 4, 10, 0), vec![(0, 2), (3, 5)]);
         // A view shorter than a row shows none.
         let snapshot = TextRef::fixed(TextKey(1), Text::from("ab").snapshot());
-        assert_eq!(layout().rows_shown(&snapshot, 40.0, 15.0, 0), Ok(vec![]));
+        assert_eq!(
+            layout().rows_shown(&snapshot, 40.0, 15.0, Padding::default(), 0),
+            Ok(vec![])
+        );
     }
 
     #[test]
@@ -373,7 +382,9 @@ mod tests {
         // pixel, so 20 pixels hold 20 of them and not the 501 of the text.
         for line_height in [0.25, 0.0, -16.0, f32::NAN] {
             let mut layout = Layout::new(CellShaper::new(10.0, line_height));
-            let shown = layout.rows_shown(&snapshot, 40.0, 20.0, 0).unwrap();
+            let shown = layout
+                .rows_shown(&snapshot, 40.0, 20.0, Padding::default(), 0)
+                .unwrap();
             assert_eq!(shown.len(), 20, "lines {line_height} tall");
             assert_eq!(
                 shown.last(),
@@ -384,10 +395,13 @@ mod tests {
                 "lines {line_height} tall"
             );
             // A part of a pixel holds no row.
-            assert_eq!(layout.rows_shown(&snapshot, 40.0, 0.5, 0), Ok(vec![]));
+            assert_eq!(
+                layout.rows_shown(&snapshot, 40.0, 0.5, Padding::default(), 0),
+                Ok(vec![])
+            );
         }
         // A height that is no number holds no row.
-        let shown = layout().rows_shown(&snapshot, 40.0, f32::NAN, 0);
+        let shown = layout().rows_shown(&snapshot, 40.0, f32::NAN, Padding::default(), 0);
         assert_eq!(shown.map(|rows| rows.len()), Ok(0));
     }
 
@@ -436,7 +450,7 @@ mod tests {
         let mut layout = Layout::new(shaper);
         let text = TextRef::fixed(TextKey(1), Text::from("abcd\nwxyz\nafib\nabcd").snapshot());
         let mut moved = |position: usize, lines: i64| {
-            let moved = layout.lines_from(&text, 400.0, position, lines, None);
+            let moved = layout.lines_from(&text, 400.0, 0, position, lines, None);
             let Moved { position, goal } = moved.unwrap();
             (position, goal)
         };
@@ -547,15 +561,15 @@ mod tests {
         let snapshot = TextRef::fixed(TextKey(1), Text::from("é\nab").snapshot());
         let mut layout = layout();
         assert_eq!(
-            layout.rows_shown(&snapshot, 40.0, 16.0, 1),
+            layout.rows_shown(&snapshot, 40.0, 16.0, Padding::default(), 1),
             Err(QueryError::BadPosition)
         );
         assert_eq!(
-            layout.rows_shown(&snapshot, 40.0, 16.0, 6),
+            layout.rows_shown(&snapshot, 40.0, 16.0, Padding::default(), 6),
             Err(QueryError::BadPosition)
         );
         assert_eq!(
-            layout.lines_from(&snapshot, 40.0, 1, 1, None),
+            layout.lines_from(&snapshot, 40.0, 0, 1, 1, None),
             Err(QueryError::BadPosition)
         );
     }

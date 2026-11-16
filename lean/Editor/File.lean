@@ -3,8 +3,8 @@ import Editor.Text
 /-!
 # Files, as a job asks for them
 
-The data of the three file requests a job can make: load a file, save a
-snapshot as a file, and stat a file. It is plain data, and it imports only the text port, for
+The data of the file requests a job can make: load a file, save a snapshot
+as a file, and read a file's stamp. It is plain data, and it imports only the text port, for
 the two kinds of id a save names its source by. The requests themselves are
 requests of the job port (`Editor/Job.lean`, `JobRequest.file`): a command
 may not wait and a job may, so loading and saving are things a job does, and
@@ -46,6 +46,11 @@ names a snapshot.
   a command released, and a `JobSnapshotId` this job does not hold, another
   job's included. Nothing is translated on the way out: the bytes of a file
   loaded and saved without an edit are the bytes it had.
+- **A stamp request** (`FileRequest.stamp`) answers the stamp of the file at
+  a path, or `none` when nothing is there, and reads nothing of the file. A
+  directory, or anything else that is not a file, is refused with
+  `notAFile`. It is how a job tells whether a file changed without loading
+  it.
 - **A stamp** (`File.Stamp`) is when a file was last modified and how long it
   is. Two stamps are compared for equality and never ordered: a file put
   back from a backup has changed.
@@ -54,12 +59,12 @@ names a snapshot.
   save that finds something else is refused with `changed` and what is there
   now, and writes nothing over the file. The caller may ask again with
   `whatever`, which is the override, or load again.
-- **A stat** (`FileRequest.stat`) answers the stamp of the file at a path
-  from one stat, reading nothing: what a check for a change on disk compares
-  with the stamp a buffer recorded. It is refused as a load is, in the same
-  order: `relativePath`, `notFound` for nothing there, `notAFile` for a
-  directory. A stat after a load answers the load's stamp, and after a save
-  the save's.
+- **A stat** (`File.stat`, `Editor/Job.lean`) is a stamp request read as a
+  load would be: what a check for a change on disk compares with the stamp
+  a buffer recorded. Nothing there is refused with `notFound`, so it is
+  refused as a load is, in the same order: `relativePath`, `notFound`,
+  `notAFile` for a directory. A stat after a load answers the load's stamp,
+  and after a save the save's.
 - **What notices a change.** A save notices one when it is asked for, and
   the staleness check, one stat a file buffer, when the loop asks for one:
   as the frame gains the focus, as a buffer is switched to, and at a
@@ -220,8 +225,8 @@ inductive FileRequest where
   /-- Save what `source` holds as the file at `path`, if what is there is
   what `expect` says. -/
   | save (source : File.Source) (path : System.FilePath) (expect : File.Expect)
-  /-- Stat the file at `path`, reading nothing. -/
-  | stat (path : System.FilePath)
+  /-- The stamp of the file at `path`, or `none` when nothing is there. -/
+  | stamp (path : System.FilePath)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each file request: a refusal or the result. A
@@ -229,6 +234,6 @@ refusal is a value, never a throw. -/
 def FileRequest.Reply : FileRequest → Type
   | .load .. => Except FileError File.Loaded
   | .save .. => Except FileError File.Stamp
-  | .stat _ => Except FileError File.Stamp
+  | .stamp _ => Except FileError (Option File.Stamp)
 
 end Editor

@@ -176,6 +176,13 @@ does not see.
   definition that says which height, handed `EditorState.bottomRow`). Over
   real layout the rows query then answers exactly the rows the frame shows
   (`crates/editor-layout/tests/heights.rs`).
+- **The padding.** A view's padding is in points, and the display lays out
+  at a scale Lean never sees. So a view is asked about with its whole width
+  and its height less its bottom row, and its padding beside them
+  (`Area.padding`, from `EditorState.paddingOf`): the display takes the
+  padding off at its scale, by the rule its frame takes it off by, and
+  Lean subtracts nothing. The width a command's rows wrap at is layout's
+  answer, not a Lean computation.
 
 ## What is missing
 
@@ -197,31 +204,38 @@ namespace Editor
 
 namespace Scroll
 
-/-- What the display is asked about a view with: a snapshot of its text, and
-its width and its height in pixels. -/
+/-- What the display is asked about a view with: a snapshot of its text, its
+width and its height in pixels, and its padding in points, which the display
+takes off at its own scale. -/
 structure Area where
   /-- The text the view shows. -/
   snapshot : SnapshotId
-  /-- The view's width, in pixels: where rows wrap. -/
+  /-- The view's width, in pixels: where rows wrap, less its padding. -/
   width : Nat
-  /-- The height the rows are asked with, in pixels. -/
+  /-- The height the rows are asked with, in pixels, less its padding. -/
   height : Nat
+  /-- The view's padding, in points (`EditorState.paddingOf`): asked with,
+  and taken off by the display. -/
+  padding : Padding := {}
   deriving DecidableEq, Repr
 
 namespace Area
 
 /-- The area of a view that shows `snapshot` in `rect`, whose bottom row is
-`bottom` tall: its width, and its height less that row. This is the one
-definition that says which height a view's rows are asked with (the module
-docs, "What is the display's"); the bottom row's height is the state's
-(`EditorState.bottomRow`). -/
-def ofRect (snapshot : SnapshotId) (rect : Rect) (bottom : Nat) : Area :=
-  { snapshot, width := rect.width, height := rect.height - bottom }
+`bottom` tall and whose content is padded `padding` points: its width, its
+height less that row, and the padding, which Lean takes off nothing of. This
+is the one definition that says which height a view's rows are asked with
+(the module docs, "What is the display's"); the bottom row's height is the
+state's (`EditorState.bottomRow`), and so is the padding
+(`EditorState.paddingOf`). -/
+def ofRect (snapshot : SnapshotId) (rect : Rect) (bottom : Nat) (padding : Padding := {}) : Area :=
+  { snapshot, width := rect.width, height := rect.height - bottom, padding }
 
 /-- The rows the view shows from `anchor`. -/
 def rows (area : Area) (anchor : Nat) : DisplayM (Array Display.Row) :=
   Display.rowsShown
-    { snapshot := area.snapshot, width := area.width, height := area.height, anchor }
+    { snapshot := area.snapshot, width := area.width, height := area.height, anchor
+      padding := area.padding }
 
 /-- Where the row that holds `position` starts; `position` itself in a view
 that shows no row. -/
@@ -237,8 +251,8 @@ def away (area : Area) (position : Nat) (lines : Int) : DisplayM Nat := do
     return ← area.rowStart position
   return (←
         Display.linesFrom
-            { snapshot := area.snapshot, width := area.width, position, lines,
-              goal := some 0 }).position
+            { snapshot := area.snapshot, width := area.width, across := area.padding.across
+              position, lines, goal := some 0 }).position
 
 /-- A position of the row `lines` rows above the one that holds `position`,
 as an anchor; the text's first row when there are fewer above. -/

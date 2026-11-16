@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use editor_layout::Layout;
 use editor_layout::face::{Face, FaceDef};
 use editor_layout::scene::{
-    Changes, Cursor, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
+    Changes, Cursor, Decoration, Padding, Rect, Scene, TextKey, TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_text::{Patch, Revision, Text};
@@ -256,7 +256,9 @@ fn an_older_snapshot_is_laid_out_apart_and_leaves_the_cache_as_it_was() {
     let mut layout = layout();
     layout.frame(&scene(std::slice::from_ref(&new)));
     // The old text's rows, at its revision.
-    let rows = layout.rows_shown(&old, 40.0, 48.0, 0).unwrap();
+    let rows = layout
+        .rows_shown(&old, 40.0, 48.0, Padding::default(), 0)
+        .unwrap();
     let pairs: Vec<(usize, usize)> = rows.iter().map(|row| (row.start, row.stop)).collect();
     assert_eq!(pairs, vec![(0, 4), (4, 8), (9, 11)]);
     // The new text's entries are all still kept.
@@ -319,11 +321,23 @@ fn a_query_after_an_edit_is_in_the_default_font_until_a_frame_shows_the_text() {
     }]);
     layout.frame(&shown);
     // A query is in the fonts of that frame: 48 pixels hold two rows.
-    assert_eq!(layout.rows_shown(&first, 40.0, 48.0, 0).unwrap().len(), 2);
+    assert_eq!(
+        layout
+            .rows_shown(&first, 40.0, 48.0, Padding::default(), 0)
+            .unwrap()
+            .len(),
+        2
+    );
     // The frame's decorations are offsets of the text it showed. After an
     // edit they are not read: the rows are in the default font, and three
     // fit.
     shared.0.lock().unwrap().replace(0..0, "x").unwrap();
     let edited = text_ref(1, &shared.0.lock().unwrap(), changes);
-    assert_eq!(layout.rows_shown(&edited, 40.0, 48.0, 0).unwrap().len(), 3);
+    assert_eq!(
+        layout
+            .rows_shown(&edited, 40.0, 48.0, Padding::default(), 0)
+            .unwrap()
+            .len(),
+        3
+    );
 }

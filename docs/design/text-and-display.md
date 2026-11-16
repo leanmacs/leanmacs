@@ -1030,11 +1030,22 @@ style and a colour), strike-through and a line height. It is the same nine
 in Lean (`lean/Editor/Face.lean`) and in Rust
 (`crates/editor-layout/src/face.rs`).
 
-**Lean defines, Rust merges.** Lean holds faces as data and merges nothing:
-a theme is an ordered list of definitions, each a name and the attributes
-it sets. Layout holds the list last sent and applies one rule to all of it.
-Doing the merge in Lean instead would put layout policy in two halves and
-make every publish cost the spans.
+**Lean defines, Rust merges.** Lean holds faces as data and merges nothing
+it sends: a theme is an ordered list of definitions, each a name and the
+attributes it sets. Layout holds the list last sent and applies one rule to
+all of it. Doing the merge in Lean instead would put layout policy in two
+halves and make every publish cost the spans.
+
+There is one exception, for checking a theme only. The completeness check
+(below) runs in the model tests, where there is no layout, and must know the
+colours a cursor is painted in; so Lean models layout's colour resolution
+(`Face.over`, `Theme.merged`, `lean/Editor/Face.lean`). What they give is
+never sent across the FFI or drawn: Lean still sends every definition
+unmerged. The objection to two halves is answered by a contract check:
+`ConfigTest.cursorResolutionChecks` lays out each shipped theme's every
+cursor through the real binding and holds that layout paints it in the
+colours the model gives, so a change to layout's precedence that the model
+does not follow fails it.
 
 **The precedence.** Attributes merge one by one. The value of an attribute
 of a run is that of the highest layer over the run that sets it:
@@ -1050,7 +1061,11 @@ of a run is that of the highest layer over the run that sets it:
 The same rule orders definitions: where what is sent defines a name more
 than once, a later definition's set attributes are over an earlier one's.
 So a theme is overridden by appending to it. A status field's face is over
-`mode-line` over `default`, and a cursor's face is over `default`. A name
+the view's status face (`mode-line.inactive` for a window that is not
+selected), over `mode-line`, over `default`, and a cursor's face is over
+`default`. A face's vertical padding is neither font nor paint: layout
+reads it only from `mode-line` and `echo-area`, to size the status rows,
+and it is a length in points like a size. A name
 nothing defines sets nothing. A decoration source added later (syntax
 highlighting) states its place in this order when it is added.
 
@@ -1095,29 +1110,142 @@ pt" font in another app is 14 × 96/72 pixels at scale 1.
   `LineHeight::Pixels`, keep the names they had when a theme stated
   physical pixels. Their documentation says which unit each is in.
 
-**Themes and config.** `Theme.builtin` defines `default`, which sets every
-attribute, and `cursor`, a cursor face for each state of the shipped Vim
-scheme (`cursor.normal`, `cursor.insert`, `cursor.visual`,
-`cursor.visual-line`, `cursor.minibuffer`), `selection`, `echo-area`,
-`minibuffer-prompt`, `mode-line` and `search-match`, which the matches of
-the last search are drawn in (below, "Decorations"); its colours are
-placeholders. Layout reads three names by itself: `default`, `selection`
-and `mode-line`.
-`echo-area` and `minibuffer-prompt` are defined and nothing draws them. Any
-other name is one a scene names and a theme or config defines, with no
-change to layout. A cursor face nothing defines has the default face's
-paint, the paper's colour on the paper, and is not seen: so each state the
-shipped scheme has gets its cursor face in the built-in theme (the default
-face's colours the other way round), and a state config registers needs
-config to define its own. Config sets a face in `setup`, `face "name" { … }`; a name is set
-once in a `setup`. The theme a display is sent is the built-in one followed
-by the installed config's definitions, so a face config sets takes
-config's attributes over the theme's, and one it stops setting is the
-theme's again at the next reload that installs
-([lean-runtime.md](lean-runtime.md), "Config and reload").
+**Themes and config.** `Theme.builtin` defines every face of the face
+vocabulary (below), `default` first, which sets every attribute; its
+colours are placeholders. Layout reads four names by itself: `default`,
+`selection`, `mode-line`, and `echo-area`, the echo in the frame's bottom
+row. Any other name is one a scene names and a theme or config defines,
+with no change to layout. A cursor face nothing defines has the default
+face's paint, the paper's colour on the paper, and is not seen: so each
+state the shipped scheme has gets its cursor face in every shipped theme,
+and a state config registers needs config to define its own. Config sets a
+face in `setup`, `face "name" { … }`; a name is set once in a `setup`.
+Among the vocabulary's faces, `search-match` is what the matches of the
+last search are drawn in (below, "Decorations"), and `mode-line.changed`
+the mark of a buffer whose file a check found changed on disk.
 
-Not built: a face naming another as its base; choosing between whole
-themes.
+**The face vocabulary** (`lean/Editor/Face/Vocabulary.lean`) is the list of
+face names a shipped theme defines, each with a sentence of what is drawn
+in it and by whom: layout's four; `cursor`, and `cursor.<state>` for each
+state of the shipped Vim scheme; the mode line's (theming phase 5):
+`mode-line.state.<state>`, the badge, for each state of the shipped Vim
+scheme, `mode-line.buffer`, `mode-line.modified`, `mode-line.changed` for
+a file changed on disk, `mode-line.secondary` for the directory, the major
+mode, line:col and the position, and `mode-line.inactive` for every field
+and the row of a window that is not selected; the minibuffer's
+(`minibuffer.prompt`, `minibuffer.candidate`, `minibuffer.chosen`); and
+`search-match`, the matches of the last search. The status fields' faces
+of before (`status.state`, `status.name`, `status.modified`, and
+`status.changed` of the daily-driver roadmap) were replaced by these, not
+kept as aliases: a config that defined them defines faces nothing draws.
+Faces are declared there ahead of the features that draw them, so the
+shipped themes colour them before those land: `syntax.` and each
+top-level name of tree-sitter's common highlight captures
+(`syntax.keyword`, `syntax.comment`, …; a dotted capture's mapping to its
+first component is the syntax roadmap's); `diff.added`, `diff.removed`,
+`diff.changed`, `gutter`, `review-unexamined` and `block-header`. A feature
+that draws a face not listed adds it to the vocabulary and to the palette
+mapping, and so to every shipped theme.
+
+**A theme from a palette.** A shipped theme is written from a `Palette`, a
+small record of named colours (paper, ink, raised, selected, faint, strong,
+the cursor's, and eight accents), by one function from palette to
+definitions (`Palette.theme`, `lean/Editor/Face.lean`), so one mapping
+serves a light and a dark variant. `Theme.builtin` is
+`Palette.placeholder.theme`. A face naming another as its base is not
+built: the palette already shares colours across faces and variants.
+
+A shipped theme is a palette's theme **plus that theme's own definitions
+after it**, where the theme gives a face another colour than the shared
+mapping: by the rule that a later definition's set attributes are over an
+earlier one's, each sets only what it changes. `Palette` itself is not
+widened for one theme's choices. The shipped Solarized themes,
+`solarized-dark` and `solarized-light` (`lean/Editor/Themes/Solarized.lean`),
+are written so: one record of Solarized's sixteen published colours, and
+one mapping from it, written in the dark names (base03 the paper, base0 the
+ink, base02 raised and selected, base01 faint, base1 strong, the cursor
+base0), then Schoonover's own definitions after it. The light variant is
+the same mapping over the same colours with the four base pairs swapped
+(base03 and base3, base02 and base2, base01 and base1, base00 and base0),
+as the specification and Schoonover's Vim and Emacs themes do. Where the
+vocabulary needs a role the specification does not name, the choice
+follows those two themes, and the table of each choice and its source is
+in the module docs of `Solarized.lean`, pinned by
+`ModelTest.solarizedChecks`. Solarized's MIT licence notice is beside it,
+`lean/Editor/Themes/Solarized-LICENSE.txt`, verbatim.
+
+The shipped `fairy-floss` (`lean/Editor/Themes/FairyFloss.lean`) is
+written the same way: one record of the nineteen colours sailorhg's
+repository `sailorhg/fairyfloss` publishes at commit `982e64a`, in its
+tmTheme and Atom styles, and one mapping from it: background the paper,
+foreground the ink and strong, the caret the cursor, selection selected,
+lineHighlight raised and lavender faint. Its own definitions after the
+shared ones follow the tmTheme's scopes and the Atom styles, and the table
+of each choice and its source is in the module docs of `FairyFloss.lean`,
+pinned by `ModelTest.fairyFlossChecks`. The repository has no LICENSE
+file; its `package.json` declares MIT, and that notice, with its
+provenance, is beside the module, `lean/Editor/Themes/FairyFloss-LICENSE.txt`.
+
+**A shipped theme reaches the CPU renderer in a test** through three
+test-facing bindings of `editor-ffi` (`crates/editor-ffi/src/display.rs`):
+a display over the real shaper and one font file it is given, with no
+font of the machine (`Display.newFont`); a picture of a display's latest
+frame, drawn synchronously by the CPU renderer with grayscale antialiasing
+and hinting, with no render session, thread or clock (`Display.picture`);
+and a picture read from and written to a PNG file (`Picture.ofPng`,
+`Picture.toPng`, over `Image::from_png` and `Image::to_png` in
+`editor-render-wgpu`, which keeps `png` behind it). `ffi-test
+theme-pictures` publishes a fixture file through the display's real
+binding in each shipped theme and compares the picture with a
+reference image (`tests/render/themes/README.md`). The headless mode's
+`--render` session is not that path: it lays out in cells, whose glyphs
+have no font bytes, so it draws no text.
+
+**The completeness check** (`Themes.problems`,
+`lean/Editor/Themes/Check.lean`) holds that a theme defines every
+vocabulary face, that its `default` states a paper and an ink (its merged
+background and foreground; the check takes none of layout's base colours),
+and that `cursor` and each shipped Vim state's cursor face are defined,
+have a background that is not the paper and a foreground that is not that
+background. A cursor's colours are its face over `default`, as layout paints
+it, so one that sets no background has the paper's. It runs on every
+shipped theme in the model tests (`ModelTest.faceVocabularyChecks`); a
+theme config defines is not checked.
+
+Themes are registered by name, by owner, as commands and modes are
+(`lean/Editor/Config/Registry.lean`, "Themes"): compiled code registers
+the themes that ship (`Themes.shipped`, `lean/Editor/Themes/Compiled.lean`),
+of which `Theme.builtin` is the one called `default`, and `setup` registers
+more with `defineTheme` and names the one in force with `useTheme`. The
+theme in force is state of the reload reducer (`Config.State.themeName`,
+`lean/Editor/Config/Reload.lean`), `default` until a config names another:
+
+- **The theme a display is sent is the theme in force followed by the
+  installed config's definitions**, so a face config sets takes config's
+  attributes over the theme's, whichever theme is in force and across a
+  switch, and one it stops setting is the theme's again at the next reload
+  that installs ([lean-runtime.md](lean-runtime.md), "Config and reload").
+- **A theme in force replaces the built-in theme wholesale.** It is not
+  over `Theme.builtin`: a theme config defines must define every face it
+  needs, or that face is not drawn, and a cursor face nothing defines is
+  not seen. A config theme keeps the built-in faces by being built as
+  `Theme.builtin ++ #[…]`. The completeness check is run on the shipped
+  themes only, not on config's.
+- **A reload whose config names a registered theme puts it in force.** One
+  whose config names none keeps the theme in force, so a theme picked with
+  the command survives a reload that does not name one. One whose config
+  names a theme nobody registered is installed all the same, keeps the
+  theme in force, and says so in the echo area: ``reload: no theme is
+  registered as `<name>` ``. A theme of config's in force that a reload
+  drops falls back to `default`.
+- **`load-theme` switches the theme live, with no reload**
+  (`lean/Editor/Themes.lean`): it asks for a name with the registered
+  themes as its candidates, and the host feeds the reducer the choice
+  (`Config.Event.choose`). A name nobody registered is refused in the echo
+  area, ``load-theme: no theme is registered as `<name>` ``, and changes
+  nothing.
+
+Not built: a face naming another as its base.
 
 ### Text is the only layout engine
 
@@ -1425,6 +1553,7 @@ The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
 | `views` | The views, in drawing order |
 | `focused` | The view with the keyboard focus, if any |
 | `echo` | The echo area's text |
+| `echoPadding` | How far the echo is inset from the frame's left and right edges, in whole points, when layout draws it in the bottom row: the bottom row's inset (`EditorState.bottomInset`), the frame padding and at least the window's corner clearance outside fullscreen. 0 by default |
 | `pending` | The pending key prefix, rendered by Lean into a string |
 | `preedit` | The input method's preedit text in the focused view, if it is composing |
 | `title` | The window's title: the selected buffer's name (`EditorState.title`), the focused window's, or the asking window's while a prompt is open, so it does not become the minibuffer's while a prompt is typed into |
@@ -1440,7 +1569,18 @@ Each view (`View`):
 | `selections` | Its selections, as selection markers of that text; each carries its ranges and its shape |
 | `cursor` | Its cursor shape (block, bar, underline, hollow) and the name of the face its cursors take |
 | `decorations` | Byte ranges of its snapshot, each naming a face |
-| `status` | Its status line: text fields, each naming a face |
+| `status` | Its status line: text fields, each naming a face, with a side (left, the default, or right) and a horizontal padding in whole points, which its face's background fills |
+| `statusFace` | The face of its status row, over `mode-line` and under every field's, which gives the row its background: `mode-line.inactive` for a window that is not selected, none for the selected one and the minibuffer's view. It neither makes the row taller nor moves its line |
+| `padding` | How far its content is inset from its edges, in whole points, across and down, and how far further its text rows start from its top (`top`) (`EditorState.paddingOf`): the frame padding both ways for a window, with the window's top inset (`EditorState.topInset`: what the title bar covers, none in fullscreen) at the top of a window along the frame's top edge; and for the minibuffer's view the bottom row's inset across and none down. 0 by default, which lays out as before there was one |
+
+A field's side and padding and a view's status face cross the wire as
+data (a field is four words: its text's and face's lengths, its side and
+its padding; a view ends with its status face's presence and length), and
+a face definition is 24 words with its vertical padding last
+(`crates/editor-ffi/src/display/wire.rs`). A view's padding ends its words
+(across, down, then top) and the echo's follows the echo's length, in whole
+points like a field's padding: no scale crosses with any of them. Their
+defaults keep every scene that names none as it was.
 
 Content is named only by handles, never by copied text, so an unchanged
 view is sent as the same handles. Faces are names; what they look like is
@@ -1465,11 +1605,15 @@ is therefore Lean's scene and one field more, the definitions, with none
 meaning "as last given". The layout of the words is the table in
 `crates/editor-ffi/src/display/wire.rs`.
 
-After a reload that installs, the runtime that owns a display hands the
+After a reload that installs, and after a theme is chosen with no reload
+(the reducer's effect `themed`), the runtime that owns a display hands the
 binding the new theme (`Config.retheme`, `lean/Editor/Config/Display.lean`).
 The headless host does, through its display's `setTheme`: the real
 binding's in the window mode and under `--render`, and nothing for the
-recorder.
+recorder, which keeps only the theme's name, for the scene line. A switch
+from the command comes after the step that ran the command has published
+its scene in the old theme, so the host publishes once more after it, and
+the switch is drawn at once.
 
 The theme takes effect at the next publish, and that publish is sized in
 it too. `Loop.publish` asks the display's heights before it lays out the
@@ -1600,19 +1744,30 @@ decided 2026-11-13 by its phase 2):
   has no decorations until later phases choose them. The focused view is
   named only while the frame has the keyboard focus, and the preedit is
   the input method's text for it.
-- A view's status line (`Loop.statusOf`) is the fields the input scheme
-  reports of the view and then its buffer's (`Loop.status`, built by the
-  command loop's phase 9): the buffer's name in the face `status.name`,
-  and, while the buffer is modified, the text `[+]` in the face
-  `status.modified`. Under the Vim scheme the scheme's is one field, the
-  name of the view's Vim state in the face `status.state`, so the line
-  reads `normal`, `scratch`. "Modified" is the presence of the field in
-  the face `status.modified`: a buffer that is not modified has no such
-  field, not one with an empty text. Whether a buffer is modified is its
-  undo tree's answer, and it is right in a scene because every tree is
-  told its text's revision before the scene is made; a buffer is modified
-  while its group is open, so during an insert session. The scene's shape
-  did not change.
+- A view's status line (`Loop.statusOf`) is the segmented mode line's
+  (theming phase 5, `lean/Editor/ModeLine.lean`): segments registered by
+  name and owner, each a function from what the window shows (its buffer,
+  the scheme's reported fields, its cursor's row and column in cells, its
+  rows, whether it is the selected window) to fields, listed by config for
+  each side (`modeLine`) or in the default order. Shipped, on the left:
+  the state badge (the scheme's field, `NORMAL` in
+  `mode-line.state.normal` under the Vim scheme, padded 8 points), the
+  buffer's name, `●` while the buffer is modified, `[changed on disk]`
+  while a check has found its file changed on disk, and the directory its
+  file was opened in; on the right, ending at the row's end: the major
+  mode, line:col and the position (`All`, `Top`, `Bot` or a percentage,
+  from the cursor's row as lualine's `progress`, not from the rows shown
+  as Vim's ruler). Every other field is padded 4. A segment with nothing
+  to say gives no field. The selected window is `EditorState.selectedView`
+  (the prompt's asker while one is open), whether or not the frame has the
+  keyboard focus; a window that is not has no badge and every field in
+  `mode-line.inactive`, and the view carries that face for its row
+  (`View.statusFace`). Whether a buffer is modified is its undo tree's
+  answer, and it is right in a scene because every tree is told its
+  text's revision before the scene is made; a buffer is modified while its
+  group is open, so during an insert session. A status field carries a
+  side and a padding, and a view a status face (below, "The scene, as
+  built").
 - **While a prompt is open the minibuffer's view is a view of the scene**
   like any other (built by the command loop's phase 10), where the
   minibuffer's place is in drawing order: its snapshot is the input typed
@@ -1974,24 +2129,74 @@ part are in the module docs; these are the decisions.
   generation nor the table. The `Renderer` port that takes these frames
   was made later, in a crate of its own ("The renderer, as built").
 - **The mode line.** A view with at least one status field has a status
-  row: its fields' texts one after another with no separator, each in its
-  face over `mode-line` over `default`, shaped as one unbroken line
-  through the `Shaper` port, at the bottom of the view's rectangle. A tab,
-  a carriage return or a line feed in a field is shaped as a space. The
-  row is exactly the mode line's line height, rounded up to a whole
-  pixel, whatever height its line was shaped at, and the view's text rows
-  are those that fit whole in the whole pixels that remain (display
-  pipeline phase 6). A view whose rectangle reaches the frame's bottom
+  row at the bottom of its rectangle. Each field is shaped through the
+  `Shaper` port as a line of its own, in its face over the view's status
+  face over `mode-line` over `default`, so a field that changes, a
+  line:col, reshapes that field alone. A tab, a carriage return or a line
+  feed in a field is shaped as a space. There is no separator glyph, so
+  nothing depends on a patched font: fields are told apart by padding and
+  background (theming phase 5, after lualine.nvim and doom-modeline).
+  Each field has a side and a horizontal padding in points: left fields
+  run from the row's start and right fields end at its end, each in a box
+  of its padding and its text. When both sides do not fit, the right side
+  keeps its place and the left side is cut where it begins; a right side
+  wider than the row starts at the row's start and is clipped by the
+  view. The frame carries each field's box in its face's background
+  (`StatusBox`), so the renderer paints padding, which has no glyph. A
+  face's vertical padding, read from `mode-line` (and from `echo-area` for
+  the echo), makes the row taller: it is the line height and twice the
+  padding, rounded up to a whole pixel, whatever height its line was
+  shaped at, and its line sits below the padding. The shipped themes pad
+  both 3 points. The view's text rows are those that fit whole in the
+  whole pixels that remain (display pipeline phase 6). A view whose rectangle reaches the frame's bottom
   edge and that has a status field has a status row of the message
   height instead, the taller of `echo-area` and `mode-line`: that row is
   the minibuffer's bottom row. A view with no status field is laid out
   across its whole rectangle, at the bottom edge or not. `Layout::heights`
   answers the three heights, text, status and message, so a caller that
   asks the rows query at a view's height less its bottom row is answered
-  with the rows the frame shows. The row is kept per view and
-  shaped again only when its text or its font runs change. The
+  with the rows the frame shows. Each field's line is kept per view and
+  shaped again only when its text or its font change. The
   alternatives were to draw it over the last text row, which hides rows,
   or outside the view's rectangle, for which the scene has no rectangle.
+- **The padding** (theming phase 6, the owner's choice of a uniform inset
+  with a corner-aware bottom row, after Ghostty's `window-padding-x`/`y`,
+  Neovide's padding and Emacs's spacious-padding). A view carries a
+  padding across and down, and the scene the echo's, in whole points, and
+  layout turns each into pixels at its own scale with one function
+  (`Layout::padding_pixels`: points times the scale, unrounded, as a
+  status field's padding is). The text wraps at the view's width less the
+  padding across twice and fills its height less its status row less the
+  padding down twice and the top once, which may be a fractional number of
+  pixels: the walk keeps the whole rows that fit. The first row starts the
+  top and the padding down from the view's top, so a view along the
+  frame's top edge, which Lean pads further at the top by what the
+  window's title bar covers (theming phase 7), starts its text below the
+  title bar; the top is 0 for every other view, and one helper takes it
+  off for the frame and the rows query alike. Each row carries its `x`, and the
+  cursors and the selection areas move in by it; a row's hash leaves out
+  its `x` and `y`, so a change of padding rebuilds no row, and the painter
+  places a row's `x`, as its `y`, on a whole pixel. A status row keeps its
+  background across the whole view, so the padding beside its fields is
+  the mode line's colour, while its first field starts at the padding and
+  its last ends at the width less it; the echo is inset by the scene's
+  echo padding. The view's background is the default face's, so the text's
+  padding is paper, not a border. The rows query and the move query carry
+  the view's padding as words of their own, since a padding is a view's
+  and the scale the display's, and layout takes them off by the frame's
+  rule, so the queries answer the rows the frame shows. A padding of 0
+  lays out as before. Lean puts the padding in the scene
+  (`EditorState.paddingOf`, `EditorState.bottomInset`) and never a scale:
+  the frame padding from config (default 8 points) for each window, each
+  window of a split its own with no gap between them; the bottom row (the
+  echo, and the minibuffer's view across, not down) at least the
+  window's corner clearance outside fullscreen and the padding alone in
+  it; and the views along the frame's top edge (the upper window of a rows
+  split, both windows of a columns split) the window's top inset beside
+  the padding, none in fullscreen. Whether layout should round a padding
+  to whole pixels inside itself
+  is the owner's open question of the Layout row in
+  [README.md](README.md), which this leaves open.
 - **Counters** count segments shaped, broken and reused, each once per call;
   every cost claim above is pinned by one.
 - **The binding.** A document has a key and a snapshot carries its
@@ -2085,8 +2290,9 @@ bound submits nothing.
   rectangles of whole pixels that are filled with a colour or read a
   rectangle of a glyph atlas, in drawing order: per view its background,
   each run's background where it is not the view's, the selection areas,
-  the glyphs, underlines and strike-throughs, the status row, the
-  cursors. A row's quads are kept by its hash, relative to its own start.
+  the glyphs, underlines and strike-throughs, the status row (its
+  background, then each field's box where its colour is not the row's,
+  then its runs), the cursors. A row's quads are kept by its hash, relative to its own start.
   Behind the painter is one of two devices, which only blend the quads:
   the CPU compositor (`HeadlessRenderer`) and wgpu (`WgpuRenderer`). So
   the two adapters are the same code down to the quads and the atlas's
@@ -2225,8 +2431,12 @@ bound submits nothing.
 - **How it is tested.** wgpu has no software renderer of its own: a
   machine with no GPU and no driver has no adapter, and the gate runs on
   such machines. So the gate draws with the CPU compositor, and compares
-  one frame of real text with one reference image, `tests/render/
-  frame.png`, within 2 of 255 a channel; and it runs the wgpu adapter on
+  one frame of real text with the renderer's reference image,
+  `tests/render/frame.png`, within 2 of 255 a channel, and each shipped
+  Solarized theme's picture of a fixture file, published from Lean, with
+  its reference image under `tests/render/themes`, within the same bound
+  ("A shipped theme reaches the CPU renderer in a test", above); and it
+  runs the wgpu adapter on
   wgpu's no-op back end, which validates every call (the shader, the
   pipeline, every draw, inside an error scope) and draws nothing. What a
   real GPU draws is compared with the same image on demand
@@ -2342,8 +2552,10 @@ window is still run with nothing drawing in it. The threads are in
   is made with winit's default attributes, which are resizable and
   titled, and on macOS such a window has the green button, which puts it
   into the system's fullscreen on a Space of its own. The event loop is
-  built without winit's default menu, so a fullscreen shortcut that is a
-  menu item's is not there: the button is the way in. To the editor it
+  built without winit's default menu; the menu bar is the editor's, whose
+  Window menu's Enter Full Screen runs `toggle-fullscreen`, and AppKit
+  adds no fullscreen item of its own (`NSFullScreenMenuItemEverywhere`).
+  So the button, `C-s-f` and that item are the ways in. To the editor it
   is a burst of sizes: winit reports each change of the content view's
   frame as a resize, the adapter reports it and tells the drawer, the
   render loop draws the frame shown on the newest size at most once a
@@ -2366,6 +2578,66 @@ window is still run with nothing drawing in it. The threads are in
   window's scale, as seen"). Changing the first is a call on the layer,
   and the second is who lays out on a resize
   ([concurrency.md](concurrency.md)); neither is built.
+- **A resize says the window's corner clearance** (theming phase 6): how
+  far in from the left and right edges its rounded bottom corners reach,
+  in whole logical points (`Resize::corner_clearance`), as data beside
+  fullscreen, reported whenever it changes by the same rule, and 0 in
+  fullscreen, which the contract holds every platform to. The winit
+  adapter reads it from the system, on macOS 26 and later, as the
+  content view's safe-area layout region adapted to the corners
+  horizontally (`-[NSView edgeInsetsForLayoutRegion:]`), rounded up, so no
+  radius is written down; when the system gives no reading above 0 it
+  reports a fallback measured on a real window (16 points on macOS 27.2,
+  `crates/editor-platform-winit/src/corner.rs`), and off macOS 0. NSWindow
+  has no public corner radius, and its private `_cornerRadius` is not
+  used. Lean keeps it in the frame (`Frame.corner`) and insets the bottom
+  row by at least it. The fullscreen case is pinned by the adapter's tests
+  alone: the window's contract run never enters fullscreen. With the
+  themed title bar the content view's left inset takes in the window's
+  buttons (measured left 78, right 16), so the adapter takes the nearer
+  side (`corner::reach`), which reads 16 again.
+- **The title bar takes the theme's paper** (theming phase 7, the owner's
+  choice, after emacs-plus's `ns-transparent-titlebar` and Ghostty's
+  `macos-titlebar-style = transparent`). On macOS the winit adapter opens
+  the window with a transparent title bar over a full-size content view
+  (winit's `WindowAttributesMacOS::with_titlebar_transparent` and
+  `with_fullsize_content_view`), so the paper is drawn under the title,
+  which stays shown, and the buttons. The window port says it as data:
+  `WindowOptions::title_bar` (`TitleBar::Themed` by default, or
+  `Standard`), chosen when the window opens since winit has no setter for
+  it under an open window; `Resize::top_inset`, how far down the title bar
+  covers the drawable area in whole logical points, reported whenever it
+  changes, 0 in fullscreen (which the contract holds every platform to),
+  with the standard title bar and off macOS; and
+  `Request::Appearance`, light or dark, which the adapter carries out with
+  winit's `set_theme` (`NSWindow.appearance`, `aqua` or `darkAqua`), only
+  when it is not the one asked last. The adapter reads the top inset from
+  winit's public `Window::safe_area`, whose top is the content view's
+  `safeAreaInsets` (32 points on macOS 27.2), rounded up, with a fallback
+  measured on a real window (32 points,
+  `crates/editor-platform-winit/src/title_bar.rs`). Lean keeps it in the
+  frame (`Frame.top`) and pads the top of every view along the frame's
+  top edge by it, in points, so their text starts below the title bar;
+  layout multiplies it at its scale, unrounded, as the rest of the
+  padding. Lean asks for the appearance whose title and buttons contrast
+  with the effective paper, the `default` face's background in the theme
+  in force with config's definitions after it, classified by its WCAG 2
+  relative luminance (`Editor/Appearance.lean`: dark exactly when white
+  text contrasts with it more than black), when the window opens and then
+  only when the classification changes: a switch of theme, or a reload
+  that changes the theme or overrides the paper. Config keeps the standard
+  title bar with `titleBar .standard`, read when the window opens once the
+  start-up config has loaded ([lean-runtime.md](lean-runtime.md),
+  "Start-up and shutdown"), so a reload changes it at the next start.
+  The top corners, the open question phase 6 left, are answered by the
+  same inset: they are under the title bar, and the first text row of a
+  view along the top edge starts the top inset and the padding down (40
+  points by default), further than the corners reach (16), while the
+  title bar's own title and buttons are the system's to place.
+  In native fullscreen the system shows the title bar over the content
+  when the pointer reaches the top, over the first row while it shows;
+  that is the system's. Following the system's own appearance is not
+  built: the roadmap leaves it out.
 - **Fullscreen and minimise are commands too.** `toggle-fullscreen` and
   `minimise-window` (`lean/Editor/FrameCommands.lean`), bound by default
   to `C-s-f` (Ctrl-Cmd-F) and `s-m` (Cmd-M), ask the window through the

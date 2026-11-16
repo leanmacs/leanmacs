@@ -52,6 +52,8 @@ It answers by the library's rules and by its own route.
 - **A save is refused in this order**: a source that names no snapshot; a
   path that is not absolute; a directory at the path; a file that is not
   what the save expects; a directory that is not there.
+- **A stamp request is refused in this order**: a path that is not absolute;
+  a directory. Nothing there is `none`.
 - It has no temporary file, no link and no permissions: how a save reaches
   the disk is the library's, pinned in Rust on the file port's fake.
 
@@ -249,22 +251,20 @@ def save (model : FileModel) (source : File.Source) (path : System.FilePath)
             let (stamp, model) := model.written path (encode content.contents)
             (.ok stamp, model)
 
-/-- The model's answer to a stat of the file at `path`: its stamp, refused as a
-load is, in the same order. It changes nothing. -/
-def stat (model : FileModel) (path : System.FilePath) : Except FileError File.Stamp :=
+/-- The model's answer to a stamp request for `path`: the stamp of the file
+there, `none` for nothing. A path that is not absolute and a directory are
+refused. -/
+def stamp (model : FileModel) (path : System.FilePath) : Except FileError (Option File.Stamp) :=
   if !path.isAbsolute then .error .relativePath
   else
     if model.directories.contains path then .error .notAFile
-    else
-      match model.file? path with
-      | none => .error .notFound
-      | some file => .ok file.stamp
+    else .ok ((model.file? path).map (·.stamp))
 
 /-- The model's answer to each file request, and the model after it. -/
 def handle : (request : FileRequest) → FileModel → request.Reply × FileModel
   | .load path limit, model => model.load path limit
   | .save source path expect, model => model.save source path expect
-  | .stat path, model => (model.stat path, model)
+  | .stamp path, model => (model.stamp path, model)
 
 /-- The model's answer to a diff request (`Editor/Diff.lean`), over the
 snapshots it holds: the script of the model of a line diff

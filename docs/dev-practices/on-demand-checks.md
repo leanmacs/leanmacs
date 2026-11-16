@@ -87,10 +87,22 @@ copy; verifies the copy's signature with `codesign --verify --strict
 `CFBundleExecutable` is an executable file under `Contents/MacOS`,
 `LSArchitecturePriority` starts with arm64, `LSMinimumSystemVersion` is no
 later than this machine's macOS, and `CFBundleDocumentTypes` is exactly two
-types, `public.plain-text` then `public.source-code`, each with
-`CFBundleTypeRole` `Editor` and `LSHandlerRank` `Alternate`, read key by key
-with `plutil -extract`) and the executable with `lipo` (arm64
-alone); reads the icon with ImageIO (`sips`: 16 pixels wide); and runs the
+entries, each with `CFBundleTypeRole` `Editor` and one content type,
+`public.text` at `LSHandlerRank` `Alternate` then `public.data` at `None`,
+read key by key with `plutil -extract`; a walk over the whole plist finds no
+`LSHandlerRank` of `Default` or `Owner` and no `UTImportedTypeDeclarations`
+or `UTExportedTypeDeclarations`; and both checks are run on mutated copies
+that must each fail naming the key: a rank of `Default` on the first entry,
+a role of `Viewer` on the second, a second content type, a third entry, and
+for the walk a `Default`, an `Owner`, an inserted
+`UTExportedTypeDeclarations` and an `Owner` under a dotted key it cannot
+address (which fails as `cannot read` that path); `CFBundleShortVersionString` and `CFBundleVersion`
+are each the line of `lean/app/version`, read from the file the build
+reads; `LSApplicationCategoryType` is `public.app-category.developer-tools`
+and `NSHumanReadableCopyright` is not empty) and the executable with `lipo`
+(arm64 alone); converts the icon back to an iconset with `iconutil -c
+iconset`, which must hold exactly the ten standard images, each read by
+ImageIO (`sips`) at its nominal size, 16 to 1024 pixels; and runs the
 copy's `Contents/MacOS/editor headless` on `tests/headless/bundle` with no
 directory argument, an empty environment (`env -i`) and `/` as the working
 directory, which must exit 0 and print exactly `expected`. Last, it builds
@@ -103,8 +115,23 @@ package in the temporary directory (`cp -c`, so it takes no space), with a
 for one that stages and then fails, builds `editorApp`, which must fail,
 puts the script back so the inputs hash to the old trace again, and builds
 once more: the bundle must still verify and be the old one, so a failed or
-interrupted rebuild leaves no half-built bundle taken as up to date. It
-ends `app-check: ok` with the bundle's size, and takes seconds.
+interrupted rebuild leaves no half-built bundle taken as up to date. In the
+same clone it writes another version, 9.8.7, into `lean/app/version` and
+builds: the bundle must be rebuilt, verify, and name 9.8.7 as both version
+keys. It turns the artwork, `lean/app/Leanmacs.png`, a quarter
+(`sips -r 90`) and builds: the bundle must be rebuilt and verify, and its
+icon must hold the ten images with a 1024-pixel one that differs from
+before, so the artwork must not look the same turned a quarter. It
+writes malformed versions (a trailing space, an empty file, `1.x`, a second
+line, four parts) and builds each: each build must fail on the version file
+and leave the old bundle. It writes `0.1.0` with no newline after it and
+builds: the build must succeed and the bundle name 0.1.0, and the check
+must read 0.1.0 from that file as it reads `lean/app/version`, so the two
+take the same files. Last, it replaces the artwork with a 512×300 PNG, a
+256×256 PNG and a 1024×1024 JPEG and builds each: each build must fail
+with an error that `app/Leanmacs.png` must be a 1024x1024 PNG and leave
+the old bundle; then it puts the artwork back. It ends `app-check: ok` with the bundle's size,
+and takes under a minute.
 
 It writes nothing outside its temporary directory but that second build,
 which is shown to write nothing, opens no window and needs no person. It is
@@ -220,9 +247,19 @@ run in the container, under Xvfb, as parts 1 and 4 of `linux-window`.
 in it that it opened before it reports so to anyone, it reports that it
 opened before anything else, it returns when it is asked to close from
 another thread and not before, even if it was asked to close before it
-opened, and it tells the drawer it is closing, once, last. The window opens
-for about a second. It is the example of `crates/editor-platform-winit`,
-and it prints one line.
+opened, it tells the drawer it is closing, once, last, and no resize it
+reports in fullscreen says a corner clearance. The window opens for about
+a second. It is the example of `crates/editor-platform-winit`, and it
+prints the verdict on one line and then each resize the window reported,
+one line apiece: `window-contract: resized <w>x<h> scale <s> fullscreen
+<bool> corner <n> top <n>`. Its window opens with the themed title bar,
+the options' default. On macOS it is also asked for a menu bar while it
+runs, which it reads back from AppKit (exactly the menu asked, with the
+services and windows menus set and no fullscreen item of AppKit's), and
+whose command items and Quit it performs; then it is asked to quit as the
+system asks, and then starts itself again in a second process and
+window, where a close with the system's quit pending must let AppKit end
+the process with status 0, only after that process recorded its verdict.
 
 **The second** is the window that draws: the example `window` of
 `crates/editor-ffi` (`examples/window.rs`). The real window is run onto a
@@ -237,7 +274,13 @@ is closed; `cargo run --locked --package editor-ffi --example window --
 --seconds <n>` runs it for another time.
 
 The first prints `window-contract: the winit platform keeps the window
-port's contract`. The second fails, with a line beginning `window:
+port's contract`, then its resizes. On macOS each of them must say
+`fullscreen false`, a corner above 0 and a top above 0: the run never
+asks for fullscreen, so it shows nothing of the fullscreen case, which
+rests on the adapter's own tests (`corner.rs`, `title_bar.rs`,
+`translate.rs`). How the two fallbacks were measured is below ("The
+corner clearance, measured", "The title bar's top inset, measured"). The
+second fails, with a line beginning `window:
 FAILED:` and exit status 1, unless all of these hold:
 
 - each frame it publishes is laid out at the window's scale: it prints
@@ -336,6 +379,53 @@ On the tree with the three changes, the second program, started so that
 its window was not on the screen at once, exited 0: two draws refused as
 `Occluded`, one presented after `Hidden(false)`, nothing drawn over the
 idle second, and a click arriving as a press and a release.
+
+### The corner clearance, measured
+
+The adapter reports the system's own reading of how far in a window's
+rounded bottom corners reach (`crates/editor-platform-winit/src/corner.rs`:
+the content view's safe-area layout region adapted to the corners
+horizontally, macOS 26 and later), rounded up to a whole point, and a
+fallback, `FALLBACK_POINTS`, when the system gives no reading above 0. The
+fallback was measured on 2026-11-16 on a Mac17,7 (arm64) running macOS
+27.2 (26B123): with the constant set to 0 for the run, and a line printing
+the insets the system gave added for the run, `mise run window-contract`
+read the insets left 16, right 16, top 0 and bottom 0, printed two
+resizes, both `resized 1600x1200 scale 2 fullscreen false corner 16`, and
+passed. The constant is 16. With it restored the run printed the same.
+That is winit's window, which has a title bar and no toolbar; the system
+gives a window with a toolbar larger corners. To measure it again, set
+the constant to 0, run the task, read the `corner` of the resizes, and
+set it back to what they say.
+
+The window's content view has extended under its title bar since the
+themed title bar (theming phase 7), and the reading changed with it. On
+2026-11-16, on the same machine and system, with the constant set to 0
+for the run and the insets printed, the corner-adapted region read left
+78, right 16, top 32 and bottom 0: the left inset now takes in the
+window's buttons, at the top left, and the run printed `corner 78`. The
+adapter now takes the nearer of the two sides (`corner::reach`), and the
+run printed `corner 16` on every resize with the constant at 0 and at 16
+alike. The constant stays 16.
+
+### The title bar's top inset, measured
+
+With the themed title bar the adapter reports how far down the title bar
+covers the content view (`crates/editor-platform-winit/src/title_bar.rs`):
+the top of winit's `Window::safe_area`, which winit-appkit reads from the
+content view's `safeAreaInsets`, over the scale factor and rounded up to a
+whole point, and a fallback, `FALLBACK_POINTS`, when the system gives no
+reading above 0. The fallback was measured on 2026-11-16 on a Mac17,7
+(arm64) running macOS 27.2 (26B123): with the constant set to 0 for the
+run, and a line printing the insets the system gave added for the run,
+`mise run window-contract` read `safeAreaInsets` top 32 and left, right
+and bottom 0, printed two resizes, both `resized 1600x1200 scale 2
+fullscreen false corner 16 top 32`, and passed. The constant is 32. With
+it restored the run printed the same. To measure it again, set the
+constant to 0, run the task, read the `top` of the resizes, and set it
+back to what they say. A standard title bar (`titleBar .standard` in
+config) reports 0 whatever the system reads, and so does a window in
+fullscreen.
 
 ### The window at the macOS weight
 
@@ -791,6 +881,17 @@ headless renderer's with, by running the example `reference` of
 `crates/editor-render-wgpu`. It writes a file of the repository, which no
 gate may do, so the gate only builds it. `tests/render/README.md` says
 what the image shows and when to make it again.
+
+```sh
+mise run theme-references
+```
+
+This writes three files, `tests/render/themes/solarized-dark.png`,
+`solarized-light.png` and `fairy-floss.png`, the pictures the gate
+compares the shipped themes' with, by running `ffi-test theme-pictures … --write`.
+It writes files of the repository, so it is never part of the gate.
+`tests/render/themes/README.md` says what the images show and when to make
+them again.
 
 ## The Core Text reference, on demand
 

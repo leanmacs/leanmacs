@@ -42,7 +42,8 @@
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Cursor, CursorShape, Decoration, Rect, Scene, Size, StatusField, TextKey, TextRef, View, ViewId,
+    Cursor, CursorShape, Decoration, Padding, Rect, Scene, Size, StatusField, TextKey, TextRef,
+    View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Slant, Weight};
@@ -179,12 +180,16 @@ fn scene() -> Scene {
                     StatusField {
                         text: "fixture.rs".to_owned(),
                         face: "mode-line".to_owned(),
+                        ..StatusField::default()
                     },
                     StatusField {
                         text: " 1:8".to_owned(),
                         face: "position".to_owned(),
+                        ..StatusField::default()
                     },
                 ],
+                status_face: None,
+                padding: Padding::default(),
             },
             View {
                 id: ViewId(2),
@@ -203,10 +208,13 @@ fn scene() -> Scene {
                 },
                 decorations: vec![],
                 status: vec![],
+                status_face: None,
+                padding: Padding::default(),
             },
         ],
         focused: Some(ViewId(1)),
         echo: "fixture".to_owned(),
+        echo_padding: 0,
         pending: String::new(),
         preedit: None,
         faces: Some(theme()),

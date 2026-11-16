@@ -79,6 +79,17 @@ runs a key's. A scheme that asks nothing answers the state as it was and
 nothing, the default, and the scheme contract holds every scheme to that
 while it is asking nothing.
 
+A scheme is told when a menu item names an invocation for a view
+(`invoked`): the state, and the invocation to run in its place. A menu
+item is chosen with no key, so `step` never sees it, and a scheme whose
+keys can make a command name run as something else in a state, as the Vim
+scheme's run tables do (`Editor/InputScheme/Vim.lean`, "Vim states"),
+does the same for the item. It defaults to both as they were. Whoever runs
+the scheme tells it once for each menu item chosen (the command loop), and
+runs what comes back with the report of the state that comes back. An
+invocation of a name the scheme does not know comes back as it was, with
+the view's report as it was, which the scheme contract asks.
+
 ## What a scheme reports of a view
 
 A scheme says what it knows of a view in a state (`report`, an
@@ -89,7 +100,7 @@ type, which the core does not know
 | Field | Default | Who reads it |
 |---|---|---|
 | `cursor` | A bar in the face `cursor` | The scene: how the view's cursors are drawn |
-| `status` | None | The scene: the view's status line begins with these fields |
+| `status` | None | The mode line's `state` segment, which draws these fields as its badge (`Editor/ModeLine.lean`) |
 | `shape` | `exclusive` | Whoever places the view's selection: the shape it has |
 | `selecting` | `false` | A command: a motion moves the head and keeps the anchor |
 | `session` | `false` | Whoever sets the boundaries of the history: the view is in an insert session |
@@ -141,6 +152,7 @@ the test scheme, published for other modules' tests.
 |---|---|
 | A new scheme | A value of `InputScheme` in a module of its own, which runs the contract check |
 | Something every scheme must report to the core | A field of `InputScheme`, and a property of the contract |
+| What a scheme makes of an invocation no key yielded, such as a menu item's | `invoked`, which `invokedKeepsUnknown` in the contract holds to its default for a name the scheme does not know |
 | Something a scheme says of one view, for the scene, the loop or a command | A field of `InputScheme.Report`, with the default a scheme that says nothing reports |
 | Something one scheme remembers between keys | That scheme's `State`; nothing here |
 | A fact about a key that more than one scheme reads | A function of `Key` here, as `Key.printed?` is |
@@ -156,8 +168,8 @@ nothing of a view reports. -/
 structure InputScheme.Report where
   /-- How the view's cursors are drawn. -/
   cursor : Cursor := { shape := .bar, face := ⟨"cursor"⟩ }
-  /-- The scheme's fields of the view's status line, which come before the
-  buffer's. -/
+  /-- The scheme's fields of the view's status line, which the mode line's
+  `state` segment draws as its badge (`Editor/ModeLine.lean`). -/
   status : Array StatusField := #[]
   /-- The shape the view's selection has. -/
   shape : Shape := .exclusive
@@ -222,6 +234,11 @@ structure InputScheme where
   completes one. A scheme that asks nothing leaves the state as it was and
   yields nothing. -/
   answered : ViewId → String → State → State × Option Invocation := fun _ _ state => (state, none)
+  /-- The state, and the invocation to run, once a menu item names this
+  invocation for the view: an invocation no key yielded. A scheme that
+  treats no such invocation apart leaves both as they were. -/
+  invoked : ViewId → State → Invocation → State × Invocation := fun _ state invocation =>
+    (state, invocation)
   /-- What the scheme says of a view in a state: how its cursor is drawn,
   its fields of the status line, the shape of its selection, and what the
   loop and a command act on. A scheme that says nothing of a view reports

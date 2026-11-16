@@ -67,6 +67,38 @@ inductive PresentMode where
   | mailbox
   deriving DecidableEq, Repr
 
+/-- The title bar the window opens with. Config chooses it (`titleBar`,
+`Editor/Setup.lean`); the window mode reads the choice when it opens the
+window (`titleBarAtOpen`), since the platform cannot change it under an
+open window. -/
+inductive TitleBar where
+  /-- The window's content extends under a title bar that draws no
+  background of its own, so the paper shows there, and the title and the
+  buttons are drawn in the appearance that contrasts with it. The views
+  along the frame's top edge start their text below the title bar
+  (`EditorState.topInset`). On a platform with no such title bar the
+  window has its standard one. The default. -/
+  | themed
+  /-- The system's own title bar, in the system's colours, above the
+  content. -/
+  | standard
+  deriving DecidableEq, Repr, Inhabited
+
+/-- How long the window mode waits for the config it loads at start before
+it opens the window, in milliseconds: the window is opened with the title
+bar that config chose, so it waits for the start-up reload to finish,
+installed or refused, and for no longer than this. -/
+def configPatience : Nat :=
+  3000
+
+/-- The title bar the window opens with, given whether the start-up reload
+had finished when the wait for it ended (`settled`) and the title bar the
+installed config chose, if one did (`installed`): the config's when the
+reload finished, and themed when it did not, or when no config chose one.
+With no config loaded at start there is no wait, and no config chose one. -/
+def titleBarAtOpen (settled : Bool) (installed : Option TitleBar) : TitleBar :=
+  if settled then installed.getD .themed else .themed
+
 /-- The present mode a command line names, by wgpu's names. -/
 def PresentMode.named? : String → Option PresentMode
   | "fifo" => some .fifo

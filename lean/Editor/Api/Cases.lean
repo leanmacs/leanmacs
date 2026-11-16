@@ -747,7 +747,10 @@ def scrollCases : List Case :=
         let some rect := state.rect? ⟨0⟩ | return false
         let own ← scratch.snapshot
         let height := rect.height - state.bottomRow ⟨0⟩
-        let want ← Display.rowsShown { snapshot := own, width := rect.width, height, anchor := 0 }
+        let want ←
+          Display.rowsShown
+              { snapshot := own, width := rect.width, height, anchor := 0
+                padding := state.paddingOf ⟨0⟩ }
         let asked ←
           target.onArea fun area => do
               return (area, ← area.snapshot.read, ← area.rows 0)
@@ -764,7 +767,8 @@ def scrollCases : List Case :=
         -- after it is taken now: the view with no rectangle took none.
         let last ← scratch.snapshot
         let inside : SnapshotId := ⟨area.snapshot.index + 1⟩
-        return area == Scroll.Area.ofRect area.snapshot rect (state.bottomRow ⟨0⟩) &&
+        return area ==
+              Scroll.Area.ofRect area.snapshot rect (state.bottomRow ⟨0⟩) (state.paddingOf ⟨0⟩) &&
             area.snapshot != own &&
             read == "héllo\nwörld" &&
             rows == want &&
@@ -792,7 +796,8 @@ def scrollCases : List Case :=
         let some target := state.focusedTarget? | return false
         let (views, _, unshown) ← ({ state } : Loop TestScheme.scheme).views
         let some view := views[0]? | return false
-        let area := Scroll.Area.ofRect view.snapshot view.rect (state.bottomRow view.id)
+        let area :=
+          Scroll.Area.ofRect view.snapshot view.rect (state.bottomRow view.id) view.padding
         let some row := (← area.rows 27)[0]? | return false
         let before ← target.anchor
         let hidden := !(← area.rows before.offset).contains row

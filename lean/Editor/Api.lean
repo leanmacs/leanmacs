@@ -214,7 +214,8 @@ about its view is here.
     "Rollback").
 - `Target.onArea run` runs `run` with what the display is asked about the
   view with (`Scroll.Area`): a snapshot of the buffer's text, taken there,
-  and the view's rectangle, read from the state (`EditorState.rect?`). So
+  and the view's rectangle and padding, read from the state
+  (`EditorState.rect?`, `EditorState.paddingOf`). So
   a command asks which rows its view shows (`Scroll.Area.rows`) and where
   a position goes by rows (`Display.linesFrom`) of the text as its own
   edits have left it.
@@ -441,6 +442,19 @@ later events. A command that is refused or interrupted after asking asks
 for none. It makes no request of the library. Pinned by
 `ModelTest.dispatchQuitChecks`.
 
+## Themes
+
+`themeNames` answers the names themes are registered under, each once, and
+`loadTheme name` asks for the theme of that name to be the theme in force
+(`docs/design/text-and-display.md`, "Themes and config"). The request is
+kept until the command has run to its end, and the loop then hands it to
+its host, which switches the theme with no reload and draws the next scene
+in it (`Editor/Loop.lean`, "A theme switch from a command"). A name no theme
+is registered under is refused as a value (`noSuchTheme`), when the command
+asks, and nothing changes; a command that is refused or interrupted after
+asking loads none. Neither makes a request of the library. Pinned by
+`ModelTest.dispatchStateChecks` and `ModelTest.dispatchQuitChecks`.
+
 ## Jobs
 
 `startJob name arguments` asks for the job registered under `name` to be
@@ -638,6 +652,18 @@ def exBinding (name : String) : EditorM (Option Ex.Binding) :=
 bound. None where no loop runs the command. -/
 def exNames : EditorM (Array String) :=
   EditorState.ask .exNames
+
+/-- The names themes are registered under, each once, in the order they
+were first registered ("Themes", in the module docs). None where no loop
+runs the command. -/
+def themeNames : EditorM (Array String) :=
+  EditorState.ask .themeNames
+
+/-- Asks for the theme registered under `name` to be the theme in force,
+once this command has run to its end ("Themes", in the module docs).
+Refused with `noSuchTheme` for a name no theme is registered under. -/
+def loadTheme (name : String) : EditorM (Except ThemeRefusal Unit) :=
+  EditorState.ask (.loadTheme name)
 
 /-- Has the command registered under `name` run inside this command, with
 `call`, and answers whether there was one ("Running another command", in
@@ -1102,7 +1128,10 @@ def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : Ed
   -- A window's bottom row is its status row, and the minibuffer's view's
   -- the frame's bottom row (`EditorState.bottomRow`).
   let bottom := state.bottomRow target.window.id
-  some <$> target.buffer.text.withSnapshot fun snapshot => run (.ofRect snapshot rect bottom)
+  -- Its padding is the one the scene showing it has (`EditorState.paddingOf`).
+  let padding := state.paddingOf target.window.id
+  some <$>
+      target.buffer.text.withSnapshot fun snapshot => run (.ofRect snapshot rect bottom padding)
 
 end Target
 

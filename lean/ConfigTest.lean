@@ -8,6 +8,7 @@ import Editor.Headless
 import Editor.InputScheme.Test
 import Editor.Job.Fake
 import Editor.Minibuffer.Compiled
+import Editor.Themes.Compiled
 
 /-!
 # Checks of the config session against the real elaborator
@@ -112,6 +113,14 @@ fakes. The checks here pin what only real collaborators can show:
   display's frame of the same scene in a theme written here; and a reload
   that makes `mode-line` taller sizes the next scene by the new heights,
   which `agree`, asked with no event between, shows;
+- `cursorResolutionChecks`: the completeness check's model of a cursor's
+  colours (`Themes.effective`) is the real layout's: for every shipped
+  theme, and two whose cursor sets one colour alone, each cursor face's
+  frame is the frame of a mirror theme that sets the modelled colours;
+- `themeChecks`: named themes through a host over the display's real
+  binding: `load-theme` switches the frame to the chosen theme with config's
+  face over it, with no reload, and the scene line names the theme; and a
+  config naming a theme nobody registered says so in the echo area;
 - `fileChecks`: files through the host, over the library's file service.
   They are the checks whose hosts are over a real service, so they share
   one table of waits and the one completion pump, which the first of them
@@ -448,6 +457,8 @@ structure Compiled where
   modes : Array Mode := #[]
   /-- The compiled ex bindings. -/
   ex : Array Ex.Binding := #[]
+  /-- The compiled themes. -/
+  themes : Array NamedTheme := #[]
   /-- How long a command may take before it is logged, in milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
   /-- The major mode the scratch buffer starts in, if any: the host's frame
@@ -474,7 +485,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
       Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let watches ← Job.FakeFileWatches.new completions { directories := #["/watched"] }
-  let requests ← context.ids.modifyGet fun next => (next, next + 3)
+  let requests ← context.ids.modifyGet fun next => (next, next + 4)
   return {
       collaborators :=
         { elaborator, source,
@@ -483,9 +494,10 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
             output.modify (·.push line),
           services := { completions, timers := clock.timers, fileWatches := watches.fileWatches }
           published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
-          wakeups := requests + 1, jobs := requests + 2, commands := compiled.commands,
-          compiledJobs := compiled.jobs, bindings := compiled.bindings, modes := compiled.modes,
-          ex := compiled.ex, log := fun entry => log.modify (·.push entry),
+          wakeups := requests + 1, jobs := requests + 2, environment := requests + 3
+          commands := compiled.commands, compiledJobs := compiled.jobs,
+          bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
+          themes := compiled.themes, log := fun entry => log.modify (·.push entry),
           slowAfter := compiled.slowAfter,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
@@ -1358,25 +1370,32 @@ def setup : SetupM Unit := do
   command \"forget\" forget
 ")]
 
-/-- The status line the host prints for the view `view` of a buffer called
-`name`, modified or not: what the host prints (`Headless.statusLine`) of the
-fields the loop gives such a buffer's views (`Loop.status`). So a check that
-compares a host's whole output repeats neither the loop's faces and texts
-nor the host's form. The scratch buffer is the default: the loop's frame is
-made with it, and its name is the editor state's to choose. -/
+/-- The status line the host prints for the view `view`, selected, of a
+buffer called `name`, modified or not, opened from `file` or from none, of
+which the test scheme reports nothing, with its cursor at `cursor` (a row
+and a column in cells) in a text of `lines` rows, and with its file found
+changed on disk by a check when `changed`: what the host prints
+(`Headless.statusLine`) of the fields the shipped mode line gives such a
+view (`ModeLine.standard`). So a check that compares a host's whole output
+repeats neither the mode line's faces and texts nor the host's form. Each
+call site passes the cursor its printed `selections` imply and the rows its
+text has, since the line:col and the position segments read them. The
+scratch buffer is the default: the loop's frame is made with it, and its
+name is the editor state's to choose. -/
 def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := false)
+    (cursor : Point := ⟨0, 0⟩) (lines : Nat := 1) (file : Option System.FilePath := none)
     (changed : Bool := false) : String :=
   let saved := UndoTree.new ⟨0⟩ 0
-  -- A file whose change on disk a check found: the status line's changed
-  -- field, whatever the file's path and stamps.
-  let file : Option Buffer.File :=
-    if changed then
-      some
-        { path := "", stamp := { seconds := 0, nanoseconds := 0, size := 0 }
-          changed := some { found := none, told := true } }
-    else none
-  Headless.statusLine ⟨view⟩
-    (Loop.status { name, text := ⟨0⟩, history := if modified then saved.record 1 else saved, file })
+  -- A file whose change on disk a check found has the changed mark,
+  -- whatever its stamps; with no path given, it has none to show.
+  let path := if changed then some (file.getD "") else file
+  let buffer : Buffer :=
+    { name, text := ⟨0⟩, history := if modified then saved.record 1 else saved
+      file :=
+        path.map fun path =>
+          { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 }
+            changed := if changed then some { found := none, told := true } else none } }
+  Headless.statusLine ⟨view⟩ (ModeLine.standard.fields { buffer, cursor := some cursor, lines })
 
 /-- Whether `output` has a line that says a job registered under `name`
 ended ok, whatever its id: the loop's own checks of files shift the ids of
@@ -1528,6 +1547,29 @@ def scriptChecks (context : Context) : List Check :=
                 #["reload 1: installed, 2 chunks, 1 commands", "key arrived: a KeyA shift+control",
                   "run greet: ok", "key arrived: <Escape> - -"] },
     { name :=
+        "a real config that defines a segment and lists the mode line installs: the reload prints a line for the segment nobody registered, the echo area says it, and each status line is the listing's, in its order and on its sides"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory
+              [("10-mode-line.lean",
+                  "def setup : SetupM Unit := do\n  defineSegment \"greeting\" fun _ =>\n    #[{ text := \"hi\", face := ⟨\"mode-line.secondary\"⟩, padding := 4 }]\n  modeLine [\"buffer\", \"nope\"] [\"greeting\", \"line-column\"]\n")]
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let failure ←
+            Headless.run stage.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .commit "ab"⟩, ⟨4, .request .scene⟩]
+                patience
+          let output ← stage.output.get
+          return failure == none &&
+              output.filter (fun line => !line.startsWith "scene " && !line.startsWith "view ") ==
+                #["reload 1: installed, 1 chunks, 0 commands",
+                  "segment: no segment is registered as `nope`",
+                  "status 0: mode-line.buffer \"scratch\" +4 | mode-line.secondary \"hi\" +4, mode-line.secondary \"1:3\" +4"] &&
+              output.any fun line =>
+                line.startsWith "scene " &&
+                  (line.splitOn
+                        s!"echo {"reload: no segment is registered as `nope`".quote}").length ==
+                    2 },
+    { name :=
         "a script that runs to its end has no failure, and what it asked for was printed before the loop stopped"
       run :=
         IO.FS.withTempDir fun directory => do
@@ -1661,10 +1703,10 @@ def scriptChecks (context : Context) : List Check :=
                 patience
           return failure == none &&
               (← stage.output.get) ==
-                #["scene 640x480, focused 0, echo \"\", preedit -, published 1",
-                  "view 0 0,0 640x464: \"\", scroll 0, selections 0..0", statusOf,
-                  "scene 320x200, focused 0, echo \"\", preedit -, published 3",
-                  "view 0 0,0 320x184: \"\", scroll 0, selections 0..0", statusOf] },
+                #["scene 640x480, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                  "view 0 0,0 640x464: \"\", scroll 0, selections 0..0, padding 8 8", statusOf,
+                  "scene 320x200, focused 0, echo \"\", echo padding 8, preedit -, published 3, theme \"default\"",
+                  "view 0 0,0 320x184: \"\", scroll 0, selections 0..0, padding 8 8", statusOf] },
     { name :=
         "a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it"
       run :=
@@ -1678,20 +1720,30 @@ def scriptChecks (context : Context) : List Check :=
                 patience
           return failure == none &&
               (← stage.output.get) ==
-                #["scene: none", "scene 0x0, focused 0, echo \"\", preedit -, published 1",
-                  "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6",
-                  statusOf (modified := true),
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 3",
-                  "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12",
-                  statusOf (modified := true)] },
+                #["scene: none",
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                  "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6, padding 8 8",
+                  statusOf (modified := true) (cursor := ⟨0, 5⟩),
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 3, theme \"default\"",
+                  "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12, padding 8 8",
+                  statusOf (modified := true) (cursor := ⟨0, 11⟩)] },
     { name :=
-        "a view's status line is printed as the view's id and each field's face and quoted text, and as - for a status line with no field"
+        "a view's status line is printed as the view's id, its status face if it has one, and each field's face, quoted text and padding when it has one, the left fields and then, after a bar, the right ones; and as - for a status line with no field"
       run :=
         pure
           (Headless.statusLine ⟨3⟩
                 #[{ text := "a \"b\"", face := ⟨"one"⟩ }, { text := "é", face := ⟨"two.three"⟩ }] ==
               "status 3: one \"a \\\"b\\\"\", two.three \"é\"" &&
-            Headless.statusLine ⟨0⟩ #[] == "status 0: -") },
+            Headless.statusLine ⟨0⟩ #[] == "status 0: -" &&
+            Headless.statusLine ⟨0⟩
+                #[{ text := "INSERT", face := ⟨"badge"⟩, padding := 8 },
+                  { text := "1:6", face := ⟨"pos"⟩, side := .right, padding := 4 },
+                  { text := "●", face := ⟨"mark"⟩, padding := 4 },
+                  { text := "All", face := ⟨"pos"⟩, side := .right }] ==
+              "status 0: badge \"INSERT\" +8, mark \"●\" +4 | pos \"1:6\" +4, pos \"All\"" &&
+            Headless.statusLine ⟨2⟩ #[{ text := "x", face := ⟨"r"⟩, side := .right }]
+                (some ⟨"mode-line.inactive"⟩) ==
+              "status 2 in mode-line.inactive: | r \"x\"") },
     { name :=
         "the scene prints each view's status line after the view's line, with the fields the loop gives the view: the buffer's name alone before anything is typed, and the modified field after it once text is committed"
       run :=
@@ -1706,11 +1758,11 @@ def scriptChecks (context : Context) : List Check :=
           return failure == none && statusOf != statusOf (modified := true) &&
               (← stage.output.get) ==
                 #["key arrived: <F5> - -",
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 1",
-                  "view 0 0,0 0x0: \"\", scroll 0, selections 0..0", statusOf,
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 3",
-                  "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1",
-                  statusOf (modified := true)] },
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                  "view 0 0,0 0x0: \"\", scroll 0, selections 0..0, padding 8 8", statusOf,
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 3, theme \"default\"",
+                  "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1, padding 8 8",
+                  statusOf (modified := true) (cursor := ⟨0, 1⟩)] },
     { name :=
         "the scene is published again after a reload installs and after a job's command runs, once a frame exists"
       run :=
@@ -1734,13 +1786,13 @@ def scriptChecks (context : Context) : List Check :=
           -- reload's install published nothing, the count would be short.
           return (← session.lines) ==
               #["reload 1: installed, 2 chunks, 1 commands",
-                "scene 0x0, focused 0, echo \"\", preedit -, published 1",
-                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4", statusOf (modified := true),
-                "spawn count: job 1", "job 1 count: ok",
-                "reload 2: installed, 2 chunks, 1 commands",
-                "scene 0x0, focused 0, echo \"\", preedit -, published 10",
-                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4",
-                statusOf (modified := true)] },
+                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
+                statusOf (modified := true) (cursor := ⟨0, 4⟩), "spawn count: job 1",
+                "job 1 count: ok", "reload 2: installed, 2 chunks, 1 commands",
+                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 10, theme \"default\"",
+                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
+                statusOf (modified := true) (cursor := ⟨0, 4⟩)] },
     { name :=
         "once a command has released the focused buffer's text, a commit is still followed by a scene: its echo is the refusal, and it has no view of that buffer"
       run :=
@@ -1758,10 +1810,10 @@ def scriptChecks (context : Context) : List Check :=
           -- after the release been refused, the count would be short.
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 1 commands",
-                "scene 0x0, focused 0, echo \"\", preedit -, published 1",
-                "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1", statusOf (modified := true),
-                "run forget: ok",
-                "scene 0x0, focused 0, echo \"refused: no such text\", preedit -, published 5"] },
+                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1, padding 8 8",
+                statusOf (modified := true) (cursor := ⟨0, 1⟩), "run forget: ok",
+                "scene 0x0, focused 0, echo \"refused: no such text\", echo padding 8, preedit -, published 5, theme \"default\""] },
     { name :=
         "a program of the editor loop that is refused is printed as refused and hands back nothing, and what it made before the refusal is kept; one that is not refused prints nothing and hands back its result"
       run := do
@@ -1841,9 +1893,13 @@ def scene (session : Session) : IO (String × Array String) := do
   let before := (← session.output.get).size
   session.ask [.scene]
   let printed := (← session.output.get).extract before
+  -- The echo's text is between `, echo ` and `, echo padding `.
   let echo :=
-    match printed[0]?.map (·.splitOn ", echo ") with
-    | some [_, rest] => (rest.splitOn ", preedit ").headD ""
+    match printed[0]?.map (·.splitOn ", echo padding ") with
+    | some (head :: _) =>
+      match head.splitOn ", echo " with
+      | _ :: rest => ", echo ".intercalate rest
+      | [] => ""
     | _ => ""
   return (echo, printed.filter (·.startsWith "view "))
 
@@ -1943,7 +1999,7 @@ def setup : SetupM Unit := do
 /-- The line of a view 0 that fills a frame of no size, showing `text` with
 its one cursor at `cursor`. -/
 def viewLine (text : String) (cursor : Nat) : String :=
-  s!"view 0 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}"
+  s!"view 0 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}, padding 8 8"
 
 /-- The collaborators of a host of the test scheme over the real elaborator. -/
 abbrev TestCollaborators :=
@@ -2351,8 +2407,8 @@ def hostLoopChecks (context : Context) : List Check :=
                   #["run split: ok", "run stamp: ok", "run missing: no such command"] &&
                 echo == "missing: no such command".quote &&
                 views ==
-                  #["view 0 0,0 0x0: \"!\", scroll 0, selections 1..1",
-                    "view 1 0,0 0x0: \"!\", scroll 0, selections 1..1"])
+                  #["view 0 0,0 0x0: \"!\", scroll 0, selections 1..1, padding 8 8",
+                    "view 1 0,0 0x0: \"!\", scroll 0, selections 1..1, padding 8 8"])
           { dispatchCompiled with commands := dispatchCompiled.commands.push splitCommand } },
     { name :=
         "the driver's run of a command that fails is rolled back and says so: the output names the refusal, the scene's echo is its error, and the view's text is that before the command"
@@ -2609,7 +2665,7 @@ def Session.sceneLines (session : Session) : IO (Array String) := do
 /-- The line of the minibuffer's view, view 1 in a frame of no size, showing
 `text` with its one cursor at `cursor`. -/
 def minibufferLine (text : String) (cursor : Nat) : String :=
-  s!"view 1 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}"
+  s!"view 1 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}, padding 8 0"
 
 /-- The status line of the minibuffer's view, view 1, while a prompt
 labelled `label` is open: what the host prints (`Headless.statusLine`) of
@@ -2652,7 +2708,8 @@ def promptChecks (context : Context) : List Check :=
                     focuses line 0 &&
                       (line.splitOn s!", echo {"hello Ada!".quote}, ").length == 2) ==
                   some true &&
-                accepted.extract 1 == #[viewLine "Ada!" 4, statusOf (modified := true)] &&
+                accepted.extract 1 ==
+                  #[viewLine "Ada!" 4, statusOf (modified := true) (cursor := ⟨0, 4⟩)] &&
                 !after.any (·.startsWith "text 1: ") &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           promptCompiled },
@@ -2701,8 +2758,8 @@ def promptChecks (context : Context) : List Check :=
                 delivered == #["job 1 nap: ok"] &&
                 (waiting[0]?.map (focuses · 1)) == some true &&
                 waiting.extract 1 ==
-                  #[viewLine "napped" 6, statusOf (modified := true), minibufferLine "Ada" 3,
-                    promptStatus] &&
+                  #[viewLine "napped" 6, statusOf (modified := true) (cursor := ⟨0, 6⟩),
+                    minibufferLine "Ada" 3, promptStatus] &&
                 echo == "hello Ada".quote &&
                 views == #[viewLine "nappedAda" 9])
           promptCompiled },
@@ -3154,6 +3211,14 @@ two-byte characters. -/
 def noteText : String :=
   "héllo\nwörld\n"
 
+/-- The status line of view 0 on `noteText` opened from `path`, called
+`note.txt`, its cursor on the first row at `column`: two rows, the empty one
+after the final line break not counted (`statusOf`). -/
+def noteStatus (path : System.FilePath) (modified : Bool := false) (column : Nat := 0)
+    (changed : Bool := false) : String :=
+  statusOf (name := "note.txt") (modified := modified) (cursor := ⟨0, column⟩) (lines := 2) (file :=
+    some path) (changed := changed)
+
 /-- The checks of files through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue, the real text binding and the
 library's file service: the checks of this executable whose hosts are over a
@@ -3219,7 +3284,7 @@ def fileChecks (context : Context) : List Check :=
                     #["run open-note: ok", s!"job 1 {Files.loadJob}: started",
                       s!"job 1 {Files.loadJob}: ok"] &&
                   echo == "".quote &&
-                  lines == #[viewLine noteText 0, statusOf (name := "note.txt")] },
+                  lines == #[viewLine noteText 0, noteStatus path] },
     { name :=
         "the save command on a modified buffer: after a commit the view's status line has the modified field, and once the save job has ended the file's bytes are the buffer's text, the echo area says the file was written, and the status line has the name alone"
       run :=
@@ -3241,11 +3306,11 @@ def fileChecks (context : Context) : List Check :=
               return saved &&
                   edited ==
                     #[viewLine ("x" ++ noteText) 1,
-                      statusOf (name := "note.txt") (modified := true)] &&
+                      noteStatus path (modified := true) (column := 1)] &&
                   endedOk (← session.output.get) Files.saveJob &&
                   (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
                   echo == (Files.wrote path).quote &&
-                  lines == #[viewLine ("x" ++ noteText) 1, statusOf (name := "note.txt")] },
+                  lines == #[viewLine ("x" ++ noteText) 1, noteStatus path (column := 1)] },
     { name :=
         "opening a path that is open starts no second load and makes no second text: the open command a second time prints its own line alone, and show lists the texts it listed before"
       run :=
@@ -3262,7 +3327,7 @@ def fileChecks (context : Context) : List Check :=
               let (_, lines) ← session.viewsAndStatus
               return again && printed == #["run open-note: ok"] && (← session.shown) == shown &&
                   (shown.filter (·.startsWith "text ")).size == 2 &&
-                  lines == #[viewLine noteText 0, statusOf (name := "note.txt")] },
+                  lines == #[viewLine noteText 0, noteStatus path] },
     { name :=
         "open then save with no edit writes the file and leaves its bytes as they were, for a file whose lines end in line feeds and one whose lines end in CRLF: each save job ends ok, the echo area says the file was written, and the bytes read back are the bytes the check wrote"
       run :=
@@ -3307,7 +3372,7 @@ def fileChecks (context : Context) : List Check :=
               return saved && (← IO.FS.readBinFile path) == other &&
                   lines ==
                     #[viewLine ("x" ++ noteText) 1,
-                      statusOf (name := "note.txt") (modified := true) (changed := true)] &&
+                      noteStatus path (modified := true) (column := 1) (changed := true)] &&
                   echo == (Files.notSaved path (.changed (some found))).quote },
     { name :=
         "the open command on a path with no file: the echo area says the refusal, and the focused view still shows the buffer it showed, with its text, its cursor and its name"
@@ -3321,7 +3386,7 @@ def fileChecks (context : Context) : List Check :=
               let (echo, lines) ← session.viewsAndStatus
               return joined && (← session.output.get).contains s!"job 1 {Files.loadJob}: ok" &&
                   echo == (Files.notOpened path .notFound).quote &&
-                  lines == #[viewLine "kept" 4, statusOf (modified := true)] },
+                  lines == #[viewLine "kept" 4, statusOf (modified := true) (cursor := ⟨0, 4⟩)] },
     { name :=
         "the open command with no path asks for one and opens the answer: run by its name, with the path of a file in a temporary directory committed into the minibuffer and the accept key pressed, the host says the load job started and ended, the prompt is closed, and the view the command was asked from shows the file's text in a buffer called by its base name"
       run :=
@@ -3346,7 +3411,7 @@ def fileChecks (context : Context) : List Check :=
                   output.filter (·.startsWith "job ") ==
                     #[s!"job 1 {Files.loadJob}: started", s!"job 1 {Files.loadJob}: ok"] &&
                   echo == "".quote &&
-                  lines == #[viewLine noteText 0, statusOf (name := "note.txt")] }]
+                  lines == #[viewLine noteText 0, noteStatus path] }]
 
 /-- A compiled command called `name`, written for the reload checks, that
 puts the cursor of the window it is called with at the byte `offset`, in the
@@ -3383,12 +3448,15 @@ def reloadChecks (context : Context) : List Check :=
               let (echo, lines) ← session.viewsAndStatus
               session.ask [.show]
               let output ← session.output.get
-              -- The first line grew by ten bytes, so the "o" is at 16.
-              return reloaded && placed == #[viewLine old 6, statusOf (name := "note.txt")] &&
+              -- The first line grew by ten bytes, so the "o" is at 16: on
+              -- row 1, column 2, of three rows, before and after.
+              let status :=
+                statusOf (name := "note.txt") (cursor := ⟨1, 2⟩) (lines := 3) (file := some path)
+              return reloaded && placed == #[viewLine old 6, status] &&
                   output.contains s!"job 2 {Files.reloadJob}: ok" &&
                   output.contains s!"text 1: {new.quote}" &&
                   echo == "".quote &&
-                  lines == #[viewLine new 16, statusOf (name := "note.txt")] }]
+                  lines == #[viewLine new 16, status] }]
 
 /-- Rewrites the file at `path` with `text` from another process, as agents
 and editors write: a temporary file beside it, renamed over it. Waits for
@@ -3460,7 +3528,8 @@ def autoReloadChecks (context : Context) : List Check :=
                 session.within 1000 fun lines =>
                     lines ==
                       #[viewLine edited 1,
-                        statusOf (name := "note.txt") (modified := true) (changed := true)]
+                        statusOf (name := "note.txt") (modified := true) (cursor := ⟨0, 1⟩)
+                          (lines := 3) (file := some path) (changed := true)]
               unless marked.isSome do
                 throw (IO.userError s!"the edited buffer was not marked within a second: {last}")
               return (← IO.FS.readBinFile path) == again.toUTF8 }]
@@ -3773,6 +3842,53 @@ def faceChecks (context : Context) : List Check :=
               return true },
     {
       name :=
+        "a real config that sets the frame padding to 12 installs, and the next scene's views are padded 12 and the library's frame draws its rows 12 in; rewritten to 0 and reloaded in the same host, with no restart, the views are padded 0 and no row is drawn in from the view's edge",
+      run :=
+        IO.FS.withTempDir fun directory => do
+          let write (points : Nat) : IO Unit :=
+            writeFiles directory [("10-padding.lean", faceChunk s!"framePadding {points}")]
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The host's display: the real binding over the library's layout in
+          -- cells 8 by 16, at scale 1, which the check keeps to read its frame
+          -- and the scene the host last published.
+          let library ← Ffi.Display.newCells 8 16
+          let made ← IO.mkRef (none : Option Headless.Host.Display)
+          let collaborators :=
+            { stage.collaborators with
+              display := fun snapshots => do
+                let display ←
+                  Headless.Host.Display.real (← RealDisplay.over library snapshots Theme.builtin)
+                made.set (some display)
+                return display }
+          onStage { stage with collaborators } fun host _ => do
+              let settled : IO Unit := do
+                unless ← host.settle patience do
+                  throw (IO.userError "the editor thread did not settle")
+              let reload : IO Unit := do
+                host.send .reload
+                settled
+              -- The paddings of the views of the last scene, and the frame.
+              let shown : IO (Array Padding × String) := do
+                let some display ← made.get | throw (IO.userError "the host made no display")
+                let some scene ← display.last? | throw (IO.userError "the host published no scene")
+                return (scene.views.map (·.padding), ← library.frameText)
+              write 12
+              host.resize 160 96
+              unless ← Event.post (.commit "let x = 1") do
+                return false
+              reload
+              let (twelve, padded) ← shown
+              write 0
+              reload
+              let (zero, plain) ← shown
+              let lines ← stage.output.get
+              return twelve == #[{ across := 12, down := 12 }] &&
+                  (padded.splitOn "  row x 12 y 12 ").length > 1 &&
+                  zero == #[{}] &&
+                  (plain.splitOn "  row x ").length == 1 &&
+                  (lines.filter (·.startsWith "reload ")).all (·.endsWith "commands") },
+    {
+      name :=
         "a reload that makes mode-line taller sizes the scene published after it by the new heights: agree, asked with no event between the reload and it, says the last rows query about the focused view gave the rows of the frame, as it did before the reload",
       run :=
         IO.FS.withTempDir fun directory => do
@@ -3819,6 +3935,194 @@ def faceChecks (context : Context) : List Check :=
                 throw (IO.userError s!"before the reload: {before}; after it: {after}")
               return lines.any (·.startsWith "reload 1: installed") }]
 
+/-- The themes whose cursors `cursorResolutionChecks` lay out, each with
+what it is called in a failure: every shipped theme, and two built-in themes
+whose `cursor.normal` is redefined to set one colour alone, a background or
+a foreground, so the other falls through to the default face's. -/
+def resolutionThemes : Array (String × Theme) :=
+  let alone (face : Face) : Theme :=
+    (Theme.builtin.filter (·.name != ⟨"cursor.normal"⟩)).push { name := ⟨"cursor.normal"⟩, face }
+  Themes.shipped.map (fun named => (named.name, named.theme)) ++
+    #[("a background alone", alone { background := some (Color.rgb 200 0 0) }),
+      ("a foreground alone", alone { foreground := some (Color.rgb 0 200 0) })]
+
+/-- The contract check of the completeness check's model of a cursor's
+colours (`Themes.effective`, `Editor/Themes/Check.lean`) against the real
+layout. For each theme of `resolutionThemes` and each cursor face the check
+holds (`Themes.cursorFaces`), a scene of one view whose block cursor is in
+that face is laid out through the display's real binding twice: in the theme
+as written, and in a mirror of it whose last definition sets that face's
+foreground and background to the colours the model says it has. The two
+frames must be equal, and a mirror with the two colours the other way round
+must give another frame, so the cursor's paint is in the frame compared. No
+frame text is read: what a frame says is layout's. -/
+def cursorResolutionChecks (_ : Unit) : List Check :=
+  [{
+      name :=
+        "the completeness check's colours of each cursor face, in every shipped theme and in themes whose cursor sets one colour alone, are the ones the real layout paints it in",
+      run := do
+        let document ← Ffi.Document.new "ab\ncd"
+        let .ok selection ←
+          document.mark
+              (.selection
+                {
+                  ranges :=
+                    #[{ anchor := 0,
+                        head := 0 }] }) | throw (IO.userError "the cursor's marker was refused")
+        let .ok top ←
+          document.mark
+              (.anchor
+                { offset := 0,
+                  bias := .before }) | throw (IO.userError "the scroll marker was refused")
+        let table ← Snapshots.new
+        let snapshot ← table.add (← document.snapshot)
+        let scene (face : FaceName) : Scene :=
+          { size := { width := 64, height := 64 }
+            views :=
+              #[{ id := ⟨1⟩, rect := { x := 0, y := 0, width := 64, height := 48 }, snapshot
+                  scroll := { text := ⟨0⟩, index := top.toNat }
+                  selections := #[{ text := ⟨0⟩, index := selection.toNat }]
+                  cursor := { shape := .block, face }, decorations := #[], status := #[] }]
+            focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
+        -- The frame text of `scene face` laid out in `theme`, by a display
+        -- of its own.
+        let frame (theme : Theme) (face : FaceName) : IO String := do
+          let real ← RealDisplay.over (← Ffi.Display.newCells 8 16) table.reader theme
+          real.publish (scene face)
+          real.display.frameText
+        let mut failed : Array String := #[]
+        for (called, theme) in resolutionThemes do
+          for face in Themes.cursorFaces do
+            let (foreground, background) := Themes.effective theme face
+            let mirror (foreground background : Option Color) : Theme :=
+              theme.push { name := face, face := { foreground, background } }
+            let written ← frame theme face
+            let modelled ← frame (mirror foreground background) face
+            let swapped ← frame (mirror background foreground) face
+            unless
+              foreground.isSome && background.isSome && written == modelled && written != swapped do
+              failed := failed.push s!"{called}: {face.name}"
+        -- The document is held until here, past the last publish.
+        discard document.read
+        if !failed.isEmpty then
+          throw (IO.userError s!"the model is not layout's for {failed}")
+        return true }]
+
+/-- What compiled code hands the hosts of the theme checks: the command that
+loads a theme and the themes that ship (`Editor/Themes/Compiled.lean`), and
+the minibuffer's commands and its mode, which its prompt is answered with. -/
+def themeCompiled : Compiled :=
+  { commands := Themes.commands ++ Minibuffer.commands, modes := Minibuffer.modes
+    themes := Themes.shipped }
+
+/-- The face `default` of the theme `second` the theme checks' config
+defines: a background of its own. -/
+def secondDefault : Face :=
+  { background := some (Color.rgb 0 90 0) }
+
+/-- The face `keyword` the theme checks' config sets. -/
+def keywordFace : Face :=
+  { foreground := some (Color.rgb 200 0 0) }
+
+/-- The checks of named themes through a host: a config directory of real
+files, the real elaborator, the display's real binding and the library's
+layout. As in `faceChecks`, a frame is compared with the frame a second
+display, handed the same themes in the same order, lays out of the same
+scene in a theme written here. -/
+def themeChecks (context : Context) : List Check :=
+  [{  name :=
+        "criteria 3 and 4: the theme command switches the theme the display draws in with no reload, to the frame the chosen theme followed by config's own face gives, and the scene line names the theme it was drawn in"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory
+              [("10-themes.lean",
+                  "def setup : SetupM Unit := do\n  defineTheme \"second\" #[{ name := ⟨\"default\"⟩, face := { background := some (Color.rgb 0 90 0) } }]\n  face \"keyword\" { foreground := some (Color.rgb 200 0 0) }\n")]
+          let configured : Theme := #[{ name := ⟨"keyword"⟩, face := keywordFace }]
+          let stage ←
+            Stage.new context context.elaborator (Config.Directory.source directory) themeCompiled
+          let library ← Ffi.Display.newCells 8 16
+          let made ← IO.mkRef (none : Option Headless.Host.Display)
+          let collaborators :=
+            { stage.collaborators with
+              display := fun snapshots => do
+                let display ←
+                  Headless.Host.Display.real (← RealDisplay.over library snapshots Theme.builtin)
+                made.set (some display)
+                return display }
+          let mirror ←
+            RealDisplay.over (← Ffi.Display.newCells 8 16) collaborators.published.reader
+                Theme.builtin
+          onStage { stage with collaborators } fun host _ => do
+              let holds (parts : List (String × Bool)) : IO Unit := do
+                if let some (part, _) := parts.find? (!·.2) then
+                  throw (IO.userError part)
+              let settled : IO Unit := do
+                unless ← host.settle patience do
+                  throw (IO.userError "the editor thread did not settle")
+              let frames (theme : Theme) : IO (String × String) := do
+                let some display ← made.get | throw (IO.userError "the host made no display")
+                let some scene ← display.last? | throw (IO.userError "the host published no scene")
+                mirror.setTheme theme
+                mirror.publish scene
+                return (← library.frameText, ← mirror.display.frameText)
+              let sceneLine : IO String := do
+                host.send .scene
+                settled
+                return ((← stage.output.get).filter (·.startsWith "scene ")).back?.getD ""
+              host.send .reload
+              settled
+              host.resize 160 96
+              unless ← Event.post (.commit "let x = 1") do
+                return false
+              settled
+              let (plain, plainMirror) ← frames (Theme.builtin ++ configured)
+              let before ← sceneLine
+              host.send (.run Themes.loadName)
+              settled
+              unless ← Event.post (.commit "second") do
+                return false
+              for key in acceptKeys do
+                host.press key
+              settled
+              let (switched, switchedMirror) ←
+                frames (#[{ name := ⟨"default"⟩, face := secondDefault }] ++ configured)
+              let after ← sceneLine
+              let lines ← stage.output.get
+              holds
+                  [("the frame after the reload is the default theme's with config's face",
+                      plain == plainMirror),
+                    ("the frame after the switch differs", switched != plain),
+                    ("and is the one the second theme with config's face gives",
+                      switched == switchedMirror),
+                    (s!"the scene before names the default theme: {before}",
+                      before.endsWith ", theme \"default\""),
+                    (s!"the scene after names the second theme: {after}",
+                      after.endsWith ", theme \"second\""),
+                    ("there was one reload",
+                      (lines.filter (·.startsWith "reload ")) ==
+                        #["reload 1: installed, 1 chunks, 0 commands"])]
+              return true },
+    { name :=
+        "criterion 6: a config that names a theme nobody registered says so in the echo area, naming the theme, before the frame is made and after, and its report says so; the theme in force stays"
+      run :=
+        withHost context
+          [("10-themes.lean", "def setup : SetupM Unit := do\n  useTheme \"nope\"\n")] (compiled :=
+          themeCompiled) fun session => do
+          session.ask [.reload]
+          session.host.resize 80 64
+          session.ask []
+          let made ← session.echo
+          session.ask [.say "cleared"]
+          let cleared ← session.echo
+          session.ask [.reload]
+          let again ← session.echo
+          let lines ← session.lines
+          let said := "reload: no theme is registered as `nope`".quote
+          let scene := (lines.filter (·.startsWith "scene ")).back?.getD ""
+          return made == said && cleared == "cleared".quote && again == said &&
+              (lines.filter (· == "theme: no theme is registered as `nope`")).size == 2 &&
+              scene.endsWith ", theme \"default\"" }]
+
 /-- The checks of what the executable's hosts are handed as compiled code
 (`Headless.shippedOver`, which `Headless.shipped` makes them with), on the
 registry a host starts with (`Headless.compiled`) and the test scheme's
@@ -3847,7 +4151,44 @@ def shippedChecks (_ : Unit) : List Check :=
             [Buffers.switchName, Buffers.listName, Buffers.closeName].all compiled &&
             ex "b" == some Buffers.switchName &&
             ex "ls" == some Buffers.listName &&
-            ex "bd" == some Buffers.closeName }]
+            ex "bd" == some Buffers.closeName },
+    { name :=
+        "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return (registry.find? Themes.loadName).any (·.owner == .compiled) &&
+            registry.theme? Theme.defaultName ==
+              some { name := "default", theme := Theme.builtin } &&
+            registry.themes.all (·.owner == .compiled) },
+    { name :=
+        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the owner compiled"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let bound (text : String) : Option Invocation :=
+          (registry.keymap TestScheme.scheme).find? (keysOf text)
+        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        return shipped.menu == some Menu.standard &&
+            bound "s-o" == some { command := "open-file" } &&
+            bound "s-s" == some { command := "save-buffer" } &&
+            bound "s-z" == some { command := "undo" } &&
+            bound "s-Z" == some { command := "redo" } &&
+            bound "s-x" == some { command := "clipboard-cut" } &&
+            bound "s-c" == some { command := "clipboard-copy" } &&
+            bound "s-v" == some { command := "clipboard-paste" } &&
+            bound "s-a" == some { command := "select-all" } &&
+            ["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
+                  "clipboard-paste", "select-all"].all
+              compiled }]
 
 /-- A chunk whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and
@@ -3927,6 +4268,72 @@ def watchReloadChecks (context : Context) : List Check :=
               lines.contains "job 1 follow: ok" &&
               lines.contains "text 1: \"v1\"" }]
 
+/-- Runs `check` against a host started on a fresh temporary directory
+holding `files`, with the real elaborator, whose jobs share the environments
+over a reference the check is handed, which reports as the executable's
+host does (`Headless.reportedEnvironments`), and stops the host. The
+directory is removed. -/
+def withEnvironments (context : Context) (files : List (String × String))
+    (check : Session → IO.Ref Process.Environments → Job.Environments → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory files
+    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+    let state ← IO.mkRef ({} : Process.Environments)
+    let environments := Headless.reportedEnvironments state stage.collaborators.environment
+    let collaborators :=
+      { stage.collaborators with services := { stage.collaborators.services with environments } }
+    onStage { stage with collaborators } fun host stage =>
+        check
+          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
+            watches := stage.watches, log := stage.log }
+          state environments
+
+/-- A chunk whose `setup` sets the process environment to `setting`, written
+as Lean. -/
+def environmentChunk (setting : String) : String :=
+  s!"def setup : SetupM Unit := do\n  processEnvironment {setting}\n"
+
+/-- An entry of a lookup that failed, as a host's environments hold one. -/
+def failedLookup : Process.Entry :=
+  { stamps := #[], found := .failed (.exited 1 "not trusted") }
+
+/-- The checks of the host's environments (`Editor/Headless.lean`, "A
+child's environment"), over the headless host and the real elaborator: a
+reload that installs puts config's setting in the state every job shares and
+drops every entry, a rejected one changes neither, and a message the
+environments report is the echo of the next scene. -/
+def environmentHostChecks (context : Context) : List Check :=
+  [{  name :=
+        "an installed reload whose setup sets the process environment puts that setting in the host's environments and drops every entry; a rejected reload changes neither"
+      run :=
+        withEnvironments context [("10-setup.lean", environmentChunk ".inherited")]
+          fun session state _ => do
+          state.set { entries := #[("/p/d", failedLookup)] }
+          session.ask [.reload]
+          let installed ← state.get
+          state.modify fun held => { held with entries := #[("/p/d", failedLookup)] }
+          session.write "10-setup.lean" "def setup : SetupM Unit := oops"
+          session.ask [.reload]
+          let rejected ← state.get
+          return installed.setting == .inherited && installed.entries.isEmpty &&
+              rejected.setting == .inherited &&
+              rejected.entries == #[(("/p/d" : System.FilePath), failedLookup)] },
+    { name := "a config that does not set the process environment installs auto"
+      run :=
+        withEnvironments context [("10-setup.lean", "def setup : SetupM Unit := pure ()")]
+          fun session state _ => do
+          state.set { setting := .mise none }
+          session.ask [.reload]
+          return (← state.get).setting == .auto },
+    { name := "a failed lookup the host's environments record is the echo of the next scene"
+      run :=
+        withEnvironments context [] fun session _ environments => do
+          session.host.resize 160 96
+          session.ask []
+          environments.ask (.record "/p/d" failedLookup)
+          let (echo, _) ← session.scene
+          return echo == (Process.failureMessage "/p/d" (.exited 1 "not trusted")).quote }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
@@ -3943,6 +4350,9 @@ def checks (context : Context) : List Check :=
     evilChecks context ++
     reloadEchoChecks context ++
     faceChecks context ++
+    cursorResolutionChecks () ++
+    themeChecks context ++
+    environmentHostChecks context ++
     fileChecks context ++
     reloadChecks context ++
     autoReloadChecks context ++
@@ -4030,7 +4440,8 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
     Headless.start (scheme := TestScheme.scheme)
         { elaborator, source := { chunks := chunks.get }, emit,
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
-          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3 }
+          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3,
+          environment := 4 }
   return { host, chunks, reported, others }
 
 /-- Makes `config` the source's chunks, asks for a reload, and returns the
@@ -4304,14 +4715,14 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   -- cancels its jobs, and the row is over when every pool thread is free.
   let row (job : String) (count : Nat) (going : IO Unit) : IO (Array Nat × Nat × Nat) := do
     -- Hosts follow one another on one queue: each has source ids of its own.
-    let requests ← ids.modifyGet fun next => (next, next + 3)
+    let requests ← ids.modifyGet fun next => (next, next + 4)
     reloads.set #[]
     let host ←
       Headless.start (scheme := TestScheme.scheme)
           { elaborator, source := { chunks := pure jobsConfig }, emit,
             services := { completions, timers := counted }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
-            jobs := requests + 2 }
+            jobs := requests + 2, environment := requests + 3 }
     try
       host.send .reload
       unless ← host.settle patience do

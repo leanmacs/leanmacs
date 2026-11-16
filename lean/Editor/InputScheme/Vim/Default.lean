@@ -38,13 +38,13 @@ The operators' entries are `Evil.operators`
 
 ## The states
 
-| State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
-|---|---|---|---|---|
-| `normal`, the initial state | `normalCommands`, `scrollCommands`, `operators`, `motions`; while an operator waits, `objects`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | |
-| `insert` | `insertCommands` | Bar | Exclusive | Typing is text |
-| `visual` | `visualCommands`, `scrollCommands`, `operators`, `motions`, `objects` | Block | Inclusive | Operators act on the selection |
-| `visual-line` | `visualLineCommands`, `scrollCommands`, `operators`, `motions`, `objects` | Block | Line | Operators act on the selection, and a text object enters `visual` |
-| `minibuffer`, the state of the minibuffer's view | `minibufferCommands` | Bar | Exclusive | Typing is text |
+| State | Keymaps, in precedence order | Cursor | Selection | The grammar reads | Run table |
+|---|---|---|---|---|---|
+| `normal`, the initial state | `normalCommands`, `scrollCommands`, `operators`, `motions`; while an operator waits, `objects`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | | `normalRuns` |
+| `insert` | `insertCommands` | Bar | Exclusive | Typing is text | `insertRuns` |
+| `visual` | `visualCommands`, `scrollCommands`, `operators`, `motions`, `objects` | Block | Inclusive | Operators act on the selection | `visualRuns` |
+| `visual-line` | `visualLineCommands`, `scrollCommands`, `operators`, `motions`, `objects` | Block | Line | Operators act on the selection, and a text object enters `visual` | `visualRuns` |
+| `minibuffer`, the state of the minibuffer's view | `minibufferCommands` | Bar | Exclusive | Typing is text | None |
 
 **Normal state's pending keymaps** (`StateRecord.pending`) are what it
 walks while an operator waits, Vim's Operator-pending mode: its commands
@@ -52,6 +52,24 @@ are left out, so `i` and `a` begin a text object after `d`, `c` or `y`, and
 every other key of `normalCommands` resets there as an unbound key does,
 which is what it did as a command. `scrollCommands` stays, so `d z t`
 resets as before.
+
+## The run tables
+
+A state's run table says what a command name, reached by a key bound to
+it alone or by a menu item, is completed as in the state
+(`Editor/InputScheme/Vim.lean`, "Vim states"). The names are the Edit
+menu's clipboard commands (`Editor/Evil/Clipboard.lean`, whose module docs
+have what each does in each state), and a name is changed here and in its
+registration together:
+
+| Table | Runs |
+|---|---|
+| `normalRuns` | `clipboard-paste` as `"+P` (`put-before` from `+`), and `select-all` as `select-all` entering `visual-line` |
+| `insertRuns` | `select-all` as in normal state, which ends the insert session |
+| `visualRuns` | `clipboard-copy` as `"+y` and `clipboard-cut` as `"+d` over the selection, `clipboard-paste` as the operator `replace` over it from `+`, each ending the selection in normal state, and `select-all` as in normal state |
+
+The minibuffer's state has none: Paste runs `clipboard-paste` itself, which
+inserts at the bar, and Copy, Cut and Select All give up.
 
 The selection's shape is the one the text store's shapes map a state onto
 (`docs/design/text-and-display.md`, "What a selection covers, and how evil
@@ -124,13 +142,16 @@ scheme contract reports.
 | Addition | Where |
 |---|---|
 | A new default key | A row of the table for its part of speech and its state |
+| A command name that runs as another edit in a state | A row of that state's run table |
 | A new role | A row of `roles` |
 | A new default Vim state | A record in `states`, with a table of its own for the keys that leave it |
 | What a name in a table does | The vocabulary or the command registry, under that name; nothing here |
 
 Pinned by `ModelTest.vimDefaultChecks`, which observe the defaults through
 the grammar and restate no table, and the scheme contract is run on
-`scheme` in `ModelTest.vimContractChecks`.
+`scheme` in `ModelTest.vimContractChecks`. The run tables are pinned by
+what the clipboard commands do in each state
+(`ModelTest.clipboardCommandChecks`).
 -/
 
 namespace Editor.Vim.Default
@@ -248,6 +269,29 @@ def scrollCommands : List (String × Bound) :=
     ("z t", running "scroll-line-to-top"), ("z z", running "scroll-line-to-center"),
     ("z b", running "scroll-line-to-bottom")]
 
+/-- What Select All runs as in normal, insert and the visual states: the
+command `select-all`, entering `visual-line`. -/
+private def selectAllRun : String × Edit :=
+  ("select-all", .run { name := "select-all", enters := some "visual-line" } none none)
+
+/-- Normal state's run table: Paste is `"+P`, and Select All enters
+`visual-line`. -/
+def normalRuns : List (String × Edit) :=
+  [("clipboard-paste", .run { name := "put-before", changes := true } none (some "+")),
+    selectAllRun]
+
+/-- Insert state's run table: Select All enters `visual-line`. -/
+def insertRuns : List (String × Edit) :=
+  [selectAllRun]
+
+/-- The run table of the two visual states: Copy is `"+y`, Cut `"+d`, Paste
+the operator `replace` over the selection from `+`, and Select All enters
+`visual-line`. -/
+def visualRuns : List (String × Edit) :=
+  [("clipboard-copy", .operate { name := "yank", changes := false } .selection none (some "+")),
+    ("clipboard-cut", .operate { name := "delete" } .selection none (some "+")),
+    ("clipboard-paste", .operate { name := "replace" } .selection none (some "+")), selectAllRun]
+
 /-- The keymap that binds each key string of `table` to what is beside it.
 A string `Key.parse` refuses binds nothing. -/
 def keymap (table : List (String × Bound)) : Keymap Bound :=
@@ -262,21 +306,25 @@ def states : States :=
   { initial :=
       { name := "normal"
         keymaps := [normalCommands, scrollCommands, operators, motions].map keymap
-        pending := [objects, scrollCommands, operators, motions].map keymap }
+        pending := [objects, scrollCommands, operators, motions].map keymap
+        runs := normalRuns }
     others :=
       [{  name := "insert"
           keymaps := [keymap insertCommands]
           cursor := .bar
           insertsText := true
-          shape := .exclusive },
+          shape := .exclusive
+          runs := insertRuns },
         { name := "visual"
           keymaps := [visualCommands, scrollCommands, operators, motions, objects].map keymap
-          operatesOnSelection := true },
+          operatesOnSelection := true
+          runs := visualRuns },
         { name := "visual-line"
           keymaps := [visualLineCommands, scrollCommands, operators, motions, objects].map keymap
           operatesOnSelection := true
           shape := .line
-          objectEnters := some "visual" },
+          objectEnters := some "visual"
+          runs := visualRuns },
         { name := "minibuffer"
           keymaps := [keymap minibufferCommands]
           cursor := .bar

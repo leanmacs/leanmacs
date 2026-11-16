@@ -75,8 +75,12 @@ it ends in a line feed.
   register nothing was set in or that holds the empty text, a clipboard
   that holds no text (`nothingToPut`), and a clipboard that cannot be
   reached (`clipboardUnavailable`).
-- **Not built: `p` and `P` in a visual state.** The visual tables do not
-  bind them.
+- **A put in place of a visual selection is the operator `replace`**
+  (`Editor/Evil/Operators.lean`), which the Edit menu's Paste runs in a
+  visual state (`Editor/Evil/Clipboard.lean`). It puts the register it
+  names in place of the selection and sets the unnamed register to the
+  text it replaced, never through `store`, so that text never reaches the
+  clipboard. The visual tables do not bind `p` and `P` to it.
 
 Pinned by `ModelTest.evilOperatorChecks` and `ModelTest.evilRegisterChecks`,
 by key.

@@ -10,9 +10,23 @@
 //!   out with, and what the gate draws; made by
 //!   [`editor_ffi_display_new_cells`];
 //! - the real shaper over the fonts of this machine, for Lean's window
-//!   mode; made by [`editor_ffi_display_new_system`], which no test calls.
+//!   mode; made by [`editor_ffi_display_new_system`], which no test calls;
+//! - the real shaper over one font file it is given, the default family of
+//!   a set with no font of the machine, for tests ([`Display::font`]; made
+//!   by [`editor_ffi_display_new_font`]): what Lean's `ffi-test` lays the
+//!   shipped themes' pictures out with, so they are the same on every
+//!   machine.
 //!
 //! Each is counted live and freed by [`editor_ffi_display_free`].
+//!
+//! **A picture** of the latest frame ([`Display::picture`],
+//! [`editor_ffi_display_picture`]) is the frame drawn by the CPU renderer,
+//! synchronously, with no render session, no thread and no clock: how a
+//! theme written in Lean reaches the renderer in a test. It crosses as a
+//! [`RawPicture`], and a picture is read from and written to a PNG file
+//! by [`editor_ffi_picture_from_png`] and [`editor_ffi_picture_to_png`],
+//! which forward to the renderer's crate ([`Image::from_png`],
+//! [`Image::to_png`]). All three are for tests.
 //!
 //! **The scale.** A display lays out at the scale it was last told
 //! ([`Display::set_scale`], which is [`Layout::set_scale`]), and at 1
@@ -44,6 +58,14 @@
 //!   a start and a stop for each;
 //! - where a move goes ([`editor_ffi_display_move`]): the position, and the
 //!   goal to pass to the next move, in whole pixels.
+//!
+//! Each question carries the view's padding in whole points (across, down
+//! and top for the rows, across for a move), because it is the view's and
+//! not the display's: the scale is one for the display and set by the
+//! presenter, while a window and the minibuffer's view are padded
+//! differently. Layout takes the points off at the scale the display lays
+//! out at, by the rule its frames take them off by ([`Layout::rows_shown`],
+//! `editor_layout::frame`, "The padding"), so no scale crosses.
 //!
 //! **A scene is published** as words, one string and the list of snapshot
 //! handles its views show ([`editor_ffi_display_publish`]; the layout is
@@ -77,9 +99,11 @@ use editor_layout::Layout;
 use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
 use editor_layout::query::{Moved, QueryError, RowRange};
-use editor_layout::scene::{Changes, Scene, TextKey, TextRef};
+use editor_layout::scene::{Changes, Padding, Scene, TextKey, TextRef};
 use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
+use editor_render::port::{DrawRequest, Renderer, Target};
+use editor_render_wgpu::{Antialiasing, HeadlessRenderer, Image, Settings};
 use editor_shape_parley::{FontSet, ParleyShaper};
 use editor_text::{Patch, Revision};
 
@@ -92,7 +116,7 @@ use crate::words::Writer;
 
 mod wire;
 
-pub use wire::{WireFace, WireScene, WireView, decode_definitions, encode_definitions};
+pub use wire::{WireFace, WireField, WireScene, WireView, decode_definitions, encode_definitions};
 
 /// How a display call ended, as it crosses the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +156,7 @@ trait Lays: Send {
         text: &TextRef,
         width: f32,
         height: f32,
+        padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError>;
     /// [`Layout::lines_from`].
@@ -139,6 +164,7 @@ trait Lays: Send {
         &mut self,
         text: &TextRef,
         width: f32,
+        across: u32,
         position: usize,
         lines: i64,
         goal: Option<f32>,
@@ -149,6 +175,8 @@ trait Lays: Send {
     fn define(&mut self, definitions: &[FaceDef]);
     /// [`Layout::set_scale`].
     fn set_scale(&mut self, scale: f32);
+    /// [`Layout::scale`].
+    fn scale(&self) -> f32;
 }
 
 impl<S: Shaper> Lays for Layout<S>
@@ -164,20 +192,22 @@ where
         text: &TextRef,
         width: f32,
         height: f32,
+        padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
-        Layout::rows_shown(self, text, width, height, anchor)
+        Layout::rows_shown(self, text, width, height, padding, anchor)
     }
 
     fn lines_from(
         &mut self,
         text: &TextRef,
         width: f32,
+        across: u32,
         position: usize,
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
-        Layout::lines_from(self, text, width, position, lines, goal)
+        Layout::lines_from(self, text, width, across, position, lines, goal)
     }
 
     fn heights(&mut self) -> Heights {
@@ -190,6 +220,10 @@ where
 
     fn set_scale(&mut self, scale: f32) {
         Layout::set_scale(self, scale);
+    }
+
+    fn scale(&self) -> f32 {
+        Layout::scale(self)
     }
 }
 
@@ -228,6 +262,16 @@ impl Display {
         }
     }
 
+    /// A display over the real shaper and one font file, `bytes`, whose
+    /// family `family` is the default family of a font set with no font of
+    /// the machine ([`FontSet::only`]): a face naming any other family is
+    /// drawn in it. Refused, with a sentence, when the bytes are not a font
+    /// or hold no such family.
+    pub fn font(bytes: Vec<u8>, family: &str) -> Result<Self, String> {
+        let fonts = FontSet::only(family, &[], [bytes]).map_err(|error| error.to_string())?;
+        Ok(Self::over(Layout::new(ParleyShaper::new(fonts))))
+    }
+
     /// Binds the display to `presenter`: from now on every scene it
     /// publishes is laid out at the presenter's scale and its frame
     /// presented ([`Presenter::present`]), and every query and heights
@@ -255,6 +299,43 @@ impl Display {
         self.layout().set_scale(scale);
     }
 
+    /// The latest frame ([`Display::latest`]) drawn by the CPU renderer
+    /// ([`HeadlessRenderer`]), synchronously, at the last published scene's
+    /// size and at the display's scale: its presenter's when it is bound,
+    /// and otherwise the scale it was told. Glyphs are drawn with one
+    /// coverage a pixel (grayscale antialiasing) and hinting, so a glyph's
+    /// partial pixels are blends of its ink and the paper in every channel
+    /// alike. Before any scene it is 0 by 0. For tests: it draws a
+    /// display's frame to a picture with no render session, no thread and
+    /// no clock.
+    pub fn picture(&self) -> Image {
+        let Some(scene) = self.scene() else {
+            return Image {
+                width: 0,
+                height: 0,
+                rgba: Vec::new(),
+            };
+        };
+        // The scale the frame was laid out at: the layout's, which
+        // `layout` sets to the presenter's when the display is bound.
+        let scale = self.layout().scale();
+        let size = |pixels: u64| u32::try_from(pixels).unwrap_or(u32::MAX);
+        let mut renderer = HeadlessRenderer::new(Settings {
+            antialiasing: Antialiasing::Grayscale,
+            hinting: true,
+            ..Settings::default()
+        });
+        renderer.draw(&DrawRequest {
+            frame: &self.latest(),
+            target: Target {
+                width: size(scene.size[0]),
+                height: size(scene.size[1]),
+                scale,
+            },
+        });
+        renderer.image().clone()
+    }
+
     /// The heights of a text row, a status row and the frame's bottom row
     /// ([`Layout::heights`]).
     pub fn heights(&self) -> Heights {
@@ -278,7 +359,8 @@ impl Display {
     /// whose views' snapshots are `snapshots`, by their index: lays it out
     /// and keeps its frame as the latest. A display bound to a presenter
     /// presents the frame and names the scene's title to it
-    /// ([`Presenter::name`]). False, keeping what was published before,
+    /// ([`Presenter::name`]), and its menu bar when it names one
+    /// ([`Presenter::menu`]). False, keeping what was published before,
     /// when they spell no scene.
     pub fn publish(&self, words: &[u8], strings: &str, snapshots: &[&Snapshot]) -> bool {
         let Some(wire) = WireScene::decode(words, strings) else {
@@ -286,12 +368,16 @@ impl Display {
         };
         let scene = wire.resolve(snapshots);
         let title = wire.title.clone();
+        let menu = wire.menu.clone();
         let frame = Arc::new(self.layout().frame(&scene));
         *self.frame.lock().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&frame);
         *self.scene.lock().unwrap_or_else(PoisonError::into_inner) = Some(wire);
         if let Some(presenter) = self.presenter() {
             presenter.present(frame, (scene.size.width, scene.size.height));
             presenter.name(&title);
+            if let Some(menu) = &menu {
+                presenter.menu(menu);
+            }
         }
         true
     }
@@ -321,25 +407,35 @@ impl Display {
         layout
     }
 
-    /// The rows of `snapshot` a view `width` pixels wide and `height` tall
-    /// shows from `anchor` ([`Layout::rows_shown`]).
+    /// The rows of `snapshot` a view `width` pixels wide and `height` tall,
+    /// padded `padding` points, shows from `anchor`
+    /// ([`Layout::rows_shown`]): the padding is taken off at the scale the
+    /// display lays out at, as its frames take it off.
     pub fn rows(
         &self,
         snapshot: &Snapshot,
         width: u64,
         height: u64,
+        padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
-        self.layout()
-            .rows_shown(&text_ref(snapshot), width as f32, height as f32, anchor)
+        self.layout().rows_shown(
+            &text_ref(snapshot),
+            width as f32,
+            height as f32,
+            padding,
+            anchor,
+        )
     }
 
     /// Where `position` of `snapshot` goes `lines` visual lines away in a
-    /// view `width` pixels wide, aiming for `goal` ([`Layout::lines_from`]).
+    /// view `width` pixels wide padded `across` points each side, aiming
+    /// for `goal` ([`Layout::lines_from`]).
     pub fn lines_from(
         &self,
         snapshot: &Snapshot,
         width: u64,
+        across: u32,
         position: usize,
         lines: i64,
         goal: Option<u64>,
@@ -347,11 +443,17 @@ impl Display {
         self.layout().lines_from(
             &text_ref(snapshot),
             width as f32,
+            across,
             position,
             lines,
             goal.map(|goal| goal as f32),
         )
     }
+}
+
+/// The `u32` of a padding in points, the largest for one no `u32` holds.
+fn points(count: u64) -> u32 {
+    u32::try_from(count).unwrap_or(u32::MAX)
 }
 
 /// The record for `answer`: its words, or the status of its refusal.
@@ -369,7 +471,8 @@ fn answered<T>(answer: Result<T, QueryError>, write: impl FnOnce(T, &mut Writer)
 }
 
 /// How many display handles this library has handed out
-/// ([`editor_ffi_display_new_cells`]) that [`editor_ffi_display_free`] has
+/// ([`editor_ffi_display_new_cells`], [`editor_ffi_display_new_system`],
+/// [`editor_ffi_display_new_font`]) that [`editor_ffi_display_free`] has
 /// not taken back.
 static LIVE: AtomicU64 = AtomicU64::new(0);
 
@@ -398,6 +501,179 @@ pub extern "C" fn editor_ffi_display_new_system() -> *mut Display {
     Box::into_raw(Box::new(Display::over(Layout::new(ParleyShaper::new(
         fonts,
     )))))
+}
+
+/// A new display over the real shaper and the one font file of the `len`
+/// bytes at `bytes`, whose family is the `family_len` bytes of text at
+/// `family` ([`Display::font`]), owned by the caller, who must hand it to
+/// [`editor_ffi_display_free`] exactly once; or null when it is refused.
+/// `out_reason` is filled either way: empty, or the refusal's sentence.
+/// For tests: it lays out with no font of the machine, so what it draws
+/// is the same on every machine (`ffi-test theme-pictures`).
+///
+/// # Safety
+///
+/// `bytes` points to `len` readable bytes, `family` to `family_len`, and
+/// `out_reason` to a writable [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_new_font(
+    bytes: *const u8,
+    len: usize,
+    family: *const u8,
+    family_len: usize,
+    out_reason: *mut RawText,
+) -> *mut Display {
+    // SAFETY: the caller guarantees the pointers and lengths.
+    let (bytes, family) = unsafe {
+        (
+            crate::words::borrow(bytes, len).to_vec(),
+            text::borrow(family, family_len),
+        )
+    };
+    let (display, reason) = match Display::font(bytes, &family) {
+        Ok(display) => {
+            LIVE.fetch_add(1, Ordering::Relaxed);
+            (Box::into_raw(Box::new(display)), String::new())
+        }
+        Err(reason) => (std::ptr::null_mut(), reason),
+    };
+    let (text, text_len) = text::lend(reason);
+    // SAFETY: the caller guarantees `out_reason` is writable.
+    unsafe { out_reason.write(RawText { text, text_len }) };
+    display
+}
+
+/// A picture as it crosses: its width and height in pixels, and its
+/// pixels, row by row from the top, red, green, blue and alpha for each,
+/// as sRGB values: a buffer of `len` bytes, owned by the caller until it is
+/// handed back with [`editor_ffi_text_free`](crate::text::editor_ffi_text_free).
+#[repr(C)]
+pub struct RawPicture {
+    /// How far across it is.
+    pub width: u64,
+    /// How far down.
+    pub height: u64,
+    /// Its pixels.
+    pub rgba: *mut u8,
+    /// The length of `rgba` in bytes.
+    pub len: usize,
+}
+
+impl RawPicture {
+    /// The record of `image`.
+    fn of(image: Image) -> Self {
+        let (rgba, len) = crate::words::lend(image.rgba);
+        Self {
+            width: u64::from(image.width),
+            height: u64::from(image.height),
+            rgba,
+            len,
+        }
+    }
+}
+
+/// Fills `out` with the picture of `display`'s latest frame
+/// ([`Display::picture`]): 0 by 0 before any scene. For tests.
+///
+/// # Safety
+///
+/// `display` is a display handle this library handed out and has not taken
+/// back, and `out` points to a writable [`RawPicture`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_picture(display: *const Display, out: *mut RawPicture) {
+    // SAFETY: the caller guarantees the handle.
+    let image = unsafe { &*display }.picture();
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(RawPicture::of(image)) };
+}
+
+/// Fills `out` with the picture the PNG file of the `len` bytes at `bytes`
+/// holds ([`Image::from_png`]), and `out_reason` with nothing; or, refused,
+/// `out` with a picture 0 by 0 and `out_reason` with the refusal's
+/// sentence, and answers false. For tests.
+///
+/// # Safety
+///
+/// `bytes` points to `len` readable bytes, `out` to a writable
+/// [`RawPicture`] and `out_reason` to a writable [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_picture_from_png(
+    bytes: *const u8,
+    len: usize,
+    out: *mut RawPicture,
+    out_reason: *mut RawText,
+) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let bytes = unsafe { crate::words::borrow(bytes, len) };
+    let (image, reason, read) = match Image::from_png(bytes) {
+        Ok(image) => (image, String::new(), true),
+        Err(reason) => (
+            Image {
+                width: 0,
+                height: 0,
+                rgba: Vec::new(),
+            },
+            reason,
+            false,
+        ),
+    };
+    let (text, text_len) = text::lend(reason);
+    // SAFETY: the caller guarantees both are writable.
+    unsafe {
+        out.write(RawPicture::of(image));
+        out_reason.write(RawText { text, text_len });
+    }
+    read
+}
+
+/// Fills `out` with the bytes of a PNG file of the picture `width` pixels
+/// across and `height` down whose pixels are the `len` bytes at `rgba`
+/// ([`Image::to_png`]), with the status 0, and `out_reason` with nothing.
+/// False, with `out` empty and `out_reason` the refusal's sentence, when
+/// the pixels are not that size or the picture is one no PNG file can
+/// hold, such as one 0 by 0. For tests.
+///
+/// # Safety
+///
+/// `rgba` points to `len` readable bytes, `out` to a writable
+/// [`RawWords`] and `out_reason` to a writable [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_picture_to_png(
+    width: u64,
+    height: u64,
+    rgba: *const u8,
+    len: usize,
+    out: *mut RawWords,
+    out_reason: *mut RawText,
+) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let rgba = unsafe { crate::words::borrow(rgba, len) };
+    let sized = u32::try_from(width).ok().zip(u32::try_from(height).ok());
+    let image = sized
+        .and_then(|(width, height)| {
+            // Checked: two sides of `u32::MAX` are past any `u64` of bytes.
+            let bytes = u64::from(width)
+                .checked_mul(u64::from(height))?
+                .checked_mul(4)?;
+            let pixels = usize::try_from(bytes).ok()?;
+            (pixels == rgba.len()).then(|| Image {
+                width,
+                height,
+                rgba: rgba.to_vec(),
+            })
+        })
+        .ok_or_else(|| String::from("the picture's pixels are not its width by its height"));
+    let (bytes, reason, written) = match image.and_then(|image| image.to_png()) {
+        Ok(bytes) => (bytes, String::new(), true),
+        Err(reason) => (Vec::new(), reason, false),
+    };
+    let (text, text_len) = text::lend(reason);
+    // SAFETY: the caller guarantees both are writable.
+    unsafe {
+        out.write(RawWords::with_status(DisplayStatus::Done as u64, bytes));
+        out_reason.write(RawText { text, text_len });
+    }
+    written
 }
 
 /// Binds `display` to the process's presenter ([`Display::present_to`]):
@@ -465,8 +741,12 @@ pub unsafe extern "C" fn editor_ffi_display_define(
 }
 
 /// Fills `out` with the rows of `snapshot` a view `width` pixels wide and
-/// `height` tall shows from `anchor`: their count, then a start and a stop
-/// for each; or with [`DisplayStatus::BadPosition`].
+/// `height` tall, its content inset `across` and `down` points and its
+/// rows a further `top` points from its top (taken off at the display's
+/// scale; [`Display::rows`]), shows from `anchor`: their
+/// count, then a start and a stop for each; or with
+/// [`DisplayStatus::BadPosition`]. A padding no `u32` holds is the
+/// largest.
 ///
 /// # Safety
 ///
@@ -479,13 +759,21 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
     snapshot: *const Snapshot,
     width: u64,
     height: u64,
+    across: u64,
+    down: u64,
+    top: u64,
     anchor: usize,
     out: *mut RawWords,
 ) {
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
+    let padding = Padding {
+        across: points(across),
+        down: points(down),
+        top: points(top),
+    };
     let raw = answered(
-        display.rows(snapshot, width, height, anchor),
+        display.rows(snapshot, width, height, padding, anchor),
         |rows, writer| {
             writer.size(rows.len());
             for row in rows {
@@ -499,9 +787,11 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
 }
 
 /// Fills `out` with where `position` of `snapshot` goes `lines` visual
-/// lines down (up when negative) in a view `width` pixels wide, aiming for
-/// `goal` when `goal_present`: the position reached and the goal to pass
-/// on; or with [`DisplayStatus::BadPosition`].
+/// lines down (up when negative) in a view `width` pixels wide whose text
+/// is inset `across` points each side, aiming for `goal` when
+/// `goal_present`: the position reached and the goal to pass on; or with
+/// [`DisplayStatus::BadPosition`]. A move only wraps, so it takes no
+/// padding down.
 ///
 /// # Safety
 ///
@@ -511,6 +801,7 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     display: *const Display,
     snapshot: *const Snapshot,
     width: u64,
+    across: u64,
     position: usize,
     lines: i64,
     goal_present: bool,
@@ -521,7 +812,7 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
     let goal = goal_present.then_some(goal);
     let raw = answered(
-        display.lines_from(snapshot, width, position, lines, goal),
+        display.lines_from(snapshot, width, points(across), position, lines, goal),
         |moved, writer| {
             writer.size(moved.position);
             writer.word(moved.goal.max(0.0) as u64);
@@ -677,7 +968,9 @@ mod tests {
     use editor_render::port::Target;
     use editor_render::render_loop::{RecordingPark, RenderHandle, RenderLoop, Step};
 
-    use super::{Display, WireScene, WireView, text_ref};
+    use editor_layout::face::{Color, Face, Underline, UnderlineStyle};
+
+    use super::{Display, WireFace, WireScene, WireView, text_ref};
     use crate::document::Document;
     use crate::render::{Follows, Presenter};
     use crate::snapshot::Snapshot;
@@ -771,6 +1064,116 @@ mod tests {
         );
         // A display that is not bound is at its own scale.
         assert_eq!(Display::cells(8, 16).heights().text, 16);
+    }
+
+    #[test]
+    fn a_display_over_bytes_that_are_not_a_font_is_refused() {
+        let refused = Display::font(b"not a font".to_vec(), "Noto Sans Mono");
+        assert!(refused.is_err_and(|reason| !reason.is_empty()));
+    }
+
+    #[test]
+    fn a_picture_before_any_scene_is_empty() {
+        let picture = Display::cells(8, 16).picture();
+        assert_eq!((picture.width, picture.height), (0, 0));
+        assert!(picture.rgba.is_empty());
+    }
+
+    #[test]
+    fn a_picture_is_the_scenes_size_in_its_faces() {
+        // Cells draw no glyphs, so a view of text is its default face's
+        // background everywhere: this pins the wiring, the size and that
+        // the faces published are the ones drawn.
+        let display = Display::cells(8, 16);
+        let snapshot = Snapshot::of(&Document::new("ab\ncd"));
+        let paper = Color::rgb(0x12, 0x34, 0x56);
+        let wire = WireScene {
+            size: [80, 32],
+            views: vec![WireView {
+                id: 1,
+                rect: [0, 0, 80, 32],
+                snapshot: Some(0),
+                ..WireView::default()
+            }],
+            faces: Some(vec![WireFace {
+                name: "default".to_owned(),
+                face: Face {
+                    background: Some(paper),
+                    ..Face::default()
+                },
+            }]),
+            ..WireScene::default()
+        };
+        let (words, strings) = wire.encode();
+        assert!(display.publish(&words, &strings, &[&snapshot]));
+        let picture = display.picture();
+        assert_eq!((picture.width, picture.height), (80, 32));
+        assert_eq!(picture.rgba.len(), 80 * 32 * 4);
+        assert!(
+            picture
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [0x12, 0x34, 0x56, 0xff])
+        );
+    }
+
+    /// How many pixels of the column 4 pixels in of `display`'s picture
+    /// are ink, once it has published a scene, 80 by 64, of one view of
+    /// "ab" in a face of paper and ink, underlined: the underline's
+    /// thickness, which the renderer draws at the scale it is given.
+    fn underline_thickness(display: &Display) -> usize {
+        let (paper, ink) = (Color::rgb(0xff, 0xff, 0xff), Color::rgb(0, 0, 0));
+        let snapshot = Snapshot::of(&Document::new("ab"));
+        let wire = WireScene {
+            size: [80, 64],
+            views: vec![WireView {
+                id: 1,
+                rect: [0, 0, 80, 64],
+                snapshot: Some(0),
+                ..WireView::default()
+            }],
+            faces: Some(vec![WireFace {
+                name: "default".to_owned(),
+                face: Face {
+                    foreground: Some(ink),
+                    background: Some(paper),
+                    underline: Some(Underline {
+                        style: UnderlineStyle::Single,
+                        color: None,
+                    }),
+                    ..Face::default()
+                },
+            }]),
+            ..WireScene::default()
+        };
+        let (words, strings) = wire.encode();
+        assert!(display.publish(&words, &strings, &[&snapshot]));
+        let picture = display.picture();
+        assert_eq!((picture.width, picture.height), (80, 64));
+        (0..picture.height)
+            .filter(|&y| picture.pixel(4, y) == Some([0, 0, 0, 0xff]))
+            .count()
+    }
+
+    #[test]
+    fn a_picture_of_a_display_not_bound_is_drawn_at_the_scale_it_was_told() {
+        assert_eq!(underline_thickness(&Display::cells(8, 16)), 1);
+        let display = Display::cells(8, 16);
+        display.set_scale(2.0);
+        assert_eq!(underline_thickness(&display), 2);
+    }
+
+    #[test]
+    fn a_picture_of_a_bound_display_is_drawn_at_its_presenters_scale() {
+        // The presenter's scale wins over the one the display was told.
+        let presenter = Presenter::new();
+        presenter.set_scale(2.0);
+        let display = Display::cells(8, 16);
+        display.set_scale(3.0);
+        display.present_to(Arc::clone(&presenter));
+        assert_eq!(underline_thickness(&display), 2);
     }
 
     #[test]

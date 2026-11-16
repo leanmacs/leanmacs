@@ -8,6 +8,7 @@ import Editor.Ex
 import Editor.Files
 import Editor.InputScheme
 import Editor.Key.Notation
+import Editor.ModeLine
 import Editor.State
 
 /-!
@@ -309,6 +310,27 @@ one-shot output of the step, like the jobs to start
 
 Pinned by `ModelTest.dispatchQuitChecks`.
 
+## A theme switch from a command
+
+A command asks for a theme to be loaded (`loadTheme`, `Editor/Api.lean`),
+and the loop refuses a name it was not told a theme is registered under
+(`Editor/Command/Dispatch.lean`). The loop holds no config session, and the
+theme in force is the reload reducer's, so the request is a one-shot output
+of the step, as a reload is.
+
+- **The request is kept in the state** until the command ends
+  (`EditorState.theme`, the latest one asked for). After a command that ran
+  to its end the loop takes it out and hands it back with the step
+  (`Loop.Stepped.theme`). A command that did not run to its end asks for
+  none.
+- **The host switches the theme** with no reload: it feeds its reload
+  reducer a choice (`Config.Event.choose`), hands its display the new theme
+  and publishes a scene in it (`Editor/Headless.lean`).
+- **On the models** `Loop.Driver` records the names
+  (`Loop.Driver.themes`): it has no config session.
+
+Pinned by `ModelTest.dispatchQuitChecks`.
+
 ## Quit
 
 A command asks the editor to quit (`quit`, `Editor/Api.lean`), and the
@@ -358,6 +380,20 @@ request sets a flag of the editor state (`EditorState.quitting`,
   does not replace the close button's rule.
 - **A queue's quit is not this.** It stops the loop and publishes nothing
   ("What each event does"): the host must return.
+- **The system's quit is put through `quit`** (`Event.quitRequested`:
+  Command-Q, the Dock's Quit, a logout). The step remembers it
+  (`EditorState.systemQuit`) and runs the command named `quit`
+  (`Ex.quitName`) as an invocation no key yielded, so the rules above hold
+  of it: config's command of that name runs in its place, and the step
+  says stop when the editor leaves, as for `:q`. When the editor does not
+  quit, because `quit` was refused or did not ask, or a quit that waited is
+  withdrawn, the publish asks the frame `keepRunning` once
+  (`EditorState.answerSystemQuit`, `Display.askFrame`), and the system's
+  quit is forgotten. While it waits for a save, nothing is asked. A quit
+  typed in the editor asks the frame nothing. Unlike a close request, it
+  runs config's `quit` when config registers one.
+
+Pinned by `ModelTest.systemQuitChecks`.
 
 Pinned by `ModelTest.dispatchQuitChecks`.
 
@@ -536,11 +572,13 @@ is queued, and marks that event. What the loop does with the flag is here
 | `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped, and so is the first commit into a buffer whose file changed on disk unbeknown to the user ("Files that changed on disk"). Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
-| `resize` | Sets the frame's size and whether the window is in fullscreen (`Frame.fullscreen`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: the scene has no field for it |
+| `resize` | Sets the frame's size, whether the window is in fullscreen (`Frame.fullscreen`), its corner clearance in points (`Frame.corner`), which the bottom row is inset by (`EditorState.bottomInset`), and its top inset in points (`Frame.top`), which the views along the frame's top edge start their text below (`EditorState.topInset`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: Lean handles no scale, and the display lays out at its own |
 | `focus gained` | Sets whether the frame has the keyboard focus. A gain starts a check of every file buffer after the publish ("Files that changed on disk") |
 | `closeRequested` | Runs the quit rule (`Ex.closeRequested`) as a delivered command is run (`Loop.deliver`), labelled `quit`: it publishes a scene, and says stop only once the editor leaves ("Quit") |
 | `quit` | Nothing: the step says stop, and publishes nothing |
 | `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
+| `quitRequested` | Remembers that the system asked to quit (`EditorState.systemQuit`) and runs `quit` (`Ex.quitName`) with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The step says stop when the editor leaves; otherwise the publish asks the frame `keepRunning` once ("Quit") |
+| `menu name` | Tells the scheme that a menu item named the command `name`, with no arguments, for the focused view (`InputScheme.invoked`), and runs the invocation it hands back as one no key yielded, in the focused window, with the report of the scheme's state it hands back: guarded, rolled back and published as every command is, and config's command of the name runs in its place. A name no command is registered under says so, as an invocation does. The scheme's states are then as after a key: a command that runs to its end keeps the state handed back, which is the state at rest when nothing is pending, and one that does not puts the scheme back at rest. A scheme that treats no menu item apart hands back the invocation and the state as they were, so the command `name` runs |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
 
@@ -588,20 +626,35 @@ changed the state or not (`Loop.publish`):
    buffer share it. A view's scroll anchor and selection are its window's
    markers. Its decorations are the matches of the last search
    ("Decorations", below), read once the follow has placed its anchor. Its
+   padding is `EditorState.paddingOf`'s, in points, from the padding the
+   step's keys hand the publish (`Loop.Keys.padding`, config's
+   `framePadding` or the editor's 8 through the host, and 0 for a loop
+   handed none), which the state keeps (`EditorState.padding`); the
+   scene's echo padding is the bottom row's inset
+   (`EditorState.bottomInset`: at least the corner clearance the last
+   resize said, outside fullscreen). Its
    cursor is the one the scheme reports of the view
    (`InputScheme.report`, in the scheme's state after the last key): a bar
    in the face `cursor` under a scheme that says nothing. Its status line
-   (`Loop.statusOf`) is the fields the scheme reports of the view, then
-   its buffer's (`Loop.status`): the buffer's name, in the face
-   `Loop.nameFace`, and, while the buffer is modified
-   (`Buffer.isModified`), the text `Loop.modifiedMark` in the face
-   `Loop.modifiedFace`. "Modified" is the presence of the field in that
-   face: a buffer that is not has no such field.
-   The answer is right because the histories were told their texts'
-   revisions in step 1. The minibuffer's view has another status line
+   (`Loop.statusOf`) is the mode line's (`ModeLine.fields`,
+   `Editor/ModeLine.lean`): the segments the step's keys name
+   (`Loop.Keys.modeLine`, config's listing or the default order), each
+   given what the window shows (`Loop.contextOf`): its buffer, the fields
+   the scheme reports of the view, which the `state` segment draws as a
+   badge, its cursor's row and column in cells, read from the head of the
+   primary range of its selection in the view's snapshot, the snapshot's
+   rows, and whether it is the selected window
+   (`EditorState.selectedView`). A window that is not selected has no
+   badge, every field in `mode-line.inactive`, and that face as its row's
+   (`View.statusFace`); the selected one has none. "Modified" is the
+   `modified` segment's mark (`Buffer.isModified`): a buffer that is not
+   has no such field. The answer is right because the histories were told
+   their texts' revisions in step 1. A selection marker the text does not
+   answer for gives a context with no cursor, and so no line:col and no
+   position. The minibuffer's view has another status line
    (`Loop.promptStatus`): the prompt's label, in the face
-   `Loop.promptFace`, with no name, no modified field and none of the
-   scheme's fields; its cursor is the scheme's report's. That is how the
+   `Loop.promptFace`, with no segment and none of the scheme's fields,
+   and no status face; its cursor is the scheme's report's. That is how the
    scene shows the prompt text: the scene's shape is the display
    contract, and it has no field for a prompt. **After the label comes one
    field for each candidate the prompt has listed**, every one, in the
@@ -655,10 +708,10 @@ loop asks for at three moments, and a save's own check.
   the buffer is modified, and says `Files.changedUnderEdits` for the first
   modified buffer newly found changed. A file that is gone is `found =
   none`. Any other refusal of the stat is ignored.
-- **What it shows.** The status line has the field `Loop.changedMark`, in
-  the face `Loop.changedFace`, after the modified field, while the buffer
-  is marked. Nothing defines the face, so it draws as the rest of the line
-  does until a theme does.
+- **What it shows.** The mode line's `changed` segment gives the field
+  `ModeLine.changedMark`, in the face `ModeLine.changedFace`
+  (`mode-line.changed`), after the modified mark, while the buffer is
+  marked (`Editor/ModeLine.lean`).
 - **The first edit is refused.** A dispatched command whose next request
   would edit the text of a marked buffer that was not told ends
   `Guarded.superseded` (`Editor/Command/Dispatch.lean`). It is rolled back
@@ -955,6 +1008,10 @@ structure Loop (scheme : InputScheme) where
   atRest : scheme.State := scheme.init
   /-- What the last publish saw of the editor state. -/
   seen : Loop.Seen := {}
+  /-- The menu bar the scenes name: the one the last step, invocation or
+  delivery was handed (`Keys.menu`, `keyedBy`), with its key equivalents
+  as the registry's bindings then were; `none` until one is. -/
+  menu : Option Menu := none
 
 /-- What the loop does after a step. -/
 inductive Loop.Next where
@@ -970,6 +1027,13 @@ inductive Loop.Next where
 milliseconds, unless a step is handed another threshold. -/
 def Loop.slowAfter : Nat :=
   100
+
+/-- The editor's frame padding when config sets none, in whole points: what
+every window's text is inset by from its edges, and the bottom row at least
+(`EditorState.paddingOf`). The host applies it (`Headless.keys`); a loop
+handed no padding (`Loop.Keys.padding`) has none. -/
+def Loop.padding : Nat :=
+  8
 
 /-- What a step is handed beside the loop and the event: what the keys are
 looked up in, and what an invocation runs. It is rebuilt by the caller for
@@ -990,6 +1054,21 @@ structure Loop.Keys (scheme : InputScheme) where
   (`Editor/Command/Dispatch.lean`). Its `command` is not read: the loop
   tells a command run inside another what `command?` says of the name. -/
   registered : Loop.Registered := {}
+  /-- The mode line the scene's status lines are drawn by: the registry's
+  segments in the order config listed, or the default one
+  (`Editor/ModeLine.lean`). -/
+  modeLine : ModeLine := ModeLine.standard
+  /-- The frame padding the scene's views are laid out with, in whole points
+  (`EditorState.paddingOf`). It is 0 unless the host hands one: the
+  editor's own default, `Loop.padding`, is applied by the host from config
+  (`framePadding`, `Editor/Setup.lean`), so a loop handed none draws and
+  scrolls as with no padding. -/
+  padding : Nat := 0
+  /-- The menu bar the scene names, its key equivalents filled from the
+  registry's bindings as they are now (`Config.Registry.menuOf`,
+  `Editor/Menu/Compiled.lean`); `none` for a host with no menu bar, whose
+  scenes name none. -/
+  menu : Option Menu := none
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1044,6 +1123,11 @@ structure Loop.Stepped (scheme : InputScheme) where
   session. `false` for a step that ran no command, and for one whose
   command did not run to its end. -/
   reload : Bool := false
+  /-- The theme the command the step ran asked to be loaded (`loadTheme`,
+  `Editor/Api.lean`), for the host to switch to. `none` for a step that ran
+  no command, for one whose command asked for none, and for one whose
+  command did not run to its end. -/
+  theme : Option String := none
   /-- How the command the step ran ended; `none` for a step that ran no
   command. -/
   ended : Option Loop.Ending := none
@@ -1100,18 +1184,6 @@ the shape the scheme reports of the first view before any key
 def start (scheme : InputScheme) (size : Size) : TextM (Loop scheme) :=
   return { state := ← EditorState.initial size (scheme.report scheme.init ⟨0⟩).shape }
 
-/-- The face of the buffer's name in a status line. -/
-def nameFace : FaceName :=
-  ⟨"status.name"⟩
-
-/-- The face of the status line's modified field. -/
-def modifiedFace : FaceName :=
-  ⟨"status.modified"⟩
-
-/-- What the status line's modified field says. -/
-def modifiedMark : String :=
-  "[+]"
-
 /-- The face of the minibuffer's status line, which is the prompt's label. -/
 def promptFace : FaceName :=
   ⟨"minibuffer.prompt"⟩
@@ -1126,27 +1198,6 @@ line. -/
 def chosenFace : FaceName :=
   ⟨"minibuffer.chosen"⟩
 
-/-- The face of the status line's field that says the buffer's file changed
-on disk. -/
-def changedFace : FaceName :=
-  ⟨"status.changed"⟩
-
-/-- What the status line's field that says the buffer's file changed on disk
-says. -/
-def changedMark : String :=
-  "[changed on disk]"
-
-/-- A buffer's fields of the status line of a view of it: the buffer's name,
-and, while the buffer is modified, the modified field after it; and then,
-while a check has found its file changed on disk, or gone, the changed
-field. A buffer that is not modified has no modified field, not an empty
-one, and one whose file has not changed no changed field. -/
-def status (buffer : Buffer) : Array StatusField :=
-  #[{ text := buffer.name, face := nameFace }] ++
-    (if buffer.isModified then #[{ text := modifiedMark, face := modifiedFace }] else #[]) ++
-    if (buffer.file.bind (·.changed)).isSome then #[{ text := changedMark, face := changedFace }]
-    else #[]
-
 /-- The fields of the minibuffer's status line for the prompt `asked`: its
 label, in `promptFace`, then one field for each candidate it has listed, in
 the listing's order, in `candidateFace`, but for the chosen one, which is
@@ -1157,27 +1208,55 @@ def promptStatus (asked : Prompt) : Array StatusField :=
       { text := candidate
         face := if asked.candidates.chosen == some index then chosenFace else candidateFace }
 
-/-- The status line of the view `id` of `state`, which shows `buffer` and of
-which the scheme reports the fields `reported`: for the minibuffer's view
-the prompt's label and the candidates it has listed (`promptStatus`), and
-for any other the scheme's fields and then the buffer's (`status`). -/
-def statusOf (state : EditorState) (id : ViewId) (buffer : Buffer)
-    (reported : Array StatusField := #[]) : Array StatusField :=
+/-- The status line of the view `id` of `state`, whose window `context`
+describes, and the face of its row: for the minibuffer's view the prompt's
+label and the candidates it has listed (`promptStatus`) and no face; for
+any other the fields of `modeLine` (`ModeLine.fields`), and no face for the
+selected window or `mode-line.inactive` for one that is not. -/
+def statusOf (modeLine : ModeLine) (state : EditorState) (id : ViewId)
+    (context : ModeLine.Context) : Array StatusField × Option FaceName :=
+  let lined :=
+    (modeLine.fields context, if context.selected then none else some ModeLine.inactiveFace)
   match state.prompt with
-  | some asked => if asked.view == id then promptStatus asked else reported ++ status buffer
-  | none => reported ++ status buffer
+  | some asked => if asked.view == id then (promptStatus asked, none) else lined
+  | none => lined
+
+/-- What the mode line's segments read of the window `target`, the view `id`
+of `state`, whose text is shown at `snapshot` and of which the scheme
+reports the fields `reported` (`ModeLine.Context`): its buffer; its cursor,
+the head of the primary range of its selection, as a row and a column in
+cells of the snapshot; the snapshot's rows, less an empty last row after a
+final line break; and whether it is the selected view
+(`EditorState.selectedView`). It is not refused: when the selection marker
+or the snapshot does not answer, there is no cursor and no row. -/
+def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : SnapshotId)
+    (reported : Array StatusField) : TextM ModeLine.Context := do
+  let marker := target.window.selection
+  let read : TextM (Point × Nat) := do
+    let .selection selection ← marker.text.marker marker | throw .noSuchMarker
+    let some range := selection.ranges[selection.primary]? | throw .noSuchMarker
+    let point ← snapshot.pointOf range.head .cells
+    let rows ← snapshot.rowCount
+    let last ← snapshot.rowContent (rows - 1)
+    return (point, if rows > 1 && last.isEmpty then rows - 1 else rows)
+  let (cursor, lines) :=
+    match ← (observing read : TextM (Except TextError (Point × Nat))) with
+    | .ok (point, lines) => (some point, lines)
+    | .error _ => (none, 0)
+  return { buffer := target.buffer, reported, cursor, lines, selected := id == state.selectedView }
 
 /-- The views of the loop's state, in drawing order, and the snapshots they
 name: its windows, and the minibuffer's view in the minibuffer's place
 while a prompt is open. A text at the revision it was last shown at keeps
 its snapshot; any other is given a new one. A view's cursor is the one the
 scheme reports of it, in the scheme's state after the last key
-(`InputScheme.report`). Its status line is the fields the scheme reports
-and then its buffer's, and the prompt's label alone for the minibuffer's
-view (`statusOf`). It is not refused: a view whose buffer's text refuses,
-because it was released, is left out, with nothing taken for it, and the
-first such refusal is handed back. -/
-def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option TextError) := do
+(`InputScheme.report`). Its status line is the fields of `modeLine` for its
+window, read as `contextOf` reads it, and the prompt's label for the
+minibuffer's view (`statusOf`). It is not refused: a view whose buffer's
+text refuses, because it was released, is left out, with nothing taken for
+it, and the first such refusal is handed back. -/
+def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
+    TextM (Array View × Array Shown × Option TextError) := do
   let state := loop.state
   let mut shown : Array Shown := #[]
   let mut views : Array View := #[]
@@ -1201,12 +1280,14 @@ def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option Text
       unless shown.any (·.text == text) do
         shown := shown.push { text, revision, snapshot }
       let report := scheme.report loop.input id
+      let context ← contextOf state id target snapshot report.status
+      let (status, statusFace) := statusOf modeLine state id context
       views :=
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
-            cursor := report.cursor, decorations := #[]
-            status := statusOf state id target.buffer report.status }
+            cursor := report.cursor, decorations := #[], status, statusFace
+            padding := state.paddingOf id }
   return (views, shown, refusal)
 
 /-- The face the matches of the last search are drawn in. -/
@@ -1252,12 +1333,15 @@ def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
   views.mapM fun view => return { view with decorations := ← decorationsOf state view }
 
 /-- The scene of `state` over `views`: what the state says of the frame, the
-echo area and the preedit, around the views made of its windows, with
-`pending` as the keys typed of a sequence not yet completed. -/
-def scene (state : EditorState) (views : Array View) (pending : String) : Scene :=
+echo area, inset by the bottom row's inset (`EditorState.bottomInset`), and
+the preedit, around the views made of its windows, with `pending` as the
+keys typed of a sequence not yet completed and `menu` as the menu bar. -/
+def scene (state : EditorState) (views : Array View) (pending : String)
+    (menu : Option Menu := none) : Scene :=
   let frame := state.frame
   { size := frame.size, views, focused := if frame.hasFocus then some frame.focused else none
-    echo := state.echo, pending, preedit := state.preedit, title := state.title }
+    echo := state.echo, echoPadding := state.bottomInset, pending, preedit := state.preedit
+    title := state.title, menu }
 
 /-- The keys the scheme reports as pending in the loop's state, as a key
 string (`Key.notations`): what the scene shows of a sequence begun and not
@@ -1306,7 +1390,8 @@ the head of the primary range of the view's selection, is not among the
 rows the display answers from the view's scroll anchor, or is nearer an
 edge of them than `margin` rows, the anchor's marker is placed where the
 follow policy says (`Scroll.follow`, `Editor/Scroll.lean`), with the bias
-it had. The display is asked with the view's own snapshot and rectangle.
+it had. The display is asked with the view's own snapshot, rectangle and
+padding.
 
 A view of no height is not asked about: no request is made for it. A view
 that shows no row keeps its anchor. Refused, with nothing placed, when a
@@ -1317,7 +1402,7 @@ def follow (margin : Nat) (bottom : Nat) (view : View) : EditorM Unit := do
     return
   let text := view.scroll.text
   let .anchor anchor ← text.marker view.scroll | throw .noSuchMarker
-  let area := Scroll.Area.ofRect view.snapshot view.rect bottom
+  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding
   let shown ← area.rows anchor.offset
   if shown.isEmpty then
     return
@@ -1344,15 +1429,24 @@ snapshot the last scene named that this one does not. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
-def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
+def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0) :
+    EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
+  -- A system quit that was refused or withdrawn is answered, once: the
+  -- system stops waiting for the editor to quit ("Quit", in the module docs).
+  let (state, keepRunning) := state.answerSystemQuit
+  if keepRunning then
+    Display.askFrame .keepRunning
   let (state, unlisted) ← listed state
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
-  let state := { state with heights := ← Display.heights }
-  let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views
+  -- The padding the views are laid out with is the one handed in.
+  let state :=
+    { state with
+      heights := ← Display.heights, padding }
+  let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views modeLine
   -- Each view follows its cursor before the scene names its anchor: the
   -- snapshots the questions of layout need were taken just above. Each is
   -- asked with its height less its bottom row.
@@ -1360,7 +1454,7 @@ def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   -- The matches are read from where each anchor now is.
   let views ← decorated state views
   let state := state.refusedBy (unrecorded <|> unlisted <|> unshown)
-  Display.publish (scene state views loop.pending)
+  Display.publish (scene state views loop.pending loop.menu)
   let mut unreleased := none
   for was in loop.shown do
     unless shown.any (·.snapshot == was.snapshot) do
@@ -1394,7 +1488,8 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
     return { state with
         frame :=
           { state.frame with
-            size := ⟨resize.width, resize.height⟩, fullscreen := resize.fullscreen } }
+            size := ⟨resize.width, resize.height⟩, fullscreen := resize.fullscreen
+            corner := resize.corner, top := resize.top } }
   | .focus gained => return { state with frame := { state.frame with hasFocus := gained } }
   | .commit text => do
     let some target := state.focusedTarget? | return { state with preedit := none }
@@ -1626,6 +1721,8 @@ structure Ran where
   /-- Whether the command asked for the config to be reloaded, when it ran
   to its end. -/
   reload : Bool := false
+  /-- The theme the command asked to be loaded, when it ran to its end. -/
+  theme : Option String := none
 
 /-- Whether the command ran to its end: one that broke off did not, though
 what it did was kept. -/
@@ -1698,7 +1795,7 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     return {
         state :=
           { left.refusedBy ungiven with
-            starts := #[], answered := #[], reload := false }
+            starts := #[], answered := #[], reload := false, theme := none }
         ending
         closed := closedViews state left
         opened := openedMinibuffer state left
@@ -1706,7 +1803,8 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
         log
         starts := left.starts
         answered := left.answered
-        reload := left.reload }
+        reload := left.reload
+        theme := left.theme }
   match outcome with
   | .finished write =>
     stays left .finished write
@@ -1762,6 +1860,7 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     starts := ran.starts
     answered := ran.answered
     reload := ran.reload
+    theme := ran.theme
     ended := some ran.ending }
 
 /-- One key through the scheme, for the focused view, and the invocation it
@@ -1883,13 +1982,22 @@ def fileJobs (loop : Loop scheme) (keys : Keys scheme) :
       seen := seenOf loop.state, state },
     checks ++ follows, cancels)
 
+/-- `loop` with the menu bar `keys` names (`Keys.menu`) as the one its
+scenes name: how a step, an invocation and a delivery start, so that a
+reload's bindings move the menu's shortcuts from the next one. -/
+def keyedBy (keys : Keys scheme) (loop : Loop scheme) : Loop scheme :=
+  { loop with menu := keys.menu }
+
 /-- `stepped`, a step whose scene is not yet published, once it is
-(`publish`): its loop is the one the publish left, and it says stop when
-the editor then leaves (`nextOf`) and to go on otherwise. The scene comes
-first, so the scene of the step that says stop is the last one. -/
+(`publish`), its views' status lines drawn by the mode line `keys` names
+and padded by its padding (`Keys.modeLine`, `Keys.padding`): its loop is
+the one the publish left, with the file jobs it starts and cancels
+(`fileJobs`) after the step's own, and it says stop when the editor then
+leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
+scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
-  let loop ← stepped.loop.publish
+  let loop ← stepped.loop.publish keys.modeLine keys.padding
   let (loop, starts, cancels) := loop.fileJobs keys
   return { stepped with
       loop, next := nextOf loop, starts := stepped.starts ++ starts
@@ -1927,6 +2035,7 @@ and what the scheme reports of the focused view in the state it is in. The
 scheme's states are left as they are, but for a view the command closed. -/
 def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     EditorM (Stepped scheme) := do
+  let loop := loop.keyedBy keys
   if invocation.command == InputScheme.answerName then
     return ← loop.answer keys invocation
   let report := scheme.report loop.input loop.state.frame.focused
@@ -1947,6 +2056,7 @@ the user was reading. When it does not run to its end the echo area reads
 and the reason it gave up with. -/
 def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command : EditorM Unit) :
     EditorM (Stepped scheme) := do
+  let loop := loop.keyedBy keys
   let ran ←
     dispatch keys loop.state label do
         command
@@ -1963,6 +2073,7 @@ state as it was, with the refusal in the echo area. The step itself is not
 refused: the publish puts a refusal of its own in the echo area too ("When
 publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
+  let loop := loop.keyedBy keys
   if let some pressed := stepped? event then
     return ← (← loop.key keys pressed).published keys
   match event with
@@ -1977,6 +2088,28 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     -- An invocation no key yielded, run as every command is, in the
     -- focused window: config's command of the name runs in its place.
     loop.invoke keys { command := Files.openName, arguments := (path :: rest).map .str }
+  | .quitRequested =>
+    -- The system's quit is remembered first, so that a `quit` that is
+    -- refused or interrupted rolls back to a state that still holds it,
+    -- and the publish answers it.
+    ({ loop with state := { loop.state with systemQuit := true } }).invoke keys
+        { command := Ex.quitName }
+  | .menu name =>
+    -- An invocation no key yielded, as a file to open is: config's
+    -- command of the name runs in its place. The scheme says what it runs
+    -- as in the focused view's state, and the state it leaves.
+    let focused := loop.state.frame.focused
+    let (input, invocation) := scheme.invoked focused loop.input { command := name }
+    let ran ← run keys loop.state invocation [] (scheme.report input focused)
+    if ran.finished then
+      let atRest := if (scheme.pending input).isEmpty then input else loop.atRest
+      (({ loop with
+                    input, atRest } :
+                  Loop scheme).ranInto
+              ran).published
+          keys
+    else
+      (({ loop with input := loop.atRest } : Loop scheme).ranInto ran).published keys
   | _ =>
     let focused := loop.state.frame.focused
     let report := scheme.report loop.input focused

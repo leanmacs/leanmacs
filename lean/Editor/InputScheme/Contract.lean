@@ -65,6 +65,11 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   decide whether a buffer's undo group stays open, so a key that ran no
   command must not begin or end an insert session, nor change what the
   scene shows of the view.
+- `invokedKeepsUnknown`: a menu item's invocation of a command name no
+  scheme knows (`InputScheme.invoked`), from the initial state, comes back
+  as it was, and the scheme's report of the view is as it was. A scheme may
+  run a name it knows as something else, as a key bound to it would, but a
+  name it does not know is the registry's, and runs as named.
 
 The contract compares no states: a scheme's state may hold what a reset
 must keep, such as its last edit, and the record carries no equality on it.
@@ -262,11 +267,24 @@ def unaskedAnswerYieldsNothing : Property :=
         let (answered, yielded) := subject.scheme.answered subject.view "x" state
         yielded.isNone && subject.scheme.pending answered == subject.scheme.pending state }
 
+/-- A menu item's invocation of `namedCommand`, a name no scheme knows, from
+the initial state (`InputScheme.invoked`), comes back as it was, and the
+scheme's report of the subject's view is as it was. -/
+def invokedKeepsUnknown : Property :=
+  { name :=
+      "a menu item's invocation of a command name the scheme does not know comes back as it was, and the scheme's report of its view is as it was"
+    holds := fun subject =>
+      let invocation : Invocation := { command := namedCommand }
+      let (state, invoked) := subject.scheme.invoked subject.view subject.scheme.init invocation
+      invoked == invocation &&
+        subject.scheme.report state subject.view ==
+          subject.scheme.report subject.scheme.init subject.view }
+
 /-- Every property of the contract. -/
 def properties : List Property :=
   [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
     namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns, minibufferTakesText,
-    quietKeyKeepsReport, unaskedAnswerYieldsNothing]
+    quietKeyKeepsReport, unaskedAnswerYieldsNothing, invokedKeepsUnknown]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/

@@ -13,7 +13,6 @@
 // Each test binary and each example uses its own part of this module.
 #![allow(dead_code)]
 
-use std::io::Cursor;
 use std::ops::Range;
 
 use editor_layout::Layout;
@@ -177,6 +176,7 @@ pub fn scene_of(text: &str, selected: Range<usize>) -> Scene {
     shown.status = vec![StatusField {
         text: "frame.png  1:8".to_owned(),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     scene
 }
@@ -191,54 +191,12 @@ pub fn fixture_frame() -> Frame {
     layout().frame(&scene_of(TEXT, SELECTED))
 }
 
-/// The picture the PNG file `bytes` holds: 8 bits a channel, with or
-/// without an alpha.
+/// The picture the PNG file `bytes` holds ([`Image::from_png`]).
 pub fn decode(bytes: &[u8]) -> Image {
-    let mut reader = png::Decoder::new(Cursor::new(bytes))
-        .read_info()
-        .expect("a PNG file");
-    let size = reader.output_buffer_size().expect("a size that fits");
-    let mut buffer = vec![0; size];
-    let info = reader.next_frame(&mut buffer).expect("the image's data");
-    assert_eq!(info.bit_depth, png::BitDepth::Eight);
-    let data = &buffer[..info.buffer_size()];
-    let rgba = match info.color_type {
-        png::ColorType::Rgba => data.to_vec(),
-        png::ColorType::Rgb => data
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 0xff])
-            .collect(),
-        other => panic!("the reference image is {other:?}, neither RGB nor RGBA"),
-    };
-    Image {
-        width: info.width,
-        height: info.height,
-        rgba,
-    }
+    Image::from_png(bytes).expect("a PNG file of 8 bits a channel, RGB or RGBA")
 }
 
-/// How `image` differs from `reference`: `None` when they are not the
-/// same size, and otherwise the largest difference of any channel of any
-/// pixel, with how many pixels differ at all.
+/// How `image` differs from `reference` ([`Image::difference`]).
 pub fn difference(image: &Image, reference: &Image) -> Option<(u8, usize)> {
-    if (image.width, image.height) != (reference.width, reference.height) {
-        return None;
-    }
-    let pixels = image.rgba.as_chunks::<4>().0;
-    let others = reference.rgba.as_chunks::<4>().0;
-    let mut worst = 0;
-    let mut differing = 0;
-    for (pixel, other) in pixels.iter().zip(others) {
-        let most = pixel
-            .iter()
-            .zip(other)
-            .map(|(one, two)| one.abs_diff(*two))
-            .max()
-            .unwrap_or(0);
-        worst = worst.max(most);
-        differing += usize::from(most > 0);
-    }
-    Some((worst, differing))
+    image.difference(reference)
 }

@@ -72,8 +72,9 @@ count for a script a hundred times as long.
 **The app bundle is a Lake target too** (`editorApp`, not a default
 target; `mise run app`). It copies the executable and the `.olean` files of
 the closure of `Editor` into `Leanmacs.app`, laid out as module lookup
-expects (`lean/Editor/ModuleLookup.lean`), writes `Info.plist` and a
-placeholder icon, and signs the whole bundle ad-hoc, last. Lake's trace of
+expects (`lean/Editor/ModuleLookup.lean`), writes `Info.plist`, with
+the version from `lean/app/version`, and the icon, made from the checked-in
+artwork `lean/app/Leanmacs.png`, and signs the whole bundle ad-hoc, last. Lake's trace of
 its inputs makes it rebuild only when one changed. It builds on macOS on
 arm64 only. How to build it, what it holds and why it is signed again are
 in [building.md](../dev-practices/building.md), "The app bundle".
@@ -95,7 +96,20 @@ and the compiler and entry-point workarounds above.
 3. The editor is usable before config has loaded: the compiled standard
    library provides the default keymap. Without config the spike reached
    its first event in 0.06 ms; importing the API and elaborating a small
-   config took 150 to 200 ms in the background.
+   config took 150 to 200 ms in the background. The window mode is the
+   exception since theming phase 7: when it loads config at start it opens
+   its window only once that reload has finished, installed or refused, or
+   after `Window.configPatience` (3 s), whichever is first. Config chooses
+   the window's title bar (`titleBar .standard`, `Editor/Setup.lean`), and
+   the platform cannot change a title bar under an open window (winit has
+   no setter for it, and restores its own style on fullscreen
+   transitions), so the choice must be known before the window exists.
+   The cost is the start-up config's load before the window shows (0.17 s
+   for the bundle, "What config may import, measured"); its gain is that
+   the first frame is drawn in config's theme. The editor loop still runs
+   from the start: the reload, an open and anything the echo area has to
+   say are handled while the window mode waits. With no config, or when
+   the wait runs out, the window opens with the themed title bar.
 
 Shutdown posts a quit event, unblocks every dedicated task, and calls exit.
 Returning from `main` while a task is blocked in Rust hangs.
@@ -108,9 +122,12 @@ process's presenter, and the system clipboard, or `Clipboard.unavailable`
 when it cannot be opened, which the echo area says once. Before the first
 event `main` posts the open command with the file, when one was given
 (with none the editor shows its one empty buffer), what the echo area has
-to say, and a reload when config is loaded at start; the editor is usable
-before the reload installs, as above. Then it runs the window on its own
-thread (`Ffi.windowRun`) with the editor loop on a dedicated task; when the
+to say, and a reload when config is loaded at start; the editor loop runs
+from then on. When config is loaded at start, `main` waits for that reload
+to finish, or for 3 s, and opens the window with the title bar the
+installed config chose (`Window.titleBarAtOpen`), as above. Then it runs
+the window on its own thread (`Ffi.windowRun`) with the editor loop on a
+dedicated task; when the
 loop ends, once a close request or `:q` can leave, a task waits briefly for the last
 frame to be drawn and asks the window to close. Then `main` quits the
 queues and exits.
@@ -297,8 +314,9 @@ elaborator.
 | Stores: a value of config's type as a plain tree with a version | `lean/Editor/Store.lean` |
 | Diagnostics: failure as data | `lean/Editor/Config/Diagnostic.lean` |
 | Owners: who registered or started something | `lean/Editor/Config/Owner.lean` |
-| Faces: what a face looks like, as data, and the built-in theme | `lean/Editor/Face.lean` |
-| The registry of commands, of jobs, of key bindings, of modes, of ex bindings and of faces, replaced by owner, the keymap of the bindings, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| Faces: what a face looks like, as data, the built-in theme and a theme with its name | `lean/Editor/Face.lean` |
+| The registry of commands, of jobs, of key bindings, of modes, of ex bindings, of faces, of themes and of mode-line segments, replaced by owner, the keymap of the bindings, a mode line resolved from a listing, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| The mode line: segments, from what a window shows to status fields; the shipped ones and their default order; a listing resolved into a mode line; and the fields of a window, selected or not | `lean/Editor/ModeLine.lean` |
 | An ex line and an ex binding, as data | `lean/Editor/Ex/Line.lean` |
 | What a command is run with when a key runs it: the focused window and its buffer, the arguments and the keys | `lean/Editor/Command/Call.lean` |
 | The cells of the stores, and the rule that installs a config's stores | `lean/Editor/Config/Stores.lean` |
@@ -413,16 +431,63 @@ elaborator.
   config's own state, and a face is something the editor is told. The
   registry holds the definitions by owner, apart from the commands and the
   jobs, and an install replaces config's as a set. A name is set once in a
-  `setup`; a face may have the name of a command. The theme is the
-  built-in one followed by the installed config's definitions
+  `setup`; a face may have the name of a command. The theme is the theme
+  in force followed by the installed config's definitions
   (`State.theme`), and a later definition of a name is over an earlier one
   by layout's rule, so a face config sets takes config's attributes over
   the theme's and one it stops setting is the theme's again. Lean merges
   nothing ([text-and-display.md](text-and-display.md), "Decorations", as
   built). A face is not a command and the reload report does not count it.
   The runtime that owns a display hands it the theme after a reload that
-  installs (`Config.retheme`): the host does, with its display's
-  `setTheme`, which the recorder ignores. A rejected reload's first error
+  installs and after a switch (`Config.retheme`): the host does, with its
+  display's `setTheme`, which the recorder ignores.
+- **Themes are named, and one is in force**: compiled code registers the
+  themes that ship, `default` (the built-in theme) among them, and `setup`
+  registers more with `defineTheme "name" theme` and names the one in
+  force with `useTheme "name"`; the registry holds them by owner and an
+  install replaces config's as a set. The theme in force is the reducer's
+  state (`State.themeName`): an install whose config names a registered
+  theme puts it in force; one that names none keeps it, so a theme chosen
+  with `load-theme` survives a reload that does not name one; one that names
+  a theme nobody registered keeps it and says so in the echo area, ``reload:
+  no theme is registered as `<name>` ``, and on the report's lines
+  (`theme: …`). `load-theme` switches it with no reload, through the
+  reducer's `choose` event. Defining a theme name twice, or naming a theme
+  twice, rejects the reload.
+- **Segments of the mode line are named, and config lists them**:
+  compiled code registers the shipped segments (`ModeLine.shipped`, the
+  host's `Collaborators.segments`), and `setup` registers more with
+  `defineSegment "name" fun context => …` and lists each side's with
+  `modeLine ["state", "buffer"] ["position"]`; the registry holds them by
+  owner and an install replaces config's as a set. The listing in force is
+  the reducer's state (`State.modeLine`), set at every install, so a
+  config that lists none has the default order. A listed name nobody
+  registered is left out and said, in the echo area after the unknown
+  theme's sentence, joined by `; `, and on the report's lines
+  (`segment: no segment is registered as `<name>``). The host resolves the
+  listing over the registry for each step (`Headless.keys`,
+  `Loop.Keys.modeLine`). Defining a segment name twice, or listing the
+  mode line twice, rejects the reload.
+- **The frame padding is config's**: `framePadding 12` sets, in whole
+  points, how far every window's text and its mode line's first and last
+  fields are inset from its edges, and the bottom row at least (theming
+  phase 6). It is the reducer's state (`State.framePadding`), set at every
+  install, so a config that sets none has the editor's 8
+  (`Loop.padding`), and the host hands it to the loop for each step
+  (`Headless.keys`, `Loop.Keys.padding`): a reload changes it with no
+  restart. Setting it twice rejects the reload.
+- **The title bar is config's, at the next start**: `titleBar .standard`
+  keeps the system's standard title bar in place of the themed one, whose
+  paper is the theme's (theming phase 7). It is the reducer's state
+  (`State.titleBar`), set at every install and published in the host's
+  progress, which the window mode reads once, when it opens the window
+  after the start-up reload: a reload that changes it takes effect at the
+  next start. Choosing it twice rejects the reload.
+- **The window's appearance follows the paper.** Once the window has
+  opened, the reducer asks it for the light or the dark appearance that
+  contrasts with the effective paper (`Config.Effect.appearance`,
+  `Editor/Appearance.lean`), and afterwards only when a choice of theme or
+  a reload changes whether that paper is light or dark. A rejected reload's first error
   is said in the echo area (`Config.Report.echo`), and its whole report is
   printed: on stdout in the headless mode, on stderr in the window mode.
 - **The session runs no `IO` action from config.** A chunk is elaborated,
@@ -1073,6 +1138,8 @@ made of state requests and text requests. Config sees it through
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
 | The ex command, and the commands `quit`, `save-and-quit` and `reload-config`, with what they say in the echo area | `lean/Editor/Ex.lean` |
 | The ex line's commands and the ex names that ship, as compiled code registers them | `lean/Editor/Ex/Compiled.lean` |
+| The command `load-theme`, which switches the theme in force with no reload, with what it says in the echo area | `lean/Editor/Themes.lean` |
+| The command that loads a theme and the themes that ship, `default` among them, as compiled code registers them | `lean/Editor/Themes/Compiled.lean` |
 | The loop on the models with jobs, for tests of a command that starts a job: a job reads the snapshots commands took, and its command is handed what the job loaded | `lean/Editor/Loop/Driver.lean` |
 
 ## Where state lives
@@ -1086,7 +1153,7 @@ made of state requests and text requests. Config sees it through
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change, and the text typed in the insert session that change began) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
 | The registers: a text and whether it is line-wise, by name. Evil keeps the unnamed one, which every yank and deletion sets | Compiled Lean, a field of the editor state (`EditorState.registers`, `lean/Editor/State.lean`), set by a command (`setRegister`), so it is rolled back with a command that does not run to its end | Untouched | Lost |
 | The system clipboard | Outside the editor: reached through the clipboard port. A host with no window keeps one of its own in the process (`lean/Editor/Clipboard/InProcess.lean`) | Untouched | The window system's is the system's; the in-process one is lost |
-| Compiled commands, jobs, key bindings, modes and ex bindings | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `w!`, `e`, `e!`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file`, `save-buffer`, `edit-file` and `reload-buffer`, and their jobs, `load-file`, `save-file` and `reload-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward` and `minibuffer-delete-to-start`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's thirty-two commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom`, and the seven editing keys of insert state, `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up` and `insert-down` (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| Compiled commands, jobs, key bindings, modes, ex bindings and themes | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the command `load-theme` and the theme `default` (`lean/Editor/Themes/Compiled.lean`), the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `w!`, `e`, `e!`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file`, `save-buffer`, `edit-file` and `reload-buffer`, and their jobs, `load-file`, `save-file` and `reload-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward` and `minibuffer-delete-to-start`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's thirty-seven commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `select-object`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators, text objects and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom`, the seven editing keys of insert state, `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up` and `insert-down`, and the four of the Edit menu, `clipboard-cut`, `clipboard-copy`, `clipboard-paste` and `select-all` (`lean/Editor/Evil/Clipboard.lean`) (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
 | An open prompt: its label, the minibuffer's view, the asking view and the continuation, its candidates with what it has listed of them and the choice, all plain data, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
 | Asked to quit: whether a command asked the editor to quit | Compiled Lean, a field of the editor state (`EditorState.quitting`), from the command that asks until the step that says stop, or until the scene that withdraws it because a buffer has unsaved changes | Untouched: a quit that is waiting for a save still waits | Not kept: the process has ended |
@@ -1136,8 +1203,9 @@ editor's port:
   cell the new config cannot decode, or does not migrate, is reset to the
   initial value, and the reload's report says so. A cell the new config no
   longer declares is removed. Declaring a store name twice, registering a
-  command name or a job name twice, setting a face twice, or registering a
-  command over an undeclared store rejects the reload.
+  command name or a job name twice, setting a face twice, defining or naming
+  a theme twice, or registering a command over an undeclared store rejects
+  the reload.
 - **Why not a request of the editor's port.** The editor's port is now a
   composite of sub-ports ("The editor's port is a composite", above), and a
   `get` and a `set` would be a store sub-port of it. Stores still do not use

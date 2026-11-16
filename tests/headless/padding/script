@@ -1,0 +1,17 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which sets the frame padding to 12 points. What
+# it prints must be exactly `expected`.
+
+reload
+settle
+
+# A frame of 640 by 480: the window's view is padded 12 across and 12 down,
+# and the scene's echo 12, the padding, since the headless window says its
+# corners are square.
+resize 640 480
+scene
+
+# `:` opens the ex prompt: the minibuffer's view is padded 12 across and
+# none down, its place staying a text row and the bottom row tall.
+key : Semicolon shift
+scene

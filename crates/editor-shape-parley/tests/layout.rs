@@ -10,7 +10,7 @@
 mod common;
 
 use editor_layout::Layout;
-use editor_layout::scene::{Rect, Scene};
+use editor_layout::scene::{Padding, Rect, Scene};
 use editor_layout::tabs::SEGMENT_BYTES;
 use editor_shape_parley::{ParleyShaper, ShapeCounters};
 
@@ -95,9 +95,11 @@ fn layout_builds_one_parley_layout_for_each_segment_it_shapes() {
     let scene = Scene::of_text(&text, rect(40));
     let shown = scene.views[0].text.clone().expect("a text");
     let (laid, shaped) = counted(&mut layout, |layout| {
-        layout.rows_shown(&shown, 40.0, 100.0, 0).expect("rows");
         layout
-            .lines_from(&shown, 300.0, 0, 3, None)
+            .rows_shown(&shown, 40.0, 100.0, Padding::default(), 0)
+            .expect("rows");
+        layout
+            .lines_from(&shown, 300.0, 0, 0, 3, None)
             .expect("a move");
     });
     assert_eq!(shaped.layouts, laid);

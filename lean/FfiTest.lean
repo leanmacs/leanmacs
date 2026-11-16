@@ -1,6 +1,12 @@
+import Editor.Command.Real
 import Editor.Display.Real
 import Editor.Event.Queue
 import Editor.Ffi
+import Editor.InputScheme.Test
+import Editor.InputScheme.Vim
+import Editor.Themes.Compiled
+import Editor.Themes.FairyFloss
+import Editor.Themes.Solarized
 import Editor.Window.Real
 import Editor.WindowCheck.Real
 import Lean.Environment
@@ -16,7 +22,9 @@ object, Rust archive and entry point. With no arguments it runs every check in
 Some behaviour needs a process of its own, so it is a scenario chosen by an
 argument (see `main`): `exit <code>` for the exit status, `shutdown` and
 `exit-while-blocked` because quitting the queues is for good, and `overflow`
-because it ends in an abort. `mise run ffi-test` runs the checks and every
+because it ends in an abort. `theme-pictures <dir> <font>` compares the
+shipped themes' pictures of a fixture file with their reference
+images (`themePicturesScenario`), and with `--write` makes them again. `mise run ffi-test` runs the checks and every
 scenario but `overflow`, under a time limit, and is part of the gate.
 `mise run ffi-overflow` runs `overflow`, on demand only: on macOS every abort
 leaves a crash report on the machine.
@@ -177,13 +185,14 @@ def dataChecks (_ : Unit) : List Check :=
     { name := "the tags of a window's events and of the window source are known"
       run :=
         pure
-          ((([3, 4, 5, 6, 7, 8, 9, 10] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
+          ((([3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
               [some .windowOpened, some .windowFocus, some .key, some .composition, some .pointer,
-                some .closeRequested, some .resize, some .openFiles] &&
+                some .closeRequested, some .resize, some .openFiles, some .quitRequested,
+                some .menu] &&
             Editor.Ffi.SourceKind.ofTag? 3 == some .window) },
     { name := "a tag the bindings do not know is refused"
       run :=
-        pure ((Editor.Ffi.EventKind.ofTag? 11).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
+        pure ((Editor.Ffi.EventKind.ofTag? 13).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
 
 /-- An hour, in milliseconds: a deadline no check reaches. -/
 def hour : UInt64 :=
@@ -462,10 +471,21 @@ def fileChecks (_ : Unit) : List Check :=
             decodedFile 8 [] == (none, some .noTemporaryName) &&
             decodedFile 9 [] "the disk is full" == (none, some (.failed "the disk is full"))) },
     { name :=
+        "a stamp request's result decodes as four words: present or not, then the stamp, its seconds before 1970 negative"
+      run :=
+        let stamped (values : List UInt64) : Option (Option Editor.Ffi.FileStamp) :=
+          match Editor.Ffi.FileResult.decode 0 none (wordBytes values) "" with
+          | .ok (.stamped stamp) => some stamp
+          | _ => none
+        pure
+          (stamped [1, 0xFFFFFFFFFFFFFFFF, 5, 9] ==
+              some (some { seconds := -1, nanoseconds := 5, size := 9 }) &&
+            stamped [0, 0, 0, 0] == some none) },
+    { name :=
         "a file result the bindings cannot read is an error: a status the table does not have, words that are not the status's, and a load with no snapshot"
       run :=
         pure
-          (([(10, []), (0, []), (0, [1, 2]), (0, [1, 2, 3, 4]), (0, [1, 2, 3, 4, 5]), (5, []),
+          (([(10, []), (0, []), (0, [1, 2]), (0, [2, 0, 0, 0]), (0, [1, 2, 3, 4, 5]), (5, []),
                   (6, [1]), (7, [1, 2, 3]), (7, [2, 0, 0, 0]), (2, [1])].all
               fun ((status, values) : UInt64 × List UInt64) =>
               (Editor.Ffi.FileResult.decode status none (wordBytes values) "").toOption.isNone) &&
@@ -1345,7 +1365,7 @@ def windowSample (composition : Bool) :
       [(.composition, 0, "", #[]), (.composition, 1, "´", #[]), (.composition, 2, "é", #[])]
     else []) ++
     [(.pointer, 0, "", #[(12.5 : Float).toBits, (40.0 : Float).toBits, 2, 0, 4, 0, 0, 0]),
-      (.resize, 0, "", #[800, 600, (2.0 : Float).toBits]), (.closeRequested, 0, "", #[])]
+      (.resize, 0, "", #[800, 600, (2.0 : Float).toBits, 0, 0]), (.closeRequested, 0, "", #[])]
 
 /-- What one run of the scripted platform's window showed. -/
 structure WindowRun where
@@ -1366,9 +1386,11 @@ structure WindowRun where
 task, pulls as many events from the editor queue as its sample has, closes
 the window and waits for the run. It always closes the window, so a check
 that fails leaves no run behind to hold the main-thread service. -/
-def runScripted (composition : Bool) (platform : Editor.Ffi.Platform := .scripted) : IO WindowRun :=
-  do
-  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun platform composition)
+def runScripted (composition : Bool) (platform : Editor.Ffi.Platform := .scripted)
+    (titleBar : Editor.Ffi.TitleBar := .themed) : IO WindowRun := do
+  let run ←
+    IO.asTask (prio := .dedicated)
+        (Editor.Ffi.windowRun platform composition (titleBar := titleBar))
   let mut events := #[]
   let mut stamped := true
   let mut last : UInt64 := 0
@@ -1429,12 +1451,47 @@ def runScriptedAsking (requests : List Editor.Ffi.WindowRequest) : IO AskedRun :
     for request in requests do
       Editor.Ffi.windowRequest .scripted request
 
-/-- The requests in `asked`, without the titles: a title is the presenter's,
-sent when the window opens if a scene bound to it named one. -/
+/-- The requests in `asked`, without the titles and the menu bars: each is
+the presenter's, sent when the window opens if a scene bound to it named
+one. -/
 def requestsOf (asked : Array Editor.Ffi.WindowAsked) : Array Editor.Ffi.WindowRequest :=
   asked.filterMap fun
     | .request request => some request
-    | .title _ => none
+    | .title _ | .menu _ => none
+
+/-- What the window mode's closer (`Editor.Window.closeOnceEnded`) did once a
+loop that ended with `ended` had: whether it said the loop ended well, the
+lines it said, the requests the scripted window was asked, and how many
+times the shutdown ran. -/
+structure Closed where
+  /-- What the closer returned. -/
+  well : Bool
+  /-- The lines it said. -/
+  said : Array String
+  /-- What the scripted window was asked in its run, without titles. -/
+  asked : Array Editor.Ffi.WindowRequest
+  /-- How many times the shutdown ran. -/
+  shutdowns : Nat
+
+/-- Runs the scripted window on a dedicated task, pulls its sample, and runs
+the window mode's closer on a loop that ended with `ended`, with a shutdown
+that counts its runs; `none` if the window's run did not return once the
+closer had closed it, in which case it is closed again so that no run is
+left behind. -/
+def closedOnceEnded (ended : Except IO.Error Unit) : IO (Option Closed) := do
+  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun .scripted true)
+  for _ in [0:(windowSample true).length] do
+    discard <| pull .editor
+  let said ← IO.mkRef #[]
+  let shutdowns ← IO.mkRef 0
+  let well ←
+    Editor.Window.closeOnceEnded .scripted (Task.pure ended) (shutdowns.modify (· + 1)) (say :=
+        fun line => said.modify (·.push line))
+  unless ← eventually (IO.hasFinished run) do
+    Editor.Ffi.windowClose .scripted
+    return none
+  let asked := requestsOf ((← Editor.Ffi.windowAsked .scripted).getD #[])
+  return some { well, said := ← said.get, asked, shutdowns := ← shutdowns.get }
 
 /-- Whether `events` are those of `windowSample composition`, in order, each
 from the window source of the window number 1. -/
@@ -1533,7 +1590,7 @@ def windowChecks (_ : Unit) : List Check :=
     { name :=
         "an input posted as a window would report it arrives on the editor queue as the window's event, stamped, and words that do not read as an input are refused and queue nothing"
       run := do
-        let words := #[1024, 768, (1.5 : Float).toBits]
+        let words := #[1024, 768, (1.5 : Float).toBits, 16, 32]
         let short ← Editor.Ffi.postInput .resize 0 "" #[1024, 768]
         let notWindow ← Editor.Ffi.postInput .message 0 "" #[]
         let posted ← Editor.Ffi.postInput .resize 0 "" words
@@ -1543,6 +1600,17 @@ def windowChecks (_ : Unit) : List Check :=
             event.code == 0 &&
             event.words == words &&
             event.stamp > 0 },
+    { name :=
+        "the scripted window is opened with the composition and the title bar a run asks for, and the real platform records nothing"
+      run := do
+        let standard ← runScripted false (titleBar := .standard)
+        let afterStandard ← Editor.Ffi.windowOpenedWith .scripted
+        let themed ← runScripted true
+        let afterThemed ← Editor.Ffi.windowOpenedWith .scripted
+        return standard.result matches some (.ok _) && themed.result matches some (.ok _) &&
+            afterStandard == some (false, .standard) &&
+            afterThemed == some (true, .themed) &&
+            (← Editor.Ffi.windowOpenedWith .winit) == none },
     { name :=
         "asked while the scripted window runs, a fullscreen request and a minimise request are what the window was asked, in that order, and entering fullscreen arrives on the editor queue as a resize in fullscreen at the size the window last said"
       run := do
@@ -1556,6 +1624,41 @@ def windowChecks (_ : Unit) : List Check :=
             (ran.asked.map requestsOf) == some #[.enterFullscreen, .minimise] &&
             resized &&
             ran.ran.result matches some (.ok _) },
+    { name :=
+        "the light and the dark appearance asked while the scripted window runs are what the window was asked, in order among the other requests, and report nothing of their own"
+      run := do
+        let ran ← runScriptedAsking [.lightAppearance, .enterFullscreen, .darkAppearance]
+        let resized :=
+          match ran.after.map Editor.Event.ofFfi with
+          | some (.ok { event := .resize size, .. }) => size.fullscreen
+          | _ => false
+        return isWindowSample true ran.ran.events &&
+            (ran.asked.map requestsOf) ==
+              some #[.lightAppearance, .enterFullscreen, .darkAppearance] &&
+            resized &&
+            ran.ran.result matches some (.ok _) },
+    { name :=
+        "asked while the scripted window runs, keeping running crosses as its own tag and is what the window was asked, before the fullscreen request after it"
+      run := do
+        -- Keeping running reports nothing; the enter after it gives the run
+        -- the resize it waits for.
+        let ran ← runScriptedAsking [.keepRunning, .enterFullscreen]
+        return isWindowSample true ran.ran.events &&
+            (ran.asked.map requestsOf) == some #[.keepRunning, .enterFullscreen] &&
+            ran.ran.result matches some (.ok _) },
+    { name :=
+        "once the editor loop has ended with an error, the window mode's closer says so, runs the shutdown once and asks the window to keep running before it closes it, so that a system quit pending is refused and the run returns; once it has ended well, the closer says nothing and asks nothing"
+      run := do
+        let some failed ← closedOnceEnded (.error (IO.userError "the loop broke")) | return false
+        let some fine ← closedOnceEnded (.ok ()) | return false
+        return !failed.well &&
+            failed.said == #["editor: the editor loop ended with an error: the loop broke"] &&
+            failed.asked == #[.keepRunning] &&
+            failed.shutdowns == 1 &&
+            fine.well &&
+            fine.said == #[] &&
+            fine.asked == #[] &&
+            fine.shutdowns == 1 },
     { name :=
         "a frame request asked of the real display binding made over the scripted platform, directly and through the window mode's host display, is what the scripted window was asked, in order"
       run := do
@@ -1571,14 +1674,16 @@ def windowChecks (_ : Unit) : List Check :=
               discard <| (Editor.Display.askFrame .enterFullscreen).runReal real
               hosted.handle (.frame .leaveFullscreen)
               hosted.handle (.frame .minimise)
+              hosted.handle (.frame .keepRunning)
         return (ran.asked.map requestsOf) ==
-              some #[.enterFullscreen, .leaveFullscreen, .minimise] &&
+              some #[.enterFullscreen, .leaveFullscreen, .minimise, .keepRunning] &&
             ran.ran.result matches some (.ok _) },
     { name :=
         "a request to a window that is not running is not recorded, and the real platform records nothing"
       run := do
         Editor.Ffi.windowRequest .scriptedFailing .enterFullscreen
         Editor.Ffi.windowRequest .scriptedFailing .minimise
+        Editor.Ffi.windowRequest .scriptedFailing .keepRunning
         return (← Editor.Ffi.windowAsked .scriptedFailing) == some #[] &&
             (← Editor.Ffi.windowAsked .winit) == none },
     { name := "the input clock is never 0 and does not go back"
@@ -1766,11 +1871,24 @@ delivers decodes to its own variant, with its fields, and what cannot be read
 is refused. They are on events built by hand: they call no binding and need
 no window. -/
 def eventDecodeChecks (_ : Unit) : List Check :=
-  [{ name := "a message decodes with its source, its code and its text, whatever its words",
-     run :=
-       pure
-         ((decodedEvent { message 5 6 "hi" with words := #[1, 2] }).map (·.event) ==
-           some (.message { kind := .lean, id := 5 } 6 "hi")) },
+  [{  name :=
+        "the modifier bits are shift 1, control 2, alt 4 and super 8: each of the 16 sets round trips, and a bit past super reads as none"
+      run :=
+        pure
+          (Editor.Ffi.modifierBits { shift := true } == 1 &&
+            Editor.Ffi.modifierBits { control := true } == 2 &&
+            Editor.Ffi.modifierBits { alt := true } == 4 &&
+            Editor.Ffi.modifierBits { superKey := true } == 8 &&
+            (List.range 16).all
+              (fun bits =>
+                (Editor.Ffi.modifiersOfBits? bits.toUInt64).map Editor.Ffi.modifierBits ==
+                  some bits.toUInt64) &&
+            [16, 17, 32, UInt64.ofNat (2 ^ 63)].all (Editor.Ffi.modifiersOfBits? · == none)) },
+    { name := "a message decodes with its source, its code and its text, whatever its words"
+      run :=
+        pure
+          ((decodedEvent { message 5 6 "hi" with words := #[1, 2] }).map (·.event) ==
+            some (.message { kind := .lean, id := 5 } 6 "hi")) },
     { name := "a completion decodes with its source and its id, and a quit to quit"
       run :=
         pure
@@ -1840,14 +1958,34 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             decodedWindow .pointer 3 (pointerWords 0 0 2 7 0.5) ==
               some (.pointer (pointerAt (.wheel (.pixels 7 0.5)) none))) },
     { name :=
-        "a resize decodes with its size, its scale and whether it is in fullscreen, and a request to close to itself"
+        "a resize decodes with its size, its scale, whether it is in fullscreen, its corner clearance and its top inset, and a request to close to itself"
       run :=
         pure
-          (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits] ==
+          (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 0, 0] ==
               some (.resize { width := 800, height := 600, scale := 2.0 }) &&
-            decodedWindow .resize 1 #[1440, 900, (2.0 : Float).toBits] ==
+            decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 16, 32] ==
+              some
+                (.resize { width := 800, height := 600, scale := 2.0, corner := 16, top := 32 }) &&
+            decodedWindow .resize 1 #[1440, 900, (2.0 : Float).toBits, 0, 0] ==
               some (.resize { width := 1440, height := 900, scale := 2.0, fullscreen := true }) &&
+            decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 16] == none &&
             decodedWindow .closeRequested 0 == some .closeRequested) },
+    { name :=
+        "a quit the system asked decodes to itself, and is refused with a code, with a word and with text"
+      run :=
+        pure
+          (decodedWindow .quitRequested 0 == some .quitRequested &&
+            (decodedWindow .quitRequested 1).isNone &&
+            (decodedWindow .quitRequested 0 #[0]).isNone &&
+            (decodedWindow .quitRequested 0 #[] "x").isNone) },
+    { name :=
+        "a menu item chosen decodes to its command's name, an empty name as it is, and is refused with a code and with a word"
+      run :=
+        pure
+          (decodedWindow .menu 0 #[] "undo" == some (.menu "undo") &&
+            decodedWindow .menu 0 == some (.menu "") &&
+            (decodedWindow .menu 1 #[] "undo").isNone &&
+            (decodedWindow .menu 0 #[0] "undo").isNone) },
     { name :=
         "files to open decode with their paths in order, each its count of characters and its characters, and no path to none"
       run :=
@@ -1901,7 +2039,7 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             (decodedWindow .key 17 #[0, 0, 0, 0, 0]).isNone &&
             (decodedWindow .key 8 #[0, 0, 0, 0, 0]).isNone &&
             (decodedWindow .pointer 4 (pointerWords 1 0 0)).isNone &&
-            (decodedWindow .resize 2 #[1, 1, 0]).isNone) },
+            (decodedWindow .resize 2 #[1, 1, 0, 0]).isNone) },
     { name :=
         "malformed words are refused: too few, left over, an unknown tag, a scalar that is not a character, modifier bits past super, a dead bit with no dead key, a named button with a number, a pointer that is not a wheel with a delta"
       run :=
@@ -1923,6 +2061,7 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             (decodedWindow .pointer 0
                 #[(12.5 : Float).toBits, (40.0 : Float).toBits, 1, 0, 16, 0, 0, 0]).isNone &&
             (decodedWindow .resize 0 #[800, 600]).isNone &&
+            (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits]).isNone &&
             (decodedWindow .closeRequested 0 #[1]).isNone) }]
 
 /-- The events of a run of the scripted platform's window, decoded. -/
@@ -1962,7 +2101,7 @@ def eventChecks (_ : Unit) : List Check :=
             events.head? == some (.windowOpened "scripted") &&
             events.getLast? == some .closeRequested },
     { name :=
-        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, files to open, none to open, and a request to close posted as a window would come back from the library equal"
+        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, files to open, none to open, a request to close, a quit the system asked and two menu items chosen posted as a window would come back from the library equal"
       run := do
         let events : List Editor.Event :=
           [.windowOpened "x", .focus true, .focus false,
@@ -1977,7 +2116,8 @@ def eventChecks (_ : Unit) : List Check :=
             .pointer (pointerAt (.wheel (.pixels 0.25 8)) none),
             .resize { width := 1920, height := 1080, scale := 1.25 },
             .resize { width := 1920, height := 1080, scale := 1.25, fullscreen := true },
-            .openFiles ["/Users/me/notes.txt", "/tmp/é x.lean"], .openFiles [], .closeRequested]
+            .openFiles ["/Users/me/notes.txt", "/tmp/é x.lean"], .openFiles [], .closeRequested,
+            .quitRequested, .menu "undo", .menu "é"]
         events.allM fun event => return (← roundTrip event) == some event },
     { name := "an event no window reports is not posted: a message, a completion and a quit"
       run := do
@@ -2238,12 +2378,34 @@ def sceneFixture (theme : Editor.Theme := #[]) : IO SceneFixture := do
 def SceneFixture.own (index : Nat) : Editor.MarkerId :=
   { text := ⟨0⟩, index }
 
+/-- A menu bar with each kind of item, each role and a key with every
+modifier: the menu `crates/editor-ffi/src/display/wire.rs`'s own round trip
+crosses. -/
+def fixtureMenu : Editor.Menu :=
+  {
+    menus :=
+      #[{ title := "Ap", role := some .app
+          items :=
+            #[.item "Q" (some { character := 'q', modifiers := { superKey := true } })
+                (.system .quit),
+              .item "S" none (.system .services), .separator] },
+        { title := "é", role := some .window
+          items :=
+            #[.item "U"
+                (some
+                  { character := 'Z'
+                    modifiers :=
+                      { shift := true, control := true, alt := true, superKey := true } })
+                (.command "undo")] },
+        { title := "" }] }
+
 /-- A scene that takes the branches of the binding's encoding the display
-fixture does not: a pending prefix and a preedit; view 1, of a snapshot the
-table does not hold, before view 2, of the one it holds, scrolled to its
-second row with a selection; and view 3, of the same snapshot, whose scroll
-marker is `scroll` and whose selection markers are `selections`. Each view
-is 4 columns by 3 rows. -/
+fixture does not: a pending prefix, a preedit, an echo padding and a menu
+bar; view 1, of a snapshot the table does not hold and padded, before view
+2, of the one it holds, scrolled to its second row with a selection, a
+right status field with a padding and a status face; and view 3, of the
+same snapshot, whose scroll marker is `scroll` and whose selection markers
+are `selections`. Each view is 4 columns by 3 rows. -/
 def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
     (selections : Array Editor.MarkerId) : Editor.Scene :=
   let rect (y : Nat) : Editor.Rect := { x := 0, y, width := 32, height := 48 }
@@ -2251,17 +2413,21 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
     views :=
       #[{ id := ⟨1⟩, rect := rect 0, snapshot := ⟨fixture.snapshot.index + 1⟩
           scroll := SceneFixture.own fixture.anchor, selections := #[]
-          cursor := { shape := .block, face := ⟨"c1"⟩ }, decorations := #[], status := #[] },
+          cursor := { shape := .block, face := ⟨"c1"⟩ }, decorations := #[], status := #[]
+          padding := { across := 8, down := 4, top := 28 } },
         { id := ⟨2⟩, rect := rect 48, snapshot := fixture.snapshot
           scroll := SceneFixture.own fixture.anchor
           selections := #[SceneFixture.own fixture.selection]
           cursor := { shape := .bar, face := ⟨"c2"⟩ }
           decorations := #[{ start := 0, stop := 2, face := ⟨"kw"⟩ }]
-          status := #[{ text := "NORMAL", face := ⟨"mode"⟩ }] },
+          status :=
+            #[{ text := "NORMAL", face := ⟨"mode"⟩ },
+              { text := "1:1", face := ⟨"pos"⟩, side := .right, padding := 4 }]
+          statusFace := some ⟨"dim"⟩ },
         { id := ⟨3⟩, rect := rect 96, snapshot := fixture.snapshot, scroll, selections
           cursor := { shape := .underline, face := ⟨"c3"⟩ }, decorations := #[], status := #[] }]
-    focused := some ⟨2⟩, echo := "fixture", pending := "g", preedit := some "é"
-    title := "notes.txt" }
+    focused := some ⟨2⟩, echo := "fixture", echoPadding := 14, pending := "g"
+    preedit := some "é", title := "notes.txt", menu := some fixtureMenu }
 
 /-- The fixture's scene with view 3's markers of two texts: its scroll
 marker is the text's anchor at offset 3, and its selection marker is a
@@ -2294,7 +2460,8 @@ def everyTheme : Editor.Theme :=
         { family := some "mono", size := some 20, weight := some 700, slant := some .italic
           foreground := some (.rgba 0x11 0x22 0x33 0x44), background := some (.rgb 0xaa 0xbb 0xcc)
           underline := some { style := .curly, color := some (.rgb 0xff 0 0) }
-          strikeThrough := some true, lineHeight := some (.pixels 24) } },
+          strikeThrough := some true, lineHeight := some (.pixels 24)
+          verticalPadding := some 3 } },
     { name := ⟨"unset"⟩, face := {} },
     { name := ⟨"é"⟩
       face :=
@@ -2323,27 +2490,40 @@ and a frame with another frame, never with a colour or a size written
 here. -/
 def sceneChecks (_ : Unit) : List Check :=
   [{  name :=
-        "a scene with a pending prefix, a preedit, a title, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
+        "a scene with a pending prefix, a preedit, a title, a menu bar with each kind of item, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
       run := do
         let fixture ← sceneFixture
         let encoded ← fixture.real.encode fixture.mixed none
         let anchor := fixture.anchor.toUInt64
         let selection := fixture.selection.toUInt64
-        -- The title's length after the preedit's presence and length.
-        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 1, 1, 2, 9, 3]
-        -- No snapshot; its scroll marker; no selection; a block cursor.
-        let first : Array UInt64 := #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0]
+        -- The echo's padding after its length, and the title's length after
+        -- the preedit's presence and length.
+        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 14, 1, 1, 2, 9]
+        -- The menu's presence and three menus: "Ap", the application's,
+        -- with Quit (s-q), Services and a separator; "é", the windows
+        -- menu, with the command undo on every modifier and Z; and an
+        -- untitled plain menu with no item. Then the count of views.
+        let menu : Array UInt64 :=
+          #[1, 3, 2, 1, 3, 2, 1, 1, 0x71, 8, 5, 2, 1, 0, 0, 0, 1, 0, 2, 2, 1, 1, 1, 1, 0x5a, 15, 4,
+            0, 0, 0, 3]
+        -- No snapshot; its scroll marker; no selection; a block cursor; no
+        -- status field and no status face; padded 8 across, 4 down and 28
+        -- at the top.
+        let first : Array UInt64 :=
+          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28]
         -- The first handle; its scroll marker and its selection; a bar
-        -- cursor; a decoration and a status field.
+        -- cursor; a decoration; a left status field with no padding and a
+        -- right one padded 4; and a status face.
         let second : Array UInt64 :=
-          #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 1, 6, 4]
+          #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 2, 6, 4, 0, 0, 3, 3,
+            1, 4, 1, 3, 0, 0, 0]
         -- The second handle; no scroll marker and no selection; an
         -- underline cursor.
-        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0]
+        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0]
         -- No faces: as last published.
         let faces : Array UInt64 := #[0]
-        return encoded.words == scene ++ first ++ second ++ third ++ faces &&
-            encoded.strings == "fixturegénotes.txtc1c2kwNORMALmodec3" &&
+        return encoded.words == scene ++ menu ++ first ++ second ++ third ++ faces &&
+            encoded.strings == "fixturegénotes.txtApQSéUundoc1c2kwNORMALmode1:1posdimc3" &&
             encoded.snapshots.size == 2 },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
@@ -2389,35 +2569,35 @@ def sceneChecks (_ : Unit) : List Check :=
         let fixture ← sceneFixture everyTheme
         let real := fixture.real
         let encoded ← real.encode emptyScene (some everyTheme)
-        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0]
+        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- Present, and seven definitions.
         let faces : Array UInt64 := #[1, 7]
         -- Its name; a family; 20 pixels; weight 700; italic; a foreground
         -- and a background; a curly underline with a colour; struck
-        -- through; a line height of 24 pixels.
+        -- through; a line height of 24 pixels; a vertical padding of 3.
         let all : Array UInt64 :=
           #[3, 1, 4, 1, 1280, 1, 700, 1, 1, 1, 0x11223344, 1, 0xaabbccff, 1, 3, 1, 0xff0000ff, 1, 1,
-            1, 1, 1536]
+            1, 1, 1536, 1, 192]
         -- Its name, and nothing set.
         let unset : Array UInt64 :=
-          #[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          #[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- A name of two bytes; upright; no underline, which is set; not
         -- struck through, which is set; one and a half times the font's
         -- own line height.
         let upright : Array UInt64 :=
-          #[2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 96]
+          #[2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 96, 0, 0]
         -- Oblique, and a single underline with no colour of its own.
         let oblique : Array UInt64 :=
-          #[1, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0]
+          #[1, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- A weight over 1000, sent as 1000, and a double underline.
         let heavy : Array UInt64 :=
-          #[1, 0, 0, 0, 0, 1, 1000, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0]
+          #[1, 0, 0, 0, 0, 1, 1000, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- A weight of 0, sent as 1, and a dotted underline.
         let light : Array UInt64 :=
-          #[1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 4, 0, 0, 0, 0, 0, 0, 0]
+          #[1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- A dashed underline.
         let dashed : Array UInt64 :=
-          #[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 5, 0, 0, 0, 0, 0, 0, 0]
+          #[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         real.publish emptyScene
         let back ← real.display.scene
         return encoded.words ==
@@ -2631,6 +2811,416 @@ def pairChecks (_ : Unit) : List Check :=
             (← snapshot.quoted .double 9) == some none &&
             (← snapshot.quoted .double 99) == none }]
 
+/-! ## Theme pictures
+
+Pictures the library's CPU renderer draws of a display's frame
+(`Ffi.Display.picture`), and the pure helpers the theme-pictures scenario
+reads them with. A pixel is a `Color`, its four bytes red first, so it
+compares with a theme's colours as they are. -/
+
+/-- The pixel numbered `index` of `picture`, counted row by row from the
+top left; `none` past its last. -/
+def pixelAt (picture : Editor.Ffi.Picture) (index : Nat) : Option Editor.Color :=
+  if index * 4 + 4 ≤ picture.rgba.size then
+    let byte (offset : Nat) : UInt8 := picture.rgba.get! (index * 4 + offset)
+    some (.rgba (byte 0) (byte 1) (byte 2) (byte 3))
+  else none
+
+/-- How many pixels `picture` has. -/
+def pixelCount (picture : Editor.Ffi.Picture) : Nat :=
+  picture.rgba.size / 4
+
+/-- The four bytes of `color`, red first. -/
+def channels (color : Editor.Color) : List Nat :=
+  [24, 16, 8, 0].map fun shift => ((color.word >>> shift.toUInt32) &&& 0xff).toNat
+
+/-- The largest difference of any channel of two colours. -/
+def channelDistance (one two : Editor.Color) : Nat :=
+  ((channels one).zip (channels two)).foldl (fun worst (a, b) => max worst (max a b - min a b)) 0
+
+/-- The numbers of the pixels where `one` and `two` differ; none when they
+are not the same size. -/
+def differing (one two : Editor.Ffi.Picture) : Array Nat :=
+  if (one.width, one.height) != (two.width, two.height) then #[]
+  else (Array.range (pixelCount one)).filter fun index => pixelAt one index != pixelAt two index
+
+/-- How `one` differs from `two`: `none` when they are not the same size,
+and otherwise the largest difference of any channel of any pixel, with how
+many pixels differ at all. -/
+def difference (one two : Editor.Ffi.Picture) : Option (Nat × Nat) :=
+  if (one.width, one.height) != (two.width, two.height) then none
+  else
+    some <|
+      (differing one two).foldl
+        (fun (worst, count) index =>
+          match pixelAt one index, pixelAt two index with
+          | some a, some b => (max worst (channelDistance a b), count + 1)
+          | _, _ => (worst, count + 1))
+        (0, 0)
+
+/-- The colour most of the pixels numbered `indices` of `picture` have;
+`none` when there are none. -/
+def commonest (picture : Editor.Ffi.Picture) (indices : Array Nat) : Option Editor.Color :=
+  let counts : Std.HashMap UInt32 Nat :=
+    indices.foldl
+      (fun counts index =>
+        match pixelAt picture index with
+        | some color => counts.insert color.word (counts.getD color.word 0 + 1)
+        | none => counts)
+      {}
+  let best :=
+    counts.fold
+      (fun (best : Option (UInt32 × Nat)) word count =>
+        match best with
+        | some (_, most) => if count > most then some (word, count) else best
+        | none => some (word, count))
+      none
+  best.map fun (word, _) => { word }
+
+/-- Whether `color` lies, channel by channel, between `paper` and `ink`,
+within `slack` of either end: a blend of the two. -/
+def between (paper ink color : Editor.Color) (slack : Nat) : Bool :=
+  ((channels paper).zip ((channels ink).zip (channels color))).all fun (p, i, c) =>
+    min p i ≤ c + slack && c ≤ max p i + slack
+
+/-- A picture 2 pixels by 2 of `colors`, row by row. -/
+def pictureOf (colors : List Editor.Color) : Editor.Ffi.Picture :=
+  { width := 2, height := 2
+    rgba := ⟨(colors.flatMap fun color => (channels color).map (·.toUInt8)).toArray⟩ }
+
+/-- The checks of the helpers the theme-pictures scenario reads its
+pictures with, on pictures 2 by 2 written here, and of a picture's round
+trip through a PNG file by the real binding. -/
+def pictureChecks (_ : Unit) : List Check :=
+  let black := Editor.Color.rgb 0 0 0
+  let white := Editor.Color.rgb 255 255 255
+  let grey := Editor.Color.rgb 128 128 128
+  let red := Editor.Color.rgb 200 0 0
+  [{  name := "two pictures differ where their pixels do, by their worst channel"
+      run :=
+        let one := pictureOf [black, white, grey, grey]
+        let two := pictureOf [black, Editor.Color.rgb 250 255 254, grey, red]
+        pure
+          (differing one two == #[1, 3] && difference one two == some (128, 2) &&
+            difference one one == some (0, 0) &&
+            difference one
+                { one with
+                  width := 4, height := 1 } ==
+              none) },
+    { name := "the commonest colour of some pixels is the one most of them have"
+      run :=
+        let picture := pictureOf [grey, white, grey, red]
+        pure
+          (commonest picture #[0, 1, 2, 3] == some grey && commonest picture #[1] == some white &&
+            commonest picture #[] == none) },
+    { name := "a blend of paper and ink is between them, and a third colour is not"
+      run :=
+        pure
+          (between black white grey 0 && between white black grey 0 && !between black grey red 0 &&
+            between black grey (Editor.Color.rgb 129 130 0) 2 &&
+            !between black grey (Editor.Color.rgb 129 131 0) 2) },
+    { name := "a picture comes back from its PNG file through the library"
+      run := do
+        let picture := pictureOf [black, white, grey, red]
+        return (← Editor.Ffi.Picture.ofPng (← picture.toPng)) == picture },
+    { name := "a picture of no pixels is refused a PNG file with a reason"
+      run := do
+        try
+          discard <| Editor.Ffi.Picture.toPng { width := 0, height := 0, rgba := .empty }
+          pure false
+        catch error =>
+          pure !(toString error).isEmpty },
+    { name := "bytes that are no PNG file and a font that is none are refused with a reason"
+      run := do
+        let notPng ←
+          try
+            discard <| Editor.Ffi.Picture.ofPng "no".toUTF8
+            pure false
+          catch error =>
+            pure !(toString error).isEmpty
+        let notFont ←
+          try
+            discard <| Editor.Ffi.Display.newFont "no".toUTF8 "Noto Sans Mono"
+            pure false
+          catch error =>
+            pure !(toString error).isEmpty
+        return notPng && notFont }]
+
+/-- Where `needle` first starts in `haystack`, as a byte offset. -/
+def offsetOf (haystack needle : String) : Option Nat :=
+  let hay := haystack.toUTF8
+  let pin := needle.toUTF8
+  (List.range (hay.size + 1 - pin.size)).find? fun start =>
+    (List.range pin.size).all fun index => hay.get! (start + index) == pin.get! index
+
+/-- The size of the theme pictures: one view covers it, taller than the
+fixture's text, so rows of bare paper remain. -/
+def themePictureSize : Editor.Size :=
+  { width := 320, height := 160 }
+
+/-- The face name no theme defines, which the scenario draws the cursor in
+to find the cursor's cell: by the face rule (`Editor/Face.lean`) a cursor
+in it is drawn in the default face's paint, the ink on the paper, so its
+background is the paper. -/
+def unthemedFace : Editor.FaceName :=
+  ⟨"theme-pictures.unthemed"⟩
+
+/-- The status line of the theme pictures: the shipped mode line
+(`ModeLine.standard`) of the selected window on `source.lean`, opened as
+`source.lean` and not modified, of which the Vim scheme reports `VISUAL` in
+`Vim.stateFace "visual"`, with its cursor at the byte `head` of `text`, the
+fixture's own text, and `text`'s rows: what the editor sends of such a
+window. -/
+def themeStatus (text : String) (head : Nat) : Array Editor.StatusField :=
+  let before := (String.fromUTF8? (text.toUTF8.extract 0 head)).getD ""
+  let rows := before.splitOn "\n"
+  let all := text.splitOn "\n"
+  let lines := if all.length > 1 && all.getLast? == some "" then all.length - 1 else all.length
+  let buffer : Editor.Buffer :=
+    { name := "source.lean", text := ⟨0⟩, history := Editor.UndoTree.new ⟨0⟩ 0
+      file :=
+        some { path := "source.lean", stamp := { seconds := 0, nanoseconds := 0, size := 0 } } }
+  Editor.ModeLine.standard.fields
+    { buffer, reported := #[{ text := "VISUAL", face := Editor.Vim.stateFace "visual" }]
+      cursor := some ⟨rows.length - 1, ((rows.getLast?).getD "").length⟩, lines }
+
+/-- One picture of the theme-pictures scene, drawn through the real
+binding over a display of the one font `font`: `text` in one view the size
+of `themePictureSize`, in `theme`, with the shipped mode line of a selected
+window in visual state on `source.lean` (`themeStatus`): the `VISUAL` badge,
+the buffer's name, and on the right line:col and the position, the same in
+every draw, read from `selectedIn`; padded as the editor pads a window,
+`Loop.padding` points across and down. With `selected`, the text holds
+one selection, from the `a` of `area` to its head on the `h` of `(w h`,
+with a block cursor there in `cursor`; without, it holds none, and so no
+cursor. The offsets are found in `selectedIn`, the fixture's own text, so
+that a text of spaces is selected where the fixture is. -/
+def themePicture (font : ByteArray) (theme : Editor.Theme) (text selectedIn : String)
+    (selected : Option Editor.FaceName) : IO Editor.Ffi.Picture := do
+  let some anchor := offsetOf selectedIn "def area"
+    | throw (IO.userError "the fixture has no `def area`")
+  let some head := offsetOf selectedIn "(w h"
+    | throw (IO.userError "the fixture has no `(w h`")
+  let document ← Editor.Ffi.Document.new text
+  let scroll ← markIn document (.anchor { offset := 0, bias := .before })
+  let selection ← markIn document (rangeMarker (anchor + 4).toUInt64 (head + 3).toUInt64)
+  let table ← Editor.Snapshots.new
+  let snapshot ← table.add (← document.snapshot)
+  let display ← Editor.Ffi.Display.newFont font "Noto Sans Mono"
+  let real ← Editor.RealDisplay.over display table.reader theme
+  let marker (index : Nat) : Editor.MarkerId := { text := ⟨0⟩, index }
+  let size := themePictureSize
+  let scene : Editor.Scene :=
+    { size
+      views :=
+        #[{ id := ⟨1⟩, rect := { x := 0, y := 0, width := size.width, height := size.height }
+            snapshot, scroll := marker scroll
+            selections := if selected.isSome then #[marker selection] else #[]
+            cursor := { shape := .block, face := selected.getD unthemedFace }
+            decorations := #[]
+            status := themeStatus selectedIn (head + 3)
+            -- The editor's frame padding at scale 1 (`Loop.padding`).
+            padding := { across := Editor.Loop.padding, down := Editor.Loop.padding } }]
+      focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
+  if let .error refusal← (Editor.Display.publish scene).runReal real then
+    throw (IO.userError s!"publishing was refused: {repr refusal}")
+  let picture ← display.picture
+  -- The document is held until here, past the publish: the library reads
+  -- its markers.
+  discard <| document.read
+  return picture
+
+/-- The colours a shipped theme's source gives its paper, its body text and
+its cursor, written from its published record (`Themes.Solarized.published`,
+`Themes.FairyFloss.published`, pinned by `ModelTest.solarizedChecks` and
+`ModelTest.fairyFlossChecks`), not read from the theme. -/
+structure ThemeRoles where
+  /-- The shipped theme's name, and its reference image's. -/
+  name : String
+  /-- The background. -/
+  paper : Editor.Color
+  /-- The body text. -/
+  ink : Editor.Color
+  /-- The cursor's background. -/
+  cursor : Editor.Color
+
+/-- Solarized dark's and light's roles: base0 on base03, its cursor
+base0; base00 on base3, its cursor base00. -/
+def solarizedRoles : List ThemeRoles :=
+  let c := Editor.Themes.Solarized.published
+  [{ name := "solarized-dark", paper := c.base03, ink := c.base0, cursor := c.base0 },
+    { name := "solarized-light", paper := c.base3, ink := c.base00, cursor := c.base00 }]
+
+/-- Fairy Floss's roles: the tmTheme's foreground on its background, its
+cursor the caret. -/
+def fairyFlossRoles : ThemeRoles :=
+  let c := Editor.Themes.FairyFloss.published
+  { name := "fairy-floss", paper := c.background, ink := c.foreground, cursor := c.caret }
+
+/-- The roles of every shipped theme that has a reference image. -/
+def shippedRoles : List ThemeRoles :=
+  solarizedRoles ++ [fairyFlossRoles]
+
+/-- `names` as a list in prose: `a`, `a and b`, `a, b and c`. -/
+def proseList : List String → String
+  | [] => ""
+  | [one] => one
+  | names => ", ".intercalate names.dropLast ++ " and " ++ names.getLast!
+
+/-- How far any channel of any pixel may be from the reference's: 2 of 255,
+the bound and the reason of the renderer's own reference image
+(`crates/editor-render-wgpu/tests/reference.rs`). -/
+def pictureTolerance : Nat :=
+  2
+
+/-- The largest a theme's reference image may be as a file. -/
+def largestReference : Nat :=
+  20000
+
+/-- The four pictures of one variant: the scene, the scene with its cursor
+in a face nothing defines, and the scene with no selection over the
+fixture's text and over the same text with every character but a newline a
+space. -/
+structure ThemePictures where
+  /-- The scene. -/
+  scene : Editor.Ffi.Picture
+  /-- Its cursor unthemed. -/
+  unthemed : Editor.Ffi.Picture
+  /-- No selection, over the text. -/
+  text : Editor.Ffi.Picture
+  /-- No selection, over spaces. -/
+  blank : Editor.Ffi.Picture
+
+/-- The four pictures of `theme`, over the fixture `source`. -/
+def themePictures (font : ByteArray) (theme : Editor.Theme) (source : String) : IO ThemePictures :=
+  do
+  let spaces := String.ofList (source.toList.map fun c => if c == '\n' then c else ' ')
+  return {
+      scene := ← themePicture font theme source source (some (Editor.Vim.cursorFace "visual"))
+      unthemed := ← themePicture font theme source source (some unthemedFace)
+      text := ← themePicture font theme source source none
+      blank := ← themePicture font theme spaces source none }
+
+/-- The role checks of one variant's pictures, as the names of what did
+not hold: the commonest colour is the paper; the pixels where the cursor's
+cell changes when its face is unthemed are mostly the cursor colour; and
+the pixels the text changes from spaces are blends of the paper and the
+ink, one of them within the tolerance of the ink. -/
+def roleChecks (roles : ThemeRoles) (pictures : ThemePictures) : List String :=
+  let all := Array.range (pixelCount pictures.scene)
+  let paper :=
+    if commonest pictures.scene all == some roles.paper then []
+    else [s!"{roles.name}: the commonest colour is not the paper"]
+  let cell := differing pictures.scene pictures.unthemed
+  let cursor :=
+    if cell.isEmpty then [s!"{roles.name}: the cursor's face changes no pixel"]
+    else
+      if commonest pictures.scene cell == some roles.cursor then []
+      else [s!"{roles.name}: the cursor's cell is not mostly the cursor colour"]
+  let glyphs := differing pictures.text pictures.blank
+  let inked := glyphs.filterMap (pixelAt pictures.text)
+  let blended :=
+    if inked.isEmpty then [s!"{roles.name}: the text changes no pixel from spaces"]
+    else
+      if !inked.all (between roles.paper roles.ink · pictureTolerance) then
+        [s!"{roles.name}: a pixel of the text is not between the paper and the ink"]
+      else
+        let farthest :=
+          inked.foldl
+            (fun (far : Editor.Color) pixel =>
+              if channelDistance pixel roles.paper > channelDistance far roles.paper then pixel
+              else far)
+            roles.paper
+        if channelDistance farthest roles.ink ≤ pictureTolerance then []
+        else [s!"{roles.name}: no pixel of the text is the ink"]
+  paper ++ cursor ++ blended
+
+/-- The theme-pictures scenario over the reference images in `dir`, its
+fixture `dir/source.lean`, and the font file `font`. For each theme of
+`variants`, looked up by name in `Themes.shipped`, it draws the four pictures (`themePictures`) and, with
+`write`, writes the scene's picture to `dir/<name>.png` (`mise run
+theme-references`); without, it compares the scene's picture with that
+file within `pictureTolerance`, runs `roleChecks`, and guards that each
+reference is the scene's size and at most `largestReference` bytes, and
+that the light picture does not match the dark reference. Exits 0 after a
+line naming what held, or 1 after `FAILED:` lines, in either mode.
+`variants`, the themes it draws, are `shippedRoles` except in its own
+check (`themePicturesChecks`). -/
+def themePicturesScenario (dir font : String) (write : Bool)
+    (variants : List ThemeRoles := shippedRoles) : IO UInt8 := do
+  let source ← IO.FS.readFile (System.FilePath.mk dir / "source.lean")
+  let fontBytes ← IO.FS.readBinFile font
+  let mut failed : List String := []
+  let mut scenes : List (String × Editor.Ffi.Picture) := []
+  let mut references : List (String × Editor.Ffi.Picture) := []
+  for roles in variants do
+    let some named := Editor.Themes.shipped.find? (·.name == roles.name)
+      | failed := failed ++ [s!"no shipped theme is named {roles.name}"]
+    let pictures ← themePictures fontBytes named.theme source
+    let path := System.FilePath.mk dir / s!"{roles.name}.png"
+    scenes := scenes ++ [(roles.name, pictures.scene)]
+    if write then
+      let bytes ← pictures.scene.toPng
+      IO.FS.writeBinFile path bytes
+      IO.println
+          s!"ffi-test theme-pictures: wrote {path}: {pictures.scene.width} by {pictures.scene.height} pixels, {bytes.size} bytes"
+      continue
+    let file ← IO.FS.readBinFile path
+    let reference ← Editor.Ffi.Picture.ofPng file
+    references := references ++ [(roles.name, reference)]
+    let size := themePictureSize
+    unless
+      (reference.width, reference.height) == (size.width, size.height) &&
+        file.size ≤ largestReference do
+      failed :=
+        failed ++
+          [s!"{path} is {reference.width} by {reference.height} and {file.size} bytes, not {size.width} by {size.height} and at most {largestReference}"]
+    match difference pictures.scene reference with
+    | some (worst, count) =>
+      unless worst ≤ pictureTolerance do
+        failed :=
+          failed ++
+            [s!"{count} pixels of {roles.name} differ from {path}, one by {worst} of 255; the tolerance is {pictureTolerance}"]
+    | none =>
+      failed := failed ++ [s!"the picture of {roles.name} is not the size of {path}"]
+    failed := failed ++ roleChecks roles pictures
+  unless write do
+    match scenes.lookup "solarized-light", references.lookup "solarized-dark" with
+    | some light, some dark =>
+      unless (difference light dark).any (·.1 > pictureTolerance) do
+        failed := failed ++ ["the light picture matches the dark reference"]
+    | _, _ =>
+      failed := failed ++ ["there is no light picture and dark reference to tell apart"]
+  for name in failed do
+    IO.eprintln s!"FAILED: {name}"
+  unless failed.isEmpty do
+    return 1
+  if write then
+    return 0
+  IO.println
+      s!"ffi-test theme-pictures: {proseList (variants.map (·.name))} match their reference images; in each the paper, the cursor and the text carry the palette's colours; the light picture is not the dark reference"
+  return 0
+
+/-- The checks of the theme-pictures scenario's own reporting, over a
+directory of its own and a theme no shipped theme is named, so that
+nothing is drawn or written. -/
+def themePicturesChecks (_ : Unit) : List Check :=
+  [{  name := "theme-pictures --write says why it fails on stderr, not only by its status"
+      run :=
+        inOwnDirectory fun directory => do
+          IO.FS.writeFile (directory / "source.lean") ""
+          let font := directory / "font.ttf"
+          IO.FS.writeBinFile font .empty
+          let missing : ThemeRoles :=
+            { name := "no-such-theme", paper := .rgb 0 0 0, ink := .rgb 0 0 0,
+              cursor := .rgb 0 0 0 }
+          let errors ← IO.mkRef ({} : IO.FS.Stream.Buffer)
+          let status ←
+            IO.withStderr (IO.FS.Stream.ofBuffer errors) <|
+                themePicturesScenario directory.toString font.toString true [missing]
+          let said := String.fromUTF8? (← errors.get).data
+          return status == 1 && said == some "FAILED: no shipped theme is named no-such-theme\n" }]
+
 /-- The checks of the fuzzy ranking's binding: a pattern and a list of
 strings in, as words and one string, and the indices of the candidates the
 pattern matches out, as words. Which candidates match and in what order are
@@ -2695,7 +3285,7 @@ def renderChecks (_ : Unit) : List Check :=
         unless (← Editor.Ffi.renderHeadless) matches .ok () do
           return false
         let before ← framesSubmitted
-        let posted ← Editor.Ffi.postInput .resize 0 "" #[64, 48, (1.0 : Float).toBits]
+        let posted ← Editor.Ffi.postInput .resize 0 "" #[64, 48, (1.0 : Float).toBits, 0, 0]
         let some taken ← pull .editor | return false
         fixture.real.publish (fixture.scene (SceneFixture.own fixture.top) #[])
         let submitted := (← framesSubmitted) == before + 1
@@ -2738,6 +3328,16 @@ def renderChecks (_ : Unit) : List Check :=
         let taller ← (← Editor.Ffi.Display.newCells 8 20).heights
         return heights == { text := 16, status := 16, message := 16 } &&
             taller == { text := 20, status := 20, message := 20 } },
+    { name :=
+        "a theme whose mode line and echo area have a vertical padding reaches layout through the binding: its status row and bottom row are taller by twice it"
+      run := do
+        let padded : Editor.Theme :=
+          #[{ name := ⟨"mode-line"⟩, face := { verticalPadding := some 3 } },
+            { name := ⟨"echo-area"⟩, face := { verticalPadding := some 5 } }]
+        let fixture ← sceneFixture padded
+        let heights ← fixture.real.heights
+        let _ ← fixture.document.read
+        return heights == { text := 16, status := 22, message := 26 } },
     { name :=
         "a bound display is drawn in the scripted window while it is open, the window's session's counters are read once it has closed, and a scene published then reaches nothing"
       run := do
@@ -2836,6 +3436,104 @@ def watchChecks (_ : Unit) : List Check :=
             decode 8 [1, 9, 2] ("/w".toUTF8) == none &&
             decode 9 [] == none }]
 
+/-- The `status` line of the view `id` in `frame`, a frame as
+`Display.frameText` writes it; `none` when the view has no status row. -/
+def statusLineOf (frame : String) (id : Nat) : Option String := do
+  let lines := frame.splitOn "\n"
+  let start ← lines.findIdx? (·.startsWith s!"view {id} rect ")
+  let inView := (lines.drop (start + 1)).takeWhile (·.startsWith "  ")
+  inView.find? (·.startsWith "  status ")
+
+/-- The x of the first glyph of the status row of the view `id` in `frame`:
+the first `id@x` after ` glyphs` on its `status` line; `none` when the view
+has no status row or its row no glyph. -/
+def firstStatusGlyph (frame : String) (id : Nat) : Option Nat := do
+  let status ← statusLineOf frame id
+  let glyphs := (status.splitOn " glyphs ")[1]?.getD ""
+  let first ← (glyphs.splitOn " ").head?
+  let x := (first.splitOn "@")[1]?.getD ""
+  -- A glyph in another font has `#font` after its x.
+  ((x.splitOn "#").head?.getD "").toNat?
+
+/-- The x of the first field's box of the status row of the view `id` in
+`frame`: the `x` of the first `x+width:colour` after ` boxes`. -/
+def firstStatusBox (frame : String) (id : Nat) : Option Nat := do
+  let status ← statusLineOf frame id
+  let boxes := (status.splitOn " boxes ")[1]?.getD ""
+  let first ← (boxes.splitOn " ").head?
+  ((first.splitOn "+").head?.getD "").toNat?
+
+/-- The frame the real display, in cells 8 pixels across and 16 down at scale
+1, lays out of the scene the loop publishes after a resize of a frame 640 by
+480 to `corner` points of corner clearance and a top inset of `top`, in
+fullscreen when `fullscreen`
+says, each step handed a frame padding of 8: with a `:` prompt open over the
+scratch window when `prompt` says, and otherwise with `echo` in the echo
+area. And the id of the minibuffer's view, when a prompt is open. At scale 1
+a point is a pixel, so the glyph positions are the scene's points. -/
+def paddedFrame (corner : Nat) (fullscreen prompt : Bool) (echo : String := "") (top : Nat := 0) :
+    IO (String × Option Nat) := do
+  let table ← Editor.Snapshots.new
+  let display ← Editor.Ffi.Display.newCells 8 16
+  let real ← Editor.RealDisplay.over display table.reader #[]
+  let program : Editor.EditorM (Option Nat) := do
+    let state ← Editor.EditorState.initial ⟨640, 480⟩
+    let state ←
+      if prompt then
+        do
+          let made ← Editor.createText ""
+          let scroll ← made.mark (.anchor { offset := 0, bias := .before })
+          let selection ← made.mark (.selection { ranges := #[⟨0, 0⟩] })
+          let history ← Editor.UndoTree.over made
+          pure (state.openPrompt ":" { command := "ex" } made history scroll selection).2
+      else
+        pure { state with echo }
+    let loop : Editor.Loop Editor.TestScheme.scheme := { state }
+    let keys : Editor.Loop.Keys Editor.TestScheme.scheme := { padding := 8 }
+    let resized ←
+      loop.step keys
+          (.resize { width := 640, height := 480, scale := 1.0, fullscreen, corner, top })
+    return resized.loop.state.minibufferView?.map (·.index)
+  let (result, _) ← program.runReal (Editor.RealTexts.over table) real.handle
+  let .ok minibuffer := result | throw (IO.userError "the loop's program was refused")
+  return (← display.frameText, minibuffer)
+
+/-- The checks of criterion 3 over real layout (`ModelTest.paddingChecks`
+pins the same numbers in the scene): the first glyph of the frame's bottom
+row, the `:` prompt's label in the minibuffer's view's status row and an
+echo in the echo's view, starts at or past the larger of the padding and the
+corner clearance outside fullscreen, and at the padding alone in
+fullscreen. -/
+def paddingChecks (_ : Unit) : List Check :=
+  [{  name :=
+        "criterion 3, over real layout: with a prompt open, padding 8 and a corner clearance of 14, the prompt's first glyph is at 14 or past it, and the window's text and its mode line's first field are at 8; in fullscreen the prompt's first glyph is at 8, the padding alone"
+      run := do
+        let (windowed, some minibuffer) ← paddedFrame 14 false true | return false
+        let (full, some fullMinibuffer) ← paddedFrame 14 true true | return false
+        let prompt := firstStatusGlyph windowed minibuffer
+        -- The window's mode line's first field starts at the padding; its
+        -- glyphs are its own padding further in.
+        let window := firstStatusBox windowed 0
+        return prompt.any (· ≥ 14) && prompt == some 14 && window == some 8 &&
+            firstStatusGlyph full fullMinibuffer == some 8 &&
+            (windowed.splitOn "  row x 8 y 8 ").length > 1 },
+    { name :=
+        "criterion 3, over real layout: with no prompt open, padding 8 and a corner clearance of 14, an echo's first glyph is at 14 or past it; in fullscreen at 8, the padding alone"
+      run := do
+        let echoView := 18446744073709551615
+        let (windowed, none) ← paddedFrame 14 false false "hello" | return false
+        let (full, none) ← paddedFrame 14 true false "hello" | return false
+        let echo := firstStatusGlyph windowed echoView
+        return echo.any (· ≥ 14) && echo == some 14 && firstStatusGlyph full echoView == some 8 },
+    { name :=
+        "criterion 4, over real layout: with padding 8 and a top inset of 28, the window's first text row is at y 36, below the inset and the padding; after a fullscreen resize that says none, at 8"
+      run := do
+        let (covered, _) ← paddedFrame 0 false false "hello" 28
+        let (full, _) ← paddedFrame 0 true false "hello" 0
+        return (covered.splitOn "  row x 8 y 36 ").length > 1 &&
+            (covered.splitOn "  row x 8 y 8 ").length == 1 &&
+            (full.splitOn "  row x 8 y 8 ").length > 1 }]
+
 /-- Every check, in the order they run. -/
 def checks (_ : Unit) : List Check :=
   entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
@@ -2857,6 +3555,9 @@ def checks (_ : Unit) : List Check :=
     fuzzyChecks () ++
     searchChecks () ++
     pairChecks () ++
+    pictureChecks () ++
+    themePicturesChecks () ++
+    paddingChecks () ++
     renderChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. A check that
@@ -2961,7 +3662,7 @@ def run (scenario : String) (checks : List Check) : IO UInt8 := do
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | window-host [<file>] | window-host-undrawn <file>]"
+      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | theme-pictures <dir> <font> [--write] | window-host [<file>] | window-host-config <sysroot> <olean dir> <config dir> | window-host-undrawn <file>]"
   return 2
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
@@ -2969,22 +3670,40 @@ scripted platform, on the absolute path `file`, or with no file, on the
 editor's one empty buffer, when it is `none`: a cells display bound to the
 presenter, a clipboard of its own, no config, and the report asked for. The
 sample window opens, reports its fixed input and asks to close, which ends
-the host's loop and closes the window, and the report is printed to stderr.
-0 when the window ran, the latest render session's counters, read once
+the host's loop, runs the window mode's shutdown and closes the window, and
+the report is printed to stderr. 0 when the window ran, the shutdown ran
+once and while the window still ran, the latest render session's counters, read once
 `windowRun` has returned (the presenter's last handle), show a frame drawn,
-and no surface said what it offered, and, with no file, the last title the
-scripted window was asked to show is `scratch`; 1 otherwise, saying why on
-stderr. The process starts no other render session, so the counters are this
+no surface said what it offered, the window was opened with the themed
+title bar and asked for the dark appearance of the built-in paper and for
+nothing else, and, with no file, the last title the scripted window was
+asked to show is `scratch`; 1 otherwise, saying why on stderr. The process starts no other render session, so the counters are this
 run's. -/
 def windowHostScenario (file : Option String) : IO UInt8 := do
   let options : Editor.Window.Options :=
     { file, config := none, configGiven := false, sysroot := none, oleans := ""
       composition := true, report := true }
+  -- The window mode's shutdown, which first asks the window to minimise: a
+  -- scripted window records that only while it runs, and runs until it is
+  -- closed, so the record shows the shutdown ran before the close. It asks
+  -- a moment later, by which a window closed first has ended its run.
+  let shutdowns ← IO.mkRef 0
+  let shutdown := do
+    shutdowns.modify (· + 1)
+    IO.sleep 100
+    Editor.Ffi.windowRequest .scripted .minimise
+    Editor.Window.shutdown
   let status ←
     Editor.Window.host .scripted options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[]
+        (← Editor.Clipboard.InProcess.new).handle #[] shutdown .headless
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host: the window mode ended with status {status}"
+    return 1
+  unless (← shutdowns.get) == 1 do
+    IO.eprintln s!"ffi-test window-host: the shutdown ran {← shutdowns.get} times, not once"
+    return 1
+  unless ((← Editor.Ffi.windowAsked .scripted).getD #[]).contains (.request .minimise) do
+    IO.eprintln "ffi-test window-host: the shutdown did not run before the window was closed"
     return 1
   let some counters ← Editor.Ffi.renderCounters |
     IO.eprintln "ffi-test window-host: no render session was started"
@@ -2997,6 +3716,20 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   unless (← Editor.Ffi.windowPresentation) == none do
     IO.eprintln "ffi-test window-host: a scripted window said what a surface offered"
     return 1
+  -- With no config the window opens with the themed title bar, and once it
+  -- has opened it is asked for the appearance of the built-in theme's
+  -- paper, which is dark; the shutdown's minimise comes last.
+  unless (← Editor.Ffi.windowOpenedWith .scripted) == some (true, .themed) do
+    IO.eprintln "ffi-test window-host: the window was not opened with the themed title bar"
+    return 1
+  let requests :=
+    ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
+      | .request request => some request
+      | .title _ | .menu _ => none
+  unless requests == #[.darkAppearance, .minimise] do
+    IO.eprintln
+        s!"ffi-test window-host: the window was asked {repr requests}, not the dark appearance and then the shutdown's minimise"
+    return 1
   -- With no file the selected buffer is the one empty buffer, whose name is
   -- the window's title. With a file, its load may not finish before the
   -- sample asks to close, so the title is not looked at.
@@ -3004,12 +3737,56 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     let titles :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .title text => some text
-        | .request _ => none
+        | .request _ | .menu _ => none
     unless titles.back? == some "scratch" do
       IO.eprintln
           s!"ffi-test window-host: the window was last asked for the title {titles.back?}, not scratch"
       return 1
+    -- The menu bar crossed whole, from Lean through the scene to the
+    -- scripted window's record and back: the standard one, with the keys
+    -- the compiled bindings give it, asked once, since it never changed.
+    let menus :=
+      ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
+        | .menu menu => some menu
+        | .request _ | .title _ => none
+    let compiled :=
+      ({} : Editor.Config.Registry).replaceBindings .compiled
+        (Editor.FrameCommands.bindings ++ Editor.Menu.bindings)
+    let expected := compiled.menuOf Editor.Menu.standard
+    unless menus == #[expected] do
+      IO.eprintln
+          s!"ffi-test window-host: the window was asked for {menus.size} menu bars, not the standard one once: {repr menus}"
+      return 1
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
+  return 0
+
+/-- The window mode's wiring (`Editor.Window.host`) on the library's
+scripted platform, with no file and config loaded at start from
+`configDir` with the toolchain `sysroot` and the `.olean` files in
+`oleanDir`: the fixture `tests/window/title-bar/config`, whose `setup`
+keeps the standard title bar. The host waits for the start-up reload with
+no bound, so the result does not race the clock (the task's time limit
+ends a run that hangs). 0 when the window mode ended with status 0 and the
+scripted window was opened with the standard title bar; 1 otherwise,
+saying why on stderr. -/
+def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 := do
+  let options : Editor.Window.Options :=
+    { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
+      oleans := oleanDir, composition := true }
+  let status ←
+    Editor.Window.host .scripted options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
+        none)
+  unless status == 0 do
+    IO.eprintln s!"ffi-test window-host-config: the window mode ended with status {status}"
+    return 1
+  let opened ← Editor.Ffi.windowOpenedWith .scripted
+  unless opened == some (true, .standard) do
+    IO.eprintln
+        s!"ffi-test window-host-config: the window was opened with {repr opened}, not the standard title bar"
+    return 1
+  IO.println
+      "ffi-test window-host-config: the window opened with the title bar the start-up config chose"
   return 0
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
@@ -3025,7 +3802,7 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
       composition := true }
   let status ←
     Editor.Window.host .scriptedUndrawn options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[]
+        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless
   unless status == 1 do
     IO.eprintln s!"ffi-test window-host-undrawn: the window mode ended with status {status}, not 1"
     return 1
@@ -3071,12 +3848,20 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← FfiTest.run "ffi-test shutdown" (FfiTest.shutdownChecks ()))
   | ["display", fixture] =>
     IO.Process.exit (← FfiTest.displayScenario fixture)
+  | ["theme-pictures", dir, font] =>
+    IO.Process.exit (← FfiTest.themePicturesScenario dir font false)
+  | ["theme-pictures", dir, font, "--write"] =>
+    IO.Process.exit (← FfiTest.themePicturesScenario dir font true)
   | ["window-host", file] =>
     let status ← FfiTest.windowHostScenario (some file)
     Editor.Ffi.quit
     IO.Process.exit status
   | ["window-host"] =>
     let status ← FfiTest.windowHostScenario none
+    Editor.Ffi.quit
+    IO.Process.exit status
+  | ["window-host-config", sysroot, oleanDir, configDir] =>
+    let status ← FfiTest.windowHostConfigScenario sysroot oleanDir configDir
     Editor.Ffi.quit
     IO.Process.exit status
   | ["window-host-undrawn", file] =>

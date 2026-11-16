@@ -7,23 +7,27 @@
 //!
 //! | Part | Words |
 //! |---|---|
-//! | The scene | its width and height; the focus's presence and view id; the echo's length; the pending prefix's length; the preedit's presence and length; the title's length; the count of views; each view |
-//! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length and face's length |
+//! | The scene | its width and height; the focus's presence and view id; the echo's length; the echo's padding in whole points; the pending prefix's length; the preedit's presence and length; the title's length; the menu bar's presence (0 or 1), and when present its layout (`crate::menu`: the count of menus, each menu's title's length, role and items); the count of views; each view |
+//! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length, face's length, side (0 left, 1 right) and padding in whole points; its status face's presence and length; its padding across, down and top, in whole points |
 //! | The faces, after the last view | their presence (0: as last published); when present, the count of definitions and each definition |
-//! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a point; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 a length in 64ths of a point) followed by its value |
+//! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a point; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 a length in 64ths of a point) followed by its value; the vertical padding in 64ths of a point |
 //!
-//! A definition is 22 words.
+//! A view is at least 18 words, and a definition is 24 words.
 //!
-//! A point is a logical one: a physical pixel at scale 1. A face's two
-//! lengths cross as the theme states them, in points, and no scale
-//! crosses with them: layout multiplies them by the scale it has
-//! (`editor_layout::face`, "Units"). Every other length of a scene, its
-//! size and each view's rectangle, is in physical pixels.
+//! A point is a logical one: a physical pixel at scale 1. A face's three
+//! lengths, a status field's padding, a view's padding and the echo's
+//! cross as Lean states them, in points, and no scale crosses with them:
+//! layout multiplies them by the scale it has (`editor_layout::face`,
+//! "Units"; `editor_layout::frame`, "The padding"). Every other length of
+//! a scene, its size and each view's rectangle, is in physical pixels.
 //!
 //! The string is every text of the scene one after another, in the order
 //! the words give their lengths: the echo, the pending prefix, the preedit
-//! if present, the title, then for each view its cursor's face, its decorations' faces
-//! and its status fields' texts and faces, then for each definition its
+//! if present, the title, the menu bar's texts if present (each menu's
+//! title, then its items' titles and command names, in order), then for
+//! each view its cursor's face, its decorations' faces, its status
+//! fields' texts and faces and its status face if present, then for each
+//! definition its
 //! name and its family when present. A length that does not end on a
 //! character boundary, and text left over, are refusals.
 //!
@@ -45,10 +49,12 @@
 //! (`super::editor_ffi_display_define`).
 //!
 //! Refused, with what was published before kept: a presence that is
-//! neither 0 nor 1; a slant, an underline style or a line height's kind
-//! that is none of those listed; a weight outside 1 to 1000; a
-//! strike-through that is neither 0 nor 1; and a colour, a size or a line
-//! height no `u32` holds, which is refused, not cut down. The words of an
+//! neither 0 nor 1; a slant, an underline style, a line height's kind or a
+//! status field's side that is none of those listed; a weight outside 1 to
+//! 1000; a strike-through that is neither 0 nor 1; and a colour, a size, a
+//! line height, a vertical padding, a status field's padding, a view's
+//! padding or the echo's padding no `u32` holds, which is refused, not cut
+//! down. The words of an
 //! absent attribute are not looked at. What the attributes mean and how
 //! definitions merge are layout's rules (`editor_layout::face`); this
 //! module only carries them.
@@ -66,9 +72,10 @@
 
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Cursor, CursorShape, Decoration, Rect, Scene, Size, StatusField, View, ViewId,
+    Cursor, CursorShape, Decoration, Padding, Rect, Scene, Side, Size, StatusField, View, ViewId,
 };
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
+use editor_platform::Menu;
 use editor_text::Marker;
 
 use super::text_ref;
@@ -94,8 +101,26 @@ pub struct WireView {
     pub cursor_face: String,
     /// Its decorations: start, stop and face.
     pub decorations: Vec<(u64, u64, String)>,
-    /// Its status fields: text and face.
-    pub status: Vec<(String, String)>,
+    /// Its status fields.
+    pub status: Vec<WireField>,
+    /// The face of its status row, if it has one.
+    pub status_face: Option<String>,
+    /// Its padding across, down and top, in whole points.
+    pub padding: Padding,
+}
+
+/// A status field as it crossed: its text and its face, its side, and its
+/// padding in points.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WireField {
+    /// What it says.
+    pub text: String,
+    /// The name of its face.
+    pub face: String,
+    /// Its side of the row.
+    pub side: Side,
+    /// Its padding, in whole points.
+    pub padding: u32,
 }
 
 /// A definition of a face as it crossed: the name, and what it sets, in
@@ -118,6 +143,9 @@ pub struct WireScene {
     pub focused: Option<u64>,
     /// The echo area's text.
     pub echo: String,
+    /// The echo's padding from the frame's left and right edges, in whole
+    /// points.
+    pub echo_padding: u32,
     /// The pending key prefix.
     pub pending: String,
     /// The preedit text, if any.
@@ -125,6 +153,10 @@ pub struct WireScene {
     /// The window's title. Layout draws no title: [`WireScene::resolve`]
     /// leaves it out, and the display hands it to its presenter.
     pub title: String,
+    /// The menu bar, if the scene names one; `None` for a scene no command
+    /// loop made. Layout draws none: the display hands it to its presenter,
+    /// as the title.
+    pub menu: Option<Menu>,
     /// The views, in drawing order.
     pub views: Vec<WireView>,
     /// The definitions of the faces, in the order they were made; `None`
@@ -179,7 +211,10 @@ fn write_optional(words: &mut Writer, value: Option<u64>) {
 }
 
 /// How many words a definition of a face is.
-const FACE_WORDS: usize = 22;
+const FACE_WORDS: usize = 24;
+
+/// The tag of each side of a status row; as [`SLANTS`].
+const SIDES: [(u64, Side); 2] = [(0, Side::Left), (1, Side::Right)];
 
 /// A presence word: whether what follows is there. `None` when the words
 /// run out or it is neither 0 nor 1.
@@ -188,6 +223,49 @@ fn presence(words: &mut Reader<'_>) -> Option<bool> {
         0 => Some(false),
         1 => Some(true),
         _ => None,
+    }
+}
+
+/// A scene's words and string as the menu's layout is read from them
+/// ([`crate::menu`]): a text is its length, read from the string.
+struct Reading<'r, 'a> {
+    /// The words.
+    words: &'r mut Reader<'a>,
+    /// The string.
+    texts: &'r mut Texts<'a>,
+}
+
+impl crate::menu::Source for Reading<'_, '_> {
+    fn word(&mut self) -> Option<u64> {
+        self.words.word()
+    }
+
+    fn text(&mut self) -> Option<String> {
+        self.texts.take(self.words.size()?)
+    }
+
+    fn count(&mut self, each: usize) -> Option<usize> {
+        self.words.count(each)
+    }
+}
+
+/// A scene's words and string as the menu's layout is written to them: a
+/// text is its length, with the text added to the string.
+struct Writing<'w> {
+    /// The words.
+    words: &'w mut Writer,
+    /// The string.
+    strings: &'w mut String,
+}
+
+impl crate::menu::Sink for Writing<'_> {
+    fn word(&mut self, word: u64) {
+        self.words.word(word);
+    }
+
+    fn text(&mut self, text: &str) {
+        self.words.size(text.len());
+        self.strings.push_str(text);
     }
 }
 
@@ -236,7 +314,7 @@ fn tag_of<T: Copy + PartialEq>(tags: &[(u64, T)], value: T) -> u64 {
         .map_or(0, |(tag, _)| *tag)
 }
 
-/// Reads one definition of a face: its 22 words, and its name and its
+/// Reads one definition of a face: its 24 words, and its name and its
 /// family from `texts`. The words of an attribute that is absent are read
 /// and not looked at.
 fn face(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireFace> {
@@ -283,6 +361,7 @@ fn face(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireFace> {
         let _unread = (words.word()?, words.word()?);
         None
     };
+    let vertical_padding = optional_u32(words)?.map(Length);
     Some(WireFace {
         name,
         face: Face {
@@ -295,11 +374,12 @@ fn face(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireFace> {
             underline,
             strike_through,
             line_height,
+            vertical_padding,
         },
     })
 }
 
-/// Writes one definition of a face: its 22 words, and its name and its
+/// Writes one definition of a face: its 24 words, and its name and its
 /// family to `strings`.
 fn write_face(words: &mut Writer, strings: &mut String, definition: &WireFace) {
     let face = &definition.face;
@@ -329,6 +409,10 @@ fn write_face(words: &mut Writer, strings: &mut String, definition: &WireFace) {
     words.word(u64::from(face.line_height.is_some()));
     words.word(kind);
     words.word(u64::from(value));
+    write_optional(
+        words,
+        face.vertical_padding.map(|padding| u64::from(padding.0)),
+    );
 }
 
 /// Reads the count of definitions and each definition.
@@ -396,12 +480,28 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
         let (start, stop) = (words.word()?, words.word()?);
         decorations.push((start, stop, texts.take(words.size()?)?));
     }
-    let count = words.count(2)?;
+    let count = words.count(4)?;
     let mut status = Vec::with_capacity(count);
     for _ in 0..count {
         let (text, face) = (words.size()?, words.size()?);
-        status.push((texts.take(text)?, texts.take(face)?));
+        let side = tagged(&SIDES, words.word()?)?;
+        let padding = narrow(words.word()?)?;
+        status.push(WireField {
+            text: texts.take(text)?,
+            face: texts.take(face)?,
+            side,
+            padding,
+        });
     }
+    let status_face = match optional(words)? {
+        Some(len) => Some(texts.take(crate::words::size(len))?),
+        None => None,
+    };
+    let padding = Padding {
+        across: narrow(words.word()?)?,
+        down: narrow(words.word()?)?,
+        top: narrow(words.word()?)?,
+    };
     Some(WireView {
         id,
         rect,
@@ -412,6 +512,8 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
         cursor_face,
         decorations,
         status,
+        status_face,
+        padding,
     })
 }
 
@@ -424,14 +526,23 @@ impl WireScene {
         let size = [words.word()?, words.word()?];
         let focused = optional(&mut words)?;
         let echo = texts.take(words.size()?)?;
+        let echo_padding = narrow(words.word()?)?;
         let pending = texts.take(words.size()?)?;
         let preedit = match optional(&mut words)? {
             Some(len) => Some(texts.take(crate::words::size(len))?),
             None => None,
         };
         let title = texts.take(words.size()?)?;
-        // A view is at least fourteen words.
-        let count = words.count(14)?;
+        let menu = if presence(&mut words)? {
+            Some(crate::menu::read(&mut Reading {
+                words: &mut words,
+                texts: &mut texts,
+            })?)
+        } else {
+            None
+        };
+        // A view is at least eighteen words.
+        let count = words.count(18)?;
         let views = (0..count)
             .map(|_| view(&mut words, &mut texts))
             .collect::<Option<_>>()?;
@@ -445,9 +556,11 @@ impl WireScene {
             size,
             focused,
             echo,
+            echo_padding,
             pending,
             preedit,
             title,
+            menu,
             views,
             faces,
         })
@@ -455,7 +568,7 @@ impl WireScene {
 
     /// The words and the string that spell this scene.
     pub fn encode(&self) -> (Vec<u8>, String) {
-        let mut words = Writer::with_capacity(10 + 20 * self.views.len());
+        let mut words = Writer::with_capacity(12 + 22 * self.views.len());
         let mut strings = String::new();
         /// Writes `text`'s length and adds it to the string.
         fn text(words: &mut Writer, strings: &mut String, text: &str) {
@@ -466,6 +579,7 @@ impl WireScene {
         words.word(self.size[1]);
         write_optional(&mut words, self.focused);
         text(&mut words, &mut strings, &self.echo);
+        words.word(u64::from(self.echo_padding));
         text(&mut words, &mut strings, &self.pending);
         words.word(u64::from(self.preedit.is_some()));
         text(
@@ -474,6 +588,16 @@ impl WireScene {
             self.preedit.as_deref().unwrap_or(""),
         );
         text(&mut words, &mut strings, &self.title);
+        words.word(u64::from(self.menu.is_some()));
+        if let Some(menu) = &self.menu {
+            crate::menu::write(
+                &mut Writing {
+                    words: &mut words,
+                    strings: &mut strings,
+                },
+                menu,
+            );
+        }
         words.size(self.views.len());
         for view in &self.views {
             words.word(view.id);
@@ -495,12 +619,23 @@ impl WireScene {
                 text(&mut words, &mut strings, face);
             }
             words.size(view.status.len());
-            for (field, face) in &view.status {
-                words.size(field.len());
-                words.size(face.len());
-                strings.push_str(field);
-                strings.push_str(face);
+            for field in &view.status {
+                words.size(field.text.len());
+                words.size(field.face.len());
+                words.word(tag_of(&SIDES, field.side));
+                words.word(u64::from(field.padding));
+                strings.push_str(&field.text);
+                strings.push_str(&field.face);
             }
+            words.word(u64::from(view.status_face.is_some()));
+            text(
+                &mut words,
+                &mut strings,
+                view.status_face.as_deref().unwrap_or(""),
+            );
+            words.word(u64::from(view.padding.across));
+            words.word(u64::from(view.padding.down));
+            words.word(u64::from(view.padding.top));
         }
         words.word(u64::from(self.faces.is_some()));
         if let Some(faces) = &self.faces {
@@ -563,11 +698,15 @@ impl WireScene {
                     status: view
                         .status
                         .iter()
-                        .map(|(text, face)| StatusField {
-                            text: text.clone(),
-                            face: face.clone(),
+                        .map(|field| StatusField {
+                            text: field.text.clone(),
+                            face: field.face.clone(),
+                            side: field.side,
+                            padding: field.padding,
                         })
                         .collect(),
+                    status_face: view.status_face.clone(),
+                    padding: view.padding,
                 }
             })
             .collect();
@@ -579,6 +718,7 @@ impl WireScene {
             views,
             focused: self.focused.map(ViewId),
             echo: self.echo.clone(),
+            echo_padding: self.echo_padding,
             pending: self.pending.clone(),
             preedit: self.preedit.clone(),
             faces: self.faces.as_deref().map(face_defs),
@@ -594,11 +734,16 @@ fn pixels(count: u64) -> u32 {
 #[cfg(test)]
 mod tests {
     use editor_layout::face::{Color, Face, Underline, UnderlineStyle};
-    use editor_layout::scene::CursorShape;
+    use editor_layout::scene::{CursorShape, Padding, Side, StatusField};
     use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
     use editor_text::{Anchor, Bias, Marker, Selection, SelectionRange};
 
-    use super::{WireFace, WireScene, WireView, decode_definitions, encode_definitions, pixels};
+    use editor_platform::menu::{Action, Item, KeyEquivalent, Role, Submenu, System};
+    use editor_platform::{Menu, Modifiers};
+
+    use super::{
+        WireFace, WireField, WireScene, WireView, decode_definitions, encode_definitions, pixels,
+    };
     use crate::document::Document;
     use crate::snapshot::Snapshot;
     use crate::words::tests::buffer;
@@ -609,9 +754,12 @@ mod tests {
             size: [96, 112],
             focused: Some(1),
             echo: "fixture".to_owned(),
+            echo_padding: 14,
             pending: "g".to_owned(),
             preedit: Some("é".to_owned()),
             title: "notes.txt".to_owned(),
+            // The menu's own test is `a_scenes_menu_crosses_…`.
+            menu: None,
             views: vec![WireView {
                 id: 1,
                 rect: [0, 0, 96, 80],
@@ -621,7 +769,18 @@ mod tests {
                 cursor_shape: 2,
                 cursor_face: "cursor.normal".to_owned(),
                 decorations: vec![(0, 2, "keyword".to_owned())],
-                status: vec![("NORMAL".to_owned(), "mode".to_owned())],
+                status: vec![WireField {
+                    text: "NORMAL".to_owned(),
+                    face: "mode".to_owned(),
+                    side: Side::Right,
+                    padding: 8,
+                }],
+                status_face: Some("dim".to_owned()),
+                padding: Padding {
+                    across: 8,
+                    down: 4,
+                    top: 28,
+                },
             }],
             faces: None,
         }
@@ -633,13 +792,19 @@ mod tests {
         assert_eq!(
             words,
             buffer(&[
-                96, 112, 1, 1, 7, 1, 1, 2, 9, 1, // the scene
+                96, 112, 1, 1, 7, 14, 1, 1, 2, 9, 0, 1, // the scene: echo padded 14, no menu
                 1, 0, 0, 96, 80, 1, 0, 1, 0, 2, 1, 2, 2, 13, // the view
-                1, 0, 2, 7, 1, 6, 4, // its decorations and status
-                0, // no faces
+                1, 0, 2, 7, // its decorations
+                1, 6, 4, 1, 8, // its status field: right, padded 8
+                1, 3, // its status face
+                8, 4, 28, // its padding across, down and top
+                0,  // no faces
             ])
         );
-        assert_eq!(strings, "fixturegénotes.txtcursor.normalkeywordNORMALmode");
+        assert_eq!(
+            strings,
+            "fixturegénotes.txtcursor.normalkeywordNORMALmodedim"
+        );
         assert_eq!(WireScene::decode(&words, &strings), Some(full()));
     }
 
@@ -652,10 +817,132 @@ mod tests {
         };
         let (words, strings) = titled.encode();
         // The preedit's presence and length, then the title's length, then
-        // no view and no faces.
-        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 1, 2, 8, 0, 0]));
+        // no menu, no view and no faces.
+        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 1, 2, 8, 0, 0, 0]));
         assert_eq!(strings, "étodo.txt");
         assert_eq!(WireScene::decode(&words, &strings), Some(titled));
+    }
+
+    /// A menu bar with every kind of item, role, key and modifier.
+    fn every_menu() -> Menu {
+        let held = |shift, control, alt, super_key| Modifiers {
+            shift,
+            control,
+            alt,
+            super_key,
+        };
+        Menu {
+            menus: vec![
+                Submenu {
+                    title: "Ap".to_owned(),
+                    role: Some(Role::App),
+                    items: vec![
+                        Item::Entry {
+                            title: "Q".to_owned(),
+                            key: Some(KeyEquivalent {
+                                character: 'q',
+                                modifiers: held(false, false, false, true),
+                            }),
+                            action: Action::System(System::Quit),
+                        },
+                        Item::Entry {
+                            title: "S".to_owned(),
+                            key: None,
+                            action: Action::System(System::Services),
+                        },
+                        Item::Separator,
+                    ],
+                },
+                Submenu {
+                    title: "é".to_owned(),
+                    role: Some(Role::Window),
+                    items: vec![Item::Entry {
+                        title: "U".to_owned(),
+                        key: Some(KeyEquivalent {
+                            character: 'Z',
+                            modifiers: held(true, true, true, true),
+                        }),
+                        action: Action::Command("undo".to_owned()),
+                    }],
+                },
+                Submenu {
+                    title: String::new(),
+                    role: None,
+                    items: vec![],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn a_scenes_menu_crosses_after_the_title_and_comes_back_as_sent() {
+        let menued = WireScene {
+            title: "t".to_owned(),
+            menu: Some(every_menu()),
+            ..WireScene::default()
+        };
+        let (words, strings) = menued.encode();
+        assert_eq!(
+            words,
+            buffer(&[
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 1, // to the title's length
+                1, 3, // the menu's presence, and three menus
+                2, 1, 3, // "Ap", the app's, three items
+                2, 1, 1, 0x71, 8, 5, // Quit, "Q", s-q
+                2, 1, 0, 0, 0, 1, // Services, "S", no key
+                0, // a separator
+                2, 2, 1, // "é", the windows menu, one item
+                1, 1, 1, 0x5a, 15, 4, // command "undo", "U", every modifier and Z
+                0, 0, 0, // untitled, plain, no items
+                0, 0, // no view, no faces
+            ])
+        );
+        assert_eq!(strings, "tApQSéUundo");
+        assert_eq!(WireScene::decode(&words, &strings), Some(menued));
+    }
+
+    #[test]
+    fn a_scene_with_no_menu_names_none() {
+        let plain = WireScene {
+            title: "t".to_owned(),
+            ..WireScene::default()
+        };
+        assert_eq!(plain.menu, None);
+        let (words, strings) = plain.encode();
+        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0]));
+        assert_eq!(WireScene::decode(&words, &strings), Some(plain));
+        let empty = WireScene {
+            menu: Some(Menu::default()),
+            ..WireScene::default()
+        };
+        let (words, strings) = empty.encode();
+        assert_eq!(WireScene::decode(&words, &strings), Some(empty));
+    }
+
+    #[test]
+    fn a_menu_whose_key_is_no_char_or_whose_tag_is_unknown_is_refused() {
+        let menued = WireScene {
+            menu: Some(every_menu()),
+            ..WireScene::default()
+        };
+        let (words, strings) = menued.encode();
+        let word = |index: usize| index * 8;
+        let changed = |index: usize, value: u64| {
+            let mut words = words.clone();
+            words[word(index)..word(index) + 8].copy_from_slice(&value.to_le_bytes());
+            WireScene::decode(&words, &strings)
+        };
+        // The title's length is word 9; the menu's presence 10, its count
+        // 11, the first menu's title, role and count 12 to 14, and its
+        // first item's kind, title, key and tag 15 to 20.
+        assert_eq!(changed(10, 2), None, "a menu's presence of 2");
+        assert_eq!(changed(13, 3), None, "a role of 3");
+        assert_eq!(changed(15, 3), None, "an item's kind of 3");
+        assert_eq!(changed(17, 2), None, "a key's presence of 2");
+        assert_eq!(changed(18, 0xD800), None, "a key that is no char");
+        assert_eq!(changed(19, 16), None, "a modifier past the system key's");
+        assert_eq!(changed(20, 6), None, "a system tag of 6");
+        assert!(changed(20, 0).is_some(), "the tag of About is one");
     }
 
     #[test]
@@ -668,7 +955,7 @@ mod tests {
         assert_eq!(WireScene::decode(&words, &strings), Some(titled));
         // The title's length, 2, made 1: it ends inside "é", and the byte
         // left over is no text.
-        words[8 * 8] = 1;
+        words[9 * 8] = 1;
         assert_eq!(WireScene::decode(&words, &strings), None);
     }
 
@@ -676,21 +963,21 @@ mod tests {
     fn absent_parts_are_written_as_zero_and_read_back_absent() {
         let empty = WireScene::default();
         let (words, strings) = empty.encode();
-        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         assert_eq!(WireScene::decode(&words, &strings), Some(empty));
-        // A view with nothing in it is its fourteen words, between the
-        // scene's ten and the faces' presence.
+        // A view with nothing in it is its nineteen words, between the
+        // scene's twelve and the faces' presence.
         let bare = WireScene {
             views: vec![WireView::default()],
             ..WireScene::default()
         };
         let (words, strings) = bare.encode();
-        assert_eq!(words.len(), (10 + 14 + 1) * 8);
+        assert_eq!(words.len(), (12 + 19 + 1) * 8);
         assert_eq!(WireScene::decode(&words, &strings), Some(bare));
     }
 
-    /// A definition that sets every attribute, and its 22 words.
-    fn every() -> (WireFace, [u64; 22]) {
+    /// A definition that sets every attribute, and its 24 words.
+    fn every() -> (WireFace, [u64; 24]) {
         let face = WireFace {
             name: "kw".to_owned(),
             face: Face {
@@ -706,6 +993,7 @@ mod tests {
                 }),
                 strike_through: Some(true),
                 line_height: Some(LineHeight::Pixels(Length(1536))),
+                vertical_padding: Some(Length(192)),
             },
         };
         let words = [
@@ -731,6 +1019,8 @@ mod tests {
             1,
             1,
             1536, // the line height: pixels
+            1,
+            192, // the vertical padding
         ];
         (face, words)
     }
@@ -752,13 +1042,13 @@ mod tests {
         };
         let scene = with_faces(vec![every, unset]);
         let (words, strings) = scene.encode();
-        let mut expected = vec![0; 10];
+        let mut expected = vec![0; 12];
         // Present, and two definitions.
         expected.extend([1, 2]);
         expected.extend(every_words);
-        // A definition that sets nothing: its name's length and 21 zeros.
+        // A definition that sets nothing: its name's length and 23 zeros.
         expected.push(1);
-        expected.extend([0; 21]);
+        expected.extend([0; 23]);
         assert_eq!(words, buffer(&expected));
         // Each definition's name, then its family when it has one.
         assert_eq!(strings, "kwmonox");
@@ -769,7 +1059,7 @@ mod tests {
         let (words, strings) = full.encode();
         assert_eq!(
             strings,
-            "fixturegénotes.txtcursor.normalkeywordNORMALmodekwmono"
+            "fixturegénotes.txtcursor.normalkeywordNORMALmodedimkwmono"
         );
         assert_eq!(WireScene::decode(&words, &strings), Some(full));
     }
@@ -778,9 +1068,9 @@ mod tests {
     fn faces_that_are_absent_are_one_word_and_no_definitions_are_two() {
         let absent = WireScene::default();
         let none = with_faces(vec![]);
-        assert_eq!(absent.encode().0, buffer(&[0; 11]));
+        assert_eq!(absent.encode().0, buffer(&[0; 13]));
         let (words, strings) = none.encode();
-        let mut expected = vec![0; 10];
+        let mut expected = vec![0; 12];
         expected.extend([1, 0]);
         assert_eq!(words, buffer(&expected));
         // They read back apart: absent is "as last published", and no
@@ -788,7 +1078,7 @@ mod tests {
         assert_eq!(WireScene::decode(&words, &strings), Some(none));
         assert_ne!(
             WireScene::decode(&words, &strings),
-            WireScene::decode(&buffer(&[0; 11]), "")
+            WireScene::decode(&buffer(&[0; 13]), "")
         );
     }
 
@@ -805,7 +1095,7 @@ mod tests {
                 WireScene::decode(&words, &strings),
                 Some(with_faces(vec![definition]))
             );
-            crate::words::tests::words_of(&words)[19..].to_vec()
+            crate::words::tests::words_of(&words)[21..].to_vec()
         };
         let slants = [Slant::Upright, Slant::Italic, Slant::Oblique];
         for (tag, slant) in (0..).zip(slants) {
@@ -840,7 +1130,15 @@ mod tests {
                 line_height: Some(height),
                 ..Face::default()
             }));
-            assert_eq!(words[12..], expected, "{height:?}");
+            assert_eq!(words[12..15], expected, "{height:?}");
+        }
+        // The vertical padding, last, and a padding of 0 set.
+        for (padding, expected) in [(Some(Length(192)), [1, 192]), (Some(Length(0)), [1, 0])] {
+            let words = tail(face(Face {
+                vertical_padding: padding,
+                ..Face::default()
+            }));
+            assert_eq!(words[15..], expected, "{padding:?}");
         }
         // Not struck through is set, and is not unset.
         let words = tail(face(Face {
@@ -855,42 +1153,45 @@ mod tests {
         let (every, _) = every();
         let (bytes, strings) = with_faces(vec![every]).encode();
         let words = crate::words::tests::words_of(&bytes);
-        assert_eq!(words.len(), 10 + 2 + 22);
-        // The scene's words with the word at `index` made `value`.
+        assert_eq!(words.len(), 12 + 2 + 24);
+        // The scene's words with the word at `index` made `value`, the
+        // index counted from the faces' presence, after the scene's twelve.
         let with = |index: usize, value: u64| {
             let mut words = words.clone();
-            words[index] = value;
+            words[12 + index] = value;
             WireScene::decode(&buffer(&words), &strings)
         };
         // As they are, they spell it.
-        assert!(with(10, 1).is_some());
+        assert!(with(0, 1).is_some());
         let too_big = u64::from(u32::MAX) + 1;
         let refused = [
-            (10, 2, "a presence of the faces that is neither 0 nor 1"),
-            (11, 2, "more definitions than there are words for"),
-            (13, 2, "a presence of an attribute that is neither 0 nor 1"),
-            (15, 2, "the size's presence"),
-            (16, too_big, "a size no u32 holds"),
-            (17, 2, "the weight's presence"),
-            (18, 0, "a weight under 1"),
-            (18, 1001, "a weight over 1000"),
-            (19, 2, "the slant's presence"),
-            (20, 3, "a slant that is none"),
-            (21, 2, "the foreground's presence"),
-            (22, too_big, "a foreground no u32 holds"),
-            (23, 2, "the background's presence"),
-            (24, too_big, "a background no u32 holds"),
-            (25, 2, "the underline's presence"),
-            (26, 6, "an underline style that is none"),
-            (27, 2, "the underline's colour's presence"),
-            (28, too_big, "an underline colour no u32 holds"),
-            (29, 2, "strike-through's presence"),
-            (30, 2, "a strike-through that is neither 0 nor 1"),
-            (31, 2, "the line height's presence"),
-            (32, 2, "a line height's kind that is none"),
-            (33, too_big, "a line height no u32 holds"),
-            (12, 3, "a name that takes the family's text"),
-            (14, 5, "a family longer than the text left"),
+            (0, 2, "a presence of the faces that is neither 0 nor 1"),
+            (1, 2, "more definitions than there are words for"),
+            (3, 2, "a presence of an attribute that is neither 0 nor 1"),
+            (5, 2, "the size's presence"),
+            (6, too_big, "a size no u32 holds"),
+            (7, 2, "the weight's presence"),
+            (8, 0, "a weight under 1"),
+            (8, 1001, "a weight over 1000"),
+            (9, 2, "the slant's presence"),
+            (10, 3, "a slant that is none"),
+            (11, 2, "the foreground's presence"),
+            (12, too_big, "a foreground no u32 holds"),
+            (13, 2, "the background's presence"),
+            (14, too_big, "a background no u32 holds"),
+            (15, 2, "the underline's presence"),
+            (16, 6, "an underline style that is none"),
+            (17, 2, "the underline's colour's presence"),
+            (18, too_big, "an underline colour no u32 holds"),
+            (19, 2, "strike-through's presence"),
+            (20, 2, "a strike-through that is neither 0 nor 1"),
+            (21, 2, "the line height's presence"),
+            (22, 2, "a line height's kind that is none"),
+            (23, too_big, "a line height no u32 holds"),
+            (24, 2, "the vertical padding's presence"),
+            (25, too_big, "a vertical padding no u32 holds"),
+            (2, 3, "a name that takes the family's text"),
+            (4, 5, "a family longer than the text left"),
         ];
         for (index, value, what) in refused {
             assert_eq!(with(index, value), None, "{what}");
@@ -898,11 +1199,12 @@ mod tests {
         // The largest values are taken.
         let largest = u64::from(u32::MAX);
         for (index, value) in [
-            (16, largest),
-            (18, 1),
-            (18, 1000),
-            (22, largest),
-            (33, largest),
+            (6, largest),
+            (8, 1),
+            (8, 1000),
+            (12, largest),
+            (23, largest),
+            (25, largest),
         ] {
             assert!(with(index, value).is_some(), "word {index} as {value}");
         }
@@ -911,12 +1213,12 @@ mod tests {
         // another length.
         let face_with = |index: usize| with(index, 0)?.faces?.pop().map(|flat| flat.face);
         assert_eq!(
-            face_with(16).map(|face| face.size),
+            face_with(6).map(|face| face.size),
             Some(Some(Length(0))),
             "a size of 0"
         );
         assert_eq!(
-            face_with(33).map(|face| face.line_height),
+            face_with(23).map(|face| face.line_height),
             Some(Some(LineHeight::Pixels(Length(0)))),
             "a line height of 0"
         );
@@ -932,7 +1234,7 @@ mod tests {
         assert_eq!(WireScene::decode(&longer, &strings), None);
         assert_eq!(WireScene::decode(&bytes, &format!("{strings}x")), None);
         // Words that stop where the faces' presence would be.
-        assert_eq!(WireScene::decode(&buffer(&[0; 10]), ""), None);
+        assert_eq!(WireScene::decode(&buffer(&[0; 11]), ""), None);
     }
 
     #[test]
@@ -947,7 +1249,7 @@ mod tests {
         let mut expected = vec![2];
         expected.extend(every_words);
         expected.push(1);
-        expected.extend([0; 21]);
+        expected.extend([0; 23]);
         assert_eq!(words, buffer(&expected));
         assert_eq!(strings, "kwmonox");
         assert_eq!(
@@ -955,9 +1257,9 @@ mod tests {
             Some(definitions.clone())
         );
         // The words and the string a scene of no view carries them in,
-        // after its ten words and the faces' presence.
+        // after its twelve words and the faces' presence.
         let (scene_words, scene_strings) = with_faces(definitions).encode();
-        assert_eq!(scene_words[11 * 8..], words[..]);
+        assert_eq!(scene_words[13 * 8..], words[..]);
         assert_eq!(scene_strings, strings);
         // No definitions is a count of 0, and undefines every face.
         let (none, none_strings) = encode_definitions(&[]);
@@ -1031,6 +1333,100 @@ mod tests {
         shapeless.views[0].cursor_shape = 4;
         let (words, strings) = shapeless.encode();
         assert_eq!(WireScene::decode(&words, &strings), None);
+        // A status field's side that is none, a padding no u32 holds, and
+        // a status face's presence that is neither 0 nor 1: the words of
+        // the full scene's view from its status field's side on.
+        let (bytes, strings) = full().encode();
+        let words = crate::words::tests::words_of(&bytes);
+        assert_eq!(words[33..40], [1, 8, 1, 3, 8, 4, 28]);
+        let with = |index: usize, value: u64| {
+            let mut words = words.clone();
+            words[index] = value;
+            WireScene::decode(&buffer(&words), &strings)
+        };
+        assert!(with(33, 0).is_some());
+        assert!(with(34, u64::from(u32::MAX)).is_some());
+        assert_eq!(with(33, 2), None, "a side that is none");
+        assert_eq!(
+            with(34, u64::from(u32::MAX) + 1),
+            None,
+            "a padding no u32 holds"
+        );
+        assert_eq!(with(35, 2), None, "a status face's presence of 2");
+        // A view's padding across, down or top, and the echo's padding, no
+        // u32 holds.
+        for index in [37, 38, 39, 5] {
+            assert!(with(index, u64::from(u32::MAX)).is_some());
+            assert_eq!(
+                with(index, u64::from(u32::MAX) + 1),
+                None,
+                "a padding no u32 holds, word {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scene_comes_back_as_it_crossed() {
+        let mut every_part = full();
+        every_part.faces = Some(vec![every().0]);
+        every_part.views.push(WireView {
+            status: vec![
+                WireField {
+                    text: "a".to_owned(),
+                    ..WireField::default()
+                },
+                WireField {
+                    face: "b".to_owned(),
+                    side: Side::Right,
+                    ..WireField::default()
+                },
+            ],
+            ..WireView::default()
+        });
+        for scene in [every_part, full(), WireScene::default()] {
+            let (words, strings) = scene.encode();
+            let decoded = WireScene::decode(&words, &strings).expect("a scene");
+            assert_eq!(decoded.encode(), (words, strings));
+            assert_eq!(decoded, scene);
+        }
+    }
+
+    #[test]
+    fn a_status_fields_side_and_padding_and_a_views_status_face_reach_layout() {
+        let scene = full().resolve(&[]);
+        let view = &scene.views[0];
+        assert_eq!(
+            view.status,
+            vec![StatusField {
+                text: "NORMAL".to_owned(),
+                face: "mode".to_owned(),
+                side: Side::Right,
+                padding: 8,
+            }]
+        );
+        assert_eq!(view.status_face.as_deref(), Some("dim"));
+    }
+
+    #[test]
+    fn a_views_padding_and_the_echos_reach_layout_in_points() {
+        let scene = full().resolve(&[]);
+        assert_eq!(
+            scene.views[0].padding,
+            Padding {
+                across: 8,
+                down: 4,
+                top: 28,
+            }
+        );
+        assert_eq!(scene.echo_padding, 14);
+        // None by default.
+        let bare = WireScene {
+            views: vec![WireView::default()],
+            ..WireScene::default()
+        }
+        .resolve(&[]);
+        assert_eq!(bare.views[0].padding, Padding::default());
+        assert_eq!(bare.echo_padding, 0);
     }
 
     #[test]

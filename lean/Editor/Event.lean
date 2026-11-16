@@ -31,10 +31,12 @@ event (`Event.key`), because a key may have an identity and produce no text
 
 A pointer event is a press, a drag, a release or a wheel, with the position
 in the frame, the button and the modifiers (`Pointer`). A resize is the
-frame's new size and its scale factor, and whether the window is in the
-system's fullscreen (`Resize`): the window says so after every change of it,
-whether a request or the user (the green button) made it. Positions and sizes
-are in the frame's physical pixels.
+frame's new size and its scale factor, whether the window is in the
+system's fullscreen, how far in its rounded bottom corners reach, and how
+far down its title bar covers it, in logical points (`Resize`): the window
+says so after every change of any of them, whether a request or the user
+(the green button) made it. Positions and sizes are in the frame's physical
+pixels; the corner and the top are in points.
 
 ## Files to open
 
@@ -48,7 +50,12 @@ the resize after it. What the loop does with them is `Editor/Loop.lean`'s.
 ## Where an addition goes
 
 Two roadmaps build on these events. The display pipeline owns producing them
-from winit in Rust; the command loop owns what Lean does with them.
+from winit in Rust; the command loop owns what Lean does with them. The
+macOS integration roadmap owns both sides of the system's quit
+(`quitRequested`): the application delegate that reports it, and the loop's
+`quit` that answers it; and both sides of a menu item chosen (`menu`): the
+menu bar's target that reports it, and the loop's invocation of its
+command.
 
 | Addition | Lean (command loop) | Rust (display pipeline) |
 |---|---|---|
@@ -260,8 +267,9 @@ structure Pointer where
   modifiers : Modifiers := {}
   deriving BEq, Repr
 
-/-- The frame's new size and scale factor, and whether the window is in the
-system's fullscreen. -/
+/-- The frame's new size and scale factor, whether the window is in the
+system's fullscreen, how far in its rounded bottom corners reach, and how far
+down its title bar covers it. -/
 structure Resize where
   /-- The drawable width, in physical pixels. -/
   width : Nat
@@ -271,6 +279,15 @@ structure Resize where
   scale : Float
   /-- Whether the window is in the system's fullscreen. -/
   fullscreen : Bool := false
+  /-- How far in from the window's left and right edges its rounded bottom
+  corners reach, in whole logical points: 0 for square corners and in
+  fullscreen. The window says it with every resize, as it says fullscreen
+  (`editor-platform`'s `Resize::corner_clearance`). -/
+  corner : Nat := 0
+  /-- How far down the window's title bar covers it, in whole logical
+  points: 0 in fullscreen and with the standard title bar
+  (`editor-platform`'s `Resize::top_inset`). -/
+  top : Nat := 0
   deriving BEq, Repr
 
 /-- What kind of thing an event came from. -/
@@ -327,6 +344,14 @@ inductive Event where
   /-- The system asked for these files to be opened, absolute, in its
   order. -/
   | openFiles (paths : List String)
+  /-- The system asked the program to quit: Command-Q, Quit from the Dock,
+  a logout, restart or shutdown. The editor puts it through its `quit`, and
+  answers the frame `keepRunning` when it does not quit. Not `quit`, which
+  is the queue's end. -/
+  | quitRequested
+  /-- A command item of the menu bar was chosen: the command of this name
+  runs, as an invocation no key yielded (`Editor/Menu.lean`). -/
+  | menu (command : String)
   /-- The queue has been quit: the loop pulling it must return. -/
   | quit
   deriving BEq, Repr

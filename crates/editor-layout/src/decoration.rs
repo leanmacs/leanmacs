@@ -30,7 +30,7 @@ use std::ops::Range;
 use editor_text::{Selection, Shape, Snapshot};
 
 use crate::face::{FaceDef, FaceId, Faces, Paint};
-use crate::shaper::{FontId, Shaper};
+use crate::shaper::{FontId, Length, Shaper};
 
 /// A span of a snapshot drawn in a face.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -49,13 +49,17 @@ pub trait DecorationSource {
 }
 
 /// What a stack of faces comes to for a shaper: the id of the font its
-/// runs are shaped in, and what they are painted with.
+/// runs are shaped in, what they are painted with, and the vertical
+/// padding of a row drawn in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Style {
     /// The font.
     pub font: FontId,
     /// The paint.
     pub paint: Paint,
+    /// The vertical padding, at the scale: in physical pixels
+    /// ([`face`](crate::face), "Units").
+    pub vertical_padding: Length,
 }
 
 /// The faces a layout holds, the scale their lengths are put at, and what
@@ -70,8 +74,8 @@ pub struct Style {
 /// and the only place: the faces over a run are merged in points
 /// ([`Faces::resolve`]), and the font they come to is put at the scale
 /// ([`FontSpec::scaled`](crate::shaper::FontSpec::scaled)) as it is handed
-/// to [`Shaper::font`]. A paint has no length, and is what it was at any
-/// scale.
+/// to [`Shaper::font`], and so is the vertical padding. A paint has no
+/// length, and is what it was at any scale.
 #[derive(Debug)]
 pub struct Styles {
     /// The faces.
@@ -149,6 +153,7 @@ impl Styles {
         let style = Style {
             font: shaper.font(&resolved.font.scaled(self.scale)),
             paint: resolved.paint,
+            vertical_padding: resolved.vertical_padding.scaled(self.scale),
         };
         self.kept.borrow_mut().insert(stack.to_vec(), style);
         style
@@ -417,7 +422,8 @@ mod tests {
             plain,
             Style {
                 font: FontId(0),
-                paint: Paint::default()
+                paint: Paint::default(),
+                vertical_padding: Length(0),
             }
         );
         let both = styles.style(&shaper, &[heavy, red_face]);

@@ -475,6 +475,7 @@ dependencies = [
 name = "editor-platform-winit"
 version = "0.1.0"
 dependencies = [
+ "dispatch2",
  "editor-platform",
  "objc2",
  "objc2-app-kit",

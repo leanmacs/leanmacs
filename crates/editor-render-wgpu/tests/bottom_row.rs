@@ -48,6 +48,7 @@ fn the_echo_is_drawn_in_the_bottom_row_in_the_echo_areas_background() {
             status: vec![StatusField {
                 text: "normal".to_owned(),
                 face: "mode-line".to_owned(),
+                ..StatusField::default()
             }],
             ..View::default()
         }],

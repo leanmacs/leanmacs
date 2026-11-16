@@ -295,7 +295,10 @@ mod tests {
      {
         let asked = Request::RunWindow {
             platform: PlatformId::Scripted,
-            options: WindowOptions { composition: false },
+            options: WindowOptions {
+                composition: false,
+                ..WindowOptions::default()
+            },
             presentation: Asked {
                 mode: Some(Mode::Mailbox),
                 frame_latency: Some(2),

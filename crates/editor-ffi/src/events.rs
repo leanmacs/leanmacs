@@ -80,6 +80,12 @@ pub enum EventKind {
     Resize = 9,
     /// The system asked for files to be opened: its words are the paths.
     OpenFiles = 10,
+    /// The system asked the program to quit (Command-Q, the Dock's Quit, a
+    /// logout): no code, text or words.
+    QuitRequested = 11,
+    /// A command item of the menu bar was chosen: its `text` is the
+    /// command's name, with no code or words.
+    Menu = 12,
 }
 
 impl EventKind {
@@ -102,6 +108,8 @@ impl EventKind {
             8 => Some(Self::CloseRequested),
             9 => Some(Self::Resize),
             10 => Some(Self::OpenFiles),
+            11 => Some(Self::QuitRequested),
+            12 => Some(Self::Menu),
             _ => None,
         }
     }
@@ -902,6 +910,8 @@ mod tests {
             (8, EventKind::CloseRequested),
             (9, EventKind::Resize),
             (10, EventKind::OpenFiles),
+            (11, EventKind::QuitRequested),
+            (12, EventKind::Menu),
         ];
         for (tag, kind) in kinds {
             assert_eq!(EventKind::from_tag(tag), Some(kind));
@@ -911,7 +921,7 @@ mod tests {
 
     #[test]
     fn an_unknown_event_kind_tag_is_refused() {
-        assert_eq!(EventKind::from_tag(11), None);
+        assert_eq!(EventKind::from_tag(13), None);
         assert_eq!(EventKind::from_tag(u64::MAX), None);
     }
 

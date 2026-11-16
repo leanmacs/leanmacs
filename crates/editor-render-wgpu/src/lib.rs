@@ -36,6 +36,7 @@ mod cpu;
 mod glyphs;
 mod gpu;
 mod painter;
+mod png;
 pub mod present;
 mod quads;
 mod raster;
@@ -76,6 +77,28 @@ impl Image {
         }
         let start = (y as usize * self.width as usize + x as usize) * 4;
         self.rgba.get(start..start + 4)?.try_into().ok()
+    }
+
+    /// The picture the PNG file `bytes` holds: 8 bits a channel, RGB or
+    /// RGBA, an RGB one read as opaque. Refused, with a sentence, when the
+    /// bytes are not such a file.
+    pub fn from_png(bytes: &[u8]) -> Result<Image, String> {
+        png::decode(bytes)
+    }
+
+    /// The picture as the bytes of a PNG file: RGB, 8 bits a channel, at
+    /// high compression. Its alpha is not written: what this crate draws
+    /// is opaque everywhere. Refused, with a sentence, when the picture
+    /// has no pixels across or down, which a PNG file cannot hold.
+    pub fn to_png(&self) -> Result<Vec<u8>, String> {
+        png::encode(self)
+    }
+
+    /// How the picture differs from `other`: `None` when they are not the
+    /// same size, and otherwise the largest difference of any channel of
+    /// any pixel, with how many pixels differ at all.
+    pub fn difference(&self, other: &Image) -> Option<(u8, usize)> {
+        png::difference(self, other)
     }
 }
 

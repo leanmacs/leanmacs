@@ -15,7 +15,10 @@
 //! What is laid out of it: each view's text across its `rect`, from its
 //! scroll anchor, with its selections, cursors and decorations, each run
 //! in the font its faces resolve to; and a view's `status` as one row at
-//! the bottom of its `rect`, above which its text has what is left. What
+//! the bottom of its `rect`, above which its text has what is left, with
+//! each field on its side and padded, the row in the view's
+//! `status_face` over the mode line's; each inset from the view's edges
+//! by its `padding`, and the echo by the scene's `echo_padding`. What
 //! it carries and lays out nothing of: the scene's `echo`, `pending`,
 //! `preedit` and `focused`, which no phase of the display pipeline draws
 //! yet.
@@ -103,13 +106,48 @@ pub struct Decoration {
     pub face: String,
 }
 
+/// Which end of a view's status row a field is drawn from
+/// ([`frame`](crate::frame), "The mode line").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Side {
+    /// From the row's start, after the left fields before it.
+    #[default]
+    Left,
+    /// Ending at the row's end, with the right fields after it.
+    Right,
+}
+
 /// One field of a view's status line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StatusField {
     /// What it says.
     pub text: String,
     /// The name of the face it takes.
     pub face: String,
+    /// The side of the row it is drawn on.
+    pub side: Side,
+    /// The space before and after its text, in whole points, which its
+    /// face's background fills. Layout multiplies it by its scale as it
+    /// does a face's lengths ([`face`](crate::face), "Units").
+    pub padding: u32,
+}
+
+/// How far a view's content is inset from its edges, in whole points,
+/// which layout multiplies by its scale as it does a face's lengths
+/// ([`Layout::padding_pixels`](crate::Layout::padding_pixels);
+/// [`frame`](crate::frame), "The padding"). The default is none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Padding {
+    /// The inset of the text, and of the status row's first and last
+    /// fields, from the view's left and right edges.
+    pub across: u32,
+    /// The inset of the text rows from the view's top, and from the top of
+    /// its status row (its bottom when it has none).
+    pub down: u32,
+    /// The further inset of the text rows from the view's top, beyond
+    /// `down`: what a window's title bar covers of a view along the
+    /// frame's top edge. 0 by default.
+    pub top: u32,
 }
 
 /// Which text: a key the binding gives each text, unique in the process.
@@ -182,6 +220,13 @@ pub struct View {
     pub decorations: Vec<Decoration>,
     /// Its status line, field by field.
     pub status: Vec<StatusField>,
+    /// The face of its status row, over the mode line's and under every
+    /// field's, which gives the row its background: an unselected
+    /// window's `mode-line.inactive`, and `None` for a selected one.
+    pub status_face: Option<String>,
+    /// How far its text and its status fields are inset from its edges, in
+    /// points; none by default.
+    pub padding: Padding,
 }
 
 /// Everything the display shows, as published after a command.
@@ -195,6 +240,10 @@ pub struct Scene {
     pub focused: Option<ViewId>,
     /// The echo area's text.
     pub echo: String,
+    /// How far the echo is inset from the frame's left and right edges, in
+    /// points, in the view [`ECHO_VIEW`](crate::frame::ECHO_VIEW) layout
+    /// makes of it; none by default.
+    pub echo_padding: u32,
     /// The pending key prefix, rendered by Lean.
     pub pending: String,
     /// The input method's preedit text, if it is composing.

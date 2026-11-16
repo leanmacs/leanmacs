@@ -4,7 +4,10 @@ import Editor.Face
 import Editor.Job
 import Editor.Key.Notation
 import Editor.Mode
+import Editor.ModeLine
+import Editor.Process.Environment
 import Editor.Store
+import Editor.Window
 
 /-!
 # `setup`: what config registers
@@ -120,7 +123,9 @@ with that message, and the config that was loaded before stays.
 The editor refuses a `setup` too, the same way, when what it registered
 cannot be meant: a command name or a job name registered twice (the first
 could never run), a key sequence bound twice (the first binding could never
-run), an ex name bound twice, a store name declared twice, a command over a store the `setup`
+run), an ex name bound twice, a store name declared twice, a theme defined
+twice or named twice, a segment defined twice, the mode line listed twice,
+a command over a store the `setup`
 does not declare, a mode name defined twice, or a mode that cannot be meant
 under any scheme (`Mode.problems`: a role that is not registered, a suffix
 used twice, a suffix that is not keys). The diagnostic names the command,
@@ -135,6 +140,75 @@ the face `keyword`, over the theme's, and leaves the rest to the theme. A
 face a config stops setting is the theme's again when the config is
 installed. One `setup` sets a name once: a second `face` of a name is
 refused like a second command of a name, and the diagnostic names the face.
+
+Config registers whole themes too, and names the one in force:
+
+```lean
+def setup : SetupM Unit := do
+  defineTheme "dusk" (Theme.builtin ++
+    #[{ name := ⟨"default"⟩, face := { foreground := some (Color.rgb 200 200 0) } }])
+  useTheme "dusk"
+  face "keyword" { foreground := some (Color.rgb 200 0 0) }
+```
+
+`defineTheme` registers a theme by name, for this config; `useTheme` names
+the theme in force once the config is installed, a compiled one (`default`
+is the built-in theme) or one the `setup` defines. A theme in force replaces
+the built-in theme wholesale, not over it: it must define every face it
+needs, the cursor faces, `selection`, `echo-area` and `mode-line` among them,
+or those faces are not drawn (a cursor face nothing defines is not seen).
+The example keeps the built-in faces by building `dusk` as `Theme.builtin`
+followed by its own definitions; a later definition of a name is over an
+earlier one. Config's own faces are over whichever theme is in force. A
+`setup` that defines a theme name twice,
+or names a theme twice, is refused. A name no theme is registered under is
+not refused: it is looked up when the config is installed, and the theme in
+force then stays, and the echo area says so (`Editor/Config/Reload.lean`).
+A config that names no theme keeps the theme in force.
+
+Config defines segments of the mode line and lists them for each side
+(`Editor/ModeLine.lean`):
+
+```lean
+def setup : SetupM Unit := do
+  defineSegment "greeting" fun _ =>
+    #[{ text := "hi", face := ⟨"mode-line.secondary"⟩, padding := 4 }]
+  modeLine ["state", "buffer", "modified"] ["greeting", "line-column", "position"]
+```
+
+`defineSegment` registers a segment by name, for this config: a function
+from what a window shows (`ModeLine.Context`: its buffer, the scheme's
+reported fields, its cursor, its rows, whether it is selected) to fields.
+`modeLine` lists the segments of each side by name, shipped ones
+(`ModeLine.shipped`) or the config's own. A name no segment is registered
+under is left out, the rest are drawn, and the echo area says so. A config
+that lists none has the default order. A `setup` that defines a segment
+name twice, or lists the mode line twice, is refused.
+
+Config sets the frame padding in points (`framePadding 12`): how far every
+window's text is inset from its edges, the bottom row at least as far as
+the window's corners reach. A config that sets none has the editor's 8,
+and a reload changes it. Setting it twice is refused.
+
+Config keeps the system's standard title bar with `titleBar .standard`, in
+place of the themed one, whose paper is the theme's. It is read when the
+window opens, so a reload changes it at the next start. Choosing it twice
+is refused.
+
+Config chooses where a child's environment comes from
+(`Editor/Process/Environment.lean`) with `processEnvironment`, the first
+option of the port: `inherited`, no lookup; `mise`, with the absolute path of
+the executable or with none, which looks in the usual places; or the
+default, `auto`, which a `setup` that does not set it keeps:
+
+```lean
+def setup : SetupM Unit := do
+  processEnvironment (.mise (some "/opt/homebrew/bin/mise"))
+```
+
+A relative path is refused, and so is a second `processEnvironment` in one
+`setup`. A reload that installs takes the setting, and drops every
+directory's cached environment.
 
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
@@ -184,7 +258,27 @@ inductive SetupRequest where
   /-- Set the attributes `attributes` sets of the face called `name`, over
   the theme's (`Editor/Face.lean`). -/
   | face (name : FaceName) (attributes : Face)
-  /-- Set auto-reload on or off: the editor's first setting. -/
+  /-- Register `named` as a theme, by its name (`Editor/Face.lean`). -/
+  | theme (named : NamedTheme)
+  /-- Name the theme called `name` as the one in force once the config is
+  installed. -/
+  | useTheme (name : String)
+  /-- Register `segment` as a segment of the mode line, by its name
+  (`Editor/ModeLine.lean`). -/
+  | segment (segment : Segment)
+  /-- List the segments of the mode line, by name, for each side, once the
+  config is installed. -/
+  | modeLine (order : ModeLine.Order)
+  /-- Set the frame padding, in whole points, once the config is installed:
+  how far every window's content is inset from its edges, and the bottom
+  row at least (`EditorState.paddingOf`). -/
+  | framePadding (points : Nat)
+  /-- Choose the title bar the window opens with (`Window.TitleBar`). -/
+  | titleBar (style : Window.TitleBar)
+  /-- Choose where a child's environment comes from
+  (`Editor/Process/Environment.lean`). -/
+  | processEnvironment (setting : Process.Setting)
+  /-- Set auto-reload on or off (`Editor/Loop.lean`, "Auto-reload"). -/
   | autoReload (on : Bool)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
@@ -198,6 +292,13 @@ def SetupRequest.Reply : SetupRequest → Type
   | .mode _ => Unit
   | .ex _ => Unit
   | .face .. => Unit
+  | .theme _ => Unit
+  | .useTheme _ => Unit
+  | .segment _ => Unit
+  | .modeLine _ => Unit
+  | .framePadding _ => Unit
+  | .titleBar _ => Unit
+  | .processEnvironment _ => Unit
   | .autoReload _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
@@ -308,13 +409,84 @@ installed. -/
 def face (name : String) (attributes : Face) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.face ⟨name⟩ attributes))
 
-/-- Turns auto-reload on, or with `false` off: the editor's first setting.
-With it on, a follow job watches each file buffer's file, and a change on
-disk reloads a buffer with no unsaved changes, or marks one with them
-(`Editor/Loop.lean`, "Auto-reload"). It is off when config says nothing, and
-a command's choice (`auto-reload-mode`, the ex names `autoread` and
-`noautoread`) decides over it until the editor stops. A second call in one
-`setup` is refused, as a second face of one name is. -/
+/-- Registers `theme` as the theme called `name`, for this config: a config
+can then name it (`useTheme`), and the command that loads a theme lists it.
+The editor refuses the `setup` for a theme name defined twice. -/
+def defineTheme (name : String) (theme : Theme) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.theme { name, theme }))
+
+/-- Names the theme called `name` as the one in force once the config is
+installed: the compiled theme of that name, or one this `setup` defines.
+The name is looked up when the config is installed, and a name no theme is
+registered under keeps the theme in force and says so in the echo area. The
+editor refuses the `setup` for naming a theme twice. -/
+def useTheme (name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.useTheme name))
+
+/-- Registers a segment of the mode line called `name`, for this config:
+`fields` gives its fields for what a window shows (`ModeLine.Context`), and
+none when it has nothing to say. A config can then list it (`modeLine`).
+Its fields' sides are the listing's; their faces and paddings are its own.
+The editor refuses the `setup` for a segment name defined twice. -/
+def defineSegment (name : String) (fields : ModeLine.Context → Array StatusField) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.segment { name, fields }))
+
+/-- Lists the segments of the mode line once the config is installed: `left`
+from the row's start and `right` ending at its end, each by its name, a
+shipped one (`ModeLine.shipped`) or one this `setup` defines. A name nobody
+registered is left out, and the echo area says so; the rest are drawn in
+order. A config that lists none has the default order
+(`ModeLine.Order.standard`). The editor refuses the `setup` for listing the
+mode line twice. -/
+def modeLine (left right : List String) : SetupM Unit :=
+  ExceptT.lift
+    (Program.request (port := setupPort)
+      (.modeLine { left := left.toArray, right := right.toArray }))
+
+/-- Sets the frame padding once the config is installed, in whole points
+(logical pixels, which the display multiplies by the window's scale): how
+far every window's text and its mode line's first and last fields are inset
+from its edges, filled with the default face's background. The bottom row,
+the echo and a prompt, is inset at least this, and at least as far as the
+window's rounded corners reach outside fullscreen. A config that sets none
+has the editor's 8 (`Loop.padding`); 0 draws as with no padding. A reload
+changes it with no restart. The editor refuses the `setup` for setting the
+frame padding twice. -/
+def framePadding (points : Nat) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.framePadding points))
+
+/-- Chooses the title bar the window opens with: `titleBar .standard` keeps
+the system's standard title bar, above the content, in place of the themed
+one, which shows the theme's paper under the window's title and buttons. A
+config that chooses none has the themed title bar. It is read when the
+window opens, once the start-up config has loaded, so a reload changes it
+at the next start. The editor refuses the `setup` for choosing it twice. -/
+def titleBar (style : Window.TitleBar) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.titleBar style))
+
+/-- The message a setting of mise's path is refused with when the path is not
+absolute. -/
+def relativeMise (path : System.FilePath) : String :=
+  s!"the path to mise must be absolute: {path}"
+
+/-- Chooses where a child's environment comes from: `inherited`, no lookup;
+`mise` with the absolute path of the executable, or with none, which takes
+the first of the usual places that exists; or `auto`, the default
+(`Editor/Process/Environment.lean`). Refuses the `setup` for a path that is
+not absolute. -/
+def processEnvironment (setting : Process.Setting) : SetupM Unit := do
+  if let .mise (some path) := setting then
+    unless path.isAbsolute do
+      throw (relativeMise path)
+  ExceptT.lift (Program.request (port := setupPort) (.processEnvironment setting))
+
+/-- Turns auto-reload on, or with `false` off. With it on, a follow job
+watches each file buffer's file, and a change on disk reloads a buffer with
+no unsaved changes, or marks one with them (`Editor/Loop.lean`,
+"Auto-reload"). It is off when config says nothing, and a command's choice
+(`auto-reload-mode`, the ex names `autoread` and `noautoread`) decides over
+it until the editor stops. A second call in one `setup` is refused, as a
+second face of one name is. -/
 def autoReload (on : Bool := true) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.autoReload on))
 

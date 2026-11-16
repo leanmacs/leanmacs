@@ -128,26 +128,32 @@
 //! asks at no other time: reading the monitor on every key would be work
 //! for nothing.
 //!
-//! # Fullscreen
+//! # Fullscreen, the corners and the title bar
 //!
 //! Every resize the port carries says whether the window is in the
-//! system's fullscreen: the state last read, which [`Seen`] keeps. winit
-//! has no event for fullscreen, so the state is read, through a function
-//! the handler supplies (`fullscreen().is_some()`), after the events that
-//! may come with a change of it:
+//! system's fullscreen, how far in its rounded bottom corners reach and
+//! how far down its title bar covers it: the shape last read, which
+//! [`Seen`] keeps, with the corner clearance decided from it by the module
+//! `corner` and the top inset by the module `title_bar`. winit has no
+//! event for any of them, so the shape is read, through a function the
+//! handler supplies (`fullscreen().is_some()`, on macOS the system's
+//! reading of the corners, `corner::system`, and the top of winit's safe
+//! area), after the events that may come with a change of it:
 //!
-//! - **A window that opens** says the state it opens in ([`Seen::opened`]).
+//! - **A window that opens** says the shape it opens in ([`Seen::opened`]).
 //! - **A resize and a change of scale** read it, and their `Resized`
 //!   carries what was read. This is the green button's way in and out:
 //!   winit-appkit sets its state in `window_will_enter_fullscreen` when the
 //!   user enters by the button, before the window grows.
-//! - **A move and an occlusion** read it, and a reading other than the last
-//!   is reported as a `Resized` at the size and scale last known with the
-//!   new state, and told to the drawer as one. This is the way out on
+//! - **A move and an occlusion** read it, and a reading that changes
+//!   fullscreen, the corner clearance or the top inset is reported as a
+//!   `Resized` at the
+//!   size and scale last known with the new shape, and told to the drawer
+//!   as one. This is the way out on
 //!   macOS: winit-appkit clears its state in `restore_state_from_fullscreen`
 //!   from `window_did_exit_fullscreen`, which may come after the last
 //!   resize, and another Space is an occlusion.
-//! - **A request carried out** is read after ([`Seen::fullscreen`]), by
+//! - **A request carried out** is read after ([`Seen::reread`]), by
 //!   the same rule: winit-appkit's `set_fullscreen` sets its state when it
 //!   is asked, or defers it to the end of a transition in progress.
 //!
@@ -165,7 +171,8 @@ use winit::event::{
 };
 use winit::keyboard;
 
-use crate::names;
+use crate::corner::{self, Shape};
+use crate::{names, title_bar};
 
 /// The parts of winit's key event that the port's key is made of.
 #[derive(Debug, Clone, Copy)]
@@ -215,6 +222,12 @@ pub(crate) struct Seen {
     /// Whether the window read as in the system's fullscreen when it was
     /// last read; not until it has been.
     fullscreen: bool,
+    /// The window's corner clearance, in whole logical points, as decided
+    /// from the shape last read; 0 until it has been.
+    corner: u32,
+    /// How far down the window's title bar covers it, in whole logical
+    /// points, as decided from the shape last read; 0 until it has been.
+    top: u32,
 }
 
 impl Default for Seen {
@@ -228,6 +241,8 @@ impl Default for Seen {
             scale: 1.0,
             refresh: None,
             fullscreen: false,
+            corner: 0,
+            top: 0,
         }
     }
 }
@@ -252,19 +267,21 @@ impl Seen {
     ///
     /// `display` reads how often the display the window is on refreshes,
     /// in thousandths of a hertz. It is asked only after an event that may
-    /// have put the window on another display. `fullscreen` reads whether
-    /// the window is in fullscreen, and is asked only after a resize, a
-    /// move or an occlusion (the module docs, "Fullscreen").
+    /// have put the window on another display. `shape` reads whether the
+    /// window is in fullscreen and the system's reading of its corners and
+    /// its title bar, and is asked only after a resize, a move or an
+    /// occlusion (the module docs, "Fullscreen, the corners and the title
+    /// bar").
     pub(crate) fn window_event(
         &mut self,
         event: &WindowEvent,
         display: &dyn Fn() -> Option<u32>,
-        fullscreen: &dyn Fn() -> bool,
+        shape: &dyn Fn() -> Shape,
     ) -> Told {
-        // A resize carries the state read with it: the green button's way
+        // A resize carries the shape read with it: the green button's way
         // into fullscreen and out of it.
         if matches!(event, WindowEvent::SurfaceResized(_)) {
-            self.fullscreen = fullscreen();
+            self.take(shape());
         }
         // The input first: it takes in what the event says, and what the
         // drawer is told is of the window as it then is.
@@ -278,9 +295,9 @@ impl Seen {
             _ => Vec::new(),
         };
         // A move or an occlusion reports nothing by itself, but may come
-        // with a change of fullscreen that no resize carried.
+        // with a change of shape that no resize carried.
         if let WindowEvent::Moved(_) | WindowEvent::Occluded(_) = event {
-            let changed = self.fullscreen(fullscreen());
+            let changed = self.reread(shape());
             canvas.extend(changed.canvas);
             return Told {
                 input: changed.input,
@@ -378,18 +395,18 @@ impl Seen {
 
     /// Takes in that the window has opened: `size` at `scale`, as the
     /// system knows it `window`, on a display that refreshes `refresh`
-    /// thousandths of a hertz, in fullscreen or not (`fullscreen`). Gives what the drawer is told before
-    /// anything is reported, and what the port reports after
-    /// [`Input::Opened`].
+    /// thousandths of a hertz, reading as `shape`. Gives what the drawer
+    /// is told before anything is reported, and what the port reports
+    /// after [`Input::Opened`].
     pub(crate) fn opened(
         &mut self,
         size: PhysicalSize<u32>,
         scale: f64,
         window: Option<NativeWindow>,
         refresh: Option<u32>,
-        fullscreen: bool,
+        shape: Shape,
     ) -> (Canvas, Input) {
-        self.fullscreen = fullscreen;
+        self.take(shape);
         self.size = size;
         self.scale = scale;
         self.refresh = refresh;
@@ -403,16 +420,16 @@ impl Seen {
 
     /// Takes in that the window's scale factor is now `scale`, and gives
     /// what it comes to. It takes the scale and not winit's whole event,
-    /// which cannot be built outside winit. `display` and `fullscreen` are
+    /// which cannot be built outside winit. `display` and `shape` are
     /// [`Seen::window_event`]'s.
     pub(crate) fn scale(
         &mut self,
         scale: f64,
         display: &dyn Fn() -> Option<u32>,
-        fullscreen: &dyn Fn() -> bool,
+        shape: &dyn Fn() -> Shape,
     ) -> Told {
         self.scale = scale;
-        self.fullscreen = fullscreen();
+        self.take(shape());
         Told {
             input: Some(self.resized()),
             canvas: self.resized_on(display),
@@ -430,20 +447,30 @@ impl Seen {
         Some(Canvas::Refresh(rate))
     }
 
-    /// Takes in that the window now reads as in fullscreen or not
-    /// (`now`), as after a request is carried out, and gives what it comes
-    /// to: a resize at the size and scale last known with the new state,
-    /// told and reported, when it is not the state last read; nothing
-    /// otherwise.
-    pub(crate) fn fullscreen(&mut self, now: bool) -> Told {
-        if now == self.fullscreen {
+    /// Takes in that the window now reads as `shape`, as after a request
+    /// is carried out, and gives what it comes to: a resize at the size and
+    /// scale last known with the new fullscreen state, corner clearance
+    /// and top inset, told and reported, when any is not the one last
+    /// known; nothing otherwise.
+    pub(crate) fn reread(&mut self, shape: Shape) -> Told {
+        let was = (self.fullscreen, self.corner, self.top);
+        self.take(shape);
+        if (self.fullscreen, self.corner, self.top) == was {
             return Told::default();
         }
-        self.fullscreen = now;
         Told {
             input: Some(self.resized()),
             canvas: vec![Canvas::Resized(self.size())],
         }
+    }
+
+    /// Takes in that the window reads as `shape`: whether it is in
+    /// fullscreen, its corner clearance as the module `corner` decides it,
+    /// and its top inset as the module `title_bar` decides it.
+    fn take(&mut self, shape: Shape) {
+        self.fullscreen = shape.fullscreen;
+        self.corner = corner::clearance(shape);
+        self.top = title_bar::top_inset(shape);
     }
 
     /// The window's size and scale as last known, as the port reports them.
@@ -458,6 +485,8 @@ impl Seen {
             height: u64::from(self.size.height),
             scale: self.scale,
             fullscreen: self.fullscreen,
+            corner_clearance: self.corner,
+            top_inset: self.top,
         }
     }
 
@@ -517,6 +546,8 @@ fn text(pressed: bool, held: Modifiers, given: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{KeyParts, Seen, Told};
+    use crate::corner::{Shape, clearance};
+    use editor_platform::TitleBar;
     use editor_platform::{Button, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey};
     use editor_platform::{Canvas, NativeWindow, Pointer, PointerAction, Resize, WheelDelta};
     use std::cell::Cell;
@@ -1123,23 +1154,25 @@ mod tests {
         );
     }
 
-    /// The port's word that the window is `width` by `height` at `scale`.
+    /// The port's word that the window is `width` by `height` at `scale`,
+    /// out of fullscreen, with the corners [`windowed`] reads as.
     fn resized(width: u64, height: u64, scale: f64) -> Input {
-        Input::Resized(Resize {
-            width,
-            height,
-            scale,
-            fullscreen: false,
-        })
+        Input::Resized(size(width, height, scale))
     }
 
     #[test]
     fn a_resize_is_the_new_size_at_the_scale_last_known() {
         let mut seen = Seen::default();
-        // Before winit has said what the scale is, it is 1.
+        // Before winit has said what the scale is, it is 1, and before the
+        // shape has been read the corners are square and no title bar
+        // covers the window.
         assert_eq!(
             seen.input(&WindowEvent::SurfaceResized(PhysicalSize::new(800, 600))),
-            Some(resized(800, 600, 1.0))
+            Some(Input::Resized(Resize {
+                corner_clearance: 0,
+                top_inset: 0,
+                ..size(800, 600, 1.0)
+            }))
         );
         seen.scale(2.0, &unknown, &windowed);
         assert_eq!(
@@ -1172,14 +1205,14 @@ mod tests {
     fn a_window_that_opens_says_its_size_and_scale_which_are_then_the_ones_last_known() {
         let mut seen = Seen::default();
         assert_eq!(
-            seen.opened(PhysicalSize::new(256, 96), 1.5, None, None, false)
+            seen.opened(PhysicalSize::new(256, 96), 1.5, None, None, windowed())
                 .1,
             resized(256, 96, 1.5)
         );
         // A resize is at the scale the window opened at, and a change of
         // scale at the size it opened at.
         let mut resized_after = Seen::default();
-        resized_after.opened(PhysicalSize::new(256, 96), 1.5, None, None, false);
+        resized_after.opened(PhysicalSize::new(256, 96), 1.5, None, None, windowed());
         assert_eq!(
             resized_after.input(&WindowEvent::SurfaceResized(PhysicalSize::new(300, 120))),
             Some(resized(300, 120, 1.5))
@@ -1195,28 +1228,51 @@ mod tests {
         None
     }
 
-    /// A window that reads as not in fullscreen.
-    fn windowed() -> bool {
-        false
+    /// A window that reads as not in fullscreen, with the themed title
+    /// bar, the system reading its corners as reaching 14.2 points in and
+    /// its title bar as covering 27.5 points.
+    fn windowed() -> Shape {
+        Shape {
+            fullscreen: false,
+            corner: Some(14.2),
+            top: Some(27.5),
+            title_bar: TitleBar::Themed,
+        }
     }
 
-    /// A window that reads as in fullscreen.
-    fn in_fullscreen() -> bool {
-        true
+    /// The corner clearance a window that reads as [`windowed`] has: 15
+    /// on macOS, and 0 elsewhere (the module `corner`'s tests).
+    const ROUNDED: u32 = if cfg!(target_os = "macos") { 15 } else { 0 };
+
+    /// The top inset a window that reads as [`windowed`] has: 28 on
+    /// macOS, and 0 elsewhere (the module `title_bar`'s tests).
+    const COVERED: u32 = if cfg!(target_os = "macos") { 28 } else { 0 };
+
+    /// A window that reads as in fullscreen, whatever the system reads of
+    /// its corners and its title bar.
+    fn in_fullscreen() -> Shape {
+        Shape {
+            fullscreen: true,
+            ..windowed()
+        }
     }
 
-    /// A reading of fullscreen that must not be taken.
-    fn unread() -> bool {
-        panic!("fullscreen was read")
+    /// A reading of the window's shape that must not be taken.
+    fn unread() -> Shape {
+        panic!("the window's shape was read")
     }
 
-    /// The port's size `width` by `height` at `scale`, in fullscreen or not.
+    /// The port's size `width` by `height` at `scale`, in fullscreen or not,
+    /// with the corner clearance and the top inset of a window that reads
+    /// as [`windowed`] or [`in_fullscreen`].
     fn sized(width: u64, height: u64, scale: f64, fullscreen: bool) -> Resize {
         Resize {
             width,
             height,
             scale,
             fullscreen,
+            corner_clearance: if fullscreen { 0 } else { ROUNDED },
+            top_inset: if fullscreen { 0 } else { COVERED },
         }
     }
 
@@ -1231,7 +1287,7 @@ mod tests {
     #[test]
     fn a_resize_carries_the_fullscreen_state_read_with_it_as_the_green_button_leaves_it() {
         let mut seen = Seen::default();
-        seen.opened(PhysicalSize::new(256, 96), 1.0, None, None, false);
+        seen.opened(PhysicalSize::new(256, 96), 1.0, None, None, windowed());
 
         // The green button: winit says the window is in fullscreen as it
         // grows to the display, so the resize reads it.
@@ -1261,8 +1317,13 @@ mod tests {
 
     #[test]
     fn a_window_that_opens_in_fullscreen_says_so() {
-        let (opened, size) =
-            Seen::default().opened(PhysicalSize::new(1440, 900), 2.0, None, None, true);
+        let (opened, size) = Seen::default().opened(
+            PhysicalSize::new(1440, 900),
+            2.0,
+            None,
+            None,
+            in_fullscreen(),
+        );
         assert_eq!(
             opened,
             Canvas::Opened {
@@ -1278,7 +1339,7 @@ mod tests {
     fn a_change_of_fullscreen_read_after_a_move_or_an_occlusion_is_a_resize_at_the_size_last_known()
     {
         let mut seen = Seen::default();
-        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, false);
+        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
 
         // winit on macOS clears its state on the way out after the last
         // resize: the move or the occlusion after it reads it.
@@ -1306,23 +1367,205 @@ mod tests {
     fn a_fullscreen_request_carried_out_is_reported_as_a_resize_at_the_size_last_known_carrying_the_new_state()
      {
         let mut seen = Seen::default();
-        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, false);
+        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
 
         assert_eq!(
-            seen.fullscreen(true),
+            seen.reread(in_fullscreen()),
             told_resize(sized(800, 600, 2.0, true))
         );
-        assert_eq!(seen.fullscreen(true), Told::default());
+        assert_eq!(seen.reread(in_fullscreen()), Told::default());
         assert_eq!(
-            seen.fullscreen(false),
+            seen.reread(windowed()),
             told_resize(sized(800, 600, 2.0, false))
+        );
+    }
+
+    /// A window out of fullscreen whose corners the system reads as
+    /// reaching `corner` points in.
+    fn cornered(corner: f64) -> Shape {
+        Shape {
+            corner: Some(corner),
+            ..windowed()
+        }
+    }
+
+    /// A window out of fullscreen whose title bar the system reads as
+    /// covering `top` points.
+    fn covered(top: f64) -> Shape {
+        Shape {
+            top: Some(top),
+            ..windowed()
+        }
+    }
+
+    /// [`sized`] out of fullscreen, with the top inset `top`.
+    fn covered_by(width: u64, height: u64, scale: f64, top: u32) -> Resize {
+        Resize {
+            top_inset: top,
+            ..sized(width, height, scale, false)
+        }
+    }
+
+    #[test]
+    fn a_window_that_opens_says_the_top_inset_it_opens_with() {
+        let (opened, size) =
+            Seen::default().opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
+        assert_eq!(size, Input::Resized(covered_by(800, 600, 2.0, COVERED)));
+        assert_eq!(
+            opened,
+            Canvas::Opened {
+                window: None,
+                size: covered_by(800, 600, 2.0, COVERED),
+                refresh_millihertz: None,
+            }
+        );
+        // A window that opens in fullscreen has no title bar over it.
+        let (_, size) = Seen::default().opened(
+            PhysicalSize::new(800, 600),
+            2.0,
+            None,
+            None,
+            in_fullscreen(),
+        );
+        assert_eq!(size, Input::Resized(sized(800, 600, 2.0, true)));
+        assert_eq!(sized(800, 600, 2.0, true).top_inset, 0);
+    }
+
+    #[test]
+    fn entering_fullscreen_by_a_request_says_a_top_inset_of_0_and_leaving_it_the_windows_own() {
+        let mut seen = Seen::default();
+        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
+
+        let entered = seen.reread(in_fullscreen());
+        assert_eq!(entered, told_resize(sized(800, 600, 2.0, true)));
+        assert_eq!(
+            seen.reread(windowed()),
+            told_resize(covered_by(800, 600, 2.0, COVERED))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_move_whose_reading_changed_the_top_inset_alone_is_a_resize_at_the_size_last_known() {
+        let mut seen = Seen::default();
+        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
+
+        assert_eq!(
+            seen.window_event(
+                &WindowEvent::Moved(PhysicalPosition::new(10, 20)),
+                &unknown,
+                &|| covered(32.0)
+            ),
+            told_resize(covered_by(800, 600, 2.0, 32))
+        );
+        // A reading that rounds up to the inset already known is no
+        // change.
+        assert_eq!(seen.reread(covered(31.2)), Told::default());
+    }
+
+    /// [`sized`] out of fullscreen, with the corner clearance `corner`.
+    fn clear_of(width: u64, height: u64, scale: f64, corner: u32) -> Resize {
+        Resize {
+            corner_clearance: corner,
+            ..sized(width, height, scale, false)
+        }
+    }
+
+    #[test]
+    fn a_window_that_opens_says_the_corner_clearance_it_opens_with() {
+        let (opened, size) =
+            Seen::default().opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
+        assert_eq!(size, Input::Resized(clear_of(800, 600, 2.0, ROUNDED)));
+        assert_eq!(
+            opened,
+            Canvas::Opened {
+                window: None,
+                size: clear_of(800, 600, 2.0, ROUNDED),
+                refresh_millihertz: None,
+            }
+        );
+        // A window that opens in fullscreen has square corners.
+        let (_, size) = Seen::default().opened(
+            PhysicalSize::new(800, 600),
+            2.0,
+            None,
+            None,
+            in_fullscreen(),
+        );
+        assert_eq!(size, Input::Resized(sized(800, 600, 2.0, true)));
+        assert_eq!(sized(800, 600, 2.0, true).corner_clearance, 0);
+    }
+
+    #[test]
+    fn a_resize_and_a_change_of_scale_carry_the_corner_clearance_read_with_them() {
+        let mut seen = Seen::default();
+        seen.opened(PhysicalSize::new(256, 96), 1.0, None, None, windowed());
+        let wider = clearance(cornered(20.0));
+
+        assert_eq!(
+            seen.window_event(
+                &WindowEvent::SurfaceResized(PhysicalSize::new(300, 120)),
+                &unknown,
+                &|| cornered(20.0)
+            ),
+            told_resize(clear_of(300, 120, 1.0, wider))
+        );
+        assert_eq!(
+            seen.scale(2.0, &unknown, &windowed),
+            told_resize(clear_of(300, 120, 2.0, ROUNDED))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_move_or_an_occlusion_whose_reading_changed_the_corner_clearance_alone_is_a_resize_at_the_size_last_known()
+     {
+        let mut seen = Seen::default();
+        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
+
+        assert_eq!(
+            seen.window_event(
+                &WindowEvent::Moved(PhysicalPosition::new(10, 20)),
+                &unknown,
+                &|| cornered(20.0)
+            ),
+            told_resize(clear_of(800, 600, 2.0, 20))
+        );
+        assert_eq!(
+            seen.window_event(&WindowEvent::Occluded(false), &unknown, &windowed),
+            Told {
+                input: Some(Input::Resized(clear_of(800, 600, 2.0, 15))),
+                canvas: vec![
+                    Canvas::Hidden(false),
+                    Canvas::Resized(clear_of(800, 600, 2.0, 15))
+                ],
+            }
+        );
+        // A reading that rounds up to the clearance already known is no
+        // change.
+        assert_eq!(seen.reread(cornered(14.9)), Told::default());
+    }
+
+    #[test]
+    fn entering_fullscreen_by_a_request_says_a_corner_clearance_of_0_and_leaving_it_the_windows_own()
+     {
+        let mut seen = Seen::default();
+        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
+
+        assert_eq!(
+            seen.reread(in_fullscreen()),
+            told_resize(sized(800, 600, 2.0, true))
+        );
+        assert_eq!(
+            seen.reread(windowed()),
+            told_resize(clear_of(800, 600, 2.0, ROUNDED))
         );
     }
 
     #[test]
     fn a_reading_that_has_not_changed_reports_nothing_more() {
         let mut seen = Seen::default();
-        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, false);
+        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
 
         assert_eq!(
             seen.window_event(
@@ -1339,7 +1582,7 @@ mod tests {
                 canvas: vec![Canvas::Hidden(true)],
             }
         );
-        assert_eq!(seen.fullscreen(false), Told::default());
+        assert_eq!(seen.reread(windowed()), Told::default());
     }
 
     #[test]
@@ -1365,14 +1608,10 @@ mod tests {
         let _: Input = seen.key(&press(&logical, KeyCode::KeyA, Some("a")));
     }
 
-    /// The port's size `width` by `height` at `scale`.
+    /// The port's size `width` by `height` at `scale`, out of fullscreen,
+    /// with the corners [`windowed`] reads as.
     fn size(width: u64, height: u64, scale: f64) -> Resize {
-        Resize {
-            width,
-            height,
-            scale,
-            fullscreen: false,
-        }
+        sized(width, height, scale, false)
     }
 
     #[test]
@@ -1388,7 +1627,7 @@ mod tests {
                 2.0,
                 Some(window),
                 Some(60_000),
-                false
+                windowed()
             )
             .0,
             Canvas::Opened {
@@ -1400,7 +1639,7 @@ mod tests {
         // A window the port cannot name, on a display that does not say.
         assert_eq!(
             Seen::default()
-                .opened(PhysicalSize::new(800, 600), 1.0, None, None, false)
+                .opened(PhysicalSize::new(800, 600), 1.0, None, None, windowed())
                 .0,
             Canvas::Opened {
                 window: None,
@@ -1447,6 +1686,7 @@ mod tests {
     #[test]
     fn an_occluded_window_is_hidden_and_one_no_longer_occluded_is_shown() {
         let mut seen = Seen::default();
+        seen.opened(PhysicalSize::new(256, 96), 1.0, None, None, windowed());
         for hidden in [true, false] {
             assert_eq!(
                 seen.window_event(&WindowEvent::Occluded(hidden), &unknown, &windowed),
@@ -1461,7 +1701,13 @@ mod tests {
     #[test]
     fn a_refresh_rate_is_told_when_it_differs_and_not_when_it_is_the_same() {
         let mut seen = Seen::default();
-        seen.opened(PhysicalSize::new(256, 96), 1.0, None, Some(60_000), false);
+        seen.opened(
+            PhysicalSize::new(256, 96),
+            1.0,
+            None,
+            Some(60_000),
+            windowed(),
+        );
         // The rate the window opened with is the one known: said again, it
         // is nothing new.
         assert_eq!(seen.refresh(Some(60_000)), None);
@@ -1481,7 +1727,7 @@ mod tests {
         // A window that opened on a display that did not say hears of the
         // first rate, and not of being told again that nothing says.
         let mut unsaid = Seen::default();
-        unsaid.opened(PhysicalSize::new(256, 96), 1.0, None, None, false);
+        unsaid.opened(PhysicalSize::new(256, 96), 1.0, None, None, windowed());
         assert_eq!(unsaid.refresh(None), None);
         assert_eq!(
             unsaid.refresh(Some(60_000)),
@@ -1492,7 +1738,13 @@ mod tests {
     #[test]
     fn the_display_is_asked_after_a_move_a_resize_and_a_change_of_scale_and_what_it_says_is_told() {
         let mut seen = Seen::default();
-        seen.opened(PhysicalSize::new(256, 96), 1.0, None, Some(60_000), false);
+        seen.opened(
+            PhysicalSize::new(256, 96),
+            1.0,
+            None,
+            Some(60_000),
+            windowed(),
+        );
         let asked = Cell::new(0);
         let display = || {
             asked.set(asked.get() + 1);
@@ -1542,7 +1794,13 @@ mod tests {
     #[test]
     fn the_display_is_not_asked_at_any_other_time() {
         let mut seen = Seen::default();
-        seen.opened(PhysicalSize::new(256, 96), 1.0, None, Some(60_000), false);
+        seen.opened(
+            PhysicalSize::new(256, 96),
+            1.0,
+            None,
+            Some(60_000),
+            windowed(),
+        );
         let asked = Cell::new(0);
         let display = || {
             asked.set(asked.get() + 1);

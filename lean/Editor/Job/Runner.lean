@@ -137,8 +137,12 @@ with nothing started. It has a fake over the pure model of files
 the library's diff service (`Editor/Job/Real.lean`). A runner that is given
 none has `Diffs.absent`.
 
+`Environments` is the port of the environments a host's jobs share, which
+answers at once and registers no wait (`Environments.inherited`, the
+default, and `sharedEnvironments`, state behind a reference).
+
 `Services` is what a runner is given: the table, the clock, the files, the
-processes, the file watches and the diffs. A runner that is given no file service has `Files.absent`,
+processes, the file watches, the diffs and the environments. A runner that is given no file service has `Files.absent`,
 and one that is given no process service has `Processes.absent`, each of
 which refuses every request as failed, at once: an error as a value, and
 the job goes on; one that is given no watch service has
@@ -258,7 +262,7 @@ as failed. -/
 def Files.absentReply : (request : FileRequest) → request.Reply
   | .load .. => .error (.failed "this runner has no file service")
   | .save .. => .error (.failed "this runner has no file service")
-  | .stat _ => .error (.failed "this runner has no file service")
+  | .stamp .. => .error (.failed "this runner has no file service")
 
 /-- No file service: every request completes at once, refused as failed,
 through the table `completions`. It is what a runner has when it was given
@@ -341,6 +345,35 @@ def Diffs.absent (completions : Completions) : Diffs where
   take _ request := pure (request.refused (.failed "this runner has no diff service"))
   cancel _ := pure ()
 
+/-- The environments port: what a job's environment requests are answered
+by, at once (`Editor/Process/Environment.lean`). -/
+structure Environments where
+  /-- The answer to `request`. It never waits. -/
+  ask : (request : EnvironmentRequest) → BaseIO request.Reply
+
+/-- The environments of a runner given none: every request answered as the
+default state answers it, `auto` in the headless mode, which is `inherited`,
+and nothing kept. So a job's process requests start their children exactly
+as their commands say. -/
+def Environments.inherited : Environments where
+  ask request := pure (({} : Process.Environments).handle request).1
+
+/-- The environments over `state`, which every job given them shares: each
+request is answered from it in one atomic step, and a message it says for
+the echo area is handed to `report`. It is pure state behind a reference, so
+it serves the real host and the runner's checks alike. -/
+def sharedEnvironments (state : IO.Ref Process.Environments) (report : String → BaseIO Unit) :
+    Environments
+    where
+  ask request := do
+    let (reply, said) ←
+      state.modifyGet fun held =>
+          let (reply, after, said) := held.handle request
+          ((reply, said), after)
+    if let some text := said then
+      report text
+    return reply
+
 /-- What a runner is given. -/
 structure Services where
   /-- The waits in flight. -/
@@ -356,6 +389,9 @@ structure Services where
   fileWatches : FileWatches := FileWatches.absent completions
   /-- The diffs. A runner that is given none has `Diffs.absent`. -/
   diffs : Diffs := Diffs.absent completions
+  /-- The environments its jobs share. A runner that is given none has
+  `Environments.inherited`. -/
+  environments : Environments := Environments.inherited
 
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
@@ -513,10 +549,10 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.files.start id (.save source path expect)
     return .later id wait (handle.services.files.take id (.save source path expect))
-  | .file (.stat path) => do
+  | .file (.stamp path) => do
     let (id, wait) ← handle.services.completions.register
-    handle.services.files.start id (.stat path)
-    return .later id wait (handle.services.files.take id (.stat path))
+    handle.services.files.start id (.stamp path)
+    return .later id wait (handle.services.files.take id (.stamp path))
   | .process (.start command streaming) => do
     let (id, wait) ← handle.services.completions.register
     handle.services.processes.start id (.start command streaming)
@@ -554,6 +590,10 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.processes.start id (.run command limit)
     return .later id wait (handle.services.processes.take id (.run command limit))
+  | .process (.runWithin command limit time) => do
+    let (id, wait) ← handle.services.completions.register
+    handle.services.processes.start id (.runWithin command limit time)
+    return .later id wait (handle.services.processes.take id (.runWithin command limit time))
   | .fileWatch (.start target coalescing) => do
     let (id, wait) ← handle.services.completions.register
     handle.services.fileWatches.start id (.start target coalescing)
@@ -563,6 +603,7 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
         if let .ok watch := reply then
           handle.watches.modify (·.push watch)
         return reply
+  | .environment request => return .now (← handle.services.environments.ask request)
   | .fileWatch (.next watch) => do
     -- A watch is named for the job that started it, and for no other.
     unless (← handle.watches.get).contains watch do

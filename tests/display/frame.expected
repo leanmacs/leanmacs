@@ -3,7 +3,7 @@ view 1 rect 0 0 96 80 background f8f8f8ff selection c0d8ffff
   row y 16 height 16 baseline 12 bytes 12..17 glyphs 32@0 32@8 32@16 32@24 32@32 32@40 32@48 32@56 108@64 101@72 116@80 32@88 runs 0..12:202020ff/f8f8f8ff
   row y 32 height 16 baseline 12 bytes 17..23 glyphs 120@0 32@8 61@16 32@24 49@32 59@40 runs 0..1:c00000ff/f8f8f8ff+single:c00000ff 1..6:202020ff/f8f8f8ff
   row y 48 height 16 baseline 12 bytes 24..25 glyphs 125@0 runs 0..1:202020ff/f8f8f8ff
-  status y 64 height 16 baseline 12 background 404040ff glyphs 102@0 105@8 120@16 116@24 117@32 114@40 101@48 46@56 114@64 115@72 32@80 49@88 58@96 56@104 runs 0..10:ffffffff/404040ff 10..14:ffff00ff/404040ff
+  status y 64 height 16 baseline 12 background 404040ff glyphs 102@0 105@8 120@16 116@24 117@32 114@40 101@48 46@56 114@64 115@72 32@80 49@88 58@96 56@104 runs 0..10:ffffffff/404040ff 10..14:ffff00ff/404040ff boxes 0+80:404040ff 80+32:404040ff
   cursor block paint f8f8f8ff/202020ff at 56 0 8 16
   cursor block paint f8f8f8ff/202020ff at 8 32 8 16
   selection at 24 0 32 16

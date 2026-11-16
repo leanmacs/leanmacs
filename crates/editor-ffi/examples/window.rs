@@ -1431,6 +1431,7 @@ fn scene(size: Resize, family: Option<&str>) -> Scene {
     scene.views[0].status = vec![StatusField {
         text: format!("window  {} by {}", size.width, size.height),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     scene
 }
@@ -1526,6 +1527,8 @@ fn described(input: &Input) -> String {
         ),
         Input::OpenFiles(paths) => format!("open files: {}", paths.join(", ")),
         Input::CloseRequested => "close requested".to_owned(),
+        Input::QuitRequested => "quit requested by the system".to_owned(),
+        Input::Menu(name) => format!("menu item chosen: {name}"),
     }
 }
 
@@ -2524,6 +2527,8 @@ mod tests {
             height: 600,
             scale: 2.0,
             fullscreen: false,
+            corner_clearance: 0,
+            top_inset: 0,
         };
         assert_eq!(
             happened(&Canvas::Opened {
@@ -2723,6 +2728,7 @@ mod tests {
         let rows = rows
             .iter()
             .map(|fonts| FrameRow {
+                x: 0.0,
                 y: 0.0,
                 height: 16.0,
                 baseline: 12.0,
@@ -2739,6 +2745,7 @@ mod tests {
             line: line_in(fonts),
             runs: Vec::new(),
             background: white,
+            boxes: Vec::new(),
             hash: 0,
         });
         let fonts = sizes

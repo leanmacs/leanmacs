@@ -33,6 +33,11 @@ command loop fills from the text model when it runs both ports together.
   tab or a wide character does at a wrap is this model's own: the contract
   says nothing of it.
 - A view `height` pixels tall shows `height / lineHeight` rows.
+- A query's padding is in points, and the model lays out at scale 1, where
+  a point is a pixel: a view `width` wide with the padding `across` lays out
+  as one `width - 2 * across` wide, and one `height` tall with the padding
+  `down` and `top` as one `height - 2 * down - top` tall, each at 0 at
+  least.
 - A position at a wrap is the start of the later row. Only a line's last row
   holds the position at the line's end, before its break.
 - The x of a position is its character's first cell in its row times
@@ -207,12 +212,15 @@ def laidOut (model : DisplayModel) (snapshot : SnapshotId) (width offset : Nat) 
   return layout text (columns model.cells width)
 
 /-- The rows a view shows: from the row that holds the anchor, as many as
-whole rows fit its height, fewer at the end of the text. -/
+whole rows fit its height, fewer at the end of the text; the view less its
+padding, as points at scale 1. -/
 def rows (model : DisplayModel) (query : Display.RowsQuery) :
     Except DisplayError (Array Display.Row) := do
-  let laid ← model.laidOut query.snapshot query.width query.anchor
+  let width := query.width - 2 * query.padding.across
+  let height := query.height - 2 * query.padding.down - query.padding.top
+  let laid ← model.laidOut query.snapshot width query.anchor
   let first := rowOf laid query.anchor
-  return (laid.extract first (first + query.height / model.cells.lineHeight)).map (·.row)
+  return (laid.extract first (first + height / model.cells.lineHeight)).map (·.row)
 
 /-- Where a position goes: to the row `query.lines` from the one that holds
 it, kept within the first and the last row, at the cell the goal aims for
@@ -222,7 +230,7 @@ row's end on a line's last row and the row's last character on any other.
 The goal passed back is the one aimed for. -/
 def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayError Display.Moved :=
   do
-  let laid ← model.laidOut query.snapshot query.width query.position
+  let laid ← model.laidOut query.snapshot (query.width - 2 * query.across) query.position
   let here := rowOf laid query.position
   let held := laid[here]!
   let own := held.firsts[(held.chars.filter (· < query.position)).size]?.getD held.reach

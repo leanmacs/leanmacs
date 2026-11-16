@@ -1,5 +1,6 @@
 import Editor.Config.Registry
 import Editor.Evil
+import Editor.Evil.Clipboard
 import Editor.Evil.Motions
 import Editor.Evil.Objects
 import Editor.Evil.Operators
@@ -38,6 +39,9 @@ they hold when config fails to load, and a reload does not replace them.
   | `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | `Evil.scrollLineTo`, with `.top`, `.middle` and `.bottom`: the view placed so that the cursor's row is the first row shown, the middle one or the last, with nothing else changed |
   | `insert-delete-backward`, `insert-newline`, `insert-tab` | `Evil.deleteBackward`, `Evil.newline`, `Evil.insertTab`: insert state's `<Backspace>`, `RET` and `TAB` (`Editor/Evil.lean`, "Editing keys") |
   | `insert-left`, `insert-right`, `insert-up`, `insert-down` | `Evil.insertMove` over `Evil.motions`, by the motions `left`, `right`, `up` and `down`: insert state's arrow keys, each a move that starts a new step of the history once it moved |
+  | `clipboard-cut`, `clipboard-copy` (`Evil.cutName`, `Evil.copyName`) | `Evil.cut`, `Evil.copy`: they give up, nothing being selected, where no run table runs `"+d` or `"+y` in their place (`Editor/Evil/Clipboard.lean`) |
+  | `clipboard-paste` (`Evil.pasteName`) | `Evil.paste`: the clipboard's text at the bar where the call's report is exclusive, and before the cursor otherwise |
+  | `select-all` (`Evil.selectAllName`) | `Evil.selectAll`: every line selected, where the call's report selects lines |
 
   The seven of the second and third rows enter a state only when a key
   that enters it runs them: the scheme enters the state, at the key, and
@@ -56,8 +60,9 @@ motions (`Editor/Evil/Motions.lean`) and the text objects
 (`Editor/Evil/Objects.lean`), so that config can call them, and not this, which is the one module of evil's it leaves out.
 
 Pinned by `ModelTest.evilMotionChecks`, `ModelTest.evilStateChecks` and
-`ModelTest.evilInsertChecks`, on the models, and the scroll commands by
-`ModelTest.viewChecks`.
+`ModelTest.evilInsertChecks`, on the models, the scroll commands by
+`ModelTest.viewChecks`, and the clipboard commands by
+`ModelTest.clipboardCommandChecks`.
 -/
 
 namespace Editor.Evil
@@ -93,6 +98,9 @@ def commands : Array Config.Registration :=
     { name := "insert-left", action := .call (insertMove motions left.name) },
     { name := "insert-right", action := .call (insertMove motions right.name) },
     { name := "insert-up", action := .call (insertMove motions up.name) },
-    { name := "insert-down", action := .call (insertMove motions down.name) }]
+    { name := "insert-down", action := .call (insertMove motions down.name) },
+    { name := cutName, action := .call cut }, { name := copyName, action := .call copy },
+    { name := pasteName, action := .call paste },
+    { name := selectAllName, action := .call selectAll }]
 
 end Editor.Evil

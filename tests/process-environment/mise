@@ -1,0 +1,14 @@
+#!/bin/sh
+# Stands for `mise` in contract-test's environment checks: `mise env --json`,
+# run in a directory, prints one JSON object in mise's two-space layout whose
+# `PATH` is the line the file `fixture-path` in that directory holds. Shell
+# builtins only, so it runs whatever PATH it is given.
+if [ "$#" -ne 2 ] || [ "$1" != env ] || [ "$2" != --json ]; then
+  printf 'mise fixture: expected the arguments env --json, got: %s\n' "$*" >&2
+  exit 2
+fi
+if ! IFS= read -r path <fixture-path; then
+  printf 'mise fixture: no line in fixture-path here\n' >&2
+  exit 2
+fi
+printf '{\n  "PATH": "%s"\n}\n' "$path"

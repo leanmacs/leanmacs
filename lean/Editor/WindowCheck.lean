@@ -35,6 +35,14 @@ window when the time limit has passed, and asks again until the window's run
 has ended: a window forgets a close that comes before its run has begun, as
 one does when the limit is shorter than the window takes to start.
 
+The check does not answer the system's quit (`quitRequested`, as Quit from
+the Dock asks it): it is nothing to the check, so that quit stays pending
+until the window is closed, by the user or at the limit. By the window
+port's rule (`Platform::close`, in `editor-platform`) that close lets the
+quit go ahead and may end the process inside the run, with status 0, as
+AppKit's terminate does on macOS; the check then prints no report. That is
+enough for a check tool.
+
 When the window has closed, `check` posts a stop to the loop, which ends at
 it with every input before it counted, those that arrived after the close was
 asked for among them. Then it prints the report.

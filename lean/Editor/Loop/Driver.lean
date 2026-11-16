@@ -49,8 +49,9 @@ handled after the answer's command.
   command asked for. A host ends its loop there (`Editor/Loop.lean`,
   "Quit"), so the driver runs no further invocation of that step. It does
   not refuse what a test feeds it afterwards: a test reads `stopped`.
-- **A reload a step asked for is counted** (`reloads`). The driver has no
-  config session to reload: a host feeds its reload reducer
+- **A reload a step asked for is counted** (`reloads`), and **a theme a step
+  asked for is recorded** (`themes`). The driver has no config session to
+  reload or to switch the theme of: a host feeds its reload reducer
   (`Editor/Headless.lean`).
 - **A step that is refused changes the models and not the loop.** No
   program of the loop is refused today (`Editor/Loop.lean`, "When
@@ -78,6 +79,11 @@ two ports are played (`Editor/File/Cases.lean`):
 - **A job that failed or was cancelled holds nothing.** No command will
   run for it, so what it loaded is released when it ends, which here is
   when it is started.
+- **What a job's environments say is said in the echo area.** Each message
+  a job's run appended to `jobs.reported`, a lookup that failed in a
+  directory among them (`Editor/Process/Environment.lean`), is put in the
+  loop's echo area when the job is started, in order, as the host's
+  `Running.said` does, so the next scene shows the last of them.
 - **The files are the driver's `jobs.files`.** A test sets them before it
   feeds an event, and changes them between two events to stand for another
   program writing a file.
@@ -149,6 +155,10 @@ structure Loop.Driver (scheme : InputScheme) where
   reloaded (`Loop.Stepped.reload`). The driver has no config session: a
   host feeds its reload reducer for each. -/
   reloads : Nat := 0
+  /-- The themes steps the driver took in asked to be loaded
+  (`Loop.Stepped.theme`), in order. The driver has no config session: a
+  host feeds its reload reducer a choice for each. -/
+  themes : Array String := #[]
 
 namespace Loop.Driver
 
@@ -187,7 +197,9 @@ def handing (driver : Loop.Driver scheme) (arrived : Array (JobSnapshotId × Tex
 /-- The driver once the job `id`, called `name`, has run `program` on the
 job model from where the driver's is, seeing only its own watches: kept as
 not delivered when it ended, and as parked when it waits at a watch with
-nothing recorded. The watches' ids come from the one shared counter. -/
+nothing recorded. What its environments said is said in the echo area, in
+order, as the host says it (`Running.said`). The watches' ids come from the
+one shared counter. -/
 def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option String)
     (program : Program jobPort (Except String (EditorM Unit)))
     (own : Array FileWatchModel.Watch := #[]) : Loop.Driver scheme :=
@@ -196,8 +208,13 @@ def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option
   let start :=
     { driver.jobs with
       files, fileWatches := { shared with watches := own } }
+  let saidBy (jobs : JobModel) : Loop scheme :=
+    let said := jobs.reported.extract driver.jobs.reported.size jobs.reported.size
+    said.foldl (fun loop text => { loop with state := { loop.state with echo := text } })
+      driver.loop
   match JobModel.runParking program start with
   | .ended value jobs =>
+    let driver := { driver with loop := saidBy jobs }
     let outcome : Job.Outcome (EditorM Unit) :=
       match value with
       | some (.ok command) => .finished command
@@ -213,6 +230,7 @@ def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option
         driver.pending.push { id, name, outcome, held := if finished then loaded else #[], key } }
   | .parked watch jobs resume =>
     { driver with
+      loop := saidBy jobs
       jobs := { jobs with fileWatches := { jobs.fileWatches with watches := #[] } }
       parked :=
         driver.parked.push { id, name, key, watch, watches := jobs.fileWatches.watches, resume } }
@@ -260,9 +278,10 @@ def touch (driver : Loop.Driver scheme) (changes : Array (System.FilePath × Fil
 /-- The driver once each of `starts` is started: the job registered under
 its name, applied to its arguments, is run on the job model, and what it
 ended with is kept as not delivered, under the next id, or the job is held
-parked at a watch. A start of a key first cancels the job of that key. A
-start whose name no job is registered under is passed over: the loop
-refused it when the command asked.
+parked at a watch; either way what its environments said is said in the
+echo area. A start of a key first cancels the job of that key. A start
+whose name no job is registered under is passed over: the loop refused it
+when the command asked.
 
 The job reads the text model's snapshots as the published ones. What its
 loads made is kept with it when it finished, and released otherwise
@@ -289,7 +308,7 @@ of its own (`Loop.invoke`), which is taken in the same way, before anything
 else is fed. An answer's step that is refused changes the models and not
 the loop. A step that said stop is recorded (`stopped`), and no invocation
 is run once one has. A step that asked for a reload is counted
-(`reloads`).
+(`reloads`), and the theme a step asked for is recorded (`themes`).
 
 It has no termination proof: an answer's command can ask and accept again,
 for ever, which is runaway code (`docs/design/concurrency.md`, "Runaway
@@ -301,7 +320,8 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
           { driver with
             loop := stepped.loop, model
             stopped := driver.stopped || stepped.next == Loop.Next.stop
-            reloads := driver.reloads + if stepped.reload then 1 else 0 }).started
+            reloads := driver.reloads + if stepped.reload then 1 else 0
+            themes := driver.themes ++ stepped.theme.toArray }).started
       stepped.starts
   stepped.answered.foldl
     (fun driver invocation =>

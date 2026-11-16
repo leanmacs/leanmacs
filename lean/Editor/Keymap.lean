@@ -53,6 +53,7 @@ caller looks a key up by its chord, so a keymap never holds anything else.
 |---|---|
 | A new attribute of a key that a binding does not name | Dropped in `Key.chord` |
 | A new way to ask what a sequence is bound to | A function over `Keymap.find?` and `Keymap.continues`, not over `bindings` |
+| A reverse question: which sequences are bound to what a predicate keeps (`Keymap.keysFor`) | A function over `bindings` that reads and adds nothing, so the order each was last bound is kept |
 | A new way to make a keymap from another, such as keeping the bindings a predicate keeps (`Keymap.filter`) | A function here that only removes or rebinds through `Keymap.bind`, so the invariants hold |
 | A new outcome of a lookup, such as a timeout | A variant of `Lookup`, and its case in `Keymap.walk` |
 | What a key is bound to | The input scheme's `Binding`; nothing here |
@@ -127,6 +128,12 @@ def filter (keymap : Keymap β) (keep : β → Bool) : Keymap β :=
 a key from a window up by its chord. -/
 def find? (keymap : Keymap β) (keys : List Key) : Option β :=
   (keymap.bindings.find? (·.1 == keys)).map (·.2)
+
+/-- The sequences bound to what `keep` keeps, in the order each was last
+bound. A sequence bound again to something `keep` does not keep is not
+among them: the keymap holds its latest binding only. -/
+def keysFor (keymap : Keymap β) (keep : β → Bool) : List (List Key) :=
+  keymap.bindings.filterMap fun (keys, binding) => if keep binding then some keys else none
 
 /-- Whether a binding begins with `keys`: is `keys`, or is longer. -/
 def continues (keymap : Keymap β) (keys : List Key) : Bool :=

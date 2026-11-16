@@ -9,6 +9,10 @@
 //! is the same for every back end; the payload it keeps for a row is the
 //! back end's own.
 //!
+//! A status row's [`RowRef`] carries its fields' boxes, which its hash
+//! covers, so a back end builds the fill of each box with the row and
+//! keeps it by the same hash.
+//!
 //! It keeps one payload for each distinct hash of the frame it was last
 //! given, text rows and status rows alike, builds a payload only for a hash
 //! it does not hold, and hands back those of rows the frame no longer
@@ -22,7 +26,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use editor_layout::face::{Color, Paint};
-use editor_layout::frame::Frame;
+use editor_layout::frame::{Frame, StatusBox};
 use editor_layout::shaper::VisualLine;
 
 /// One row of a frame, as a renderer builds draw data from it: a text row
@@ -42,6 +46,9 @@ pub struct RowRef<'a> {
     /// The colour behind a status row, which its hash covers; `None` for
     /// a text row.
     pub status: Option<Color>,
+    /// The boxes of a status row's fields, each filled in its colour,
+    /// which its hash covers; none for a text row.
+    pub boxes: &'a [StatusBox],
 }
 
 /// The rows `frame` shows: for each view, its text rows from the top and
@@ -55,6 +62,7 @@ pub fn shown(frame: &Frame) -> impl Iterator<Item = RowRef<'_>> {
             height: row.height,
             baseline: row.baseline,
             status: None,
+            boxes: &[],
         });
         let status = view.status.iter().map(|row| RowRef {
             hash: row.hash,
@@ -63,6 +71,7 @@ pub fn shown(frame: &Frame) -> impl Iterator<Item = RowRef<'_>> {
             height: row.height,
             baseline: row.baseline,
             status: Some(row.background),
+            boxes: &row.boxes,
         });
         rows.chain(status)
     })
@@ -171,7 +180,7 @@ mod tests {
 
     use editor_layout::Layout;
     use editor_layout::frame::{CursorBox, Frame, FrameRow};
-    use editor_layout::scene::{Rect, Scene, StatusField};
+    use editor_layout::scene::{Rect, Scene, Side, StatusField};
     use editor_layout::shaper::fake::CellShaper;
 
     use super::{Reuse, RowCache, shown};
@@ -191,6 +200,7 @@ mod tests {
         scene.views[0].status = vec![StatusField {
             text: "status".to_owned(),
             face: "mode-line".to_owned(),
+            ..StatusField::default()
         }];
         Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene)
     }
@@ -238,6 +248,26 @@ mod tests {
         assert_eq!(shown(&frame).count(), 4);
         assert_eq!(hashes(&frame).len(), 4);
         assert_eq!(shown(&frame).filter(|row| row.status.is_some()).count(), 1);
+    }
+
+    #[test]
+    fn a_status_rows_ref_carries_the_frames_boxes_and_a_text_rows_none() {
+        let mut scene = Scene::of_text("ab", RECT);
+        scene.views[0].status = vec![StatusField {
+            text: "status".to_owned(),
+            face: "mode-line".to_owned(),
+            side: Side::Right,
+            padding: 4,
+        }];
+        let frame = Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene);
+        let status = frame.views[0].status.as_ref().expect("a status row");
+        assert_eq!(status.boxes.len(), 1);
+        for row in shown(&frame) {
+            match row.status {
+                Some(_) => assert_eq!(row.boxes, status.boxes.as_slice()),
+                None => assert!(row.boxes.is_empty()),
+            }
+        }
     }
 
     #[test]

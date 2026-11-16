@@ -16,11 +16,12 @@ use std::slice;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_ffi::display::{
-    DisplayStatus, WireFace, WireScene, WireView, editor_ffi_display_define,
+    DisplayStatus, RawPicture, WireFace, WireField, WireScene, WireView, editor_ffi_display_define,
     editor_ffi_display_frame_rows, editor_ffi_display_frame_text, editor_ffi_display_free,
     editor_ffi_display_heights, editor_ffi_display_live, editor_ffi_display_move,
-    editor_ffi_display_new_cells, editor_ffi_display_publish, editor_ffi_display_rows,
-    editor_ffi_display_scene, encode_definitions,
+    editor_ffi_display_new_cells, editor_ffi_display_new_font, editor_ffi_display_picture,
+    editor_ffi_display_publish, editor_ffi_display_rows, editor_ffi_display_scene,
+    editor_ffi_picture_from_png, editor_ffi_picture_to_png, encode_definitions,
 };
 use editor_ffi::document::{
     Document, RawText, editor_ffi_document_free, editor_ffi_document_new,
@@ -35,7 +36,8 @@ use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Cursor, CursorShape, Decoration, Rect, Scene, Size, StatusField, TextKey, TextRef, View, ViewId,
+    Cursor, CursorShape, Decoration, Padding, Rect, Scene, Size, StatusField, TextKey, TextRef,
+    View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -87,10 +89,32 @@ fn rows(
     height: u64,
     anchor: usize,
 ) -> Result<Vec<(usize, usize)>, u64> {
+    rows_padded(display, snapshot, width, height, (0, 0, 0), anchor)
+}
+
+/// [`rows`] of a view padded `padding` points across, down and top.
+fn rows_padded(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    padding: (u64, u64, u64),
+    anchor: usize,
+) -> Result<Vec<(usize, usize)>, u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
     // SAFETY: both handles are live, and `raw` is writable.
     let (status, words) = unsafe {
-        editor_ffi_display_rows(display, snapshot, width, height, anchor, raw.as_mut_ptr());
+        editor_ffi_display_rows(
+            display,
+            snapshot,
+            width,
+            height,
+            padding.0,
+            padding.1,
+            padding.2,
+            anchor,
+            raw.as_mut_ptr(),
+        );
         take(raw.assume_init())
     };
     if status != DisplayStatus::Done as u64 {
@@ -114,6 +138,19 @@ fn moved(
     lines: i64,
     goal: Option<u64>,
 ) -> Result<(usize, u64), u64> {
+    moved_padded(display, snapshot, width, 0, position, lines, goal)
+}
+
+/// [`moved`] in a view padded `across` points across.
+fn moved_padded(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    across: u64,
+    position: usize,
+    lines: i64,
+    goal: Option<u64>,
+) -> Result<(usize, u64), u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
     // SAFETY: both handles are live, and `raw` is writable.
     let (status, words) = unsafe {
@@ -121,6 +158,7 @@ fn moved(
             display,
             snapshot,
             width,
+            across,
             position,
             lines,
             goal.is_some(),
@@ -140,7 +178,7 @@ fn rows_directly(text: &str, width: f32, height: f32, anchor: usize) -> Vec<(usi
     let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
     let text = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
     layout
-        .rows_shown(&text, width, height, anchor)
+        .rows_shown(&text, width, height, Padding::default(), anchor)
         .unwrap()
         .into_iter()
         .map(|row| (row.start, row.stop))
@@ -165,7 +203,14 @@ fn a_display_is_live_from_new_until_free_and_answers_the_queries_as_layout_does(
     let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
     for (position, lines, goal) in [(1, 1, None), (6, 2, Some(20)), (13, -3, None)] {
         let expected = layout
-            .lines_from(&direct, 32.0, position, lines, goal.map(|goal| goal as f32))
+            .lines_from(
+                &direct,
+                32.0,
+                0,
+                position,
+                lines,
+                goal.map(|goal| goal as f32),
+            )
             .unwrap();
         assert_eq!(
             moved(display, snapshot, 32, position, lines, goal),
@@ -327,10 +372,14 @@ fn scene_directly() -> Scene {
             status: vec![StatusField {
                 text: "NORMAL".to_owned(),
                 face: "mode".to_owned(),
+                ..StatusField::default()
             }],
+            status_face: None,
+            padding: Padding::default(),
         }],
         focused: Some(ViewId(3)),
         echo: "hello".to_owned(),
+        echo_padding: 0,
         pending: String::new(),
         preedit: None,
         faces: None,
@@ -362,6 +411,7 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
         pending: String::new(),
         preedit: None,
         title: String::new(),
+        menu: None,
         views: vec![WireView {
             id: 3,
             rect: [0, 0, 96, 64],
@@ -371,8 +421,15 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
             cursor_shape: 1,
             cursor_face: "cursor".to_owned(),
             decorations: vec![(0, 2, "keyword".to_owned())],
-            status: vec![("NORMAL".to_owned(), "mode".to_owned())],
+            status: vec![WireField {
+                text: "NORMAL".to_owned(),
+                face: "mode".to_owned(),
+                ..WireField::default()
+            }],
+            status_face: None,
+            padding: Padding::default(),
         }],
+        echo_padding: 0,
         faces: None,
     };
     let (words, strings) = wire.encode();
@@ -533,15 +590,93 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
     );
     let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
     let expected: Vec<(usize, usize)> = layout
-        .rows_shown(&direct, 160.0, 64.0, 0)
+        .rows_shown(&direct, 160.0, 64.0, Padding::default(), 0)
         .unwrap()
         .into_iter()
         .map(|row| (row.start, row.stop))
         .collect();
     assert_eq!(expected.len(), 2);
     assert_eq!(rows(display, snapshot, 160, 64, 0), Ok(expected));
+    // A padded question is answered at the scale too: 8 points are 16
+    // pixels, so a view 160 by 96 padded 8 each way lays out in 128 by
+    // 64, as layout's own padded query does.
+    let long = "abcdefghijkl\nmnop\nqrst\nuvwx";
+    let padded_document = document_new(long);
+    // SAFETY: `padded_document` is live.
+    let padded = unsafe { editor_ffi_document_snapshot(padded_document) };
+    // A key of its own: layout keeps what it laid out per key.
+    let direct = TextRef::fixed(TextKey(1), Text::from(long).snapshot());
+    let expected: Vec<(usize, usize)> = layout
+        .rows_shown(
+            &direct,
+            160.0,
+            96.0,
+            Padding {
+                across: 8,
+                down: 8,
+                top: 0,
+            },
+            0,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.start, row.stop))
+        .collect();
+    assert_eq!(
+        expected,
+        layout
+            .rows_shown(&direct, 128.0, 64.0, Padding::default(), 0)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.start, row.stop))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        expected.len(),
+        2,
+        "the long line wraps at 128: {expected:?}"
+    );
+    assert_eq!(
+        rows_padded(display, padded, 160, 96, (8, 8, 0), 0),
+        Ok(expected)
+    );
+    // A top inset of 8 points takes 16 pixels more off the height, once:
+    // 48 holds one row of 32.
+    let under = layout
+        .rows_shown(
+            &direct,
+            160.0,
+            96.0,
+            Padding {
+                across: 8,
+                down: 8,
+                top: 8,
+            },
+            0,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.start, row.stop))
+        .collect::<Vec<_>>();
+    assert_eq!(under.len(), 1, "{under:?}");
+    assert_eq!(
+        rows_padded(display, padded, 160, 96, (8, 8, 8), 0),
+        Ok(under)
+    );
+    let along = layout.lines_from(&direct, 160.0, 8, 2, 1, None).unwrap();
+    assert_eq!(
+        moved_padded(display, padded, 160, 8, 2, 1, None),
+        Ok((along.position, along.goal as u64))
+    );
+    assert_ne!(
+        moved(display, padded, 160, 2, 1, None),
+        moved_padded(display, padded, 160, 8, 2, 1, None),
+        "unpadded, the first line wraps after 10 cells, not 8"
+    );
     // SAFETY: each handle is live and freed once.
     unsafe {
+        editor_ffi_snapshot_free(padded);
+        editor_ffi_document_free(padded_document);
         editor_ffi_snapshot_free(snapshot);
         editor_ffi_document_free(document);
         editor_ffi_display_free(display);
@@ -602,7 +737,11 @@ fn faces_defined_through_c_are_the_faces_of_the_heights_and_of_a_frame_published
             id: 1,
             rect: [0, 0, 160, 64],
             snapshot: Some(0),
-            status: vec![("NORMAL".to_owned(), "mode-line".to_owned())],
+            status: vec![WireField {
+                text: "NORMAL".to_owned(),
+                face: "mode-line".to_owned(),
+                ..WireField::default()
+            }],
             ..WireView::default()
         }],
         ..WireScene::default()
@@ -613,6 +752,7 @@ fn faces_defined_through_c_are_the_faces_of_the_heights_and_of_a_frame_published
     directly.views[0].status = vec![StatusField {
         text: "NORMAL".to_owned(),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     assert_eq!(frame_text(display), layout.frame(&directly).describe());
     // Words that spell no definitions are refused, and change nothing.
@@ -818,7 +958,13 @@ fn published_scene() -> (
             cursor_shape: 1,
             cursor_face: "cursor".to_owned(),
             decorations: vec![(0, 2, "keyword".to_owned())],
-            status: vec![("NORMAL".to_owned(), "mode".to_owned())],
+            status: vec![WireField {
+                text: "NORMAL".to_owned(),
+                face: "mode".to_owned(),
+                ..WireField::default()
+            }],
+            status_face: None,
+            padding: Padding::default(),
         }],
         ..WireScene::default()
     };
@@ -900,8 +1046,9 @@ fn words_that_spell_no_face_are_refused_and_the_last_frame_and_faces_are_kept() 
     wire.faces = Some(some_faces());
     assert!(publish_wire(display, snapshot, &wire));
     let styled = frame_text(display);
-    // The same scene with other faces, and its last word, a line height's
-    // value, made one no `u32` holds.
+    // The same scene with other faces, and its line height's value, the
+    // third word from the end before the vertical padding's two, made one
+    // no `u32` holds.
     wire.faces = Some(vec![WireFace {
         name: "default".to_owned(),
         face: Face {
@@ -910,8 +1057,8 @@ fn words_that_spell_no_face_are_refused_and_the_last_frame_and_faces_are_kept() 
         },
     }]);
     let (mut words, strings) = wire.encode();
-    let last = words.len() - 8;
-    words[last..].copy_from_slice(&(u64::from(u32::MAX) + 1).to_le_bytes());
+    let value = words.len() - 3 * 8;
+    words[value..value + 8].copy_from_slice(&(u64::from(u32::MAX) + 1).to_le_bytes());
     assert!(!publish(display, &words, &strings, &[snapshot]));
     assert_eq!(frame_text(display), styled);
     // Neither the frame nor the faces changed: a publish with absent
@@ -955,4 +1102,257 @@ fn a_scene_published_with_faces_comes_back_with_them() {
         editor_ffi_document_free(document);
         editor_ffi_display_free(display);
     }
+}
+
+#[test]
+fn a_views_padding_and_the_echos_cross_reach_layout_and_come_back() {
+    let _alone = alone();
+    let (display, document, snapshot, mut wire) = published_scene();
+    wire.views[0].padding = Padding {
+        across: 8,
+        down: 4,
+        top: 0,
+    };
+    wire.echo_padding = 14;
+    let (words, strings) = wire.encode();
+    assert!(publish(display, &words, &strings, &[snapshot]));
+    // Layout's frame of the same scene padded the same way.
+    let mut direct_scene = scene_directly();
+    direct_scene.views[0].padding = Padding {
+        across: 8,
+        down: 4,
+        top: 0,
+    };
+    direct_scene.echo_padding = 14;
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    let direct = layout.frame(&direct_scene).describe();
+    assert_eq!(frame_text(display), direct);
+    assert!(direct.contains("row x 8 y 4"), "{direct}");
+    // And the scene comes back as it was sent.
+    let (mut back, mut text) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: `display` is live, and both records are writable and filled
+    // before they are read.
+    let (status, back, text) = unsafe {
+        editor_ffi_display_scene(display, back.as_mut_ptr(), text.as_mut_ptr());
+        let (status, back) = take(back.assume_init());
+        (status, back, take_text(text.assume_init()))
+    };
+    let sent: Vec<u64> = words
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|word| u64::from_le_bytes(*word))
+        .collect();
+    assert_eq!((status, back, text), (0, sent, strings));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+/// The fixture mono font, compiled in for this test alone: no file is read
+/// when it runs, and no font of the machine is used.
+const MONO: &[u8] = include_bytes!("../../../tests/fonts/NotoSansMono-Regular.subset.ttf");
+
+/// The family the fixture mono font holds.
+const MONO_FAMILY: &str = "Noto Sans Mono";
+
+/// A display over the one font `bytes` holds, as family `family`, through
+/// C: the handle, or the reason it was refused.
+fn font_display(bytes: &[u8], family: &str) -> Result<*mut editor_ffi::display::Display, String> {
+    let mut reason = MaybeUninit::uninit();
+    // SAFETY: the buffers are alive for the call, `reason` is writable and
+    // filled before it is read.
+    let (display, reason) = unsafe {
+        let display = editor_ffi_display_new_font(
+            bytes.as_ptr(),
+            bytes.len(),
+            family.as_ptr(),
+            family.len(),
+            reason.as_mut_ptr(),
+        );
+        (display, take_text(reason.assume_init()))
+    };
+    if display.is_null() {
+        Err(reason)
+    } else {
+        assert_eq!(reason, "");
+        Ok(display)
+    }
+}
+
+/// A picture through C: its width, its height and its pixels.
+///
+/// # Safety
+///
+/// `raw` was filled by the library, and its buffer has not been handed
+/// back.
+unsafe fn take_picture(raw: RawPicture) -> (u64, u64, Vec<u8>) {
+    // SAFETY: the record's buffer is `len` bytes, owned until handed back.
+    let rgba = unsafe { slice::from_raw_parts(raw.rgba, raw.len) }.to_vec();
+    // SAFETY: the buffer came from the library in this record, handed back
+    // once.
+    unsafe { editor_ffi_text_free(raw.rgba, raw.len) };
+    (raw.width, raw.height, rgba)
+}
+
+/// The picture of `display`'s latest frame, through C.
+fn picture(display: *const editor_ffi::display::Display) -> (u64, u64, Vec<u8>) {
+    let mut raw = MaybeUninit::uninit();
+    // SAFETY: `display` is live, `raw` writable and filled before it is
+    // read.
+    unsafe {
+        editor_ffi_display_picture(display, raw.as_mut_ptr());
+        take_picture(raw.assume_init())
+    }
+}
+
+#[test]
+fn a_display_over_one_font_is_refused_for_bytes_that_are_no_font_and_a_family_it_does_not_hold() {
+    let _alone = alone();
+    let before = editor_ffi_display_live();
+    assert!(font_display(b"not a font", MONO_FAMILY).is_err_and(|reason| !reason.is_empty()));
+    assert!(font_display(MONO, "No Such Family").is_err_and(|reason| !reason.is_empty()));
+    assert_eq!(editor_ffi_display_live(), before);
+}
+
+#[test]
+fn a_display_over_the_fixture_font_draws_its_text_in_a_picture() {
+    // Wiring: the real shaper over the font given, layout and the CPU
+    // renderer, through C. What the glyphs look like is the renderer's,
+    // pinned by its reference image; what is pinned here is that a font
+    // display's picture has text on it, and that it is the scene's size.
+    let _alone = alone();
+    let before = editor_ffi_display_live();
+    let display = font_display(MONO, MONO_FAMILY).expect("the fixture font");
+    assert_eq!(editor_ffi_display_live(), before + 1);
+    assert_eq!(picture(display), (0, 0, Vec::new()));
+    let document = document_new("wh=");
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let paper = [0xf8, 0xf8, 0xf8, 0xff];
+    let wire = WireScene {
+        size: [64, 32],
+        views: vec![WireView {
+            id: 1,
+            rect: [0, 0, 64, 32],
+            snapshot: Some(0),
+            ..WireView::default()
+        }],
+        faces: Some(vec![WireFace {
+            name: "default".to_owned(),
+            face: Face {
+                family: Some("monospace".to_owned()),
+                size: Some(Length::pixels(16)),
+                foreground: Some(Color::rgb(0x20, 0x20, 0x20)),
+                background: Some(Color::rgb(paper[0], paper[1], paper[2])),
+                ..Face::default()
+            },
+        }]),
+        ..WireScene::default()
+    };
+    assert!(publish_wire(display, snapshot, &wire));
+    let (width, height, rgba) = picture(display);
+    assert_eq!((width, height, rgba.len()), (64, 32, 64 * 32 * 4));
+    let pixels = rgba.as_chunks::<4>().0;
+    assert!(pixels.contains(&paper));
+    assert!(pixels.iter().any(|pixel| *pixel != paper));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+    assert_eq!(editor_ffi_display_live(), before);
+}
+
+#[test]
+fn a_picture_crosses_to_a_png_file_and_back() {
+    let rgba: Vec<u8> = (0..4u8)
+        .flat_map(|index| [index * 60, 7, 255 - index * 60, 0xff])
+        .collect();
+    let (written, status, bytes, reason) = to_png(2, 2, &rgba);
+    assert!(written);
+    assert_eq!((status, reason), (0, String::new()));
+    let (mut back, mut reason) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: as above.
+    let (read, back, reason) = unsafe {
+        let read = editor_ffi_picture_from_png(
+            bytes.as_ptr(),
+            bytes.len(),
+            back.as_mut_ptr(),
+            reason.as_mut_ptr(),
+        );
+        (
+            read,
+            take_picture(back.assume_init()),
+            take_text(reason.assume_init()),
+        )
+    };
+    assert!(read);
+    assert_eq!((back, reason), ((2, 2, rgba.clone()), String::new()));
+    // A picture whose pixels are not its size is not written, and bytes
+    // that are no PNG file are not read.
+    let (written, _, bytes, reason) = to_png(3, 2, &rgba);
+    assert!(!written && bytes.is_empty() && !reason.is_empty());
+    // Nor is a picture of no pixels, what a display draws before any
+    // scene: a PNG file has at least one pixel each way.
+    let (written, _, bytes, reason) = to_png(0, 0, &[]);
+    assert!(!written && bytes.is_empty() && !reason.is_empty());
+    // Nor one whose size in bytes is past any number: refused, not a
+    // panic across the boundary.
+    let side = u64::from(u32::MAX);
+    let (written, _, bytes, reason) = to_png(side, side, &rgba);
+    assert!(!written && bytes.is_empty() && !reason.is_empty());
+    let (mut back, mut reason) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: as above.
+    let (read, back, reason) = unsafe {
+        let read =
+            editor_ffi_picture_from_png(b"no".as_ptr(), 2, back.as_mut_ptr(), reason.as_mut_ptr());
+        (
+            read,
+            take_picture(back.assume_init()),
+            take_text(reason.assume_init()),
+        )
+    };
+    assert!(!read);
+    assert_eq!(back, (0, 0, Vec::new()));
+    assert!(!reason.is_empty());
+}
+
+/// What `editor_ffi_picture_to_png` answers for the picture `width` by
+/// `height` of the pixels `rgba`: whether it wrote, the status and bytes
+/// it filled, and its reason.
+fn to_png(width: u64, height: u64, rgba: &[u8]) -> (bool, u64, Vec<u8>, String) {
+    let (mut png, mut reason) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: the buffer is alive for the call, both records writable and
+    // filled before they are read.
+    unsafe {
+        let written = editor_ffi_picture_to_png(
+            width,
+            height,
+            rgba.as_ptr(),
+            rgba.len(),
+            png.as_mut_ptr(),
+            reason.as_mut_ptr(),
+        );
+        let (status, bytes) = take_bytes(png.assume_init());
+        (written, status, bytes, take_text(reason.assume_init()))
+    }
+}
+
+/// The bytes of a filled record, with its status; the buffer is handed
+/// back.
+///
+/// # Safety
+///
+/// As [`take`].
+unsafe fn take_bytes(raw: RawWords) -> (u64, Vec<u8>) {
+    // SAFETY: the record's buffer is `len` bytes, owned until handed back.
+    let bytes = unsafe { slice::from_raw_parts(raw.words, raw.len) }.to_vec();
+    // SAFETY: handed back once.
+    unsafe { editor_ffi_text_free(raw.words, raw.len) };
+    (raw.status, bytes)
 }

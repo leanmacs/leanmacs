@@ -346,11 +346,11 @@ def take (files : FakeFiles) (id : UInt64) : (request : FileRequest) → BaseIO 
             { state with
               model, pending := state.pending.filter (·.1 != id) })
         else (.error (.failed "the request is not pending"), state)
-  | .stat path => do
+  | .stamp path => do
     files.parkTake
     files.state.modifyGet fun state =>
         if state.pending.any (·.1 == id) then
-          (state.model.stat path, { state with pending := state.pending.filter (·.1 != id) })
+          (state.model.stamp path, { state with pending := state.pending.filter (·.1 != id) })
         else (.error (.failed "the request is not pending"), state)
 
 /-- Withdraws the wait `id`, if its request is pending: it is never
@@ -554,8 +554,11 @@ def take (processes : FakeProcesses) (id : UInt64) (request : ProcessRequest) :
               model, pending := state.pending.filter (·.1 != id), taken := state.taken.push id })
         else ((request.refused (.failed "the request is not pending"), false), state)
   if ran then
-    if let .run command _ := request then
+    match request with
+    | .run command _ | .runWithin command _ _ =>
       processes.ran command
+    | _ =>
+      pure ()
   return reply
 
 /-- Withdraws the wait `id`, if its request is pending: it is never

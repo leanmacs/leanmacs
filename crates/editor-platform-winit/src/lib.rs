@@ -6,13 +6,15 @@
 //! port's [`Input`] and [`Canvas`], and ends its loop when it is asked to
 //! close. No winit or objc2 type is public, no other crate depends on
 //! winit or on the objc2 crates it names (`deny.toml`), and AppKit is named
-//! only in the module `delegate`, on macOS.
+//! only in the modules `delegate`, `menu_bar` and `corner`, on macOS.
 //!
 //! The translation is the module `translate`'s, with a key's names in
 //! `names` and the window's native handles in `native`: every key with its
 //! logical key, physical key and modifiers; the pointer's press, drag,
-//! release and wheel; a resize with the size, the scale and whether the
-//! window is in fullscreen; the focus; a
+//! release and wheel; a resize with the size, the scale, whether the
+//! window is in fullscreen, its corner clearance (the module `corner`
+//! decides it) and its top inset (the module `title_bar` decides it); the
+//! focus; a
 //! composition; a request to close; and, for whatever draws in the window,
 //! its native window, its size, its display's refresh rate, damage, and
 //! whether it is hidden. Their docs say what is decided where winit and the
@@ -36,13 +38,27 @@
 //!   before it touches winit: winit panics there. Whether the calling thread
 //!   is the main one is asked of a function the caller supplies, since the
 //!   check belongs to whoever owns the main thread.
+//! - **It opens the window as the options' title bar says**
+//!   (`title_bar::attributes`): on macOS a themed window has a
+//!   transparent title bar over a full-size content view, and a standard
+//!   one winit's defaults. The choice is kept for the run.
 //! - **It allows an input method to compose exactly when the options say
 //!   so.** With composition not allowed, a dead key arrives as a key.
 //! - **It asks for the keyboard focus once**, when the window opens. The
 //!   system may decline: macOS gives focus only to an application the user
 //!   has brought forward.
-//! - **It builds no default menu** on macOS, so Command-Q is a key that
-//!   reaches the window and not a menu item that ends the process.
+//! - **It builds the menu bar the editor asks for (macOS)**, and none of
+//!   winit's: [`Request::Menu`] is the application's, not the window's, so
+//!   the loop takes it out of the requests once the window has opened and
+//!   hands the module `menu`'s plan of it to `menu_bar`, which builds it in
+//!   AppKit. Every decision of what is built is `menu`'s. Elsewhere winit
+//!   has no menu bar, and a menu changes nothing shown, as the port's
+//!   request contract lets a platform with none.
+//! - **It reports a command item chosen** as [`Input::Menu`]: the item's
+//!   action is the one method of a target object of the crate's, which
+//!   sends the command's name on a channel of the choices' own and wakes
+//!   the loop, as the delegate hands files. The loop reports each name when
+//!   it is woken; a close drops them with the requests.
 //! - **It runs once in a process.** winit makes one event loop a process, so
 //!   a second run fails with winit's reason.
 //! - **It ends its loop on a close, and only then.** A close asks the loop
@@ -56,8 +72,8 @@
 //!   request on the channel (`wake`): when a close has been asked they are
 //!   dropped, since the window is going; otherwise each is carried out on
 //!   the window, in order, by the module `asked`'s translation, and then
-//!   the window's fullscreen is read and a change of it reported as a
-//!   resize. A request asked with no window running does nothing, and one
+//!   the window's fullscreen, corners and title bar are read and a change
+//!   of any reported as a resize. A request asked with no window running does nothing, and one
 //!   that arrives before the window is made is dropped.
 //! - **It receives the files the system asks the app to open (macOS)**,
 //!   through an application delegate of its own (the module `delegate`),
@@ -71,6 +87,32 @@
 //!   when: after `Opened` and the `Resized` after it, each list as one
 //!   [`Input::OpenFiles`], in the order they arrived. A close drops them
 //!   with the requests.
+//! - **It reports the system's quit and answers it (macOS).** The same
+//!   delegate answers every `applicationShouldTerminate:` (Command-Q's
+//!   `terminate:`, the Dock's Quit, a logout) with `NSTerminateLater`, so
+//!   AppKit waits inside `terminate:`, and hands the ask on through a
+//!   channel of its own and a wake of the loop. The module `terminate`
+//!   decides what comes of it: the first ask is reported once as
+//!   [`Input::QuitRequested`], after `Opened`, and not again while it is
+//!   pending; [`Request::KeepRunning`] cancels a pending one
+//!   (`replyToApplicationShouldTerminate:NO`) and is otherwise nothing; a
+//!   close lets one pending, held or still waiting go ahead (`YES`), so that
+//!   none is left unanswered, unless a keep running came with it, when it
+//!   cancels them (`NO`) and the run returns; and a window that could not
+//!   be opened cancels one held or waiting. Keep running is taken out of
+//!   the requests the loop finds, and never reaches the window; on a close,
+//!   `wake` says whether one was among the requests it drops. winit's loop
+//!   handles its
+//!   wake-ups and requests while AppKit waits, since winit runs them in the
+//!   common modes, which include AppKit's modal-panel mode.
+//! - **It does what follows the loop's end before it lets the system
+//!   terminate (macOS).** AppKit waits inside `terminate:`, under winit's
+//!   run, so with a terminate pending the run never returns, and once
+//!   answered `YES` AppKit ends the process (`exit(0)`) there. So on such a
+//!   close the drawer is told the window is closing, and the window goes,
+//!   before the reply. Whatever the program must do before it ends, it
+//!   does before it asks for the close: the window port's rule
+//!   (`Platform::close`), which this adapter is why the port states.
 //!
 //! # Tests
 //!
@@ -82,7 +124,14 @@
 //! window (`asked`, which runs the port's request contract), the files to
 //! open (`files`: the translation of paths and the holding of them until
 //! the window opened; and `Handing::hand`, which sends before it wakes),
-//! and the refusal off the main thread. The event
+//! the system's quit (`terminate`'s rules, `Handing::terminate`, which
+//! sends before it wakes, and `wake`, which still counts the asks on a
+//! close, so that the close answers them, and says whether a keep running
+//! came with it), the menu bar (`menu`'s plan and its reading back, over
+//! the model of what AppKit holds; `Handing::choose`, which sends before it
+//! wakes; `wake`, which drops the choices on a close; and `asked`'s run of
+//! the request contract with the menu bar routed as the handler routes
+//! it), and the refusal off the main thread. The event
 //! loop itself needs a display, and so do the lines here that only a real
 //! window runs. They are few, and each is a reading of the window or a
 //! call with no decision in it:
@@ -91,6 +140,8 @@
 //!   change of scale cannot be built outside winit. winit 0.31's key event
 //!   can be, and is still taken apart here, so that the key's translation
 //!   keeps its parts (`KeyParts`);
+//! - creating the window with the attributes `title_bar::attributes`
+//!   gives, which are tested;
 //! - the readings of the window as it opens: its size and scale, its raw
 //!   handles (`native_window`), and its display's refresh rate
 //!   (`refresh_rate`, which reads `current_monitor`, its
@@ -106,15 +157,23 @@
 //!   wake-up comes to is `wake`'s, and tested;
 //! - reporting the files to open that `files` gives, when the loop is woken
 //!   and when the window opens. What it gives is `files`'s, and tested;
-//! - the four lines of `Control` for winit's window, which carry out a
+//! - the five lines of `Control` for winit's window, which carry out a
 //!   request: reading `fullscreen().is_some()`, and calling
 //!   `set_fullscreen` with `Fullscreen::Borderless(None)` or `None`,
-//!   `set_minimized(true)` and `set_title`. Which is called, and when, is
-//!   `asked`'s, and tested;
-//! - the reading of fullscreen as the window opens and when the
-//!   translation asks for it, after a resize, a change of scale, a move or
-//!   an occlusion, and after requests are carried out. When it is read and
-//!   what is reported of it are the translation's, and tested;
+//!   `set_minimized(true)`, `set_title` and `set_theme`. Which is called,
+//!   and when, is `asked`'s, and tested;
+//! - the reading of the window's shape (`shape`) as the window opens and
+//!   when the translation asks for it, after a resize, a change of scale, a
+//!   move or an occlusion, and after requests are carried out: whether it
+//!   is in fullscreen, on macOS the system's reading of its corners
+//!   (`corner_reading`, over the view of `native_window`, and
+//!   `corner::system`, one call into AppKit), and the reading of its title
+//!   bar (`title_reading`, the top of winit's `safe_area` over the scale
+//!   factor). When it is read and what is reported of it are the
+//!   translation's, and what the readings come to is `corner::clearance`'s
+//!   and `title_bar::top_inset`'s, and all are tested. `mise run
+//!   window-contract` runs the readings and prints the clearance and the
+//!   top inset each resize said;
 //! - telling the drawer the window is closing once the loop has ended;
 //! - on macOS, the application delegate's one method, which reads each
 //!   URL's file path and hands the list to `Handing::hand`, and
@@ -122,9 +181,28 @@
 //!   makes the delegate and gives it to the application. No test can make
 //!   AppKit send an open-documents event; Finder and the Dock are tried by
 //!   hand (the roadmap `macos-app`, phase 6). Installing it in `run` is
-//!   reached by any run on macOS, so `mise run window-contract` runs it.
+//!   reached by any run on macOS, so `mise run window-contract` runs it;
+//! - on macOS, the delegate's `applicationShouldTerminate:`, which hands
+//!   the ask to `Handing::terminate` and answers `NSTerminateLater`, and
+//!   `delegate::reply`, which makes the reply `terminate` gave; the loop's
+//!   forwarding of each ask, each keep running, a close and a window that
+//!   could not be opened to `terminate`, and of its reply to the delegate;
+//!   and, on a close with a reply, telling the drawer the window is closing
+//!   before it. What comes of them is `terminate`'s, and tested. The
+//!   contract example asks them of a running window, sees a close with a
+//!   keep running before it cancel a terminate pending and return, and
+//!   sees a close with a terminate pending end the process by AppKit's
+//!   terminate;
+//! - on macOS, the menu bar's build (`MenuBar::show`, item for item from
+//!   the plan) and its reading (`probe::read_menu_bar`), the target's one
+//!   method, which hands `menu::chosen`'s name to `Handing::choose`, the
+//!   loop's reporting of each choice, and `delegate::install`'s
+//!   `NSFullScreenMenuItemEverywhere`. What is built and read is `menu`'s,
+//!   and tested. The contract example asks a running window for a menu
+//!   bar, reads it back from AppKit, performs each command item and the
+//!   Quit item, and sees what each reports.
 //!
-//! They are held to the port's contract by `examples/contract.rs`, which
+//! They are held to the port's contract by `examples/contract/main.rs`, which
 //! two opt-in tasks run: `mise run linux-window`, under Xvfb in a
 //! container, and `mise run window-contract`, on the desktop it is started
 //! from. Run the first after a change to this crate. Under Xvfb the
@@ -142,11 +220,18 @@
 //! not been seen.
 
 mod asked;
+mod corner;
 #[cfg(target_os = "macos")]
 mod delegate;
 mod files;
+#[cfg(any(target_os = "macos", test))]
+mod menu;
+#[cfg(target_os = "macos")]
+mod menu_bar;
 mod names;
 mod native;
+mod terminate;
+mod title_bar;
 mod translate;
 
 use std::num::NonZeroU32;
@@ -155,7 +240,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 
 use editor_platform::{
-    CannotOpen, Canvas, Drawer, Input, NativeWindow, Platform, Report, Request, WindowOptions,
+    CannotOpen, Canvas, Drawer, Input, NativeWindow, Platform, Report, Request, TitleBar,
+    WindowOptions,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -165,14 +251,24 @@ use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{
     ImeCapabilities, ImeEnableRequest, ImeHint, ImePurpose, ImeRequest, ImeRequestData, Window,
-    WindowAttributes, WindowId,
+    WindowId,
 };
 
 use crate::asked::{Asked, Control};
+use crate::corner::Shape;
 use crate::files::Arrivals;
 #[cfg(any(target_os = "macos", test))]
 use crate::files::Handing;
+use crate::terminate::{Reply, Terminate};
 use crate::translate::{KeyParts, Seen, Told};
+
+/// A reading of the menu bar the adapter built, for `examples/contract`
+/// alone (macOS): no other crate calls it, and it names no objc2 type.
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub mod probe {
+    pub use crate::menu_bar::{Reading, read_menu_bar};
+}
 
 /// The window port over winit. It opens one window, on the process's main
 /// thread, once in a process.
@@ -244,13 +340,24 @@ impl Platform for WinitPlatform {
         // arrive as the loop starts. Elsewhere nothing hands them, and the
         // channel stays empty.
         let (handing, files) = mpsc::channel();
+        // The system's asks to terminate, handed the same way.
+        let (terminating, terminations) = mpsc::channel();
+        // The command items chosen in the menu bar, handed by its target,
+        // which is made beside the delegate.
+        let (choosing, choices) = mpsc::channel();
         #[cfg(target_os = "macos")]
-        let installed = delegate::install(Handing {
+        let handing = Handing {
             files: handing,
+            terminations: terminating,
+            menus: choosing,
             proxy: event_loop.create_proxy(),
-        });
+        };
+        #[cfg(target_os = "macos")]
+        let menu_bar = menu_bar::MenuBar::install(handing.clone());
+        #[cfg(target_os = "macos")]
+        let installed = delegate::install(handing);
         #[cfg(not(target_os = "macos"))]
-        drop(handing);
+        drop((handing, terminating, choosing));
         *self.running() = Some(Running {
             proxy: event_loop.create_proxy(),
             closing: closing.clone(),
@@ -268,6 +375,11 @@ impl Platform for WinitPlatform {
             asked: Asked::default(),
             files,
             arrivals: Arrivals::default(),
+            terminations,
+            terminate: Terminate::default(),
+            choices,
+            #[cfg(target_os = "macos")]
+            menu_bar,
         };
         // What winit's `run_app` does on macOS and on Linux, with the
         // handler borrowed so that it is still here once the loop has ended.
@@ -280,7 +392,7 @@ impl Platform for WinitPlatform {
         }
         let failure = app.failure.take();
         // The window goes before its loop, as in winit's `run_app`, and the
-        // application's delegate with it.
+        // menu bar (in `app`) and then the application's delegate with it.
         drop(app);
         #[cfg(target_os = "macos")]
         drop(installed);
@@ -337,42 +449,76 @@ impl Closing {
     }
 }
 
-/// What a wake-up of the loop comes to: the requests to carry out on the
-/// window, in the order asked, the lists of files to open, in the order
-/// handed, and whether the loop ends.
+/// What a wake-up of the loop comes to: the requests to carry out, in the
+/// order asked, the lists of files to open, in the order handed, how many
+/// times the system asked to terminate, the command items chosen, and
+/// whether the loop ends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Woken {
     /// The requests to carry out, oldest first.
     carry: Vec<Request>,
     /// The lists of files to open, oldest first.
     files: Vec<Vec<PathBuf>>,
+    /// How many asks to terminate arrived.
+    terminations: usize,
+    /// The names of the command items chosen, oldest first.
+    chosen: Vec<String>,
+    /// Whether a keep running came with the close, when the loop ends:
+    /// the close then cancels the system's quit (`Terminate::close`).
+    /// A loop that goes on carries keep running with the other requests.
+    kept: bool,
     /// Whether the loop ends.
     ends: bool,
 }
 
 /// What a wake-up of the loop comes to, with `closing` as it is and
-/// `requests` and `files` taken off their channels. A loop that ends drops
-/// what is pending, files to open with the requests: the window is going.
-/// One that does not takes every request and every list of files, in order;
-/// with none it still goes on, since winit may wake a loop nobody woke.
+/// `requests`, `files`, `terminations` and `choices` taken off their
+/// channels. A loop that ends drops the requests, the files to open and the
+/// menu choices: the window is going.
+/// It still counts the asks to terminate, since each is a `terminate:`
+/// AppKit waits in until it is answered, and the close answers it
+/// (`Terminate::close`), and it says whether a keep running was among the
+/// requests, which the close's answer turns on: a keep running asked
+/// before the close is found with it whenever the loop did not wake in
+/// between. One that does not end takes every request, every list of
+/// files, every ask and every choice, in order; with none it still goes
+/// on, since winit may wake a loop nobody woke.
 fn wake(
     closing: &Closing,
-    requests: impl Iterator<Item = Request>,
+    mut requests: impl Iterator<Item = Request>,
     files: impl Iterator<Item = Vec<PathBuf>>,
+    terminations: impl Iterator<Item = ()>,
+    choices: impl Iterator<Item = String>,
 ) -> Woken {
     let ends = closing.ends_on_wake();
     if ends {
+        let kept = requests.any(|request| request == Request::KeepRunning);
         return Woken {
             carry: Vec::new(),
             files: Vec::new(),
+            terminations: terminations.count(),
+            chosen: Vec::new(),
+            kept,
             ends,
         };
     }
     Woken {
         carry: requests.collect(),
         files: files.collect(),
+        terminations: terminations.count(),
+        chosen: choices.collect(),
+        kept: false,
         ends,
     }
+}
+
+/// Makes `reply` to the system: on macOS through the application delegate,
+/// elsewhere nowhere, since nothing there asks.
+fn answer(reply: Reply) {
+    #[cfg(target_os = "macos")]
+    delegate::reply(reply);
+    #[cfg(not(target_os = "macos"))]
+    let _ = reply;
 }
 
 /// The window and its loop's handler: what [`WinitPlatform::run`] hands to
@@ -401,6 +547,32 @@ struct App {
     files: mpsc::Receiver<Vec<PathBuf>>,
     /// The files to open that arrived, held until the window has opened.
     arrivals: Arrivals,
+    /// The system's asks to terminate, taken when the loop is woken and
+    /// when the window opens.
+    terminations: mpsc::Receiver<()>,
+    /// What is known of those asks, and of the answers to them.
+    terminate: Terminate,
+    /// The names of the command items chosen in the menu bar, taken when
+    /// the loop is woken.
+    choices: mpsc::Receiver<String>,
+    /// The menu bar, which keeps its items' target alive for the run
+    /// (macOS); `None` off the main thread.
+    #[cfg(target_os = "macos")]
+    menu_bar: Option<menu_bar::MenuBar>,
+}
+
+impl App {
+    /// Shows `menu` as the application's menu bar, built from its plan, on
+    /// macOS; elsewhere it is dropped, since winit builds no menu bar
+    /// there and the request contract lets a platform with none show none.
+    fn show(&self, menu: &editor_platform::Menu) {
+        #[cfg(target_os = "macos")]
+        if let Some(menu_bar) = &self.menu_bar {
+            menu_bar.show(&menu::plan(menu));
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = menu;
+    }
 }
 
 impl ApplicationHandler for App {
@@ -411,8 +583,7 @@ impl ApplicationHandler for App {
         if self.window.is_some() || self.failure.is_some() {
             return;
         }
-        let attributes = WindowAttributes::default().with_title(WinitPlatform::TITLE);
-        match event_loop.create_window(attributes) {
+        match event_loop.create_window(title_bar::attributes(self.options)) {
             Ok(window) => {
                 // What it comes to is seen in the events the window sends,
                 // as with the call this replaces, which returned nothing.
@@ -423,7 +594,7 @@ impl ApplicationHandler for App {
                     window.scale_factor(),
                     native_window(window.as_ref()),
                     refresh_rate(window.as_ref()),
-                    window.in_fullscreen(),
+                    shape(window.as_ref(), self.options.title_bar),
                 );
                 self.window = Some(window);
                 // The drawer hears of the window before anyone else does.
@@ -437,9 +608,20 @@ impl ApplicationHandler for App {
                 for input in self.arrivals.open(self.files.try_iter()) {
                     (self.report)(input);
                 }
+                // An ask to terminate that came before the window, or is
+                // still waiting, after the files.
+                if let Some(input) = self.terminate.open(self.terminations.try_iter().count()) {
+                    (self.report)(input);
+                }
             }
             Err(error) => {
                 self.failure = Some(error.to_string());
+                // An ask held, or waiting, keeps AppKit waiting inside
+                // `terminate:`, and the run could not return with the
+                // failure: what it is answered is `terminate`'s.
+                if let Some(reply) = self.terminate.fail(self.terminations.try_iter().count()) {
+                    answer(reply);
+                }
                 event_loop.exit();
             }
         }
@@ -450,8 +632,23 @@ impl ApplicationHandler for App {
             &self.closing,
             self.requests.try_iter(),
             self.files.try_iter(),
+            self.terminations.try_iter(),
+            self.choices.try_iter(),
         );
         if woken.ends {
+            // What a close says to an ask still pending, held or waiting is
+            // `terminate`'s to decide, with whether a keep running came with
+            // it. A reply that goes ahead lets AppKit end the process inside
+            // the run, which then never returns, so what follows the loop's
+            // end is done first: the drawer is told the window is closing,
+            // while the window is still there, and then it goes.
+            if let Some(reply) = self.terminate.close(woken.terminations, woken.kept) {
+                if let Some(window) = self.window.take() {
+                    (self.drawer)(Canvas::Closing);
+                    drop(window);
+                }
+                answer(reply);
+            }
             event_loop.exit();
             return;
         }
@@ -461,16 +658,43 @@ impl ApplicationHandler for App {
                 (self.report)(input);
             }
         }
+        // Nor do the asks to terminate: they are held as files are.
+        for _ in 0..woken.terminations {
+            if let Some(input) = self.terminate.ask() {
+                (self.report)(input);
+            }
+        }
+        // A command item can only be chosen from a menu bar the editor
+        // asked for, which is built only once the window has opened.
+        for name in woken.chosen {
+            (self.report)(Input::Menu(name));
+        }
+        // Keeping running answers the system, and is no request of the
+        // window's; every other request is the window's.
+        let (keep_running, carry): (Vec<_>, Vec<_>) = woken
+            .carry
+            .into_iter()
+            .partition(|request| *request == Request::KeepRunning);
+        for _ in keep_running {
+            if let Some(reply) = self.terminate.keep_running() {
+                answer(reply);
+            }
+        }
         // A request asked before the window was made is dropped.
         let Some(window) = self.window.as_deref() else {
             return;
         };
-        for request in woken.carry {
-            asked::carry_out(&mut self.asked, window, request);
+        for request in carry {
+            match request {
+                // The menu bar is the application's, not the window's: it
+                // is built only once `Opened` has been reported.
+                Request::Menu(menu) => self.show(&menu),
+                request => asked::carry_out(&mut self.asked, window, request),
+            }
         }
-        // What carrying them out did to fullscreen, as the drawer and the
-        // report hear of a window event's.
-        let told = self.seen.fullscreen(window.in_fullscreen());
+        // What carrying them out did to fullscreen and the corners, as the
+        // drawer and the report hear of a window event's.
+        let told = self.seen.reread(shape(window, self.options.title_bar));
         for canvas in told.canvas {
             (self.drawer)(canvas);
         }
@@ -484,8 +708,10 @@ impl ApplicationHandler for App {
         // translation asks: it decides after which events to.
         let window = self.window.as_deref();
         let display = || window.and_then(refresh_rate);
-        // Whether it is in fullscreen, read when the translation asks.
-        let fullscreen = || window.is_some_and(Control::in_fullscreen);
+        // Whether it is in fullscreen, and how its corners and its title
+        // bar read, when the translation asks.
+        let title_bar = self.options.title_bar;
+        let shape = || window.map_or(Shape::default(), |window| shape(window, title_bar));
         // A change of scale cannot be built in a test, and a key is
         // translated from its parts, so each is taken apart here. These two
         // arms are all this handler decides.
@@ -501,9 +727,9 @@ impl ApplicationHandler for App {
                 canvas: Vec::new(),
             },
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.seen.scale(*scale_factor, &display, &fullscreen)
+                self.seen.scale(*scale_factor, &display, &shape)
             }
-            other => self.seen.window_event(other, &display, &fullscreen),
+            other => self.seen.window_event(other, &display, &shape),
         };
         // The drawer first, as when the window opened: a size is known to
         // what draws before anyone is told to lay out for it.
@@ -523,6 +749,41 @@ fn native_window(window: &dyn Window) -> Option<NativeWindow> {
     let handle = window.window_handle().ok()?.as_raw();
     let display = window.display_handle().ok()?.as_raw();
     native::native(handle, display)
+}
+
+/// What `window`, opened with `title_bar`, reads as, for its fullscreen
+/// state, its corner clearance and its top inset: whether it is in
+/// fullscreen, on macOS the system's reading of its corners over its
+/// AppKit view, and the system's reading of how far down its title bar
+/// covers it. Each is a reading with no decision in it; what they come to
+/// is the modules `corner`'s and `title_bar`'s.
+fn shape(window: &dyn Window, title_bar: TitleBar) -> Shape {
+    Shape {
+        fullscreen: window.in_fullscreen(),
+        corner: corner_reading(window),
+        top: title_reading(window),
+        title_bar,
+    }
+}
+
+/// The system's reading of how far down `window`'s title bar covers its
+/// drawable area, in logical points: the top of winit's safe area, which
+/// is in physical pixels, over the scale factor. winit reads 0 off macOS.
+fn title_reading(window: &dyn Window) -> Option<f64> {
+    Some(f64::from(window.safe_area().top) / window.scale_factor())
+}
+
+/// The system's reading of how far in `window`'s corners reach, in logical
+/// points: on macOS, over the AppKit view its raw handle gives; nothing
+/// elsewhere, or for a window with no such view.
+fn corner_reading(window: &dyn Window) -> Option<f64> {
+    #[cfg(target_os = "macos")]
+    if let Some(NativeWindow::AppKit { view }) = native_window(window) {
+        return corner::system(view);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+    None
 }
 
 /// How often the display the window is on refreshes, in thousandths of a
@@ -558,7 +819,8 @@ fn ime_request(composition: bool) -> ImeRequest {
     ImeEnableRequest::new(capabilities, data).map_or(ImeRequest::Disable, ImeRequest::Enable)
 }
 
-/// Builds the event loop, without winit's default menu where it has one.
+/// Builds the event loop, without winit's default menu where it has one:
+/// the menu bar is the editor's ([`Request::Menu`]).
 fn event_loop() -> Result<EventLoop, String> {
     let mut builder = EventLoop::builder();
     #[cfg(target_os = "macos")]
@@ -720,6 +982,8 @@ mod tests {
         });
         let handing = Handing {
             files,
+            terminations: mpsc::channel().0,
+            menus: mpsc::channel().0,
             proxy: EventLoopProxy::new(waker.clone()),
         };
         let first = vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")];
@@ -744,11 +1008,16 @@ mod tests {
             wake(
                 &Closing::default(),
                 asked.clone().into_iter(),
+                std::iter::empty(),
+                std::iter::empty(),
                 std::iter::empty()
             ),
             Woken {
                 carry: asked.to_vec(),
                 files: Vec::new(),
+                terminations: 0,
+                chosen: Vec::new(),
+                kept: false,
                 ends: false,
             }
         );
@@ -764,11 +1033,16 @@ mod tests {
             wake(
                 &Closing::default(),
                 std::iter::empty(),
-                lists.clone().into_iter()
+                lists.clone().into_iter(),
+                std::iter::empty(),
+                std::iter::empty()
             ),
             Woken {
                 carry: Vec::new(),
                 files: lists,
+                terminations: 0,
+                chosen: Vec::new(),
+                kept: false,
                 ends: false,
             }
         );
@@ -782,11 +1056,16 @@ mod tests {
             wake(
                 &closing,
                 [Request::EnterFullscreen].into_iter(),
+                std::iter::empty(),
+                std::iter::empty(),
                 std::iter::empty()
             ),
             Woken {
                 carry: Vec::new(),
                 files: Vec::new(),
+                terminations: 0,
+                chosen: Vec::new(),
+                kept: false,
                 ends: true,
             }
         );
@@ -800,11 +1079,232 @@ mod tests {
             wake(
                 &closing,
                 std::iter::empty(),
-                [vec![PathBuf::from("/tmp/a")]].into_iter()
+                [vec![PathBuf::from("/tmp/a")]].into_iter(),
+                std::iter::empty(),
+                std::iter::empty()
             ),
             Woken {
                 carry: Vec::new(),
                 files: Vec::new(),
+                terminations: 0,
+                chosen: Vec::new(),
+                kept: false,
+                ends: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_terminations_and_no_close_takes_them_all() {
+        assert_eq!(
+            wake(
+                &Closing::default(),
+                std::iter::empty(),
+                std::iter::empty(),
+                [(), ()].into_iter(),
+                std::iter::empty()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: Vec::new(),
+                terminations: 2,
+                chosen: Vec::new(),
+                kept: false,
+                ends: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_a_close_asked_still_takes_the_terminations_so_they_are_answered() {
+        let closing = Closing::default();
+        closing.ask();
+        assert_eq!(
+            wake(
+                &closing,
+                [Request::Minimise].into_iter(),
+                [vec![PathBuf::from("/tmp/a")]].into_iter(),
+                [(), ()].into_iter(),
+                std::iter::empty()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: Vec::new(),
+                terminations: 2,
+                chosen: Vec::new(),
+                kept: false,
+                ends: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_a_close_asked_says_whether_keep_running_came_with_it_and_drops_the_rest() {
+        let closing = Closing::default();
+        closing.ask();
+        assert_eq!(
+            wake(
+                &closing,
+                [
+                    Request::Minimise,
+                    Request::KeepRunning,
+                    Request::Title("notes.txt".into())
+                ]
+                .into_iter(),
+                std::iter::empty(),
+                [()].into_iter(),
+                std::iter::empty()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: Vec::new(),
+                terminations: 1,
+                chosen: Vec::new(),
+                kept: true,
+                ends: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_keep_running_and_no_close_carries_it_with_the_other_requests() {
+        let asked = [Request::KeepRunning, Request::Minimise];
+        assert_eq!(
+            wake(
+                &Closing::default(),
+                asked.clone().into_iter(),
+                std::iter::empty(),
+                std::iter::empty(),
+                std::iter::empty()
+            ),
+            Woken {
+                carry: asked.to_vec(),
+                files: Vec::new(),
+                terminations: 0,
+                chosen: Vec::new(),
+                kept: false,
+                ends: false,
+            }
+        );
+    }
+
+    /// A loop's waker that counts, at each wake-up, the terminations already
+    /// on the channel by then.
+    #[derive(Debug)]
+    struct TerminationsWaker {
+        terminations: Mutex<mpsc::Receiver<()>>,
+        woken: Mutex<Vec<usize>>,
+    }
+
+    impl EventLoopProxyProvider for TerminationsWaker {
+        fn wake_up(&self) {
+            let found = self.terminations.lock().unwrap().try_iter().count();
+            self.woken.lock().unwrap().push(found);
+        }
+    }
+
+    #[test]
+    fn a_terminate_handed_by_the_delegate_is_sent_before_the_loop_is_woken() {
+        let (terminations, taken) = mpsc::channel();
+        let waker = Arc::new(TerminationsWaker {
+            terminations: Mutex::new(taken),
+            woken: Mutex::new(Vec::new()),
+        });
+        let handing = Handing {
+            files: mpsc::channel().0,
+            terminations,
+            menus: mpsc::channel().0,
+            proxy: EventLoopProxy::new(waker.clone()),
+        };
+
+        handing.terminate();
+        handing.terminate();
+
+        // Woken once for each, with it already on the channel: the loop
+        // that wakes finds it.
+        assert_eq!(*waker.woken.lock().unwrap(), [1, 1]);
+    }
+
+    /// A loop's waker that takes, at each wake-up, the menu choices
+    /// already on the channel by then.
+    #[derive(Debug)]
+    struct ChoicesWaker {
+        choices: Mutex<mpsc::Receiver<String>>,
+        woken: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl EventLoopProxyProvider for ChoicesWaker {
+        fn wake_up(&self) {
+            let found = self.choices.lock().unwrap().try_iter().collect();
+            self.woken.lock().unwrap().push(found);
+        }
+    }
+
+    #[test]
+    fn a_choice_handed_by_the_target_is_sent_before_the_loop_is_woken() {
+        let (menus, taken) = mpsc::channel();
+        let waker = Arc::new(ChoicesWaker {
+            choices: Mutex::new(taken),
+            woken: Mutex::new(Vec::new()),
+        });
+        let handing = Handing {
+            files: mpsc::channel().0,
+            terminations: mpsc::channel().0,
+            menus,
+            proxy: EventLoopProxy::new(waker.clone()),
+        };
+
+        handing.choose("undo".into());
+        handing.clone().choose("redo".into());
+
+        // Woken once for each, with it already on the channel: the loop
+        // that wakes finds it.
+        assert_eq!(
+            *waker.woken.lock().unwrap(),
+            [vec!["undo".to_owned()], vec!["redo".to_owned()]]
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_choices_and_no_close_takes_them_in_order() {
+        let chosen = vec!["undo".to_owned(), "redo".to_owned()];
+        assert_eq!(
+            wake(
+                &Closing::default(),
+                std::iter::empty(),
+                std::iter::empty(),
+                std::iter::empty(),
+                chosen.clone().into_iter()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: Vec::new(),
+                terminations: 0,
+                chosen,
+                kept: false,
+                ends: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_a_close_asked_drops_the_choices() {
+        let closing = Closing::default();
+        closing.ask();
+        assert_eq!(
+            wake(
+                &closing,
+                std::iter::empty(),
+                std::iter::empty(),
+                std::iter::empty(),
+                ["undo".to_owned()].into_iter()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: Vec::new(),
+                terminations: 0,
+                chosen: Vec::new(),
+                kept: false,
                 ends: true,
             }
         );

@@ -259,14 +259,25 @@ needs none. What it checks:
 - **The rasteriser**, on the fixture fonts under `tests/fonts`, compiled
   in, with glyph ids read from each font's own character map. Its tests
   state relations only (more ink, wider, differs, the same twice).
-- **One picture.** The headless adapter draws one frame of real text on
-  the CPU, and no channel of any pixel may be further than 2 of 255 from
-  the reference image checked in at `tests/render/frame.png`
+- **The renderer's picture.** The headless adapter draws one frame of
+  real text on the CPU, and no channel of any pixel may be further than 2
+  of 255 from the reference image checked in at `tests/render/frame.png`
   (`crates/editor-render-wgpu/tests/reference.rs`). The image is compiled
   into the test, so nothing is read or written when it runs; its README
   says what it shows and when to make it again. That test and one other
-  (`tests/reuse.rs`) are the only two that run the real shaper outside
-  its own crate, for the wiring alone.
+  (`tests/reuse.rs`) are the only two of that crate that run the real
+  shaper, for the wiring alone.
+- **The shipped themes' pictures.** `ffi-test theme-pictures`, in
+  `mise run ffi-test`, publishes a fixture file from Lean through the
+  display's real binding, in `solarized-dark`, `solarized-light` and
+  `fairy-floss`, over a display of one fixture font, and the CPU renderer draws it. No
+  channel of any pixel may be further than 2 of 255 from the reference
+  images under `tests/render/themes`, and the light picture must not
+  match the dark reference. In each picture the paper, the cursor and the
+  text must carry the palette's colours, found by differencing pictures
+  the scenario draws itself, so it names no size layout or the renderer
+  owns. It reads only checked-in files. `tests/render/themes/README.md`
+  says what the images show and when to make them again.
 - **The wgpu adapter's calls.** It runs on wgpu's no-op back end, which
   validates every call as a real one would and draws nothing: the shader
   compiles in both its forms, the pipeline's vertex layout is the
@@ -528,7 +539,10 @@ driver does not need it. The tests of the pool pin no size, so they pass
 whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, `config-test`, and
+linked against the real library, then `contract-test`, handed the directory
+`tests/process-environment` as its one argument (the fixtures that stand in
+for mise in the checks of a child's environment, which must stay
+executable), `config-test`, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must
@@ -822,11 +836,19 @@ rules (an equal frame is no demand; a loop at rest draws nothing) are
 library's scripted platform: a cells display bound to the presenter, a
 clipboard of its own, the host opening a copy of `ex/note.txt`, and the
 scripted sample window opening, sending its input and asking to close.
-It must exit 0, which it does only when the window ran and closed and the
-render session's counters show a frame drawn, and the copy must be
-unchanged. `ffi-test window-host` with no file runs the same wiring as
-Finder starts the app: the host posts no open, the window runs on the
-editor's one empty buffer, and it must exit 0 the same way.
+It must exit 0, which it does only when the window ran and closed, the
+render session's counters show a frame drawn, the window was opened with
+the themed title bar and asked for the dark appearance of the built-in
+paper and nothing else, and the copy must be unchanged. `ffi-test
+window-host` with no file runs the same wiring as Finder starts the app:
+the host posts no open, the window runs on the editor's one empty buffer,
+and it must exit 0 the same way. `ffi-test window-host-config <sysroot>
+<olean dir> <config dir>` runs the same wiring with no file and config
+loaded at start from the fixture `tests/window/title-bar/config`, whose
+`setup` keeps the standard title bar: the host waits for the start-up
+reload with no bound, so the result does not race the clock, and the
+scenario must exit 0, which it does only when the scripted window was
+opened with the standard title bar.
 `ffi-test window-host-undrawn <file>` runs the same wiring on
 the scripted platform whose renderer cannot be made, as a machine with no
 usable GPU gives: it must exit 0, which it does only when the window mode
@@ -926,13 +948,16 @@ scripted platform that cannot open a window gives its reason, which the
 keyboard check reports with status 1; a scripted platform whose renderer
 cannot be made runs its window and then says why nothing drew in it; and
 each event of a window is decoded
-to the input the keyboard check counts. Three scenarios need a process each:
+to the input the keyboard check counts; and a picture crosses through a PNG
+file and back, and its helpers read it (`pictureChecks`). These scenarios
+need a process each:
 
 | Command | Shows |
 |---|---|
 | `ffi-test exit 7` | The entry point passes arguments to Lean's `main` and its result is the exit status. |
 | `ffi-test shutdown` | Quitting the queues wakes every task blocked in a pull, and the process then exits. |
 | `ffi-test exit-while-blocked` | An explicit exit ends the process although a task is still blocked in the library. |
+| `ffi-test theme-pictures <dir> <font>` | The shipped themes' pictures of the fixture file match their reference images in `<dir>`, and carry the palette's colours where the paper, the cursor and the text are ("The shipped themes' pictures", above). |
 
 The conventions every binding follows, and the test that pins each, are in
 the crate docs of `crates/editor-ffi/src/lib.rs` and the module docs of

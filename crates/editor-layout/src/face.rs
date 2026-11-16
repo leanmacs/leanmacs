@@ -1,9 +1,10 @@
 //! Faces: what a run of text looks like, as a set of optional attributes,
 //! and how the faces over a run merge into one font and one paint.
 //!
-//! A [`Face`] sets any of nine attributes and leaves the rest unset: a
+//! A [`Face`] sets any of ten attributes and leaves the rest unset: a
 //! family, a size, a weight, a slant, a foreground, a background, an
-//! underline (a style and a colour), strike-through and a line height.
+//! underline (a style and a colour), strike-through, a line height and a
+//! vertical padding.
 //! Faces are named. What a name means is a list of definitions
 //! ([`FaceDef`]) sent with a scene ([`Scene::faces`]), and layout holds the
 //! list last sent ([`Faces`]).
@@ -24,8 +25,10 @@
 //!
 //! The same rule orders definitions: where the list defines a name more
 //! than once, a later definition's set attributes are over an earlier
-//! one's. A status field's face is over [`MODE_LINE_FACE`] over the
-//! default face, and a cursor's face is over the default face. A name
+//! one's. A status field's face is over the view's status face (an
+//! unselected window's `mode-line.inactive`, when the scene names one),
+//! over [`MODE_LINE_FACE`], over the default face; and a cursor's face is
+//! over the default face. A name
 //! nothing defines sets nothing. A source of decorations added later
 //! (syntax highlighting) says where it is in this order when it is added.
 //!
@@ -44,6 +47,12 @@
 //! and breaks nothing. An underline with no colour of its own takes the
 //! run's foreground.
 //!
+//! The vertical padding is neither: it shapes and paints nothing, and is
+//! read only where layout sizes a status row ([`Layout::heights`]), from
+//! the face of the row itself, [`MODE_LINE_FACE`] or [`ECHO_AREA_FACE`]. A
+//! field's face or a view's status face may set it, and it is ignored
+//! there.
+//!
 //! # Units
 //!
 //! A colour is one word, `0xRRGGBBAA` ([`Color`]).
@@ -59,7 +68,11 @@
 //! ([`Styles::style`](crate::decoration::Styles::style)), so `size := 14`
 //! is 14 physical pixels at scale 1 and 28 at scale 2. A line height that
 //! is a multiple of the font's own is not a length, and follows the size.
-//! No other attribute is a length: a face has no padding and no margin.
+//! A vertical padding is a length too, in points, and is multiplied where
+//! these are ([`Styles::style`](crate::decoration::Styles::style)). No
+//! other attribute is a length: a face has no horizontal padding and no
+//! margin (a status field's horizontal padding is the field's own, in
+//! points, [`StatusField::padding`](crate::scene::StatusField::padding)).
 //! One added later is in points, and is multiplied where these are.
 //!
 //! The names do not say so: [`Length::pixels`] and [`LineHeight::Pixels`]
@@ -79,8 +92,9 @@
 //!
 //! A new attribute is a field of [`Face`], merged in [`Face::over`], and
 //! then a field of [`FontSpec`] if it changes shaping or of [`Paint`] if it
-//! does not. Face inheritance (a face naming another as its base) is not
-//! built.
+//! paints a run. One that does neither, as the vertical padding, is a field
+//! of [`Resolved`] of its own, read where layout uses it. Face inheritance
+//! (a face naming another as its base) is not built.
 
 use std::collections::HashMap;
 
@@ -172,6 +186,11 @@ pub struct Face {
     pub strike_through: Option<bool>,
     /// The line height.
     pub line_height: Option<LineHeight>,
+    /// The space above and below the line of a row drawn in it: read only
+    /// from the face of a status row, `mode-line` or `echo-area`
+    /// ([`frame`](crate::frame), "The mode line"), and ignored in every
+    /// other face. A length, in points.
+    pub vertical_padding: Option<Length>,
 }
 
 impl Face {
@@ -189,6 +208,7 @@ impl Face {
             underline: self.underline.or(under.underline),
             strike_through: self.strike_through.or(under.strike_through),
             line_height: self.line_height.or(under.line_height),
+            vertical_padding: self.vertical_padding.or(under.vertical_padding),
         }
     }
 
@@ -238,14 +258,16 @@ impl Default for Paint {
     }
 }
 
-/// A stack of faces resolved: the font a run is shaped in and what it is
-/// painted with.
+/// A stack of faces resolved: the font a run is shaped in, what it is
+/// painted with, and the vertical padding of a row drawn in it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct Resolved {
     /// The font.
     pub font: FontSpec,
     /// The paint.
     pub paint: Paint,
+    /// The vertical padding, in points: 0 where no face sets one.
+    pub vertical_padding: Length,
 }
 
 /// Which face: a number [`Faces`] gave a face's name.
@@ -352,6 +374,7 @@ impl Faces {
                     .map(|underline| (underline.style, underline.color.unwrap_or(foreground))),
                 strike_through: face.strike_through.unwrap_or(base.paint.strike_through),
             },
+            vertical_padding: face.vertical_padding.unwrap_or(base.vertical_padding),
         }
     }
 }
@@ -414,6 +437,7 @@ mod tests {
             }),
             strike_through: Some(true),
             line_height: Some(LineHeight::Pixels(Length::pixels(30))),
+            vertical_padding: Some(Length::pixels(3)),
         }
     }
 
@@ -433,6 +457,7 @@ mod tests {
                 underline: Some((UnderlineStyle::Curly, GREEN)),
                 strike_through: true,
             },
+            vertical_padding: Length::pixels(3),
         }
     }
 
@@ -531,6 +556,35 @@ mod tests {
     }
 
     #[test]
+    fn a_vertical_padding_merges_like_every_attribute_and_is_neither_font_nor_paint() {
+        let padded = |points: u32| Face {
+            vertical_padding: Some(Length::pixels(points)),
+            ..Face::default()
+        };
+        // Set over unset, and the higher of two that set it.
+        assert_eq!(padded(3).over(&Face::default()), padded(3));
+        assert_eq!(Face::default().over(&padded(3)), padded(3));
+        assert_eq!(padded(5).over(&padded(3)), padded(5));
+        // It shapes nothing and paints nothing.
+        assert!(!padded(3).sets_font());
+        let mut faces = faces(&[def("x", padded(3)), def(DEFAULT_FACE, padded(1))]);
+        let run = resolved(&mut faces, &["x"]);
+        assert_eq!(run.font, FontSpec::default());
+        assert_eq!(run.paint, Paint::default());
+        assert_eq!(run.vertical_padding, Length::pixels(3));
+        // The default face's where the stack sets none, and none where
+        // nothing sets one.
+        assert_eq!(
+            resolved(&mut faces, &[]).vertical_padding,
+            Length::pixels(1)
+        );
+        assert_eq!(
+            resolved(&mut Faces::default(), &[]).vertical_padding,
+            Length(0)
+        );
+    }
+
+    #[test]
     fn a_later_face_of_a_stack_sets_an_attribute_over_an_earlier_one() {
         let mut faces = faces(&[
             def(
@@ -605,6 +659,7 @@ mod tests {
                 underline: None,
                 strike_through: false,
             },
+            vertical_padding: Length(0),
         };
         assert_eq!(BASE_SIZE, Length::pixels(16));
         assert_eq!(
@@ -817,10 +872,12 @@ mod tests {
             of((styles, colors())),
             of(any::<bool>()),
         );
-        (font, paint).prop_map(
+        let padding = of(select(vec![Length(0), Length::pixels(3), Length(1)]));
+        (font, paint, padding).prop_map(
             |(
                 (family, size, weight, slant, line_height),
                 (foreground, background, underline, strike_through),
+                vertical_padding,
             )| Face {
                 family: family.map(str::to_owned),
                 size,
@@ -831,6 +888,7 @@ mod tests {
                 underline: underline.map(|(style, color)| Underline { style, color }),
                 strike_through,
                 line_height,
+                vertical_padding,
             },
         )
     }
@@ -891,6 +949,10 @@ mod tests {
             let expected = (underline.style != UnderlineStyle::None)
                 .then(|| (underline.style, underline.color.unwrap_or(foreground)));
             prop_assert_eq!(run.paint.underline, expected);
+            prop_assert_eq!(
+                run.vertical_padding,
+                highest(&layers, |face| face.vertical_padding, Length(0))
+            );
             Ok(())
         });
     }

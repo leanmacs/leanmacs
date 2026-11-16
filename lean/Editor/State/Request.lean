@@ -26,22 +26,25 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   put a state of its own making in place of the editor's.
 - **A refusal is a value.** A reply that can be refused is an `Except` of
   the operation's refusal (`LayoutRefusal`, `BufferRefusal`, `ModeRefusal`,
-  `JobRefusal`, `PromptRefusal`), with the state as it was. Nothing is thrown, so a command
+  `JobRefusal`, `PromptRefusal`, `ThemeRefusal`), with the state as it was. Nothing is thrown, so a command
   matches on it, and a command's error stays a `TextError`.
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So five requests are answered with more than this handler by the loop,
+  So seven requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode`, which there refuses a name no
   mode is registered under and runs the mode's on-enter actions,
   `startJob`, which there refuses a name no job is registered under,
   `ex`, which there is answered the binding the registry has for an ex
   name (`Editor/Ex/Line.lean`), `exNames`, which there is answered the ex
-  names that are bound, and `runCommand`, which there runs the
-  command registered under a name inside the asking command. Here the
-  first two take any name, `ex` is answered `none`, `exNames` is answered
-  no name, and `runCommand` is
-  answered `false` and runs nothing: this handler knows no registry.
+  names that are bound, `themeNames`, which there is answered the names
+  themes are registered under, `loadTheme`, which there refuses a name no
+  theme is registered under, and `runCommand`, which there runs the
+  command registered under a name inside the asking command. Here
+  `setMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
+  answered `none`, `exNames` and `themeNames` are answered no name, and
+  `runCommand` is answered `false` and runs nothing: this handler knows no
+  registry.
 - **A reply holds plain data too**, so no request is answered a command:
   a command is a program over the port these requests are part of, and a
   reply that held one would be a type that refers to itself. A command
@@ -91,6 +94,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   which sets a flag of the state (`EditorState.reload`) until the loop
   hands it to its host, as `starts` holds the jobs a command asked for
   (`Editor/Loop.lean`, "Reload from a command").
+- **A theme is loaded by one request**, `loadTheme`, which keeps the name
+  in the state (`EditorState.theme`), the latest one wins, until the loop
+  hands it to its host, as `reload` is kept (`Editor/Loop.lean`, "A theme
+  switch from a command").
 - **A window's wanted column is set by one request**, `setWanted`, with
   the column, a goal of the display's or the line's end, and the offset it
   is kept at, or with none (`Editor/State.lean`, "The wanted column"). The
@@ -227,6 +234,11 @@ inductive StateRequest where
   | ex (name : String)
   /-- Which ex names are bound. -/
   | exNames
+  /-- Which names themes are registered under. -/
+  | themeNames
+  /-- Have the theme called `name` loaded once this command has run to its
+  end. -/
+  | loadTheme (name : String)
   /-- Have `invocation` run after this command, as a step of its own. -/
   | invoke (invocation : Invocation)
   /-- Run the command registered under `name` inside this command, with
@@ -285,6 +297,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setWanted .. => Except LayoutRefusal Unit
   | .ex _ => Option Ex.Binding
   | .exNames => Array String
+  | .themeNames => Array String
+  | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
   | .runCommand .. => Bool
   | .quit => Unit
@@ -355,6 +369,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setWanted view wanted, state => state.setWanted view wanted
   | .ex _, state => (none, state)
   | .exNames, state => (#[], state)
+  | .themeNames, state => (#[], state)
+  | .loadTheme name, state => (.ok (), { state with theme := some name })
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
   | .runCommand .., state => (false, state)
   | .quit, state => ((), { state with quitting := true })

@@ -277,7 +277,7 @@ report : State → ViewId → InputScheme.Report   -- defaults to the default re
 | Field of `InputScheme.Report` | Default | Read by |
 |---|---|---|
 | `cursor : Cursor` | A bar in the face `cursor` | The scene: how the view's cursors are drawn |
-| `status : Array StatusField` | None | The scene: the view's status line begins with these fields |
+| `status : Array StatusField` | None | The mode line's `state` segment, which draws these fields as its badge on the selected window |
 | `shape : Shape` | `exclusive` | The first window's selection, and a command that places one |
 | `selecting : Bool` | `false` | A command: a motion moves the head and keeps the anchor |
 | `session : Bool` | `false` | The loop: the view is in an insert session ("Insert sessions") |
@@ -311,6 +311,19 @@ report : State → ViewId → InputScheme.Report   -- defaults to the default re
     That no key ran the command does not decide it either: a key bound
     to the name alone enters no state, and a command of config's run by
     name may call `Evil.enter` with a report of its own.
+  - **A state's run table, and a menu item.** A record of the Vim scheme
+    may say that in its state a command name is completed as another
+    edit (`StateRecord.runs`), which can end a selection or enter a
+    state: Copy in a visual state is `"+y`, and Select All enters
+    `visual-line`. It holds for a key bound to the name alone, in any
+    keymap, and for a menu item that names it: the loop tells the scheme
+    of a menu item (`InputScheme.invoked`) and runs what it hands back,
+    with the report of the state it hands back, so on macOS, where AppKit
+    runs the item for `s-c` before the key reaches the window, the menu
+    and the key agree. So a key or a menu item enters a state, and still
+    no command does. A name with no entry runs as named, and config's
+    binding of the chord to another name wins, since the table looks at
+    the name reached.
 - **The first window's selection has the reported shape**: the loop starts
   its state with the scheme's report of the first view
   (`Loop.start`, `EditorState.initial`). A window made later takes its
@@ -1001,12 +1014,17 @@ for the rule).
   can read one: the record's cursor shape in the face `cursor.` followed
   by the state's name (`cursor.normal`, `cursor.insert`, `cursor.visual`,
   `cursor.visual-line`, `cursor.minibuffer`), one status field with the
-  state's name in the face `status.state` (`Vim.stateFace`), the record's
-  shape, `selecting` from `operatesOnSelection`, and `session` and
-  `takesText` both from `insertsText`. So the scene's cursor shape and
-  the state's name in the status line change when the state changes, and
-  a view's status line under the Vim scheme reads
-  `status.state "normal", status.name "scratch"`.
+  state's name in capitals in the face `mode-line.state.` followed by the
+  state's name (`NORMAL` in `mode-line.state.normal`, `Vim.stateFace`),
+  the record's shape, `selecting` from `operatesOnSelection`, and
+  `session` and `takesText` both from `insertsText`. The mode line's
+  `state` segment draws that field as its badge
+  ([text-and-display.md](text-and-display.md), "The scene", as built;
+  `lean/Editor/ModeLine.lean`), on the selected window only. So the
+  scene's cursor shape and the badge change when the state changes, and
+  a view's status line under the Vim scheme on the scratch buffer reads
+  `mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 |
+  mode-line.secondary "1:1" +4, mode-line.secondary "All" +4`.
 - **If a state ever needs `selecting`, `session` and `takesText` apart**
   from the two fields they are read off, each becomes a field of the
   record, and the report does not change.
@@ -2150,8 +2168,13 @@ commands"):
   next; the cursor goes to the first non-blank of the first line put.
   The text is put `count` times. A register that holds nothing, a
   clipboard that holds no text and one that is refused each give the
-  command up. `p` and `P` in a visual state are not built: the visual
-  tables do not bind them.
+  command up. A put in place of a visual selection is the operator
+  `replace`, which the Edit menu's Paste runs there: it fetches the
+  register first, puts its text in place of the selection, and sets the
+  unnamed register to the replaced text without `store`, so that text
+  never reaches the clipboard. The visual tables do not bind `p` and `P`
+  to it. A line-wise text put in place of a character-wise selection goes
+  in as it is, where Vim would split the line.
 
 **Departures from Vim that the checks name**, beside those of "Motions as
 built":
@@ -2326,6 +2349,7 @@ Which names have something behind them:
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
+| `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (`Evil.commands`, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
 |---|---|
@@ -2338,6 +2362,16 @@ Which names have something behind them:
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
 | `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
 | `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
+
+The run tables (`StateRecord.runs`), which say what a command name is
+completed as in a state, for a key bound to the name and a menu item that
+names it ("So a command enters no state: a key does"):
+
+| Table | Runs |
+|---|---|
+| `normalRuns` | `clipboard-paste` as `"+P`; `select-all` as itself, entering `visual-line` |
+| `insertRuns` | `select-all` as in normal state |
+| `visualRuns`, of both visual states | `clipboard-copy` as `"+y`, `clipboard-cut` as `"+d`, `clipboard-paste` as the operator `replace` from `+`, each over the selection, and `select-all` as in normal state |
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
 |---|---|---|---|---|
@@ -3460,9 +3494,11 @@ every build). The second is proved on the text model
 - **The column of a cursor on a tab** ("The wanted column"). It is the
   tab's first display column, and Vim's is its last. Vim's needs the x of
   a character's last cell, which the display interface does not answer.
-- **The status line's order and the face names**: the state's field
-  first, in the face `status.state`; the cursor faces `cursor.` followed
-  by the state's name.
+- **The status line's order and the face names**: the state's badge
+  first, in the face `mode-line.state.` followed by the state's name, as
+  the segmented mode line's default order puts it (theming phase 5,
+  `lean/Editor/ModeLine.lean`); the cursor faces `cursor.` followed by
+  the state's name.
 - **A view follows by the least movement** ("Scrolling as built";
   [text-and-display.md](text-and-display.md), "Views as built"). Vim
   centres the cursor's line after a far jump. Centring is another target

@@ -5,6 +5,7 @@ import Editor.Clipboard.Model
 import Editor.Command.Append
 import Editor.Command.Dispatch
 import Editor.Command.Model
+import Editor.Config.Display
 import Editor.Config.Reload
 import Editor.Display.Contract
 import Editor.Display.Model
@@ -13,6 +14,7 @@ import Editor.Ex.Compiled
 import Editor.Ex.Line
 import Editor.Executable
 import Editor.Face
+import Editor.Face.Vocabulary
 import Editor.File.Cases
 import Editor.File.Model
 import Editor.FileWatch.Model
@@ -31,9 +33,12 @@ import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Key.Notation
 import Editor.Loop.Driver
+import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.Mode
+import Editor.ModeLine
 import Editor.ModuleLookup
+import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Role
 import Editor.Scene
@@ -41,6 +46,10 @@ import Editor.Scroll
 import Editor.State
 import Editor.State.Request
 import Editor.Text.Contract
+import Editor.Themes.Check
+import Editor.Themes.Compiled
+import Editor.Themes.FairyFloss
+import Editor.Themes.Solarized
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
 import Editor.Watch.Model
@@ -226,6 +235,13 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   when the save is refused and when the buffer is edited meanwhile. They
   name no ex name. They are apart from `dispatchChecks`, which are
   defined before the driver;
+- `systemQuitChecks`: the system's quit (`Event.quitRequested`,
+  `Editor/Loop.lean`, "Quit") on that driver, with the compiled `quit`
+  registered: with nothing unsaved the step says stop; with unsaved
+  changes the editor goes on, says why, and asks the frame `keepRunning`
+  once; with a save in flight it waits, and a refused save withdraws the
+  quit and asks `keepRunning`; config's `quit` runs in its place; and a
+  quit the system did not ask asks the frame nothing;
 - `exChecks`: the ex command line (`Editor/Ex.lean`) on that driver, with
   the commands compiled code registers for it, for the minibuffer and for
   files, keys of the test scheme bound to the ex command and to the accept
@@ -234,7 +250,27 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   as a step of its own, with the rest of the line as its argument; a name
   nobody bound, an argument a name does not take, an empty line, a bound
   command that is not registered or is refused, and a cancelled line.
-  Each message is read from the function that makes it.
+  Each message is read from the function that makes it;
+- `themeChecks`: the command that loads a theme (`Editor/Themes.lean`) on
+  that driver, told of two registered themes: with no name it asks among
+  them, with a registered name the step hands the name back, and a name
+  nobody registered, or a prompt already open, is said in the echo area;
+- `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
+  names each face once with its meaning, and lists every face the shipped
+  Vim scheme and the loop draw, layout's four and the faces declared
+  ahead; the completeness check (`Editor/Themes/Check.lean`) finds each
+  problem in a theme spoiled from the built-in one, a cursor colour that
+  falls through to the default face's among them; one palette mapping over
+  two palettes gives two complete themes; and every shipped theme is
+  complete;
+- `solarizedChecks`: the Solarized themes (`Editor/Themes/Solarized.lean`):
+  each of the sixteen colours is its published value, the light colours
+  swap the four base pairs, each variant's faces are the choices the
+  module's table records, and both variants are shipped.
+- `fairyFlossChecks`: the Fairy Floss theme (`Editor/Themes/FairyFloss.lean`):
+  each of the nineteen colours is its published value, the source's commit
+  is recorded, its faces are the choices the module's table records, and it
+  is shipped.
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
@@ -418,7 +454,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
 - `evilRepeatChecks`: `.` after a change of each kind (`repeatRows`), a
   count before it, a change with an insert session and its typed and
   committed text, the editing keys of insert state in a session
-  (`insertKeysRepeatRows`), and what is not repeated.
+  (`insertKeysRepeatRows`), and what is not repeated;
+- `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
+  All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
+  item (`clipRan`), in each Vim state, on the clipboard model.
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
@@ -647,6 +686,73 @@ def jobModelChecks : List Check :=
           sleep 3
           discard timer.tick
         pure (modelled job == (.finished (), 30)) },
+    { name :=
+        "in the job model, a run whose script takes longer than its time limit is refused as timedOut with the clock at exactly its start plus the limit, and is killed; one within its limit moves the clock by what it takes and is not killed"
+      run :=
+        let slow := JobContract.sh "/p" "/bin/sleep 600"
+        let quick := JobContract.sh "/p" "exit 0"
+        let model : JobModel :=
+          { now := 10
+            processes :=
+              {
+                scripts :=
+                  #[{ command := slow,
+                      reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 600000 },
+                    { command := quick,
+                      reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 30 }] } }
+        let (late, afterLate) := (Process.runWithin slow 100 50).runModel model
+        let (within, afterWithin) := (Process.runWithin quick 100 50).runModel model
+        pure
+          ((match late with
+            | .finished (.error (.timedOut 50)) => true
+            | _ => false) &&
+            afterLate.now == 60 &&
+            afterLate.processes.killed == #[slow] &&
+            (match within with
+            | .finished (.ok ran) => ran.exit == .code 0
+            | _ => false) &&
+            afterWithin.now == 40 &&
+            afterWithin.processes.killed == #[]) },
+    { name :=
+        "in the job model, a cancel that falls before a run's time limit ends the job cancelled at that instant, and the run is killed once"
+      run :=
+        let slow := JobContract.sh "/p" "/bin/sleep 600"
+        let model : JobModel :=
+          { cancelAt := some 20
+            processes :=
+              {
+                scripts :=
+                  #[{ command := slow,
+                      reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 600000 }] } }
+        let (outcome, after) := (Process.runWithin slow 100 50).runModel model
+        pure
+          ((match outcome with
+            | .cancelled => true
+            | _ => false) &&
+            after.now == 20 &&
+            after.processes.killed == #[slow]) },
+    { name :=
+        "in the job model, environment requests are answered from its environments without moving the clock, and a message they say is reported"
+      run :=
+        let failure := Process.Failure.signalled 9
+        let entry : Process.Entry := { stamps := #[], found := .failed failure }
+        let job : JobM (Option Process.Entry × Process.Policy) := do
+          Process.askEnvironment (.record "/p/d" entry)
+          let found ← Process.askEnvironment (.cached "/p/d")
+          let policy ← Process.askEnvironment .policy
+          return (found, policy)
+        let (outcome, after) :=
+          job.runModel { now := 7, environments := { setting := .inherited, limit := 3 } }
+        pure
+          (outcome ==
+              .finished
+                (some entry,
+                  { setting := .inherited, host := .headless, resolved := none, limit := 3 }) &&
+            after.now == 7 &&
+            after.reported == #[Process.failureMessage "/p/d" failure]) },
     { name :=
         "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
       run := do
@@ -1225,6 +1331,7 @@ def processChecks : List Check :=
             | .write _ _ => "write"
             | .closeInput _ => "closeInput"
             | .run _ _ => "run"
+            | .runWithin .. => "runWithin"
         return finished && kinds == #["start", "read"] && (← processes.withdrawn).isEmpty },
     -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
     -- taken out of `Handle.conclude`, this check and the next fail.
@@ -1712,7 +1819,49 @@ def runnerChecks : List Check :=
               (← rig.services.completions.waiting) == 0
         finally
           short.handle.cancel
-          sleeper.handle.cancel }]
+          sleeper.handle.cancel },
+    { name :=
+        "over shared environments, a job's record of a failure reaches the report once, a second job finds the first one's entry, and no environment request registers a wait"
+      run := do
+        let rig ← Rig.new
+        let state ← IO.mkRef ({} : Process.Environments)
+        let said ← IO.mkRef #[]
+        let rig :=
+          { rig with
+            services :=
+              { rig.services with
+                environments :=
+                  Job.sharedEnvironments state fun text => said.modify (·.push text) } }
+        let failure := Process.Failure.exited 1 "untrusted"
+        let entry : Process.Entry := { stamps := #[none], found := .failed failure }
+        let first ←
+          rig.spawn
+              (reporting fun _ => do
+                Process.askEnvironment (.record "/p/d" entry)
+                Process.askEnvironment (.record "/p/d" entry)
+                return true)
+        let firstEnded ← first.endedAs (.finished #["true"])
+        let second ←
+          rig.spawn
+              (reporting fun _ => do
+                let found : Option Process.Entry ← Process.askEnvironment (.cached "/p/d")
+                return found == some entry)
+        let secondEnded ← second.endedAs (.finished #["true"])
+        return firstEnded && secondEnded &&
+            (← said.get) == #[Process.failureMessage "/p/d" failure] &&
+            (← rig.services.completions.waiting) == 0 &&
+            (← rig.clock.started).isEmpty },
+    { name :=
+        "a runner given no environments answers the policy as inherited: auto in the headless mode"
+      run := do
+        let rig ← Rig.new
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                let policy : Process.Policy ← Process.askEnvironment .policy
+                return policy ==
+                    { setting := .auto, host := .headless, resolved := none, limit := 5000 })
+        job.endedAs (.finished #["true"]) }]
 
 /-- An owner of jobs. -/
 def anna : Config.Owner :=
@@ -2065,6 +2214,30 @@ def coloured (red : UInt8) : Face :=
 def defined (name : String) (attributes : Face) : FaceDefinition :=
   { name := ⟨name⟩, face := attributes }
 
+/-- A theme of one definition: the face `default` in the red `red`. -/
+def oneFace (red : UInt8) : Theme :=
+  #[defined "default" (coloured red)]
+
+/-- The theme called `name`, of one definition in the red `red`
+(`oneFace`). -/
+def namedTheme (name : String) (red : UInt8) : NamedTheme :=
+  { name, theme := oneFace red }
+
+/-- The buffer the mode line checks show: `Loop.lean`, opened as
+`lean/Editor/Loop.lean`, in the major mode `lean`, modified when `modified`
+says. -/
+def loopLean (modified : Bool := true) (path : String := "lean/Editor/Loop.lean") : Buffer :=
+  let history := UndoTree.new ⟨0⟩ 0
+  { name := "Loop.lean", text := ⟨0⟩, history := if modified then history.record 1 else history
+    major := some "lean",
+    file := some { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 } } }
+
+/-- The context of a window on `buffer` in normal state, its cursor on row
+958 at column 4 of 2338 rows, selected when `selected` says. -/
+def loopContext (buffer : Buffer := loopLean) (selected : Bool := true) : ModeLine.Context :=
+  { buffer, reported := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
+    cursor := some ⟨958, 4⟩, lines := 2338, selected }
+
 /-- The message a `setup` was refused with, if it was. -/
 def refusal (setup : SetupM Unit) : Option String :=
   match Config.Registrations.ofSetup setup with
@@ -2380,7 +2553,123 @@ def setupChecks : List Check :=
             | .error _ => false) &&
             match Config.Registrations.ofSetup (pure ()) with
             | .ok collected => collected.autoReload.isEmpty
-            | .error _ => false) }]
+            | .error _ => false) },
+    { name :=
+        "a setup's themes are collected in the order it defined them, each with its definitions, with the theme it names; a setup that defines and names none has none"
+      run :=
+        let setup : SetupM Unit := do
+          defineTheme "first" (oneFace 1)
+          useTheme "second"
+          command "greet" (makes "1")
+          defineTheme "second" (oneFace 2)
+        match Config.Registrations.ofSetup setup,
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.themes == #[namedTheme "first" 1, namedTheme "second" 2] &&
+              collected.theme == some "second" &&
+              collected.commands.map (·.name) == #["greet"] &&
+              plain.themes.isEmpty &&
+              plain.theme == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup that defines a theme twice is refused with a message that names the theme, one that names a theme twice with a message that names both, and naming a theme nobody defined is not refused"
+      run :=
+        let twice : SetupM Unit := do
+          defineTheme "first" (oneFace 1)
+          defineTheme "other" (oneFace 2)
+          defineTheme "first" (oneFace 3)
+        let named : SetupM Unit := do
+          useTheme "a"
+          useTheme "b"
+        pure
+          (refusal twice == some "the theme `first` is defined twice" &&
+            refusal named == some "the theme is named twice: `a`, then `b`" &&
+            refusal (useTheme "nope") == none) },
+    { name :=
+        "a setup's segments are collected in the order it defined them, with the mode line it lists; a setup that defines and lists none has none"
+      run :=
+        let setup : SetupM Unit := do
+          defineSegment "greeting" fun _ => #[{ text := "hi", face := ⟨"mode-line.secondary"⟩ }]
+          modeLine ["state", "greeting"] ["position"]
+          defineSegment "other" fun _ => #[]
+        match Config.Registrations.ofSetup setup,
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.segments.map (·.name) == #["greeting", "other"] &&
+              (collected.segments[0]?.map fun segment =>
+                  (segment.fields loopContext).map (·.text)) ==
+                some #["hi"] &&
+              collected.modeLine ==
+                some { left := #["state", "greeting"], right := #["position"] } &&
+              plain.segments.isEmpty &&
+              plain.modeLine == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup that defines a segment twice is refused with a message that names the segment, and one that lists the mode line twice with a message that says so; listing a segment nobody defined is not refused"
+      run :=
+        let twice : SetupM Unit := do
+          defineSegment "greeting" fun _ => #[]
+          defineSegment "greeting" fun _ => #[]
+        let listed : SetupM Unit := do
+          modeLine ["state"] []
+          modeLine [] ["position"]
+        pure
+          (refusal twice == some "the segment `greeting` is defined twice" &&
+            refusal listed == some "the mode line is listed twice" &&
+            refusal (modeLine ["nope"] []) == none) },
+    { name :=
+        "a setup's frame padding is collected, a setup that sets none has none, and one that sets it twice is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          framePadding 12
+          framePadding 4
+        match Config.Registrations.ofSetup (framePadding 12),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.framePadding == some 12 && plain.framePadding == none &&
+              refusal twice == some "the frame padding is set twice" &&
+              refusal (framePadding 0) == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          titleBar .standard
+          titleBar .themed
+        match Config.Registrations.ofSetup (titleBar .standard),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.titleBar == some .standard && plain.titleBar == none &&
+              refusal twice == some "the title bar is chosen twice" &&
+              refusal (titleBar .themed) == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup's process environment is collected as it set it: inherited, mise with no path and mise with an absolute path; a setup that does not set it collects none"
+      run :=
+        let collected (setup : SetupM Unit) : Option (Option Process.Setting) :=
+          match Config.Registrations.ofSetup setup with
+          | .ok registrations => some registrations.environment
+          | .error _ => none
+        pure
+          (collected (processEnvironment .inherited) == some (some .inherited) &&
+            collected (processEnvironment (.mise none)) == some (some (.mise none)) &&
+            collected (processEnvironment (.mise (some "/opt/homebrew/bin/mise"))) ==
+              some (some (.mise (some "/opt/homebrew/bin/mise"))) &&
+            collected (command "first" (makes "1")) == some none) },
+    { name :=
+        "a setup that gives mise a relative path, or sets the process environment twice, is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          processEnvironment .inherited
+          processEnvironment (.mise none)
+        pure
+          (refusal (processEnvironment (.mise (some "bin/mise"))) ==
+              some "the path to mise must be absolute: bin/mise" &&
+            refusal twice == some "the process environment is set twice") }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -2595,6 +2884,49 @@ def registryChecks : List Check :=
             registry.registered.exNames.all (fun name => (registry.registered.ex name).isSome) &&
             ({} : Config.Registry).registered.exNames == #[] &&
             (registry.replaceEx .config #[]).registered.exNames == #["w", "q"]) },
+    { name :=
+        "themes are held by owner and replaced as a set: the latest entry of a name is the one found, config's theme of a compiled theme's name while config registers it and the compiled one again once it does not; the theme names are each listed once, in the order first registered, and are what the loop is told; the commands and the faces are left as they were"
+      run :=
+        let registry : Config.Registry :=
+          ((({} : Config.Registry).replace .config #[registration "greet" "1"]).replaceThemes
+                .compiled #[namedTheme "default" 1, namedTheme "second" 2]).replaceThemes
+            .config #[namedTheme "mine" 3, namedTheme "second" 4]
+        let replaced := registry.replaceThemes .config #[namedTheme "other" 5]
+        pure
+          (registry.theme? "second" == some (namedTheme "second" 4) &&
+            registry.theme? "default" == some (namedTheme "default" 1) &&
+            registry.theme? "nope" == none &&
+            registry.themeNames == #["default", "second", "mine"] &&
+            registry.registered.themeNames == registry.themeNames &&
+            replaced.theme? "second" == some (namedTheme "second" 2) &&
+            replaced.theme? "mine" == none &&
+            replaced.themeNames == #["default", "second", "other"] &&
+            replaced.themes.size == 3 &&
+            replaced.names == #["greet"] &&
+            replaced.definitions.isEmpty &&
+            ({} : Config.Registry).registered.themeNames == #[]) },
+    { name :=
+        "segments are held by owner and replaced as a set: the latest entry of a name is the one found; a mode line resolves in its listing's order, with the names nobody registered listed in order, each once"
+      run :=
+        let mine : Segment :=
+          { name := "buffer", fields := fun _ => #[{ text := "mine", face := ⟨"x"⟩ }] }
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceSegments .compiled ModeLine.shipped).replaceSegments
+            .config #[mine]
+        let replaced := registry.replaceSegments .config #[]
+        let texts (registry : Config.Registry) (order : ModeLine.Order) : Array String :=
+          ((registry.resolve order).1.fields loopContext).map (·.text)
+        let (_, unknown) :=
+          registry.resolve { left := #["nope", "buffer", "nope"], right := #["gone", "position"] }
+        pure
+          ((registry.segment? "buffer").map (·.name) == some "buffer" &&
+            texts registry { left := #["buffer"], right := #[] } == #["mine"] &&
+            texts replaced { left := #["buffer"], right := #[] } == #["Loop.lean"] &&
+            replaced.segments.size == ModeLine.shipped.size &&
+            (registry.segment? "nope").isNone &&
+            unknown == #["nope", "gone"] &&
+            texts registry ModeLine.Order.standard ==
+              #["NORMAL", "mine", "●", "lean/Editor", "lean", "959:5", "41%"]) },
     { name :=
         "replacing an owner's ex bindings leaves the commands, the jobs, the key bindings and the modes as they were"
       run :=
@@ -2937,6 +3269,10 @@ inductive Seen where
   | cancelJobs (owner : String)
   /-- A reload was reported. -/
   | report (number : Nat) (installed : Bool) (sources : Array String) (chunks commands : Nat)
+  /-- The theme in force was switched. -/
+  | themed
+  /-- The window was asked for this appearance. -/
+  | appearance (appearance : Appearance)
   deriving DecidableEq, Repr
 
 /-- `effect` as a check compares it. -/
@@ -2946,6 +3282,8 @@ def seen : Config.Effect Elaborated → Seen
   | .report report =>
     .report report.number report.installed (report.diagnostics.map (·.source)) report.chunks
       report.commands
+  | .themed => .themed
+  | .appearance appearance => .appearance appearance
 
 /-- The state the reducer reaches from `state` through `events`, and every
 effect on the way. -/
@@ -3053,18 +3391,232 @@ before any config. -/
 def compiledWith (registrations : Array Config.Registration) : Config.State Elaborated :=
   { registry := ({} : Config.Registry).replace .compiled registrations }
 
+/-- The theme `second` of the reducer's checks: one definition of its own. -/
+def secondTheme : Theme :=
+  oneFace 7
+
+/-- A config state in which compiled code has registered two themes, before
+any config: `default`, the built-in one, and `second` (`secondTheme`). -/
+def themed : Config.State Elaborated :=
+  {
+    registry :=
+      ({} : Config.Registry).replaceThemes .compiled
+        #[{ name := Theme.defaultName, theme := Theme.builtin },
+          { name := "second", theme := secondTheme }] }
+
+/-- The report of the reload that finishes with `outcome` from `state`. -/
+def reportFrom (state : Config.State Elaborated) (outcome : Config.Outcome Elaborated) :
+    Config.Report :=
+  (state.install outcome).2
+
 /-- The checks of the reload reducer (`Editor/Config/Reload.lean`), with
 outcomes built by hand. -/
 def reloadChecks : List Check :=
-  [{ name := "a request with no job running starts one, carrying the base and the loaded chunks",
-     run :=
-       let first := reduce [.requested]
-       let later := reduce [.requested, .finished (accepted ["a", "b"] (greets "1")), .requested]
-       pure
-         (first.2 == #[.start none #[]] &&
-           later.2 ==
-             #[.start none #[], .cancelJobs "config", .report 1 true #[] 2 1,
-               .start (some #[]) #["a", "b"]]) },
+  [{  name :=
+        "an install sets the title bar config chooses, a later install that chooses none goes back to none, the themed one, and a rejected one changes nothing"
+      run :=
+        let (state, _) :=
+          reduceFrom themed [.requested, .finished (accepted ["a"] (titleBar .standard))]
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        pure
+          (themed.titleBar == none && state.titleBar == some .standard &&
+            dropped.titleBar == none &&
+            kept.titleBar == some .standard) },
+    { name :=
+        "the window opens with the title bar the start-up config chose once its reload has finished, themed when it chose none, and themed when the wait ran out before the reload finished, whatever was installed by then"
+      run :=
+        pure
+          (Window.titleBarAtOpen true (some .standard) == .standard &&
+            Window.titleBarAtOpen true (some .themed) == .themed &&
+            Window.titleBarAtOpen true none == .themed &&
+            Window.titleBarAtOpen false (some .standard) == .themed &&
+            Window.titleBarAtOpen false none == .themed) },
+    { name :=
+        "an install sets the frame padding config sets, a later install that sets none goes back to none, the editor's own, and a rejected one changes nothing"
+      run :=
+        let (state, _) :=
+          reduceFrom themed [.requested, .finished (accepted ["a"] (framePadding 12))]
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        pure
+          (themed.framePadding == none && state.framePadding == some 12 &&
+            dropped.framePadding == none &&
+            kept.framePadding == some 12) },
+    { name :=
+        "an install sets the mode line config lists, and its report names each segment nobody registered, which the echo area says after the unknown theme's sentence; a later install that lists none goes back to the default, and a rejected one changes nothing"
+      run :=
+        let listed : SetupM Unit := modeLine ["state", "nope"] ["position"]
+        let both : SetupM Unit := do
+          useTheme "gone"
+          modeLine ["state", "nope", "nope"] ["lost"]
+        let segmented : Config.State Elaborated :=
+          { themed with registry := themed.registry.replaceSegments .compiled ModeLine.shipped }
+        let (state, _) := reduceFrom segmented [.requested, .finished (accepted ["a"] listed)]
+        let report := reportFrom segmented (accepted ["a"] listed)
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        pure
+          (state.modeLine == some { left := #["state", "nope"], right := #["position"] } &&
+            report.unknownSegments == #["nope"] &&
+            report.echo == some "reload: no segment is registered as `nope`" &&
+            (reportFrom segmented (accepted ["a"] both)).echo ==
+              some
+                "reload: no theme is registered as `gone`; no segment is registered as `nope`; no segment is registered as `lost`" &&
+            (reportFrom segmented (accepted ["a"] (modeLine ["state"] []))).echo == none &&
+            dropped.modeLine == none &&
+            kept.modeLine == state.modeLine &&
+            (reportFrom segmented (accepted ["a"] (pure ()))).unknownSegments == #[]) },
+    { name :=
+        "a config's segments are replaced at every install: one it defines can be listed, and is gone once a reload no longer defines it"
+      run :=
+        let own : SetupM Unit := do
+          defineSegment "greeting" fun _ => #[{ text := "hi", face := ⟨"mode-line.secondary"⟩ }]
+          modeLine ["greeting"] []
+        let (state, _) := reduceFrom themed [.requested, .finished (accepted ["a"] own)]
+        let (dropped, _) :=
+          reduceFrom state [.requested, .finished (accepted ["a"] (modeLine ["greeting"] []))]
+        pure
+          ((state.registry.segment? "greeting").isSome &&
+            (reportFrom themed (accepted ["a"] own)).unknownSegments.isEmpty &&
+            (dropped.registry.segment? "greeting").isNone &&
+            (reportFrom state (accepted ["a"] (modeLine ["greeting"] []))).unknownSegments ==
+              #["greeting"]) },
+    { name :=
+        "criterion 1: a config that names a registered theme starts in it, with config's faces over it; so does one that names a theme it defines itself, and the report says nothing in the echo area"
+      run :=
+        let named : SetupM Unit := do
+          useTheme "second"
+          face "keyword" (coloured 1)
+        let own : SetupM Unit := do
+          defineTheme "mine" (oneFace 9)
+          useTheme "mine"
+        let (state, effects) := reduceFrom themed [.requested, .finished (accepted ["a"] named)]
+        let (mine, _) := reduceFrom themed [.requested, .finished (accepted ["a"] own)]
+        pure
+          (state.themeName == "second" &&
+            state.theme == secondTheme ++ #[defined "keyword" (coloured 1)] &&
+            effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 0] &&
+            (reportFrom themed (accepted ["a"] named)).echo == none &&
+            mine.themeName == "mine" &&
+            mine.theme == oneFace 9) },
+    { name :=
+        "a theme config defines replaces the built-in theme wholesale: one of `default` alone, in force, defines no `cursor.normal`; one built as `Theme.builtin ++ #[…]` keeps it"
+      run :=
+        let definesCursor (theme : Theme) : Bool := theme.any (·.name == ⟨"cursor.normal"⟩)
+        let bare : SetupM Unit := do
+          defineTheme "bare" (oneFace 9)
+          useTheme "bare"
+        let over : SetupM Unit := do
+          defineTheme "over" (Theme.builtin ++ oneFace 9)
+          useTheme "over"
+        let (bareState, _) := reduceFrom themed [.requested, .finished (accepted ["a"] bare)]
+        let (overState, _) := reduceFrom themed [.requested, .finished (accepted ["a"] over)]
+        pure
+          (definesCursor Theme.builtin && bareState.themeName == "bare" &&
+            !definesCursor bareState.theme &&
+            overState.themeName == "over" &&
+            definesCursor overState.theme) },
+    { name :=
+        "criterion 2: a config that names no theme starts in default, the built-in theme, with config's faces over it; a state before any config is in default"
+      run :=
+        let (state, _) :=
+          reduceFrom themed [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1)))]
+        pure
+          (({} : Config.State Elaborated).themeName == Theme.defaultName &&
+            themed.themeName == Theme.defaultName &&
+            state.themeName == Theme.defaultName &&
+            state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)]) },
+    { name :=
+        "criterion 2: choosing a registered theme switches to it with the effect that says so, and a reload whose config names no theme keeps the theme in force"
+      run :=
+        let (chosen, effects) := Config.step themed (.choose "second")
+        let (reloaded, _) :=
+          reduceFrom chosen [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1)))]
+        pure
+          (chosen.themeName == "second" && effects.map seen == #[.themed] &&
+            reloaded.themeName == "second" &&
+            reloaded.theme == secondTheme ++ #[defined "keyword" (coloured 1)]) },
+    { name :=
+        "criterion 4: after a switch, config's own faces still apply over the new theme, in their order"
+      run :=
+        let setup : SetupM Unit := do
+          face "keyword" (coloured 1)
+          face "default" (coloured 2)
+        let (loaded, _) := reduceFrom themed [.requested, .finished (accepted ["a"] setup)]
+        let (switched, _) := Config.step loaded (.choose "second")
+        pure
+          (loaded.theme ==
+              Theme.builtin ++ #[defined "keyword" (coloured 1), defined "default" (coloured 2)] &&
+            switched.theme ==
+              secondTheme ++ #[defined "keyword" (coloured 1), defined "default" (coloured 2)]) },
+    { name :=
+        "criteria 5 and 6: a config that names a theme nobody registered is installed, leaves the theme in force as it was, and its report names the unknown theme in the echo area"
+      run :=
+        let (chosen, _) := Config.step themed (.choose "second")
+        let unknown : SetupM Unit := do
+          useTheme "nope"
+          face "keyword" (coloured 1)
+        let (state, effects) := reduceFrom chosen [.requested, .finished (accepted ["a"] unknown)]
+        let report := reportFrom chosen (accepted ["a"] unknown)
+        pure
+          (state.themeName == "second" &&
+            state.theme == secondTheme ++ #[defined "keyword" (coloured 1)] &&
+            effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 0] &&
+            report.unknownTheme == some "nope" &&
+            report.echo == some s!"reload: {Theme.unknown "nope"}" &&
+            report.echo == some "reload: no theme is registered as `nope`" &&
+            (reportFrom chosen (accepted ["a"] (useTheme "second"))).unknownTheme == none) },
+    { name :=
+        "a rejected reload leaves the theme in force; choosing a theme nobody registered leaves the state and has no effect; a theme of config's in force that the next reload drops falls back to default"
+      run :=
+        let (chosen, _) := Config.step themed (.choose "second")
+        let (kept, _) := reduceFrom chosen [.requested, .finished (rejected "a")]
+        let (unknown, nothing) := Config.step chosen (.choose "nope")
+        let own : SetupM Unit := do
+          defineTheme "mine" (oneFace 9)
+          useTheme "mine"
+        let (mine, _) := reduceFrom themed [.requested, .finished (accepted ["a"] own)]
+        let (dropped, _) := reduceFrom mine [.requested, .finished (accepted ["a"] (pure ()))]
+        pure
+          (kept.themeName == "second" && unknown.themeName == "second" &&
+            unknown.theme == chosen.theme &&
+            nothing.isEmpty &&
+            mine.themeName == "mine" &&
+            dropped.themeName == Theme.defaultName &&
+            dropped.theme == Theme.builtin) },
+    { name :=
+        "the display is handed the theme in force, with its name, after a reload that installs and after a choice that switched the theme, and not after a rejected reload or a choice of a theme nobody registered"
+      run := do
+        let handed ← IO.mkRef (#[] : Array (String × Theme))
+        let setTheme (name : String) (theme : Theme) : BaseIO Unit :=
+          handed.modify (·.push (name, theme))
+        let steps : List (Config.Event Elaborated) :=
+          [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1))), .choose "second",
+            .requested, .finished (rejected "a"), .choose "nope"]
+        let mut state := themed
+        for event in steps do
+          let (next, effects) := Config.step state event
+          Config.retheme setTheme next effects
+          state := next
+        return (← handed.get) ==
+            #[(Theme.defaultName, Theme.builtin ++ #[defined "keyword" (coloured 1)]),
+              ("second", secondTheme ++ #[defined "keyword" (coloured 1)])] },
+    { name :=
+        "a state whose registry holds no theme of the name in force is drawn in the built-in theme"
+      run :=
+        pure
+          (({ themeName := "second" } : Config.State Elaborated).theme == Theme.builtin &&
+            ({} : Config.State Elaborated).theme == Theme.builtin) },
+    { name := "a request with no job running starts one, carrying the base and the loaded chunks"
+      run :=
+        let first := reduce [.requested]
+        let later := reduce [.requested, .finished (accepted ["a", "b"] (greets "1")), .requested]
+        pure
+          (first.2 == #[.start none #[]] &&
+            later.2 ==
+              #[.start none #[], .cancelJobs "config", .report 1 true #[] 2 1,
+                .start (some #[]) #["a", "b"]]) },
     { name :=
         "requests while a job runs start nothing, and the finish then starts exactly one more job"
       run :=
@@ -3143,6 +3695,18 @@ def reloadChecks : List Check :=
         pure
           (state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)] &&
             state.theme == loaded.theme) },
+    { name :=
+        "an installed reload puts config's process environment in the registry, a rejected one leaves the one that was there, and a config that sets none gives none"
+      run :=
+        let (loaded, _) :=
+          reduce [.requested, .finished (accepted ["a"] (processEnvironment .inherited))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        pure
+          ((reduce []).1.registry.environment == none &&
+            loaded.registry.environment == some .inherited &&
+            kept.registry.environment == some .inherited &&
+            bare.registry.environment == none) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -4316,8 +4880,8 @@ def twoViews : Scene where
         cursor := { shape := .block, face := ⟨"cursor.normal"⟩ }
         decorations := #[{ start := 4, stop := 9, face := ⟨"search.match"⟩ }]
         status :=
-          #[{ text := "notes.txt", face := ⟨"status.name"⟩ },
-            { text := "[+]", face := ⟨"status.modified"⟩ }] },
+          #[{ text := "notes.txt", face := ⟨"mode-line.buffer"⟩, padding := 4 },
+            { text := "1:1", face := ⟨"mode-line.secondary"⟩, side := .right, padding := 4 }] },
       { id := ⟨1⟩, rect := { x := 800, y := 0, width := 800, height := 1160 }, snapshot := ⟨4⟩
         scroll := { text := ⟨2⟩, index := 0 }, selections := #[]
         cursor := { shape := .bar, face := ⟨"cursor.insert"⟩ }, decorations := #[], status := #[] }]
@@ -4335,7 +4899,8 @@ def sceneChecks : List Check :=
            (twoViews.views[0]?.map (·.selections.size)) == some 2 &&
            (twoViews.views[0]?.map (·.decorations)) ==
              some #[{ start := 4, stop := 9, face := ⟨"search.match"⟩ }] &&
-           (twoViews.views[0]?.map (·.status.map (·.text))) == some #["notes.txt", "[+]"] &&
+           (twoViews.views[0]?.map (·.status.map (·.text))) == some #["notes.txt", "1:1"] &&
+           (twoViews.views[0]?.map (·.status.map (·.side))) == some #[.left, .right] &&
            (twoViews.views[1]?.map (·.cursor)) ==
              some { shape := .bar, face := ⟨"cursor.insert"⟩ } &&
            (twoViews.views[1]?.map (·.rect.x)) == some 800 &&
@@ -4349,7 +4914,124 @@ def sceneChecks : List Check :=
       run :=
         pure
           (twoViews == twoViews && twoViews != { twoViews with pending := "" } &&
-            twoViews != { twoViews with views := twoViews.views.pop }) }]
+            twoViews != { twoViews with views := twoViews.views.pop }) },
+    { name :=
+        "a status field is on the left with no padding and a view has no status face, unless they say so"
+      run :=
+        let field : StatusField := { text := "x", face := ⟨"mode-line.buffer"⟩ }
+        let right : StatusField :=
+          { field with
+            side := .right, padding := 4 }
+        match twoViews.views[1]? with
+        | some view =>
+          pure
+            (field.side == .left && field.padding == 0 && right.side == .right &&
+              right.padding == 4 &&
+              field != right &&
+              view.statusFace == none &&
+              { view with statusFace := some ⟨"mode-line.inactive"⟩ } != view)
+        | none => pure false }]
+
+/-- The texts of `fields`, each with its face's name. -/
+def textsAndFaces (fields : Array StatusField) : Array (String × String) :=
+  fields.map fun field => (field.text, field.face.name)
+
+/-- The checks of the mode line (`Editor/ModeLine.lean`): the shipped
+segments' fields, in the order a listing gives, for a selected and an
+unselected window. -/
+def modeLineChecks : List Check :=
+  let secondary (text : String) : StatusField :=
+    { text, face := ⟨"mode-line.secondary"⟩, side := .right, padding := 4 }
+  let positionOf (row lines : Nat) : Array String :=
+    let fields :=
+      ModeLine.standard.fields
+        { loopContext with
+          cursor := some ⟨row, 0⟩, lines }
+    (fields.filter (·.side == .right)).map (·.text) |>.toList.getLast?.toArray
+  [{  name :=
+        "the shipped mode line of a selected window on a modified file in normal state is the badge, the name, the mark and the directory on the left, and the mode, line:col and position on the right"
+      run :=
+        pure
+          (ModeLine.standard.fields loopContext ==
+            #[{ text := "NORMAL", face := ⟨"mode-line.state.normal"⟩, padding := 8 },
+              { text := "Loop.lean", face := ⟨"mode-line.buffer"⟩, padding := 4 },
+              { text := "●", face := ⟨"mode-line.modified"⟩, padding := 4 },
+              { text := "lean/Editor", face := ⟨"mode-line.secondary"⟩, padding := 4 },
+              secondary "lean", secondary "959:5", secondary "41%"]) },
+    { name :=
+        "an unselected window on the same buffer has no badge, and every field in mode-line.inactive with the same texts, sides and paddings"
+      run :=
+        let selected := ModeLine.standard.fields loopContext
+        let unselected := ModeLine.standard.fields (loopContext (selected := false))
+        pure
+          (unselected == (selected.extract 1).map ({ · with face := ModeLine.inactiveFace }) &&
+            ModeLine.inactiveFace == ⟨"mode-line.inactive"⟩) },
+    { name :=
+        "a segment with nothing to say gives no field: no directory with no file or a bare name, no mode with none, no line:col or position with no cursor, no mark unmodified"
+      run :=
+        let texts (context : ModeLine.Context) := (ModeLine.standard.fields context).map (·.text)
+        let bare := loopContext (loopLean (path := "Loop.lean"))
+        let dotted := loopContext (loopLean (path := "./Loop.lean"))
+        let noFile := loopContext { loopLean with file := none }
+        let noMode := loopContext { loopLean with major := none }
+        let noCursor := { loopContext with cursor := none }
+        let unmodified := loopContext (loopLean (modified := false))
+        pure
+          (texts bare == #["NORMAL", "Loop.lean", "●", "lean", "959:5", "41%"] &&
+            texts dotted == #["NORMAL", "Loop.lean", "●", "lean", "959:5", "41%"] &&
+            texts noFile == #["NORMAL", "Loop.lean", "●", "lean", "959:5", "41%"] &&
+            texts noMode == #["NORMAL", "Loop.lean", "●", "lean/Editor", "959:5", "41%"] &&
+            texts noCursor == #["NORMAL", "Loop.lean", "●", "lean/Editor", "lean"] &&
+            texts unmodified == #["NORMAL", "Loop.lean", "lean/Editor", "lean", "959:5", "41%"]) },
+    { name :=
+        "the position is All in a buffer of one row, Top on the first row, Bot on the last or past it, and otherwise the cursor's row as a whole percentage of the rows"
+      run :=
+        pure
+          (positionOf 0 1 == #["All"] && positionOf 0 0 == #["All"] &&
+            positionOf 0 10 == #["Top"] &&
+            positionOf 9 10 == #["Bot"] &&
+            positionOf 12 10 == #["Bot"] &&
+            positionOf 4 10 == #["50%"] &&
+            positionOf 1 3 == #["66%"]) },
+    { name := "the line:col is the cursor's row and column counted from 1"
+      run :=
+        let fields :=
+          ModeLine.standard.fields
+            { loopContext with
+              cursor := some ⟨0, 0⟩, lines := 1 }
+        pure ((fields.map (·.text)).contains "1:1") },
+    { name := "a listing's order and side win over the segment's own place"
+      run :=
+        let line :=
+          ModeLine.resolve { left := #["position"], right := #["buffer"] } ModeLine.shipped?
+        let fields := line.1.fields loopContext
+        pure
+          (line.2.isEmpty &&
+            fields.map (fun field => (field.text, field.side)) ==
+              #[("41%", .left), ("Loop.lean", .right)]) },
+    { name :=
+        "a listing that names a segment nobody registered keeps the rest, in order, and names the unknown ones once each, in order"
+      run :=
+        let (line, unknown) :=
+          ModeLine.resolve { left := #["state", "nope", "buffer", "nope"], right := #["gone"] }
+            ModeLine.shipped?
+        pure
+          (textsAndFaces (line.fields loopContext) ==
+              #[("NORMAL", "mode-line.state.normal"), ("Loop.lean", "mode-line.buffer")] &&
+            unknown == #["nope", "gone"] &&
+            ModeLine.unknown "nope" == "no segment is registered as `nope`") },
+    { name :=
+        "the default order is the badge, buffer, modified mark, changed mark and directory on the left, and major mode, line:col and position on the right"
+      run :=
+        pure
+          (ModeLine.Order.standard ==
+              { left := #["state", "buffer", "modified", "changed", "directory"]
+                right := #["major-mode", "line-column", "position"] } &&
+            ModeLine.shipped.map (·.name) ==
+              #["state", "buffer", "modified", "changed", "directory", "major-mode", "line-column",
+                "position"] &&
+            ModeLine.standard.left.map (·.name) == ModeLine.Order.standard.left &&
+            ModeLine.standard.right.map (·.name) == ModeLine.Order.standard.right) }]
 
 /-- The checks of faces and of the built-in theme, which are plain data
 (`Editor/Face.lean`). What a face looks like in a frame is layout's rule,
@@ -4357,13 +5039,12 @@ pinned in `crates/editor-layout`; these pin what Lean itself defines. -/
 def faceChecks : List Check :=
   [{
       name :=
-        "the built-in theme defines default, cursor, a cursor face for each state of the shipped Vim scheme, selection, echo-area, minibuffer-prompt, mode-line and search-match, each once",
+        "the built-in theme defines default first, then each other face of the vocabulary, each once and nothing else",
       run :=
+        let names := Theme.builtin.map (·.name)
         pure
-          (Theme.builtin.map (·.name.name) ==
-            #["default", "cursor", "cursor.normal", "cursor.insert", "cursor.visual",
-              "cursor.visual-line", "cursor.minibuffer", "selection", "echo-area",
-              "minibuffer-prompt", "mode-line", "search-match"]) },
+          (names[0]? == some ⟨"default"⟩ && names.size == Face.vocabularyNames.size &&
+            Face.vocabularyNames.all names.contains) },
     { name :=
         "the built-in search-match face sets a background that is not the default face's, and a foreground"
       run :=
@@ -4382,38 +5063,40 @@ def faceChecks : List Check :=
             face.background.isSome &&
             face.underline.isSome &&
             face.strikeThrough.isSome &&
-            face.lineHeight.isSome
+            face.lineHeight.isSome &&
+            face.verticalPadding.isSome
         pure ((Theme.builtin.filter (complete ·.face)).map (·.name.name) == #["default"]) },
     { name :=
-        "the built-in theme gives the cursor the shipped Vim scheme reports in each of its states, normal's block and insert's bar among them, a background that is not the default face's and a foreground that is not that background"
+        "a face over another takes each attribute from the upper where it sets it and from the lower where it does not"
       run :=
-        let scheme := Vim.Default.scheme
-        let fed (text : String) : Vim.State :=
-          (scheme.feed (fun _ => []) ⟨0⟩ scheme.init (keys text)).1
-        let told : Vim.State := scheme.openMinibuffer ⟨0⟩ scheme.init
-        -- Each attribute as the theme defines it: a later definition of a
-        -- name over an earlier one.
-        let defined (pick : Face → Option Color) (name : FaceName) : Option Color :=
-          Theme.builtin.foldl
-            (fun found definition =>
-              if definition.name == name then pick definition.face <|> found else found)
-            none
-        let paper := defined (·.background) ⟨"default"⟩
-        let ink := defined (·.foreground) ⟨"default"⟩
-        -- Drawn over the default face, as a cursor's face is.
-        let visible (cursor : Cursor) : Bool :=
-          match defined (·.background) cursor.face with
-          | some background =>
-            some background != paper &&
-              (defined (·.foreground) cursor.face <|> ink) != some background
-          | none => false
-        let reports := [scheme.init, fed "i", fed "v", fed "V", told].map (scheme.report · ⟨0⟩)
-        let states := Vim.Default.states.initial :: Vim.Default.states.others
+        let upper : Face := { foreground := some (Color.rgb 1 0 0), weight := some 700 }
+        let lower : Face :=
+          { foreground := some (Color.rgb 2 0 0), background := some (Color.rgb 3 0 0)
+            size := some 12 }
         pure
-          ((reports.map (·.cursor.shape)).take 2 == [.block, .bar] &&
-            reports.all (visible ·.cursor) &&
-            states.all fun record =>
-              visible { shape := record.cursor, face := Vim.cursorFace record.name }) },
+          (upper.over lower ==
+              { foreground := some (Color.rgb 1 0 0), weight := some 700
+                background := some (Color.rgb 3 0 0), size := some 12 } &&
+            ({} : Face).over lower == lower &&
+            upper.over {} == upper &&
+            ({ verticalPadding := some 3 } : Face).over { verticalPadding := some 5 } ==
+              { verticalPadding := some 3 } &&
+            ({} : Face).over { verticalPadding := some 5 } == { verticalPadding := some 5 }) },
+    { name :=
+        "a theme's merged face of a name defined twice is the later definition's set attributes over the earlier's, ignores other names, and is the empty face for a name it does not define"
+      run :=
+        let theme : Theme :=
+          #[{ name := ⟨"a"⟩, face := { foreground := some (Color.rgb 1 0 0), size := some 10 } },
+            { name := ⟨"b"⟩, face := { background := some (Color.rgb 9 9 9) } },
+            { name := ⟨"a"⟩, face := { foreground := some (Color.rgb 2 0 0) } }]
+        pure
+          (theme.merged ⟨"a"⟩ == { foreground := some (Color.rgb 2 0 0), size := some 10 } &&
+            theme.merged ⟨"b"⟩ == { background := some (Color.rgb 9 9 9) } &&
+            theme.merged ⟨"c"⟩ == {}) },
+    { name := "a theme defines a name it gives an empty definition, and not a name it gives none"
+      run :=
+        let theme : Theme := #[{ name := ⟨"plain"⟩, face := {} }]
+        pure (theme.defines ⟨"plain"⟩ && !theme.defines ⟨"other"⟩) },
     { name := "a colour is its four bytes, red first, and one made of three is opaque"
       run :=
         pure
@@ -4439,6 +5122,371 @@ def faceChecks : List Check :=
             plain.lineHeight.isNone &&
             red != plain &&
             red == { foreground := some (Color.rgb 200 0 0) }) }]
+
+/-- The faces the code on this branch draws, read from the values that draw
+them, not from their text: the cursors and status fields the shipped Vim
+scheme reports in each of its states, its cursor face of each default
+state, the cursor of a scheme that names no face, and the status fields the
+loop gives a modified buffer and a prompt with candidates listed, one of
+them chosen. -/
+def drawnFaces : Array FaceName :=
+  let scheme := Vim.Default.scheme
+  let fed (text : String) : Vim.State := (scheme.feed (fun _ => []) ⟨0⟩ scheme.init (keys text)).1
+  let told : Vim.State := scheme.openMinibuffer ⟨0⟩ scheme.init
+  let reports := #[scheme.init, fed "i", fed "v", fed "V", told].map (scheme.report · ⟨0⟩)
+  let states := Vim.Default.states.initial :: Vim.Default.states.others
+  let context : ModeLine.Context :=
+    { loopContext with
+      reported := (reports[0]?.map (·.status)).getD #[], cursor := some ⟨4, 2⟩, lines := 10 }
+  let asked : Prompt :=
+    { label := "Theme: ", view := ⟨1⟩, asker := ⟨0⟩, continuation := { command := "load-theme" }
+      candidates :=
+        { all := #["a", "b"], listedFor := some "", listed := #["a", "b"], chosen := some 0 } }
+  reports.map (·.cursor.face) ++ reports.flatMap (·.status.map (·.face)) ++
+    states.toArray.map (Vim.cursorFace ·.name) ++
+    #[({} : InputScheme.Report).cursor.face] ++
+    (ModeLine.standard.fields context).map (·.face) ++
+    (ModeLine.standard.fields { context with selected := false }).map (·.face) ++
+    (Loop.promptStatus asked).map (·.face)
+
+/-- The checks of the face vocabulary (`Editor/Face/Vocabulary.lean`), of a
+theme written from a palette (`Palette.theme`, `Editor/Face.lean`) and of
+the completeness check (`Themes.problems`, `Editor/Themes/Check.lean`), on
+themes and palettes written here. -/
+def faceVocabularyChecks : List Check :=
+  [{  name := "the vocabulary names each face once, and says what each is"
+      run :=
+        let names := Face.vocabularyNames
+        pure
+          (!names.isEmpty &&
+            (List.range names.size).all
+              (fun later =>
+                (List.range later).all fun earlier => names[later]? != names[earlier]?) &&
+            Face.vocabulary.all (!·.meaning.isEmpty)) },
+    { name :=
+        "the vocabulary lists every face the shipped Vim scheme, the mode line, the loop and a scheme that names no cursor face draw, and the mode line's and the three minibuffer faces among them"
+      run :=
+        pure
+          (drawnFaces.all Face.vocabularyNames.contains &&
+            [ModeLine.bufferFace, ModeLine.modifiedFace, ModeLine.secondaryFace,
+                  ModeLine.inactiveFace, Loop.promptFace, Loop.candidateFace, Loop.chosenFace].all
+              drawnFaces.contains) },
+    { name :=
+        "the vocabulary holds the badge face of every state of the shipped Vim scheme, read from the scheme, and no status. face"
+      run :=
+        let states := Vim.Default.states.initial :: Vim.Default.states.others
+        pure
+          (states.all (fun state => Face.vocabularyNames.contains (Vim.stateFace state.name)) &&
+            states.length == Theme.cursorStates.size &&
+            ["status.state", "status.name", "status.modified"].all fun name =>
+              !Face.vocabularyNames.contains ⟨name⟩) },
+    { name :=
+        "every shipped theme pads the mode line and the echo area 3 points above and below, and its default face sets no padding"
+      run :=
+        let padded (theme : Theme) :=
+          (theme.merged ⟨"mode-line"⟩).verticalPadding == some 3 &&
+            (theme.merged ⟨"echo-area"⟩).verticalPadding == some 3 &&
+            (theme.merged ⟨"default"⟩).verticalPadding == some 0
+        pure (padded Theme.builtin && Themes.shipped.all (padded ·.theme)) },
+    { name := "the vocabulary lists the four names layout reads by itself"
+      run :=
+        pure
+          (["default", "selection", "mode-line", "echo-area"].all fun name =>
+            Face.vocabularyNames.contains ⟨name⟩) },
+    { name :=
+        "the vocabulary lists the faces declared ahead of the features that draw them: syntax captures, diff, gutter, search, review, an inactive mode line and a block header"
+      run :=
+        let captures :=
+          ["keyword", "string", "comment", "function", "type", "constant", "variable",
+                "punctuation"].map
+            ("syntax." ++ ·)
+        let ahead :=
+          ["diff.added", "diff.removed", "diff.changed", "gutter", "search-match",
+            "review-unexamined", "mode-line.inactive", "block-header"]
+        pure ((captures ++ ahead).all fun name => Face.vocabularyNames.contains ⟨name⟩) },
+    { name :=
+        "the cursor faces the check holds are cursor and the shipped Vim scheme's face of each of its states"
+      run :=
+        let states := Vim.Default.states.initial :: Vim.Default.states.others
+        pure (Themes.cursorFaces == #[⟨"cursor"⟩] ++ states.toArray.map (Vim.cursorFace ·.name)) },
+    { name := "the built-in theme has no problem the check finds"
+      run := pure (Themes.problems Theme.builtin == #[]) },
+    { name :=
+        "a theme that leaves a vocabulary face undefined has that problem, for each face of the vocabulary; one with no default has no paper and no ink"
+      run :=
+        let without (name : FaceName) : Theme := Theme.builtin.filter (·.name != name)
+        pure
+          (Face.vocabulary.all
+              (fun entry =>
+                (Themes.problems (without entry.name)).contains (.undefined entry.name)) &&
+            [Themes.Problem.noPaper, .noInk].all
+              (Themes.problems (without ⟨"default"⟩)).contains) },
+    { name :=
+        "a theme that leaves the cursor face of a shipped Vim state undefined has no such cursor, for each of them"
+      run :=
+        pure
+          (Themes.cursorFaces.all fun face =>
+            (Themes.problems (Theme.builtin.filter (·.name != face))).contains (.noCursor face)) },
+    { name :=
+        "a cursor whose foreground is its own background has that problem and no other, set so or with no foreground set over a background that is the ink, for each shipped cursor face"
+      run :=
+        let theme := Theme.builtin
+        let paper := (theme.merged ⟨"default"⟩).background
+        let ink := (theme.merged ⟨"default"⟩).foreground
+        let odd := Color.rgb 1 2 3
+        pure
+          (some odd != paper && ink != paper &&
+            Themes.cursorFaces.all fun face =>
+              Themes.problems
+                    (theme.push
+                      { name := face,
+                        face := { foreground := some odd, background := some odd } }) ==
+                  #[.cursorInkOnItself face] &&
+                Themes.problems
+                    ((theme.filter (·.name != face)).push
+                      { name := face, face := { background := ink } }) ==
+                  #[.cursorInkOnItself face]) },
+    { name :=
+        "a cursor whose background is the paper has that problem: set so, with no background set, and when a later default moves the paper to the cursors' background, for each shipped cursor face"
+      run :=
+        let theme := Theme.builtin
+        let paper := (theme.merged ⟨"default"⟩).background
+        let odd := Color.rgb 1 2 3
+        let cursors := (Themes.effective theme ⟨"cursor"⟩).2
+        let moved := theme.push { name := ⟨"default"⟩, face := { background := cursors } }
+        pure
+          (some odd != paper && cursors.isSome &&
+            Themes.cursorFaces.all fun face =>
+              (Themes.problems
+                      (theme.push { name := face, face := { background := paper } })).contains
+                  (.cursorOnPaper face) &&
+                Themes.problems
+                    ((theme.filter (·.name != face)).push
+                      { name := face, face := { foreground := some odd } }) ==
+                  #[.cursorOnPaper face] &&
+                (Themes.problems moved).contains (.cursorOnPaper face)) },
+    { name :=
+        "a theme whose default sets no background has no paper: the check takes no base colour"
+      run :=
+        let unpapered :=
+          Theme.builtin.map fun definition =>
+            if definition.name == ⟨"default"⟩ then
+              { definition with face := { definition.face with background := none } }
+            else definition
+        pure ((Themes.problems unpapered).contains .noPaper) },
+    { name := "each problem's sentence names the face it is about"
+      run :=
+        let names (problem : Themes.Problem) (face : String) : Bool :=
+          (problem.describe.splitOn face).length > 1
+        pure
+          (names (.undefined ⟨"gutter"⟩) "gutter" &&
+            names (.noCursor ⟨"cursor.visual"⟩) "cursor.visual" &&
+            names (.cursorOnPaper ⟨"cursor.insert"⟩) "cursor.insert" &&
+            names (.cursorInkOnItself ⟨"cursor.normal"⟩) "cursor.normal") },
+    { name :=
+        "one palette mapping applied to two palettes gives two themes that define the same names in the same order, and each has no problem the check finds"
+      run :=
+        let light : Palette :=
+          { paper := Color.rgb 250 250 245, ink := Color.rgb 30 30 40,
+            raised := Color.rgb 225 225 220
+            selected := Color.rgb 200 215 235, faint := Color.rgb 140 140 140
+            strong := Color.rgb 10 10 20, red := Color.rgb 180 30 30, orange := Color.rgb 190 100 20
+            yellow := Color.rgb 160 130 0, green := Color.rgb 40 130 40, cyan := Color.rgb 0 130 140
+            blue := Color.rgb 30 80 180, violet := Color.rgb 110 60 170
+            magenta := Color.rgb 170 40 130 }
+        let dark := Palette.placeholder.theme
+        let pale := light.theme
+        pure
+          (dark != pale && dark.map (·.name) == pale.map (·.name) && Themes.problems dark == #[] &&
+            Themes.problems pale == #[]) },
+    { name := "every shipped theme has no problem the check finds"
+      run :=
+        pure (!Themes.shipped.isEmpty && Themes.shipped.all (Themes.problems ·.theme == #[])) }]
+
+/-- The badge faces of the shipped Vim scheme's states, each bold in every
+shipped theme. -/
+def badgeFaces : List String :=
+  Theme.cursorStates.toList.map (s!"mode-line.state.{·}")
+
+/-- The faces whose colours the Solarized module's table of choices records
+(`Editor/Themes/Solarized.lean`), in dark names: each face's foreground and
+background as the table gives them, read from `c`, so that the same list
+read from the light colours is the light theme's. -/
+def solarizedChoices (c : Themes.Solarized.Colours) : List (String × Option Color × Option Color) :=
+  let cursors :=
+    ["cursor", "cursor.normal", "cursor.insert", "cursor.visual", "cursor.visual-line",
+      "cursor.minibuffer"]
+  [("default", some c.base0, some c.base03), ("selection", none, some c.base02)] ++
+    cursors.map (·, some c.base03, some c.base0) ++
+    [("mode-line", some c.base1, some c.base02),
+      ("mode-line.inactive", some c.base0, some c.base02), ("echo-area", some c.base0, none),
+      ("mode-line.state.normal", some c.base03, some c.blue),
+      ("mode-line.state.insert", some c.base03, some c.green),
+      ("mode-line.state.visual", some c.base03, some c.magenta),
+      ("mode-line.state.visual-line", some c.base03, some c.magenta),
+      ("mode-line.state.minibuffer", some c.base03, some c.cyan),
+      ("mode-line.buffer", some c.base1, none), ("mode-line.modified", some c.orange, none),
+      ("mode-line.secondary", some c.base01, none), ("minibuffer.prompt", some c.blue, none),
+      ("minibuffer.candidate", some c.base1, none),
+      ("minibuffer.chosen", some c.base02, some c.base2), ("syntax.attribute", some c.orange, none),
+      ("syntax.comment", some c.base01, none), ("syntax.constant", some c.cyan, none),
+      ("syntax.constructor", some c.yellow, none), ("syntax.embedded", some c.base0, none),
+      ("syntax.function", some c.blue, none), ("syntax.keyword", some c.green, none),
+      ("syntax.module", some c.orange, none), ("syntax.number", some c.cyan, none),
+      ("syntax.operator", some c.green, none), ("syntax.property", some c.blue, none),
+      ("syntax.punctuation", some c.red, none), ("syntax.string", some c.cyan, none),
+      ("syntax.tag", some c.red, none), ("syntax.type", some c.yellow, none),
+      ("syntax.variable", some c.blue, none), ("diff.added", some c.green, some c.base02),
+      ("diff.removed", some c.red, some c.base02), ("diff.changed", some c.yellow, some c.base02),
+      ("gutter", some c.base01, some c.base02), ("search-match", some c.base03, some c.yellow),
+      ("review-unexamined", none, none), ("block-header", some c.base1, some c.base02)]
+
+/-- Whether `theme` gives each face of `solarizedChoices c` the colours
+listed, and keeps the weight, slant and underline the table keeps. -/
+def solarizedChosen (theme : Theme) (c : Themes.Solarized.Colours) : Bool :=
+  let face (name : String) : Face := theme.merged ⟨name⟩
+  (solarizedChoices c).all
+      (fun (name, foreground, background) =>
+        (face name).foreground == foreground && (face name).background == background) &&
+    (badgeFaces ++ ["mode-line.buffer", "minibuffer.prompt", "block-header"]).all
+      (fun name => (face name).weight == some 700) &&
+    (face "syntax.comment").slant == some .italic &&
+    (face "review-unexamined").underline == some { style := .single, color := some c.orange }
+
+/-- The checks of the Solarized themes (`Editor/Themes/Solarized.lean`):
+the sixteen colours are Solarized's published values, the light colours
+swap the four base pairs, each variant's faces are the choices the module's
+table records, and both variants are shipped. That they pass the
+completeness check is `faceVocabularyChecks`'s last check, over every
+shipped theme. -/
+def solarizedChecks : List Check :=
+  let c := Themes.Solarized.published
+  [{  name := "each of Solarized's sixteen colours is its published value"
+      run :=
+        pure
+          ([c.base03, c.base02, c.base01, c.base00, c.base0, c.base1, c.base2, c.base3, c.yellow,
+                  c.orange, c.red, c.magenta, c.violet, c.blue, c.cyan, c.green].map
+              (·.word) ==
+            [0x002b36ff, 0x073642ff, 0x586e75ff, 0x657b83ff, 0x839496ff, 0x93a1a1ff, 0xeee8d5ff,
+              0xfdf6e3ff, 0xb58900ff, 0xcb4b16ff, 0xdc322fff, 0xd33682ff, 0x6c71c4ff, 0x268bd2ff,
+              0x2aa198ff, 0x859900ff]) },
+    { name := "light swaps the four base pairs and keeps the accents"
+      run :=
+        let l := c.light
+        pure
+          (l.base03 == c.base3 && l.base3 == c.base03 && l.base02 == c.base2 &&
+            l.base2 == c.base02 &&
+            l.base01 == c.base1 &&
+            l.base1 == c.base01 &&
+            l.base00 == c.base0 &&
+            l.base0 == c.base00 &&
+            [l.yellow, l.orange, l.red, l.magenta, l.violet, l.blue, l.cyan, l.green] ==
+              [c.yellow, c.orange, c.red, c.magenta, c.violet, c.blue, c.cyan, c.green] &&
+            l.light == c &&
+            l != c) },
+    { name := "each variant's faces are the choices recorded in the module's table"
+      run :=
+        pure
+          (solarizedChosen Themes.Solarized.dark.theme c &&
+            solarizedChosen Themes.Solarized.light.theme c.light) },
+    { name := "each variant's default is the specification's pair: base0 on base03, base00 on base3"
+      run :=
+        let dark := Themes.Solarized.dark.theme.merged ⟨"default"⟩
+        let light := Themes.Solarized.light.theme.merged ⟨"default"⟩
+        pure
+          (dark.background == some c.base03 && dark.foreground == some c.base0 &&
+            light.background == some c.base3 &&
+            light.foreground == some c.base00) },
+    { name := "the two variants define the same names in the same order, and are not the same theme"
+      run :=
+        let dark := Themes.Solarized.dark.theme
+        let light := Themes.Solarized.light.theme
+        pure (dark.map (·.name) == light.map (·.name) && dark != light) },
+    { name := "solarized-dark and solarized-light are shipped"
+      run :=
+        pure
+          ([Themes.Solarized.dark, Themes.Solarized.light].all Themes.shipped.contains &&
+            Themes.Solarized.dark.name == "solarized-dark" &&
+            Themes.Solarized.light.name == "solarized-light") }]
+
+/-- The faces whose colours the Fairy Floss module's table of choices
+records (`Editor/Themes/FairyFloss.lean`): each face's foreground and
+background as the table gives them, read from `c`. -/
+def fairyFlossChoices (c : Themes.FairyFloss.Colours) :
+    List (String × Option Color × Option Color) :=
+  let cursors :=
+    ["cursor", "cursor.normal", "cursor.insert", "cursor.visual", "cursor.visual-line",
+      "cursor.minibuffer"]
+  [("default", some c.foreground, some c.background), ("selection", none, some c.selection)] ++
+    cursors.map (·, some c.background, some c.caret) ++
+    [("mode-line", some c.foreground, some c.lineHighlight),
+      ("mode-line.inactive", some c.lavender, some c.lineHighlight),
+      ("echo-area", some c.foreground, none),
+      ("mode-line.state.normal", some c.background, some c.pink),
+      ("mode-line.state.insert", some c.background, some c.added),
+      ("mode-line.state.visual", some c.background, some c.lavender),
+      ("mode-line.state.visual-line", some c.background, some c.lavender),
+      ("mode-line.state.minibuffer", some c.background, some c.mint),
+      ("mode-line.buffer", some c.foreground, none), ("mode-line.modified", some c.peach, none),
+      ("mode-line.secondary", some c.lavender, none), ("minibuffer.prompt", some c.mint, none),
+      ("minibuffer.candidate", some c.lavender, none),
+      ("minibuffer.chosen", some c.background, some c.mint),
+      ("syntax.attribute", some c.lemon, none), ("syntax.comment", some c.gold, none),
+      ("syntax.constant", some c.lavender, none), ("syntax.constructor", some c.lemon, none),
+      ("syntax.embedded", some c.foreground, none), ("syntax.function", some c.lemon, none),
+      ("syntax.keyword", some c.pink, none), ("syntax.module", some c.lemon, none),
+      ("syntax.number", some c.lavender, none), ("syntax.operator", some c.pink, none),
+      ("syntax.property", some c.foreground, none), ("syntax.punctuation", some c.foreground, none),
+      ("syntax.string", some c.yellow, none), ("syntax.tag", some c.pink, none),
+      ("syntax.type", some c.mint, none), ("syntax.variable", some c.foreground, none),
+      ("diff.added", some c.added, none), ("diff.removed", some c.removed, none),
+      ("diff.changed", some c.modified, none), ("gutter", some c.foreground, some c.background),
+      ("search-match", some c.background, some c.lemon), ("review-unexamined", none, none),
+      ("block-header", some c.foreground, some c.lineHighlight)]
+
+/-- Whether `theme` gives each face of `fairyFlossChoices c` the colours
+listed, and the weight, slant and underline the table records. -/
+def fairyFlossChosen (theme : Theme) (c : Themes.FairyFloss.Colours) : Bool :=
+  let face (name : String) : Face := theme.merged ⟨name⟩
+  (fairyFlossChoices c).all
+      (fun (name, foreground, background) =>
+        (face name).foreground == foreground && (face name).background == background) &&
+    (badgeFaces ++ ["mode-line.buffer", "minibuffer.prompt", "block-header"]).all
+      (fun name => (face name).weight == some 700) &&
+    (face "syntax.comment").slant == some .upright &&
+    (face "syntax.type").slant == some .italic &&
+    (face "review-unexamined").underline == some { style := .single, color := some c.peach }
+
+/-- The checks of the Fairy Floss theme (`Editor/Themes/FairyFloss.lean`):
+the nineteen colours are sailorhg's published values, the source's commit
+is recorded, the faces are the choices the module's table records, and the
+theme is shipped. That it passes the completeness check is
+`faceVocabularyChecks`'s last check, over every shipped theme. -/
+def fairyFlossChecks : List Check :=
+  let c := Themes.FairyFloss.published
+  [{  name := "each of Fairy Floss's nineteen colours is its published value"
+      run :=
+        pure
+          ([c.background, c.foreground, c.caret, c.invisibles, c.lineHighlight, c.selection, c.gold,
+                  c.yellow, c.lavender, c.pink, c.mint, c.lemon, c.peach, c.invalid, c.deprecated,
+                  c.renamed, c.added, c.modified, c.removed].map
+              (·.word) ==
+            [0x5a5475ff, 0xf8f8f2ff, 0xf8f8f0ff, 0x3b3a32ff, 0x3e3d32ff, 0x49483eff, 0xe6c000ff,
+              0xffea00ff, 0xc5a3ffff, 0xffb8d1ff, 0xc2ffdfff, 0xfff352ff, 0xff857fff, 0xf92672ff,
+              0xae81ffff, 0x96cbfeff, 0xa8ff60ff, 0xe9c062ff, 0xcc6666ff]) },
+    { name := "the source's commit is recorded"
+      run := pure (Themes.FairyFloss.commit == "982e64a9e36160350125c0a82a7981dca6200150") },
+    { name := "the faces are the choices recorded in the module's table"
+      run := pure (fairyFlossChosen Themes.FairyFloss.fairyFloss.theme c) },
+    { name := "the default is foreground on background"
+      run :=
+        let face := Themes.FairyFloss.fairyFloss.theme.merged ⟨"default"⟩
+        pure (face.foreground == some c.foreground && face.background == some c.background) },
+    { name := "fairy-floss is shipped"
+      run :=
+        pure
+          (Themes.shipped.contains Themes.FairyFloss.fairyFloss &&
+            Themes.FairyFloss.fairyFloss.name == "fairy-floss") }]
 
 /-- A display model whose cells are one pixel each way, holding `texts` as
 the snapshots 0, 1, 2 and so on, with nothing published. -/
@@ -4730,7 +5778,24 @@ def modelWithFile : FileModel :=
 (`Editor/File/Model.lean`) and of the file data (`Editor/File.lean`). They
 touch no file. -/
 def fileModelChecks : List Check :=
-  [{
+  [{  name :=
+        "the file model's stamp of a file is the stamp it was written with, and a write changes it; of nothing it is none"
+      run :=
+        let (before, model) := modelWithFile.handle (.stamp (modelRoot / "mixed.txt"))
+        let (written, _) := model.written (modelRoot / "mixed.txt") mixedBytes
+        let (after, _) :=
+          (model.withFile (modelRoot / "mixed.txt") mixedBytes).handle
+            (.stamp (modelRoot / "mixed.txt"))
+        let (nothing, _) := modelWithFile.handle (.stamp (modelRoot / "missing.txt"))
+        let stampOf : Except FileError (Option File.Stamp) → Option (Option File.Stamp)
+          | .ok stamp => some stamp
+          | .error _ => none
+        pure
+          (stampOf before == some ((modelWithFile.file? (modelRoot / "mixed.txt")).map (·.stamp)) &&
+            stampOf after == some (some written) &&
+            stampOf before != stampOf after &&
+            stampOf nothing == some none) },
+    {
       name :=
         "the file model decodes bytes to the text the library keeps them as, and encodes that text to the bytes again: thirteen byte strings, each against a text written out by hand",
       run :=
@@ -6782,8 +7847,8 @@ def stateRequests : List StateRequest :=
     .closePrompt none, .closePrompt (some "typed"), .setCandidates #["one", "two"],
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .invoke asked,
-    .quit, .reload, .giveUp "no", .breakOff "far enough",
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
+    .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
     .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
@@ -7293,6 +8358,20 @@ def stateRequestChecks : List Check :=
             let (names, after) := state.handle .exNames
             names == #[] && after == state },
     { name :=
+        "the handler knows no registry: asked which themes are registered, it answers none and leaves the state as it was; asked to load a theme, it takes any name and keeps the latest until the loop takes it out"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (names, after) := state.handle .themeNames
+            let (first, loaded) := state.handle (.loadTheme "first")
+            let (second, again) := loaded.handle (.loadTheme "second")
+            names == #[] && after == state && replied first == .inr () &&
+              replied second == .inr () &&
+              loaded == { state with theme := some "first" } &&
+              again == { state with theme := some "second" } },
+    { name :=
         "the request to have an invocation run next records it after what is recorded, the answer of a prompt that was closed among it, and changes nothing else"
       run :=
         pure <|
@@ -7418,6 +8497,24 @@ def stepsFrom (start : TextM EditorState) (events : List Event) :
     nexts := nexts.push said
   return (loop, nexts)
 
+/-- The shipped mode line (`ModeLine.standard`) of a view of a buffer called
+`name`, with no file and no major mode, modified when `modified` says, of
+which the scheme reports `reported`, its cursor at `cursor` in a text of
+`lines` rows, selected when `selected` says: what the loop draws of a view
+of the scratch buffer. -/
+def modeLineOf (name : String := "scratch") (modified : Bool := false)
+    (cursor : Option Point := some ⟨0, 0⟩) (lines : Nat := 1) (reported : Array StatusField := #[])
+    (selected : Bool := true) : Array StatusField :=
+  let history := UndoTree.new ⟨0⟩ 0
+  ModeLine.standard.fields
+    { buffer := { name, text := ⟨0⟩, history := if modified then history.record 1 else history }
+      reported, cursor, lines, selected }
+
+/-- The left side of a status line: the fields of the buffer's name and its
+modified mark, and a badge. -/
+def leftOf (status : Array StatusField) : Array StatusField :=
+  status.filter (·.side == .left)
+
 /-- What a run of the loop on the editor's models came to: the loop and what
 each step said, the scenes the display recorded, and the models. `none` when
 it was refused. -/
@@ -7453,7 +8550,7 @@ the scene shows: a block in a face of its own, one status field, an
 inclusive selection, and selecting. -/
 def markedReport : InputScheme.Report :=
   { cursor := { shape := .block, face := ⟨"cursor.marked"⟩ }
-    status := #[{ text := "marked", face := ⟨"status.marked"⟩ }]
+    status := #[{ text := "marked", face := ⟨"mode-line.state.marked"⟩ }]
     shape := .inclusive
     selecting := true }
 
@@ -7461,7 +8558,7 @@ def markedReport : InputScheme.Report :=
 minibuffer's: an underline in a face of its own, and one status field. -/
 def askedReport : InputScheme.Report :=
   { cursor := { shape := .underline, face := ⟨"cursor.asked"⟩ }
-    status := #[{ text := "asked", face := ⟨"status.asked"⟩ }] }
+    status := #[{ text := "asked", face := ⟨"mode-line.state.asked"⟩ }] }
 
 /-- The reports the scheme `switching` switches a view between: a command's
 name, the key string a loop over it binds to that command, and what the
@@ -7623,22 +8720,75 @@ def loopChecks : List Check :=
               second.views.all fun view => shownText model view == some ""
           | _ => false },
     { name :=
-        "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, no decorations, and a status line of one field, its buffer's name in the name's face"
+        "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, no decorations, and the shipped mode line of its window: the focused one's with no status face, and each other one's in mode-line.inactive, its row too"
       run :=
         pure <|
           match looped threeWindows [pressF5] with
           | some ((loop, _), #[scene], _) =>
-            let named :=
-              (loop.state.buffer? ⟨0⟩).map fun buffer =>
-                #[({ text := buffer.name, face := Loop.nameFace } : StatusField)]
             scene.views.map (·.scroll) == loop.state.windows.map (·.scroll) &&
               scene.views.map (·.selections) == loop.state.windows.map (#[·.selection]) &&
-              scene.views.all fun view =>
-                view.cursor == { shape := .bar, face := ⟨"cursor"⟩ } && view.decorations.isEmpty &&
-                  some view.status == named
+              (scene.views.all fun view =>
+                view.cursor == { shape := .bar, face := ⟨"cursor"⟩ } && view.decorations.isEmpty) &&
+              scene.views.map (·.status) ==
+                #[modeLineOf, modeLineOf (selected := false), modeLineOf (selected := false)] &&
+              scene.views.map (·.statusFace) ==
+                #[none, some ModeLine.inactiveFace, some ModeLine.inactiveFace]
           | _ => false },
     { name :=
-        "a view's status line carries the modified field while its buffer is modified, and not otherwise: the first scene's views have the name alone, after a commit each view of the buffer has the name and then the modified mark in the modified face, and after a key whose command undoes the commit each has the name alone again"
+        "two windows on one buffer under the Vim scheme: the focused one's mode line has the NORMAL badge and no status face, and the other's has no badge, every field and its row in mode-line.inactive"
+      run :=
+        pure <|
+          let program : EditorM (Loop Vim.Default.scheme) := do
+            let loop : Loop Vim.Default.scheme := { state := ← threeWindows }
+            return (← loop.step {} pressF5).loop
+          match program.runModel editorModel with
+          | (.ok _, model) =>
+            let badge := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
+            match model.display.scenes with
+            | #[scene] =>
+              scene.views.map (·.status) ==
+                  #[modeLineOf (reported := badge), modeLineOf (selected := false),
+                    modeLineOf (selected := false)] &&
+                scene.views.map (·.statusFace) ==
+                  #[none, some ModeLine.inactiveFace, some ModeLine.inactiveFace] &&
+                (modeLineOf (reported := badge))[0]? ==
+                  some { text := "NORMAL", face := ⟨"mode-line.state.normal"⟩, padding := 8 }
+            | _ => false
+          | (.error _, _) => false },
+    { name :=
+        "the scene's status lines are drawn by the mode line the step's keys carry, in its order and on its sides"
+      run :=
+        pure <|
+          let handed : Loop.Keys TestScheme.scheme :=
+            { modeLine := { left := #[ModeLine.position], right := #[ModeLine.buffer] } }
+          let program : EditorM TestLoop := do
+            let loop : TestLoop := { state := ← EditorState.initial ⟨640, 480⟩ }
+            return (← loop.step handed (.commit "ab\ncd")).loop
+          match program.runModel editorModel with
+          | (.ok _, model) =>
+            model.display.scenes.map (·.views.map (·.status)) ==
+              #[#[#[{ text := "Bot", face := ModeLine.secondaryFace, padding := 4 },
+                    { text := "scratch", face := ModeLine.bufferFace, side := .right,
+                      padding := 4 }]]]
+          | (.error _, _) => false },
+    { name :=
+        "a view's mode line reads its cursor from its selection in the view's snapshot, as a row and a column in the text port's cells, and its rows less an empty last row after a final line break"
+      run :=
+        pure <|
+          let program : EditorM TestLoop := do
+            let loop : TestLoop := { state := ← EditorState.initial ⟨640, 480⟩ }
+            let loop := (← loop.step {} (.commit "ab\ncd")).loop
+            return (← loop.step {} (.commit "\n")).loop
+          match program.runModel editorModel with
+          | (.ok _, model) =>
+            model.display.scenes.map (·.views.map (·.status)) ==
+                #[#[modeLineOf (modified := true) (cursor := some ⟨1, 2⟩) (lines := 2)],
+                  #[modeLineOf (modified := true) (cursor := some ⟨2, 0⟩) (lines := 2)]] &&
+              (modeLineOf (cursor := some ⟨1, 2⟩) (lines := 2)).map (·.text) ==
+                #["scratch", "2:3", "Bot"]
+          | (.error _, _) => false },
+    { name :=
+        "a view's status line carries the modified mark while its buffer is modified, and not otherwise: the first scene's views have the name alone on the left, after a commit each view of the buffer has the name and then the modified mark, in the modified face in the focused view, and after a key whose command undoes the commit each has the name alone again"
       run :=
         pure <|
           let undoKeys : Loop.Keys TestScheme.scheme :=
@@ -7659,11 +8809,15 @@ def loopChecks : List Check :=
             match loop.state.buffer? ⟨0⟩ with
             | none => false
             | some buffer =>
-              let name : StatusField := { text := buffer.name, face := Loop.nameFace }
-              let modified : StatusField := { text := Loop.modifiedMark, face := Loop.modifiedFace }
+              let texts (status : Array StatusField) := (leftOf status).map (·.text)
               model.texts.contents == #[""] &&
-                model.display.scenes.map (fun scene => scene.views.map (·.status)) ==
-                  #[.replicate 3 #[name], .replicate 3 #[name, modified], .replicate 3 #[name]]
+                model.display.scenes.map (fun scene => scene.views.map (texts ·.status)) ==
+                  #[.replicate 3 #[buffer.name], .replicate 3 #[buffer.name, ModeLine.modifiedMark],
+                    .replicate 3 #[buffer.name]] &&
+                (model.display.scenes[1]?.bind (·.views[0]?)).map (leftOf ·.status) ==
+                  some
+                    #[ModeLine.field buffer.name ModeLine.bufferFace,
+                      ModeLine.field ModeLine.modifiedMark ModeLine.modifiedFace]
           | (.error _, _) => false },
     { name :=
         "a commit once the focused buffer's text was released is not refused: it publishes a scene with the refusal in its echo and no view of that buffer, and the loop keeps the state as it was, well formed, with that echo"
@@ -7818,8 +8972,10 @@ def loopChecks : List Check :=
                 minibuffer.scroll == held.scroll &&
                 minibuffer.selections == #[held.selection] &&
                 minibuffer.status == #[{ text := "Name: ", face := Loop.promptFace }] &&
-                window.status == #[{ text := "scratch", face := Loop.nameFace }] &&
-                Loop.promptFace != Loop.nameFace &&
+                window.status == modeLineOf &&
+                window.statusFace == none &&
+                minibuffer.statusFace == none &&
+                Loop.promptFace != ModeLine.bufferFace &&
                 scene.focused == some ⟨1⟩ &&
                 scene.views.map (fun view => (view.id, view.rect)) ==
                   state.frame.tree.rects (frameRect state.frame.size) (some ⟨1⟩)
@@ -7865,16 +9021,20 @@ def loopChecks : List Check :=
               markedReport.cursor != plainCursor
           | _ => false },
     { name :=
-        "a view's status line is the fields the scheme reports of it and then its buffer's: the name, and the modified field while the buffer is modified; a view the scheme reports no field of has its buffer's alone"
+        "the focused view's status line is the shipped mode line with the fields the scheme reports of it as its badge, and the modified mark while the buffer is modified; the other views have no badge, whatever the scheme reports of them"
       run :=
         pure <|
           match switched threeWindows "C-m" [.commit "x"] with
           | some (_, #[marked, modified], _) =>
-            let name : StatusField := { text := "scratch", face := Loop.nameFace }
-            let mark : StatusField := { text := Loop.modifiedMark, face := Loop.modifiedFace }
-            marked.views.map (·.status) == #[markedReport.status ++ #[name], #[name], #[name]] &&
-              modified.views.map (·.status) ==
-                #[markedReport.status ++ #[name, mark], #[name, mark], #[name, mark]] &&
+            let other := modeLineOf (selected := false)
+            marked.views.map (·.status) ==
+                #[modeLineOf (reported := markedReport.status), other, other] &&
+              (modified.views[0]?.map (·.status)) ==
+                some
+                  (modeLineOf (modified := true) (cursor := some ⟨0, 1⟩) (reported :=
+                    markedReport.status)) &&
+              (modified.views.extract 1).map (leftOf ·.status) ==
+                .replicate 2 (leftOf (modeLineOf (modified := true) (selected := false))) &&
               markedReport.status.size == 1
           | _ => false },
     { name :=
@@ -7890,8 +9050,9 @@ def loopChecks : List Check :=
           | some (_, #[_, scene], _) =>
             scene.views.map (·.cursor) == #[markedReport.cursor, askedReport.cursor] &&
               scene.views.map (·.status) ==
-                #[markedReport.status ++ #[{ text := "scratch", face := Loop.nameFace }],
+                #[modeLineOf (reported := markedReport.status),
                   #[{ text := "Name: ", face := Loop.promptFace }]] &&
+              scene.views.map (·.statusFace) == #[none, none] &&
               !askedReport.status.isEmpty
           | _ => false },
     { name :=
@@ -8230,7 +9391,18 @@ def keymapChecks : List Check :=
             odd.find? [controlKey "x", charKey "b"] == none &&
             !odd.continues [controlKey "x"] &&
             (keymap.filter (· > 3)).continues [controlKey "x"] &&
-            (keymap.filter fun _ => true).bindings == keymap.bindings) }]
+            (keymap.filter fun _ => true).bindings == keymap.bindings) },
+    { name :=
+        "keysFor gives the sequences bound to the bindings a predicate keeps, in the order each was last bound, and a sequence rebound to another binding is not among them"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofList
+            [([charKey "a"], 1), ([charKey "b"], 2), ([controlKey "x", charKey "c"], 1),
+              ([charKey "d"], 1), ([charKey "a"], 1), ([charKey "d"], 2)]
+        pure
+          (keymap.keysFor (· == 1) == [[controlKey "x", charKey "c"], [charKey "a"]] &&
+            keymap.keysFor (· == 2) == [[charKey "b"], [charKey "d"]] &&
+            keymap.keysFor (· == 3) == []) }]
 
 /-- Whether `text` is a key string that names exactly `keys`. -/
 def parses (text : String) (keys : List Key) : Bool :=
@@ -9497,6 +10669,37 @@ def dispatchStateChecks : List Check :=
           asks registered == some (.finished #["w", "q", "greet"], true) &&
             asks {} == some (.finished #[], true) },
     { name :=
+        "a command that asks which themes are registered is answered the names the loop was told, in their order, with the state as it was"
+      run :=
+        pure <|
+          let asks (registered : Loop.Registered) : Option (Guarded (Array String) × Bool) :=
+            let program : EditorM (Guarded (Array String) × Bool) := do
+              let start ← EditorState.initial ⟨640, 480⟩
+              let (outcome, state) ← themeNames.dispatched registered start
+              return (outcome, state == start)
+            (program.runModel editorModel).1.toOption
+          asks { themeNames := #["default", "second"] } ==
+              some (.finished #["default", "second"], true) &&
+            asks {} == some (.finished #[], true) },
+    { name :=
+        "a command that asks to load a theme the loop was told is registered is answered ok, and the state keeps the name for the loop to take out; one nobody registered is refused with its name, and the state is as it was"
+      run :=
+        pure <|
+          let registered : Loop.Registered := { themeNames := #["default", "second"] }
+          let asks (name : String) : Option (Option (ThemeRefusal ⊕ Unit) × Option String × Bool) :=
+            let program : EditorM (Option (ThemeRefusal ⊕ Unit) × Option String × Bool) := do
+              let start ← EditorState.initial ⟨640, 480⟩
+              let (outcome, state) ← (loadTheme name).dispatched registered start
+              let reply :=
+                match outcome with
+                | .finished reply => some (replied reply)
+                | _ => none
+              return (reply, state.theme, { state with theme := none } == start)
+            (program.runModel editorModel).1.toOption
+          asks "second" == some (some (.inr ()), some "second", true) &&
+            asks "nope" == some (some (.inl (.noSuchTheme "nope")), none, true) &&
+            ThemeRefusal.describe (.noSuchTheme "nope") == Theme.unknown "nope" },
+    { name :=
         "a command that asks for the command of a name to be run inside it: the command the loop was told of under that name runs there, with the call it is handed, before the asking command goes on, and what it said is in the state the asking command then reads; a name the loop was told no command of is answered false, and nothing runs"
       run :=
         pure <|
@@ -10250,7 +11453,8 @@ def dispatchUndoChecks : List Check :=
             before == inside &&
               -- One scene a key: the key that begins the session, the
               -- prefix of the stamping sequence, and the key that stamps.
-              model.display.scenes.map (·.views.map (·.status.any (·.face == Loop.modifiedFace))) ==
+              model.display.scenes.map
+                  (·.views.map (·.status.any (·.face == ModeLine.modifiedFace))) ==
                 #[#[false], #[false], #[true]]
           | (.error _, _) => false },
     { name :=
@@ -10815,6 +12019,32 @@ def startled : InputScheme :=
     leader := TestScheme.leader
     report := fun state _ => { session := state.2 } }
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that a menu item's invocation of any name is made one of another
+name. -/
+def meddling : InputScheme :=
+  { TestScheme.scheme with
+    invoked := fun _ state invocation =>
+      (state, { invocation with command := invocation.command ++ "-not" }) }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that a menu item's invocation of any name reports the view as in an
+insert session from then on. Its state is the test scheme's, and whether a
+menu item named one. -/
+def menuStartled : InputScheme :=
+  { State := TestScheme.State × Bool
+    Binding := Invocation
+    init := ({}, false)
+    step := fun maps view state key =>
+      let (next, yielded) := TestScheme.step maps view state.1 key
+      ((next, state.2), yielded)
+    pending := (·.1.pending)
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader
+    report := fun state _ => { session := state.2 }
+    invoked := fun _ state invocation => ((state.1, true), invocation) }
+
 /-- The subject the scheme contract is run on: `scheme` over the scheme
 checks' keymaps for view 0, the sequences those bind, a key none of them
 goes on with, and that same key as the one that prints and that nothing
@@ -10960,7 +12190,13 @@ def schemeContractChecks : List Check :=
         pure
           (failsOnly subject [SchemeContract.quietKeyKeepsReport] &&
             !(subject.scheme.report (subject.feed (keys "C-x")).1 ⟨0⟩).session &&
-            (subject.scheme.report (subject.feed (keys "C-x z")).1 ⟨0⟩).session) }]
+            (subject.scheme.report (subject.feed (keys "C-x z")).1 ⟨0⟩).session) },
+    { name :=
+        "the scheme contract reports a scheme that changes a menu item's invocation of a name it does not know, and one that changes its report of the view for one, for that property alone"
+      run :=
+        pure
+          (failsOnly (subjectOf meddling schemeMaps) [SchemeContract.invokedKeepsUnknown] &&
+            failsOnly (subjectOf menuStartled schemeMaps) [SchemeContract.invokedKeepsUnknown]) }]
 
 /-- The delete operator of the Vim checks: it changes text and names no
 state. -/
@@ -11287,6 +12523,55 @@ def vimSubjectOver (states : Vim.States) : SchemeContract.Subject :=
 scheme over `vimStates`. -/
 def vimSubject : SchemeContract.Subject :=
   vimSubjectOver vimStates
+
+/-- What the run-table checks' visual states run `t-copy` as: the yank of
+the selection into the register `+`. -/
+def vimRunCopy : Vim.Edit :=
+  .operate vimYank .selection none (some "+")
+
+/-- What the run-table checks' visual states run `t-cut` as: the deletion of
+the selection into the register `+`. -/
+def vimRunCut : Vim.Edit :=
+  .operate vimDelete .selection none (some "+")
+
+/-- What the run-table checks' normal state runs `t-enter` as: a command of
+that name that enters `visual-line`. -/
+def vimRunEnter : Vim.Edit :=
+  .run { name := "t-enter", enters := some "visual-line" } none none
+
+/-- `vimStates` with run tables (`StateRecord.runs`): normal state runs
+`t-enter` as `vimRunEnter`, and `visual` and a `visual-line` state the
+checks register run `t-copy` and `t-cut` as `vimRunCopy` and
+`vimRunCut`. -/
+def vimRunStates : Vim.States :=
+  let visual := vimStates.get "visual"
+  let runs := [("t-copy", vimRunCopy), ("t-cut", vimRunCut)]
+  ((vimStates.register { vimStates.initial with runs := [("t-enter", vimRunEnter)] }).register
+        { visual with runs }).register
+    { name := "visual-line", keymaps := visual.keymaps, operatesOnSelection := true, shape := .line
+      runs }
+
+/-- Active keymaps, for every view, that bind keys to command names alone,
+as the scheme binds a command name (`InputScheme.command`): `C` to
+`t-copy`, `X` to `t-cut`, `S` to `t-enter` and `N` to `t-none`, which no
+run table has. -/
+def vimRunMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
+  [vimKeymap
+      [("C", .command { name := "t-copy" }), ("X", .command { name := "t-cut" }),
+        ("S", .command { name := "t-enter" }), ("N", .command { name := "t-none" })]]
+
+/-- The Vim scheme over `vimRunStates` fed `text` with `vimRunMaps`: the
+state it is left in, the name of the Vim state view 0 is then in, and what
+each key yielded. -/
+def vimRunFed (text : String) : Vim.State × String × List (Option Invocation) :=
+  let (state, yields) := vimFed text vimRunMaps ⟨0⟩ vimRunStates
+  (state, state.stateOf vimRunStates ⟨0⟩, yields)
+
+/-- What the Vim scheme over `vimRunStates` makes of `invocation`, named by
+a menu item for view 0 from `state` (`InputScheme.invoked`), at the
+state's own type. -/
+def vimInvoked (state : Vim.State) (invocation : Invocation) : Vim.State × Invocation :=
+  (Vim.scheme vimRunStates).invoked ⟨0⟩ state invocation
 
 /-- The checks of the Vim scheme's grammar (`Editor/InputScheme/Vim.lean`),
 on the registry written here: the keymaps a key is looked up in, and what a
@@ -11730,7 +13015,73 @@ def vimGrammarChecks : List Check :=
           (vimPending "g r" vimTwoKeyMaps == keys "g r" &&
             vimPending "g r a" vimTwoKeyMaps == keys "g r a" &&
             vimPending "g r a d" vimTwoKeyMaps == keys "g r a d" &&
-            vimPending "g r a d d" vimTwoKeyMaps == []) }]
+            vimPending "g r a d d" vimTwoKeyMaps == []) },
+    { name :=
+        "a key bound to a command name the view's state has a run-table entry for completes that entry's edit: over the selection in a visual state it ends the selection, leaving the view in the initial state, and a yank is not the last change where a deletion is"
+      run :=
+        let (copied, copiedIn, copiedYields) := vimRunFed "v C"
+        let (cut, cutIn, cutYields) := vimRunFed "v X"
+        pure
+          (copiedYields.getLast? == some (some (vimOperate "yank" "selection" "" 0 "+")) &&
+            copiedIn == "normal" &&
+            copied.lastChange == none &&
+            cutYields.getLast? == some (some (vimOperate "delete" "selection" "" 0 "+")) &&
+            cutIn == "normal" &&
+            cut.lastChange == some vimRunCut) },
+    { name :=
+        "a run-table entry that names a state enters it: S in normal state yields t-enter and leaves the view in visual-line"
+      run :=
+        pure
+          (vimRunFed "S" ==
+            ((vimFed "S" vimRunMaps ⟨0⟩ vimRunStates).1, "visual-line",
+              [some { command := "t-enter", arguments := [.nat 0, .str ""] }])) },
+    { name :=
+        "a command name the view's state has no run-table entry for runs the command of that name and enters nothing: N anywhere, and C in normal state"
+      run :=
+        pure
+          ((vimRunFed "N").2 ==
+              ("normal", [some { command := "t-none", arguments := [.nat 0, .str ""] }]) &&
+            (vimRunFed "C").2 ==
+              ("normal", [some { command := "t-copy", arguments := [.nat 0, .str ""] }]) &&
+            (vimRunFed "v N").2.1 == "visual" &&
+            (vimRunFed "v N").2.2.getLast? ==
+              some (some { command := "t-none", arguments := [.nat 0, .str ""] })) },
+    { name :=
+        "a run-table entry is used as written: a count and a register typed before its key are dropped"
+      run :=
+        pure
+          ((vimRunFed "v 2 C").2.2.getLast? ==
+              some (some (vimOperate "yank" "selection" "" 0 "+")) &&
+            (vimRunFed "v \" a C").2.2.getLast? ==
+              some (some (vimOperate "yank" "selection" "" 0 "+"))) },
+    { name :=
+        "a binding of the active keymaps to another command wins over the run table: with C bound to t-other in a keymap before, v C runs t-other and stays in visual"
+      run :=
+        let rebound (view : ViewId) : List (Keymap Vim.Bound) :=
+          vimKeymap [("C", .command { name := "t-other" })] :: vimRunMaps view
+        let (state, yields) := vimFed "v C" rebound ⟨0⟩ vimRunStates
+        pure
+          (yields.getLast? ==
+              some (some { command := "t-other", arguments := [.nat 0, .str ""] }) &&
+            state.stateOf vimRunStates ⟨0⟩ == "visual") },
+    { name :=
+        "a menu item's invocation of a name the view's state has a run-table entry for is that entry's edit, compiled, with the state the entry leaves; one of a name it has none for, or one with arguments, comes back as it was, with the state"
+      run :=
+        let visual := (vimRunFed "v").1
+        let (copied, copy) := vimInvoked visual { command := "t-copy" }
+        let (entered, enter) := vimInvoked vimInit { command := "t-enter" }
+        let unchanged (state : Vim.State) (invocation : Invocation) : Bool :=
+          let (after, yielded) := vimInvoked state invocation
+          decide (after = state) && yielded == invocation
+        pure
+          (copy == vimOperate "yank" "selection" "" 0 "+" &&
+            copied.stateOf vimRunStates ⟨0⟩ == "normal" &&
+            enter == { command := "t-enter", arguments := [.nat 0, .str ""] } &&
+            entered.stateOf vimRunStates ⟨0⟩ == "visual-line" &&
+            (vimInvoked visual { command := "t-cut" }).1.lastChange == some vimRunCut &&
+            unchanged visual { command := "t-none" } &&
+            unchanged vimInit { command := "t-copy" } &&
+            unchanged visual { command := "t-copy", arguments := [.nat 1] }) }]
 
 /-- `vimStates` with a state the checks register, `test`, whose keymap
 binds `m` to a motion and whose cursor is an underline, and with `q` bound
@@ -11756,16 +13107,17 @@ which Vim state a view is in, how one is entered, and what the grammar
 reads of a state's record. -/
 def vimStateChecks : List Check :=
   [{  name :=
-        "the Vim scheme reports a view with no entry by the initial record: its cursor shape in the face cursor. and its name, one status field with its name in the state's face, its shape, no selecting, no insert session, and a view that takes no text"
+        "the Vim scheme reports a view with no entry by the initial record: its cursor shape in the face cursor. and its name, one status field, its name in capitals in the badge face mode-line.state. and its name, its shape, no selecting, no insert session, and a view that takes no text"
       run :=
         let scheme := Vim.scheme vimStates
         pure
           (scheme.report vimInit ⟨0⟩ ==
               { cursor := { shape := .block, face := ⟨"cursor.normal"⟩ }
-                status := #[{ text := "normal", face := Vim.stateFace }], shape := .inclusive
-                selecting := false, session := false, takesText := false } &&
+                status := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
+                shape := .inclusive, selecting := false, session := false, takesText := false } &&
             scheme.report vimInit ⟨5⟩ == scheme.report vimInit ⟨0⟩ &&
-            Vim.stateFace == ⟨"status.state"⟩) },
+            Vim.stateFace "normal" == ⟨"mode-line.state.normal"⟩ &&
+            Vim.stateFace "visual-line" == ⟨"mode-line.state.visual-line"⟩) },
     { name :=
         "after a key that enters a state where typing is text, the Vim scheme reports that record's cursor, name and shape, an insert session, and a view that takes text"
       run :=
@@ -11773,7 +13125,7 @@ def vimStateChecks : List Check :=
         pure
           (scheme.report (vimFed "i").1 ⟨0⟩ ==
             { cursor := { shape := .bar, face := ⟨"cursor.insert"⟩ }
-              status := #[{ text := "insert", face := Vim.stateFace }], shape := .exclusive
+              status := #[{ text := "INSERT", face := Vim.stateFace "insert" }], shape := .exclusive
               selecting := false, session := true, takesText := true }) },
     { name :=
         "the Vim scheme reports selecting for a view in a state whose operators act on the selection, and the record a check registers by its own cursor, name and shape"
@@ -11782,10 +13134,10 @@ def vimStateChecks : List Check :=
         let visual := (Vim.scheme vimStates).report (vimFed "v").1 ⟨0⟩
         pure
           (visual.selecting && !visual.session && !visual.takesText && visual.shape == .inclusive &&
-            visual.status == #[{ text := "visual", face := Vim.stateFace }] &&
+            visual.status == #[{ text := "VISUAL", face := Vim.stateFace "visual" }] &&
             (Vim.scheme states).report (vimFed "q" (states := states)).1 ⟨0⟩ ==
               { cursor := { shape := .underline, face := ⟨"cursor.test"⟩ }
-                status := #[{ text := "test", face := Vim.stateFace }], shape := .line
+                status := #[{ text := "TEST", face := Vim.stateFace "test" }], shape := .line
                 selecting := false, session := false, takesText := false }) },
     { name :=
         "the Vim scheme's report is one view's: a key for one view leaves another view's report as it was, a view told closed is reported by the initial record again, and a view told to be the minibuffer's by the record the registry names for it"
@@ -13495,6 +14847,10 @@ def driverJobs (name : String) : Option (List Argument → Work) :=
           discard <| JobContract.loaded (fileRoot / "note.txt")
           throw "lost")
         fun (_ : Unit) => pure ()
+  | "build" =>
+    some fun _ =>
+      Work.of (fun _ => Process.run { program := "/bin/true", directory := "/p/d" } 10) fun _ =>
+        pure ()
   | _ => none
 
 /-- The commands of the driver checks, bound under `C-c`: `ask` (`a`)
@@ -13504,7 +14860,8 @@ and is then refused; `none` (`n`) starts `double` with no argument; `bad`
 (`b`) and `chain` (`c`) start the jobs of those names; `load` (`l`) starts
 `load` with `note.txt`, `adopt` (`s`) starts `adopt` with 0, `save` (`w`)
 takes a snapshot of its buffer's text and starts `save` with its index, and
-`lose` (`t`) starts `lose`. -/
+`lose` (`t`) starts `lose`, and `build` (`e`) starts `build`, which runs
+`/bin/true` in `/p/d`. -/
 def driverKeys : Loop.Keys TestScheme.scheme :=
   let starts (name : String) (arguments : List Argument := []) : Dispatched := fun _ => do
     discard <| startJob name arguments
@@ -13513,7 +14870,7 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
     [("C-c a", invoke "ask"), ("C-c m", invoke "missing"), ("C-c f", invoke "fail"),
       ("C-c n", invoke "none"), ("C-c b", invoke "bad"), ("C-c c", invoke "chain"),
       ("C-c l", invoke "load"), ("C-c s", invoke "adopt"), ("C-c w", invoke "save"),
-      ("C-c t", invoke "lose")]
+      ("C-c t", invoke "lose"), ("C-c e", invoke "build")]
     [("ask", fun _ => do
         message "asked"
         discard <| startJob "double" [.nat 21]
@@ -13529,7 +14886,7 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
         let taken ← call.target.buffer.text.snapshot
         discard <| startJob "save" [.nat taken.index]
         return none),
-      ("lose", starts "lose")]
+      ("lose", starts "lose"), ("build", starts "build")]
 
 /-- A driver over the initial state, with the commands and the jobs of the
 driver checks; `none` if making the state was refused. -/
@@ -13565,6 +14922,31 @@ def driverChecks : List Check :=
     steps.flatMap fun step => (step.map (·.starts)).getD #[]
   let echoOf (driver : TestDriver) : Option String := driver.model.display.scenes.back?.map (·.echo)
   [{  name :=
+        "a job whose directory's lookup fails leaves the loop's echo area saying why, as the host says it"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let child : Process.Command := { program := "/bin/true", directory := "/p/d" }
+            let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+            let driver :=
+              { driver with
+                jobs :=
+                  { environments := { setting := .mise (some "/opt/mise") }
+                    processes :=
+                      {
+                        scripts :=
+                          #[{ command := lookup
+                              reply :=
+                                .ok { exit := .code 1, stdout := .empty, stderr := .empty } },
+                            { command := child
+                              reply :=
+                                .ok { exit := .code 0, stdout := .empty, stderr := .empty } }] } } }
+            let (built, _) := fedTo driver (presses "C-c e")
+            built.loop.state.echo == Process.failureMessage "/p/d" (.exited 1 "") &&
+              built.jobs.processes.started == #[lookup, child] },
+    { name :=
         "a command that starts a job with an argument: the step hands the start back, the job is run with that argument, and once it is finished a command has run that received the value the job computed from it; the delivery publishes a scene and leaves the echo the command left"
       run :=
         pure <|
@@ -14289,7 +15671,7 @@ def promptModeChecks : List Check :=
             let showing (text : String) :=
               some
                 (some text, #[({ text := "Name: ", face := Loop.promptFace } : StatusField)], true,
-                  #[({ text := "scratch", face := Loop.nameFace } : StatusField)])
+                  modeLineOf)
             promptScene driver == none && promptScene asking == showing "" &&
               promptScene one == showing "h" &&
               promptScene two == showing "hi" },
@@ -15010,21 +16392,36 @@ def showing (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option Showing :=
 def echoOf (driver : TestDriver) : Option String :=
   driver.model.display.scenes.back?.map (·.echo)
 
-/-- The status line of the view `view` in the last scene `driver`'s display
-recorded. -/
+/-- The buffer's fields of the status line of the view `view` in the last
+scene `driver`'s display recorded: those in the faces of the buffer's name,
+of the modified mark and of the changed mark (`ModeLine.buffer`,
+`ModeLine.modified`, `ModeLine.changed`), which is what the file checks
+read. The other segments are `modeLineChecks`'s. -/
 def statusOf (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array StatusField) :=
   driver.model.display.scenes.back?.bind fun scene =>
-    (scene.views.find? (·.id == view)).map (·.status)
+    (scene.views.find? (·.id == view)).map fun view =>
+      view.status.filter fun field =>
+        field.face == ModeLine.bufferFace || field.face == ModeLine.modifiedFace ||
+          field.face == ModeLine.changedFace
 
-/-- The status line of a view of a buffer called `name` that is not
-modified: the name alone, in the name's face. -/
+/-- Whether the status line of the view `view` in the last scene `driver`'s
+display recorded, a view that is not selected, names the buffer `name`: the
+`buffer` segment's field, in `ModeLine.inactiveFace`, as every field of such
+a view is (`statusOf` reads a selected view's). -/
+def inactiveNames (driver : TestDriver) (view : ViewId) (name : String) : Bool :=
+  driver.model.display.scenes.back?.any fun scene =>
+    (scene.views.find? (·.id == view)).any fun view =>
+      view.status.contains { ModeLine.field name ModeLine.inactiveFace with side := .left }
+
+/-- The buffer's fields of the status line of a selected view of a buffer
+called `name` that is not modified: the name alone, in its face. -/
 def named (name : String) : Array StatusField :=
-  #[{ text := name, face := Loop.nameFace }]
+  #[ModeLine.field name ModeLine.bufferFace]
 
-/-- The status line of a view of a buffer called `name` that is modified:
-the name, then the modified field. -/
+/-- The buffer's fields of the status line of a selected view of a buffer
+called `name` that is modified: the name, then the modified mark. -/
 def namedModified (name : String) : Array StatusField :=
-  named name ++ #[{ text := Loop.modifiedMark, face := Loop.modifiedFace }]
+  named name ++ #[ModeLine.field ModeLine.modifiedMark ModeLine.modifiedFace]
 
 /-- The stamp the files `driver`'s jobs reach have for `path`. -/
 def stampOf (driver : TestDriver) (path : System.FilePath) : Option File.Stamp :=
@@ -16079,39 +17476,49 @@ command checks have them, and six commands written here, under `C-l`:
 buffer, `other` (`o`) says `other`, `hand-leave` (`h`) asks for `leave`
 to be run after it, and `hand-leave-other` (`t`) asks for `leave` and then
 `other` to be run after it. Two more ask for the config to be reloaded: `again`
-(`r`), and `again-then-fail` (`g`), which asks and is then refused. -/
+(`r`), and `again-then-fail` (`g`), which asks and is then refused; and two
+ask for the theme `second` to be loaded, which the loop is told is
+registered: `pick` (`p`), and `pick-then-fail` (`k`), which asks and is then
+refused. -/
 def quitKeys : Loop.Keys TestScheme.scheme :=
-  dispatchKeys
-    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
-      ("C-l l", invoke "leave"), ("C-l f", invoke "leave-then-fail"), ("C-l s", invoke "stamp"),
-      ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"),
-      ("C-l t", invoke "hand-leave-other"), ("C-l r", invoke "again"),
-      ("C-l g", invoke "again-then-fail")]
-    [(Files.openName, fun call => do
-        Files.openCommand call
-        return none),
-      (Files.saveName, fun call => do
-        Files.saveCommand call
-        return none),
-      ("leave", fun _ => do
-        if let .error (.unsaved name)← quit then
-          message (notLeaving name)
-        return none),
-      ("leave-then-fail", failingAfter fun _ => discard quit), ("stamp", stamp),
-      ("other", fun _ => do
-        message "other"
-        return none),
-      ("hand-leave", fun _ => do
-        Editor.invoke { command := "leave" }
-        return none),
-      ("hand-leave-other", fun _ => do
-        Editor.invoke { command := "leave" }
-        Editor.invoke { command := "other" }
-        return none),
-      ("again", fun _ => do
-        reloadConfig
-        return none),
-      ("again-then-fail", failingAfter fun _ => reloadConfig)]
+  {
+    dispatchKeys
+      [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
+        ("C-l l", invoke "leave"), ("C-l f", invoke "leave-then-fail"), ("C-l s", invoke "stamp"),
+        ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"),
+        ("C-l t", invoke "hand-leave-other"), ("C-l r", invoke "again"),
+        ("C-l g", invoke "again-then-fail"), ("C-l p", invoke "pick"),
+        ("C-l k", invoke "pick-then-fail")]
+      [(Files.openName, fun call => do
+          Files.openCommand call
+          return none),
+        (Files.saveName, fun call => do
+          Files.saveCommand call
+          return none),
+        ("leave", fun _ => do
+          if let .error (.unsaved name)← quit then
+            message (notLeaving name)
+          return none),
+        ("leave-then-fail", failingAfter fun _ => discard quit), ("stamp", stamp),
+        ("other", fun _ => do
+          message "other"
+          return none),
+        ("hand-leave", fun _ => do
+          Editor.invoke { command := "leave" }
+          return none),
+        ("hand-leave-other", fun _ => do
+          Editor.invoke { command := "leave" }
+          Editor.invoke { command := "other" }
+          return none),
+        ("again", fun _ => do
+          reloadConfig
+          return none),
+        ("again-then-fail", failingAfter fun _ => reloadConfig),
+        ("pick", fun _ => do
+          discard <| loadTheme "second"
+          return none),
+        ("pick-then-fail", failingAfter fun _ => discard <| loadTheme "second")] with
+    registered := { themeNames := #["second"] } }
 
 /-- A driver of the quit checks over the files `files`, with the file
 `note.txt` open in view 0: the open command, and its job finished. The load
@@ -16347,7 +17754,144 @@ def dispatchQuitChecks : List Check :=
               !failed.loop.state.reload &&
               failed.reloads == 1 &&
               twice.reloads == 2 &&
-              driver.reloads == 0 }]
+              driver.reloads == 0 },
+    { name :=
+        "a step whose command asked for a theme to be loaded hands its name back, and the state after it holds none; a step that ran another command hands back none, and so does one whose command asked and was then refused; the driver records the themes asked for"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let asked (steps : Array (Option (Loop.Stepped TestScheme.scheme))) :=
+              steps.map (·.map (·.theme))
+            let (once, steps) := fedTo driver (presses "C-l p")
+            let (other, went) := fedTo once (presses "C-l o")
+            let (failed, lost) := fedTo other (presses "C-l k")
+            asked steps == #[some none, some (some "second")] && once.loop.state.theme == none &&
+              once.themes == #["second"] &&
+              asked went == #[some none, some none] &&
+              asked lost == #[some none, some none] &&
+              failed.loop.state.theme == none &&
+              failed.themes == #["second"] &&
+              driver.themes == #[] }]
+
+/-- The compiled quit command (`Ex.quitCommand`), as the system quit checks
+register it. -/
+def compiledQuit : Dispatched := fun call => do
+  Ex.quitCommand call
+  return none
+
+/-- What a step of the system quit checks is handed: the open command with
+the path of `note.txt` (`C-o n`) and the save command (`C-o w`), as the
+quit checks have them, and `quit` (`Ex.quitName`), bound to `C-l q`, as
+`command` does it: the compiled one, or one config registered in its
+place. -/
+def systemQuitKeys (command : Dispatched := compiledQuit) : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
+      ("C-l q", invoke Ex.quitName)]
+    [(Files.openName, fun call => do
+        Files.openCommand call
+        return none),
+      (Files.saveName, fun call => do
+        Files.saveCommand call
+        return none),
+      (Ex.quitName, command)]
+
+/-- A driver of the system quit checks, with `quit` as `command` does it
+and the file `note.txt` open in view 0, as `quitDriver` opens it. -/
+def systemQuitDriver (command : Dispatched := compiledQuit) : Option TestDriver :=
+  (Loop.Driver.over (systemQuitKeys command) fileJobs (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver =>
+    ((fedTo { driver with jobs := { files := commandFiles } } (presses "C-o n")).1.finish 1).1
+
+/-- How many times `driver`'s frame was asked to keep running. -/
+def keptRunning (driver : TestDriver) : Nat :=
+  (driver.model.display.asked.filter (· == .keepRunning)).size
+
+/-- The checks of the system's quit in the loop (`Editor/Loop.lean`,
+"Quit"): `Event.quitRequested` runs `quit` as an invocation no key yielded,
+so the editor leaves as it does for `:q`, or keeps running and asks the
+frame `keepRunning` once, when `quit` is refused or a quit it asked is
+withdrawn. -/
+def systemQuitChecks : List Check :=
+  let next (steps : Array (Option (Loop.Stepped TestScheme.scheme))) : Array (Option Loop.Next) :=
+    steps.map (·.map (·.next))
+  let path := inFiles "note.txt"
+  [{  name :=
+        "the system asks to quit with nothing unsaved: the step says stop, the driver has stopped, and the frame is not asked to keep running"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (left, steps) := fedTo driver [.quitRequested]
+            next steps == #[some .stop] && left.stopped && keptRunning left == 0 },
+    { name :=
+        "the system asks to quit with a file's buffer that has unsaved changes: the editor goes on, the echo area says why, the frame is asked to keep running once, and the system's quit is no longer pending; a later edit asks nothing more"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (refused, steps) := fedTo driver [.commit "x", .quitRequested]
+            let (edited, _) := fedTo refused [.commit "y"]
+            next steps == #[some .continue, some .continue] && !refused.stopped &&
+              echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              echoOf refused == some "quit: note.txt has unsaved changes" &&
+              keptRunning refused == 1 &&
+              !refused.loop.state.systemQuit &&
+              keptRunning edited == 1 },
+    { name :=
+        "the system asks to quit with a save in flight: the step says continue and asks nothing, and the delivery of the save's result says stop; when that save is refused, the delivery says continue, the frame is asked to keep running once, and the echo area has the save's refusal"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (saving, _) := fedTo driver ([.commit "x"] ++ presses "C-o w")
+            let (asked, steps) := fedTo saving [.quitRequested]
+            let (left, delivered) := asked.finish 2
+            let changed := rewritten driver path JobContract.otherFile
+            let (refusing, _) := fedTo changed ([.commit "x"] ++ presses "C-o w")
+            let (pending, _) := fedTo refusing [.quitRequested]
+            let (refused, undelivered) := pending.finish 2
+            next steps == #[some .continue] && !asked.stopped && keptRunning asked == 0 &&
+              delivered.map (·.next) == some .stop &&
+              left.stopped &&
+              keptRunning left == 0 &&
+              keptRunning pending == 0 &&
+              undelivered.map (·.next) == some .continue &&
+              !refused.stopped &&
+              keptRunning refused == 1 &&
+              !refused.loop.state.systemQuit &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
+    { name :=
+        "config's command named quit runs in place of the compiled one on the system's quit: its message is the echo, and since nothing asked to quit the frame is asked to keep running once"
+      run :=
+        pure <|
+          match
+            systemQuitDriver fun _ => do
+              message "mine"
+              return none with
+          | none => false
+          | some driver =>
+            let (ran, steps) := fedTo driver [.commit "x", .quitRequested]
+            next steps == #[some .continue, some .continue] && !ran.stopped &&
+              echoOf ran == some "mine" &&
+              keptRunning ran == 1 &&
+              !ran.loop.state.systemQuit },
+    { name :=
+        "a quit typed, not asked by the system, that is refused asks the frame nothing: it was the editor's own quit"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver ([.commit "x"] ++ presses "C-l q")
+            !refused.stopped && echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              keptRunning refused == 0 }]
 
 /-- The ex bindings of the ex line's own checks, written here: `say` runs
 the command `greet` of the prompt checks with the rest of the line, and
@@ -17081,9 +18625,10 @@ def fileReloadChecks : List Check :=
               (pendingOf noFile Files.reloadJob).isNone
           | _, _ => false }]
 
-/-- The status line's field that says a buffer's file changed on disk. -/
+/-- The mode line's field that says a buffer's file changed on disk: the
+`changed` segment's (`ModeLine.changed`). -/
 def changedField : StatusField :=
-  { text := Loop.changedMark, face := Loop.changedFace }
+  ModeLine.field ModeLine.changedMark ModeLine.changedFace
 
 /-- `driver` once the file at `path` is gone. -/
 def removed (driver : TestDriver) (path : System.FilePath) : TestDriver :=
@@ -17652,7 +19197,7 @@ def bufferCommandChecks : List Check :=
               shownName after other == some "crlf.txt" &&
               (closed.bind before.mostRecent) == bufferNamed after "crlf.txt" &&
               statusOf after == some (named "crlf.txt") &&
-              statusOf after other == some (named "crlf.txt") &&
+              inactiveNames after other "crlf.txt" &&
               closed.all (!state.recent.contains ·) &&
               state.wellFormed &&
               (text.bind fun text => (after.model.texts.texts[text.index]?).join).isNone &&
@@ -17802,6 +19347,180 @@ def bufferCommandChecks : List Check :=
                 (showing driver).bind (·.text) == some text &&
                 echoOf driver == some (Buffers.notClosing "note.txt") &&
                 driver.loop.state.wellFormed }]
+
+/-- The command `other` of the theme command's checks: it says `other`. -/
+def saysOther : Dispatched := fun _ => do
+  message "other"
+  return none
+
+/-- What a step of the theme command's checks is handed: the commands
+compiled code registers for loading a theme and for the minibuffer
+(`Themes.commands`, `Minibuffer.commands`), and `other`, which says
+`other`; told that the themes `default` and `second` are registered. `C-t
+t` runs the theme command with nothing, `C-t s` with the name `second`,
+`C-t n` with the name `nope`, `C-e y` runs the minibuffer's accept and `C-e
+o` runs `other`. -/
+def themeKeys : Loop.Keys TestScheme.scheme :=
+  let compiled : List (String × Dispatched) :=
+    (Themes.commands ++ Minibuffer.commands).toList.filterMap fun registration =>
+      match registration.action with
+      | .call run =>
+        some
+          (registration.name, fun call => do
+            run call
+            return none)
+      | _ => none
+  {
+    dispatchKeys
+      [("C-t t", invoke Themes.loadName),
+        ("C-t s", { command := Themes.loadName, arguments := [.str "second"] }),
+        ("C-t n", { command := Themes.loadName, arguments := [.str "nope"] }),
+        ("C-e y", invoke Minibuffer.acceptName), ("C-e o", invoke "other")]
+      (compiled ++ [("other", saysOther)]) with
+    registered := { themeNames := #[Theme.defaultName, "second"] } }
+
+/-- The reload reducer's state with the shipped themes registered, the
+built-in theme in force, and nothing loaded. -/
+def shippedThemes : Config.State Elaborated :=
+  { registry := ({} : Config.Registry).replaceThemes .compiled Themes.shipped }
+
+/-- The effects of each of `events` from `state`, one array an event, and the
+state reached. -/
+def effectsOf (state : Config.State Elaborated) (events : List (Config.Event Elaborated)) :
+    Config.State Elaborated × List (Array Seen) :=
+  events.foldl
+    (fun (state, effects) event =>
+      let (state, more) := Config.step state event
+      (state, effects ++ [more.map seen]))
+    (state, [])
+
+/-- The colour `0xRRGGBB`, opaque. -/
+def hex (word : UInt32) : Color :=
+  { word := word <<< 8 ||| 0xFF }
+
+/-- The checks of the window's appearance (`Editor/Appearance.lean`, and the
+reload reducer's `State.ask`, `Editor/Config/Reload.lean`): which papers
+are light and which dark, and when the reducer asks the window for one. -/
+def appearanceChecks : List Check :=
+  [{  name :=
+        "a paper is dark exactly when white text contrasts with it more than black: white and Solarized light's paper are light, black, the built-in paper, Solarized dark's and fairy-floss's are dark, and #757575 is dark and #767676 light, either side of the crossover"
+      run :=
+        let paper (theme : Theme) : Option Appearance := theme.paper.map Appearance.ofPaper
+        pure
+          (Appearance.ofPaper (hex 0xFFFFFF) == .light &&
+            Appearance.ofPaper (hex 0x000000) == .dark &&
+            paper Theme.builtin == some .dark &&
+            paper Themes.Solarized.dark.theme == some .dark &&
+            paper Themes.Solarized.light.theme == some .light &&
+            paper Themes.FairyFloss.fairyFloss.theme == some .dark &&
+            Appearance.ofPaper (hex 0x757575) == .dark &&
+            Appearance.ofPaper (hex 0x767676) == .light &&
+            (hex 0x757575).luminance < 0.1791 &&
+            (hex 0x767676).luminance > 0.1791 &&
+            (hex 0xFFFFFF).luminance > 0.999 &&
+            (hex 0x000000).luminance == 0 &&
+            (Theme.paper #[]).isNone) },
+    { name :=
+        "criterion 2: the window is asked for the paper's appearance when it opens, and then once per change: choosing solarized-light asks light, again asks nothing, solarized-dark asks dark, fairy-floss nothing (dark again), solarized-light light; a choice before the window opened asks nothing, and a window that opens again is asked afresh"
+      run :=
+        let (_, before) := effectsOf shippedThemes [.choose "solarized-light"]
+        let (_, effects) :=
+          effectsOf shippedThemes
+            [.windowOpened, .choose "solarized-light", .choose "solarized-light",
+              .choose "solarized-dark", .choose "fairy-floss", .choose "solarized-light",
+              .windowOpened]
+        pure
+          (before == [#[.themed]] &&
+            effects ==
+              [#[.appearance .dark], #[.themed, .appearance .light], #[.themed],
+                #[.themed, .appearance .dark], #[.themed], #[.themed, .appearance .light],
+                #[.appearance .light]]) },
+    { name :=
+        "criterion 3: with solarized-light in force and the window open, a reload whose config sets the default face's paper to #002b36 keeps solarized-light in force and asks for dark after its report; the same reload again asks nothing; and from solarized-light, a reload that sets only the default face's ink, one that sets nothing, and a refused one ask nothing"
+      run :=
+        let (light, opened) := effectsOf shippedThemes [.windowOpened, .choose "solarized-light"]
+        let darkPaper : SetupM Unit := face "default" { background := some (hex 0x002b36) }
+        let inkOnly : SetupM Unit := face "default" { foreground := some (hex 0x002b36) }
+        let (overridden, reloads) :=
+          effectsOf light
+            [.requested, .finished (accepted ["a"] darkPaper), .requested,
+              .finished (accepted ["a"] darkPaper)]
+        let reloadOf (setup : SetupM Unit) : List (Array Seen) :=
+          (effectsOf light [.requested, .finished (accepted ["a"] setup)]).2
+        let (_, refused) := effectsOf light [.requested, .finished (rejected "a")]
+        pure
+          (opened == [#[.appearance .dark], #[.themed, .appearance .light]] &&
+            overridden.themeName == "solarized-light" &&
+            reloads ==
+              [#[.start none #[]],
+                #[.cancelJobs "config", .report 1 true #[] 1 0, .appearance .dark],
+                #[.start (some #[]) #["a"]], #[.cancelJobs "config", .report 2 true #[] 1 0]] &&
+            reloadOf inkOnly ==
+              [#[.start none #[]], #[.cancelJobs "config", .report 1 true #[] 1 0]] &&
+            reloadOf (pure ()) ==
+              [#[.start none #[]], #[.cancelJobs "config", .report 1 true #[] 1 0]] &&
+            refused == [#[.start none #[]], #[.report 1 false #["a"] 0 0]]) }]
+
+/-- The checks of the command that loads a theme (`Editor/Themes.lean`,
+`Editor/Themes/Compiled.lean`), on the loop's driver over the editor's
+models and the test scheme: it asks for a name among the registered ones,
+and a step that loads one hands the name back. -/
+def themeChecks : List Check :=
+  let driver? : Option TestDriver :=
+    (Loop.Driver.over themeKeys (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption
+  [{  name :=
+        "the theme command with no name opens a prompt labelled with its label, whose continuation is the command itself and whose candidates are the registered themes' names"
+      run :=
+        pure <|
+          match driver? with
+          | none => false
+          | some driver =>
+            let (asking, steps) := fedTo driver (presses "C-t t")
+            asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
+                some (Themes.label, { command := Themes.loadName }) &&
+              (candidatesOf asking).map (·.all) == some #[Theme.defaultName, "second"] &&
+              steps.map (·.map (·.theme)) == #[some none, some none] },
+    { name :=
+        "the theme command with a registered name hands the name back with its step and says nothing; accepting its prompt with a name loads that one"
+      run :=
+        pure <|
+          match driver? with
+          | none => false
+          | some driver =>
+            let (loaded, steps) := fedTo driver (presses "C-t s")
+            let (typed, _) := fedTo driver (presses "C-t t" ++ [.commit "second"])
+            let (accepted, _) := fedTo typed (presses "C-e y")
+            steps.map (·.map (·.theme)) == #[some none, some (some "second")] &&
+              promptEcho loaded == "" &&
+              loaded.themes == #["second"] &&
+              accepted.themes == #["second"] &&
+              accepted.loop.state.prompt == none },
+    { name :=
+        "the theme command with a name nobody registered says so in the echo area, by its name and the theme's, and loads none; the editor goes on"
+      run :=
+        pure <|
+          match driver? with
+          | none => false
+          | some driver =>
+            let (unknown, _) := fedTo driver (presses "C-t n")
+            let (after, _) := fedTo unknown (presses "C-e o")
+            promptEcho unknown == "load-theme: no theme is registered as `nope`" &&
+              promptEcho unknown == Themes.notLoaded (.noSuchTheme "nope") &&
+              unknown.themes == #[] &&
+              promptEcho after == "other" },
+    { name :=
+        "the theme command while a prompt is open says the refusal after its own name and leaves that prompt open"
+      run :=
+        pure <|
+          match driver? with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-t t")
+            let (again, _) := fedTo asking (presses "C-t t")
+            promptEcho again == Themes.notAsking (.alreadyOpen ⟨1⟩) &&
+              promptEcho again == "load-theme: a prompt is open already" &&
+              again.loop.state.prompt.isSome }]
 
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,
@@ -18590,7 +20309,8 @@ structure EvilSeen where
   covered : Array String
   /-- How the view's cursors are drawn. -/
   cursor : Cursor
-  /-- The view's status line. -/
+  /-- The left side of the view's mode line: its badge, its buffer's name
+  and its modified mark. -/
   status : Array StatusField
   deriving DecidableEq, Repr
 
@@ -18607,7 +20327,7 @@ def evilSeen (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option EvilSeen 
     let extents ← marker.text.extents selection
     return (selection, ← extents.mapM fun extent => marker.text.slice extent.start extent.stop)
   let (selection, covered) ← (program.runModel driver.model.texts).1.toOption
-  return { selection, covered, cursor := shown.cursor, status := shown.status }
+  return { selection, covered, cursor := shown.cursor, status := leftOf shown.status }
 
 /-- What the scene after the keys `typed`, pressed from the fixture
 `fixture`, shows of view 0 (`evilSeen`). -/
@@ -18622,13 +20342,26 @@ def evilSelected (fixture typed : String) : Option (List (Nat × Nat) × Shape �
     ((seen.selection.ranges.map fun range => (range.anchor, range.head)).toList,
       seen.selection.shape, seen.covered.toList)
 
-/-- The cursor and the status line a scene shows of a view of the buffer
-`scratch`, not modified, in the Vim state view 0 is in after the keys
-`typed` under the grammar alone: what the default scheme reports of that
-state, and then the buffer's name. -/
+/-- The cursor and the left side of the mode line a scene shows of a view of
+the buffer `scratch`, not modified, in the Vim state view 0 is in after the
+keys `typed` under the grammar alone: what the default scheme reports of
+that state, as the badge, and then the buffer's name. -/
 def evilLooks (typed : String) : Cursor × Array StatusField :=
   let report := vimDefaultReport typed
-  (report.cursor, report.status ++ #[{ text := "scratch", face := Loop.nameFace }])
+  (report.cursor,
+    report.status.map ({ · with padding := ModeLine.badgePadding }) ++
+      #[ModeLine.field "scratch" ModeLine.bufferFace])
+
+/-- The badge a scene's mode line shows first for a selected view in the
+Vim state view 0 is in after the keys `typed` under the grammar alone: the
+default scheme's first reported field, padded as the `state` segment pads
+it. -/
+def evilBadge (typed : String) : Option StatusField :=
+  (vimDefaultReport typed).status[0]?.map ({ · with padding := ModeLine.badgePadding })
+
+/-- The modified mark, as the mode line of a selected view draws it. -/
+def evilMark : StatusField :=
+  ModeLine.field ModeLine.modifiedMark ModeLine.modifiedFace
 
 /-- What the scheme reports of a view in a state that keeps both ends of
 the selection, of the shape `shape`, written by hand: what a visual state
@@ -19023,7 +20756,7 @@ def evilInsertChecks : List Check :=
       run :=
         pure <|
           let seen (typed : String) : Option EvilSeen := evilScene "foo |bar" typed
-          let modified : StatusField := { text := Loop.modifiedMark, face := Loop.modifiedFace }
+          let modified : StatusField := evilMark
           let insert := vimDefaultReport "i"
           let normal := vimDefaultReport ""
           seen "<F5>" ==
@@ -19204,7 +20937,8 @@ structure EvilEdited where
   /-- The unnamed register; `none` when it is as it was before the keys. -/
   register : Option Register
   /-- Whether the scene's status line says the view is in insert state: its
-  first field is the one the scheme reports of that state. -/
+  first field, the mode line's badge, is the one the scheme reports of that
+  state. -/
   insert : Bool
   /-- What the echo area says. -/
   echo : String
@@ -19225,7 +20959,9 @@ def evilLeft (driver : EvilDriver) : EvilEdited :=
   { shown := evilShown driver
     register := if register == some evilSentinel then none else register
     insert :=
-      ((evilSeen driver).bind (·.status[0]?)) == (vimDefaultReport "i").status[0]? &&
+      let badge (field : StatusField) := (field.text, field.face)
+      ((evilSeen driver).bind (·.status[0]?)).map badge ==
+          (vimDefaultReport "i").status[0]?.map badge &&
         (vimDefaultReport "i").status[0]? != (vimDefaultReport "").status[0]?
     echo := driver.loop.state.echo }
 
@@ -21054,8 +22790,8 @@ ends at positions of the text, and the view is in `visual`, or, where the
 object is not there after `V`, in the state it was in, with the give-up's
 sentence said. -/
 def visualObjectSweep (contents : String) : List String :=
-  let visual := (vimDefaultReport "v").status[0]?
-  let visualLine := (vimDefaultReport "V").status[0]?
+  let visual := evilBadge "v"
+  let visualLine := evilBadge "V"
   ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap fun position =>
     ["v", "V"].flatMap fun state =>
       Vim.Default.objects.flatMap fun (objectKey, bound) =>
@@ -21114,7 +22850,7 @@ def evilObjectChecks : List Check :=
     { name :=
         "in v and V each text object sets the selection Vim 9.1 documents: one range, inclusive, covering the object, with the view in visual; a selection wider than one cell is extended from its head, a block one out when it is no bigger; an object that is not there leaves the selection as it was, and so does a quote object over a wider selection, a recorded departure"
       run := do
-        let visual := (vimDefaultReport "v").status[0]?
+        let visual := evilBadge "v"
         let wrong :=
           objectSelectionRows.filterMap fun (fixture, typed, ranges, covered) =>
             let got := evilSelected fixture typed
@@ -21127,8 +22863,8 @@ def evilObjectChecks : List Check :=
     { name :=
         "an object that is not there leaves the selection as the visual state had it: in v the view stays in visual and nothing is said; in V, where the object would make the selection charwise, the view stays in visual-line, as Vim 9.1.1752 does, and the give-up's sentence is said"
       run := do
-        let visual := (vimDefaultReport "v").status[0]?
-        let visualLine := (vimDefaultReport "V").status[0]?
+        let visual := evilBadge "v"
+        let visualLine := evilBadge "V"
         -- What a give-up of the select command says.
         let gaveUp (object : Vocabulary.TextObject) :=
           s!"{Vim.selectObjectCommand}: {Evil.noObjectHere object.name}"
@@ -21237,6 +22973,31 @@ def evilCrlfDriver (contents : String) (head : Nat) (model : EditorModel := edit
         let state ← evilState contents head
         return { state with buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) })
       model).toOption
+
+/-- What a step of the replace checks is handed: evil's commands, with
+`<F5>` bound in an active keymap to the operator `replace`, which no
+default key binds, so that a visual state's selection is replaced by key. -/
+def replaceHanded : Loop.Keys Vim.Default.scheme :=
+  { evilHanded with
+    maps := fun _ _ => [Vim.Default.keymap [("<F5>", .operator { name := Evil.replace.name })]] }
+
+/-- A driver of the replace checks over the text and cursor `fixture` says,
+with the unnamed register holding `evilSentinel`, on the editor's models
+with the clipboard model `clipboard`. -/
+def replaceDriver (fixture : String) (clipboard : ClipboardModel := {}) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  (Loop.Driver.over replaceHanded (fun _ => none)
+      (do
+        return (← evilState contents head).setRegister Evil.unnamed evilSentinel)
+      { editorModel with clipboard }).toOption
+
+/-- The keys `typed` pressed on `replaceDriver`: what they left, and the
+text the clipboard model then holds. -/
+def evilReplaced (fixture typed : String) (clipboard : ClipboardModel := {}) :
+    Option (EvilEdited × Option String) :=
+  (replaceDriver fixture clipboard).map fun driver =>
+    let after := evilFed driver typed
+    (evilLeft after, after.model.clipboard.held)
 
 /-- The checks of evil's registers and of the commands that read and set
 them without an operator's key (`Editor/Evil/Registers.lean`,
@@ -21414,7 +23175,49 @@ def evilRegisterChecks : List Check :=
           put "ab\r\ncd" 5 "\" + p" "xy\r\n" == some "ab\r\ncd\r\n|xy" &&
             put "ab\r\ncd" 0 "\" + p" "xy\r\n" == some "ab\r\n|xy\r\ncd" &&
             put "ab\r\ncd" 5 "\" + P" "xy\r\n" == some "ab\r\n|xy\r\ncd" &&
-            put "ab\r\ncd" 5 "\" + p" "xy\n" == some "ab\r\ncd\r\n|xy" }]
+            put "ab\r\ncd" 5 "\" + p" "xy\n" == some "ab\r\ncd\r\n|xy" },
+    { name :=
+        "the operator replace over a character-wise selection puts the clipboard's text in place of it, the cursor on the last cell put, or on the first when the text holds a line break, which goes in as it is; the unnamed register holds the replaced text and the clipboard model what it held; the view is in normal state"
+      run :=
+        pure <|
+          evilReplaced "a|bcd" "v l \" + <F5>" { held := some "XY" } ==
+              some (⟨"aX|Yd", charwise "bc", false, ""⟩, some "XY") &&
+            evilReplaced "a|bcd" "v l \" + <F5>" { held := some "XY\n" } ==
+              some (⟨"a|XY\nd", charwise "bc", false, ""⟩, some "XY\n") &&
+            ((replaceDriver "a|bcd" { held := some "XY" }).map fun driver =>
+                (evilSeen (evilFed driver "v l \" + <F5>")).bind (·.status[0]?)) ==
+              some (evilLooks "").2[0]? },
+    { name :=
+        "the operator replace over a line-wise selection puts the clipboard's text in place of the lines, a character-wise text with the buffer's line ending added, and the cursor on the first non-blank of the first line put; below a last line with no line break the text's last line break is left out; the unnamed register holds the lines, line-wise"
+      run :=
+        pure <|
+          evilReplaced "ab\nc|d\nef" "V \" + <F5>" { held := some "XY" } ==
+              some (⟨"ab\n|XY\nef", linewise "cd\n", false, ""⟩, some "XY") &&
+            evilReplaced "ab\nc|d\nef" "V \" + <F5>" { held := some "  XY\n" } ==
+              some (⟨"ab\n  |XY\nef", linewise "cd\n", false, ""⟩, some "  XY\n") &&
+            evilReplaced "ab\nc|d" "V \" + <F5>" { held := some "XY\n" } ==
+              some (⟨"ab\n|XY", linewise "cd\n", false, ""⟩, some "XY\n") &&
+            evilReplaced "a|b\ncd\nef" "V j \" + <F5>" { held := some "XY" } ==
+              some (⟨"|XY\nef", linewise "ab\ncd\n", false, ""⟩, some "XY") },
+    { name :=
+        "the operator replace with a clipboard model holding no text gives up with nothingToPut, and with one not available with clipboardUnavailable, and the buffer is as it was"
+      run :=
+        pure <|
+          evilGaveUp ((evilReplaced "a|bcd" "v l \" + <F5>").map (·.1)) "ab|cd" Evil.nothingToPut &&
+            evilGaveUp ((evilReplaced "a|bcd" "v l \" + <F5>" { available := false }).map (·.1))
+              "ab|cd" Evil.clipboardUnavailable &&
+            evilGaveUp ((evilReplaced "ab\nc|d\nef" "V \" + <F5>").map (·.1)) "ab\nc|d\nef"
+              Evil.nothingToPut },
+    { name :=
+        "the operator replace is one step of the history: one undo request gives the text from before it"
+      run :=
+        pure <|
+          match replaceDriver "a|bcd" { held := some "XY" } with
+          | none => false
+          | some driver =>
+            let replaced := evilFed driver "v l \" + <F5>"
+            evilText replaced == some "aXYd" && evilHistory replaced == some (2, false) &&
+              evilText (evilUndone replaced) == some "abcd" }]
 
 /-- The checks of the two commands that open a line (`Evil.openBelow`,
 `Evil.openAbove`), by key, as `evilOperatorChecks` are. -/
@@ -21442,9 +23245,7 @@ def evilOpenChecks : List Check :=
         return held &&
             (evilScene "ab\nc|d\nef" "o").map (fun seen => (seen.selection, seen.status)) ==
               some
-                ({ ranges := #[⟨6, 6⟩], shape := .exclusive },
-                  (evilLooks "i").2.push
-                    { text := Loop.modifiedMark, face := Loop.modifiedFace }) },
+                ({ ranges := #[⟨6, 6⟩], shape := .exclusive }, (evilLooks "i").2.push evilMark) },
     { name :=
         "o and the text typed after it are one step of the history: o leaves its group open, <Escape> closes it as one node, and one undo request gives the text from before the o"
       run :=
@@ -21702,10 +23503,7 @@ def evilRepeatChecks : List Check :=
             let replayed := evilFed changed "."
             evilHistory changed == some (2, false) && evilHistory replayed == some (3, false) &&
               evilShown replayed == "XY X|Y baz" &&
-              (evilSeen replayed).map (·.status) ==
-                some
-                  ((evilLooks "").2.push
-                    { text := Loop.modifiedMark, face := Loop.modifiedFace }) &&
+              (evilSeen replayed).map (·.status) == some ((evilLooks "").2.push evilMark) &&
               evilShown (evilFed replayed "u") == "XY |bar baz" },
     { name :=
         ". with no change to repeat says nothing and changes nothing, and the repeat command run by its name, which is handed no change, gives up with the sentence its function makes"
@@ -22123,6 +23921,182 @@ def scrollFailures (keys : List String) (contents : String) (size : Size)
             if seen.index.isSome then none
             else some s!"{key} from anchor {anchor} and cursor {head} of {repr contents}"
           | none => some s!"{key} from anchor {anchor} and cursor {head}: no scene"
+
+/-- The last scene of a run of the loop over the state `start` makes, each
+step handed the frame padding `padding`, fed `events`; `none` when the run
+was refused or published nothing. -/
+def paddedScene (padding : Nat) (events : List Event)
+    (start : TextM EditorState := EditorState.initial ⟨640, 480⟩) : Option Scene :=
+  match dispatched { padding } events start with
+  | some (_, scenes, _) => scenes.back?
+  | none => none
+
+/-- A resize to 640 by 480 at scale 1, in fullscreen when `fullscreen` says,
+whose window's corners reach `corner` points in and whose title bar covers
+`top` points of it. -/
+def resizedWith (corner : Nat) (fullscreen : Bool := false) (top : Nat := 0) : Event :=
+  .resize { width := 640, height := 480, scale := 1.0, fullscreen, corner, top }
+
+/-- `twoBuffers` with its two windows one above the other. -/
+def twoRows : TextM EditorState := do
+  let state ← twoBuffers
+  return { state with
+      frame :=
+        { state.frame with
+          tree := .split .rows (.split .rows (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer } }
+
+/-- The padding of the view `id` in `scene`, if it has the view. -/
+def paddingIn (scene : Scene) (id : ViewId) : Option Padding :=
+  (scene.views.find? (·.id == id)).map (·.padding)
+
+/-- The checks of the views' padding (`EditorState.paddingOf`,
+`EditorState.bottomInset`, `Loop.Keys.padding`): what the loop puts in the
+scene, in points. Lean handles no scale, so every number here is points:
+that layout multiplies them at its scale is pinned in `crates/editor-layout`
+(`tests/padding.rs`), and that the first glyph is where these say over real
+layout by `FfiTest.paddingChecks`. -/
+def paddingChecks : List Check :=
+  [{  name :=
+        "a resize keeps its corner clearance in the frame beside fullscreen, and the frame keeps no scale"
+      run := do
+        let some ((loop, _), _, _) := looped (EditorState.initial ⟨0, 0⟩) [resizedWith 14]
+          | return false
+        let frame := loop.state.frame
+        let some ((later, _), _, _) :=
+          looped (EditorState.initial ⟨0, 0⟩) [resizedWith 14, resizedWith 0 true]
+          | return false
+        return frame.corner == 14 && !frame.fullscreen && frame.size == ⟨640, 480⟩ &&
+            later.state.frame.corner == 0 &&
+            later.state.frame.fullscreen &&
+            frame ==
+              { size := ⟨640, 480⟩, tree := frame.tree, focused := frame.focused, corner := 14 } },
+    { name :=
+        "at a padding of 8 each window's view is padded 8 across and 8 down, each window of a split its own, and the scene's echo padding is 8 with square corners"
+      run :=
+        pure <|
+          match paddedScene 8 [resizedWith 0] twoBuffers with
+          | none => false
+          | some scene =>
+            paddingIn scene ⟨0⟩ == some { across := 8, down := 8 } &&
+              paddingIn scene ⟨1⟩ == some { across := 8, down := 8 } &&
+              (scene.views.map (·.rect.x)) == #[0, 320] &&
+              scene.echoPadding == 8 },
+    { name :=
+        "criterion 3, on the model: with a prompt open and a corner clearance of 14, the minibuffer's view is padded 14 across and none down and the echo 14, the larger of the padding 8 and the corner; with a corner of 4 both are 8, the padding; and in fullscreen with a corner of 14 both are 8, the padding alone"
+      run :=
+        let bottom (events : List Event) : Option (Nat × Nat × Nat) := do
+          let scene ← paddedScene 8 events (promptedOver "x")
+          let minibuffer ← scene.views.back?
+          let window ← paddingIn scene ⟨0⟩
+          guard (minibuffer.id != ⟨0⟩ && window == { across := 8, down := 8 })
+          return (minibuffer.padding.across, minibuffer.padding.down, scene.echoPadding)
+        pure
+          (bottom [resizedWith 14] == some (14, 0, 14) &&
+            bottom [resizedWith 4] == some (8, 0, 8) &&
+            bottom [resizedWith 14 true] == some (8, 0, 8)) },
+    { name :=
+        "the state's bottom inset is the padding and at least the corner outside fullscreen, and the padding alone in fullscreen; a view's padding is the state's, the minibuffer's view's across only"
+      run := do
+        let some state := onTextModel (promptedOver "x") | return false
+        let shaped (padding corner : Nat) (fullscreen : Bool) : EditorState :=
+          { state with
+            padding,
+            frame :=
+              { state.frame with
+                corner, fullscreen } }
+        let some minibuffer := state.minibufferView? | return false
+        return (shaped 8 14 false).bottomInset == 14 && (shaped 8 4 false).bottomInset == 8 &&
+            (shaped 8 14 true).bottomInset == 8 &&
+            (shaped 0 0 false).bottomInset == 0 &&
+            (shaped 8 14 false).paddingOf minibuffer == { across := 14, down := 0 } &&
+            (shaped 8 14 false).paddingOf ⟨0⟩ == { across := 8, down := 8 } &&
+            (shaped 0 14 false).paddingOf ⟨0⟩ == {} },
+    { name :=
+        "a resize keeps its top inset in the frame, and a resize in fullscreen that says none leaves none"
+      run := do
+        let some ((loop, _), _, _) :=
+          looped (EditorState.initial ⟨0, 0⟩) [resizedWith 14 (top := 28)]
+          | return false
+        let some ((later, _), _, _) :=
+          looped (EditorState.initial ⟨0, 0⟩) [resizedWith 14 (top := 28), resizedWith 0 true]
+          | return false
+        return loop.state.frame.top == 28 && later.state.frame.top == 0 &&
+            later.state.frame.fullscreen },
+    { name :=
+        "criterion 4, on the model: with a top inset of 28 a window along the frame's top edge is padded 8 across, 8 down and 28 at the top, the lower window of a rows split 8, 8 and none, and both windows of a columns split 8, 8 and 28; after a fullscreen resize that says none, every window is padded 8, 8 and none"
+      run :=
+        let under (top : Nat) : Padding := { across := 8, down := 8, top }
+        pure <|
+          match paddedScene 8 [resizedWith 0 (top := 28)] twoRows,
+            paddedScene 8 [resizedWith 0 (top := 28)] twoBuffers,
+            paddedScene 8 [resizedWith 0 (top := 28), resizedWith 0 true] twoRows,
+            paddedScene 8 [resizedWith 0 (top := 28), resizedWith 0 true] twoBuffers with
+          | some rows, some columns, some fullRows, some fullColumns =>
+            (rows.views.map (·.rect.y != 0)) == #[false, true] &&
+              paddingIn rows ⟨0⟩ == some (under 28) &&
+              paddingIn rows ⟨1⟩ == some (under 0) &&
+              paddingIn columns ⟨0⟩ == some (under 28) &&
+              paddingIn columns ⟨1⟩ == some (under 28) &&
+              paddingIn fullRows ⟨0⟩ == some (under 0) &&
+              paddingIn fullRows ⟨1⟩ == some (under 0) &&
+              paddingIn fullColumns ⟨0⟩ == some (under 0) &&
+              paddingIn fullColumns ⟨1⟩ == some (under 0)
+          | _, _, _, _ => false },
+    { name :=
+        "the state's top inset is the frame's outside fullscreen and none in fullscreen, whatever the window last said; the minibuffer's view takes none, and the area a command asks about its top window carries it"
+      run := do
+        let some state := onTextModel (promptedOver "x") | return false
+        let shaped (top : Nat) (fullscreen : Bool) : EditorState :=
+          { state with
+            padding := 8,
+            frame :=
+              { state.frame with
+                top, fullscreen } }
+        let some minibuffer := state.minibufferView? | return false
+        let some rect := (shaped 28 false).rect? ⟨0⟩ | return false
+        let area := Scroll.Area.ofRect ⟨3⟩ rect 16 ((shaped 28 false).paddingOf ⟨0⟩)
+        return (shaped 28 false).topInset == 28 && (shaped 28 true).topInset == 0 &&
+            (shaped 28 false).paddingOf ⟨0⟩ == { across := 8, down := 8, top := 28 } &&
+            (shaped 28 true).paddingOf ⟨0⟩ == { across := 8, down := 8 } &&
+            ((shaped 28 false).paddingOf minibuffer).top == 0 &&
+            area.padding == { across := 8, down := 8, top := 28 } },
+    { name :=
+        "a loop handed no padding gives every view no padding and the echo none: it draws and scrolls as before there was one"
+      run :=
+        pure <|
+          match paddedScene 0 [resizedWith 0] twoBuffers,
+            paddedScene 0 [resizedWith 0] (promptedOver "x"),
+            dispatched {} [resizedWith 0] twoBuffers with
+          | some windows, some prompted, some (_, scenes, _) =>
+            windows.views.all (·.padding == {}) && windows.echoPadding == 0 &&
+              prompted.views.all (·.padding == {}) &&
+              prompted.echoPadding == 0 &&
+              scenes.back? == some windows
+          | _, _, _ => false },
+    { name :=
+        "the area a view is asked about keeps the rectangle's width and its height less the bottom row, and carries the padding; the loop's follow asks with the view's padding, so a cursor on the fifth row of a text area five rows tall is followed when the view is padded a row down, and not when it is not"
+      run := do
+        let area :=
+          Scroll.Area.ofRect ⟨3⟩ { x := 0, y := 0, width := 640, height := 200 } 16
+            { across := 8, down := 8 }
+        -- Lines of two digits and a break: the fifth row starts at byte 12.
+        -- In cells of a pixel a frame 10 by 7 gives the window 6 rows, 5
+        -- above its status row, and a padding of 1 down leaves 3.
+        let anchorAfter (padding : Nat) : Option Nat :=
+          let program : EditorM Nat := do
+            let state ← viewState (numbered 20) ⟨10, 7⟩ 0 12
+            let keys : Loop.Keys TestScheme.scheme := { padding }
+            let (loop, _) ← stepsWith keys { state } [.focus true]
+            let some target := loop.state.focusedTarget? | throw .noSuchText
+            return (← target.anchor).offset
+          match program.runModel editorModel with
+          | (.ok offset, _) => some offset
+          | (.error _, _) => none
+        return area ==
+              { snapshot := ⟨3⟩, width := 640, height := 184,
+                padding := { across := 8, down := 8 } } &&
+            anchorAfter 0 == some 0 &&
+            anchorAfter 1 == some 6 }]
 
 /-- The checks of a view that follows its cursor (`Editor/Loop.lean`,
 "Following the cursor"), on the loop's driver over the editor's models,
@@ -22790,17 +24764,21 @@ def heightChecks : List Check :=
 
 /-- The registry of the frame command checks: the frame's commands, and the
 ex line's, whose `quit` the frame's `s-q` names, and the frame's bindings,
-registered for the owner `compiled`, as a host registers them, and `config`
-as config's bindings. -/
-def frameRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
-  ((({} : Config.Registry).replace .compiled
-            (FrameCommands.commands ++ Ex.commands)).replaceBindings
-        .compiled FrameCommands.bindings).replaceBindings
-    .config config
+with the menu bar's bindings, registered for the owner `compiled`, as a
+host registers them, and `config` as config's bindings and `commands` as
+config's commands. -/
+def frameRegistry (config : Array Config.KeyBinding := #[])
+    (commands : Array Config.Registration := #[]) : Config.Registry :=
+  (((({} : Config.Registry).replace .compiled
+                (FrameCommands.commands ++ Ex.commands)).replaceBindings
+            .compiled (FrameCommands.bindings ++ Menu.bindings)).replaceBindings
+        .config config).replace
+    .config commands
 
 /-- What a step of the frame command checks is handed: the active keymaps
-`registry` makes for the test scheme from the loop's state, and its plain
-commands and those given their call. -/
+`registry` makes for the test scheme from the loop's state, its plain
+commands and those given their call, and the menu bar that ships with its
+key equivalents filled from `registry`, as a host's are. -/
 def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
   { maps := registry.activeMaps TestScheme.scheme
     command? := fun name =>
@@ -22813,7 +24791,8 @@ def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
         some fun call => do
           run call
           return none
-      | _ => none }
+      | _ => none
+    menu := some (registry.menuOf Menu.standard) }
 
 /-- A driver of the frame command checks over the initial state, with the
 keys of `registry`; `none` if making the state was refused. With `held`
@@ -22954,6 +24933,497 @@ def titleChecks : List Check :=
               titleOf prompting == some "scratch" &&
               EditorState.title EditorState.none == ""
           | _, _, _ => false }]
+
+/-- The menu bar the frame driver over `registry` publishes once the window
+has said its size; `none` without one. -/
+def menuShown (registry : Config.Registry) : Option Menu := do
+  let driver ← frameDriver registry
+  let scene ← (fedTo driver [resizedTo false]).1.model.display.scenes.back?
+  scene.menu
+
+/-- The key equivalent of `character` with `modifiers` held, the system key
+alone unless told. -/
+def equivalent (character : Char) (modifiers : Modifiers := { superKey := true }) :
+    Option KeyEquivalent :=
+  some { character, modifiers }
+
+/-- The Vim scheme of the menu's run-table checks: the default states, with
+normal state's run table holding `t-enter`, run as `visual-line` entering
+that state, and `t-fail`, run as itself entering it too. -/
+def menuRunScheme : InputScheme :=
+  let enter (name : String) : Vim.Edit := .run { name, enters := some "visual-line" } none none
+  Vim.scheme
+    (Vim.Default.states.register
+      { Vim.Default.states.initial with
+        runs := [("t-enter", enter "visual-line"), ("t-fail", enter "t-fail")] })
+
+/-- A driver of the menu's run-table checks over the text and cursor
+`fixture` says, with evil's commands and `t-fail`, which gives up. -/
+def menuRunDriver (fixture : String) : Option (Loop.Driver menuRunScheme) :=
+  let (contents, head) := barred fixture
+  let fail : Dispatched := fun _ => giveUp "failed"
+  let keys : Loop.Keys menuRunScheme :=
+    { command? := (evilHanded (commands := [("t-fail", fail)])).command? }
+  (Loop.Driver.over keys (fun _ => none) (evilState contents head) editorModel).toOption
+
+/-- The selection of view 0 of `driver`, as the text model has it. -/
+def menuRunSelection (driver : Loop.Driver menuRunScheme) : Option Selection := do
+  let target ← driver.loop.state.target? ⟨0⟩
+  (target.selection.runModel driver.model.texts).1.toOption
+
+/-- The key equivalents the compiled bindings give the menu's commands. -/
+def compiledEquivalents : String → Option KeyEquivalent
+  | "open-file" => equivalent 'o'
+  | "save-buffer" => equivalent 's'
+  | "undo" => equivalent 'z'
+  | "redo" => equivalent 'Z'
+  | "clipboard-cut" => equivalent 'x'
+  | "clipboard-copy" => equivalent 'c'
+  | "clipboard-paste" => equivalent 'v'
+  | "select-all" => equivalent 'a'
+  | "minimise-window" => equivalent 'm'
+  | "toggle-fullscreen" => equivalent 'f' { control := true, superKey := true }
+  | _ => none
+
+/-- The key equivalent `menu`'s item that runs `command` shows; `none` when
+no item runs it. -/
+def keyShown (menu : Menu) (command : String) : Option (Option KeyEquivalent) :=
+  menu.menus.findSome? fun submenu =>
+    submenu.items.findSome? fun
+      | .item _ key (.command name) => if name == command then some key else none
+      | _ => none
+
+/-- The registry of nothing but the binding of `text` to `open-file`. -/
+def openBoundTo (text : String) : Config.Registry :=
+  ({} : Config.Registry).replaceBindings .compiled #[{ keys := keys text, command := "open-file" }]
+
+/-- The checks of the menu bar (`Editor/Menu.lean`, `Editor/Menu/Compiled.lean`):
+a command item chosen runs its command as an invocation, and the key
+equivalents the published menu shows are the chords the registry binds. -/
+def menuChecks : List Check :=
+  [{  name :=
+        "a menu's undo undoes as u does: after x over abc, both leave abc and the same selection"
+      run :=
+        pure <|
+          match evilDriver "|abc" with
+          | none => false
+          | some driver =>
+            let cut := evilFed driver "x"
+            let byKey := evilFed cut "u"
+            let byMenu := (cut.feed { event := .menu "undo", stamp := 0 }).1
+            evilShown cut != evilShown byKey && evilShown byMenu == evilShown byKey &&
+              (evilShown byKey).replace "|" "" == "abc" &&
+              evilSelection byMenu == evilSelection byKey },
+    { name :=
+        "a menu item naming a command the view's state's run table has an entry for runs that entry, with the report of the state it enters: t-enter in normal state leaves the view in visual-line, its selection of the line shape, at rest; one that gives up leaves the scheme at rest in normal state"
+      run :=
+        pure <|
+          match menuRunDriver "a|b\ncd" with
+          | none => false
+          | some driver =>
+            let initial := menuRunScheme.report menuRunScheme.init ⟨0⟩
+            let entered := (driver.feed { event := .menu "t-enter", stamp := 0 }).1
+            let failed := (driver.feed { event := .menu "t-fail", stamp := 0 }).1
+            let report := menuRunScheme.report entered.loop.input ⟨0⟩
+            report.shape == .line && report.selecting &&
+              menuRunScheme.report entered.loop.atRest ⟨0⟩ == report &&
+              (menuRunSelection entered).map (·.shape) == some .line &&
+              entered.loop.state.echo.isEmpty &&
+              failed.loop.state.echo == "t-fail: failed" &&
+              menuRunScheme.report failed.loop.input ⟨0⟩ == initial &&
+              menuRunScheme.report failed.loop.atRest ⟨0⟩ == initial &&
+              menuRunSelection failed == menuRunSelection driver },
+    { name := "a menu's minimise-window asks the frame to minimise"
+      run := pure (framed frameDriver [.menu "minimise-window"] == some (#[.minimise], false)) },
+    { name :=
+        "a menu runs config's command of its name in place of the compiled one, and a command only config registers"
+      run :=
+        let replaced :=
+          frameRegistry (commands :=
+            #[{ name := "minimise-window", action := .plain (Display.askFrame .enterFullscreen) }])
+        let greeting :=
+          frameRegistry (commands :=
+            #[{ name := "greet", action := .plain (Display.askFrame .leaveFullscreen) }])
+        pure
+          (framed (frameDriver replaced) [.menu "minimise-window"] ==
+              some (#[.enterFullscreen], false) &&
+            framed (frameDriver greeting) [.menu "greet"] == some (#[.leaveFullscreen], false)) },
+    { name :=
+        "a menu naming no command says no such command as an invocation does, and asks the frame nothing"
+      run :=
+        pure <|
+          match frameDriver with
+          | none => false
+          | some driver =>
+            let fed := (fedTo driver [.menu "nope"]).1
+            fed.loop.state.echo == "nope: no such command" && fed.model.display.asked.isEmpty },
+    { name :=
+        "a menu, a file to open and the system's quit publish with the padding and the mode line the step's keys carry: views padded 8 across and 8 down, the echo 8, and the status lines the handed segments', whether the command runs to its end or is refused"
+      run :=
+        let ran : Call → EditorM (Option Config.Write) := fun _ => pure none
+        let refused : Call → EditorM (Option Config.Write) := fun _ => throw .badRange
+        let handed : Loop.Keys TestScheme.scheme :=
+          { padding := 8
+            modeLine := { left := #[ModeLine.position], right := #[ModeLine.buffer] }
+            command? := fun
+              | "noop" => some ran
+              | "balk" => some refused
+              | name => if name == Files.openName || name == Ex.quitName then some ran else none }
+        let status : Array StatusField :=
+          #[{ text := "All", face := ModeLine.secondaryFace, padding := 4 },
+            { text := "scratch", face := ModeLine.bufferFace, side := .right, padding := 4 }]
+        let publishedBy (event : Event) : Bool :=
+          match dispatched handed [event] with
+          | some (_, #[scene], _) =>
+            scene.views.map (·.padding) == #[{ across := 8, down := 8 }] &&
+              scene.echoPadding == 8 &&
+              scene.views.map (·.status) == #[status]
+          | _ => false
+        pure
+          ([Event.menu "noop", .menu "balk", .openFiles ["a"], .quitRequested].all publishedBy) },
+    { name :=
+        "on the compiled registry the published menu is the standard one with the chords bound to its commands: s-o, s-s, s-z, s-Z, s-x, s-c, s-v, s-a, s-m and C-s-f, and the system items' own"
+      run :=
+        pure
+          (menuShown frameRegistry == some (Menu.standard.withKeys compiledEquivalents) &&
+            ["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
+                  "clipboard-paste", "select-all", "minimise-window", "toggle-fullscreen",
+                  "nope"].all
+              fun name => frameRegistry.keyEquivalent? name == compiledEquivalents name) },
+    { name :=
+        "the published default menu's Edit menu is Undo, Redo, a separator, Cut, Copy, Paste, a separator and Select All, with the key equivalents s-z, s-Z (s-S-z), s-x, s-c, s-v and s-a"
+      run :=
+        let edit : Option Submenu :=
+          (menuShown frameRegistry).bind fun menu => menu.menus.find? (·.title == "Edit")
+        pure
+          (edit.map (·.items) ==
+            some
+              #[.item "Undo" (equivalent 'z') (.command "undo"),
+                .item "Redo" (equivalent 'Z') (.command "redo"), .separator,
+                .item "Cut" (equivalent 'x') (.command "clipboard-cut"),
+                .item "Copy" (equivalent 'c') (.command "clipboard-copy"),
+                .item "Paste" (equivalent 'v') (.command "clipboard-paste"), .separator,
+                .item "Select All" (equivalent 'a') (.command "select-all")]) },
+    { name := "after config binds toggle-fullscreen to M-s-f, Enter Full Screen shows M-s-f"
+      run :=
+        let rebound :=
+          frameRegistry #[{ keys := keys "M-s-f", command := FrameCommands.toggleFullscreenName }]
+        let shown := equivalent 'f' { alt := true, superKey := true }
+        pure
+          (rebound.keyEquivalent? "toggle-fullscreen" == shown &&
+            ((menuShown rebound).bind (keyShown · "toggle-fullscreen")) == some shown) },
+    { name :=
+        "an item whose command has no single chord with the system key shows none: s-o rebound by config to another command, only C-x C-f, only C-o"
+      run :=
+        let taken := frameRegistry #[{ keys := keys "s-o", command := "save-buffer" }]
+        let registries := [taken, openBoundTo "C-x C-f", openBoundTo "C-o"]
+        pure <|
+          registries.all fun registry =>
+            registry.keyEquivalent? "open-file" == none &&
+              ((menuShown registry).bind (keyShown · "open-file")) == some none },
+    { name :=
+        "a chord a system item shows is no command item's, as AppKit runs the system item: config's s-q, s-h or M-s-h alone to save-buffer shows none on Save, and beside the compiled s-s Save shows s-s"
+      run :=
+        let bound := fun text =>
+          ({} : Config.Registry).replaceBindings .config
+            #[{ keys := keys text, command := Files.saveName }]
+        let beside := frameRegistry #[{ keys := keys "s-q", command := Files.saveName }]
+        pure
+          (["s-q", "s-h", "M-s-h"].all
+              (fun text =>
+                ((menuShown (bound text)).bind (keyShown · Files.saveName)) == some none) &&
+            ((menuShown beside).bind (keyShown · Files.saveName)) == some (equivalent 's') &&
+            (menuShown beside).map (·.systemKeys) == some Menu.standard.systemKeys) }]
+
+/-- The registry of the clipboard command checks: the menu bar's compiled
+bindings, for the owner `compiled`, and `config` as config's bindings. -/
+def clipRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
+  (({} : Config.Registry).replaceBindings .compiled Menu.bindings).replaceBindings .config config
+
+/-- What a step of the clipboard command checks is handed: evil's commands
+and the minibuffer's, then `commands`, with the active keymaps and the menu
+bar `clipRegistry config` makes, as a host's are. -/
+def clipHanded (config : Array Config.KeyBinding := #[])
+    (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
+  let registry := clipRegistry config
+  { evilHanded Minibuffer.commands
+      commands with
+    maps := registry.activeMaps Vim.Default.scheme
+    menu := some (registry.menuOf Menu.standard) }
+
+/-- A driver of the clipboard command checks over the text and cursor
+`fixture` says, with the unnamed register holding `evilSentinel`, on the
+editor's models with the clipboard model `clipboard`, each step handed
+`handed`. -/
+def clipDriver (fixture : String) (clipboard : ClipboardModel := {})
+    (handed : Loop.Keys Vim.Default.scheme := clipHanded) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  (Loop.Driver.over handed (fun _ => none)
+      (do
+        return (← evilState contents head).setRegister Evil.unnamed evilSentinel)
+      { editorModel with clipboard }).toOption
+
+/-- `driver` once the command `name` was chosen: by pressing the key string
+`chord` when `byKey`, and from its menu item otherwise. -/
+def clipRan (byKey : Bool) (name chord : String) (driver : EvilDriver) : EvilDriver :=
+  if byKey then evilFed driver chord else (driver.feed { event := .menu name, stamp := 0 }).1
+
+/-- What the scheme reports of the focused view of `driver`. -/
+def clipReport (driver : EvilDriver) : InputScheme.Report :=
+  Vim.Default.scheme.report driver.loop.input driver.loop.state.frame.focused
+
+/-- The keys `typed` pressed from the text and cursor `fixture` says, on the
+clipboard model `clipboard`, and then the command `name` chosen by `chord`
+when `byKey` and by its menu item otherwise: what they left, the text the
+clipboard model then holds, and the scheme's report of the focused
+view. -/
+def clipLeft (byKey : Bool) (name chord fixture typed : String) (clipboard : ClipboardModel) :
+    Option (EvilEdited × Option String × InputScheme.Report) :=
+  (clipDriver fixture clipboard).map fun driver =>
+    let after := clipRan byKey name chord (evilFed driver typed)
+    (evilLeft after, after.model.clipboard.held, clipReport after)
+
+/-- A prompt opened over `a|b` and `A` typed in it, on the clipboard model
+`clipboard`, and then the command `name` chosen by `chord` when `byKey` and
+by its menu item otherwise: what the minibuffer's view shows, what the asking
+view shows, what the echo area says, the text the clipboard model holds,
+and whether the prompt is still open. -/
+def clipInPrompt (byKey : Bool) (name chord : String) (clipboard : ClipboardModel := {}) :
+    Option (String × String × String × Option String × Bool) :=
+  let ask : Dispatched := fun _ => do
+    discard <| prompt "Name: " { command := "greet" }
+    return none
+  (clipDriver "a|b" clipboard (clipHanded (commands := [("ask", ask)]))).map fun driver =>
+    let (asking, _) := driver.stepped (driver.loop.runNamed driver.handed "ask")
+    let after := clipRan byKey name chord (evilFed asking "A")
+    (evilShown after ⟨1⟩, evilShown after, after.loop.state.echo, after.model.clipboard.held,
+      after.loop.state.prompt.isSome)
+
+/-- Whether `holds` of a command chosen by its chord and of one chosen by
+its menu item. -/
+def bothWays (holds : Bool → Bool) : Bool :=
+  holds true && holds false
+
+/-- What a command that gave up with `reason` says in the echo area, after
+its name. -/
+def gaveUpSaying (name reason : String) : String :=
+  s!"{name}: {reason}"
+
+/-- The checks of the Edit menu's clipboard commands
+(`Editor/Evil/Clipboard.lean`): Cut, Copy, Paste and Select All, each by
+its chord and by its menu item, in each Vim state, on the loop's driver over
+the editor's models with the registry's active keymaps and the clipboard
+model. -/
+def clipboardCommandChecks : List Check :=
+  [{  name :=
+        "Copy in visual over part of a line leaves that text in the clipboard model and the view in normal state; in visual-line it leaves the lines, line-wise; in normal state it gives up with nothingSelected in the echo area and the clipboard model holds what it held"
+      run :=
+        pure <|
+          !Evil.nothingSelected.isEmpty &&
+            bothWays fun byKey =>
+              let copy := clipLeft byKey Evil.copyName "s-c"
+              let normal := vimDefaultReport ""
+              copy "foo |bar baz" "v l l" { held := some "before" } ==
+                  some (⟨"foo |bar baz", charwise "bar", false, ""⟩, some "bar", normal) &&
+                copy "ab\nc|d\nef" "V" { held := some "before" } ==
+                  some (⟨"ab\n|cd\nef", linewise "cd\n", false, ""⟩, some "cd\n", normal) &&
+                copy "foo |bar" "" { held := some "before" } ==
+                  some
+                    (⟨"foo |bar", asItWas, false, gaveUpSaying Evil.copyName Evil.nothingSelected⟩,
+                      some "before", normal) },
+    { name :=
+        "Cut in visual and visual-line removes the selection, leaves it in the clipboard model, and one u gives back the text; it is one step of the history; in normal state it gives up with nothingSelected and the buffer and the clipboard model are as they were; with a clipboard not available it deletes, keeps the text in the unnamed register and says so"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let cut := clipLeft byKey Evil.cutName "s-x"
+            let normal := vimDefaultReport ""
+            let undone (fixture typed : String) : Option (Option (Nat × Bool) × Option String) :=
+              (clipDriver fixture).map fun driver =>
+                let ran := clipRan byKey Evil.cutName "s-x" (evilFed driver typed)
+                (evilHistory ran, evilText (evilFed ran "u"))
+            cut "foo |bar baz" "v l l" { held := some "before" } ==
+                some (⟨"foo | baz", charwise "bar", false, ""⟩, some "bar", normal) &&
+              cut "ab\nc|d\nef" "V" { held := some "before" } ==
+                some (⟨"ab\n|ef", linewise "cd\n", false, ""⟩, some "cd\n", normal) &&
+              undone "foo |bar baz" "v l l" == some (some (2, false), some "foo bar baz") &&
+              undone "ab\nc|d\nef" "V" == some (some (2, false), some "ab\ncd\nef") &&
+              cut "foo |bar" "" { held := some "before" } ==
+                some
+                  (⟨"foo |bar", asItWas, false, gaveUpSaying Evil.cutName Evil.nothingSelected⟩,
+                    some "before", normal) &&
+              cut "foo |bar baz" "v l l" { available := false } ==
+                some
+                  (⟨"foo | baz", charwise "bar", false, Evil.clipboardUnavailable⟩, none, normal) },
+    { name :=
+        "Cut in visual replaces the last change, as \" + d does: after an x, a . after it leaves what a . after \" + d leaves (a change over a selection, not repeated), not a second x; a . after a Copy repeats the x, as a . after \" + y does"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let repeated (chord name : String) : Option (EvilEdited × Option String) :=
+              (clipDriver "foo |bar bar bar").map fun driver =>
+                let after := evilFed (clipRan byKey name chord (evilFed driver "x v l l")) "."
+                (evilLeft after, after.model.clipboard.held)
+            let cut := repeated "s-x" Evil.cutName
+            let copied := repeated "s-c" Evil.copyName
+            cut.isSome && cut == evilClipped "foo |bar bar bar" "x v l l \" + d ." &&
+              (cut.map fun left =>
+                  (left.1.shown, left.1.echo.endsWith (Evil.notRepeated Evil.overSelection))) ==
+                some ("foo |bar bar", true) &&
+              copied.isSome &&
+              copied == evilClipped "foo |bar bar bar" "x v l l \" + y ." &&
+              (copied.map (·.1.shown)) == some "foo |r bar bar" },
+    { name :=
+        "Paste called with a report that is not exclusive, in no state whose run table has an entry for it, puts the clipboard's text before the cursor, as \" + P does, and leaves the clipboard model as it was"
+      run :=
+        pure <|
+          let pasting : Dispatched := fun call => do
+            Evil.paste { call with report := { call.report with shape := .inclusive } }
+            return none
+          let pasted (fixture : String) (held : String) : Option (EvilEdited × Option String) :=
+            (clipDriver fixture { held := some held }
+                  (clipHanded (commands := [("t-paste", pasting)]))).map
+              fun driver =>
+              let (after, _) := driver.stepped (driver.loop.runNamed driver.handed "t-paste")
+              (evilLeft after, after.model.clipboard.held)
+          pasted "a|b" "XY" == evilClipped "a|b" "\" + P" { held := some "XY" } &&
+            (pasted "a|b" "XY").map (fun left => (left.1.shown, left.2)) ==
+              some ("aX|Yb", some "XY") &&
+            (pasted "a|b\n" "cd\n").map (fun left => (left.1.shown, left.2)) ==
+              some ("|cd\nab\n", some "cd\n") },
+    { name :=
+        "Paste puts the clipboard's text before the cursor in normal state (as \" + P), in place of the selection in visual and visual-line, and at the bar as typed text in insert state and in the minibuffer"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let paste := clipLeft byKey Evil.pasteName "s-v"
+            let held : ClipboardModel := { held := some "XY" }
+            (paste "a|b" "" held).map (·.1) == (evilClipped "a|b" "\" + P" held).map (·.1) &&
+              (paste "a|b" "" held).map (·.1.shown) == some "aX|Yb" &&
+              (paste "a|bcd" "v l" held).map (·.1.shown) == some "aX|Yd" &&
+              (paste "ab\nc|d\nef" "V" held).map (·.1.shown) == some "ab\n|XY\nef" &&
+              paste "a|b" "i" held ==
+                some (⟨"aXY|b", asItWas, true, ""⟩, some "XY", vimDefaultReport "i") &&
+              clipInPrompt byKey Evil.pasteName "s-v" held ==
+                some ("AXY|", "a|b", "", some "XY", true) },
+    { name :=
+        "after a Paste in each of normal, visual, visual-line, insert and minibuffer the clipboard model holds what it held before, and in the visual states the replaced text is in the unnamed register and not the clipboard, and the view is in normal state"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let paste := clipLeft byKey Evil.pasteName "s-v"
+            let held : ClipboardModel := { held := some "XY" }
+            let normal := vimDefaultReport ""
+            (paste "a|b" "" held).map (fun left => (left.1.register, left.2)) ==
+                some (asItWas, (some "XY", normal)) &&
+              (paste "a|bcd" "v l" held).map (fun left => (left.1.register, left.2)) ==
+                some (charwise "bc", (some "XY", normal)) &&
+              (paste "ab\nc|d\nef" "V" held).map (fun left => (left.1.register, left.2)) ==
+                some (linewise "cd\n", (some "XY", normal)) &&
+              (paste "a|b" "i" held).map (·.2.1) == some (some "XY") &&
+              (clipInPrompt byKey Evil.pasteName "s-v" held).map (·.2.2.2.1) == some (some "XY") },
+    { name :=
+        "Paste with a clipboard model holding no text gives up with nothingToPut, and with one not available with clipboardUnavailable, in normal, a visual state and insert state, and leaves the buffer as it was"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let refused (fixture typed shown : String) (clipboard : ClipboardModel)
+              (reason : String) : Bool :=
+              match clipLeft byKey Evil.pasteName "s-v" fixture typed clipboard with
+              | some (left, _, _) =>
+                left.shown == shown && left.register == none && left.echo.endsWith reason &&
+                  (left.echo.splitOn "refused").length == 1
+              | none => false
+            [("a|b", "", "a|b"), ("a|bcd", "v l", "ab|cd"), ("a|b", "i", "a|b")].all
+              fun (fixture, typed, shown) =>
+              refused fixture typed shown {} Evil.nothingToPut &&
+                refused fixture typed shown { available := false } Evil.clipboardUnavailable },
+    { name :=
+        "Select All from normal and from insert state leaves the view in visual-line with one range from offset 0 to the first non-blank of the last line, the cursor on the last line; from visual too"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let all (fixture typed : String) :
+              Option (Option Selection × InputScheme.Report × String) :=
+              (clipDriver fixture).map fun driver =>
+                let after := clipRan byKey Evil.selectAllName "s-a" (evilFed driver typed)
+                (evilSelection after, clipReport after, after.loop.state.echo)
+            let lines (anchor head : Nat) :
+              Option (Option Selection × InputScheme.Report × String) :=
+              some (some { ranges := #[⟨anchor, head⟩], shape := .line }, vimDefaultReport "V", "")
+            all "a|b\ncd\n  ef" "" == lines 0 8 && all "a|b\ncd\n  ef" "i" == lines 0 8 &&
+              all "ab\nc|d\n" "" == lines 0 3 &&
+              all "a|b\ncd" "v" == lines 0 3 &&
+              all "a|b\ncd" "V" == lines 0 3 },
+    { name :=
+        "s-x, s-c, s-v and s-a run the four commands in normal, insert, visual, visual-line and the minibuffer (each leaves what that command leaves there, or its refusal names it), and config's binding of s-c to another command runs that command instead, with the clipboard model as it was"
+      run :=
+        pure <|
+          let greet : Dispatched := fun _ => do
+            message "hello"
+            return none
+          let rebound := clipHanded #[{ keys := keys "s-c", command := "greet" }] [("greet", greet)]
+          let overridden :=
+            (clipDriver "foo |bar baz" { held := some "before" } rebound).map fun driver =>
+              let after := evilFed driver "v l l s-c"
+              (evilLeft after, after.model.clipboard.held, clipReport after)
+          overridden ==
+              some
+                (⟨"foo ba|r baz", asItWas, false, "hello"⟩, some "before", vimDefaultReport "v") &&
+            bothWays fun byKey =>
+              let insertRefused (name chord reason : String) : Bool :=
+                (clipLeft byKey name chord "a|b" "i" { held := some "before" }).map
+                    (fun left => (left.1.shown, left.1.echo, left.2.1)) ==
+                  some ("a|b", gaveUpSaying name reason, some "before")
+              insertRefused Evil.copyName "s-c" Evil.nothingSelected &&
+                insertRefused Evil.cutName "s-x" Evil.nothingSelected &&
+                clipInPrompt byKey Evil.copyName "s-c" { held := some "before" } ==
+                  some
+                    ("A|", "a|b", gaveUpSaying Evil.copyName Evil.nothingSelected, some "before",
+                      true) &&
+                clipInPrompt byKey Evil.cutName "s-x" { held := some "before" } ==
+                  some
+                    ("A|", "a|b", gaveUpSaying Evil.cutName Evil.nothingSelected, some "before",
+                      true) &&
+                clipInPrompt byKey Evil.selectAllName "s-a" ==
+                  some
+                    ("A|", "a|b", gaveUpSaying Evil.selectAllName Evil.noLineSelection, none,
+                      true) &&
+                (clipLeft byKey Evil.copyName "s-c" "a|b\ncd" "V j" {}).map (·.2.1) ==
+                  some (some "ab\ncd\n") },
+    { name :=
+        "a Cut or Copy refused (nothing selected) or stopped by the interrupt before any one of its requests leaves the clipboard model as it was, and a refused or stopped Cut leaves the buffer as it was"
+      run :=
+        pure <|
+          let swept (byKey : Bool) (name chord : String) (whole : EvilEdited × Option String) :
+            Bool :=
+            match clipDriver "foo |bar baz" { held := some "before" } with
+            | none => false
+            | some driver =>
+              let selected := evilFed driver "v l l"
+              let ran (asks : Option Nat) : EvilEdited × Option String :=
+                let after :=
+                  clipRan byKey name chord
+                    { selected with
+                      model :=
+                        { selected.model with
+                          watch := { selected.model.watch with arrivesAfter := asks } } }
+                (evilLeft after, after.model.clipboard.held)
+              let stopped : EvilEdited × Option String :=
+                (⟨"foo ba|r baz", asItWas, false, s!"{Vim.operateCommand}: interrupted"⟩,
+                  some "before")
+              let runs := (List.range 80).map fun asks => ran (some asks)
+              ran none == whole && runs.all (fun run => run == stopped || run == whole) &&
+                (runs.filter (· == stopped)).length > 4 &&
+                runs.getLast? == some whole
+          swept true Evil.cutName "s-x" (⟨"foo | baz", charwise "bar", false, ""⟩, some "bar") &&
+            swept false Evil.copyName "s-c"
+              (⟨"foo |bar baz", charwise "bar", false, ""⟩, some "bar") &&
+            bothWays fun byKey =>
+              [(Evil.cutName, "s-x"), (Evil.copyName, "s-c")].all fun (name, chord) =>
+                (clipLeft byKey name chord "foo |bar" "" { held := some "before" }).map
+                    (fun left => (left.1.shown, left.2.1)) ==
+                  some ("foo |bar", some "before") }]
 
 /-- What the watch model answers a start of `target` coalesced as
 `coalescing`, made at `now`. -/
@@ -23208,6 +25678,476 @@ def fileWatchRunnerChecks : List Check :=
         let allEnded ← eventually (return (← watches.watching) == 0)
         return annasEnded && one && allEnded }]
 
+/-! ## A child's environment, looked up for its directory -/
+
+/-- What `mise env --json` prints, in its layout: one name a line, indented
+two spaces, with a `PATH` of 400 characters. -/
+def miseOutput : String :=
+  let path := String.ofList (List.replicate 400 'p')
+  "{\n  \"PATH\": \"" ++ path ++
+    "\",\n  \"MACOSX_DEPLOYMENT_TARGET\": \"27.2\",\n  \"RUST\": \"1.98\"\n}\n"
+
+/-- Whether `parseVariables` reads `bytes` as `expected`. -/
+def readsVariables (bytes : ByteArray) (expected : Array (String × String)) : Bool :=
+  match Process.parseVariables bytes with
+  | .ok variables => variables == expected
+  | .error _ => false
+
+/-- Whether `parseVariables` refuses `text` with `why`. -/
+def refusesVariables (text : String) (why : String) : Bool :=
+  match Process.parseVariables text.toUTF8 with
+  | .error said => said == why
+  | .ok _ => false
+
+/-- An entry of a lookup that failed with `failure`, its config files' stamps
+`stamps`. -/
+def failedEntry (failure : Process.Failure) (stamps : Array (Option File.Stamp) := #[]) :
+    Process.Entry :=
+  { stamps, found := .failed failure }
+
+/-- The checks of the pure part of a child's environment
+(`Editor/Process/Environment.lean`): the parser of what mise prints, how the
+lookup's variables and a command's own environment combine, the config files
+whose stamps keep an entry, the shared state's answers and the messages. -/
+def processEnvironmentChecks : List Check :=
+  [{  name :=
+        "parseVariables reads mise's layout, a multi-line object with a PATH of 400 characters"
+      run :=
+        pure
+          (readsVariables miseOutput.toUTF8
+            #[("PATH", String.ofList (List.replicate 400 'p')),
+              ("MACOSX_DEPLOYMENT_TARGET", "27.2"), ("RUST", "1.98")]) },
+    { name :=
+        "parseVariables reads every escape, a surrogate pair among them, and the empty object; the last of a name that comes twice wins"
+      run :=
+        pure
+          (readsVariables
+              "{\"A\":\"\\\" \\\\ \\/ \\b \\f \\n \\r \\t \\u00e9 \\ud83d\\ude00\",\"B\":\"1\",\"B\":\"2\"}".toUTF8
+              #[("A", "\" \\ / \x08 \x0c \n \r \t é 😀"), ("B", "2")] &&
+            readsVariables " { } ".toUTF8 #[]) },
+    { name :=
+        "parseVariables refuses a number, null, a nested object, an array, trailing text, bytes that are not UTF-8, a name holding =, an empty name and a NUL, each with its reason"
+      run :=
+        pure
+          (refusesVariables "{\"A\":1}" "a value is not a string" &&
+            refusesVariables "{\"A\":null}" "a value is not a string" &&
+            refusesVariables "{\"A\":{}}" "a value is not a string" &&
+            refusesVariables "[\"A\"]" "it is not an object" &&
+            refusesVariables "{\"A\":\"a\"} x" "there is more after the object" &&
+            (match Process.parseVariables ⟨#[0x7B, 0xFF, 0x7D]⟩ with
+            | .error why => why == "it is not UTF-8"
+            | .ok _ => false) &&
+            refusesVariables "{\"A=B\":\"a\"}" "the name A=B holds =" &&
+            refusesVariables "{\"\":\"a\"}" "a name is empty" &&
+            refusesVariables "{\"A\":\"a\\u0000\"}" "a string holds a NUL" &&
+            refusesVariables "{\"A\":\"a\nb\"}" "a string holds a control character" &&
+            refusesVariables "{\"A\":\"\\ud83d\"}"
+              "a high surrogate is not followed by a low one") },
+    { name :=
+        "a lookup's variables are set over the editor's, the command's own set wins over one of the same name, its unset removes one, and clear drops them all"
+      run :=
+        let variables := #[("PATH", "/m/bin"), ("A", "mise"), ("DROP", "x")]
+        pure
+          (Process.Environment.over variables {} == { set := variables } &&
+            Process.Environment.over variables { set := #[("A", "own")], unset := #["DROP"] } ==
+              { set := #[("PATH", "/m/bin"), ("A", "own")], unset := #["DROP"] } &&
+            Process.Environment.over variables { clear := true, set := #[("ONLY", "x")] } ==
+              { clear := true, set := #[("ONLY", "x")] }) },
+    { name := "configPaths of /p/d is mise's four config names in /p/d, then in /p, then in /"
+      run :=
+        let four (directory : String) : Array System.FilePath :=
+          #[s!"{directory}mise.toml", s!"{directory}.mise.toml", s!"{directory}.tool-versions",
+                s!"{directory}mise.local.toml"].map
+            System.FilePath.mk
+        pure
+          (Process.configPaths "/p/d" == four "/p/d/" ++ four "/p/" ++ four "/" &&
+            Process.configPaths "/p/d/" == Process.configPaths "/p/d") },
+    { name :=
+        "the shared state gives back the entry a record kept; a failure recorded says its message once, the same failure again says nothing, and with new stamps it says it again"
+      run :=
+        let state : Process.Environments := {}
+        let failure := Process.Failure.exited 1 "untrusted"
+        let first := failedEntry failure #[none]
+        let message := Process.failureMessage "/p/d" failure
+        let ((), state, said) := state.handle (.record "/p/d" first)
+        let (cached, state, quiet) := state.handle (.cached "/p/d")
+        let cached : Option Process.Entry := cached
+        let ((), state, again) := state.handle (.record "/p/d" first)
+        let ((), _, renewed) :=
+          state.handle (.record "/p/d" (failedEntry failure #[some ⟨1, 0, 3⟩]))
+        let variables : Process.Entry := { stamps := #[], found := .variables #[("A", "a")] }
+        let ((), _, found) := ({} : Process.Environments).handle (.record "/p/e" variables)
+        pure
+          (said == some message && cached == some first && quiet.isNone && again.isNone &&
+            renewed == some message &&
+            found.isNone) },
+    { name := "install drops what was resolved and every entry, and keeps the mode and the limit"
+      run :=
+        let state : Process.Environments :=
+          { host := .window (some "/u"), limit := 7, resolved := some (.mise "/m")
+            entries := #[("/p", failedEntry (.signalled 9))] }
+        let ((), after, said) := state.handle (.install .inherited)
+        pure
+          (after ==
+              { setting := .inherited, host := .window (some "/u"), limit := 7, resolved := none
+                entries := #[] } &&
+            said.isNone) },
+    { name := "the policy is the setting, the mode, what was resolved and the limit"
+      run :=
+        let state : Process.Environments := { setting := .mise none, resolved := some .inherited }
+        let (policy, after, said) := state.handle .policy
+        let policy : Process.Policy := policy
+        pure
+          (policy ==
+              { setting := .mise none, host := .headless, resolved := some .inherited
+                limit := 5000 } &&
+            after == state &&
+            said.isNone) },
+    { name := "each failure's message has its own words"
+      run :=
+        let say := Process.failureMessage "/p/d"
+        let tail := "; its children get the editor's environment"
+        pure
+          (say (.exited 1 "not trusted") ==
+              "environment: /p/d: mise exited with status 1: not trusted" ++ tail &&
+            say (.exited 2 "") == "environment: /p/d: mise exited with status 2" ++ tail &&
+            say (.signalled 9) == "environment: /p/d: mise was ended by signal 9" ++ tail &&
+            say (.unparsable "it is not an object") ==
+              "environment: /p/d: mise's output is not a JSON object of strings: it is not an object" ++
+                tail &&
+            say (.timedOut 5000) ==
+              "environment: /p/d: mise did not finish within 5000 ms and was killed" ++ tail &&
+            say (.refused (.denied "Permission denied")) ==
+              "environment: /p/d: mise could not be run: the system does not allow it: Permission denied" ++
+                tail &&
+            say (.missing (Process.miseCandidates (some "/u"))) ==
+              "environment: /p/d: mise is not at /u/.local/bin/mise, /opt/homebrew/bin/mise or /usr/local/bin/mise" ++
+                tail) },
+    { name :=
+        "what a lookup's run came to: variables for status 0 and an object, and else the failure, with the first line of standard error"
+      run :=
+        let ran (exit : Process.Exit) (stdout stderr : String) : Except ProcessError Process.Ran :=
+          .ok { exit, stdout := stdout.toUTF8, stderr := stderr.toUTF8 }
+        pure
+          (Process.foundOf (ran (.code 0) "{\"A\":\"a\"}" "") == .variables #[("A", "a")] &&
+            Process.foundOf (ran (.code 1) "" "first\nsecond\n") == .failed (.exited 1 "first") &&
+            Process.foundOf (ran (.signal 9) "" "") == .failed (.signalled 9) &&
+            Process.foundOf (ran (.code 0) "[1]" "") ==
+              .failed (.unparsable "it is not an object") &&
+            Process.foundOf (.error .noSuchProcess) == .failed (.refused .noSuchProcess) &&
+            Process.foundOf (.error (.timedOut 5000)) == .failed (.timedOut 5000)) }]
+
+/-- The requests `job` makes when it runs against the job port's model from
+`model`, in order. -/
+def requestsOf {α : Type} (job : JobM α) (model : JobModel) : Array JobRequest :=
+  go 10000 job.run model #[]
+where
+  /-- The requests of `program` from `model`, with `fuel` steps at most. -/
+  go : Nat → Program jobPort (Except String α) → JobModel → Array JobRequest → Array JobRequest
+    | 0, _, _, seen => seen
+    | _, .done _, _, seen => seen
+    | fuel + 1, .step request next, model, seen =>
+      let (reply, after) := JobModel.handle request model
+      go fuel (next reply) after (seen.push request)
+
+/-- A run that ends with the status 0 and prints `stdout`. -/
+def printed (stdout : String) : Except ProcessError Process.Ran :=
+  .ok { exit := .code 0, stdout := stdout.toUTF8, stderr := .empty }
+
+/-- The command the lookup checks start in `/p/d`: a bare `lake`, with a
+variable of its own set and one unset. -/
+def lakeBuild : Process.Command :=
+  { program := "lake", arguments := #["build"]
+    environment := { set := #[("A", "own")], unset := #["DROP"] }, directory := "/p/d" }
+
+/-- What the lookup prints for `/p/d`: a `PATH`, a variable the command sets
+too, one it unsets, and one of its own. -/
+def lookupJson : String :=
+  "{\"PATH\":\"/m/bin:/usr/bin\",\"A\":\"mise\",\"DROP\":\"x\",\"B\":\"b\"}"
+
+/-- `command` with the lookup's variables of `lookupJson` set under its own. -/
+def mergedOf (command : Process.Command) : Process.Command :=
+  { command with
+    environment :=
+      { set := #[("PATH", "/m/bin:/usr/bin"), ("B", "b"), ("A", "own")], unset := #["DROP"] } }
+
+/-- `command` in `directory`. -/
+def movedTo (command : Process.Command) (directory : System.FilePath) : Process.Command :=
+  { command with directory }
+
+/-- A file model holding each of `paths`, written in that order. -/
+def filesAt (paths : List System.FilePath) : FileModel :=
+  paths.foldl (fun model path => model.withFile path "x".toUTF8) {}
+
+/-- `model` with the file at `path` gone. -/
+def withoutFile (model : FileModel) (path : System.FilePath) : FileModel :=
+  { model with files := model.files.filter (·.path != path) }
+
+/-- Whether `requests` read the stamp of any of `paths`. -/
+def stampsAny (requests : Array JobRequest) (paths : List System.FilePath) : Bool :=
+  requests.any fun request =>
+    match request with
+    | .file (.stamp path) => paths.contains path
+    | _ => false
+
+/-- The job model the lookup checks start from: the files `files`, the
+scripts of `mise` at `executable` printing `lookupJson` in each of
+`directories` and of each command merged there, and the environments with
+`setting` and `host`. -/
+def lookupModel (setting : Process.Setting) (host : Process.Host) (files : FileModel)
+    (executable : System.FilePath := "/opt/mise") (directories : List System.FilePath := ["/p/d"])
+    (reply : Except ProcessError Process.Ran := printed lookupJson) (takes : Nat := 0) : JobModel :=
+  let scripts : Array Process.Script :=
+    directories.toArray.flatMap fun directory =>
+      #[{ command := Process.lookupCommand executable directory, reply, takes },
+        { command := mergedOf (movedTo lakeBuild directory), reply := printed "built" },
+        { command := movedTo lakeBuild directory, reply := printed "built inherited" }]
+  { files, processes := { scripts }, environments := { setting, host } }
+
+/-- A run of `command` that the model answers. -/
+def runsOn (command : Process.Command) : JobM Bool := do
+  return (← Process.run command 1000) matches .ok _
+
+/-- Runs `job` on the model, and gives the model after it. -/
+def after {α : Type} (job : JobM α) (model : JobModel) : JobModel :=
+  (job.runModel model).2
+
+/-- The checks of a child's environment on the models (AC 1 to 5 of
+`docs/design/concurrency.md`, "A child's environment, as built"): each runs
+jobs with `JobM.runModel` on one `JobModel`, carried from job to job. -/
+def environmentLookupChecks : List Check :=
+  let candidates := ["/opt/homebrew/bin/mise", "/usr/local/bin/mise"].map System.FilePath.mk
+  [{  name :=
+        "auto in the window mode runs the first candidate that exists: Homebrew's, with nothing under the home directory, and the home directory's once it is there"
+      run :=
+        let homebrew :=
+          lookupModel .auto (.window (some "/u")) (filesAt candidates) "/opt/homebrew/bin/mise"
+        let home :=
+          lookupModel .auto (.window (some "/u")) (filesAt ("/u/.local/bin/mise" :: candidates))
+            "/u/.local/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) homebrew).processes.started ==
+              #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            (after (runsOn lakeBuild) home).processes.started ==
+              #[Process.lookupCommand "/u/.local/bin/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "auto in the window mode keeps what it resolved until a reload: with Homebrew's mise gone, a start in another directory still runs it and reads no candidate's stamp, and after install the next start resolves again"
+      run :=
+        let all : List System.FilePath := "/u/.local/bin/mise" :: candidates
+        let model :=
+          lookupModel .auto (.window (some "/u")) (filesAt candidates) "/opt/homebrew/bin/mise"
+            (directories := ["/p/d", "/p/e"])
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                scripts :=
+                  model.processes.scripts.push
+                    { command := Process.lookupCommand "/usr/local/bin/mise" "/p/d"
+                      reply := printed lookupJson } } }
+        let inE := movedTo lakeBuild "/p/e"
+        let once := after (runsOn lakeBuild) model
+        let gone := { once with files := withoutFile once.files "/opt/homebrew/bin/mise" }
+        let second := after (runsOn inE) gone
+        let installed := { second with environments := second.environments.install .auto }
+        let third := after (runsOn lakeBuild) installed
+        pure
+          (second.processes.started ==
+              #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild,
+                Process.lookupCommand "/opt/homebrew/bin/mise" "/p/e", mergedOf inE] &&
+            !stampsAny (requestsOf (runsOn inE) gone) all &&
+            stampsAny (requestsOf (runsOn lakeBuild) installed) all &&
+            third.processes.started ==
+              second.processes.started ++
+                #[Process.lookupCommand "/usr/local/bin/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "mise with no path runs the first candidate that exists, in the headless mode and in the window mode"
+      run :=
+        let headless :=
+          lookupModel (.mise none) .headless (filesAt candidates) "/opt/homebrew/bin/mise"
+        let window :=
+          lookupModel (.mise none) (.window (some "/u"))
+            (filesAt ("/u/.local/bin/mise" :: candidates)) "/u/.local/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) headless).processes.started ==
+              #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            (after (runsOn lakeBuild) window).processes.started ==
+              #[Process.lookupCommand "/u/.local/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            (after (runsOn lakeBuild) headless).reported.isEmpty) },
+    { name :=
+        "auto in the window mode with none of the candidates starts the child as it would have"
+      run :=
+        pure
+          ((after (runsOn lakeBuild)
+                (lookupModel .auto (.window (some "/u")) {})).processes.started ==
+            #[lakeBuild]) },
+    { name := "auto in the headless mode starts the child as it would have and reads no stamp"
+      run :=
+        let model :=
+          lookupModel .auto .headless (filesAt ("/u/.local/bin/mise" :: candidates))
+            "/opt/homebrew/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) model).processes.started == #[lakeBuild] &&
+            !(requestsOf (runsOn lakeBuild) model).any fun request =>
+                request matches .file (.stamp _)) },
+    { name :=
+        "with mise at a path, a run first runs mise env --json in its directory, then the command with the lookup's variables under its own: the bare name keeps its name and gets the lookup's PATH"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {}
+        pure
+          ((after (runsOn lakeBuild) model).processes.started ==
+            #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
+    { name := "with mise at a path, a streaming start gets the lookup's variables the same way"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {}
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                streams :=
+                  #[{ command := mergedOf lakeBuild, steps := #[.write .out "built\n".toUTF8] }] } }
+        let starts : JobM Bool := do
+          return (← Process.start lakeBuild { bound := 64 }) matches .ok _
+        pure
+          ((starts.runModel model).1 == .finished true &&
+            (after starts model).processes.started ==
+              #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "a second start in the directory runs no lookup; after mise.toml there or a parent's .tool-versions is rewritten, or a config file appears, the next one looks up again"
+      run :=
+        let model :=
+          lookupModel (.mise (some "/opt/mise")) .headless
+            (filesAt ["/p/d/mise.toml", "/p/.tool-versions"])
+        let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        let rewritten :=
+          after (runsOn lakeBuild)
+            { twice with files := twice.files.withFile "/p/d/mise.toml" "y".toUTF8 }
+        let parent :=
+          after (runsOn lakeBuild)
+            { rewritten with files := rewritten.files.withFile "/p/.tool-versions" "y".toUTF8 }
+        let appeared :=
+          after (runsOn lakeBuild)
+            { parent with files := parent.files.withFile "/.mise.toml" "y".toUTF8 }
+        let merged := mergedOf lakeBuild
+        pure
+          (once.processes.started == #[lookup, merged] &&
+            twice.processes.started == #[lookup, merged, merged] &&
+            rewritten.processes.started == #[lookup, merged, merged, lookup, merged] &&
+            parent.processes.started == #[lookup, merged, merged, lookup, merged, lookup, merged] &&
+            appeared.processes.started ==
+              #[lookup, merged, merged, lookup, merged, lookup, merged, lookup, merged]) },
+    { name :=
+        "a start in another directory runs its own lookup, and a reload's install drops every entry"
+      run :=
+        let model :=
+          lookupModel (.mise (some "/opt/mise")) .headless {} (directories := ["/p/d", "/p/e"])
+        let inD := after (runsOn lakeBuild) model
+        let inE := after (runsOn (movedTo lakeBuild "/p/e")) inD
+        let installed :=
+          { inE with environments := inE.environments.install (.mise (some "/opt/mise")) }
+        let again := after (runsOn lakeBuild) installed
+        pure
+          (inE.processes.started ==
+              #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild,
+                Process.lookupCommand "/opt/mise" "/p/e", mergedOf (movedTo lakeBuild "/p/e")] &&
+            again.processes.started ==
+              inE.processes.started ++
+                #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "a lookup that exits non-zero starts the child inherited and reports once for the directory; a second start looks up nothing and says nothing"
+      run :=
+        let model :=
+          lookupModel (.mise (some "/opt/mise")) .headless {} (reply :=
+            .ok { exit := .code 1, stdout := .empty, stderr := "not trusted\n".toUTF8 })
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        pure
+          (once.processes.started.back? == some lakeBuild &&
+            once.reported == #[Process.failureMessage "/p/d" (.exited 1 "not trusted")] &&
+            twice.processes.started == once.processes.started.push lakeBuild &&
+            twice.reported == once.reported) },
+    { name :=
+        "a lookup whose output is not a JSON object of strings starts the child inherited and reports once for the directory"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {} (reply := printed "[1]")
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        pure
+          (once.processes.started.back? == some lakeBuild &&
+            once.reported == #[Process.failureMessage "/p/d" (.unparsable "it is not an object")] &&
+            twice.processes.started == once.processes.started.push lakeBuild &&
+            twice.reported == once.reported) },
+    { name :=
+        "a lookup that outlives the default limit of 5000 ms is killed at its start plus the limit, the child starts inherited, and the directory is reported once"
+      run :=
+        let model :=
+          { lookupModel (.mise (some "/opt/mise")) .headless {} (takes := 6000) with now := 100 }
+        let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        pure
+          (once.processes.started == #[lookup, lakeBuild] && once.processes.killed == #[lookup] &&
+            once.now == 5100 &&
+            once.reported == #[Process.failureMessage "/p/d" (.timedOut 5000)] &&
+            twice.processes.started == #[lookup, lakeBuild, lakeBuild] &&
+            twice.reported == once.reported) },
+    { name :=
+        "with the inherited setting, a run and a start start their command exactly, read no stamp, and make only the policy request beyond the process request"
+      run :=
+        let model :=
+          lookupModel .inherited (.window (some "/u"))
+            (filesAt ("/u/.local/bin/mise" :: candidates))
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                streams := #[{ command := lakeBuild, steps := #[.write .out "built\n".toUTF8] }] } }
+        let starts : JobM Bool := do
+          return (← Process.start lakeBuild { bound := 64 }) matches .ok _
+        pure
+          ((after (runsOn lakeBuild) model).processes.started == #[lakeBuild] &&
+            (after starts model).processes.started == #[lakeBuild] &&
+            (after (runsOn lakeBuild) model).files == model.files &&
+            requestsOf (runsOn lakeBuild) model ==
+              #[.environment .policy, .process (.run lakeBuild 1000)]) },
+    { name :=
+        "a command that clears its environment runs no lookup, and a relative directory or program is refused as before, with no lookup"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {}
+        let cleared := { lakeBuild with environment := { clear := true } }
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                scripts :=
+                  model.processes.scripts.push { command := cleared, reply := printed "" } } }
+        let relative := movedTo lakeBuild "p/d"
+        let program := { lakeBuild with program := "bin/lake" }
+        let refused (command : Process.Command) (error : ProcessError) : Bool :=
+          match (Process.run command 1000).runModel model with
+          | (.finished (.error refusal), after) =>
+            refusal == error && after.processes.started.isEmpty
+          | _ => false
+        pure
+          ((after (runsOn cleared) model).processes.started == #[cleared] &&
+            refused relative .relativeDirectory &&
+            refused program .relativeProgram) },
+    { name :=
+        "mise with no path and none of the candidates reports mise is not at them once for each directory, and runs no lookup"
+      run :=
+        let model :=
+          lookupModel (.mise none) (.window (some "/u")) {} (directories := ["/p/d", "/p/e"])
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        let other := after (runsOn (movedTo lakeBuild "/p/e")) twice
+        let missing := Process.Failure.missing (Process.miseCandidates (some "/u"))
+        pure
+          (other.processes.started == #[lakeBuild, lakeBuild, movedTo lakeBuild "/p/e"] &&
+            other.reported ==
+              #[Process.failureMessage "/p/d" missing, Process.failureMessage "/p/e" missing]) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -23220,6 +26160,8 @@ def checks : List Check :=
     ownerChecks ++
     fileRunnerChecks ++
     processChecks ++
+    processEnvironmentChecks ++
+    environmentLookupChecks ++
     fileWatchModelChecks ++
     fileWatchRunnerChecks ++
     setupChecks ++
@@ -23240,6 +26182,8 @@ def checks : List Check :=
     textModelStepChecks ++
     fileModelChecks ++
     sceneChecks ++
+    modeLineChecks ++
+    paddingChecks ++
     faceChecks ++
     displayChecks ++
     frameDisplayChecks ++
@@ -23279,11 +26223,17 @@ def checks : List Check :=
     fileCommandChecks ++
     openFilesChecks ++
     dispatchQuitChecks ++
+    systemQuitChecks ++
     exChecks ++
     fileReloadChecks ++
     stalenessChecks ++
     autoReloadChecks ++
     bufferCommandChecks ++
+    themeChecks ++
+    appearanceChecks ++
+    faceVocabularyChecks ++
+    solarizedChecks ++
+    fairyFlossChecks ++
     evilRestChecks ++
     evilMotionChecks ++
     evilStateChecks ++
@@ -23300,7 +26250,9 @@ def checks : List Check :=
     evilRepeatChecks ++
     viewChecks ++
     frameCommandChecks ++
-    titleChecks
+    titleChecks ++
+    menuChecks ++
+    clipboardCommandChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

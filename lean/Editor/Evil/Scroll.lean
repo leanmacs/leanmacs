@@ -151,7 +151,8 @@ def scroll (amount : Scroll.Amount) (down : Bool) (call : Call) : EditorM Unit :
           call.target.scrollTo offset
         let move (position : Nat) (lines : Int) (goal : Option Nat) : EditorM Display.Moved :=
           Display.linesFrom
-            { snapshot := area.snapshot, width := area.width, position, lines, goal }
+            { snapshot := area.snapshot, width := area.width, across := area.padding.across
+              position, lines, goal }
         let moved ← move range.head (if down then (rows : Int) else -(rows : Int)) none
         let text := call.target.buffer.text
         let rule := restOf call.report

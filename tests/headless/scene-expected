@@ -1,10 +1,10 @@
 key arrived: i KeyI -
-scene 0x0, focused 0, echo "", preedit -, published 2
-view 0 0,0 0x0: "hello", scroll 0, selections 5..5
-status 0: status.state "insert", status.name "scratch", status.modified "[+]"
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 2, theme "default"
+view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 reload 1: installed, 2 chunks, 1 commands
 spawn count: job 1
 job 1 count: ok
-scene 0x0, focused 0, echo "", preedit -, published 9
-view 0 0,0 0x0: "hello", scroll 0, selections 5..5
-status 0: status.state "insert", status.name "scratch", status.modified "[+]"
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 9, theme "default"
+view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4

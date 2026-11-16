@@ -14,7 +14,7 @@ use editor_layout::cache::Counters;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::frame::Frame;
 use editor_layout::scene::{
-    Changes, Cursor, Decoration, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId,
+    Changes, Cursor, Decoration, Padding, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -82,6 +82,8 @@ fn scene_rows(text: &TextRef, width: u32, cursor: usize, rows: u32) -> Scene {
             cursor: Cursor::default(),
             decorations: vec![],
             status: vec![],
+            status_face: None,
+            padding: Padding::default(),
         }],
         ..Scene::default()
     }
@@ -162,8 +164,10 @@ fn a_query_reuses_what_a_frame_laid_out() {
     let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
     layout.frame(&scene(&text, 400, 0));
     let queried = counted(&mut layout, |layout| {
-        layout.rows_shown(&text, 400.0, 5.0 * 16.0, 0).unwrap();
-        layout.lines_from(&text, 400.0, 0, 3, None).unwrap();
+        layout
+            .rows_shown(&text, 400.0, 5.0 * 16.0, Padding::default(), 0)
+            .unwrap();
+        layout.lines_from(&text, 400.0, 0, 0, 3, None).unwrap();
     });
     assert_eq!((queried.shaped, queried.broken), (0, 0));
 }
@@ -596,7 +600,10 @@ fn a_default_face_whose_lines_have_no_height_lays_out_a_row_for_each_pixel_of_th
         assert_eq!(again, count(0, 0, 160), "{flat:?}");
         // And the rows query likewise.
         let queried = counted(&mut layout, |layout| {
-            rows = layout.rows_shown(&text, 200.0, 160.0, 0).unwrap().len();
+            rows = layout
+                .rows_shown(&text, 200.0, 160.0, Padding::default(), 0)
+                .unwrap()
+                .len();
         });
         assert_eq!((rows, queried), (160, count(0, 0, 160)), "{flat:?}");
         // A move counts lines, not pixels: three lines down is on the
@@ -604,7 +611,7 @@ fn a_default_face_whose_lines_have_no_height_lays_out_a_row_for_each_pixel_of_th
         let mut row = None;
         let moved = counted(&mut layout, |layout| {
             let to = layout
-                .lines_from(&text, 200.0, 0, 3, None)
+                .lines_from(&text, 200.0, 0, 0, 3, None)
                 .unwrap()
                 .position;
             row = text.snapshot.offset_to_point(to).map(|point| point.row);
@@ -650,6 +657,7 @@ fn with_status(text: &TextRef, fields: &[(&str, &str)], faces: &[(&str, Face)]) 
         .map(|(text, face)| StatusField {
             text: (*text).to_owned(),
             face: (*face).to_owned(),
+            ..StatusField::default()
         })
         .collect();
     scene
@@ -688,19 +696,26 @@ fn an_unchanged_status_row_is_not_shaped_again() {
         layout.frame(&moved);
     });
     assert_eq!(moving, 0);
-    // Another text is shaped, and only it.
+    // Another text of one field is shaped, and only that field: each
+    // field is a line of its own.
     let fields = [("words.txt", "name"), (" 2:1", "position")];
     let changed = bytes_shaped(&mut layout, |layout| {
         layout.frame(&with_status(&text, &fields, &[]));
     });
-    assert_eq!(changed, 13);
-    // The same glyphs in fields cut another way are the same line while
-    // their faces come to one font.
+    assert_eq!(changed, 4);
+    // The same glyphs in fields cut another way are other fields, and are
+    // shaped again.
     let fields = [("words", "name"), (".txt 2:1", "position")];
     let recut = bytes_shaped(&mut layout, |layout| {
         layout.frame(&with_status(&text, &fields, &[]));
     });
-    assert_eq!(recut, 0);
+    assert_eq!(recut, 13);
+    // A field that moves to another place in the row is found again.
+    let fields = [(".txt 2:1", "position"), ("words", "name")];
+    let moved = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&with_status(&text, &fields, &[]));
+    });
+    assert_eq!(moved, 0);
     // A font change shapes it again, with every row.
     layout.shaper().change_fonts();
     let reshaped = bytes_shaped(&mut layout, |layout| {
@@ -742,8 +757,8 @@ fn a_paint_only_change_does_not_shape_the_status_row() {
         assert_eq!(repainted, 0, "{faces:?}");
         assert!(status.is_some(), "{faces:?}");
     }
-    // A face of a field that sets a font attribute shapes the status row
-    // again, and no row of the text.
+    // A face of a field that sets a font attribute shapes that field
+    // again, and no other field and no row of the text.
     let bold = [(
         "name",
         Face {
@@ -757,8 +772,9 @@ fn a_paint_only_change_does_not_shape_the_status_row() {
         });
         assert_eq!(counted, count(0, 0, 20));
     });
-    assert_eq!(reshaped, 13);
-    // And the mode line's font, which every field is under.
+    assert_eq!(reshaped, 9);
+    // And the mode line's font, which every field is under, shapes them
+    // all.
     let sized = [(
         "mode-line",
         Face {

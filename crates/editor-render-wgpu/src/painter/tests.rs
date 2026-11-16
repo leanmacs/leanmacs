@@ -13,7 +13,9 @@ use std::sync::Arc;
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Paint, Underline, UnderlineStyle};
 use editor_layout::frame::{Area, CursorBox, Frame, FrameRow, ViewFrame};
-use editor_layout::scene::{Cursor, CursorShape, Decoration, Rect, Scene, StatusField, ViewId};
+use editor_layout::scene::{
+    Cursor, CursorShape, Decoration, Rect, Scene, Side, StatusField, ViewId,
+};
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Glyph, ResolvedFontId, VisualLine};
 use editor_render::port::Target;
@@ -119,6 +121,7 @@ fn row(y: f32, glyphs: Vec<Glyph>, runs: Vec<(Range<usize>, Paint)>, hash: u64) 
     let bytes = 0..glyphs.len();
     let width = glyphs.last().map_or(0.0, |last| last.x + last.advance);
     FrameRow {
+        x: 0.0,
         y,
         height: 16.0,
         baseline: 12.0,
@@ -371,6 +374,7 @@ fn dressed_scene() -> Scene {
     shown.status = vec![StatusField {
         text: "st".to_owned(),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     scene
 }
@@ -435,6 +439,55 @@ fn a_view_is_drawn_back_to_front() {
     assert_eq!(drawn, glyphs + status.line.glyphs.len());
 }
 
+#[test]
+fn a_status_rows_boxes_are_filled_in_their_colour() {
+    let rect = Rect {
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 64,
+    };
+    let mut scene = Scene::of_text("ab", rect);
+    let mut faces = theme();
+    faces.push(FaceDef {
+        name: "badge".to_owned(),
+        face: Face {
+            background: Some(GREEN),
+            ..Face::default()
+        },
+    });
+    scene.faces = Some(faces);
+    // A badge padded 3 on the left, in a colour unlike the row's, and a
+    // field padded 2 on the right in the row's own.
+    scene.views[0].status = vec![
+        StatusField {
+            text: "ab".to_owned(),
+            face: "badge".to_owned(),
+            side: Side::Left,
+            padding: 3,
+        },
+        StatusField {
+            text: "c".to_owned(),
+            face: "mode-line".to_owned(),
+            side: Side::Right,
+            padding: 2,
+        },
+    ];
+    let laid = Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene);
+    let status = laid.views[0].status.as_ref().expect("a status row");
+    let mut painter = painter();
+    painter.paint(&laid, target(1.0));
+    // The badge's box, its padding and its text, across exactly the box
+    // and down the row; then its run's background over its glyphs.
+    let badge = status.boxes[0];
+    assert_eq!((badge.x, badge.width, badge.background), (0.0, 26.0, GREEN));
+    let y = status.y as i32;
+    assert_eq!(fills(&painter, GREEN), vec![(0, y, 26, 16), (3, y, 20, 16)]);
+    // The field in the row's colour adds nothing to the row's background.
+    assert_eq!(status.boxes[1].background, GREY);
+    assert_eq!(fills(&painter, GREY), vec![(0, y, 200, 16)]);
+}
+
 /// Where the second view of [`side_by_side`] is.
 const SECOND: (i32, i32) = (150, 90);
 
@@ -447,6 +500,7 @@ fn side_by_side() -> Frame {
     scene.views[0].status.push(StatusField {
         text: "!".to_owned(),
         face: "mark".to_owned(),
+        ..StatusField::default()
     });
     let laid = Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene);
     let mut first = laid.views[0].clone();
@@ -481,10 +535,16 @@ fn every_view_of_a_frame_is_drawn_from_its_own_top_left() {
         quads.iter().copied().chain(moved).collect()
     };
     // The marked runs are one of the text and one of the status row, so
-    // each of their parts is two quads a view.
+    // each of their parts is two quads a view; their backgrounds are three,
+    // with the marked status field's box, under its run's.
     let parts = [
         ("the view's background", QuadKind::Fill, WHITE, 1),
-        ("the marked runs' backgrounds", QuadKind::Fill, YELLOW, 2),
+        (
+            "the marked runs' backgrounds and the marked field's box",
+            QuadKind::Fill,
+            YELLOW,
+            3,
+        ),
         (
             "the selected run's background and the selection's area",
             QuadKind::Fill,
@@ -705,6 +765,64 @@ fn the_glyph_under_a_block_cursor_is_cut_to_the_cursors_area() {
     let aside = Area { x: 100.0, ..CELL };
     let (_, white) = cursor_quads(CursorShape::Block, aside, 1.0);
     assert!(white.is_empty());
+}
+
+#[test]
+fn a_rows_x_moves_its_glyphs_its_run_backgrounds_and_a_block_cursors_glyphs() {
+    // One glyph at 10 across on a red background, in a row that a padded
+    // view puts 8.4 pixels in and 8 down: drawn at 8 (8.4 on its pixel,
+    // as a row's top is), and its cursor's cell 8.4 further in too.
+    let on_red = Paint {
+        foreground: BLACK,
+        background: RED,
+        ..Paint::default()
+    };
+    let at = |x: f32| FrameRow {
+        x,
+        ..row(8.0, vec![glyph(2, 0, 10.0)], vec![(0..1, on_red)], 1)
+    };
+    let cursor = |x: f32| CursorBox {
+        area: Area {
+            x: x + 10.0,
+            y: 8.0,
+            width: 10.0,
+            height: 16.0,
+        },
+        shape: CursorShape::Block,
+        paint: Paint {
+            foreground: WHITE,
+            background: GREEN,
+            ..Paint::default()
+        },
+    };
+    let painted = |x: f32| {
+        let mut shown = view(vec![at(x)]);
+        shown.cursors = vec![cursor(x)];
+        let mut painter = painter();
+        painter.paint(&frame(vec![shown]), target(1.0));
+        (
+            boxes(&quads_of(&painter, QuadKind::Mask, BLACK)),
+            fills(&painter, RED),
+            boxes(&quads_of(&painter, QuadKind::Mask, WHITE)),
+        )
+    };
+    let (glyphs, backgrounds, under) = painted(0.0);
+    let (moved_glyphs, moved_backgrounds, moved_under) = painted(8.4);
+    let by = |quads: Vec<(i32, i32, u32, u32)>| -> Vec<(i32, i32, u32, u32)> {
+        quads
+            .into_iter()
+            .map(|(x, y, width, height)| (x + 8, y, width, height))
+            .collect()
+    };
+    assert_eq!(glyphs.len(), 1);
+    assert_eq!(moved_glyphs, by(glyphs));
+    assert_eq!(backgrounds.len(), 1);
+    assert_eq!(moved_backgrounds, by(backgrounds));
+    // The glyph a block cursor draws again is the row's, moved with it,
+    // and cut to the cursor's cell.
+    assert_eq!(under.len(), 1);
+    assert_eq!(moved_under.len(), 1);
+    assert_eq!(moved_under[0].0, under[0].0 + 8);
 }
 
 #[test]

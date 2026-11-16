@@ -901,7 +901,7 @@ bool editor_ffi_files_load(uint64_t id, const uint8_t *path, size_t path_len,
 bool editor_ffi_files_save(uint64_t id, const editor_ffi_snapshot *snapshot,
                            const uint8_t *path, size_t path_len,
                            const editor_ffi_raw_expect *expect);
-bool editor_ffi_files_stat(uint64_t id, const uint8_t *path, size_t path_len);
+bool editor_ffi_files_stamp(uint64_t id, const uint8_t *path, size_t path_len);
 bool editor_ffi_files_take(uint64_t id, editor_ffi_raw_file_result *out);
 bool editor_ffi_files_cancel(uint64_t id);
 uint64_t editor_ffi_files_pending(void);
@@ -913,10 +913,10 @@ lean_obj_res editor_glue_files_load(uint64_t id, b_lean_obj_arg path,
       editor_ffi_files_load(id, string_bytes(path), string_len(path), limit)));
 }
 
-// `Editor.Ffi.filesStat : UInt64 → @& String → IO Bool`
-lean_obj_res editor_glue_files_stat(uint64_t id, b_lean_obj_arg path) {
+// `Editor.Ffi.filesStamp : UInt64 → @& String → IO Bool`
+lean_obj_res editor_glue_files_stamp(uint64_t id, b_lean_obj_arg path) {
   return lean_io_result_mk_ok(lean_box(
-      editor_ffi_files_stat(id, string_bytes(path), string_len(path))));
+      editor_ffi_files_stamp(id, string_bytes(path), string_len(path))));
 }
 
 // `Editor.Ffi.filesSaveRaw : UInt64 → @& Snapshot → @& String → UInt64 →
@@ -1273,7 +1273,8 @@ typedef struct {
   size_t reason_len;
 } editor_ffi_raw_refusal;
 uint8_t editor_ffi_window_run(uint8_t platform, bool composition,
-                              uint8_t present_mode, uint32_t frame_latency,
+                              uint8_t title_bar, uint8_t present_mode,
+                              uint32_t frame_latency,
                               editor_ffi_raw_refusal *out);
 bool editor_ffi_window_close(uint8_t platform);
 bool editor_ffi_window_request(uint8_t platform, uint8_t request);
@@ -1282,18 +1283,18 @@ bool editor_ffi_window_post_input(uint8_t kind, uint64_t code,
                                   const uint8_t *text, size_t text_len,
                                   const uint8_t *words, size_t words_len);
 
-// `Editor.Ffi.windowRunRaw : Platform → Bool → UInt8 → UInt32 → IO
-// RawWindowRun`. Blocks in Rust until the window has closed. The status is
-// the library's: 0 when the window ran and something drew in it, with an
+// `Editor.Ffi.windowRunRaw : Platform → Bool → TitleBar → UInt8 → UInt32 →
+// IO RawWindowRun`. Blocks in Rust until the window has closed. The status
+// is the library's: 0 when the window ran and something drew in it, with an
 // empty reason; 1 when no window ran and 2 when nothing drew in the window,
-// each with the reason. The present mode's tag and the frame latency are
-// each 0 for none asked.
+// each with the reason. The title bar is the tag of Lean's `TitleBar`, and
+// the present mode's tag and the frame latency are each 0 for none asked.
 lean_obj_res editor_glue_window_run(uint8_t platform, uint8_t composition,
-                                    uint8_t present_mode,
+                                    uint8_t title_bar, uint8_t present_mode,
                                     uint32_t frame_latency) {
   editor_ffi_raw_refusal refusal;
-  uint8_t status = editor_ffi_window_run(platform, composition, present_mode,
-                                         frame_latency, &refusal);
+  uint8_t status = editor_ffi_window_run(platform, composition, title_bar,
+                                         present_mode, frame_latency, &refusal);
   lean_object *reason;
   if (status == 0) {
     reason = lean_mk_string("");
@@ -1386,12 +1387,13 @@ editor_ffi_display *editor_ffi_display_new_cells(uint64_t advance,
                                                  uint64_t line_height);
 void editor_ffi_display_rows(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
-                             uint64_t width, uint64_t height, size_t anchor,
+                             uint64_t width, uint64_t height, uint64_t across,
+                             uint64_t down, uint64_t top, size_t anchor,
                              editor_ffi_raw_words *out);
 void editor_ffi_display_move(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
-                             uint64_t width, size_t position, int64_t lines,
-                             bool goal_present, uint64_t goal,
+                             uint64_t width, uint64_t across, size_t position,
+                             int64_t lines, bool goal_present, uint64_t goal,
                              editor_ffi_raw_words *out);
 bool editor_ffi_display_publish(const editor_ffi_display *display,
                                 const uint8_t *words, size_t words_len,
@@ -1445,28 +1447,31 @@ lean_obj_res editor_glue_display_live(void) {
 }
 
 // `Editor.Ffi.Display.rowsRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// USize → IO RawWords`
+// UInt64 → UInt64 → UInt64 → USize → IO RawWords`
 lean_obj_res editor_glue_display_rows(b_lean_obj_arg display,
                                       b_lean_obj_arg snapshot, uint64_t width,
-                                      uint64_t height, size_t anchor) {
+                                      uint64_t height, uint64_t across,
+                                      uint64_t down, uint64_t top,
+                                      size_t anchor) {
   editor_ffi_raw_words raw;
   editor_ffi_display_rows(lean_get_external_data(display),
                           lean_get_external_data(snapshot), width, height,
-                          anchor, &raw);
+                          across, down, top, anchor, &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
-// `Editor.Ffi.Display.moveRaw : @& Display → @& Snapshot → UInt64 → USize →
-// UInt64 → Bool → UInt64 → IO RawWords`. The lines are a two's complement
-// number in a `UInt64`.
+// `Editor.Ffi.Display.moveRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
+// USize → UInt64 → Bool → UInt64 → IO RawWords`. The lines are a two's
+// complement number in a `UInt64`.
 lean_obj_res editor_glue_display_move(b_lean_obj_arg display,
                                       b_lean_obj_arg snapshot, uint64_t width,
-                                      size_t position, uint64_t lines,
-                                      uint8_t goal_present, uint64_t goal) {
+                                      uint64_t across, size_t position,
+                                      uint64_t lines, uint8_t goal_present,
+                                      uint64_t goal) {
   editor_ffi_raw_words raw;
   editor_ffi_display_move(lean_get_external_data(display),
-                          lean_get_external_data(snapshot), width, position,
-                          (int64_t)lines, goal_present, goal, &raw);
+                          lean_get_external_data(snapshot), width, across,
+                          position, (int64_t)lines, goal_present, goal, &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
@@ -1541,6 +1546,110 @@ lean_obj_res editor_glue_display_scene(b_lean_obj_arg display) {
   editor_ffi_text_free(words.words, words.len);
   editor_ffi_text_free(strings.text, strings.text_len);
   return lean_io_result_mk_ok(scene);
+}
+
+// ---- A display's picture, for tests ----
+//
+// A display over one font file it is given, and the picture of its latest
+// frame, drawn by the library's CPU renderer; and a picture read from and
+// written to a PNG file. A picture crosses as the library's `RawPicture`,
+// which the glue builds into Lean's: its pixels copied into a `ByteArray`,
+// and the library's buffer handed back.
+
+// The library's `RawPicture`.
+typedef struct {
+  uint64_t width;
+  uint64_t height;
+  uint8_t *rgba;
+  size_t len;
+} editor_ffi_raw_picture;
+editor_ffi_display *
+editor_ffi_display_new_font(const uint8_t *bytes, size_t len,
+                            const uint8_t *family, size_t family_len,
+                            editor_ffi_raw_text *out_reason);
+void editor_ffi_display_picture(const editor_ffi_display *display,
+                                editor_ffi_raw_picture *out);
+bool editor_ffi_picture_from_png(const uint8_t *bytes, size_t len,
+                                 editor_ffi_raw_picture *out,
+                                 editor_ffi_raw_text *out_reason);
+bool editor_ffi_picture_to_png(uint64_t width, uint64_t height,
+                               const uint8_t *rgba, size_t len,
+                               editor_ffi_raw_words *out,
+                               editor_ffi_raw_text *out_reason);
+
+// Lean's `RawPicture` for a record the library filled: the object field
+// `rgba`, then `width` and `height`. The library's buffer is handed back.
+static lean_object *raw_picture_take(editor_ffi_raw_picture raw) {
+  lean_object *picture = lean_alloc_ctor(0, 1, 2 * sizeof(uint64_t));
+  lean_ctor_set(picture, 0, byte_array_copy(raw.rgba, raw.len));
+  lean_ctor_set_uint64(picture, uint64_field(1, 0), raw.width);
+  lean_ctor_set_uint64(picture, uint64_field(1, 1), raw.height);
+  editor_ffi_text_free(raw.rgba, raw.len);
+  return picture;
+}
+
+// The `IO` error of the library's reason, whose buffer is handed back.
+static lean_obj_res reason_error(editor_ffi_raw_text reason) {
+  lean_object *text =
+      lean_mk_string_from_bytes((const char *)reason.text, reason.text_len);
+  editor_ffi_text_free(reason.text, reason.text_len);
+  return lean_io_result_mk_error(lean_mk_io_user_error(text));
+}
+
+// `Editor.Ffi.Display.newFont : @& ByteArray → @& String → IO Display`
+lean_obj_res editor_glue_display_new_font(b_lean_obj_arg bytes,
+                                          b_lean_obj_arg family) {
+  pthread_once(&display_class_once, display_class_register);
+  editor_ffi_raw_text reason;
+  editor_ffi_display *display = editor_ffi_display_new_font(
+      byte_array_bytes(bytes), byte_array_len(bytes), string_bytes(family),
+      string_len(family), &reason);
+  if (display == NULL) {
+    return reason_error(reason);
+  }
+  editor_ffi_text_free(reason.text, reason.text_len);
+  return lean_io_result_mk_ok(lean_alloc_external(display_class, display));
+}
+
+// `Editor.Ffi.Display.pictureRaw : @& Display → IO RawPicture`
+lean_obj_res editor_glue_display_picture(b_lean_obj_arg display) {
+  editor_ffi_raw_picture raw;
+  editor_ffi_display_picture(lean_get_external_data(display), &raw);
+  return lean_io_result_mk_ok(raw_picture_take(raw));
+}
+
+// `Editor.Ffi.Picture.ofPngRaw : @& ByteArray → IO RawPicture`
+lean_obj_res editor_glue_picture_from_png(b_lean_obj_arg bytes) {
+  editor_ffi_raw_picture raw;
+  editor_ffi_raw_text reason;
+  bool read = editor_ffi_picture_from_png(byte_array_bytes(bytes),
+                                          byte_array_len(bytes), &raw, &reason);
+  lean_object *picture = raw_picture_take(raw);
+  if (!read) {
+    lean_dec(picture);
+    return reason_error(reason);
+  }
+  editor_ffi_text_free(reason.text, reason.text_len);
+  return lean_io_result_mk_ok(picture);
+}
+
+// `Editor.Ffi.Picture.toPngRaw : UInt64 → UInt64 → @& ByteArray → IO
+// ByteArray`
+lean_obj_res editor_glue_picture_to_png(uint64_t width, uint64_t height,
+                                        b_lean_obj_arg rgba) {
+  editor_ffi_raw_words raw;
+  editor_ffi_raw_text reason;
+  bool written =
+      editor_ffi_picture_to_png(width, height, byte_array_bytes(rgba),
+                                byte_array_len(rgba), &raw, &reason);
+  lean_object *png = byte_array_copy(raw.words, raw.len);
+  editor_ffi_text_free(raw.words, raw.len);
+  if (!written) {
+    lean_dec(png);
+    return reason_error(reason);
+  }
+  editor_ffi_text_free(reason.text, reason.text_len);
+  return lean_io_result_mk_ok(png);
 }
 
 // ---- The display's binding to the presenter, and the render session ----
@@ -1634,6 +1743,15 @@ void editor_ffi_window_asked(uint8_t platform, editor_ffi_raw_words *out);
 lean_obj_res editor_glue_window_asked(uint8_t platform) {
   editor_ffi_raw_words raw;
   editor_ffi_window_asked(platform, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+void editor_ffi_window_opened_with(uint8_t platform, editor_ffi_raw_words *out);
+
+// `Editor.Ffi.windowOpenedWithRaw : Platform → IO RawWords`
+lean_obj_res editor_glue_window_opened_with(uint8_t platform) {
+  editor_ffi_raw_words raw;
+  editor_ffi_window_opened_with(platform, &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 

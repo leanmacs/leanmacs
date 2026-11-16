@@ -102,6 +102,9 @@ def library : Display.FrameRequest → Ffi.WindowRequest
   | .enterFullscreen => .enterFullscreen
   | .leaveFullscreen => .leaveFullscreen
   | .minimise => .minimise
+  | .keepRunning => .keepRunning
+  | .appearance .light => .lightAppearance
+  | .appearance .dark => .darkAppearance
 
 /-- Makes `theme` what the faces look like from the next publish on: it is
 sent with the next scene published, in place of the theme sent before,
@@ -114,13 +117,20 @@ holds is the largest, past the end of every text. -/
 def offset (number : Nat) : USize :=
   if number < USize.size then number.toUSize else (USize.size - 1).toUSize
 
+/-- The word of a padding in points (a status field's, a view's, the echo's,
+or a query's): a padding no `u32` holds is sent as the largest one does,
+which is what the library would refuse otherwise. -/
+def paddingWord (padding : Nat) : UInt64 :=
+  (min padding (UInt32.size - 1)).toUInt64
+
 /-- The rows a view shows: `Display.rowsShown`'s answer. -/
 def rows (real : RealDisplay) (query : Display.RowsQuery) :
     IO (Except DisplayError (Array Display.Row)) := do
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
   let answer ←
     real.display.rows snapshot (RealTexts.word query.width) (RealTexts.word query.height)
-        (offset query.anchor)
+        (offset query.anchor) (paddingWord query.padding.across) (paddingWord query.padding.down)
+        (paddingWord query.padding.top)
   match answer with
   | some rows =>
     return .ok (rows.map fun row => { start := row.start.toNat, stop := row.stop.toNat })
@@ -133,7 +143,7 @@ def move (real : RealDisplay) (query : Display.MoveQuery) :
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
   let answer ←
     real.display.move snapshot (RealTexts.word query.width) (offset query.position) query.lines
-        (query.goal.map RealTexts.word)
+        (query.goal.map RealTexts.word) (paddingWord query.across)
   match answer with
   | some moved =>
     return .ok { position := moved.position.toNat, goal := moved.goal.toNat }
@@ -179,6 +189,11 @@ def pushOptional (words : Array UInt64) : Option UInt64 → Array UInt64
   | some value => words.push 1 |>.push value
   | none => words.push 0 |>.push 0
 
+/-- The library's tag of a status field's side. -/
+def sideTag : StatusSide → UInt64
+  | .left => 0
+  | .right => 1
+
 /-- `view` added to `encoded`: its snapshot, found in the table, as the
 next handle when the table holds it. -/
 def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encoded := do
@@ -218,9 +233,16 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
       { encoded with
         words :=
           encoded.words.push field.text.utf8ByteSize.toUInt64 |>.push
-            field.face.name.utf8ByteSize.toUInt64
+                field.face.name.utf8ByteSize.toUInt64 |>.push
+              (sideTag field.side) |>.push
+            (paddingWord field.padding)
         strings := encoded.strings ++ field.text ++ field.face.name }
-  return encoded
+  encoded :=
+    pushText { encoded with words := encoded.words.push view.statusFace.isSome.toUInt64 }
+      ((view.statusFace.map (·.name)).getD "")
+  let padding :=
+    #[paddingWord view.padding.across, paddingWord view.padding.down, paddingWord view.padding.top]
+  return { encoded with words := encoded.words ++ padding }
 
 /-- The library's tag of a slant. -/
 def slantTag : Slant → UInt64
@@ -242,7 +264,7 @@ the nearest end of it, which is what the library would refuse otherwise. -/
 def weightWord (weight : Nat) : UInt64 :=
   (min 1000 (max 1 weight)).toUInt64
 
-/-- One definition of a face added to `encoded`: its 22 words, an absent
+/-- One definition of a face added to `encoded`: its 24 words, an absent
 attribute written as 0, and its name and then its family, when it has one,
 added to the string. -/
 def encodeFace (encoded : Encoded) (definition : FaceDefinition) : Encoded :=
@@ -265,13 +287,62 @@ def encodeFace (encoded : Encoded) (definition : FaceDefinition) : Encoded :=
   let words := words.push face.underline.isSome.toUInt64 |>.push (underlineTag underline.style)
   let words := pushOptional words (underline.color.map color)
   let words := pushOptional words (face.strikeThrough.map (·.toUInt64))
-  { familied with words := words.push face.lineHeight.isSome.toUInt64 |>.push kind |>.push height }
+  let words := words.push face.lineHeight.isSome.toUInt64 |>.push kind |>.push height
+  { familied with words := pushOptional words (face.verticalPadding.map (·.sixtyFourths.toUInt64)) }
 
 /-- The definitions of `theme` added to `encoded`: their count, then each
 (`encodeFace`). After a presence, they are a scene's faces; by themselves,
 they are what `heights` defines ahead of the scene. -/
 def encodeDefinitions (encoded : Encoded) (theme : Theme) : Encoded :=
   theme.foldl encodeFace { encoded with words := encoded.words.push theme.size.toUInt64 }
+
+/-- The tag of a system action, as the library reads it: 0 about, 1
+services, 2 hide, 3 hide others, 4 show all, 5 quit. -/
+def systemTag : SystemAction → UInt64
+  | .about => 0
+  | .services => 1
+  | .hide => 2
+  | .hideOthers => 3
+  | .showAll => 4
+  | .quit => 5
+
+/-- `item` added to `encoded`: its kind (0 a separator, 1 a command, 2 a
+system item), then for an item its title, its key's presence, scalar value
+and modifier bits, and its command's name or its system action's tag. -/
+def encodeMenuItem (encoded : Encoded) : MenuItem → Encoded
+  | .separator => { encoded with words := encoded.words.push 0 }
+  | .item title key action =>
+    let kind : UInt64 :=
+      match action with
+      | .command _ => 1
+      | .system _ => 2
+    let encoded := pushText { encoded with words := encoded.words.push kind } title
+    let (scalar, bits) : UInt64 × UInt64 :=
+      match key with
+      | some key => (key.character.toNat.toUInt64, Ffi.modifierBits key.modifiers)
+      | none => (0, 0)
+    let encoded :=
+      { encoded with words := encoded.words.push key.isSome.toUInt64 |>.push scalar |>.push bits }
+    match action with
+    | .command name => pushText encoded name
+    | .system system => { encoded with words := encoded.words.push (systemTag system) }
+
+/-- `menu` added to `encoded` (`crates/editor-ffi/src/menu.rs`): its count of
+menus, then each menu's title, role (0 none, 1 the application's, 2 the
+windows menu) and count of items, and each item. -/
+def encodeMenu (encoded : Encoded) (menu : Menu) : Encoded :=
+  menu.menus.foldl
+    (fun encoded submenu =>
+      let role : UInt64 :=
+        match submenu.role with
+        | none => 0
+        | some .app => 1
+        | some .window => 2
+      let encoded := pushText encoded submenu.title
+      let encoded :=
+        { encoded with words := encoded.words.push role |>.push submenu.items.size.toUInt64 }
+      submenu.items.foldl encodeMenuItem encoded)
+    { encoded with words := encoded.words.push menu.menus.size.toUInt64 }
 
 /-- `scene` as it crosses to the library, with the definitions `faces`
 after its views when there are any to send: none is sent as their absence,
@@ -281,11 +352,15 @@ def encode (real : RealDisplay) (scene : Scene) (faces : Option Theme) : IO Enco
   let words :=
     pushOptional #[RealTexts.word scene.size.width, RealTexts.word scene.size.height]
       (scene.focused.map (RealTexts.word ·.index))
+  let echoed := pushText { words, strings := "", snapshots := #[] } scene.echo
   let encoded :=
-    pushText (pushText { words, strings := "", snapshots := #[] } scene.echo) scene.pending
+    pushText { echoed with words := echoed.words.push (paddingWord scene.echoPadding) }
+      scene.pending
   let encoded := { encoded with words := encoded.words.push scene.preedit.isSome.toUInt64 }
   let encoded := pushText encoded (scene.preedit.getD "")
   let encoded := pushText encoded scene.title
+  let encoded := { encoded with words := encoded.words.push scene.menu.isSome.toUInt64 }
+  let encoded := (scene.menu.map (encodeMenu encoded)).getD encoded
   let encoded := { encoded with words := encoded.words.push scene.views.size.toUInt64 }
   let encoded ← scene.views.foldlM real.encodeView encoded
   match faces with

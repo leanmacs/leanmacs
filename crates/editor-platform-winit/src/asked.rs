@@ -21,15 +21,22 @@
 //! - **A title is set only when it is not the title the window shows**,
 //!   which starts as [`WinitPlatform::TITLE`], so the window is never told
 //!   what it already shows.
+//! - **An appearance is set only when it is not the one the window
+//!   shows**, which starts as none asked, as a title is. It is winit's
+//!   `set_theme`, which on macOS sets the window's `NSAppearance` to
+//!   `aqua` or `darkAqua`; on X11 and Wayland it hints a GTK variant or
+//!   themes the client-side decorations.
+//! - **Keeping running is nothing done to the window.** It answers the
+//!   system's quit, which is the module `terminate`'s.
 //!
 //! The adapter's run of `editor_platform::contract::requests` is this
 //! module's: the translation, over a window that records what it is told
-//! and models what winit documents of `set_fullscreen`, `set_minimized`
-//! and `set_title`.
+//! and models what winit documents of `set_fullscreen`, `set_minimized`,
+//! `set_title` and `set_theme`.
 
-use editor_platform::Request;
+use editor_platform::{Appearance, Request};
 use winit::monitor::Fullscreen;
-use winit::window::Window;
+use winit::window::{Theme, Window};
 
 use crate::WinitPlatform;
 
@@ -42,13 +49,18 @@ pub(crate) enum Act {
     Minimise,
     /// Show this title.
     Title(String),
+    /// Draw the window's title and buttons in this appearance.
+    Appearance(Appearance),
 }
 
-/// What the translation remembers of the window: the title it shows.
+/// What the translation remembers of the window: the title it shows, and
+/// the appearance it was last asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Asked {
     /// The title the window shows.
     title: String,
+    /// The appearance the window was last asked; `None` until one is.
+    appearance: Option<Appearance>,
 }
 
 impl Default for Asked {
@@ -56,6 +68,7 @@ impl Default for Asked {
     fn default() -> Self {
         Self {
             title: WinitPlatform::TITLE.to_owned(),
+            appearance: None,
         }
     }
 }
@@ -73,6 +86,17 @@ impl Asked {
                 self.title.clone_from(&title);
                 Some(Act::Title(title))
             }
+            // Not the window's: it answers the system's quit, which
+            // `terminate.rs` decides. The handler never sends it here.
+            Request::KeepRunning => None,
+            // Not the window's: the menu bar is the application's. The
+            // handler never sends it here.
+            Request::Menu(_) => None,
+            Request::Appearance(appearance) if self.appearance == Some(appearance) => None,
+            Request::Appearance(appearance) => {
+                self.appearance = Some(appearance);
+                Some(Act::Appearance(appearance))
+            }
         }
     }
 }
@@ -87,6 +111,8 @@ pub(crate) trait Control {
     fn minimise(&self);
     /// Shows `title` as the window's title.
     fn set_title(&self, title: &str);
+    /// Draws the window's title and buttons in `appearance`.
+    fn set_appearance(&self, appearance: Appearance);
 }
 
 /// Does `act` to `window`: one call.
@@ -95,6 +121,7 @@ pub(crate) fn apply(window: &(impl Control + ?Sized), act: Act) {
         Act::Fullscreen(on) => window.set_fullscreen(on),
         Act::Minimise => window.minimise(),
         Act::Title(title) => window.set_title(&title),
+        Act::Appearance(appearance) => window.set_appearance(appearance),
     }
 }
 
@@ -122,6 +149,13 @@ impl Control for dyn Window {
 
     fn set_title(&self, title: &str) {
         Window::set_title(self, title);
+    }
+
+    fn set_appearance(&self, appearance: Appearance) {
+        self.set_theme(Some(match appearance {
+            Appearance::Light => Theme::Light,
+            Appearance::Dark => Theme::Dark,
+        }));
     }
 }
 
@@ -180,18 +214,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_appearance_is_set_only_when_it_is_not_the_one_the_window_shows() {
+        let mut asked = Asked::default();
+        let appearance = Request::Appearance;
+        // The window opens with none asked.
+        assert_eq!(
+            asked.act(appearance(Appearance::Light), false),
+            Some(Act::Appearance(Appearance::Light))
+        );
+        assert_eq!(asked.act(appearance(Appearance::Light), true), None);
+        assert_eq!(
+            asked.act(appearance(Appearance::Dark), false),
+            Some(Act::Appearance(Appearance::Dark))
+        );
+        assert_eq!(asked.act(appearance(Appearance::Dark), false), None);
+    }
+
     /// A call made on a [`RecordingWindow`].
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Call {
         SetFullscreen(bool),
         Minimise,
         SetTitle(String),
+        SetAppearance(Appearance),
     }
 
     /// A window that records each call made on it and models what winit
     /// documents of it: `set_fullscreen` puts the window in fullscreen or
-    /// takes it out, `set_minimized(true)` minimises it, and `set_title`
-    /// shows the title.
+    /// takes it out, `set_minimized(true)` minimises it, `set_title` shows
+    /// the title, and `set_theme` the appearance.
     #[derive(Default)]
     struct RecordingWindow {
         shown: RefCell<Shown>,
@@ -217,6 +269,13 @@ mod tests {
             self.calls.borrow_mut().push(Call::SetTitle(title.into()));
             self.shown.borrow_mut().title = Some(title.into());
         }
+
+        fn set_appearance(&self, appearance: Appearance) {
+            self.calls
+                .borrow_mut()
+                .push(Call::SetAppearance(appearance));
+            self.shown.borrow_mut().appearance = Some(appearance);
+        }
     }
 
     /// The translation over a recording window: what the adapter does on
@@ -228,6 +287,9 @@ mod tests {
     }
 
     impl Carries for Carried {
+        /// The window alone has no menu bar: the menu is the application's.
+        const MENU_BAR: bool = false;
+
         fn carry_out(&mut self, request: Request) {
             carry_out(&mut self.asked, &self.window, request);
         }
@@ -242,6 +304,43 @@ mod tests {
         assert_eq!(requests::check(Carried::default), Ok(()));
     }
 
+    /// The adapter as the handler routes a request: a menu to the menu
+    /// bar, which on macOS is built from its plan and read back (the model
+    /// of what AppKit holds, `menu::Plan::built`), and is dropped
+    /// elsewhere; every other request to the window's translation.
+    #[derive(Default)]
+    struct WithMenuBar {
+        carried: Carried,
+        menu: Option<editor_platform::Menu>,
+    }
+
+    impl Carries for WithMenuBar {
+        const MENU_BAR: bool = cfg!(target_os = "macos");
+
+        fn carry_out(&mut self, request: Request) {
+            match request {
+                Request::Menu(menu) if Self::MENU_BAR => {
+                    let plan = crate::menu::plan(&menu);
+                    self.menu = Some(crate::menu::read(&plan.built(), &plan.commands).menu);
+                }
+                Request::Menu(_) => {}
+                request => self.carried.carry_out(request),
+            }
+        }
+
+        fn shown(&self) -> Shown {
+            Shown {
+                menu: self.menu.clone(),
+                ..self.carried.shown()
+            }
+        }
+    }
+
+    #[test]
+    fn the_request_contract_holds_of_the_adapter_with_its_menu_bar() {
+        assert_eq!(requests::check(WithMenuBar::default), Ok(()));
+    }
+
     #[test]
     fn each_request_that_changes_the_window_is_one_call_on_it_and_one_that_does_not_is_none() {
         let mut carried = Carried::default();
@@ -251,7 +350,11 @@ mod tests {
             Request::EnterFullscreen,
             Request::Title("notes.txt".into()),
             Request::Title("notes.txt".into()),
+            Request::KeepRunning,
+            Request::Menu(editor_platform::Menu::default()),
             Request::LeaveFullscreen,
+            Request::Appearance(Appearance::Dark),
+            Request::Appearance(Appearance::Dark),
             Request::Minimise,
         ] {
             carried.carry_out(request);
@@ -262,6 +365,7 @@ mod tests {
                 Call::SetFullscreen(true),
                 Call::SetTitle("notes.txt".into()),
                 Call::SetFullscreen(false),
+                Call::SetAppearance(Appearance::Dark),
                 Call::Minimise,
             ]
         );

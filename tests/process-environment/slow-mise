@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stands for a `mise` that outlives the lookup's time limit: it sleeps for 30
+# seconds, so the lookup is killed, with its process group, first.
+exec /bin/sleep 30

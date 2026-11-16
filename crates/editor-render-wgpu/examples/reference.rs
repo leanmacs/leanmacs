@@ -17,31 +17,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use editor_render::port::{DrawRequest, Renderer};
-use editor_render_wgpu::{HeadlessRenderer, Image};
+use editor_render_wgpu::HeadlessRenderer;
 
 #[path = "../tests/common/mod.rs"]
 mod common;
-
-/// `image` as the bytes of a PNG file: 8 bits a channel, without its
-/// alpha, which is opaque everywhere.
-fn encode(image: &Image) -> Result<Vec<u8>, png::EncodingError> {
-    let mut bytes = Vec::new();
-    let mut encoder = png::Encoder::new(&mut bytes, image.width, image.height);
-    encoder.set_color(png::ColorType::Rgb);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_compression(png::Compression::High);
-    let rgb: Vec<u8> = image
-        .rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
-        .collect();
-    let mut writer = encoder.write_header()?;
-    writer.write_image_data(&rgb)?;
-    writer.finish()?;
-    Ok(bytes)
-}
 
 fn main() -> ExitCode {
     let Some(path) = std::env::args().nth(1) else {
@@ -55,10 +34,10 @@ fn main() -> ExitCode {
         target: common::TARGET,
     });
     let image = renderer.image();
-    let bytes = match encode(image) {
+    let bytes = match image.to_png() {
         Ok(bytes) => bytes,
-        Err(error) => {
-            eprintln!("reference: cannot encode the image: {error}");
+        Err(reason) => {
+            eprintln!("reference: cannot write {path}: {reason}");
             return ExitCode::FAILURE;
         }
     };

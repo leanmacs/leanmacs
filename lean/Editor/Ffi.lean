@@ -1,3 +1,5 @@
+import Editor.Menu
+
 /-!
 # Bindings to the Rust library
 
@@ -58,6 +60,15 @@ answers cross (`FfiTest.displayChecks`); `tests/c_api.rs`,
 | List | *Words*: a `@& ByteArray` of 64-bit numbers, eight bytes each, least significant first, written by a private encoder here; the glue passes its bytes and byte length, and Rust checks every count against the buffer | The glue copies the library's buffer of words into a `ByteArray` and hands the buffer back; a private decoder here builds the typed value, and words it cannot read are an `IO` error |
 | List of handles | `@& Array Snapshot`, an array of handles borrowed for the call, beside the words, which name a handle by its index in it; the glue passes it as a C array of the handles' pointers and its count, which it builds for the call (`Display.publish`) | None yet |
 | List of strings | Words, the count and then the byte length of each string, written by a private encoder here, and one `@& String` of all of them end to end; Rust refuses lengths that do not add up to the string or that end inside a character (`fuzzyRank`) | None yet |
+
+A picture (`Picture`, for tests) crosses as a small structure: its pixels,
+an object field the glue copies from the library's buffer into a
+`ByteArray`, then its width and height as `UInt64` (`Display.picture`,
+`Picture.ofPng`); and in, as its width and height as scalars and its pixels
+as a `@& ByteArray`, with a PNG file's bytes out as a `ByteArray`
+(`Picture.toPng`). A refusal with a reason the library gives in a sentence
+is an `IO` error the glue raises with it (`Display.newFont`,
+`Picture.ofPng`).
 
 Prefer a few scalar arguments or one structure to many calls: one `nextEvent`
 returns one whole event. A raw structure whose shape the glue knows stays
@@ -162,14 +173,15 @@ for.
 The timer service is the first: `timersNow`, `timersStart`, `timersCancel`,
 and `timersPending`, a readout for tests.
 
-The file service is the second: `filesLoad` and `filesSave` start a request,
+The file service is the second: `filesLoad`, `filesSave` and `filesStamp`
+start a request,
 `filesTake` hands its result over once its completion has arrived,
 `filesCancel` cancels, and `filesPending` is a readout for tests. A request
 has a result, which a timer's has not, so there is one more step: the
 completion says only that the request `id` is done, and the result is taken
 by that id, once, as one record (`FileResult`): a loaded file's text as a
 `Snapshot` handle with its stamp and its line endings, a saved file's stamp,
-or a refusal (`FileRefusal`). A file's content never crosses as a Lean
+a file's stamp or none, or a refusal (`FileRefusal`). A file's content never crosses as a Lean
 string or a byte array: a load hands back a handle, and a save borrows one.
 A path crosses as the bytes of a Lean string, which the library does not
 decode. What a save expects on disk (`FileExpect`) crosses as a tag and a
@@ -255,10 +267,13 @@ arrives on the editor queue.
   |---|---|---|
   | `key` | Bit 0 pressed, bit 1 repeat, bit 2 dead, bit 3 the interrupt mark ("The interrupt flag") | `[logical tag, n, n scalars, physical tag, m, m scalars, modifiers]`; logical 0 unidentified, 1 character, 2 named (a W3C UI Events `key` name), 3 dead (n is 0 or 1); physical 0 unidentified, 1 a W3C UI Events `code` |
   | `pointer` | 0 press, 1 drag, 2 release, 3 wheel | `[x, y, button tag, other, modifiers, delta tag, dx, dy]`; button 0 none, 1 primary, 2 secondary, 3 middle, 4 back, 5 forward, 6 another (its number in `other`); delta 0 none, 1 lines, 2 pixels |
-  | `resize` | Bit 0 in fullscreen | `[width, height, scale]` |
+  | `resize` | Bit 0 in fullscreen | `[width, height, scale, corner clearance, top inset]`; the corner clearance and the top inset in whole logical points |
   | `openFiles` | 0 | `[n, then for each of the n paths: m, m scalars]`; the text is empty |
+  | `quitRequested` | 0 | None, and no text: the system asked the program to quit |
+  | `menu` | 0 | None; the text is the chosen item's command name |
 
-  The modifiers are bits: shift 1, control 2, alt 4, super 8. A float
+  The modifiers are bits: shift 1, control 2, alt 4, super 8
+  (`modifierBits`, `modifiersOfBits?`). A float
   crosses as its IEEE 754 bits (`Float.ofBits`). These bindings carry the
   words as they are; the one place on the Lean side that reads them is
   `Editor/Event/Queue.lean`.
@@ -266,11 +281,15 @@ arrives on the editor queue.
   `closeRequested` and stays open until `windowClose`, which any thread may
   call.
 - Lean asks things of the window with `windowRequest`: enter or leave
-  fullscreen, or minimise (`WindowRequest`, tags 0, 1 and 2). It never
-  blocks, and it goes through the window's own loop, not the main-thread
-  service, which still answers nothing else while the window runs. Whether
+  fullscreen, minimise, keep running, the answer to a quit the system
+  asked when the editor does not quit, or the light or the dark
+  appearance of its title and buttons (`WindowRequest`, tags 0, 1, 2, 4,
+  6 and 7). It never blocks, and it goes through the window's own loop,
+  not the main-thread service, which still answers nothing else while the
+  window runs. Whether
   the window is in fullscreen comes back on every resize, bit 0 of its
-  code. The title is no request: it is the scene's (`Scene.title`), and the
+  code, how far in its rounded corners reach as its fourth word, and how
+  far down its title bar covers it as its fifth. The title is no request: it is the scene's (`Scene.title`), and the
   library sends it to the window when it changes. `windowAsked` reads what
   a scripted window was asked, for tests.
 - The platform is an enumeration (`Platform`). The scripted ones are the
@@ -1423,6 +1442,13 @@ inductive EventKind where
   empty; the words are the paths: their count, then each path's count of
   characters and its characters ("The window" in the module docs). -/
   | openFiles
+  /-- The system asked the program to quit: Command-Q, Quit from the Dock,
+  a logout, restart or shutdown. The code is 0, and there is no text and no
+  word. -/
+  | quitRequested
+  /-- A command item of the menu bar was chosen. The code is 0, the text
+  the command's name, and there is no word. -/
+  | menu
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
@@ -1438,6 +1464,8 @@ def EventKind.ofTag? : UInt64 → Option EventKind
   | 8 => some .closeRequested
   | 9 => some .resize
   | 10 => some .openFiles
+  | 11 => some .quitRequested
+  | 12 => some .menu
   | _ => none
 
 /-- What kind of thing an event came from. -/
@@ -1640,6 +1668,8 @@ inductive FileResult where
   | loaded (snapshot : Snapshot) (stamp : FileStamp) (lineFeeds crlfs : UInt64)
   /-- A file was saved, and has this stamp. -/
   | saved (stamp : FileStamp)
+  /-- A stamp was read: the file's, or `none` when nothing is there. -/
+  | stamped (stamp : Option FileStamp)
   /-- The request was refused. -/
   | refused (refusal : FileRefusal)
 
@@ -1665,6 +1695,14 @@ def FileResult.decode (status : UInt64) (snapshot : Option Snapshot) (words : By
     return .loaded snapshot (stampAt words 0) words[3]! words[4]!
   | 0, 3, none =>
     return .saved (stampAt words 0)
+  | 0, 4, none =>
+    match words[0]! with
+    | 0 =>
+      return .stamped none
+    | 1 =>
+      return .stamped (some (stampAt words 1))
+    | present =>
+      throw s!"a stamped file is present or not, and the word says {present}"
   | 1, 0, none =>
     return .refused .relativePath
   | 2, 0, none =>
@@ -1705,12 +1743,15 @@ started, if `id` is in use or the service could not start its thread. -/
 @[extern "editor_glue_files_load"]
 opaque filesLoad (id : UInt64) (path : @& String) (limit : UInt64) : IO Bool
 
-/-- Asks the library's file service to stat the file at `path`, reading
-nothing, as the request `id`, and returns whether it was accepted. The
-completion and the result are as `filesLoad`'s: a stamp, which comes back as
-a save's does (`FileResult.saved`), or a load's refusal. -/
-@[extern "editor_glue_files_stat"]
-opaque filesStat (id : UInt64) (path : @& String) : IO Bool
+/-- Asks the library's file service for the stamp of the file at `path`, as
+the request `id`, and returns whether it was accepted. It returns at once,
+and nothing of the file is read. The completion and the result are as
+`filesLoad`'s: the result is `stamped`, or a refusal.
+
+`false`, with nothing started, if `id` is in use or the service could not
+start its thread. -/
+@[extern "editor_glue_files_stamp"]
+opaque filesStamp (id : UInt64) (path : @& String) : IO Bool
 
 /-- `filesSave` as it crosses: what the save expects as a tag (0 whatever, 1
 absent, 2 unchanged) and a stamp's three numbers, its seconds as a two's
@@ -1881,11 +1922,23 @@ private structure RawWindowRun where
   /-- How the run ended. -/
   status : UInt64
 
-/-- `windowRun` as it crosses. The present mode is its tag and the frame
-latency a number, each 0 for none asked. -/
+/-- The title bar a window opens with (`editor_ffi_window_run`'s tags 0 and
+1, in this order). -/
+inductive TitleBar where
+  /-- The drawable area extends under a title bar that draws no background
+  of its own, so what is drawn there shows through: the window says how far
+  down it covers the drawable area on every resize. A platform with no such
+  title bar opens a standard one. -/
+  | themed
+  /-- The system's own title bar, above the drawable area. -/
+  | standard
+  deriving DecidableEq, Repr, Inhabited
+
+/-- `windowRun` as it crosses. The title bar is its tag, the present mode
+its tag and the frame latency a number, each 0 for none asked. -/
 @[extern "editor_glue_window_run"]
-private opaque windowRunRaw (platform : Platform) (composition : Bool) (presentMode : UInt8)
-    (frameLatency : UInt32) : IO RawWindowRun
+private opaque windowRunRaw (platform : Platform) (composition : Bool) (titleBar : TitleBar)
+    (presentMode : UInt8) (frameLatency : UInt32) : IO RawWindowRun
 
 /-- How a window that opened ran, once it has closed. -/
 structure WindowRan where
@@ -1897,7 +1950,8 @@ structure WindowRan where
   deriving DecidableEq, Repr
 
 /-- Runs the window on `platform`, with an input method allowed to compose
-or not, and returns once the window has closed: `.ok` when it ran, saying
+or not and the title bar `titleBar`, and returns once the window has
+closed: `.ok` when it ran, saying
 why nothing drew in it when nothing did, and `.error` with the reason when
 no window could be opened.
 
@@ -1917,22 +1971,33 @@ While the window is open, what a display bound to the presenter publishes
 ask for a present mode and a frame latency in place of the renderer's
 decision, to measure them; `none` is the decision. -/
 def windowRun (platform : Platform) (composition : Bool) (presentMode : Option PresentMode := none)
-    (frameLatency : Option Nat := none) : IO (Except String WindowRan) := do
+    (frameLatency : Option Nat := none) (titleBar : TitleBar := .themed) :
+    IO (Except String WindowRan) := do
   let latency := (frameLatency.getD 0).toUInt32
-  let raw ← windowRunRaw platform composition (PresentMode.tag presentMode) latency
+  let raw ← windowRunRaw platform composition titleBar (PresentMode.tag presentMode) latency
   return match raw.status with
     | 0 => .ok {}
     | 2 => .ok { nothingDrew := some raw.reason }
     | _ => .error raw.reason
 
 /-- Asks the window `platform` is running to close, so that `windowRun`
-returns. Any thread may call it, and it does nothing when that platform runs
-no window. -/
+ends. Any thread may call it, and it does nothing when that platform runs
+no window.
+
+With the system's quit pending (`EventKind.quitRequested`) the close lets
+the quit go ahead, and the platform may end the process inside `windowRun`,
+which then never returns (the window port's rule, `Platform::close` in
+`editor-platform`; AppKit's terminate on macOS). So whatever must happen
+before the program ends happens before this is called. A
+`WindowRequest.keepRunning` asked just before it refuses the quit instead,
+and `windowRun` returns. -/
 @[extern "editor_glue_window_close"]
 opaque windowClose (platform : Platform) : IO Unit
 
-/-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0, 1
-and 2, in this order). The title is not one: it is a field of the scene. -/
+/-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0, 1,
+2, 4, 6 and 7: `WindowRequest.tag`). The title is not one: it is a field of
+the scene, and the tag 3 is the title's in what a scripted window was
+asked, as 5 is a menu bar's. -/
 inductive WindowRequest where
   /-- Put the window in the system's fullscreen; one in it stays there. -/
   | enterFullscreen
@@ -1941,32 +2006,175 @@ inductive WindowRequest where
   | leaveFullscreen
   /-- Minimise the window. -/
   | minimise
+  /-- The editor refused, or withdrew, the quit the system asked
+  (`EventKind.quitRequested`). It changes nothing the window shows, and a
+  platform with no quit pending does nothing with it. Asked just before
+  `windowClose`, it refuses a quit pending as the window closes, so that
+  `windowRun` returns. -/
+  | keepRunning
+  /-- Draw the window's title and buttons in the system's light
+  appearance, for a light paper. -/
+  | lightAppearance
+  /-- Draw the window's title and buttons in the system's dark appearance,
+  for a dark paper. -/
+  | darkAppearance
   deriving DecidableEq, Repr
+
+/-- The library's number for `request`: 0, 1, 2, 4, 6 and 7. It is not the
+constructor's index, which for `keepRunning` would be the title's 3, and
+for the appearances 4 and 5, keep running's and a menu bar's. -/
+def WindowRequest.tag : WindowRequest → UInt8
+  | .enterFullscreen => 0
+  | .leaveFullscreen => 1
+  | .minimise => 2
+  | .keepRunning => 4
+  | .lightAppearance => 6
+  | .darkAppearance => 7
+
+/-- `windowRequest` as it crosses: the request's tag. -/
+@[extern "editor_glue_window_request"]
+private opaque windowRequestRaw (platform : Platform) (tag : UInt8) : IO Unit
 
 /-- Asks the window `platform` is running to do what `request` says. Any
 thread may call it, it never blocks, and it does nothing when that platform
 runs no window. It goes through the window's own loop, not the main-thread
 service. Whether the window is then in fullscreen comes back on the editor
 queue, as a resize. -/
-@[extern "editor_glue_window_request"]
-opaque windowRequest (platform : Platform) (request : WindowRequest) : IO Unit
+def windowRequest (platform : Platform) (request : WindowRequest) : IO Unit :=
+  windowRequestRaw platform request.tag
 
-/-- One thing a scripted window was asked: a request, or a title the
-presenter sent it from a scene. -/
+/-- One thing a scripted window was asked: a request, or a title or a menu
+bar the presenter sent it from a scene. -/
 inductive WindowAsked where
   /-- A request Lean made. -/
   | request (request : WindowRequest)
   /-- A title. -/
   | title (text : String)
+  /-- A menu bar. -/
+  | menu (menu : Menu)
   deriving DecidableEq, Repr
+
+/-- The word of `modifiers` as the library reads it ("The window", in the
+module docs): shift 1, control 2, alt 4, the system key 8. The one encoding
+on the Lean side, for an event posted (`EventWords`), a menu's key
+equivalent in a scene (`RealDisplay.encodeMenu`) and what a window was
+asked (`askedOf`). -/
+def modifierBits (modifiers : Modifiers) : UInt64 :=
+  (if modifiers.shift then 1 else 0) ||| (if modifiers.control then 2 else 0) |||
+    (if modifiers.alt then 4 else 0) |||
+    (if modifiers.superKey then 8 else 0)
+
+/-- The modifiers the word `bits` holds (`modifierBits`); `none` when it has
+a bit past the system key's. -/
+def modifiersOfBits? (bits : UInt64) : Option Modifiers :=
+  if bits &&& ~~~15 != 0 then none
+  else
+    some
+      { shift := bits &&& 1 != 0, control := bits &&& 2 != 0, alt := bits &&& 4 != 0,
+        superKey := bits &&& 8 != 0 }
+
+/-- Reads the words of what a window was asked, from an index on: each
+reader gives what it read and the index after it, or `none` when the
+words spell nothing. -/
+private abbrev AskedReader :=
+  StateT Nat Option
+
+/-- The next word. -/
+private def AskedReader.word (words : Array UInt64) : AskedReader UInt64 := fun at_ =>
+  words[at_]?.map (·, at_ + 1)
+
+/-- A count of things, each at least one word, that the words left can
+hold. -/
+private def AskedReader.count (words : Array UInt64) : AskedReader Nat := do
+  let count := (← AskedReader.word words).toNat
+  if count ≤ words.size - (← get) then
+    pure count
+  else
+    failure
+
+/-- The character the scalar value `scalar` numbers, if it is one. -/
+private def AskedReader.char? (scalar : UInt64) : Option Char :=
+  if scalar < 0x110000 && Nat.isValidChar scalar.toNat then some (Char.ofNat scalar.toNat) else none
+
+/-- A text: the count of its scalar values, and each of them. -/
+private def AskedReader.text (words : Array UInt64) : AskedReader String := do
+  let count ← AskedReader.count words
+  let chars ←
+    (List.range count).mapM fun _ => do
+        let some char := AskedReader.char? (← AskedReader.word words) | failure
+        pure char
+  return String.ofList chars
+
+/-- A menu bar in the layout of `editor-ffi`'s `menu.rs`: its menus, each
+with its title, its role and its items. -/
+private def AskedReader.menu (words : Array UInt64) : AskedReader Menu := do
+  let word := AskedReader.word words
+  let menus ←
+    (List.range (← AskedReader.count words)).mapM fun _ => do
+        let title ← AskedReader.text words
+        let role ←
+          match ← word with
+          | 0 =>
+            pure none
+          | 1 =>
+            pure (some MenuRole.app)
+          | 2 =>
+            pure (some MenuRole.window)
+          | _ =>
+            failure
+        let items ←
+          (List.range (← AskedReader.count words)).mapM fun _ => do
+              match ← word with
+              | 0 =>
+                pure MenuItem.separator
+              | kind@(1 : UInt64) | kind@2 =>
+                do
+                  let title ← AskedReader.text words
+                  let (present, scalar, bits) := (← word, ← word, ← word)
+                  let key ←
+                    match present with
+                    | 0 =>
+                      pure none
+                    | 1 =>
+                      do
+                        let some character := AskedReader.char? scalar | failure
+                        let some modifiers := modifiersOfBits? bits | failure
+                        pure (some { character, modifiers })
+                    | _ =>
+                      failure
+                  let action ←
+                    if kind == 1 then
+                      MenuAction.command <$> AskedReader.text words
+                    else
+                      match ← word with
+                      | 0 =>
+                        pure (.system .about)
+                      | 1 =>
+                        pure (.system .services)
+                      | 2 =>
+                        pure (.system .hide)
+                      | 3 =>
+                        pure (.system .hideOthers)
+                      | 4 =>
+                        pure (.system .showAll)
+                      | 5 =>
+                        pure (.system .quit)
+                      | _ =>
+                        failure
+                  pure (MenuItem.item title key action)
+              | _ =>
+                failure
+        pure { title, role, items := items.toArray }
+  return { menus := menus.toArray }
 
 /-- `windowAsked` as it crosses. -/
 @[extern "editor_glue_window_asked"]
 private opaque windowAskedRaw (platform : Platform) : IO RawWords
 
 /-- What the words of `windowAsked` spell from the index `at_` on, each
-thing asked in order: a request's tag, or the tag 3, a count and the
-scalar values of a title's characters. `none` when they spell nothing. -/
+thing asked in order: a request's tag, the tag 3, a count and the scalar
+values of a title's characters, or the tag 5 and a menu bar's layout
+(`AskedReader.menu`). `none` when they spell nothing. -/
 private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     (asked : Array WindowAsked := #[]) : Option (Array WindowAsked) :=
   if at_ >= words.size then some asked
@@ -1975,6 +2183,9 @@ private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     | 0 => askedOf words (at_ + 1) (asked.push (.request .enterFullscreen))
     | 1 => askedOf words (at_ + 1) (asked.push (.request .leaveFullscreen))
     | 2 => askedOf words (at_ + 1) (asked.push (.request .minimise))
+    | 4 => askedOf words (at_ + 1) (asked.push (.request .keepRunning))
+    | 6 => askedOf words (at_ + 1) (asked.push (.request .lightAppearance))
+    | 7 => askedOf words (at_ + 1) (asked.push (.request .darkAppearance))
     | 3 => do
       let count := (← words[at_ + 1]?).toNat
       let scalars ← (List.range count).mapM fun index => words[at_ + 2 + index]?
@@ -1984,6 +2195,9 @@ private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
               some (Char.ofNat scalar.toNat)
             else none
       askedOf words (at_ + 2 + count) (asked.push (.title (String.ofList chars)))
+    | 5 => do
+      let (menu, next) ← (AskedReader.menu words).run (at_ + 1)
+      askedOf words next (asked.push (.menu menu))
     | _ => none
 
 /-- What the scripted window of `platform` was asked in its latest run, in
@@ -1997,6 +2211,36 @@ def windowAsked (platform : Platform) : IO (Option (Array WindowAsked)) := do
   let some words := wordsOf? raw.words | throw problem
   let some asked := askedOf words | throw problem
   return some asked
+
+/-- `windowOpenedWith` as it crosses. -/
+@[extern "editor_glue_window_opened_with"]
+private opaque windowOpenedWithRaw (platform : Platform) : IO RawWords
+
+/-- What the scripted window of `platform` was opened with in its latest
+run: whether an input method could compose, and its title bar. `none` for
+the real platform, which records nothing, and before any run. A readout for
+tests. -/
+def windowOpenedWith (platform : Platform) : IO (Option (Bool × TitleBar)) := do
+  let raw ← windowOpenedWithRaw platform
+  if raw.status != 0 then
+    return none
+  let problem := IO.userError "the library's record of a run is not its words"
+  let some words := wordsOf? raw.words | throw problem
+  match words with
+  | #[] =>
+    return none
+  | #[composition, titleBar] =>
+    let titleBar ←
+      match titleBar with
+      | 0 =>
+        pure TitleBar.themed
+      | 1 =>
+        pure .standard
+      | _ =>
+        throw problem
+    return some (composition == 1, titleBar)
+  | _ =>
+    throw problem
 
 /-- `postInput` as it crosses: the words as bytes. -/
 @[extern "editor_glue_window_post_input"]
@@ -2157,34 +2401,38 @@ private def rowsOf? (raw : RawWords) : IO (Option (Array DisplayRow)) := do
 /-- `Display.rows` as it crosses: the answer as words, and its status. -/
 @[extern "editor_glue_display_rows"]
 private opaque Display.rowsRaw (display : @& Display) (snapshot : @& Snapshot)
-    (width height : UInt64) (anchor : USize) : IO RawWords
+    (width height across down top : UInt64) (anchor : USize) : IO RawWords
 
-/-- The rows a view `width` pixels wide and `height` tall shows of
-`snapshot`, from the visual row that holds `anchor`: as many as fit whole,
-fewer at the end of the text. `none` when `anchor` is not a position of the
-text. -/
-def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64)
-    (anchor : USize) : IO (Option (Array DisplayRow)) := do
-  rowsOf? (← display.rowsRaw snapshot width height anchor)
+/-- The rows a view `width` pixels wide and `height` tall, its content inset
+`across` and `down` points from its edges and its rows a further `top`
+points from its top, shows of `snapshot`, from the visual row that holds
+`anchor`: as many as fit whole, fewer at the end of the text. The library
+takes the padding off at the scale it lays out at, as its frames take it
+off; a padding no `u32` holds is the largest. `none` when `anchor` is not a
+position of the text. -/
+def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64) (anchor : USize)
+    (across down top : UInt64 := 0) : IO (Option (Array DisplayRow)) := do
+  rowsOf? (← display.rowsRaw snapshot width height across down top anchor)
 
 /-- `Display.move` as it crosses: the lines as a 64-bit two's complement
 number, the goal as a presence flag and a value, and the answer as words. -/
 @[extern "editor_glue_display_move"]
-private opaque Display.moveRaw (display : @& Display) (snapshot : @& Snapshot) (width : UInt64)
-    (position : USize) (lines : UInt64) (goalPresent : Bool) (goal : UInt64) : IO RawWords
+private opaque Display.moveRaw (display : @& Display) (snapshot : @& Snapshot)
+    (width across : UInt64) (position : USize) (lines : UInt64) (goalPresent : Bool)
+    (goal : UInt64) : IO RawWords
 
 /-- The position of `snapshot` `lines` visual rows below `position` (above
-when negative) in a view `width` pixels wide, aiming for `goal`, or for the
-position's own x when there is none; and the goal to pass on. A count of
-lines past what 64 bits hold is cut to the largest, which is past every
-text's first and last row anyway. `none` when `position` is not a position
-of the text. -/
+when negative) in a view `width` pixels wide whose text is inset `across`
+points each side, aiming for `goal`, or for the position's own x when there
+is none; and the goal to pass on. A count of lines past what 64 bits hold
+is cut to the largest, which is past every text's first and last row
+anyway. `none` when `position` is not a position of the text. -/
 def Display.move (display : Display) (snapshot : Snapshot) (width : UInt64) (position : USize)
-    (lines : Int) (goal : Option UInt64) : IO (Option DisplayMoved) := do
+    (lines : Int) (goal : Option UInt64) (across : UInt64 := 0) : IO (Option DisplayMoved) := do
   let bound : Int := 2 ^ 63
   let clamped := max (-bound) (min lines (bound - 1))
   let word := if clamped < 0 then (2 ^ 64 + clamped).toNat.toUInt64 else clamped.toNat.toUInt64
-  let raw ← display.moveRaw snapshot width position word goal.isSome (goal.getD 0)
+  let raw ← display.moveRaw snapshot width across position word goal.isSome (goal.getD 0)
   if raw.status != 0 then
     return none
   match wordsOf? raw.words with
@@ -2261,6 +2509,76 @@ def Display.scene (display : Display) : IO (Option (Array UInt64 × String)) := 
   let some words := wordsOf? raw.words
     | throw (IO.userError "the library's scene is not whole words")
   return some (words, raw.strings)
+
+/-! ## A display's picture, for tests -/
+
+/-- A new display over the library's real shaper and one font file, `bytes`,
+whose family `family` is the default family of a font set with no font of
+the machine: a face naming any other family is drawn in it. An `IO` error
+with the library's reason when the bytes are not a font or hold no such
+family. For tests, as `Display.frameText` is: what it lays out is the same
+on every machine (`FfiTest.themePicturesScenario`). -/
+@[extern "editor_glue_display_new_font"]
+opaque Display.newFont (bytes : @& ByteArray) (family : @& String) : IO Display
+
+/-- A picture, as the library's CPU renderer draws one: `width` pixels
+across, `height` down, and its pixels, row by row from the top, red, green,
+blue and alpha for each, as sRGB values. For tests. -/
+structure Picture where
+  /-- How far across it is. -/
+  width : Nat
+  /-- How far down. -/
+  height : Nat
+  /-- Its pixels: four bytes each. -/
+  rgba : ByteArray
+  deriving DecidableEq
+
+/-- A picture as the glue builds it. Object fields first, so the order here
+is the layout the glue writes. -/
+private structure RawPicture where
+  /-- The pixels. -/
+  rgba : ByteArray
+  /-- How far across. -/
+  width : UInt64
+  /-- How far down. -/
+  height : UInt64
+
+/-- The picture `raw` stands for. -/
+private def RawPicture.picture (raw : RawPicture) : Picture :=
+  { width := raw.width.toNat, height := raw.height.toNat, rgba := raw.rgba }
+
+/-- `Display.picture` as it crosses. -/
+@[extern "editor_glue_display_picture"]
+private opaque Display.pictureRaw (display : @& Display) : IO RawPicture
+
+/-- The latest frame the display laid out, drawn by the library's CPU
+renderer synchronously, with no render session, thread or clock, at the
+last published scene's size and at the display's scale, with one coverage a
+pixel and hinting: 0 by 0 before any scene. For tests: it is how a theme
+written here reaches the renderer in `ffi-test`. -/
+def Display.picture (display : Display) : IO Picture :=
+  return (← display.pictureRaw).picture
+
+/-- `Picture.ofPng` as it crosses. -/
+@[extern "editor_glue_picture_from_png"]
+private opaque Picture.ofPngRaw (bytes : @& ByteArray) : IO RawPicture
+
+/-- The picture the PNG file `bytes` holds, 8 bits a channel, RGB or RGBA,
+an RGB one read as opaque; an `IO` error with the library's reason when the
+bytes are no such file. For tests. -/
+def Picture.ofPng (bytes : ByteArray) : IO Picture :=
+  return (← Picture.ofPngRaw bytes).picture
+
+/-- `Picture.toPng` as it crosses. -/
+@[extern "editor_glue_picture_to_png"]
+private opaque Picture.toPngRaw (width height : UInt64) (rgba : @& ByteArray) : IO ByteArray
+
+/-- The bytes of a PNG file of `picture`: RGB, 8 bits a channel, its alpha
+not written. An `IO` error with the library's reason when its pixels are
+not its size or it is one no PNG file can hold, such as one 0 by 0. For
+tests. -/
+def Picture.toPng (picture : Picture) : IO ByteArray :=
+  Picture.toPngRaw picture.width.toUInt64 picture.height.toUInt64 picture.rgba
 
 /-! ## The render session -/
 

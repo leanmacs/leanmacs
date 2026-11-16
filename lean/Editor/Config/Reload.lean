@@ -1,3 +1,4 @@
+import Editor.Appearance
 import Editor.Config.Session
 import Editor.Config.Stores
 
@@ -18,16 +19,69 @@ the model tests run it with outcomes built by hand
   what was just installed, and two reloads cannot install out of order.
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the chunks, replaces the config's entries in the registry,
-  commands, jobs, key bindings, modes, ex bindings and faces
-  (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
-  `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
-  never an append) and meets the config's stores with the cells there are
-  (`Cells.install`). A rejected outcome changes none of them: the config that
+  commands, jobs, key bindings, modes, ex bindings, faces, themes and
+  segments (`Registry.replace`, `Registry.replaceJobs`,
+  `Registry.replaceBindings`, `Registry.replaceModes`, `Registry.replaceEx`,
+  `Registry.replaceFaces`, `Registry.replaceThemes`,
+  `Registry.replaceSegments`, never an append), sets the registry's process
+  environment to the one the config set, `none` when it set none
+  (`Registry.environment`), and meets the config's stores with the cells
+  there are (`Cells.install`). A rejected outcome changes none of them: the config that
   was loaded stays.
-- **The theme follows the registry.** `State.theme` is the built-in theme
-  followed by the installed config's definitions of faces, so it changes
-  when, and only when, a reload installs. The runtime that owns a display
-  hands it the theme then (`Config.retheme`, `Editor/Config/Display.lean`).
+- **The theme follows the registry and the theme in force.** The theme in
+  force is a name (`State.themeName`), `default` to start with, and
+  `State.theme` is the registry's theme of that name followed by the
+  installed config's definitions of faces, so config's faces are over
+  whichever theme is in force, and survive a switch. It changes when a
+  reload installs and when a theme is chosen (`Event.choose`), and only
+  then. The runtime that owns a display hands it the theme then
+  (`Config.retheme`, `Editor/Config/Display.lean`).
+- **Which theme is in force.** An install also replaces config's themes
+  (`Registry.replaceThemes`), then: a config that names a registered theme
+  (`useTheme`) puts it in force; one that names a theme nobody registered
+  keeps the theme in force and its report names the unknown theme, which
+  the echo area says (`Report.echo`); one that names none keeps the theme in
+  force, so a theme chosen by the command survives a reload that does not
+  name one. A theme in force that is no longer registered, because config
+  defined it and dropped it, falls back to `default` (`chooseAt`). A
+  rejected outcome changes none of it.
+- **Choosing a theme** (`Event.choose`, which the host feeds for a command
+  that loaded one) puts a registered theme in force, with the effect
+  `themed`; a name nobody registered changes nothing and has no effect,
+  since the command has already said so.
+- **The mode line follows the registry and config's listing.** An install
+  replaces config's segments (`Registry.replaceSegments`) and sets the
+  listing in force (`State.modeLine`) to the one the config made, or none
+  for the default order, so a reload that lists none goes back to the
+  default. A listed name no segment is registered under is left out, and
+  the report names it (`Report.unknownSegments`), which the echo area says
+  after the unknown theme's sentence. The host resolves the listing over
+  the registry for each step (`Headless.keys`). A rejected outcome changes
+  none of it.
+- **The frame padding follows config.** An install sets the padding in
+  force (`State.framePadding`) to the one the config set, or none for the
+  editor's 8 (`Loop.padding`), so a reload that sets none goes back to it.
+  The host hands it to the loop for each step (`Headless.keys`), so it
+  changes with no restart. A rejected outcome changes none of it.
+- **The window's appearance follows the paper.** Once the window has
+  opened (`Event.windowOpened`), the reducer asks for the appearance that
+  contrasts with the effective paper (`Theme.paper` of `State.theme`,
+  classified by `Appearance.ofPaper`, `Editor/Appearance.lean`) with the
+  effect `appearance`, and after that only when the classification
+  changes: after a reload, installed or not, and after a choice of a
+  theme. So a switch between two dark themes, or a reload that keeps the
+  paper dark, asks for nothing, and one that keeps the theme and overrides
+  the paper from light to dark asks for dark. Nothing is asked before the
+  window has opened, since a request asked of no running window is lost
+  (`editor-platform`'s crate docs, "What a window is asked"), and a window
+  that opens again is asked afresh. A theme that states no paper asks for
+  nothing. The effect comes after `themed` and after a reload's report.
+- **The title bar follows config, at the next start.** An install sets the
+  title bar in force (`State.titleBar`) to the one the config chose, or
+  none for the themed one. The window mode reads it once, when it opens the
+  window after the start-up reload (`Window.titleBarAtOpen`), so a reload
+  that changes it takes effect at the next start. A rejected outcome
+  changes none of it.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -69,15 +123,27 @@ structure Report where
   chunks : Nat
   /-- How many commands the config that is now installed registers. -/
   commands : Nat
+  /-- The theme the installed config named that no theme is registered
+  under, if it named one: the theme in force stayed. -/
+  unknownTheme : Option String := none
+  /-- The segment names the installed config's mode line lists that no
+  segment is registered under, in order, each once: they are left out, and
+  the rest are drawn. -/
+  unknownSegments : Array String := #[]
 
 /-- What a reload says in the echo area: for a rejected one, its first
 error, `reload: <source>:<line>:<column>: error: ` and the first line of its
 message, then ` (and <n> more)` when it has more errors; for one rejected
 with no error to name, `reload: rejected`. A reload that installs says
-nothing, so a working config does not cover what a command said. The whole
-report is the host's to print. -/
+nothing, so a working config does not cover what a command said, unless its
+config named a theme or listed segments nobody registered: then `reload: `
+and the sentences, `Theme.unknown`'s and then each `ModeLine.unknown`,
+joined by `; `. The whole report is the host's to print. -/
 def Report.echo (report : Report) : Option String :=
-  if report.installed then none
+  if report.installed then
+    let sentences :=
+      report.unknownTheme.toArray.map Theme.unknown ++ report.unknownSegments.map ModeLine.unknown
+    if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"
   else
     let errors := report.diagnostics.filter (·.severity == .error)
     match errors[0]? with
@@ -103,6 +169,27 @@ structure State (σ : Type) where
   pending : Bool := false
   /-- How many reloads have finished. -/
   finished : Nat := 0
+  /-- The name of the theme in force: set by an install whose config names
+  a registered theme, and by `choose`. -/
+  themeName : String := Theme.defaultName
+  /-- The listing of the mode line the installed config made, or none for
+  the default order (`ModeLine.Order.standard`): set at every install, so a
+  config that lists none goes back to the default. -/
+  modeLine : Option ModeLine.Order := none
+  /-- The frame padding the installed config set, in points, or none for the
+  editor's own (`Loop.padding`): set at every install, so a config that
+  sets none goes back to it. -/
+  framePadding : Option Nat := none
+  /-- The title bar the installed config chose (`titleBar`), or none for the
+  themed one: set at every install, so a config that chooses none goes
+  back to it. The window mode reads it when it opens the window. -/
+  titleBar : Option Window.TitleBar := none
+  /-- Whether the window has opened (`Event.windowOpened`): only then is an
+  appearance asked of it. -/
+  windowOpen : Bool := false
+  /-- The appearance the window was last asked, since it last opened; none
+  before one is. -/
+  appearance : Option Appearance := none
 
 /-- What happened, as far as reloads go. -/
 inductive Event (σ : Type) where
@@ -110,6 +197,11 @@ inductive Event (σ : Type) where
   | requested
   /-- The reload job finished with `outcome`. -/
   | finished (outcome : Outcome σ)
+  /-- The theme called `name` was chosen, by a command, to be the theme in
+  force. -/
+  | choose (name : String)
+  /-- The window opened. Whatever was asked of it before is lost. -/
+  | windowOpened
 
 /-- What the runtime is to do. -/
 inductive Effect (σ : Type) where
@@ -122,6 +214,11 @@ inductive Effect (σ : Type) where
   | cancelJobs (owner : Owner)
   /-- Show what a reload came to. -/
   | report (report : Report)
+  /-- The theme in force was switched, with no reload: the display is to
+  be handed the new theme. -/
+  | themed
+  /-- Ask the window to draw its title and buttons in this appearance. -/
+  | appearance (appearance : Appearance)
 
 namespace State
 
@@ -137,13 +234,29 @@ def start (state : State σ) : State σ × Array (Effect σ) :=
 def commands (state : State σ) : Nat :=
   (state.registry.entries.filter (·.owner == .config)).size
 
-/-- What the faces look like now: the built-in theme, then the definitions
-the installed config made, in the order its `setup` made them. A later
-definition of a name is over an earlier one, so a face the config sets
-takes the config's attributes over the theme's, and a face it does not set
-is the theme's. -/
+/-- What the faces look like now: the theme in force (`themeName`), then
+the definitions the installed config made, in the order its `setup` made
+them. A later definition of a name is over an earlier one, so a face the
+config sets takes the config's attributes over the theme's, whichever theme
+is in force, and a face it does not set is the theme's. The theme in force
+stands in for the built-in theme wholesale: a face it does not define is not
+the built-in theme's. A registry that holds no theme of the name in force
+draws in the built-in theme. -/
 def theme (state : State σ) : Theme :=
-  Theme.builtin ++ state.registry.definitions
+  (((state.registry.theme? state.themeName).map (·.theme)).getD Theme.builtin) ++
+    state.registry.definitions
+
+/-- The theme in force once a config that named `named` is installed over
+`registry`, from `current`, the one in force before: a name registered under
+is in force; with an unregistered name, or none, `current` stays, unless no
+theme is registered under it any more, when `default` is. The second is the
+unregistered name, for the report. -/
+def chooseAt (registry : Registry) (current : String) (named : Option String) :
+    String × Option String :=
+  let kept := if (registry.theme? current).isSome then current else Theme.defaultName
+  match named with
+  | some name => if (registry.theme? name).isSome then (name, none) else (kept, some name)
+  | none => (kept, none)
 
 /-- The state once `outcome` is handled, and the report of it: an outcome
 that built a config installs it, and any other leaves the config as it was. -/
@@ -163,22 +276,44 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         chunks := built.chunks,
         registry :=
           {
-            (((((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                              built.registrations.jobs).replaceBindings
-                          .config built.registrations.bindings).replaceModes
-                      .config built.registrations.modes).replaceEx
-                  .config built.registrations.ex).replaceFaces
-              .config built.registrations.faces with
+            (((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                                      built.registrations.jobs).replaceBindings
+                                  .config built.registrations.bindings).replaceModes
+                              .config built.registrations.modes).replaceEx
+                          .config built.registrations.ex).replaceFaces
+                      .config built.registrations.faces).replaceThemes
+                  .config built.registrations.themes).replaceSegments
+              .config
+              built.registrations.segments with
+            environment := built.registrations.environment
             autoReload := built.registrations.autoReload.back?.getD false },
         cells }
-    (state,
+    let (themeName, unknownTheme) :=
+      chooseAt state.registry state.themeName built.registrations.theme
+    let modeLine := built.registrations.modeLine
+    let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
+    ({ state with
+        themeName, modeLine, framePadding := built.registrations.framePadding
+        titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
-        chunks := state.chunks.size, commands := state.commands })
+        chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments })
+
+/-- The appearance the window is to be asked for, and the state that
+remembers it: when the window is open and the paper of the theme now in
+force (`theme`) classifies as an appearance other than the one last asked,
+that one; nothing otherwise. -/
+def ask (state : State σ) : State σ × Array (Effect σ) :=
+  match state.theme.paper.map Appearance.ofPaper with
+  | some appearance =>
+    if state.windowOpen && state.appearance != some appearance then
+      ({ state with appearance := some appearance }, #[.appearance appearance])
+    else (state, #[])
+  | none => (state, #[])
 
 end State
 
-/-- The reducer: the state after `event`, and the effects to perform. -/
-def step {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect σ)
+/-- The reducer before the window's appearance is asked. -/
+private def stepTheme {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect σ)
   | .requested => if state.running then ({ state with pending := true }, #[]) else state.start
   | .finished outcome =>
     let (state, report) := state.install outcome
@@ -189,6 +324,21 @@ def step {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect
       let (state, effects) := state.start
       (state, installed ++ effects)
     else (state, installed)
+  | .choose name =>
+    if (state.registry.theme? name).isSome then ({ state with themeName := name }, #[.themed])
+    else (state, #[])
+  | .windowOpened =>
+    ({ state with
+        windowOpen := true, appearance := none },
+      #[])
+
+/-- The reducer: the state after `event`, and the effects to perform. The
+window's appearance is asked last (`State.ask`), after whatever the event
+did to the theme in force. -/
+def step {σ : Type} (state : State σ) (event : Event σ) : State σ × Array (Effect σ) :=
+  let (state, effects) := stepTheme state event
+  let (state, asked) := state.ask
+  (state, effects ++ asked)
 
 namespace State
 
