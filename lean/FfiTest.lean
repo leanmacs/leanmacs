@@ -1351,7 +1351,7 @@ def windowSample (composition : Bool) :
       [(.composition, 0, "", #[]), (.composition, 1, "´", #[]), (.composition, 2, "é", #[])]
     else []) ++
     [(.pointer, 0, "", #[(12.5 : Float).toBits, (40.0 : Float).toBits, 2, 0, 4, 0, 0, 0]),
-      (.resize, 0, "", #[800, 600, (2.0 : Float).toBits]), (.closeRequested, 0, "", #[])]
+      (.resize, 0, "", #[800, 600, (2.0 : Float).toBits, 0]), (.closeRequested, 0, "", #[])]
 
 /-- What one run of the scripted platform's window showed. -/
 structure WindowRun where
@@ -1539,7 +1539,7 @@ def windowChecks (_ : Unit) : List Check :=
     { name :=
         "an input posted as a window would report it arrives on the editor queue as the window's event, stamped, and words that do not read as an input are refused and queue nothing"
       run := do
-        let words := #[1024, 768, (1.5 : Float).toBits]
+        let words := #[1024, 768, (1.5 : Float).toBits, 16]
         let short ← Editor.Ffi.postInput .resize 0 "" #[1024, 768]
         let notWindow ← Editor.Ffi.postInput .message 0 "" #[]
         let posted ← Editor.Ffi.postInput .resize 0 "" words
@@ -1846,12 +1846,14 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             decodedWindow .pointer 3 (pointerWords 0 0 2 7 0.5) ==
               some (.pointer (pointerAt (.wheel (.pixels 7 0.5)) none))) },
     { name :=
-        "a resize decodes with its size, its scale and whether it is in fullscreen, and a request to close to itself"
+        "a resize decodes with its size, its scale, whether it is in fullscreen and its corner clearance, and a request to close to itself"
       run :=
         pure
-          (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits] ==
+          (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 0] ==
               some (.resize { width := 800, height := 600, scale := 2.0 }) &&
-            decodedWindow .resize 1 #[1440, 900, (2.0 : Float).toBits] ==
+            decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 16] ==
+              some (.resize { width := 800, height := 600, scale := 2.0, corner := 16 }) &&
+            decodedWindow .resize 1 #[1440, 900, (2.0 : Float).toBits, 0] ==
               some (.resize { width := 1440, height := 900, scale := 2.0, fullscreen := true }) &&
             decodedWindow .closeRequested 0 == some .closeRequested) },
     { name :=
@@ -1907,7 +1909,7 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             (decodedWindow .key 17 #[0, 0, 0, 0, 0]).isNone &&
             (decodedWindow .key 8 #[0, 0, 0, 0, 0]).isNone &&
             (decodedWindow .pointer 4 (pointerWords 1 0 0)).isNone &&
-            (decodedWindow .resize 2 #[1, 1, 0]).isNone) },
+            (decodedWindow .resize 2 #[1, 1, 0, 0]).isNone) },
     { name :=
         "malformed words are refused: too few, left over, an unknown tag, a scalar that is not a character, modifier bits past super, a dead bit with no dead key, a named button with a number, a pointer that is not a wheel with a delta"
       run :=
@@ -1929,6 +1931,7 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             (decodedWindow .pointer 0
                 #[(12.5 : Float).toBits, (40.0 : Float).toBits, 1, 0, 16, 0, 0, 0]).isNone &&
             (decodedWindow .resize 0 #[800, 600]).isNone &&
+            (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits]).isNone &&
             (decodedWindow .closeRequested 0 #[1]).isNone) }]
 
 /-- The events of a run of the scripted platform's window, decoded. -/
@@ -3029,7 +3032,7 @@ def renderChecks (_ : Unit) : List Check :=
         unless (← Editor.Ffi.renderHeadless) matches .ok () do
           return false
         let before ← framesSubmitted
-        let posted ← Editor.Ffi.postInput .resize 0 "" #[64, 48, (1.0 : Float).toBits]
+        let posted ← Editor.Ffi.postInput .resize 0 "" #[64, 48, (1.0 : Float).toBits, 0]
         let some taken ← pull .editor | return false
         fixture.real.publish (fixture.scene (SceneFixture.own fixture.top) #[])
         let submitted := (← framesSubmitted) == before + 1

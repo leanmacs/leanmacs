@@ -16,7 +16,7 @@
 //! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 a dead logical key, bit 3 the interrupt mark | What the key produced, or empty | The logical key, the physical key, the modifiers |
 //! | `Composition` | `Composition` | 0 enabled, 1 preedit, 2 commit, 3 disabled | The preedit or the committed text | None |
 //! | `Pointer` | `Pointer` | 0 press, 1 drag, 2 release, 3 wheel | Empty | The position, the button, the modifiers, the wheel's delta |
-//! | `Resized` | `Resize` | Bit 0 in fullscreen ([`RESIZE_FULLSCREEN`]) | Empty | The width, the height, the scale |
+//! | `Resized` | `Resize` | Bit 0 in fullscreen ([`RESIZE_FULLSCREEN`]) | Empty | The width, the height, the scale, the corner clearance |
 //! | `CloseRequested` | `CloseRequested` | 0 | Empty | None |
 //! | `OpenFiles` | `OpenFiles` | 0 | Empty | The paths |
 //!
@@ -33,7 +33,9 @@
 //!   5 forward and 6 another, whose number is `other` (0 for the rest). The
 //!   delta tags are 0 none (with `dx` and `dy` 0), 1 lines and 2 pixels, for
 //!   a wheel.
-//! - **Resize**: `[width, height, scale]`.
+//! - **Resize**: `[width, height, scale, corner clearance]`. The corner
+//!   clearance is in whole logical points (`editor-platform`'s
+//!   `Resize::corner_clearance`), and a word no `u32` holds is refused.
 //! - **OpenFiles**: `[n, then for each of the n paths: m, m scalars]`, a
 //!   path's characters laid out as a key's names are. An empty list is `[0]`;
 //!   it is encoded and read back, though no platform reports one.
@@ -307,7 +309,12 @@ pub fn event(input: Input, stamp: u64) -> Event {
                 0
             },
             String::new(),
-            vec![resize.width, resize.height, resize.scale.to_bits()],
+            vec![
+                resize.width,
+                resize.height,
+                resize.scale.to_bits(),
+                u64::from(resize.corner_clearance),
+            ],
         ),
         Input::OpenFiles(paths) => {
             let mut words = vec![words::word(paths.len())];
@@ -466,7 +473,7 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
                 height: reader.word()?,
                 scale: f64::from_bits(reader.word()?),
                 fullscreen,
-                corner_clearance: 0,
+                corner_clearance: u32::try_from(reader.word()?).ok()?,
             })
         }
         EventKind::CloseRequested => {
@@ -1631,21 +1638,35 @@ mod tests {
     }
 
     #[test]
-    fn a_resize_is_its_width_its_height_and_the_bits_of_its_scale() {
+    fn a_resize_is_its_width_its_height_the_bits_of_its_scale_and_its_corner_clearance() {
         assert_eq!(
             encoded(Input::Resized(Resize {
                 width: 800,
                 height: 600,
                 scale: 2.0,
                 fullscreen: false,
-                corner_clearance: 0,
+                corner_clearance: 16,
             })),
             (
                 EventKind::Resize,
                 0,
                 String::new(),
-                vec![800, 600, bits(2.0)]
+                vec![800, 600, bits(2.0), 16]
             )
+        );
+    }
+
+    #[test]
+    fn a_resize_of_three_words_or_a_corner_clearance_past_a_u32_is_refused() {
+        assert_eq!(read(EventKind::Resize, 0, "", &[800, 600, bits(2.0)]), None);
+        assert_eq!(
+            read(
+                EventKind::Resize,
+                0,
+                "",
+                &[800, 600, bits(2.0), u64::from(u32::MAX) + 1]
+            ),
+            None
         );
     }
 
@@ -1664,7 +1685,7 @@ mod tests {
                 EventKind::Resize,
                 RESIZE_FULLSCREEN,
                 String::new(),
-                vec![1440, 900, bits(2.0)]
+                vec![1440, 900, bits(2.0), 0]
             )
         );
     }
@@ -1851,7 +1872,7 @@ mod tests {
                 height: 600,
                 scale: 2.0,
                 fullscreen: false,
-                corner_clearance: 0,
+                corner_clearance: 16,
             }),
             Input::Resized(Resize {
                 width: 1440,
@@ -1960,7 +1981,7 @@ mod tests {
             read(EventKind::Pointer, 4, "", &[0, 0, 0, 0, 0, 0, 0, 0]),
             None
         );
-        assert_eq!(read(EventKind::Resize, 2, "", &[1, 1, 0]), None);
+        assert_eq!(read(EventKind::Resize, 2, "", &[1, 1, 0, 0]), None);
     }
 
     #[test]

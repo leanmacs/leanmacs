@@ -256,7 +256,7 @@ arrives on the editor queue.
   |---|---|---|
   | `key` | Bit 0 pressed, bit 1 repeat, bit 2 dead, bit 3 the interrupt mark ("The interrupt flag") | `[logical tag, n, n scalars, physical tag, m, m scalars, modifiers]`; logical 0 unidentified, 1 character, 2 named (a W3C UI Events `key` name), 3 dead (n is 0 or 1); physical 0 unidentified, 1 a W3C UI Events `code` |
   | `pointer` | 0 press, 1 drag, 2 release, 3 wheel | `[x, y, button tag, other, modifiers, delta tag, dx, dy]`; button 0 none, 1 primary, 2 secondary, 3 middle, 4 back, 5 forward, 6 another (its number in `other`); delta 0 none, 1 lines, 2 pixels |
-  | `resize` | Bit 0 in fullscreen | `[width, height, scale]` |
+  | `resize` | Bit 0 in fullscreen | `[width, height, scale, corner clearance]`; the corner clearance in whole logical points |
   | `openFiles` | 0 | `[n, then for each of the n paths: m, m scalars]`; the text is empty |
 
   The modifiers are bits: shift 1, control 2, alt 4, super 8. A float

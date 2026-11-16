@@ -1564,7 +1564,8 @@ def commit (_ : Host) (text : String) : IO Unit := do
     throw (IO.userError "the editor queue refused a commit: it has been quit")
 
 /-- Sends a resize of the frame to `width` by `height` physical pixels, at a
-scale of 1, as the window would report it: through the library's window
+scale of 1 and out of fullscreen, with square corners (a corner clearance of
+0), as the window would report it: through the library's window
 input (`Event.post`), onto the editor queue after everything sent before.
 Throws if the queue refuses it, which it does once the queues are quit. -/
 def resize (_ : Host) (width height : Nat) : IO Unit := do

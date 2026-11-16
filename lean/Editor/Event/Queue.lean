@@ -338,13 +338,13 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
         throw s!"{repr Ffi.EventKind.resize} has no code {code}"
       else
         match event.words with
-        | #[width, height, scale] =>
+        | #[width, height, scale, corner] =>
           pure
               (.resize
                 { width := width.toNat, height := height.toNat, scale := Float.ofBits scale
-                  fullscreen := code == 1 })
+                  fullscreen := code == 1, corner := corner.toNat })
         | _ =>
-          throw "a resize has three words"
+          throw "a resize has four words"
     | .closeRequested, 0 =>
       none .closeRequested
     | .openFiles, 0 =>
@@ -375,7 +375,7 @@ def Event.post : Event → IO Bool
     Ffi.postInput .pointer code "" words
   | .resize size =>
     Ffi.postInput .resize (if size.fullscreen then 1 else 0) ""
-      #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits]
+      #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits, size.corner.toUInt64]
   | .closeRequested => Ffi.postInput .closeRequested 0 "" #[]
   | .openFiles paths => Ffi.postInput .openFiles 0 "" (EventWords.pathWords paths)
   | .message .. | .completion .. | .quit => pure false
