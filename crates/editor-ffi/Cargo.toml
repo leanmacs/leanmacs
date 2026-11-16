@@ -71,6 +71,15 @@ editor-process = { path = "../editor-process" }
 # `clippy.toml` here keeps the adapter out of everything but that one
 # static. Through it the static library Lean links holds rustix.
 editor-process-std = { path = "../editor-process-std" }
+# The watch service: the Watch port, its fake and its contract, the
+# coalescing rule, and the service that owns every watch, which the C
+# functions of `src/watches.rs` forward to.
+editor-watch = { path = "../editor-watch" }
+# The real watch, for the process's watch service. This is the crate that
+# wires the library together, so it is the one that links the adapter;
+# `clippy.toml` here keeps the adapter out of everything but that one
+# static. Through it the static library Lean links holds notify.
+editor-watch-notify = { path = "../editor-watch-notify" }
 
 [dev-dependencies]
 # The temporary directory the wiring test (`tests/files.rs`) owns: the one

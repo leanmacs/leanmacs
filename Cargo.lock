@@ -466,6 +466,8 @@ dependencies = [
  "editor-render-wgpu",
  "editor-shape-parley",
  "editor-text",
+ "editor-watch",
+ "editor-watch-notify",
  "rustix 1.1.6",
  "tempfile",
 ]

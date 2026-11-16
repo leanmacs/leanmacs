@@ -182,9 +182,16 @@
 # ("crate 'editor-watch = 0.1.0' is explicitly banned"). The wrapper
 # `editor-watch-notify` of `tempfile`'s entry, for the adapter's contract
 # test: with it taken out, it fails on that edge ("crate 'tempfile =
-# 3.27.0' is explicitly banned"). `editor-watch-notify` itself has no entry
-# while nothing depends on it. `inotify`, `mio` and `objc2-core-services`
-# have none: they are reached only through notify, as wgpu's internals are.
+# 3.27.0' is explicitly banned"). `editor-watch-notify` itself had no entry
+# while nothing depended on it. Its entry came in the commit in which
+# `editor-ffi` came to depend on it, for the process's watch service: with
+# the entry's wrapper naming another crate, it fails ("crate
+# 'editor-watch-notify = 0.1.0' is explicitly banned"); and in that commit
+# `editor-ffi` joined the wrappers of `editor-watch`'s entry: with the
+# wrapper not yet there, it fails on that edge ("crate 'editor-watch =
+# 0.1.0' is explicitly banned"). `inotify`, `mio` and
+# `objc2-core-services` have none: they are reached only through notify,
+# as wgpu's internals are.
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -223,7 +230,8 @@ deny = [
   { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, and editor-ffi's wiring tests; editor-text's, editor-process's and editor-watch's tests run on their fakes and make no file" },
   { crate = "editor-process", wrappers = ["editor-process-std", "editor-ffi"], reason = "the Processes port and the process service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-process-std", wrappers = ["editor-ffi"], reason = "the process adapter is linked only by the crate that wires the library together, for the process's process service; everything else reaches a process through the port, and editor-process's tests through its fake" },
-  { crate = "editor-watch", wrappers = ["editor-watch-notify"], reason = "the Watch port and the watch service have one user: the port's adapter, which implements it and runs its contract; another is a decision, so it is made here" },
+  { crate = "editor-watch", wrappers = ["editor-watch-notify", "editor-ffi"], reason = "the Watch port and the watch service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
+  { crate = "editor-watch-notify", wrappers = ["editor-ffi"], reason = "the watch adapter is linked only by the crate that wires the library together, for the process's watch service; everything else reaches a watch through the port, and editor-watch's tests through its fake" },
   { crate = "notify", wrappers = ["editor-watch-notify"], reason = "notify stays behind the Watch port: only its adapter crate may name its types" },
   { crate = "notify-types", wrappers = ["notify"], reason = "notify's own crate of event types stays behind the Watch port with it: no crate of the workspace may name it, the adapter reaching its types through notify's re-export" },
   { crate = "nucleo-matcher", wrappers = ["editor-fuzzy-nucleo"], reason = "the matching library stays behind the Scorer port: only its adapter crate may name its types" },

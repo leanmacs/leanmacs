@@ -183,8 +183,9 @@
 //! ## Services and completions
 //!
 //! A service is work the library does for a Lean job that takes time: a
-//! timer ([`timers`]), a load or a save of a file ([`files`]), and a
-//! command run to its end ([`processes`]). A job that waits must not hold a thread, so a request to
+//! timer ([`timers`]), a load or a save of a file ([`files`]), a
+//! command run to its end ([`processes`]), and a watch on a file or a
+//! directory ([`watches`]). A job that waits must not hold a thread, so a request to
 //! a service is never a blocking call. Every service follows these rules:
 //!
 //! - **The caller names the request.** `start` takes an id the caller
@@ -290,6 +291,37 @@
 //! fake and by the contract on real processes (`editor-process-std`'s
 //! `tests/contract.rs`). On the Lean side: the process checks of `ffi-test`
 //! (`processChecks`), and `contract-test`'s process properties.
+//!
+//! Fourth example: the watch service. Its port is `editor-watch`'s
+//! [`editor_watch::Watch`], with [`editor_watch::fake::FakeWatch`]
+//! published for tests and the real adapter in a crate of its own
+//! (`editor-watch-notify`, over notify), which only the process's instance
+//! names. As with processes, the service's rules live beside the port, in
+//! [`editor_watch::service::Service`]: a file watched through its
+//! directory, the changes coalesced over a window the caller gives, and a
+//! bound on a delivery's paths. Its clock is the job clock
+//! ([`timers::Monotonic`]). A start crosses as three words and a path
+//! ([`watches::editor_ffi_watches_start`]); its reply is taken by its id
+//! once its completion has arrived ([`watches::editor_ffi_watches_take`]),
+//! and from then on the id names the watch. A read
+//! ([`watches::editor_ffi_watches_next`]) is a pull, a wait with an id of
+//! its own completed once, however many changes come; its delivery is
+//! taken in the same record: a status, words, a detail and the paths end to
+//! end. Its other C functions are [`watches::editor_ffi_watches_cancel`],
+//! [`watches::editor_ffi_watches_shutdown`] and, as a readout for tests,
+//! [`watches::editor_ffi_watches_pending`].
+//!
+//! Tests: the unit tests of `watches.rs`, on the port's fake and its manual
+//! clock (a start's words read back, the refusals of words that spell
+//! none, and each reply's layout); `tests/watches.rs`, the wiring test,
+//! which watches a real file in a temporary directory it owns through the
+//! C functions, sees a write delivered on the real queue, and sees that a
+//! cancelled watch's read is never completed; and
+//! `tests/watches_shutdown.rs`, a binary of its own because shutdown is for
+//! good. The rules of a watch are `editor-watch`'s, pinned there on the fake
+//! and by the contract on real files (`editor-watch-notify`'s
+//! `tests/contract.rs`). On the Lean side: the watch checks of `ffi-test`,
+//! and `contract-test`'s watch properties.
 //!
 //! ## The window
 //!
@@ -466,6 +498,7 @@ pub mod snapshot;
 pub mod text;
 pub mod timers;
 pub mod transaction;
+pub mod watches;
 pub mod window;
 mod words;
 
