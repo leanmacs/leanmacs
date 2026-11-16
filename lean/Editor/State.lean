@@ -43,8 +43,9 @@ a scene of it after each.
 
 The frame's windows are an ordered list of `ViewId`s, the first being main,
 and the focus is held by `ViewId` (`Frame.focused`). A layout value turns
-the list into one rectangle per window shown (`Layout.place`): master-and-
-stack by default, and monocle, which shows only the selected window. The
+the list into one rectangle per window shown (`Layout.place`):
+master-and-stack by default, and monocle, which shows only the selected
+window. The
 list says which windows exist and in what order; the layout says only
 where each goes.
 
