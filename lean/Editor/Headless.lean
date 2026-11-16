@@ -1944,11 +1944,13 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
   let refused ← Job.RefusedRuns.new
+  let timed ← Job.TimedRuns.new
   let watches ← Job.RealWatches.new
+  let timers := Job.realTimers completions
   return shippedOver sysroot oleanDir configDir emit
-      { completions, timers := Job.realTimers completions,
+      { completions, timers
         files := Job.realFiles completions published.reader held
-        processes := Job.realProcesses completions refused
+        processes := Job.realProcesses completions refused timers timed
         fileWatches := Job.realFileWatches completions watches } published held
 
 /-- The headless mode of the executable, handed the command line after

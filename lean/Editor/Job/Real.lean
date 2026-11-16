@@ -81,6 +81,16 @@ once.
   cancelled job's child ends. A result already kept is dropped.
 - **A refusal as shut down** becomes `failed` with the library's words: the
   editor shuts the service down only as it quits.
+- **A run with a time limit** goes to the library as a run, and an alarm
+  for its limit is armed on the clock (`timers`) under a wait of its own,
+  kept in `TimedRuns`. When the alarm completes before the run is taken, the
+  run is marked timed out and cancelled at the library, which kills the
+  child's group and reaps it, and the run's wait is completed; its take
+  answers `timedOut`. A take, and a cancel, disarm the alarm. The table is
+  one atomic step for each change, so the alarm acts only on a run not yet
+  taken. When a run ends just as its alarm completes, the alarm may come
+  first, and the run is answered `timedOut`, its result dropped: harmless
+  for a lookup, which falls back as it would for any failure.
 - **A streaming child** goes to the library as an open under its start's
   wait's id, which names it from then on; a read, a write and a close each go
   with their own wait's id, and each reply is taken once
@@ -460,16 +470,83 @@ def takenStream (refused : RefusedRuns) (id : UInt64) :
   | .ok none =>
     return .error runNoResult
 
+/-- A run with a time limit while its alarm is armed: the alarm's wait, and
+whether the alarm has ended the run. -/
+structure TimedRun where
+  /-- The wait of the alarm, on the clock. -/
+  alarm : UInt64
+  /-- Whether the alarm came before the run was taken, and killed it. -/
+  timedOut : Bool := false
+
+/-- The runs with a time limit whose alarm is armed, by the id of their wait.
+It is the runner's own state, made beside `RefusedRuns`. Every change is one
+atomic step, so "the alarm acts only on a run not yet taken" and "a take
+marks it taken" exclude each other. -/
+structure TimedRuns where private mk ::
+  /-- The runs, by the id of their wait. -/
+  private runs : IO.Ref (Std.HashMap UInt64 TimedRun)
+
+namespace TimedRuns
+
+/-- A table that holds no run. -/
+def new : BaseIO TimedRuns :=
+  return ⟨← IO.mkRef {}⟩
+
+/-- Takes the run `id` out of the table, if it is there: it is no longer the
+alarm's to end. -/
+def take (timed : TimedRuns) (id : UInt64) : BaseIO (Option TimedRun) :=
+  timed.runs.modifyGet fun runs => (runs[id]?, runs.erase id)
+
+/-- Marks the run `id` timed out, if it is in the table and is not already:
+whether it was marked by this call. -/
+def expire (timed : TimedRuns) (id : UInt64) : BaseIO Bool :=
+  timed.runs.modifyGet fun runs =>
+    match runs[id]? with
+    | some run =>
+      if run.timedOut then (false, runs) else (true, runs.insert id { run with timedOut := true })
+    | none => (false, runs)
+
+/-- How many runs have an alarm armed. A readout for tests. -/
+def size (timed : TimedRuns) : BaseIO Nat :=
+  return (← timed.runs.get).size
+
+end TimedRuns
+
+/-- Disarms the alarm of a run with a time limit: the clock will not
+complete it, and its wait ends as `cancelled`. -/
+def disarm (completions : Completions) (timers : Timers) (run : TimedRun) : BaseIO Unit := do
+  timers.cancel run.alarm
+  completions.finish run.alarm .cancelled
+
+/-- Arms the alarm of the run `id`, which the library has taken, for `time`
+milliseconds on `timers`. When the alarm completes while the run is not yet
+taken, the run is marked timed out, cancelled at the library, which kills
+the child's group and reaps it, and its wait is completed: its take then
+answers `timedOut`. -/
+def arm (completions : Completions) (timers : Timers) (timed : TimedRuns) (id : UInt64)
+    (time : Nat) : BaseIO Unit := do
+  let (alarm, wait) ← completions.register
+  timed.runs.modify (·.insert id { alarm })
+  discard <|
+      BaseIO.chainTask wait.result? fun completion => do
+        if completion == some .completed then
+          if ← timed.expire id then
+            (discard <| Ffi.processesCancel id : IO Unit).catchExceptions fun _ => pure ()
+            completions.finish id .completed
+  timers.start alarm ((← timers.now) + time)
+
 /-- The process port answered by the library's process service. `completions`
-is the table its waits are registered in, and `refused` where it keeps the
-refusals of the requests that never reached the library. A streaming child
-is named by its start's wait, and each read, write and close of it goes to
-the library with its own wait's id. -/
-def realProcesses (completions : Completions) (refused : RefusedRuns) : Processes :=
+is the table its waits are registered in, `refused` where it keeps the
+refusals of the requests that never reached the library, `timers` the clock
+a run's time limit is measured on and `timed` where it keeps the runs whose
+limit is armed. A streaming child is named by its start's wait, and each
+read, write and close of it goes to the library with its own wait's id. -/
+def realProcesses (completions : Completions) (refused : RefusedRuns) (timers : Timers)
+    (timed : TimedRuns) : Processes :=
   { start := fun id request => do
       let started ←
         (match request with
-                | .run command limit =>
+                | .run command limit | .runWithin command limit _ =>
                   let environment := command.environment
                   Ffi.processesRun id command.program command.arguments environment.clear
                     environment.set environment.unset command.directory.toString (word limit)
@@ -484,12 +561,25 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) : Processe
                 | .closeInput child => Ffi.processesCloseInput (word child.number) id :
                 IO Bool).catchExceptions
             fun _ => pure false
-      unless started do
+      if started then
+        if let .runWithin _ _ time := request then
+          arm completions timers timed id time
+      else
         refused.refused.modify (·.insert id runNotTaken)
         completions.finish id .completed
     take := fun id request =>
       match request with
       | .run .. => takenRun refused id
+      | .runWithin _ _ time => do
+        match ← timed.take id with
+        | some run =>
+          disarm completions timers run
+          if run.timedOut then
+            return .error (.timedOut time)
+          else
+            takenRun refused id
+        | none =>
+          takenRun refused id
       | .start .. => do
         match ← takenStream refused id with
         | .ok .opened =>
@@ -517,6 +607,8 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) : Processe
           return .error refusal
     cancel := fun id => do
       refused.refused.modify (·.erase id)
+      if let some run← timed.take id then
+        disarm completions timers run
       (discard <| Ffi.processesCancel id : IO Unit).catchExceptions fun _ => pure () }
 
 /-- What the watch service's adapter keeps of its own: the refusals of the

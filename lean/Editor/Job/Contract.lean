@@ -785,6 +785,23 @@ def processProperties : List ProcessProperty :=
               | .error .relativeProgram => true
               | _ => false) &&
               after.exit == .code 0 },
+      { name :=
+          "a run that outlives its time limit is refused as timedOut, and a run within its limit answers as a run does"
+        scripts := fun root =>
+          #[{ command := sh root "/bin/sleep 600"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+              takes := 600000 },
+            { command := sh root "exit 0"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
+        holds := fun root => do
+          let late ← Process.runWithin (sh root "/bin/sleep 600") roomyOutput 50
+          let within ← Process.runWithin (sh root "exit 0") roomyOutput 10000
+          return (match late with
+              | .error (.timedOut 50) => true
+              | _ => false) &&
+              match within with
+              | .ok ran => ran.exit == .code 0
+              | .error _ => false },
       { name := "output past the limit is refused as too large, with the stream and the limit"
         scripts := fun root =>
           #[{ command := sh root "printf 0123456789"

@@ -654,6 +654,49 @@ def jobModelChecks : List Check :=
           discard timer.tick
         pure (modelled job == (.finished (), 30)) },
     { name :=
+        "in the job model, a run whose script takes longer than its time limit is refused as timedOut with the clock at exactly its start plus the limit, and is killed; one within its limit moves the clock by what it takes and is not killed"
+      run :=
+        let slow := JobContract.sh "/p" "/bin/sleep 600"
+        let quick := JobContract.sh "/p" "exit 0"
+        let model : JobModel :=
+          { now := 10
+            processes :=
+              { scripts :=
+                  #[{ command := slow, reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 600000 },
+                    { command := quick, reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 30 }] } }
+        let (late, afterLate) := (Process.runWithin slow 100 50).runModel model
+        let (within, afterWithin) := (Process.runWithin quick 100 50).runModel model
+        pure
+          ((match late with
+              | .finished (.error (.timedOut 50)) => true
+              | _ => false) &&
+            afterLate.now == 60 &&
+            afterLate.processes.killed == #[slow] &&
+            (match within with
+              | .finished (.ok ran) => ran.exit == .code 0
+              | _ => false) &&
+            afterWithin.now == 40 &&
+            afterWithin.processes.killed == #[]) },
+    { name :=
+        "in the job model, a cancel that falls before a run's time limit ends the job cancelled at that instant, and the run is killed once"
+      run :=
+        let slow := JobContract.sh "/p" "/bin/sleep 600"
+        let model : JobModel :=
+          { cancelAt := some 20
+            processes :=
+              { scripts :=
+                  #[{ command := slow, reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 600000 }] } }
+        let (outcome, after) := (Process.runWithin slow 100 50).runModel model
+        pure
+          ((match outcome with
+              | .cancelled => true
+              | _ => false) &&
+            after.now == 20 &&
+            after.processes.killed == #[slow]) },
+    { name :=
         "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
       run := do
         let properties : List JobContract.Property :=
@@ -1226,6 +1269,7 @@ def processChecks : List Check :=
             | .write _ _ => "write"
             | .closeInput _ => "closeInput"
             | .run _ _ => "run"
+            | .runWithin .. => "runWithin"
         return finished && kinds == #["start", "read"] && (← processes.withdrawn).isEmpty },
     -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
     -- taken out of `Handle.conclude`, this check and the next fail.
@@ -21446,7 +21490,8 @@ def processEnvironmentChecks : List Check :=
             Process.foundOf (ran (.signal 9) "" "") == .failed (.signalled 9) &&
             Process.foundOf (ran (.code 0) "[1]" "") ==
               .failed (.unparsable "it is not an object") &&
-            Process.foundOf (.error .noSuchProcess) == .failed (.refused .noSuchProcess)) }]
+            Process.foundOf (.error .noSuchProcess) == .failed (.refused .noSuchProcess) &&
+            Process.foundOf (.error (.timedOut 5000)) == .failed (.timedOut 5000)) }]
 
 /-- Every check, in the order they run.
 

@@ -234,6 +234,13 @@ def Process.run (command : Process.Command) (limit : Nat) :
     JobM (Except ProcessError Process.Ran) :=
   ExceptT.lift (Program.request (port := jobPort) (.process (.run command limit)))
 
+/-- Runs `command` as `Process.run` does, and kills it, with its process
+group, if it has not ended `time` milliseconds after it was started: then the
+reply is `timedOut`. `Editor/Process.lean` has the rules. -/
+def Process.runWithin (command : Process.Command) (limit : Nat) (time : Nat) :
+    JobM (Except ProcessError Process.Ran) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.runWithin command limit time)))
+
 /-- Starts `command` as a streaming child, as `streaming` says, and waits for
 it to start: the child, named for this job, or why it was refused. The child
 does not outlive the job. `Editor/Process.lean` has the rules. -/

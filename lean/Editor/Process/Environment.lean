@@ -366,6 +366,7 @@ def Environment.over (variables : Array (String × String)) (own : Environment) 
 /-- What a lookup's run came to, as an entry's finding: the variables of a run
 that exited 0 and printed a JSON object of strings, or why not. -/
 def foundOf : Except ProcessError Ran → Found
+  | .error (.timedOut limit) => .failed (.timedOut limit)
   | .error error => .failed (.refused error)
   | .ok { exit := .signal signal, .. } => .failed (.signalled signal)
   | .ok { exit := .code 0, stdout, .. } =>

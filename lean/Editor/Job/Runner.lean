@@ -523,6 +523,10 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.processes.start id (.run command limit)
     return .later id wait (handle.services.processes.take id (.run command limit))
+  | .process (.runWithin command limit time) => do
+    let (id, wait) ← handle.services.completions.register
+    handle.services.processes.start id (.runWithin command limit time)
+    return .later id wait (handle.services.processes.take id (.runWithin command limit time))
   | .fileWatch (.start target coalescing) => do
     let (id, wait) ← handle.services.completions.register
     handle.services.fileWatches.start id (.start target coalescing)

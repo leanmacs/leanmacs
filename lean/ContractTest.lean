@@ -619,7 +619,9 @@ def processChecks (services : Job.Services) : List Check :=
         let directory ← IO.FS.createTempDir
         let refused ← Job.RefusedRuns.new
         let services :=
-          { services with processes := Job.realProcesses services.completions refused }
+          { services with
+            processes :=
+              Job.realProcesses services.completions refused services.timers (← Job.TimedRuns.new) }
         let (probe, _) ← services.completions.register
         services.completions.finish probe .completed
         let taken := probe + 1
@@ -652,7 +654,9 @@ def processChecks (services : Job.Services) : List Check :=
         "a run the library does not take completes its wait at once, and withdrawing the wait erases the refusal kept for it"
       run := do
         let directory ← IO.FS.createTempDir
-        let processes := Job.realProcesses services.completions (← Job.RefusedRuns.new)
+        let processes :=
+          Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers
+            (← Job.TimedRuns.new)
         let (id, wait) ← services.completions.register
         let before ← Ffi.processesPending
         let request := ProcessRequest.run (JobContract.sh directory "exit 0") 10
@@ -1431,10 +1435,13 @@ def main : IO UInt32 := do
   -- properties save what their own jobs loaded.
   let published ← Editor.Snapshots.new
   let held ← Editor.Job.HeldSnapshots.new
+  let timers := Editor.Job.realTimers completions
   let services : Editor.Job.Services :=
-    { completions, timers := Editor.Job.realTimers completions
+    { completions, timers
       files := Editor.Job.realFiles completions published.reader held
-      processes := Editor.Job.realProcesses completions (← Editor.Job.RefusedRuns.new)
+      processes :=
+        Editor.Job.realProcesses completions (← Editor.Job.RefusedRuns.new) timers
+          (← Editor.Job.TimedRuns.new)
       fileWatches := Editor.Job.realFileWatches completions (← Editor.Job.RealWatches.new) }
   let pump ← IO.asTask (prio := .dedicated) (Editor.Job.pump completions)
   let properties := Editor.TextContract.properties
