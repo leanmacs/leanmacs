@@ -14282,6 +14282,25 @@ def highlightEnterChecks : List Check :=
                 major == some "cobol-mode" &&
                 model.attached.isEmpty
             | _ => false },
+    { name :=
+        "a refused mode set over a highlighted one leaves its text detached, so nothing of the mode before is drawn: a grammar the service lacks, and a query of the same grammar that does not compile; the echo area still says the refusal"
+      run :=
+        pure <|
+          let broken := parsedMode "broken" { grammar := "json", highlights := some "((" }
+          let cobol := parsedMode "cobol-mode" { grammar := "cobol" }
+          let modes := #[parsedMode "json", broken, cobol]
+          (match highlightedBy modes ["json", "cobol-mode"] with
+            | some (["", echo], major, model) =>
+              echo == "highlights: `cobol-mode`: no grammar of that name" &&
+                major == some "cobol-mode" &&
+                model.attached.isEmpty && model.highlighted.isEmpty
+            | _ => false) &&
+            match highlightedBy modes ["json", "broken"] with
+            | some (["", echo], major, model) =>
+              echo.startsWith "highlights: `broken`: the query is not one" &&
+                major == some "broken" &&
+                model.attached.isEmpty && model.highlighted.isEmpty
+            | _ => false },
     { name := "a derived mode that says nothing of a syntax tree takes its parent's"
       run :=
         pure <|

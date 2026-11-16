@@ -30,6 +30,9 @@ the library has:
 
 - the grammars listed, and a grammar that is not listed refused;
 - a question of a text that is not attached, or no longer, refused;
+- a detach answered whether or not the text is attached, and one after a
+  refused attach leaving the text with neither its parse nor its
+  highlighter (what `Highlight.enter` does on a refusal);
 - a query refused by its kind (offsets are each implementation's own, and
   are not compared), its capture names, and a released query refused;
 - a table of exact cases: a text, a query, and the rows it answers of the
@@ -163,6 +166,23 @@ def properties : List Property :=
           SyntaxTree.detach snapshot
           let after ← refusedWith .notAttached (SyntaxTree.captures snapshot query 0 3)
           return before && attached && after },
+      { name :=
+          "a detach is answered whether or not the text is attached, and a text attached and highlighted, then refused an attach of an unlisted grammar and detached, is not attached and takes no highlighter"
+        texts := #["[1]", "[2]"]
+        holds := fun snapshots => do
+          let highlighted := nth snapshots 0
+          let never := nth snapshots 1
+          let query ← SyntaxTree.compile json "(number) @number"
+          SyntaxTree.attach highlighted json
+          SyntaxTree.highlight highlighted query #[some ⟨"syntax.number"⟩]
+          let refused ← refusedWith .unknownGrammar (SyntaxTree.attach highlighted "no-such")
+          SyntaxTree.detach highlighted
+          SyntaxTree.detach never
+          return refused &&
+              (← refusedWith .notAttached (SyntaxTree.captures highlighted query 0 3)) &&
+              (← refusedWith .notAttached
+                  (SyntaxTree.highlight highlighted query #[some ⟨"syntax.number"⟩])) &&
+              (← refusedWith .notAttached (SyntaxTree.captures never query 0 3)) },
       { name :=
           "a query that is not one is refused as syntax, an unknown kind as a node type and an unknown field as a field"
         texts := #[]

@@ -2316,7 +2316,11 @@ contributes nothing.
   highlighter keeps. A refusal of the syntax tree port is said in the echo
   area, ``highlights: `<mode>`: <refusal>``, and stops those steps: the
   mode is set and the command is not refused, so a query of config's that
-  does not compile keeps no buffer out of its mode. When a mode with no
+  does not compile keeps no buffer out of its mode. The text is detached
+  first, so it is drawn plain, as the echo area says: a refused attach
+  replaces nothing, and an attach with the grammar the text already has
+  keeps its highlighter, so without it the mode before would still be
+  drawn. When a mode with no
   syntax tree replaces one with a syntax tree, the text is detached, which
   drops its highlights; when neither has one, the port is asked nothing.
   What the port did is not undone on rollback, as the clipboard is not.
@@ -2894,7 +2898,7 @@ names a scheme's key:
 | `modeRegistryChecks` | A mode's lineage, a cycle and a missing parent; the order of the active keymaps; a mode name no mode is registered under; a view with no window |
 | `modeDispatchChecks` | On the editor's models, through the loop: a major mode's role runs its command in a view of its buffer and the global binding elsewhere; a minor mode's wins; a derived mode falls to its parent; the leader then a suffix |
 | `modeEnterChecks` | On the editor's models: the on-enter action runs once, with the view, when the mode becomes the major mode; a derived mode's lineage root first; a refusal runs nothing |
-| `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set, a parent's syntax tree, and the text detached when a mode with none replaces it |
+| `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it |
 | `ConfigTest.modeChecks` | Through the headless host and the real elaborator: a config mode's role runs its store command, and once a reload drops the mode the role's key runs the global binding; a compiled mode's role runs its command before any reload and after a reload of a config that defines no mode |
 
 Beside them, `stateChecks` pin the three state operations, `registryChecks`

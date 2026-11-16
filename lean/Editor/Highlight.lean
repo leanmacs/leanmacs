@@ -50,10 +50,17 @@ of the buffer's text (`TextId.withSnapshot`):
    mapping;
 5. `release` the query: the library's highlighter keeps it.
 
-A refusal from the syntax tree port stops the steps and is said in the echo
-area, ``highlights: `<mode>`: <refusal>``. The mode is still set and the
-command is not refused: a query of config's that does not compile keeps no
-buffer out of its mode.
+A refusal from the syntax tree port stops the steps, detaches the text, and
+is said in the echo area, ``highlights: `<mode>`: <refusal>``. The mode is
+still set and the command is not refused: a query of config's that does not
+compile keeps no buffer out of its mode.
+
+The detach is what keeps the mode before from being drawn: the steps run
+over what that mode left, and a refused attach (a grammar the library lacks)
+replaces nothing, while an attach with the same grammar keeps its parse and
+its highlighter, which a query that then does not compile never replaces. So
+a refused mode's text is drawn plain, as the echo area says, whatever mode it
+replaced. Detaching a text that is not attached does nothing.
 
 `leave` detaches the text, when a major mode with no syntax tree replaces
 one with a syntax tree. A mode that says nothing of a syntax tree, set over
@@ -100,8 +107,8 @@ private def say (text : String) : EditorM Unit :=
 /-- What setting a major mode with `syntaxTree` asks of the syntax tree port
 for its text `text` (the steps of the module docs): attached with the
 grammar, and highlighted with the query in the faces `faces` gives; or,
-refused, said in the echo area under the mode's name `mode`. Never refused
-itself. -/
+refused, detached, so nothing of the mode before is drawn, and said in the
+echo area under the mode's name `mode`. Never refused itself. -/
 def enter (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree) : EditorM Unit :=
   text.withSnapshot fun snapshot => do
     let steps : SyntaxTreeM Unit := do
@@ -124,6 +131,7 @@ def enter (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree) : Edito
     | .ok () =>
       pure ()
     | .error refusal =>
+      discard (SyntaxTree.lift (SyntaxTree.detach snapshot))
       say s!"highlights: `{mode}`: {refusal.describe}"
 
 /-- What setting a major mode with no syntax tree over one with a syntax
