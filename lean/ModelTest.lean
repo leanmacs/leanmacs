@@ -20461,6 +20461,30 @@ def equivalent (character : Char) (modifiers : Modifiers := { superKey := true }
     Option KeyEquivalent :=
   some { character, modifiers }
 
+/-- The Vim scheme of the menu's run-table checks: the default states, with
+normal state's run table holding `t-enter`, run as `visual-line` entering
+that state, and `t-fail`, run as itself entering it too. -/
+def menuRunScheme : InputScheme :=
+  let enter (name : String) : Vim.Edit := .run { name, enters := some "visual-line" } none none
+  Vim.scheme
+    (Vim.Default.states.register
+      { Vim.Default.states.initial with
+        runs := [("t-enter", enter "visual-line"), ("t-fail", enter "t-fail")] })
+
+/-- A driver of the menu's run-table checks over the text and cursor
+`fixture` says, with evil's commands and `t-fail`, which gives up. -/
+def menuRunDriver (fixture : String) : Option (Loop.Driver menuRunScheme) :=
+  let (contents, head) := barred fixture
+  let fail : Dispatched := fun _ => giveUp "failed"
+  let keys : Loop.Keys menuRunScheme :=
+    { command? := (evilHanded (commands := [("t-fail", fail)])).command? }
+  (Loop.Driver.over keys (fun _ => none) (evilState contents head) editorModel).toOption
+
+/-- The selection of view 0 of `driver`, as the text model has it. -/
+def menuRunSelection (driver : Loop.Driver menuRunScheme) : Option Selection := do
+  let target ← driver.loop.state.target? ⟨0⟩
+  (target.selection.runModel driver.model.texts).1.toOption
+
 /-- The key equivalents the compiled bindings give the menu's commands. -/
 def compiledEquivalents : String → Option KeyEquivalent
   | "open-file" => equivalent 'o'
@@ -20500,6 +20524,25 @@ def menuChecks : List Check :=
             evilShown cut != evilShown byKey && evilShown byMenu == evilShown byKey &&
               (evilShown byKey).replace "|" "" == "abc" &&
               evilSelection byMenu == evilSelection byKey },
+    { name :=
+        "a menu item naming a command the view's state's run table has an entry for runs that entry, with the report of the state it enters: t-enter in normal state leaves the view in visual-line, its selection of the line shape, at rest; one that gives up leaves the scheme at rest in normal state"
+      run :=
+        pure <|
+          match menuRunDriver "a|b\ncd" with
+          | none => false
+          | some driver =>
+            let initial := menuRunScheme.report menuRunScheme.init ⟨0⟩
+            let entered := (driver.feed { event := .menu "t-enter", stamp := 0 }).1
+            let failed := (driver.feed { event := .menu "t-fail", stamp := 0 }).1
+            let report := menuRunScheme.report entered.loop.input ⟨0⟩
+            report.shape == .line && report.selecting &&
+              menuRunScheme.report entered.loop.atRest ⟨0⟩ == report &&
+              (menuRunSelection entered).map (·.shape) == some .line &&
+              entered.loop.state.echo.isEmpty &&
+              failed.loop.state.echo == "t-fail: failed" &&
+              menuRunScheme.report failed.loop.input ⟨0⟩ == initial &&
+              menuRunScheme.report failed.loop.atRest ⟨0⟩ == initial &&
+              menuRunSelection failed == menuRunSelection driver },
     { name := "a menu's minimise-window asks the frame to minimise"
       run := pure (framed frameDriver [.menu "minimise-window"] == some (#[.minimise], false)) },
     { name :=

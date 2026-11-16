@@ -534,7 +534,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
 | `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
 | `quitRequested` | Remembers that the system asked to quit (`EditorState.systemQuit`) and runs `quit` (`Ex.quitName`) with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The step says stop when the editor leaves; otherwise the publish asks the frame `keepRunning` once ("Quit") |
-| `menu name` | Runs the command `name` names, with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. A name no command is registered under says so, as an invocation does. It runs whatever the scheme's state, which is left as it is |
+| `menu name` | Tells the scheme that a menu item named the command `name`, with no arguments, for the focused view (`InputScheme.invoked`), and runs the invocation it hands back as one no key yielded, in the focused window, with the report of the scheme's state it hands back: guarded, rolled back and published as every command is, and config's command of the name runs in its place. A name no command is registered under says so, as an invocation does. The scheme's states are then as after a key: a command that runs to its end keeps the state handed back, which is the state at rest when nothing is pending, and one that does not puts the scheme back at rest. A scheme that treats no menu item apart hands back the invocation and the state as they were, so the command `name` runs |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
 
@@ -1645,8 +1645,19 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
         { command := Ex.quitName }
   | .menu name =>
     -- An invocation no key yielded, as a file to open is: config's
-    -- command of the name runs in its place.
-    loop.invoke keys { command := name }
+    -- command of the name runs in its place. The scheme says what it runs
+    -- as in the focused view's state, and the state it leaves.
+    let focused := loop.state.frame.focused
+    let (input, invocation) := scheme.invoked focused loop.input { command := name }
+    let ran ← run keys loop.state invocation [] (scheme.report input focused)
+    if ran.finished then
+      let atRest := if (scheme.pending input).isEmpty then input else loop.atRest
+      (({ loop with
+                  input, atRest } :
+                Loop scheme).ranInto
+            ran).published
+    else
+      (({ loop with input := loop.atRest } : Loop scheme).ranInto ran).published
   | _ =>
     let focused := loop.state.frame.focused
     let report := scheme.report loop.input focused
