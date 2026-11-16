@@ -948,11 +948,7 @@ mod tests {
         let snapshot = Document::new("1").snapshot();
         editor_syntax::Consumer::deliver(
             &notice,
-            &editor_syntax::Parsed {
-                revision: snapshot.revision(),
-                snapshot,
-                tree: (),
-            },
+            &editor_syntax::Parsed::new(snapshot.revision(), snapshot, ()),
         );
         NOTICES.quit();
         let event = NOTICES.next();

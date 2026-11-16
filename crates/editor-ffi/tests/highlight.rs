@@ -135,10 +135,16 @@ fn fresh(
     let faces = faces.iter().cloned().map(Some).collect();
     let highlighter = Highlighter::new(std::sync::Arc::new(query), count, faces).unwrap();
     let mut parser = TreeSitter.parser(&grammar).unwrap();
-    highlight::fresh(&TreeSitter, &highlighter, &mut parser, &document.snapshot())
-        .into_iter()
-        .map(|span| (span.bytes, highlighter.names()[span.face].clone()))
-        .collect()
+    highlight::fresh(
+        &TreeSitter,
+        &highlighter,
+        None,
+        &mut parser,
+        &document.snapshot(),
+    )
+    .into_iter()
+    .map(|span| (span.bytes, highlighter.names()[span.face].clone()))
+    .collect()
 }
 
 /// The offset of `needle` in `document`'s text, which holds it.

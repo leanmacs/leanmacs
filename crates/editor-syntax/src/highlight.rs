@@ -26,8 +26,27 @@
 //!    around it, and layout, which stacks spans in the order given, draws
 //!    an inner node (an escape inside a string) over its outer one.
 //!
-//! [`fresh`] is a whole parse, the captures of the whole text, and the rule:
-//! the reference every carried or reparsed highlight is compared with.
+//! [`fresh`] is a whole parse, the captures of the whole text, and the rule,
+//! with the layers' spans after the host's: the reference every carried or
+//! reparsed highlight is compared with.
+//!
+//! # Layers
+//!
+//! A text's layers ([`crate::inject`]) are drawn after the host's spans, so
+//! layout, which stacks spans in the order given, draws an injected span
+//! over the host's; where the injected language has no face for a node,
+//! the host's shows through. Layer by layer, by depth and then by start,
+//! for each layer whose ranges meet the range asked: its language's
+//! highlighter's captures of its tree, by the highlight rule, each span cut
+//! to the layer's ranges, so nothing of a gap between them (a `> ` before a
+//! quoted fence's line) is drawn as the layer's. A layer whose language is
+//! no longer one of the injections', or is now of another grammar, is not
+//! drawn.
+//!
+//! **One face table.** The faces a text's spans name are the host
+//! highlighter's names followed by each language's, in the order of their
+//! names, with no name twice ([`face_table`]); each span's face is its
+//! highlighter's index remapped into that table.
 //!
 //! # Carrying through a patch ([`back`], [`carry`])
 //!
@@ -47,14 +66,16 @@
 //! Every end lands on a position of N: kept text moves whole, and an edit's
 //! ends are positions.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
 use editor_text::{Edit, Patch, Revision, Snapshot};
 
+use crate::inject::{Injections, Layer};
 use crate::port::{Capture, Syntax};
-use crate::query::{captures_in, positions};
+use crate::query::{captures_in, overlaps, positions};
 use crate::session::Parsed;
 
 /// A face table refused: it does not have one entry for each of the
@@ -163,24 +184,115 @@ pub fn spans<Q>(highlighter: &Highlighter<Q>, captures: &[Capture]) -> Vec<Highl
     drawn
 }
 
-/// The spans of the whole of `snapshot` from a fresh parse: the reference
-/// that carried and reparsed highlights are compared with.
+/// The faces of a text drawn by `highlighter` with `injections`: its names,
+/// then each language's, by name, with no name twice; and, for each
+/// language, where each of its face indices is in that table.
+pub fn face_table<Q>(
+    highlighter: &Highlighter<Q>,
+    injections: Option<&Injections<Q>>,
+) -> (Vec<String>, BTreeMap<String, Vec<usize>>) {
+    let mut names = highlighter.names().to_vec();
+    let mut remaps = BTreeMap::new();
+    for (name, language) in injections.into_iter().flat_map(|found| &found.languages) {
+        let remap = language
+            .highlighter
+            .names()
+            .iter()
+            .map(|face| match names.iter().position(|known| known == face) {
+                Some(index) => index,
+                None => {
+                    names.push(face.clone());
+                    names.len() - 1
+                }
+            })
+            .collect();
+        remaps.insert(name.clone(), remap);
+    }
+    (names, remaps)
+}
+
+/// The spans of the whole of `snapshot` from a fresh parse, with the
+/// layers `injections` find drawn after the host's, each face an index into
+/// [`face_table`]'s names (which are `highlighter`'s with no injections):
+/// the reference that carried and reparsed highlights are compared with.
 pub fn fresh<S: Syntax>(
     syntax: &S,
     highlighter: &Highlighter<S::Query>,
+    injections: Option<&Injections<S::Query>>,
     parser: &mut S::Parser,
     snapshot: &Snapshot,
 ) -> Vec<HighlightSpan> {
     let tree = syntax.parse(parser, snapshot, None);
-    let captures = captures_in(
-        syntax,
-        highlighter.query(),
-        &tree,
-        snapshot,
-        0..snapshot.len(),
-    )
-    .unwrap_or_default();
-    spans(highlighter, &captures)
+    let whole = 0..snapshot.len();
+    let captures = captures_in(syntax, highlighter.query(), &tree, snapshot, whole.clone())
+        .unwrap_or_default();
+    let mut drawn = spans(highlighter, &captures);
+    let Some(injections) = injections else {
+        return drawn;
+    };
+    let layers = crate::inject::layers(syntax, injections, &tree, snapshot, &mut BTreeMap::new());
+    let (_, remaps) = face_table(highlighter, Some(injections));
+    for layer in &layers {
+        layer_spans(
+            syntax,
+            injections,
+            &remaps,
+            layer,
+            snapshot,
+            whole.clone(),
+            |span| {
+                drawn.push(span);
+            },
+        );
+    }
+    drawn
+}
+
+/// The spans of `layer`, a layer of the tree of `text`, that meet `asked`,
+/// a range of `text`, each cut to the layer's ranges, with its face
+/// remapped into the face table: none when its language is not one of
+/// `injections`' or is of another grammar now.
+fn layer_spans<S: Syntax>(
+    syntax: &S,
+    injections: &Injections<S::Query>,
+    remaps: &BTreeMap<String, Vec<usize>>,
+    layer: &Layer<S::Tree>,
+    text: &Snapshot,
+    asked: Range<usize>,
+    mut out: impl FnMut(HighlightSpan),
+) {
+    let Some(language) = injections
+        .languages
+        .get(&layer.language)
+        .filter(|language| language.grammar == layer.grammar)
+    else {
+        return;
+    };
+    let Some(remap) = remaps.get(&layer.language) else {
+        return;
+    };
+    if !layer
+        .ranges
+        .iter()
+        .any(|range| overlaps(range.clone(), asked.clone()))
+    {
+        return;
+    }
+    let highlighter = &language.highlighter;
+    let Ok(captures) = captures_in(syntax, highlighter.query(), &layer.tree, text, asked) else {
+        return;
+    };
+    for span in spans(highlighter, &captures) {
+        for range in &layer.ranges {
+            let cut = span.bytes.start.max(range.start)..span.bytes.end.min(range.end);
+            if !cut.is_empty() {
+                out(HighlightSpan {
+                    bytes: cut,
+                    face: remap[span.face],
+                });
+            }
+        }
+    }
 }
 
 /// `bytes`, a range of the text `patch` reaches, mapped back to the text
@@ -257,15 +369,21 @@ pub fn carry(patch: &Patch, bytes: Range<usize>) -> Vec<Range<usize>> {
     parts
 }
 
-/// What a text is drawn with for one snapshot: the tree delivered last, the
-/// highlighter, the snapshot, and the patch from the tree's revision to the
-/// snapshot's when they differ ([`crate::Session::highlights`]). It is
-/// fixed once made.
+/// What a text is drawn with for one snapshot: the tree delivered last,
+/// with its layers, the highlighter, the injections, the snapshot, and the
+/// patch from the tree's revision to the snapshot's when they differ
+/// ([`crate::Session::highlights`]). It is fixed once made.
 pub struct Highlights<S: Syntax> {
-    /// The tree delivered, with its snapshot.
+    /// The tree delivered, with its snapshot and its layers.
     parsed: Arc<Parsed<S::Tree>>,
     /// The highlighter.
     highlighter: Arc<Highlighter<S::Query>>,
+    /// The injections its layers are drawn with.
+    injections: Arc<Injections<S::Query>>,
+    /// The faces its spans name ([`face_table`]).
+    faces: Vec<String>,
+    /// For each language, where each of its faces is in `faces`.
+    remaps: BTreeMap<String, Vec<usize>>,
     /// The snapshot it was made for, whose positions a range asked of it
     /// must be.
     snapshot: Snapshot,
@@ -280,20 +398,25 @@ impl<S: Syntax> Highlights<S> {
     pub(crate) fn new(
         parsed: Arc<Parsed<S::Tree>>,
         highlighter: Arc<Highlighter<S::Query>>,
+        injections: Arc<Injections<S::Query>>,
         snapshot: Snapshot,
         patch: Option<Patch>,
     ) -> Self {
+        let (faces, remaps) = face_table(&highlighter, Some(&injections));
         Self {
             parsed,
             highlighter,
+            injections,
+            faces,
+            remaps,
             snapshot,
             patch,
         }
     }
 
-    /// The face names its spans name by index.
+    /// The face names its spans name by index ([`face_table`]).
     pub fn faces(&self) -> &[String] {
-        self.highlighter.names()
+        &self.faces
     }
 
     /// The revision of the tree it draws from.
@@ -305,7 +428,8 @@ impl<S: Syntax> Highlights<S> {
     /// snapshot it was made for, cut to it, in the order of the highlight
     /// rule: `bytes` mapped back to the tree's text ([`back`]), the query's
     /// captures there drawn by the rule ([`spans`]), each carried forward
-    /// ([`carry`]), and cut. Nothing for a range that is not two positions
+    /// ([`carry`]), and cut; then each layer's, as "Layers" in the module
+    /// docs says, carried and cut the same way. Nothing for a range that is not two positions
     /// of the snapshot in order: checked on the snapshot itself, since
     /// [`back`] maps an end inside text put in since the tree to a position
     /// of the tree's text.
@@ -323,11 +447,11 @@ impl<S: Syntax> Highlights<S> {
             self.highlighter.query(),
             &parsed.tree,
             &parsed.snapshot,
-            asked,
+            asked.clone(),
         ) else {
             return;
         };
-        for span in spans(&self.highlighter, &captures) {
+        let mut forward = |span: HighlightSpan| {
             let parts = match &self.patch {
                 Some(patch) => carry(patch, span.bytes),
                 None => vec![span.bytes],
@@ -341,6 +465,20 @@ impl<S: Syntax> Highlights<S> {
                     });
                 }
             }
+        };
+        for span in spans(&self.highlighter, &captures) {
+            forward(span);
+        }
+        for layer in &parsed.layers {
+            layer_spans(
+                syntax,
+                &self.injections,
+                &self.remaps,
+                layer,
+                &parsed.snapshot,
+                asked.clone(),
+                &mut forward,
+            );
         }
     }
 }
@@ -365,7 +503,7 @@ mod tests {
     /// of its face.
     fn drawn(highlighter: &Highlighter<ParensQuery>, text: &str) -> Vec<(Range<usize>, String)> {
         let snapshot = Text::from(text).snapshot();
-        fresh(&Parens, highlighter, &mut ParensParser, &snapshot)
+        fresh(&Parens, highlighter, None, &mut ParensParser, &snapshot)
             .into_iter()
             .map(|span| (span.bytes, highlighter.names()[span.face].clone()))
             .collect()
@@ -555,13 +693,15 @@ mod tests {
         for (range, with) in edits {
             text.replace(range.clone(), with).unwrap();
         }
-        let parsed = Arc::new(Parsed {
-            revision: before.revision(),
-            snapshot: before,
-            tree,
-        });
+        let parsed = Arc::new(Parsed::new(before.revision(), before, tree));
         let patch = (!edits.is_empty()).then(|| text.changes_since(Revision::new(0)).unwrap());
-        Highlights::new(parsed, Arc::new(highlighter), text.snapshot(), patch)
+        Highlights::new(
+            parsed,
+            Arc::new(highlighter),
+            Arc::new(Injections::default()),
+            text.snapshot(),
+            patch,
+        )
     }
 
     /// The spans `highlights` adds for `bytes`.

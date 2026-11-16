@@ -1,7 +1,9 @@
 //! Highlights while a parse is in progress, with the worker on a real
-//! thread: an edit and its touch do not wait for the parse, the highlights
-//! asked meanwhile are the delivered ones carried through the edits, and
-//! once the parse is let go the highlights are a fresh highlight's.
+//! thread: an edit and its touch, and a language set for injections, do not
+//! wait for the parse, since the round takes the state lock only briefly;
+//! the highlights asked meanwhile are the delivered ones carried through
+//! the edits, and once the parse is let go the highlights are a fresh
+//! highlight's.
 //!
 //! Nothing sleeps, and the test fails rather than hangs. Every wait is
 //! bounded by [`BOUND`] (a timeout fails with what waited), and the parse
@@ -17,6 +19,7 @@ use std::time::Duration;
 
 use editor_syntax::fake::{GRAMMAR, Parens, ParensParser, ParensQuery, ParensTree};
 use editor_syntax::highlight::{self, Highlighter};
+use editor_syntax::inject::Language;
 use editor_syntax::{
     Capture, GrammarName, Handle, Latest, Node, QueryError, QueryKind, Session, Source, Syntax,
     Worker,
@@ -193,7 +196,7 @@ fn drawn(
 /// A fresh highlight of `snapshot`, each span with its face's name.
 fn fresh(snapshot: &Snapshot) -> Vec<(Range<usize>, String)> {
     let highlighter = highlighter();
-    highlight::fresh(&Parens, &highlighter, &mut ParensParser, snapshot)
+    highlight::fresh(&Parens, &highlighter, None, &mut ParensParser, snapshot)
         .into_iter()
         .map(|span| (span.bytes, highlighter.names()[span.face].clone()))
         .collect()
@@ -207,7 +210,7 @@ fn replace(text: &Mutex<Text>, range: Range<usize>, with: &str) -> Revision {
 }
 
 #[test]
-fn an_edit_during_a_parse_does_not_wait_for_it() {
+fn the_round_takes_the_state_lock_only_briefly() {
     let text = Arc::new(Mutex::new(Text::from("(ab cd)\n(ef)\n")));
     let closed = Arc::new(AtomicBool::new(false));
     let (entered_sender, entered) = mpsc::channel();
@@ -250,16 +253,23 @@ fn an_edit_during_a_parse_does_not_wait_for_it() {
             .recv_timeout(BOUND)
             .expect("the worker never started the parse");
 
-        // 2. Another edit and its touch, on another thread, bounded.
+        // 2. Another edit and its touch, and a language set, on another
+        // thread, bounded.
         let (done_sender, done) = mpsc::channel();
         let (text, handle, session) = (&text, &handle, &session);
         scope.spawn(move || {
             let revision = replace(text, 10..10, " gh");
             handle.touch(session, revision);
+            let language = Language {
+                grammar: GrammarName::new(GRAMMAR),
+                highlighter: Arc::new(highlighter()),
+                injections: None,
+            };
+            session.set_language("inner".to_owned(), language);
             let _ = done_sender.send(());
         });
         done.recv_timeout(BOUND)
-            .expect("an edit or its touch waited for a parse in progress");
+            .expect("an edit, its touch or a language set waited for a parse in progress");
         let third = lock(text).snapshot();
         assert_eq!(third.revision(), Revision::new(2));
 

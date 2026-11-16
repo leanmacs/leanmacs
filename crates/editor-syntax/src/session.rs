@@ -10,8 +10,9 @@
 //!
 //! 1. The source is asked for the text as it is now and what changed since
 //!    the revision of the last tree parsed, the *base*. A text that is gone
-//!    ends the session ([`Outcome::Gone`]); one still at the base's revision
-//!    needs nothing ([`Outcome::UpToDate`]).
+//!    ends the session ([`Outcome::Gone`]). One still at the base's revision
+//!    needs nothing ([`Outcome::UpToDate`]), unless the injections have
+//!    changed since the base's layers were found (step 4).
 //! 2. With a base and a patch that chains from it (`patch.from` is the
 //!    base's revision and `patch.to` the snapshot's), a clone of the base
 //!    tree is told each of the patch's edits, in order, and the text is
@@ -27,14 +28,27 @@
 //!    parse. So the tree of a round is always the tree a fresh parse of
 //!    its snapshot gives. The second parse is the worker's: the editor
 //!    thread never waits for it.
-//! 4. The result is the new base, delivered or not.
-//! 5. **The delivery rule.** The result is delivered only if its revision is
+//! 4. **Layers.** When the session has an injections query
+//!    ([`Session::set_injections`]), the new tree's layers are found
+//!    ([`crate::inject::layers`]) and parsed, each whole, on the worker, by
+//!    parsers the work keeps, one for each grammar. The injections are read
+//!    once, at the round's start, with their *generation*, which grows with
+//!    each change ([`Session::set_injections`], [`Session::set_language`]).
+//!    A text still at the base's revision whose base's layers were found
+//!    with another generation is not parsed again: the base tree is kept,
+//!    its layers are found again, and the result is delivered at the same
+//!    revision. So the injections a mode sets are drawn without a key
+//!    pressed.
+//! 5. The result is the new base, delivered or not.
+//! 6. **The delivery rule.** The result is delivered only if its revision is
 //!    at least the newest the session has been told of
 //!    ([`Session::touch`]). Delivering sets that revision to the result's,
 //!    keeps the result ([`Session::parsed`]) and hands it to each consumer.
 //!    A result older than a revision the session has been told of is
 //!    [`Outcome::Stale`]: nobody sees it, and it serves only as the base of
-//!    the next parse. So the revisions delivered only grow, and a result
+//!    the next parse. So a result is delivered at least at every revision
+//!    told and every one delivered before: the revisions delivered never go
+//!    back, and they repeat only for a round of step 4's, and a result
 //!    tagged with a revision older than the current one is never handed
 //!    out.
 //!
@@ -69,6 +83,10 @@
 //!   forgotten M, nothing, for that frame: the next one draws again;
 //! - when M is newer (a scene of an old snapshot), nothing.
 //!
+//! The tree delivered carries its layers, and they are drawn over the
+//! host's spans by the injections the session has when it is asked
+//! ([`crate::highlight`], "Layers").
+//!
 //! So the old highlights stay, carried through the edits since, until the
 //! reparse that replaces them is delivered, and an edit never waits for a
 //! parse: a question of highlights takes the state lock, lets it go, and
@@ -76,15 +94,20 @@
 //!
 //! # Locks
 //!
-//! A session has two: the *work* lock, over the parser and the base, which
+//! A session has two: the *work* lock, over the parsers and the base, which
 //! only the round takes, so only the worker; and the *state* lock, over the
-//! newest revision told, the result delivered and the consumers, which the
-//! round takes only to deliver and [`Session::touch`] takes to tell. A
-//! parse holds the work lock and no other: it takes the document's lock
-//! only inside [`Source::latest`], and never the state lock while it
-//! parses, so an edit's touch never waits for a parse. A consumer is
+//! newest revision told, the result delivered, the consumers, the
+//! highlighter and the injections, which the round takes briefly at its
+//! start, to read the injections and their generation, and then only to
+//! deliver, and which [`Session::touch`] takes to tell. A parse holds the
+//! work lock and no other: it takes the document's lock only inside
+//! [`Source::latest`], and never the state lock while it parses, so an
+//! edit's touch, and a change of injections, never wait for a parse.
+//! Nothing takes the state lock and then the work lock, so the round's
+//! taking the state lock under the work lock makes no cycle. A consumer is
 //! called under the state lock and must not call back into the session.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -93,6 +116,7 @@ use std::time::Duration;
 use editor_text::{Patch, Revision, Snapshot};
 
 use crate::highlight::{Highlighter, Highlights};
+use crate::inject::{Injections, Language, Layer, layers};
 use crate::port::{Capture, GrammarName, Syntax};
 use crate::query::{captures_in, positions};
 
@@ -126,14 +150,31 @@ pub struct Parsed<T> {
     pub snapshot: Snapshot,
     /// The tree.
     pub tree: T,
+    /// The tree's layers, in order of depth and then of start
+    /// ([`crate::inject::layers`]).
+    pub layers: Vec<Layer<T>>,
+}
+
+impl<T> Parsed<T> {
+    /// The result of `tree`, the tree of `snapshot` at `revision`, with no
+    /// layers.
+    pub fn new(revision: Revision, snapshot: Snapshot, tree: T) -> Self {
+        Self {
+            revision,
+            snapshot,
+            tree,
+            layers: Vec::new(),
+        }
+    }
 }
 
 /// What is handed each result a session delivers.
 pub trait Consumer<T>: Send + Sync {
     /// `parsed` is delivered: its revision is at least every revision the
-    /// session has been told of, and greater than every one delivered
-    /// before. Called under the session's state lock: it must not call
-    /// back into the session.
+    /// session has been told of and every one delivered before. It is the
+    /// same as the last one delivered only when the injections changed and
+    /// the text did not (the module docs, step 4). Called under the
+    /// session's state lock: it must not call back into the session.
     fn deliver(&self, parsed: &Parsed<T>);
 }
 
@@ -218,8 +259,20 @@ pub struct Session<S: Syntax> {
 struct Work<S: Syntax> {
     /// The parser.
     parser: S::Parser,
-    /// The last tree parsed, delivered or not, with its revision.
-    base: Option<(Revision, S::Tree)>,
+    /// A parser for each grammar a layer has been parsed with.
+    parsers: BTreeMap<GrammarName, S::Parser>,
+    /// The last tree parsed, delivered or not.
+    base: Option<Base<S::Tree>>,
+}
+
+/// The last tree a round parsed.
+struct Base<T> {
+    /// The revision it is of.
+    revision: Revision,
+    /// The tree.
+    tree: T,
+    /// The generation of the injections its layers were found with.
+    generation: u64,
 }
 
 /// What a round delivers into and a touch tells.
@@ -232,6 +285,10 @@ struct State<S: Syntax> {
     consumers: Vec<Box<dyn Consumer<S::Tree>>>,
     /// What the text is drawn with, once one is set.
     highlighter: Option<Arc<Highlighter<S::Query>>>,
+    /// The injections layers are found and drawn with.
+    injections: Arc<Injections<S::Query>>,
+    /// How many times the injections have changed.
+    generation: u64,
 }
 
 /// `mutex`, locked. A round and a touch leave what they guard whole at
@@ -249,12 +306,18 @@ impl<S: Syntax> Session<S> {
         Some(Self {
             grammar,
             source,
-            work: Mutex::new(Work { parser, base: None }),
+            work: Mutex::new(Work {
+                parser,
+                parsers: BTreeMap::new(),
+                base: None,
+            }),
             state: Mutex::new(State {
                 current: Revision::default(),
                 delivered: None,
                 consumers: Vec::new(),
                 highlighter: None,
+                injections: Arc::new(Injections::default()),
+                generation: 0,
             }),
             delivered: Condvar::new(),
             queued: AtomicBool::new(false),
@@ -320,6 +383,31 @@ impl<S: Syntax> Session<S> {
             .is_some()
     }
 
+    /// Finds the text's layers with `query`, or none with none, from the
+    /// next round on (the module docs, step 4). The caller queues the
+    /// session for that round.
+    pub fn set_injections(&self, query: Option<Arc<S::Query>>) {
+        self.change_injections(|injections| injections.query = query);
+    }
+
+    /// Parses and draws an injection of the language `name` as `language`
+    /// says from the next round on, in place of any language of that name
+    /// before. The caller queues the session for that round.
+    pub fn set_language(&self, name: String, language: Language<S::Query>) {
+        self.change_injections(|injections| {
+            injections.languages.insert(name, language);
+        });
+    }
+
+    /// Changes the injections with `change`, and their generation.
+    fn change_injections(&self, change: impl FnOnce(&mut Injections<S::Query>)) {
+        let mut state = lock(&self.state);
+        let mut injections = (*state.injections).clone();
+        change(&mut injections);
+        state.injections = Arc::new(injections);
+        state.generation += 1;
+    }
+
     /// What `snapshot` is drawn with, as the module docs say
     /// ("Highlights"): none with no highlighter or nothing delivered, the
     /// tree delivered when it is of the snapshot's revision, the tree
@@ -330,13 +418,23 @@ impl<S: Syntax> Session<S> {
     /// It takes the state lock and lets it go, and then the source's,
     /// never the work lock: it never waits for a parse.
     pub fn highlights(&self, snapshot: &Snapshot) -> Option<Highlights<S>> {
-        let (parsed, highlighter) = {
+        let (parsed, highlighter, injections) = {
             let state = lock(&self.state);
-            (state.delivered.clone()?, state.highlighter.clone()?)
+            (
+                state.delivered.clone()?,
+                state.highlighter.clone()?,
+                state.injections.clone(),
+            )
         };
         let revision = snapshot.revision();
         if parsed.revision == revision {
-            return Some(Highlights::new(parsed, highlighter, snapshot.clone(), None));
+            return Some(Highlights::new(
+                parsed,
+                highlighter,
+                injections,
+                snapshot.clone(),
+                None,
+            ));
         }
         if parsed.revision > revision {
             return None;
@@ -345,8 +443,15 @@ impl<S: Syntax> Session<S> {
         let patch = latest
             .patch
             .filter(|patch| patch.from == parsed.revision && patch.to == revision)?;
-        (latest.snapshot.revision() == revision)
-            .then(|| Highlights::new(parsed, highlighter, latest.snapshot, Some(patch)))
+        (latest.snapshot.revision() == revision).then(|| {
+            Highlights::new(
+                parsed,
+                highlighter,
+                injections,
+                latest.snapshot,
+                Some(patch),
+            )
+        })
     }
 
     /// The captures of `query`, compiled for `grammar`, in `range` of
@@ -377,32 +482,52 @@ impl<S: Syntax> Session<S> {
     /// One round, as the module docs say.
     pub fn parse_once(&self, syntax: &S) -> Outcome {
         let mut work = lock(&self.work);
-        let since = work.base.as_ref().map(|(revision, _)| *revision);
+        let (injections, generation) = {
+            let state = lock(&self.state);
+            (state.injections.clone(), state.generation)
+        };
+        let since = work.base.as_ref().map(|base| base.revision);
         let Some(latest) = self.source.latest(since) else {
             return Outcome::Gone;
         };
         let revision = latest.snapshot.revision();
-        if since == Some(revision) {
-            return Outcome::UpToDate;
-        }
-        let Work { parser, base } = &mut *work;
-        let edited = match (base.as_ref(), &latest.patch) {
-            (Some((from, tree)), Some(patch)) if patch.from == *from && patch.to == revision => {
-                let mut edited = tree.clone();
-                for edit in &patch.edits {
-                    syntax.edit(&mut edited, &edit.input_edit());
-                }
-                Some(edited)
+        let Work {
+            parser,
+            parsers,
+            base,
+        } = &mut *work;
+        let tree = match base.as_ref() {
+            Some(base) if base.revision == revision && base.generation == generation => {
+                return Outcome::UpToDate;
             }
-            _ => None,
+            // The text as it was; only the injections are new.
+            Some(base) if base.revision == revision => base.tree.clone(),
+            _ => {
+                let edited = match (base.as_ref(), &latest.patch) {
+                    (Some(base), Some(patch))
+                        if patch.from == base.revision && patch.to == revision =>
+                    {
+                        let mut edited = base.tree.clone();
+                        for edit in &patch.edits {
+                            syntax.edit(&mut edited, &edit.input_edit());
+                        }
+                        Some(edited)
+                    }
+                    _ => None,
+                };
+                reparse(syntax, parser, &latest.snapshot, edited.as_ref()).tree
+            }
         };
-        let tree = reparse(syntax, parser, &latest.snapshot, edited.as_ref()).tree;
-        *base = Some((revision, tree.clone()));
+        let layers = layers(syntax, &injections, &tree, &latest.snapshot, parsers);
+        *base = Some(Base {
+            revision,
+            tree: tree.clone(),
+            generation,
+        });
         drop(work);
         self.deliver(Parsed {
-            revision,
-            snapshot: latest.snapshot,
-            tree,
+            layers,
+            ..Parsed::new(revision, latest.snapshot, tree)
         })
     }
 
@@ -433,6 +558,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::fake::{GRAMMAR, Parens, ParensParser, ParensQuery, ParensTree};
     use crate::highlight::Highlighter;
+    use crate::inject::{Injections, Language, Layer};
     use crate::port::{Node, QueryError, QueryKind};
 
     /// A text behind a lock, as a document holds one, read as a source.
@@ -996,7 +1122,7 @@ pub(crate) mod tests {
     /// The fresh highlights of `snapshot`, each with the name of its face.
     fn fresh_of(snapshot: &Snapshot) -> Vec<(Range<usize>, String)> {
         let highlighter = parens_highlighter();
-        crate::highlight::fresh(&Parens, &highlighter, &mut ParensParser, snapshot)
+        crate::highlight::fresh(&Parens, &highlighter, None, &mut ParensParser, snapshot)
             .into_iter()
             .map(|span| (span.bytes, highlighter.names()[span.face].clone()))
             .collect()
@@ -1118,6 +1244,253 @@ pub(crate) mod tests {
         assert_eq!(lock(&fixture.syntax.asked).clone(), vec![3..9]);
         let ranges: Vec<Range<usize>> = spans.into_iter().map(|span| span.bytes).collect();
         assert_eq!(ranges, [6..10, 6..7, 7..9, 9..10]);
+    }
+
+    /// The fake's query `source`, compiled.
+    fn parens_query(source: &str) -> Arc<ParensQuery> {
+        Arc::new(Parens.compile(&GrammarName::new(GRAMMAR), source).unwrap())
+    }
+
+    /// The host's injections query: each list's text but its child lists
+    /// and atoms, as the language `inner`.
+    fn inner_injections() -> Arc<ParensQuery> {
+        parens_query("list @injection.content #set! injection.language inner")
+    }
+
+    /// The language `inner`: the fake's grammar, its lists drawn in
+    /// `inner.list` and its parens in `inner.paren`.
+    fn inner_language() -> Language<ParensQuery> {
+        let query = parens_query("list @l\n\"(\" @p\n\")\" @p");
+        let faces = vec![
+            Some("inner.list".to_owned()),
+            Some("inner.paren".to_owned()),
+        ];
+        Language {
+            grammar: GrammarName::new(GRAMMAR),
+            highlighter: Arc::new(Highlighter::new(query, 2, faces).unwrap()),
+            injections: None,
+        }
+    }
+
+    /// The injections `inner_injections` and `inner_language` make.
+    fn injections() -> Injections<ParensQuery> {
+        Injections {
+            query: Some(inner_injections()),
+            languages: BTreeMap::from([("inner".to_owned(), inner_language())]),
+        }
+    }
+
+    /// Gives `session` the injections of `injections()`.
+    fn inject(session: &Session<Recording>) {
+        session.set_injections(Some(inner_injections()));
+        session.set_language("inner".to_owned(), inner_language());
+    }
+
+    /// A layer as its language, depth, ranges and nodes.
+    type Shape = (String, u32, Vec<Range<usize>>, Vec<Node>);
+
+    /// Each layer as its language, depth, ranges and nodes.
+    fn shape(layers: &[Layer<ParensTree>]) -> Vec<Shape> {
+        layers
+            .iter()
+            .map(|layer| {
+                (
+                    layer.language.clone(),
+                    layer.depth,
+                    layer.ranges.clone(),
+                    Parens.nodes(&layer.tree),
+                )
+            })
+            .collect()
+    }
+
+    /// The layers a fresh round of the text of `fixture` as it is now finds.
+    fn fresh_layers(fixture: &Fixture) -> Vec<Shape> {
+        let snapshot = lock(&fixture.text).snapshot();
+        let grammar = GrammarName::new(GRAMMAR);
+        let (_, layers) =
+            crate::inject::fresh(&Parens, &grammar, &injections(), &snapshot).unwrap();
+        shape(&layers)
+    }
+
+    /// The layers of the tree `fixture`'s session delivered last.
+    fn delivered_layers(fixture: &Fixture) -> Vec<Shape> {
+        shape(&fixture.session.parsed().unwrap().layers)
+    }
+
+    #[test]
+    fn a_round_with_injections_delivers_the_layers_a_fresh_round_finds() {
+        let fixture = Fixture::new("(a b) c (d)");
+        inject(&fixture.session);
+
+        fixture.session.parse_once(&fixture.syntax);
+        let layers = delivered_layers(&fixture);
+        assert_eq!(layers, fresh_layers(&fixture));
+        let ranges: Vec<Vec<Range<usize>>> = layers.into_iter().map(|layer| layer.2).collect();
+        assert_eq!(ranges, [vec![0..1, 2..3, 4..5], vec![8..9, 10..11]]);
+    }
+
+    #[test]
+    fn setting_injections_after_a_delivery_delivers_layers_at_the_same_revision() {
+        let fixture = Fixture::new("(a b)");
+        assert_eq!(
+            fixture.session.parse_once(&fixture.syntax),
+            Outcome::Delivered(Revision::new(0))
+        );
+        assert_eq!(
+            fixture.session.parse_once(&fixture.syntax),
+            Outcome::UpToDate
+        );
+        assert!(delivered_layers(&fixture).is_empty());
+
+        inject(&fixture.session);
+        assert_eq!(
+            fixture.session.parse_once(&fixture.syntax),
+            Outcome::Delivered(Revision::new(0))
+        );
+        assert_eq!(delivered_layers(&fixture), fresh_layers(&fixture));
+        assert!(!delivered_layers(&fixture).is_empty());
+        // The text was not parsed again: one parse, the first.
+        assert_eq!(fixture.olds(), [None]);
+        assert_eq!(
+            fixture.session.parse_once(&fixture.syntax),
+            Outcome::UpToDate
+        );
+        assert_eq!(fixture.delivered(), [Revision::new(0), Revision::new(0)]);
+    }
+
+    #[test]
+    fn layers_after_edits_equal_a_fresh_rounds() {
+        let fixture = Fixture::new("(a b) c");
+        inject(&fixture.session);
+        fixture.session.parse_once(&fixture.syntax);
+        for (range, with) in [(7..7, " (d (e))"), (0..1, ""), (0..0, "((x)"), (3..9, "")] {
+            let revision = fixture.replace(range, with);
+            fixture.session.touch(revision);
+            assert_eq!(
+                fixture.session.parse_once(&fixture.syntax),
+                Outcome::Delivered(revision)
+            );
+            assert_eq!(delivered_layers(&fixture), fresh_layers(&fixture));
+        }
+    }
+
+    /// The fake's shipped highlights, with the injections of `injections()`,
+    /// each span with the name of its face.
+    fn fresh_injected(snapshot: &Snapshot) -> Vec<(Range<usize>, String)> {
+        let highlighter = parens_highlighter();
+        let injections = injections();
+        let (faces, _) = crate::highlight::face_table(&highlighter, Some(&injections));
+        crate::highlight::fresh(
+            &Parens,
+            &highlighter,
+            Some(&injections),
+            &mut ParensParser,
+            snapshot,
+        )
+        .into_iter()
+        .map(|span| (span.bytes, faces[span.face].clone()))
+        .collect()
+    }
+
+    #[test]
+    fn a_layers_spans_are_drawn_over_the_hosts_and_cut_to_its_ranges() {
+        let fixture = Fixture::new("(a b) c");
+        fixture.session.set_highlighter(parens_highlighter());
+        inject(&fixture.session);
+        fixture.session.parse_once(&fixture.syntax);
+        let snapshot = lock(&fixture.text).snapshot();
+
+        let drawn = highlighted(&fixture.syntax, &fixture.session, &snapshot).unwrap();
+        let at = |range: Range<usize>, face: &str| (range, face.to_owned());
+        assert_eq!(
+            drawn,
+            [
+                // The host's, first.
+                at(0..5, "syntax.list"),
+                at(0..1, "syntax.punctuation.bracket"),
+                at(1..2, "syntax.variable"),
+                at(3..4, "syntax.variable"),
+                at(4..5, "syntax.punctuation.bracket"),
+                at(6..7, "syntax.variable"),
+                // The layer's list, cut to its ranges: the atoms are not
+                // its; then its parens.
+                at(0..1, "inner.list"),
+                at(2..3, "inner.list"),
+                at(4..5, "inner.list"),
+                at(0..1, "inner.paren"),
+                at(4..5, "inner.paren"),
+            ]
+        );
+        assert_eq!(drawn, fresh_injected(&snapshot));
+        assert_eq!(
+            fixture.session.highlights(&snapshot).unwrap().faces(),
+            [
+                "syntax.punctuation.bracket",
+                "syntax.list",
+                "syntax.variable",
+                "syntax.constant",
+                "syntax.error",
+                "inner.list",
+                "inner.paren"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_layers_spans_are_carried_through_a_patch_until_the_reparse() {
+        let fixture = Fixture::new("(a b) c");
+        fixture.session.set_highlighter(parens_highlighter());
+        inject(&fixture.session);
+        fixture.session.parse_once(&fixture.syntax);
+        // `zz ` typed at the start, told and not parsed.
+        let revision = fixture.replace(0..0, "zz ");
+        fixture.session.touch(revision);
+        let snapshot = lock(&fixture.text).snapshot();
+
+        let carried = highlighted(&fixture.syntax, &fixture.session, &snapshot).unwrap();
+        let layer: Vec<(Range<usize>, String)> = carried
+            .iter()
+            .filter(|(_, face)| face.starts_with("inner."))
+            .cloned()
+            .collect();
+        let at = |range: Range<usize>, face: &str| (range, face.to_owned());
+        assert_eq!(
+            layer,
+            [
+                at(3..4, "inner.list"),
+                at(5..6, "inner.list"),
+                at(7..8, "inner.list"),
+                at(3..4, "inner.paren"),
+                at(7..8, "inner.paren"),
+            ]
+        );
+        assert_ne!(carried, fresh_injected(&snapshot));
+
+        fixture.session.parse_once(&fixture.syntax);
+        assert_eq!(
+            highlighted(&fixture.syntax, &fixture.session, &snapshot),
+            Some(fresh_injected(&snapshot))
+        );
+    }
+
+    #[test]
+    fn a_layer_whose_language_is_gone_or_of_another_grammar_is_not_drawn() {
+        let fixture = Fixture::new("(a b)");
+        fixture.session.set_highlighter(parens_highlighter());
+        inject(&fixture.session);
+        fixture.session.parse_once(&fixture.syntax);
+        let snapshot = lock(&fixture.text).snapshot();
+        fixture.session.set_language(
+            "inner".to_owned(),
+            Language {
+                grammar: GrammarName::new("another"),
+                ..inner_language()
+            },
+        );
+
+        let drawn = highlighted(&fixture.syntax, &fixture.session, &snapshot).unwrap();
+        assert!(drawn.iter().all(|(_, face)| !face.starts_with("inner.")));
     }
 
     #[test]
