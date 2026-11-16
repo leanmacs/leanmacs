@@ -293,8 +293,8 @@ which the ex names `b`, `ls` and `bd` run.
 | Command | Does |
 |---|---|
 | `switch-buffer` | Shows another open buffer in the window it is called with: the buffer of exactly the name that is its first argument, or else the best fuzzy match of the open buffers' names. With no string it asks, with a prompt labelled `Buffer: ` whose candidates are the open buffers' names, most recently used first and the window's own buffer last. Nothing matching says `switch-buffer: no buffer matches <text>`. |
-| `list-buffers` | Shows a buffer called `buffer-list`, with no file, whose text lists the open buffers, most recently used first: `+` for one with unsaved changes, its name, and its path for a buffer with a file. A later list replaces the text. |
-| `close-buffer` | Closes the buffer its first argument names, or the window's buffer: every window that showed it shows the most recently used buffer left, and closing the last leaves an empty `scratch`. It is refused while the buffer holds a file and has unsaved changes, and says `close-buffer: <name> has unsaved changes`. |
+| `list-buffers` | Shows a buffer called `buffer-list` (`buffer-list<2>` and so on where another buffer, such as a file's, has that name), with no file, whose text lists the open buffers, most recently used first: `+` for one with unsaved changes, its name, and its path for a buffer with a file. A later list replaces the text. |
+| `close-buffer` | Closes the buffer its first argument names, or the window's buffer: every window that showed it shows the most recently used buffer left, and closing the last leaves an empty `scratch`. It is refused while the buffer holds a file and has unsaved changes, and says `close-buffer: <name> has unsaved changes`; and while a save of the buffer is in flight, saying `close-buffer: <name> is being saved; try again when it is written`. |
 
 | Ex name | Runs | Takes |
 |---|---|---|

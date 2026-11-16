@@ -16669,8 +16669,9 @@ One keymap, the same for every view: `C-e e` runs the ex command, `C-e y`
 and `C-e t` the minibuffer's accept command and its command that moves to
 the next candidate, `C-b b` runs `switch-buffer` with the arguments the Vim
 scheme gives a command a key is bound to, a count and a register, `C-b n`
-runs it with `note.txt`, `C-b s` runs `split` and `C-b x` runs
-`edit-then-close`. -/
+runs it with `note.txt`, `C-b s` runs `split`, `C-b x` runs
+`edit-then-close`, `C-b d` runs `close-buffer` with no argument and `C-b m`
+runs it with the name the minibuffer's buffer has (`Prompt.bufferName`). -/
 def bufferKeys : Loop.Keys TestScheme.scheme :=
   let registrations := Files.commands ++ Minibuffer.commands ++ Buffers.commands ++ Ex.commands
   let compiled : List (String × Dispatched) :=
@@ -16696,7 +16697,9 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         ("C-e t", invoke Minibuffer.nextName),
         ("C-b b", { command := Buffers.switchName, arguments := [.nat 0, .str ""] }),
         ("C-b n", { command := Buffers.switchName, arguments := [.str "note.txt"] }),
-        ("C-b s", invoke "split"), ("C-b x", invoke "edit-then-close")]
+        ("C-b s", invoke "split"), ("C-b x", invoke "edit-then-close"),
+        ("C-b d", invoke Buffers.closeName),
+        ("C-b m", { command := Buffers.closeName, arguments := [.str Prompt.bufferName] })]
       (compiled ++ written) with
     registered :=
       { ex := fun name => Ex.bindings.findRev? (·.name == name),
@@ -16849,6 +16852,34 @@ def bufferCommandChecks : List Check :=
                     (·.any (·.name.startsWith Buffers.listBuffer))).size ==
                 1 },
     { name :=
+        "ls with a file called buffer-list open leaves that buffer's text as it was and unmodified, lists it, and shows the list in a buffer of its own with no file, under a free name; ls again makes no third"
+      run :=
+        pure <|
+          match buffersDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles Buffers.listBuffer
+            let contents := "kept\n"
+            let withFile := rewritten driver path contents.toUTF8
+            let (opened, _) := fedTo withFile (exLine s!"e {path}")
+            let (opened, _) := opened.finish 1
+            let (listed, _) := fedTo opened (exLine "ls")
+            let (again, _) := fedTo listed (exLine "ls")
+            let (back, _) := fedTo again (exLine s!"b {Buffers.listBuffer}")
+            let expected := s!"  {Buffers.listBuffer}  {path}\n  scratch\n"
+            let state := again.loop.state
+            (showing opened).bind (·.text) == some contents &&
+              ((showing listed).map fun shown => (shown.buffer.file.isNone, shown.text)) ==
+                some (true, some expected) &&
+              shownName listed == some (opened.loop.state.freeName Buffers.listBuffer) &&
+              (showing again).bind (·.text) == some expected &&
+              state.openBuffers.size == 3 &&
+              state.findFile path == bufferNamed opened Buffers.listBuffer &&
+              (heldFile back).map (·.path) == some path &&
+              (showing back).bind (·.text) == some contents &&
+              (showing back).map (·.buffer.isModified) == some false &&
+              state.wellFormed },
+    { name :=
         "bd closes an unmodified file buffer shown in two windows: it is gone, no buffer holds its file, both windows show crlf.txt, the buffer used before it, and their status lines name it, the order of use lacks it, the state is well formed, and its text is released; a second bd falls back to note.txt"
       run :=
         pure <|
@@ -16902,19 +16933,77 @@ def bufferCommandChecks : List Check :=
             bufferNamed closed "scratch" == none && shownName closed == some "lf.txt" &&
               closed.loop.state.wellFormed },
     { name :=
-        "a buffer whose save in flight covers its text closes, and the save's delivery still says the file was written"
+        "bd on a buffer with a save in flight leaves it open and shown, with its text, and the echo area says why by the close command's message; once the save is delivered and says the file was written, bd closes it"
       run :=
         pure <|
           match buffersOpen with
           | none => false
           | some opened =>
             let (saving, _) := fedTo opened ([.commit "x"] ++ exLine "w")
-            let (closed, _) := fedTo saving (exLine "bd")
-            let (delivered, _) := closed.finish 4
+            let (refused, _) := fedTo saving (exLine "bd")
+            let (delivered, _) := refused.finish 4
+            let (closed, _) := fedTo delivered (exLine "bd")
             (heldFile saving).bind (·.saving) != none &&
+              refused.loop.state.findFile (inFiles "lf.txt") != none &&
+              shownName refused == some "lf.txt" &&
+              (showing refused).bind (·.text) == (showing saving).bind (·.text) &&
+              echoOf refused == some (Buffers.beingSaved "lf.txt") &&
+              refused.loop.state.wellFormed &&
+              echoOf delivered == some (Files.wrote (inFiles "lf.txt")) &&
               closed.loop.state.findFile (inFiles "lf.txt") == none &&
-              shownName closed == some "crlf.txt" &&
-              echoOf delivered == some (Files.wrote (inFiles "lf.txt")) },
+              shownName closed == some "crlf.txt" },
+    { name :=
+        "bd on a buffer whose save in flight is then refused, the file having changed behind the editor: the buffer is still open and shown, with its edit, and still modified, and the echo area has the save's refusal"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "lf.txt"
+            let changed := rewritten opened path JobContract.otherFile
+            let (saving, _) := fedTo changed ([.commit "x"] ++ exLine "w")
+            let (closing, _) := fedTo saving (exLine "bd")
+            let (refused, _) := closing.finish 4
+            refused.loop.state.findFile path != none && shownName refused == some "lf.txt" &&
+              (showing refused).bind (·.text) == (showing saving).bind (·.text) &&
+              ((showing saving).bind (·.text)).any (·.startsWith "x") &&
+              (showing refused).map (·.buffer.isModified) == some true &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              refused.loop.state.wellFormed },
+    { name :=
+        "close-buffer run from the minibuffer's view, and run with the name of the minibuffer's buffer, closes nothing and says so by the close command's message; the prompt stays open and the state is well formed"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (asking, _) := fedTo opened (presses "C-e e")
+            let minibuffer := asking.loop.state.minibufferBuffer?
+            [presses "C-b d", presses "C-b m"].all fun keys =>
+              let (refused, _) := fedTo asking keys
+              let state := refused.loop.state
+              (minibuffer.bind asking.loop.state.buffer?).map (·.name) == some Prompt.bufferName &&
+                promptEcho refused == Buffers.ofMinibuffer &&
+                state.openBuffers == asking.loop.state.openBuffers &&
+                state.minibufferBuffer? == minibuffer &&
+                state.prompt == asking.loop.state.prompt &&
+                state.wellFormed },
+    { name :=
+        "switch-buffer with no buffer named while a prompt is open asks for none: the echo area says the prompt's refusal by the switch command's message, and the open prompt is as it was"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (asking, _) := fedTo opened (presses "C-e e")
+            let (refused, _) := fedTo asking (presses "C-b b")
+            match asking.loop.state.minibufferView? with
+            | none => false
+            | some view =>
+              promptEcho refused == Buffers.notAsking (.alreadyOpen view) &&
+                refused.loop.state.prompt == asking.loop.state.prompt &&
+                refused.loop.state.minibufferView? == some view &&
+                refused.loop.state.wellFormed },
     { name :=
         "bd on the only buffer, the initial scratch with text typed in it: the window shows a buffer called scratch with no file, whose text is empty; the old slot is empty, one buffer is open, and the state is well formed"
       run :=

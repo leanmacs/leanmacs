@@ -52,6 +52,13 @@ checks compare the echo area with that function, never with a sentence.
 - **"Unsaved" is what `quit` asks** (`BufferId.hasUnsavedChanges`), so an
   edit made earlier in the same command counts, and a buffer with no file
   never has unsaved changes.
+- **The list is the buffer the list command marked** (`listOf`): it sets a
+  buffer-local value, `listMark`, on the buffer it makes, and a later list
+  finds the buffer by that value and that it has no file, never by its
+  name. A buffer that only happens to be called `listBuffer`, such as a
+  file's, is neither replaced nor left out of the list; the list is then
+  made under a free name made from `listBuffer`
+  (`EditorState.freeName`).
 - **The first list makes the buffer, and a later one replaces its text**,
   whole: there is one list. Either way it is shown in the window the
   command was called with. The text is what the buffers were when the
@@ -69,10 +76,15 @@ checks compare the echo area with that function, never with a sentence.
 - **A buffer with unsaved changes is not closed**: it is a buffer that
   holds a file, and nothing changes but the echo area, which says so
   (`notClosing`), in the shape `quit` says it. A buffer with no file never
-  blocks it, by `quit`'s rule (`Editor/Ex.lean`, "Quit"). A buffer whose
-  save in flight covers its text has no unsaved changes, so it closes; the
-  save's result then finds no buffer, and says what became of the file all
-  the same (`Editor/Files.lean`, "Save").
+  blocks it, by `quit`'s rule (`Editor/Ex.lean`, "Quit").
+- **A buffer with a save in flight is not closed** either, whatever its
+  text: the echo area says so (`beingSaved`), and the close can be asked
+  again once the save is delivered. The save may still be refused, the
+  file having changed behind the editor, and the buffer is then the only
+  holder of the edits it was writing; `quit` waits for the save for the
+  same reason (`EditorState.leaves`). Refusing is chosen over waiting, as
+  quit waits, because a close request has nothing in the state to wait
+  in.
 - **Every window that showed it shows the most recently used buffer left**
   (`EditorState.mostRecent`), with one cursor at its start (`ViewId.show`),
   and then the buffer is removed. The loop releases the windows' old
@@ -116,6 +128,13 @@ def switchPrompt : String :=
 def listBuffer : String :=
   "buffer-list"
 
+/-- The name of the buffer-local value the list command sets on the buffer
+it makes, by which a later list finds it (`listOf`): no other command sets
+it, so a buffer that only happens to be called `listBuffer`, a file's among
+them, is not taken for the list. -/
+def listMark : String :=
+  "list-buffers"
+
 /-- What the echo area says when no open buffer matches `text`. -/
 def noMatch (text : String) : String :=
   s!"{switchName}: no buffer matches {text}"
@@ -147,6 +166,11 @@ def ofMinibuffer : String :=
 because it has unsaved changes. -/
 def notClosing (name : String) : String :=
   s!"{closeName}: {name} has unsaved changes"
+
+/-- What the echo area says when the buffer called `name` was not closed
+because a save of it is in flight. -/
+def beingSaved (name : String) : String :=
+  s!"{closeName}: {name} is being saved; try again when it is written"
 
 /-- The open buffers of `state` and their names, most recently used first
 (`EditorState.openBuffers`). -/
@@ -198,13 +222,20 @@ def switchCommand (call : Call) : EditorM Unit := do
           return candidates (← editorState) asking) then
       message (notAsking refusal)
 
+/-- The buffer list of `state`, if there is one: the open buffer with no file
+that keeps the value `listMark`, which the list command sets on the buffer
+it makes. -/
+def listOf (state : EditorState) : Option BufferId :=
+  state.openBuffers.find? fun id =>
+    (state.buffer? id).any (·.file.isNone) && (state.value? id listMark).isSome
+
 /-- The text of the buffer list ("List", in the module docs): one line per
-open buffer of `state` (`EditorState.openBuffers`) but the list's own, each
+open buffer of `state` (`EditorState.openBuffers`) but the list's own (`listOf`), each
 `+` when `unsaved` says the buffer has unsaved changes and a space
 otherwise, a space and the buffer's name, and for a buffer with a file two
 spaces and its path, each line ending in a line feed. -/
 def listing (state : EditorState) (unsaved : BufferId → Bool) : String :=
-  let list := state.findBuffer listBuffer
+  let list := listOf state
   String.join <|
     (state.openBuffers.filterMap fun id => do
         guard (list != some id)
@@ -215,10 +246,11 @@ def listing (state : EditorState) (unsaved : BufferId → Bool) : String :=
 
 /-- The list command as it is called ("List", in the module docs): makes the
 text of the buffer list (`listing`), with each buffer's unsaved changes as
-`BufferId.hasUnsavedChanges` answers them; puts it in the buffer called
-`listBuffer`, made by the first list and with its whole text replaced by a
-later one; and shows that buffer in the window it was called with. It reads
-nothing else of its call. -/
+`BufferId.hasUnsavedChanges` answers them; puts it in the buffer list
+(`listOf`), made by the first list, called `listBuffer` or, where a buffer
+has that name, a free name made from it, and marked with `listMark`, and
+with its whole text replaced by a later list; and shows that buffer in the
+window it was called with. It reads nothing else of its call. -/
 def listCommand (call : Call) : EditorM Unit := do
   let state ← editorState
   let mut unsaved : Array BufferId := #[]
@@ -227,13 +259,14 @@ def listCommand (call : Call) : EditorM Unit := do
       unsaved := unsaved.push id
   let text := listing state unsaved.contains
   let mut made : Option BufferId := none
-  if let some id := state.findBuffer listBuffer then
+  if let some id := listOf state then
     if let .ok held← id.text then
       let length ← held.byteLength
       held.replaceRange 0 length text
       made := some id
-  else
-    made := (← createBuffer listBuffer text).toOption
+  else if let .ok id← createBuffer (state.freeName listBuffer) text then
+    if let .ok ()← id.setValue listMark (.bool true) then
+      made := some id
   let some id := made | message notListed
   if let .error _← (Files.shownIn state call.target.window.id).show id then
     message notListed
@@ -257,8 +290,8 @@ def closeInto (id fallback : BufferId) : EditorM Unit := do
 the buffer its first argument, a string, names exactly, and otherwise the
 buffer of the window it was called with. A name no buffer has is said
 (`noBuffer`), and so is the minibuffer's buffer (`ofMinibuffer`). A buffer
-with unsaved changes is not closed, and the echo area says so
-(`notClosing`). Otherwise every window that showed it shows the most
+with a save in flight is not closed (`beingSaved`), and nor is one with
+unsaved changes (`notClosing`); the echo area says which. Otherwise every window that showed it shows the most
 recently used buffer left, and when none is left, a new empty buffer with
 no file called `EditorState.scratchName`. -/
 def closeCommand (call : Call) : EditorM Unit := do
@@ -277,6 +310,9 @@ def closeCommand (call : Call) : EditorM Unit := do
     message ofMinibuffer
     return
   let name := ((state.buffer? id).map (·.name)).getD ""
+  if (state.buffer? id).any (·.file.any (·.saving.isSome)) then
+    message (beingSaved name)
+    return
   if let .ok true← id.hasUnsavedChanges then
     message (notClosing name)
     return

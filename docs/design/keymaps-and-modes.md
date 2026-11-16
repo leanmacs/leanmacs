@@ -2717,7 +2717,7 @@ command an ex name runs is a step of its own.**
 | `reload` | `reload-config` | Nothing | Reloads the config |
 | `b` | `switch-buffer` | Text | Shows the buffer the rest of the line names, exactly or by fuzzy match. With no argument, asks with the open buffers as candidates, by `switch-buffer`'s own rule |
 | `ls` | `list-buffers` | Nothing | Shows the buffer list, a text view of the open buffers, most recently used first, with `+` for unsaved changes |
-| `bd` | `close-buffer` | Text | Closes the buffer the rest of the line names, or the window's own: refused for a buffer of a file with unsaved changes, and every window that showed it shows the most recently used buffer left |
+| `bd` | `close-buffer` | Text | Closes the buffer the rest of the line names, or the window's own: refused for a buffer of a file with unsaved changes and for a buffer with a save in flight, and every window that showed it shows the most recently used buffer left |
 
 Where they differ from Vim:
 
@@ -2735,6 +2735,9 @@ Where they differ from Vim:
   matches more than one buffer.
 - **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it
   cannot be saved.
+- **`bd` refuses a buffer with a save in flight**, until the save is
+  delivered: the save may yet be refused, and the buffer then holds the
+  only copy of the edits. `q` waits for such a save instead.
 - **The buffer left after the last `bd` is `scratch`**, empty and with no
   file, the name the initial buffer has. Vim calls it `[No Name]`.
 - **A buffer's cursor is not given back.** A window shown a buffer again,
