@@ -133,8 +133,8 @@ are the bundle's own, found from the executable's path.
 
 `mise run finder-session-prepare` installs the built bundle to
 `/Applications` and a config fixture to `~/.config/leanmacs`, moving any
-existing ones aside to timestamped backups, for the owner's session in
-Finder ([`finder-session.md`](finder-session.md)).
+existing ones aside to timestamped backups
+([`on-demand-checks.md`](on-demand-checks.md), "Installing the app").
 
 `mise run app-check` checks the built bundle
 ([`on-demand-checks.md`](on-demand-checks.md), "The app bundle, on demand").

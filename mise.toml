@@ -173,7 +173,7 @@ run = [
   # (`dispatch/expected`). A command that is not stopped loops for longer
   # than the time limit.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
-  # The config fixture of the owner's Finder session (tests/headless/
+  # The config fixture installed with the app (tests/headless/
   # finder-session), the one tools/prepare-finder-session.sh installs to
   # ~/.config/leanmacs: it loads, and its command, run by its key `C-c h`
   # and by its ex name `finder-hello`, says `finder-session: config loaded`
@@ -427,15 +427,15 @@ timeout = "300s"
 run = "tools/app-check.sh lean"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
-# hk.pkl: it writes outside the checkout. It prepares the owner's Finder
-# session (docs/dev-practices/finder-session.md): after `app-check`, on a
+# hk.pkl: it writes outside the checkout. It installs the app to use: after
+# `app-check`, on a
 # clean checkout, tools/prepare-finder-session.sh moves any existing
 # /Applications/Leanmacs.app and ~/.config/leanmacs aside to timestamped
 # backups, installs the built bundle and the config fixture
 # tests/headless/finder-session/config in their place, and prints how to
 # restore them. It removes nothing and opens, registers or runs nothing.
 [tasks.finder-session-prepare]
-description = "Opt-in, never part of ci; macOS on arm64 only: build and check Leanmacs.app, install it to /Applications and the Finder-session config fixture to ~/.config/leanmacs, moving any existing ones aside to timestamped backups (tools/prepare-finder-session.sh, docs/dev-practices/finder-session.md)"
+description = "Opt-in, never part of ci; macOS on arm64 only: build and check Leanmacs.app, install it to /Applications and the Finder-session config fixture to ~/.config/leanmacs, moving any existing ones aside to timestamped backups (tools/prepare-finder-session.sh)"
 depends = ["app-check"]
 run = "tools/prepare-finder-session.sh lean"
 

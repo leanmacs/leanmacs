@@ -126,6 +126,24 @@ order, in parallel, and leaves the developer's machine exactly as it found it.
 - Set up any state a test needs inside the test itself, so it passes on a clean
   checkout.
 
+## No manual test plans
+
+The owner tests the editor by using it day to day, and reports bugs and
+feedback from that. Don't write work that ends in a person running steps.
+
+- Don't write manual QA checklists, by-hand test procedures, or acceptance
+  criteria that only a person can check, and don't plan a phase or a task
+  whose work is a person checking something. Don't ask the owner to run
+  steps or record what they saw.
+- Finish every phase and task on automated checks. Where something can only
+  really be seen in a real window or a real OS session, cover as much as
+  possible with automated checks (contract checks, headless runs, bundle
+  checks), and leave the rest to the owner's day-to-day use.
+- When a change is ready to try, make it easy to install (one command), and
+  say in a line or two what is new to try. Never give a list of steps.
+- A bug the owner reports becomes a failing test first, as every bug fix
+  does.
+
 ## Toolchains
 
 - Rust: stable, edition 2024.

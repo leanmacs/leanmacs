@@ -1,5 +1,5 @@
--- The config the owner's Finder session loads from ~/.config/leanmacs
--- (docs/dev-practices/finder-session.md). It uses only Editor.
+-- The config `mise run finder-session-prepare` installs in ~/.config/leanmacs,
+-- to show the installed app loaded config. It uses only Editor.
 def hello : EditorM Unit :=
   message "finder-session: config loaded"
 

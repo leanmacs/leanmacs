@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# The owner's Finder session, prepared: `mise run finder-session-prepare`
-# (docs/dev-practices/finder-session.md, docs/dev-practices/
-# on-demand-checks.md, "The Finder session, by hand").
+# The app installed to try: `mise run finder-session-prepare`
+# (docs/dev-practices/on-demand-checks.md, "Installing the app").
 #
 # `mise run app-check` runs first (the task depends on it), so the bundle is
 # built and checked. This script then:
@@ -109,4 +108,3 @@ if [ "$cfg_moved" = 1 ]; then
   echo "  mv '$cfg_backup' '$cfg'"
 fi
 echo "finder-session-prepare: nothing is deleted; remove the set-aside copies by hand"
-echo "finder-session-prepare: now follow docs/dev-practices/finder-session.md"

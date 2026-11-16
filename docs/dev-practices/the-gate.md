@@ -494,10 +494,9 @@ command that starts a job with an argument, whose result the job's command
 says in the echo area, and whose output must
 be exactly `dispatch/expected`; and with `finder-session/script` on the
 config in `finder-session/config`, the fixture
-`tools/prepare-finder-session.sh` installs for the owner's Finder session
-([`finder-session.md`](finder-session.md)), which runs that config's
-command by its key `C-c h` and by its ex name `finder-hello`, so the
-fixture the owner loads is known to load and to say
+`tools/prepare-finder-session.sh` installs with the app, which runs that
+config's command by its key `C-c h` and by its ex name `finder-hello`, so
+the fixture the installed app loads is known to load and to say
 `finder-session: config loaded`, and whose output must be exactly
 `finder-session/expected`; and with `files/script` on the config in
 `files/config`, which runs the file commands the editor ships and touches

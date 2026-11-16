@@ -101,8 +101,8 @@ ditto lean/.lake/build/Leanmacs.app /Applications/Leanmacs.app
 
 `mise run finder-session-prepare` does the same, on a checkout with no
 uncommitted changes, after moving any existing app and config aside to
-timestamped backups, and installs a small config to try
-([finder-session.md](docs/dev-practices/finder-session.md)).
+timestamped backups, and installs a small config whose `C-c h` shows
+`finder-session: config loaded`.
 
 - The app holds its own toolchain modules
   ([building.md](docs/dev-practices/building.md), "The app bundle").

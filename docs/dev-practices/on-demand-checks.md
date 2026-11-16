@@ -114,14 +114,13 @@ any change to `editorApp`, to `tools/stage-bundle.sh` or to module lookup
 (`lean/Editor/ModuleLookup.lean`): such a change is not done until this
 ends `app-check: ok`.
 
-## The Finder session, by hand
+## Installing the app
 
 ```sh
 mise run finder-session-prepare
 ```
 
-This prepares the owner's session with the installed app, on macOS on
-arm64 only. After `mise run app-check`, on a checkout with no uncommitted
+This installs the app to use, on macOS on arm64 only. After `mise run app-check`, on a checkout with no uncommitted
 changes, `tools/prepare-finder-session.sh` moves any existing
 `/Applications/Leanmacs.app` and `~/.config/leanmacs` aside to
 `<name>.backup-<timestamp>` (it refuses while the shell exports an
@@ -131,8 +130,7 @@ the built bundle with `ditto` and verifies its signature, installs the
 config fixture `tests/headless/finder-session/config` (which the gate runs
 headless, [`the-gate.md`](the-gate.md)), and prints the commands that
 restore what was there. It removes nothing and opens, registers or runs
-nothing. The steps the owner then follows, at the machine, are in
-[`finder-session.md`](finder-session.md).
+nothing.
 
 ## The job benchmark, on demand
 
