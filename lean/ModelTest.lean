@@ -950,6 +950,43 @@ def processFailures : IO (List String) := do
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake process service: {·}")
 
+/-- The made-up directory the watch checks and the watch properties watch,
+for the model and the fake: an absolute path that is never opened. -/
+def watchRoot : System.FilePath :=
+  "/watched"
+
+/-- The models a watch property's directories, files and scripts are, for
+the job model and the fake, in `watchRoot`: the directory and its
+subdirectories, and each script as a run that ends with the status 0 and
+changes what it touches. -/
+def watchModelsOf (property : JobContract.FileWatchProperty) : ProcessModel × FileWatchModel :=
+  let commandOf (script : JobContract.FileWatchScript) := JobContract.sh watchRoot script.script
+  let processes : ProcessModel :=
+    {
+      scripts :=
+        property.scripts.map fun script =>
+          { command := commandOf script
+            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } } }
+  let watches : FileWatchModel :=
+    { directories :=
+        #[watchRoot] ++ property.directories.map fun (name : String) => watchRoot / name
+      effects :=
+        property.scripts.map fun script =>
+          (commandOf script, script.touches.map fun (name, kind) => (watchRoot / name, kind)) }
+  (processes, watches)
+
+/-- Runs a watch property's job against the job port's model: how the job
+ended. -/
+def runWatchesOnModel (property : JobContract.FileWatchProperty) : IO (Job.Outcome Bool) :=
+  let (processes, fileWatches) := watchModelsOf property
+  pure ((property.holds watchRoot).runModel { processes, fileWatches }).1
+
+/-- The names of the job port's watch properties that do not hold of the job
+model. -/
+def fileWatchFailures : IO (List String) := do
+  let onModel ← JobContract.fileWatchFailures runWatchesOnModel JobContract.fileWatchProperties
+  return onModel.map (s!"the job model: {·}")
+
 /-- A command that sleeps for ten minutes in `processRoot`, as the process
 checks script it. -/
 def sleeper : Process.Command :=
@@ -19434,11 +19471,6 @@ def heightChecks : List Check :=
                 | _ => false
             | _ => false }]
 
-/-- The made-up directory the watch checks and the watch properties watch,
-for the model and the fake: an absolute path that is never opened. -/
-def watchRoot : System.FilePath :=
-  "/watched"
-
 /-- What the watch model answers a start of `target` coalesced as
 `coalescing`, made at `now`. -/
 def watchStart (model : FileWatchModel) (target : FileWatch.Target)
@@ -19803,6 +19835,7 @@ def main : IO UInt32 := do
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.fileFailures) ++
       (← ModelTest.processFailures) ++
+      (← ModelTest.fileWatchFailures) ++
       (← ModelTest.caseFailures) ++
       (← ModelTest.displayFailures) ++
       (← ModelTest.watchFailures) ++
@@ -19816,6 +19849,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0

@@ -24,7 +24,11 @@ service on real files in a temporary directory. So do the process requests,
 `processProperties`, at the end: against the model and the fake, which a
 property's scripts tell what each command does, and against the library's
 process service on real processes, each property in a temporary directory,
-which is what shows those scripts true.
+which is what shows those scripts true. And so do the watch requests,
+`fileWatchProperties`, last: against the model and the fake, which each
+property's scripts tell what each command changes on disk, and against the
+library's watch service on real files, each property in a temporary
+directory.
 
 Every property is an inequality. A real clock only promises "not before": a
 wait may return late, and time passes between two requests. So nothing here
@@ -776,6 +780,231 @@ directory of its own and runs its job there, and returns the names of those
 that did not hold, each with how its job ended if it did not finish. -/
 def processFailures (run : ProcessProperty → IO (Job.Outcome Bool))
     (properties : List ProcessProperty) : IO (List String) :=
+  properties.filterMapM fun property => do
+    match ← run property with
+    | .finished true =>
+      return none
+    | .finished false =>
+      return some property.name
+    | .failed message =>
+      return some s!"{property.name} (the job failed with `{message}`)"
+    | .cancelled =>
+      return some s!"{property.name} (the job was cancelled)"
+
+/-! ## The watch requests
+
+A property of the watch requests (`Editor/FileWatch.lean`) is the
+directories and the files there are to start with, the `sh` scripts it runs
+in its directory to change them, with what each changes for the model, and a
+job that is given the directory and returns whether it held. Whoever runs
+the list makes the directory: the model and the fake are given a made-up
+absolute path, its directories and what each script touches, and the
+library's service a temporary directory, where the scripts really run and
+the platform really reports what they did.
+
+On the library a property checks that a kind is *present* in a change, and
+reads until the change it looks for arrives, at most `watchReads`
+deliveries for each change it looks for: a platform can carry an earlier
+change's kind, and can split what one script did across deliveries. On the
+model the first delivery is the one, and a second read finds nothing to
+answer it and fails the job. The coalescing property is the one exception
+to "read until": the five writes must be in the first delivery, and in no
+delivery twice; that they all arrive in that one delivery on a real
+platform is the library's contract's (`editor_watch::contract::COALESCED`),
+which runs on the real adapter in Rust, and the exact window is the
+model's (`ModelTest.fileWatchModelChecks`). -/
+
+/-- A script a watch property runs in its directory, and what it changes
+there, for the model: each name, relative to the directory, and the kind of
+its change, in order. -/
+structure FileWatchScript where
+  /-- The script, run by `/bin/sh -c` in the directory. -/
+  script : String
+  /-- What it changes, for the model and the fake. -/
+  touches : Array (String × FileWatch.Kind) := #[]
+
+/-- One property of the job port's watch requests. -/
+structure FileWatchProperty where
+  /-- What must hold, as a sentence; printed when it does not. -/
+  name : String
+  /-- The subdirectories there are to start with, each a name relative to the
+  directory, parents first. -/
+  directories : Array String := #[]
+  /-- The files there are to start with, each a name in the directory and its
+  bytes. -/
+  files : Array (String × ByteArray) := #[]
+  /-- The scripts it runs. -/
+  scripts : Array FileWatchScript := #[]
+  /-- Observes the property, given the directory, an absolute path; `true`
+  when it holds. A job that fails or is cancelled has not held. -/
+  holds : System.FilePath → JobM Bool
+
+/-- How many deliveries a watch property reads for each change it looks for,
+at most. -/
+def watchReads : Nat :=
+  4
+
+/-- The coalescing of every watch property but the coalescing one: a short
+window, and room for every path a property changes. -/
+def watchCoalescing : FileWatch.Coalescing :=
+  { window := 50, bound := 64 }
+
+/-- Runs `script` in `root`; a refusal or a status other than 0 fails the
+job, saying which. -/
+def changes (root : System.FilePath) (script : String) : JobM Unit := do
+  let ran ← ranOk (sh root script)
+  unless ran.exit == .code 0 do
+    throw s!"`{script}` ended with {repr ran.exit}"
+
+/-- Starts a watch on `target`; a refusal fails the job, saying which. -/
+def watching (target : FileWatch.Target) (coalescing : FileWatch.Coalescing := watchCoalescing) :
+    JobM FileWatch.Id := do
+  match ← FileWatch.start target coalescing with
+  | .ok watch =>
+    return watch
+  | .error error =>
+    throw s!"the watch of {target.path} was refused: {error.describe}"
+
+/-- Whether `delivery` has a change of `path` with `kind` among its kinds. -/
+def told (delivery : Array FileWatch.Change) (path : System.FilePath) (kind : FileWatch.Kind) :
+    Bool :=
+  delivery.any fun change => change.path == path && change.kinds.has kind
+
+/-- How many changes of `path` `delivery` holds. -/
+def timesIn (delivery : Array FileWatch.Change) (path : System.FilePath) : Nat :=
+  (delivery.filter (·.path == path)).size
+
+/-- Reads deliveries of `watch`, up to `watchReads` for each of `wanted`
+changes, until `done` holds of every delivery so far: those deliveries, or
+`none` if it never did. A refusal fails the job. -/
+def readAll (watch : FileWatch.Id) (done : Array (Array FileWatch.Change) → Bool)
+    (wanted : Nat := 1) : JobM (Option (Array (Array FileWatch.Change))) := do
+  let mut deliveries := #[]
+  for _ in [0:watchReads * wanted] do
+    match ← FileWatch.next watch with
+    | .ok delivery =>
+      deliveries := deliveries.push delivery
+      if done deliveries then
+        return some deliveries
+    | .error error =>
+      throw s!"a read of the watch was refused: {error.describe}"
+  return none
+
+/-- Whether reading `watch` as `readAll` does comes to deliveries of which
+`done` holds. -/
+def readUntil (watch : FileWatch.Id) (done : Array (Array FileWatch.Change) → Bool)
+    (wanted : Nat := 1) : JobM Bool :=
+  return (← readAll watch done wanted).isSome
+
+/-- Whether some delivery of `deliveries` has a change of `path` with
+`kind`. -/
+def toldIn (deliveries : Array (Array FileWatch.Change)) (path : System.FilePath)
+    (kind : FileWatch.Kind) : Bool :=
+  deliveries.any (told · path kind)
+
+/-- The properties every implementation of the job port's watch requests
+has. -/
+def fileWatchProperties : List FileWatchProperty :=
+  [{  name := "a job watching a file is told when the file is written"
+      files := #[("f", "a".toUTF8)]
+      scripts := #[{ script := "printf x >> f", touches := #[("f", .written)] }]
+      holds := fun root => do
+        let watch ← watching (.file (root / "f"))
+        changes root "printf x >> f"
+        readUntil watch (toldIn · (root / "f") .written) },
+    { name := "a job watching a file is told when another file is renamed over it"
+      files := #[("f", "a".toUTF8)]
+      scripts :=
+        #[{ script := "printf y > g && mv g f"
+            touches := #[("g", .created), ("g", .written), ("g", .renamed), ("f", .renamed)] }]
+      holds := fun root => do
+        let watch ← watching (.file (root / "f"))
+        changes root "printf y > g && mv g f"
+        readUntil watch (toldIn · (root / "f") .renamed) },
+    { name := "a job watching a file is told when the file is removed"
+      files := #[("f", "a".toUTF8)]
+      scripts := #[{ script := "rm f", touches := #[("f", .removed)] }]
+      holds := fun root => do
+        let watch ← watching (.file (root / "f"))
+        changes root "rm f"
+        readUntil watch (toldIn · (root / "f") .removed) },
+    { name :=
+        "a job watching a directory is told the path of each entry created, written, renamed and removed directly inside it"
+      files := #[("w", "w".toUTF8), ("a", "a".toUTF8), ("r", "r".toUTF8)]
+      scripts :=
+        #[{ script := "printf n > n && printf x >> w && mv a b && rm r"
+            touches :=
+              #[("n", .created), ("n", .written), ("w", .written), ("a", .renamed), ("b", .renamed),
+                ("r", .removed)] }]
+      holds := fun root => do
+        let watch ← watching (.directory root false)
+        changes root "printf n > n && printf x >> w && mv a b && rm r"
+        let wanted :=
+          #[(root / "n", FileWatch.Kind.created), (root / "w", .written), (root / "a", .renamed),
+            (root / "b", .renamed), (root / "r", .removed)]
+        readUntil (wanted := wanted.size) watch fun deliveries =>
+            wanted.all fun (path, kind) => toldIn deliveries path kind },
+    { name :=
+        "a job with a recursive directory watch is told the path of an entry changed two levels down"
+      directories := #["x", "x/y"]
+      files := #[("x/y/f", "a".toUTF8)]
+      scripts := #[{ script := "printf x >> x/y/f", touches := #[("x/y/f", .written)] }]
+      holds := fun root => do
+        let watch ← watching (.directory root true)
+        changes root "printf x >> x/y/f"
+        readUntil watch (toldIn · (root / "x" / "y" / "f") .written) },
+    { name :=
+        "five writes to one path within the window are in the first delivery, once, and in no delivery twice, and a later write is told"
+      files := #[("f", "a".toUTF8)]
+      scripts :=
+        #[{ script := "for i in 1 2 3 4 5; do printf x >> f; done"
+            touches :=
+              #[("f", .written), ("f", .written), ("f", .written), ("f", .written),
+                ("f", .written)] },
+          { script := "printf x > g", touches := #[("g", .created), ("g", .written)] }]
+      holds := fun root => do
+        let watch ← watching (.directory root false) { window := 300, bound := 64 }
+        changes root "for i in 1 2 3 4 5; do printf x >> f; done"
+        let .ok first ← FileWatch.next watch | return false
+        changes root "printf x > g"
+        let some later ← readAll watch (toldIn · (root / "g") .written) | return false
+        return timesIn first (root / "f") == 1 && told first (root / "f") .written &&
+            later.all (timesIn · (root / "f") ≤ 1) },
+    { name :=
+        "a job watching a file that is not there yet is told of its creation, and of a write after a rename over it"
+      scripts :=
+        #[{ script := "printf x > f", touches := #[("f", .created), ("f", .written)] },
+          { script := "printf y > g && mv g f"
+            touches := #[("g", .created), ("g", .written), ("g", .renamed), ("f", .renamed)] }]
+      holds := fun root => do
+        let watch ← watching (.file (root / "f"))
+        changes root "printf x > f"
+        let made ← readUntil watch (toldIn · (root / "f") .created)
+        changes root "printf y > g && mv g f"
+        let saved ← readUntil watch (toldIn · (root / "f") .renamed)
+        return made && saved },
+    { name :=
+        "a watch of a directory that is not there is refused as not found, a relative path as not absolute, and the job goes on"
+      holds := fun root => do
+        let missing ← FileWatch.start (.directory (root / "missing") false) watchCoalescing
+        let relative ← FileWatch.start (.file "relative/f") watchCoalescing
+        let after ← FileWatch.start (.file (root / "f")) watchCoalescing
+        return (match missing with
+            | .error (.notFound _) => true
+            | _ => false) &&
+            (match relative with
+            | .error (.notAbsolute _) => true
+            | _ => false) &&
+            (match after with
+            | .ok _ => true
+            | .error _ => false) }]
+
+/-- Runs each of `properties` with `run`, which makes the property's
+directories and files in a directory of its own and runs its job there, and
+returns the names of those that did not hold, each with how its job ended if
+it did not finish. -/
+def fileWatchFailures (run : FileWatchProperty → IO (Job.Outcome Bool))
+    (properties : List FileWatchProperty) : IO (List String) :=
   properties.filterMapM fun property => do
     match ← run property with
     | .finished true =>
