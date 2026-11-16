@@ -239,6 +239,9 @@ structure Registry where
   ex : Array ExEntry := #[]
   /-- The face entries: the definitions each owner made, apart too. -/
   faces : Array FaceEntry := #[]
+  /-- Where a child's environment comes from, as config set it; `none` when
+it did not, which a host reads as `auto`. -/
+  environment : Option Process.Setting := none
 
 namespace Registry
 
@@ -432,6 +435,9 @@ structure Registrations where
   ex : Array Ex.Binding := #[]
   /-- The faces, in the order they were set. -/
   faces : Array FaceDefinition := #[]
+  /-- Each setting of where a child's environment comes from, in the order
+they were made: one at most, in a `setup` that is not refused. -/
+  environments : Array Process.Setting := #[]
 
 namespace Registrations
 
@@ -456,6 +462,13 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .ex binding, collected => ((), { collected with ex := collected.ex.push binding })
   | .face name attributes, collected =>
     ((), { collected with faces := collected.faces.push { name, face := attributes } })
+  | .processEnvironment setting, collected =>
+    ((), { collected with environments := collected.environments.push setting })
+
+/-- Where a child's environment comes from, as the `setup` set it, or `none`
+when it did not. -/
+def environment (collected : Registrations) : Option Process.Setting :=
+  collected.environments[0]?
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -467,8 +480,8 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 
 /-- What is wrong with what was collected, if anything: a store declared
 twice, a command name or a job name registered twice, a face set twice, a
-key sequence bound twice, a binding of no keys, an ex name bound twice, a
-command over a store that is not declared, a mode name defined twice, or a
+key sequence bound twice, a binding of no keys, an ex name bound twice, the
+process environment set twice, a command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named.
 
@@ -493,6 +506,8 @@ def problem? (collected : Registrations) : Option String := do
     return s!"the job `{name}` is registered twice"
   if let some name := repeated? (collected.faces.map (·.name.name)) then
     return s!"the face `{name}` is set twice"
+  if collected.environments.size > 1 then
+    return "the process environment is set twice"
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command

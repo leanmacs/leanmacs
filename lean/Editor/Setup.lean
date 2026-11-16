@@ -4,6 +4,7 @@ import Editor.Face
 import Editor.Job
 import Editor.Key.Notation
 import Editor.Mode
+import Editor.Process.Environment
 import Editor.Store
 
 /-!
@@ -136,6 +137,21 @@ face a config stops setting is the theme's again when the config is
 installed. One `setup` sets a name once: a second `face` of a name is
 refused like a second command of a name, and the diagnostic names the face.
 
+Config chooses where a child's environment comes from
+(`Editor/Process/Environment.lean`) with `processEnvironment`, the first
+option of the port: `inherited`, no lookup; `mise`, with the absolute path of
+the executable or with none, which looks in the usual places; or the
+default, `auto`, which a `setup` that does not set it keeps:
+
+```lean
+def setup : SetupM Unit := do
+  processEnvironment (.mise (some "/opt/homebrew/bin/mise"))
+```
+
+A relative path is refused, and so is a second `processEnvironment` in one
+`setup`. A reload that installs takes the setting, and drops every
+directory's cached environment.
+
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
 over, so the type does not refer to itself. A job's handler is carried the
@@ -184,6 +200,9 @@ inductive SetupRequest where
   /-- Set the attributes `attributes` sets of the face called `name`, over
   the theme's (`Editor/Face.lean`). -/
   | face (name : FaceName) (attributes : Face)
+  /-- Choose where a child's environment comes from
+  (`Editor/Process/Environment.lean`). -/
+  | processEnvironment (setting : Process.Setting)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -196,6 +215,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .mode _ => Unit
   | .ex _ => Unit
   | .face .. => Unit
+  | .processEnvironment _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -304,5 +324,21 @@ what the face looks like from the first frame after the config is
 installed. -/
 def face (name : String) (attributes : Face) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.face ⟨name⟩ attributes))
+
+/-- The message a setting of mise's path is refused with when the path is not
+absolute. -/
+def relativeMise (path : System.FilePath) : String :=
+  s!"the path to mise must be absolute: {path}"
+
+/-- Chooses where a child's environment comes from: `inherited`, no lookup;
+`mise` with the absolute path of the executable, or with none, which takes
+the first of the usual places that exists; or `auto`, the default
+(`Editor/Process/Environment.lean`). Refuses the `setup` for a path that is
+not absolute. -/
+def processEnvironment (setting : Process.Setting) : SetupM Unit := do
+  if let .mise (some path) := setting then
+    unless path.isAbsolute do
+      throw (relativeMise path)
+  ExceptT.lift (Program.request (port := setupPort) (.processEnvironment setting))
 
 end Editor

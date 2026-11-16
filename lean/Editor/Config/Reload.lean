@@ -21,8 +21,9 @@ the model tests run it with outcomes built by hand
   commands, jobs, key bindings, modes, ex bindings and faces
   (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
   `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
-  never an append) and meets the config's stores with the cells there are
-  (`Cells.install`). A rejected outcome changes none of them: the config that
+  never an append), sets the registry's process environment to the one the
+  config set, `none` when it set none (`Registry.environment`), and meets
+  the config's stores with the cells there are (`Cells.install`). A rejected outcome changes none of them: the config that
   was loaded stays.
 - **The theme follows the registry.** `State.theme` is the built-in theme
   followed by the installed config's definitions of faces, so it changes
@@ -162,12 +163,14 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { state with
         chunks := built.chunks,
         registry :=
-          (((((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                            built.registrations.jobs).replaceBindings
-                        .config built.registrations.bindings).replaceModes
-                    .config built.registrations.modes).replaceEx
-                .config built.registrations.ex).replaceFaces
-            .config built.registrations.faces,
+          {
+            (((((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                              built.registrations.jobs).replaceBindings
+                          .config built.registrations.bindings).replaceModes
+                      .config built.registrations.modes).replaceEx
+                  .config built.registrations.ex).replaceFaces
+              .config built.registrations.faces with
+            environment := built.registrations.environment },
         cells }
     (state,
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,

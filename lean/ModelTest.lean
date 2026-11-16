@@ -2366,7 +2366,30 @@ def setupChecks : List Check :=
         let shared : SetupM Unit := do
           command "keyword" (makes "1")
           face "keyword" (coloured 1)
-        pure (refusal twice == some "the face `keyword` is set twice" && refusal shared == none) }]
+        pure (refusal twice == some "the face `keyword` is set twice" && refusal shared == none) },
+    { name :=
+        "a setup's process environment is collected as it set it: inherited, mise with no path and mise with an absolute path; a setup that does not set it collects none"
+      run :=
+        let collected (setup : SetupM Unit) : Option (Option Process.Setting) :=
+          match Config.Registrations.ofSetup setup with
+          | .ok registrations => some registrations.environment
+          | .error _ => none
+        pure
+          (collected (processEnvironment .inherited) == some (some .inherited) &&
+            collected (processEnvironment (.mise none)) == some (some (.mise none)) &&
+            collected (processEnvironment (.mise (some "/opt/homebrew/bin/mise"))) ==
+              some (some (.mise (some "/opt/homebrew/bin/mise"))) &&
+            collected (command "first" (makes "1")) == some none) },
+    { name :=
+        "a setup that gives mise a relative path, or sets the process environment twice, is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          processEnvironment .inherited
+          processEnvironment (.mise none)
+        pure
+          (refusal (processEnvironment (.mise (some "bin/mise"))) ==
+              some "the path to mise must be absolute: bin/mise" &&
+            refusal twice == some "the process environment is set twice") }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -3129,6 +3152,18 @@ def reloadChecks : List Check :=
         pure
           (state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)] &&
             state.theme == loaded.theme) },
+    { name :=
+        "an installed reload puts config's process environment in the registry, a rejected one leaves the one that was there, and a config that sets none gives none"
+      run :=
+        let (loaded, _) :=
+          reduce [.requested, .finished (accepted ["a"] (processEnvironment .inherited))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        pure
+          ((reduce []).1.registry.environment == none &&
+            loaded.registry.environment == some .inherited &&
+            kept.registry.environment == some .inherited &&
+            bare.registry.environment == none) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
