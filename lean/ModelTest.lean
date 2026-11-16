@@ -55,8 +55,8 @@ import Editor.UndoTree.Cases
 import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
-import Editor.WindowCommands.Compiled
 import Editor.WindowCheck
+import Editor.WindowCommands.Compiled
 import Editor.Workspace.Compiled
 import Editor.Workspace.Contract
 
@@ -128,8 +128,11 @@ ignores case, and one that does not put an exact match first.
 
 The layouts (`Editor/Layout.lean`) are pure functions, checked by
 enumeration (`layoutChecks`): master-and-stack's rectangles tile the area
-for one to eight windows at every sample size, share and side, with its
-geometry pinned, and monocle gives the whole area to the selected window.
+for one to eight windows at every sample size, share, side and count of
+main's, with its geometry pinned; monocle gives the whole area to the
+selected window; and the manual split layout's tiles the area for every
+tree its operations reach, with its geometry and its operations (insert,
+remove and its inheritor, balance, resize, fit) pinned.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
@@ -137,7 +140,19 @@ the layout's above the minibuffer's strip, and the layout operations, each refus
 was when it would break an invariant. The invariants themselves are checked
 to refuse: states built in code that each break one (`spoilings`) are not
 well formed, so `EditorState.wellFormed` is seen to answer false for every
-one of its clauses.
+one of its clauses. The operations the window commands are made of
+(`windowOperationChecks`, part of `stateChecks`) are checked there too: a
+split's placement, a removal's inheritor, zoom, the last window focused,
+each change of `EditorState.arrange`, focus by direction against a property
+over sample states of the three layouts, and focus in list order.
+
+The window commands (`Editor/WindowCommands.lean`) are checked by key on
+the loop's driver over the editor's models, under the Vim scheme that ships
+(`windowCommandChecks`): Vim 9.1's `C-w` behaviours under the manual split
+layout, the reorders, zoom and resizes under master-and-stack, focus by
+direction under the three layouts, the refusals in the echo area, and a
+config's `C-w` keys reached in insert state while one that binds none
+keeps the word delete.
 
 The command loop (`Editor/Loop.lean`) is checked on the editor's models
 (`loopChecks`): events fed to `Loop.step` one by one, the state each leaves

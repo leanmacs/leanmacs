@@ -483,11 +483,18 @@ elaborator.
   set at every install, so a config that chooses none has the default,
   master-and-stack with main taking half on the left, and the host hands
   it to the loop for each step (`Headless.keys`, `Loop.Keys.layout`),
-  whose publish sets it on the frame before the views are laid out: a
-  reload changes it with no restart. A loop handed none keeps the frame's
-  own. Choosing it twice, or a master-and-stack share above 100, rejects
-  the reload. It is chosen as a value, not by a registered name as a
-  theme is, until a command switches layouts by name.
+  whose publish has the frame choose it before the views are laid out
+  when it differs from the layout the frame last chose (`Frame.chosen`,
+  `Frame.choose`): a reload that changes it applies with no restart, and
+  rearranges the same windows. A publish handed the layout it last
+  applied leaves the frame's, so the window commands' changes (a zoom, a
+  resized share, main's count, a split tree) last until config chooses
+  another layout (window management's phase 2). A loop handed none keeps
+  the frame's own. `layout Layout.manual` chooses manual splits; config
+  writes only a shape, which is fitted to the windows. Choosing it twice,
+  or a master-and-stack share above 100, rejects the reload. It is chosen
+  as a value, not by a registered name as a theme is, until a command
+  switches layouts by name.
 - **The title bar is config's, at the next start**: `titleBar .standard`
   keeps the system's standard title bar in place of the themed one, whose
   paper is the theme's (theming phase 7). It is the reducer's state

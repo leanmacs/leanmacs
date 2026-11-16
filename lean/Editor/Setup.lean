@@ -193,11 +193,22 @@ and a reload changes it. Setting it twice is refused.
 
 Config chooses the window layout (`layout`, `Editor/Layout.lean`), as a
 value with its parameters, the way it sets the frame padding:
-`layout (.masterStack { share := 60, side := .right })`, or
-`layout .monocle`. A config that chooses none has master-and-stack with
-main taking half on the left (`Layout.default`), and a reload changes it.
-Choosing it twice is refused, and so is a master-and-stack share above
-100.
+`layout (.masterStack { share := 60, side := .right })`, with main's count
+of windows as `count` (`layout (.masterStack { count := 2 })`),
+`layout .monocle`, or the manual split layout, `layout Layout.manual`,
+whose tree of tiles the window commands grow and which is fitted to the
+windows there are. A config that chooses none has master-and-stack with
+main taking half on the left (`Layout.default`), and a reload changes it,
+rearranging the same windows; a reload that chooses the same layout again
+leaves the changes the window commands made. Choosing it twice is refused,
+and so is a master-and-stack share above 100.
+
+The window commands are compiled and bound by the Vim scheme under `C-w`
+in normal state. A config puts them in every state, insert state included,
+with one line that binds the scheme's own table:
+`for (keys, name) in Vim.Default.windowKeys do bindKey keys name`. Its
+`C-w` prefix then shadows insert state's `C-w`, Vim's word delete, which a
+config that binds nothing under `C-w` keeps.
 
 Config keeps the system's standard title bar with `titleBar .standard`, in
 place of the themed one, whose paper is the theme's. It is read when the
@@ -487,9 +498,10 @@ def framePadding (points : Nat) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.framePadding points))
 
 /-- Chooses the layout the frame's windows are arranged by once the config
-is installed: master-and-stack with main's share, in percent, and its side
-(`layout (.masterStack { share := 60, side := .right })`), or monocle, which
-shows only the selected window (`layout .monocle`). A config that chooses
+is installed: master-and-stack with main's share, in percent, its side and
+main's count (`layout (.masterStack { share := 60, side := .right })`),
+monocle, which shows only the selected window (`layout .monocle`), or the
+manual split layout (`layout Layout.manual`), fitted to the windows. A config that chooses
 none has master-and-stack with main taking half on the left
 (`Layout.default`). A reload changes it with no restart. The editor refuses
 the `setup` for a share above 100 (`Layout.shareTooLarge`) and for

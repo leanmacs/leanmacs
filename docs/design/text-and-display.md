@@ -1370,9 +1370,12 @@ inside a text view, as a box.
 
 A frame's windows are an ordered list, held in Lean, with the focus held by
 `ViewId`; a layout value turns the list and the tiled area into one
-rectangle per window shown. Master-and-stack is the default and monocle the
-second; manual splits come in window management's phase 2. A view's
-scroll position is an anchor. Layout invariants (for example, a minibuffer
+rectangle per window shown. Master-and-stack is the default, monocle the
+second and manual splits, a tree of anonymous tiles the windows take in
+list order, the third. The window commands split, close, focus, reorder,
+zoom and resize the windows as the layout defines, and the Vim scheme binds
+them under `C-w` ([keymaps-and-modes.md](keymaps-and-modes.md), "Window
+commands as built"). A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
 exists) are part of the data model, and operations that would break one
 return a typed refusal.
 
@@ -1480,13 +1483,18 @@ echo area, the preedit, and the prompt that is open, if one is.
   and a rectangle to one rectangle per window shown, in drawing order. It
   is no port, and knows nothing of the editor state, so layouts can be
   composed later.
-  - **Master-and-stack**, the default, with main's share in percent and its
-    side as parameters (by default 50, on the left). One window takes the
-    whole area. With two or more, main takes `extent * min share 100 / 100`
-    pixels (rounded down) along columns for a left or right main, along
-    rows for a top or bottom one, and the stack divides the rest the other
-    way into equal parts, the first `extent % n` a pixel larger, so the
-    parts sum to the extent. Drawing order is main, then the stack.
+  - **Master-and-stack**, the default, with main's share in percent, its
+    side and main's count as parameters (by default 50, on the left, and
+    1). With `0 < count < n` for `n` windows, main takes
+    `extent * min share 100 / 100` pixels (rounded down) along columns for
+    a left or right main, along rows for a top or bottom one; the first
+    `count` windows divide main's part the other way into equal parts, and
+    the stack divides the rest the same way, the first `extent % n` of
+    each a pixel larger, so the parts sum to the extent. With a count of 0,
+    or of `n` or more, every window divides the whole area that way, as
+    xmonad's `Tall` does; one window takes the whole area. Count 1 is the
+    geometry phase 1 pinned. Drawing order is the list's (window
+    management's phase 2 added the count).
   - **Monocle** gives the whole area to the selected view
     (`EditorState.selectedView`) when it is in the list, and to the first
     window otherwise. The other windows get no rectangle and are not in
@@ -1494,6 +1502,45 @@ echo area, the preedit, and the prompt that is open, if one is.
     state's views, so it can be focused, which shows it. Its cursor is not
     followed while it is hidden. While a prompt is open the selected view
     is the asker, so monocle keeps showing it and not the minibuffer.
+  - **Manual splits** (`Layout.splits`, `Layout.manual`; window
+    management's phase 2, decided 2026-11-16) is a binary tree of
+    anonymous tiles (`Splits`), each split an axis and two weights. `place`
+    gives the windows of the list to the tiles in order, left to right
+    through the tree, the order Vim numbers windows in ("top-left to
+    bottom-right"). So the list stays the one record of which windows
+    exist and the tree is only the shape; list order is screen order,
+    which is what `C-w w`, `W`, `t` and `b` walk; and promote, demote,
+    rotate and exchange are the same list operations under every layout,
+    which under splits move windows between tiles while the shape stays.
+    - **Read as Vim's frames.** A chain of splits on one axis is one row
+      or column of parts, its group. Splitting a tile replaces it with two
+      along the axis, as Vim's `win_split` adds a part to a group when the
+      axes agree. Removing a tile replaces its parent with its sibling,
+      and the tile that inherits its place is the first of the next part
+      of its group, or the last of the previous part when it was the
+      group's last (Vim's `win_altframe` under `nosplitbelow` and
+      `nosplitright`).
+    - **A split's weights**: its first part takes
+      `extent * first / (first + second)` along its axis, rounded down, or
+      half when both are 0, and the second the rest. Weights, not a
+      percentage, so balancing three windows in a row gives exactly 1:2
+      and then 1:1. Balancing sets each split on an axis to the slot
+      counts of its parts along it, as Vim's `win_equal` shares out a
+      frame: a tile counts 1, a split on the same axis the sum of its
+      parts', and one on the other axis the larger.
+    - **`equalalways`** (Vim's default, with `eadirection=both`): after a
+      split the tree is balanced along the split's axis, and after a
+      removal along the removed tile's group axis. A recorded departure:
+      Vim leaves the other windows alone when none is larger than the two
+      new ones, and here they are always balanced, which shows only after
+      a resize.
+    - **The tree's tiles are as many as the list's windows**, an invariant
+      of the state, over the layout zoom returns to too. `place` stays
+      total by fitting a tree first (`Splits.fit`): one whose count agrees
+      is kept, and any other becomes as many even rows, as `vim -o` opens
+      them. That fit is what a config's switch to splits does, since
+      config knows no view ids and writes only a shape (`Layout.manual`,
+      or any `Splits`).
   - Layouts cut in whole pixels and do not snap to text rows; each
     window's padding is inside its rectangle.
 - **The tiled area is the frame above the minibuffer's strip**
@@ -1505,10 +1552,15 @@ echo area, the preedit, and the prompt that is open, if one is.
   parameters (`layout (.masterStack { share := 60, side := .right })`,
   `layout .monocle`), as it sets the frame padding; a reload changes it,
   and choosing it twice or a share above 100 is refused. The host hands
-  it to the loop for each step (`Loop.Keys.layout`), whose publish sets
-  it on the frame before the views are laid out; a loop handed none keeps
-  the frame's own ([lean-runtime.md](lean-runtime.md), "The layout is
-  config's"). No command changes the layout yet.
+  it to the loop for each step (`Loop.Keys.layout`), whose publish has
+  the frame choose it before the views are laid out, but only when it is
+  not the layout the frame last chose (`Frame.chosen`, `Frame.choose`);
+  a loop handed none keeps the frame's own ([lean-runtime.md](lean-runtime.md),
+  "The layout is config's"). So the window commands' changes to the
+  layout, a zoom, a resized share, main's count or a split tree, last
+  every step until config chooses another layout, and a config that does
+  rearranges the same windows, the tree fitted to them, and leaves a zoom
+  (window management's phase 2, decided 2026-11-16).
 - **The minibuffer is a buffer and a window of the state** (built by the
   command loop's phase 10; [concurrency.md](concurrency.md), "Prompts").
   The open prompt is a field of the state (`EditorState.prompt`): its
@@ -1549,15 +1601,78 @@ echo area, the preedit, and the prompt that is open, if one is.
   buffer's text). The minibuffer's place is not in the list, so none can
   remove it.
 - **A command reaches them as requests** (the command loop's phase 8,
-  `lean/Editor/Api.lean`): `ViewId.split`, `close`, `focus` and `show`. A
-  split takes no axis and puts the new window right after its source in
-  the list, on the same buffer, with markers of its own, and leaves the
-  focus: splitting main makes the new window the first of the stack.
-  Closing a window takes it out of the list, and the layout gives its
-  space to the rest; when it was focused, the focus goes to the window
-  that took its index, or to the new last window when it was last. So
-  splitting and closing the new window gives back the frame from before
-  the split. A view's id is never used again,
+  `lean/Editor/Api.lean`): `ViewId.split`, `close`, `focus`, `show` and,
+  since window management's phase 2, `arrange`.
+  - **A split takes a placement** (`Placement`: an axis, and whether the
+    new window goes before its source, above or left), which only manual
+    splits read: there the new window takes the source's index when it
+    goes before and the index after it otherwise, and the source's tile is
+    split along the axis. Under master-and-stack and monocle the placement
+    is ignored and the new window goes right after its source, so the
+    stack grows and main is left alone: splitting main makes the new
+    window the first of the stack. Either way it is on the same buffer,
+    with markers of its own, and the focus stays: the window commands
+    focus the new window themselves, as Vim's split does.
+  - **Closing a window** takes it out of the list, and the layout gives
+    its space to the rest. When it was focused, the focus goes to the
+    window that inherits its place under manual splits (above), and
+    otherwise to the window that took its index, or to the new last window
+    when it was last. So splitting and closing the new window gives back
+    the frame from before the split, under every layout.
+  - **`arrange`** makes one change as data (`Arrange`), so a new change is
+    a variant and no request of its own. Promote moves a window to main,
+    index 0, and main itself swaps with the next (dwm's zoom); demote
+    swaps a window with the next. Rotate rotates the stack under
+    master-and-stack, main staying, and the whole list under the other
+    layouts, forward as Vim's `C-w r` puts the last first and back as
+    `C-w R`. Each keeps the focus on its view, so the focus follows the
+    window. Exchange swaps a window with the next, the previous when it is
+    last, or the Nth, and focuses the other view, which now stands where
+    it was (Vim's "The cursor is put in the other window"). Balance makes
+    the windows equal: master-and-stack's share back to 50, a split tree
+    balanced on both axes, nothing under monocle. Resize grows or shrinks
+    a window by 5 percent of the extent a step: main's share under
+    master-and-stack, along its side's axis only and with a stack beside
+    main, and the deepest split on the axis that holds the window's tile
+    under manual splits. Lean knows the height of a text row but no
+    column width, so one rule serves both axes, a recorded departure from
+    Vim's lines and columns. Main's count moves up or down, not below 0.
+  - **Zoom** keeps the layout it leaves (`Frame.zoomedFrom`) and makes the
+    layout monocle, and zoom again goes back to it. Every list change is
+    applied to the layout and to the one zoom returns to
+    (`Frame.inserted`, `Frame.removed`), so a window split or closed while
+    zoomed is in the tree zoom returns to, and a removal's inheritor while
+    zoomed is that layout's. Under a monocle config chose, with no zoom to
+    leave, zoom is refused.
+  - **The last window focused** (`Frame.lastFocused`, Vim's `prevwin`) is
+    set when the focus moves from one window of the list to another, by a
+    focus and by an exchange; focusing the minibuffer's view or leaving it
+    does not set it. It is never cleared: ids are never used again, so its
+    reader checks that it is still in the list.
+  - **Focus by direction is worked out from the rectangles the layout
+    gave** (`EditorState.toward?`), so it works for every layout. The
+    candidates are the windows whose rectangle lies wholly on that side
+    and overlaps the start across; the nearest edge wins, then the one
+    whose span holds the reference coordinate (the original window's top
+    for left and right, its left for up and down), then the first in list
+    order. A count repeats the step with the same reference and stops at
+    the last window reached, Vim's "Nth window". The minibuffer's view is
+    never a candidate. Under monocle only the shown window has a
+    rectangle, so no window lies in any direction, and the next and
+    previous commands are how one moves there (`EditorState.cycled`, the
+    next or previous of the list with wrap, or the Nth). A recorded
+    departure: Vim chooses between windows by the cursor's screen
+    position, which Lean does not know, so the window's top-left corner
+    stands in for it; that is where a fresh window's cursor is, so Vim
+    agrees there.
+  - **The refusals** are `LayoutRefusal`s, each said in a sentence
+    (`LayoutRefusal.describe`), which a window command gives up with:
+    `onlyWindow` (Vim's E444, "the last window cannot be closed"),
+    `noSuchWindow`, `noSuchBuffer`, `markersOfAnotherText`,
+    `ofMinibuffer`, and since window management's phase 2
+    `noPreviousWindow`, `notResizable` with its axis, `noMain` and
+    `monocleChosen`.
+- A view's id is never used again,
   and a buffer's is not either: buffers are kept in slots, and a removed
   buffer leaves its slot empty.
 - **No ambient context**: a handler is given the window it acts on and its
@@ -1734,8 +1849,9 @@ decided 2026-11-13 by its phase 2):
   edited in the session is one step
   ([keymaps-and-modes.md](keymaps-and-modes.md), "Insert sessions").
 - A view's rectangle is the layout's (`EditorState.rects`): the frame's
-  layout, set from the step's keys before the views are laid out, places
-  the windows in the tiled area. A window monocle hides has no rectangle
+  layout, chosen from the step's keys before the views are laid out when
+  config's choice changed (`Frame.choose`), places the windows in the
+  tiled area. A window monocle hides has no rectangle
   and is not in the scene.
 - A view whose buffer's text is at the revision it was last shown at keeps
   the same snapshot; otherwise a new one is taken, and views of one buffer

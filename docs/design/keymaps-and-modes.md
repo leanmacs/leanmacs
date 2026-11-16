@@ -2360,6 +2360,107 @@ it was not read again for this, and no check runs Vim.
 Not built: `C-e` and `C-y`; `z<CR>`, `z.` and `z-`; `H`, `M` and `L`; `gj`
 and `gk`; the mouse wheel; smooth scrolling; `scrolljump` and `sidescroll`.
 
+### Window commands as built
+
+Status: built, by window management's phase 2
+(`lean/Editor/WindowCommands.lean`, `lean/Editor/WindowCommands/Compiled.lean`;
+pinned by `windowCommandChecks`, and over the recorder by
+`tests/headless/manual-splits`, `insert-window-keys` and
+`insert-word-delete`).
+
+The window commands split, close, focus and arrange the frame's windows
+over the editor API's window requests ([text-and-display.md](text-and-display.md),
+"Views as built"). Each acts on its call's window, never on the frame's
+focus; reads a count from its call's first `.nat` argument, as this scheme
+lays one out, 0 for none; and gives up with what its refusal says
+(`LayoutRefusal.describe`), so closing the last window says
+`window-close: the last window cannot be closed` in the echo area. They are
+registered for the owner `compiled` by both hosts (`Headless.shippedOver`).
+
+The Vim scheme binds them under `C-w` in normal state (`windowKeys`, the
+table `windowCommands`):
+
+| Keys (normal state) | Command | Vim 9.1 |
+|---|---|---|
+| `C-w s`, `C-w S`, `C-w C-s` | `window-split` | `CTRL-W s` |
+| `C-w v`, `C-w C-v` | `window-split-vertically` | `CTRL-W v` |
+| `C-w C-n` | `window-new` | `CTRL-W n` (`C-w n` is left for tab pages) |
+| `C-w C-c` | `window-close` | `CTRL-W c` (`C-w c` is left for tab pages) |
+| `C-w q`, `C-w C-q` | `window-quit` | `CTRL-W q` |
+| `C-w o`, `C-w C-o` | `window-only` | `CTRL-W o` |
+| `C-w h`, `C-w C-h`, `C-w <ArrowLeft>`, `C-w <Backspace>` | `window-focus-left` | `CTRL-W h` |
+| `C-w j`, `C-w C-j`, `C-w <ArrowDown>` | `window-focus-down` | `CTRL-W j` |
+| `C-w k`, `C-w C-k`, `C-w <ArrowUp>` | `window-focus-up` | `CTRL-W k` |
+| `C-w l`, `C-w C-l`, `C-w <ArrowRight>` | `window-focus-right` | `CTRL-W l` |
+| `C-w C-w` | `window-focus-next` | `CTRL-W w` (`C-w w` is left for tab pages) |
+| `C-w W` | `window-focus-previous` | `CTRL-W W` |
+| `C-w t`, `C-w C-t` | `window-focus-top` | `CTRL-W t` |
+| `C-w b`, `C-w C-b` | `window-focus-bottom` | `CTRL-W b` |
+| `C-w C-p` | `window-focus-last` | `CTRL-W p` (`C-w p` is left for tab pages) |
+| `C-w x`, `C-w C-x` | `window-exchange` | `CTRL-W x` |
+| `C-w r`, `C-w C-r` | `window-rotate` | `CTRL-W r` |
+| `C-w R` | `window-rotate-back` | `CTRL-W R` |
+| `C-w =` | `window-balance` | `CTRL-W =` |
+| `C-w +`, `C-w -` | `window-taller`, `window-shorter` | `CTRL-W +`, `CTRL-W -` |
+| `C-w >`, `C-w <` | `window-wider`, `window-narrower` | `CTRL-W >`, `CTRL-W <` |
+| `C-w z` | `window-zoom` | Displaces `CTRL-W z` (close the preview window; there are no preview windows here). tmux's zoom key |
+| `C-w m`, `C-w M` | `window-promote`, `window-demote` | None: Vim binds no `CTRL-W m` or `M` |
+| `C-w ,`, `C-w .` | `window-main-more`, `window-main-fewer` | None: xmonad's `M-,` and `M-.` |
+
+- **`C-w n`, `C-w p`, `C-w c` and `C-w w` are left unbound**, so tab pages
+  (window management's phase 5) only add rows: until then each resets and
+  runs nothing. The Vim commands they displace keep their control
+  spellings, as `edmacs` did.
+- **Normal state only, by default.** Insert state's `C-w` is Vim's word
+  delete ("Insert state"); a config that binds the table with `bindKey`
+  has the commands in every state ("Extending from config"). The visual
+  states are deferred: what a selection does when the focus leaves its
+  window is a question of its own. The minibuffer's `c_CTRL-W` stays
+  unbuilt.
+- **What each does.** `window-split` and `window-split-vertically` split
+  with the new window before the source (above, left: Vim's
+  `nosplitbelow` and `nosplitright`) and focus it. `window-new` is that
+  split showing a new empty buffer with no file, Vim's `:new`.
+  `window-close` closes the window; `window-quit` closes it, or on the
+  last window runs `quit`, as Vim's `:quit` quits Vim. `window-only`
+  closes every other window, and says `already only one window` when
+  there is none. The focus commands focus the window that way (from the
+  rectangles the layout gave), the next or previous of the list with
+  wrap, the first or last, and the last focused, and do nothing at an
+  edge, as Vim is silent there; `window-focus-last` with no last window
+  gives up, where Vim beeps. The rest are `ViewId.arrange` with their
+  change; resize and main's count take the count as steps, 1 for none,
+  and exchange takes it as the Nth window.
+
+The Vim 9.1 behaviours pinned (`:help windows`, with the defaults
+`nosplitbelow`, `nosplitright`, `equalalways`, `eadirection=both`), each by
+key under the manual split layout:
+
+| Key → command | Vim 9.1 says | Pinned |
+|---|---|---|
+| `C-w s` | "Split current window in two. The result is two viewports on the same file"; the new window above; `'equalalways'` | Two windows on one buffer with equal markers at first, the new one above and focused, equal heights; three from one window at 640×464 give four rows of 116 |
+| `C-w v` | The same, vertically: the new window on the left, widths equalized | The new window left and focused; twice gives three columns equal to a pixel; under a column split the heights do not change |
+| `C-w C-n` | "Create a new window and start editing an empty file in it" | A new window above, focused, on a new empty buffer with no file; the old window keeps its buffer |
+| `C-w C-c` | "Close the current window"; E444 on the only window; `'equalalways'` after closing | The window leaves the list and the tree, its column equal again; the last window refused, with the reason in the echo area |
+| `C-w q` | "Quit current window, like :quit", which quits Vim on the last window | Closes like `C-w C-c`; on the last window asks the editor to quit |
+| `C-w o` | "Make the current window the only one on the screen" | One window left, the one it ran in, over the tiled area |
+| `C-w h/j/k/l` | "Move cursor to Nth window left of [below, above, right of] current one" | In a 2×2 grid and a column beside a row: each direction reaches the neighbour, a count goes as far as it can, an edge changes nothing |
+| `C-w C-w`, `C-w W` | Next and previous, wrapping; "with count: go to Nth window (windows are numbered from top-left to bottom-right)" | The tree's order, wrapping both ways, and the Nth with a count |
+| `C-w t`, `C-w b` | "top-left window", "bottom-right window" | The first and the last of the numbering |
+| `C-w C-p` | "Go to previous (last accessed) window" | After `C-w s` back to the window split, and again forth; with none, refused in the echo area |
+| `C-w =` | "Make all windows (almost) equally high and wide" | Every split back to its slot counts |
+
+Checked but no criterion: `C-w x`, on the list and the focus, and `C-w r`
+and `C-w R` over a single row of windows, where Vim's rule and this one
+agree. Promote, demote, rotate and zoom are pinned under master-and-stack.
+
+**Recorded departures**, not pinned against Vim: exchange and rotate are
+not limited to the current row or column, and Vim's E443 is not
+reproduced; resize moves in 5 percent steps, not lines or columns; `C-w =`
+reads no `winheight` or `winwidth`; `equalalways` balances every window,
+where Vim leaves larger ones alone; and focus by direction measures from
+the window's top-left corner, not the cursor ("Open questions").
+
 ### Default bindings
 
 `Vim.Default` holds the scheme's default keys as data: tables of key string
@@ -2388,6 +2489,7 @@ Which names have something behind them:
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
+| The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
 | `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (`Evil.commands`, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
@@ -2401,6 +2503,7 @@ Which names have something behind them:
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
 | `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
 | `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
+| `windowCommands` | `windowKeys` as normal state's table, each key running its window command, which changes no text and enters no state: the table under "Window commands as built". It is not in normal state's pending keymaps, so `d C-w s` resets |
 
 The run tables (`StateRecord.runs`), which say what a command name is
 completed as in a state, for a key bound to the name and a menu item that
@@ -2414,7 +2517,7 @@ names it ("So a command enters no state: a key does"):
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
 |---|---|---|---|---|
-| `normal`, the initial state | `normalCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | |
+| `normal`, the initial state | `normalCommands`, `windowCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | |
 | `insert` | `insertCommands` | Bar | Exclusive | Typing is text |
 | `visual` | `visualCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | Operators act on the selection |
 | `visual-line` | `visualLineCommands`, `scrollCommands`, `operators`, `motions` | Block | Line | Operators act on the selection |
@@ -3111,6 +3214,16 @@ which run the executable on a real file.
   refused, since it could not be typed as a line's first word, and a
   `setup` that binds one ex name twice is rejected. A reload replaces
   config's ex bindings and never the compiled ones.
+- Built: the window commands in every state, with one line that binds the
+  Vim scheme's own `C-w` table (`Vim.Default.windowKeys`, a key string and
+  a command name each): `for (keys, name) in Vim.Default.windowKeys do
+  bindKey keys name`. That is `edmacs`'s layout. A `bindKey` binding holds
+  in every Vim state, and its `C-w` prefix shadows insert state's own
+  `C-w`, the word delete ("Which keymaps a key is looked up in"), so `C-w l`
+  focuses the window on the right without leaving insert state. A config
+  that binds nothing under `C-w` keeps Vim's word delete. No switch is
+  needed: which of the two insert state's `C-w` does is a matter of the
+  bindings a config defines (window management's phase 2).
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
   a mistyped key is an error in config before it runs. It is not built. See
   the open questions for its cost.
@@ -3500,6 +3613,15 @@ every build). The second is proved on the text model
   does. `C-w` does not stop once at the insert's start as Vim's does
   (`backspace=start`): the session would have to keep where the insert
   began.
+- **The window commands in the visual states** ("Window commands as
+  built"). They are bound in normal state only; what a visual selection
+  does when the focus leaves its window is not decided, so the visual
+  states have no `C-w` keys.
+- **The cursor as the direction reference** ("Window commands as built").
+  Vim chooses among windows in a direction by the cursor's screen
+  position; Lean knows no pixel position of a cursor, so the window's
+  top-left corner stands in. A layout query that answered the cursor's
+  position would settle it.
 - **A count before `i a I A o O` is ignored.** Vim repeats the insert.
   Dot repeat is built and replays a session's text, so the repeat is now
   a matter of running that replay `count - 1` times when the session
