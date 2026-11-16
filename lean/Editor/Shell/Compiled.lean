@@ -11,8 +11,9 @@ line's commands (`Editor/Ex/Compiled.lean`), which hand a `:!` line to
 `shell-command`.
 
 - **`Shell.commands`**: `shell-command`, which starts a run
-  (`Shell.command`), and `shell-filter`, which starts a filter's
-  (`Shell.filterCommand`).
+  (`Shell.command`); `shell-filter`, which starts a filter's
+  (`Shell.filterCommand`); and `keyboard-quit`, which cancels the run in
+  flight in the focused buffer's scope (`Shell.interruptCommand`).
 - **`Shell.jobs`**: `shell-run`, which runs the child and finishes with what
   came of it (`Shell.runWork`). A host that is not handed it runs no `:!`,
   and says so when one is asked for.
@@ -29,7 +30,8 @@ namespace Editor.Shell
 `compiled`. -/
 def commands : Array Config.Registration :=
   #[{ name := commandName, action := .call command },
-    { name := filterName, action := .call filterCommand }]
+    { name := filterName, action := .call filterCommand },
+    { name := interruptName, action := .call interruptCommand }]
 
 /-- The shell's job, as a host registers it for the owner `compiled`. -/
 def jobs : Array Config.JobRegistration :=

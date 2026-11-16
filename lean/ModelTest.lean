@@ -13826,6 +13826,13 @@ def vimDefaultChecks : List Check :=
             selects "V a (" == some none &&
             (vimDefaultRecord "V a (").name == (vimDefaultRecord "v").name &&
             (vimDefaultRecord "V").name != (vimDefaultRecord "v").name) },
+    { name :=
+        "C-g in the initial state runs the interrupt command, which changes no text and enters no state"
+      run :=
+        pure
+          ((vimDefaultCommand "C-g").map
+              (fun command => (command.name, command.changes, command.enters)) ==
+            some (Shell.interruptName, false, none)) },
     { name := "every row of each default table binds its keys, and no table is empty"
       run :=
         pure <|
@@ -26958,6 +26965,7 @@ def shellScripts : Array Process.Script :=
     { command := shellCommand "/w" "build", reply := shellReply "w1\nw2\n" },
     { command := shellCommand "/x" "ls -l", reply := shellReply "a.txt\nb.txt\n" },
     { command := shellCommand "/r" "sleep 40", reply := shellReply "", takes := 40000 },
+    { command := shellCommand "/r" "sleep 10", reply := shellReply "", takes := 10000 },
     { command := shellCommand "/r" "sort", reply := shellReply "a\nb\nc\n" },
     { command := shellCommand "/r" "tac", reply := shellReply "a\nc\n" },
     { command := shellCommand "/r" "sort -u", reply := shellReply "a\nb\nc\nd\n" }]
@@ -26972,7 +26980,8 @@ def withScript (driver : TestDriver) (script : Process.Script) : TestDriver :=
           { driver.jobs.processes with scripts := #[script] ++ driver.jobs.processes.scripts } } }
 
 /-- The keys of the shell checks: the workspace driver checks', and `C-e e`
-and `C-e y`, the ex line and its accept key (`exLine`); `C-e k` gives the
+and `C-e y`, the ex line and its accept key (`exLine`); `C-e g` runs the
+interrupt command, as `C-g` does under the Vim scheme; `C-e k` gives the
 window's buffer a workspace registered as reachable through `kube`, which
 cannot run commands; `C-e u` undoes in the window's buffer; and `C-o s`
 and `C-o t` open `/r/src/s.txt` and `/r/src/t.txt`. -/
@@ -26989,7 +26998,8 @@ def shellKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (workspaceBindings ++
       [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName), ("C-e k", invoke "kube"),
-        ("C-e u", invoke "undo"), ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")])
+        ("C-e g", invoke Shell.interruptName), ("C-e u", invoke "undo"),
+        ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")])
     (workspaceCommands ++ compiled ++
       [("kube", fun call => do
           let location := Location.reachable "kube" "pod" "/app"
@@ -27152,6 +27162,45 @@ def shellChecks : List Check :=
               ran.loop.state.workspaces.getOfProject Shell.historyStore
                   (.remote "github.com/o/r") ==
                 #[] },
+    { name :=
+        "criterion 14: the interrupt while `:!sleep 10` runs cancels its job by the workspace's key: the step hands the key back, the job is no longer pending and finishing it delivers nothing, what the workspace runs is cleared, and the echo area says the line was interrupted; with nothing running it says Quit"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let running := (fedTo opened (exLine "!sleep 10")).1
+            let (quit, steps) := fedTo running (presses "C-e g")
+            let (after, delivered) :=
+              match running.pending[0]? with
+              | some job => quit.finish job.id
+              | none => (quit, none)
+            running.pending.map (·.key) == #[some "shell local /r"] &&
+              Shell.scopedValue running.loop.state Shell.runningStore main == some "!sleep 10" &&
+              steps.flatMap (fun step => (step.map (·.cancels)).getD #[]) == #["shell local /r"] &&
+              quit.pending.isEmpty &&
+              delivered.isNone &&
+              Shell.scopedValue after.loop.state Shell.runningStore main == none &&
+              echoOf after == some "!sleep 10: interrupted" &&
+              echoOf (fedTo opened (presses "C-e g")).1 == some Shell.quitText },
+    { name :=
+        "criterion 14 on the job model: a run whose job is cancelled while its child runs ends cancelled, and its child is killed"
+      run :=
+        let order : Shell.Order :=
+          { line := "!sleep 10", text := "sleep 10", directory := "/r", time := 30000, buffer := ⟨0⟩
+            view := ⟨0⟩, scope := main }
+        let model : JobModel :=
+          { processes :=
+              {
+                scripts :=
+                  #[{ command := shellCommand "/r" "sleep 10", reply := shellReply ""
+                      takes := 10000 }] }
+            cancelAt := some 1000 }
+        let (outcome, after) := (Shell.runWork order.arguments ()).runModel model
+        pure
+          ((outcome matches .cancelled) &&
+            after.processes.killed == #[shellCommand "/r" "sleep 10"]) },
     { name :=
         "criterion 15: a run past the time limit is killed and the echo area says so, naming the limit, 30 seconds by default or config's; what the workspace runs is cleared"
       run :=

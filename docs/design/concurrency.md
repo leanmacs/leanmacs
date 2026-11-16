@@ -298,6 +298,14 @@ time, in order, on the editor thread.
     and followed by a scene. So is a major mode's on-enter action, which
     runs inside the command that set the mode. Built by the command loop's
     phase 8; before it the driver's run and a job's command were run bare.
+  - **A job is cancelled by a command, not by the flag.** No job reads
+    the flag. Under the Vim scheme `C-g` is bound in normal state to
+    `keyboard-quit` (`lean/Editor/Shell.lean`), which the key runs once it
+    has lowered the flag: it cancels the `:!` or filter running in the
+    focused buffer's workspace by that workspace's job key (`cancelJob`,
+    "Getting results back"), which kills its child, and says
+    `<line>: interrupted`, or `Quit` with nothing running. It is made of
+    state requests alone, so the flag it lowered cannot stop it.
   - **Only the command is checked.** The loop's own requests (keeping what
     it rolls back to, rolling back, publishing) are not, so a flag that is
     up never stops a rollback or a scene. **The follow is one of them**

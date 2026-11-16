@@ -65,6 +65,20 @@ directory's environment, as every child gets (`Process.runWithin`), under
 so a user's interactive set-up cannot change what runs. A run past its
 limit is killed, and so is the child of a job that is cancelled.
 
+## The interrupt
+
+`keyboard-quit` (`interruptName`, `interruptCommand`), which the Vim scheme
+binds to `C-g` in normal state, cancels the run in flight in the focused
+buffer's scope, by the scope's key (`cancelJob`, `Editor/Api.lean`): its
+job never delivers a command, and its child is killed with its process
+group. What the scope runs is cleared, and the echo area says `<line>:
+interrupted`. With nothing running it says `Quit`. A run in another
+workspace is left alone.
+
+`C-g` is also the interrupt key (`Watch.interruptKey`): it raises the flag
+that stops a command looping, and is then stepped like any key. The job is
+cancelled by this command, not by the flag, which a job never reads.
+
 ## What comes of it
 
 The job's command (`finished`) clears what the scope is running, then:
@@ -556,6 +570,34 @@ def finished (order : Order) (reply : Except ProcessError Process.Ran) : EditorM
       return
     buffer.text.replaceRange filter.start filter.stop (replacement filter ran.stdout)
     message (filteredText filter.lines)
+
+/-- The name the interrupt command is registered under: the Vim scheme binds
+`C-g` to it. -/
+def interruptName : String :=
+  "keyboard-quit"
+
+/-- What the interrupt command says with nothing running in the scope. -/
+def quitText : String :=
+  "Quit"
+
+/-- What the interrupt command says of the run of `line` it cancelled. -/
+def interrupted (line : String) : String :=
+  s!"{line}: interrupted"
+
+/-- `keyboard-quit` ("The interrupt", in the module docs): cancels the run in
+flight in the scope of the buffer of the window it was called with, by the
+scope's key, clears what the scope runs and says the line was interrupted;
+with nothing running it says `Quit`. It is made of state requests alone. -/
+def interruptCommand (call : Call) : EditorM Unit := do
+  let state ← editorState
+  let scope := Scope.of state call.target.window.buffer
+  match scopedValue state runningStore scope.location? with
+  | some line =>
+    cancelJob scope.jobKey
+    setScoped runningStore none scope.location?
+    message (interrupted line)
+  | none =>
+    message quitText
 
 /-- The run job ("The run", in the module docs): runs its order's child and
 finishes with what came of it (`finished`). It fails only for arguments that
