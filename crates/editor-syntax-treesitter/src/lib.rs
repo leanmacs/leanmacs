@@ -1,5 +1,5 @@
 //! The syntax port's real adapter: [`TreeSitter`], a [`Syntax`] over
-//! tree-sitter, with the Rust and JSON grammars compiled in.
+//! tree-sitter, with the Rust, JSON and Markdown grammars compiled in.
 //!
 //! The port, its fake, its contract, the rule for what a range answers and
 //! the worker that reparses are `editor-syntax`'s. This crate is thin: each
@@ -18,22 +18,6 @@
 //! grammars are the private table `GRAMMARS`: a name, the language of the
 //! grammar's crate, and the queries it ships, each with its kind.
 //!
-//! # Where each query comes from
-//!
-//! A grammar crate's own query is used wherever the crate is published with
-//! one, pinned by the same exact version as the grammar it was written for.
-//! Rust's crate ships no `indents.scm` or `textobjects.scm`, so those two
-//! are this repository's, under `queries/rust/`, each opening with a comment
-//! naming the Lean rule that reads it; their capture names follow
-//! nvim-treesitter's, and no third-party query set is used, since each is
-//! written for its own editor's rules (`docs/design/rust-library.md`,
-//! "Injections, indentation and text objects, as built").
-//!
-//! | Grammar | Highlights | Injections | Text objects | Indents |
-//! |---|---|---|---|---|
-//! | `json` | the crate's | none | none | none |
-//! | `rust` | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
-//!
 //! The other two ways were set aside (the decision is in
 //! `docs/design/README.md`'s table and `docs/design/rust-library.md`,
 //! "Syntax, as built"):
@@ -50,6 +34,29 @@
 //!
 //! `deny.toml` bans `wasmtime` and `tree-sitter-loader` outright, so
 //! neither way enters the build unnoticed.
+//!
+//! # Where each query comes from
+//!
+//! A grammar crate's own query is used wherever the crate is published with
+//! one, pinned by the same exact version as the grammar it was written for.
+//! Rust's crate ships no `indents.scm` or `textobjects.scm`, so those two
+//! are this repository's, under `queries/rust/`, each opening with a comment
+//! naming the Lean rule that reads it; their capture names follow
+//! nvim-treesitter's, and no third-party query set is used, since each is
+//! written for its own editor's rules (`docs/design/rust-library.md`,
+//! "Injections, indentation and text objects, as built").
+//!
+//! | Grammar | Highlights | Injections | Text objects | Indents |
+//! |---|---|---|---|---|
+//! | `json` | the crate's | none | none | none |
+//! | `rust` | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
+//! | `markdown` | the crate's, of its block grammar | the crate's, of its block grammar | none | none |
+//!
+//! Markdown is `tree-sitter-md`'s block grammar alone; its inline grammar
+//! is not listed, since its incremental reparses were seen to differ from a
+//! fresh parse with no error in the tree (the crate's `Cargo.toml`). The
+//! block grammar's injection of each `(inline)` node, as `markdown_inline`,
+//! names a grammar this adapter does not have.
 //!
 //! # What each method forwards to
 //!
@@ -101,8 +108,8 @@ use editor_syntax::{
 use editor_text::{InputEdit, Point, Snapshot};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
-/// The adapter: tree-sitter, with the grammars compiled in: `json` and
-/// `rust`.
+/// The adapter: tree-sitter, with the grammars compiled in: `json`,
+/// `rust` and `markdown`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TreeSitter;
 
@@ -122,7 +129,7 @@ struct Grammar {
 }
 
 /// The grammars compiled in.
-const GRAMMARS: [Grammar; 2] = [
+const GRAMMARS: [Grammar; 3] = [
     Grammar {
         name: "json",
         language: || Language::new(tree_sitter_json::LANGUAGE),
@@ -142,6 +149,14 @@ const GRAMMARS: [Grammar; 2] = [
                 QueryKind::Indents,
                 include_str!("../queries/rust/indents.scm"),
             ),
+        ],
+    },
+    Grammar {
+        name: "markdown",
+        language: || Language::new(tree_sitter_md::LANGUAGE),
+        queries: &[
+            (QueryKind::Highlights, tree_sitter_md::HIGHLIGHT_QUERY_BLOCK),
+            (QueryKind::Injections, tree_sitter_md::INJECTION_QUERY_BLOCK),
         ],
     },
 ];

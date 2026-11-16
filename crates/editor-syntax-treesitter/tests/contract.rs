@@ -1,5 +1,5 @@
 //! The tree-sitter adapter held to the syntax port's contract, once for
-//! each grammar compiled in.
+//! each grammar compiled in: Rust, JSON and Markdown.
 //!
 //! The check is `editor-syntax`'s, the same one its fake passes
 //! (`editor_syntax::contract::check`). Its incremental property drives a
@@ -100,6 +100,33 @@ const JSON: Corpus = Corpus {
     settings: &[&[("key", Some("value"))], &[]],
 };
 
+/// The Markdown grammar's corpus: the block grammar, the one listed.
+const MARKDOWN: Corpus = Corpus {
+    grammar: "markdown",
+    texts: &[
+        include_str!("../../../tests/syntax/markdown/fenced.md"),
+        include_str!("../../../tests/syntax/markdown/blocks.md"),
+        include_str!("../../../tests/syntax/markdown/broken.md"),
+        "",
+        "# Title\n",
+        "> é 漢\r\n> 😀\n",
+    ],
+    pieces: &[
+        "x", " ", "\n", "#", "> ", "- ", "```", "`", "*", "1. ", "---\n", "é",
+    ],
+    query: "(atx_heading heading_content: (inline) @heading)\n(fenced_code_block (info_string) @info) @fence\n(block_quote) @quote\n",
+    query_names: &["heading", "info", "fence", "quote"],
+    bad_queries: &[
+        ("((", QueryErrorKind::Syntax),
+        ("(no_such_kind) @x", QueryErrorKind::NodeType),
+        ("(atx_heading nope: (inline)) @x", QueryErrorKind::Field),
+    ],
+    unknown_kind_query: "(paragraph) @p\n(no_such_kind) @x\n",
+    shipped: &[QueryKind::Highlights, QueryKind::Injections],
+    settings_query: "((fenced_code_block) @f (#set! injection.language \"rust\"))\n(paragraph) @p\n",
+    settings: &[&[("injection.language", Some("rust"))], &[]],
+};
+
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_rust() {
     assert_eq!(contract::check(&TreeSitter, &RUST), [""; 0]);
@@ -108,4 +135,9 @@ fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_rust() {
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_json() {
     assert_eq!(contract::check(&TreeSitter, &JSON), [""; 0]);
+}
+
+#[test]
+fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_markdown() {
+    assert_eq!(contract::check(&TreeSitter, &MARKDOWN), [""; 0]);
 }
