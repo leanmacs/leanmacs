@@ -254,7 +254,8 @@ arrives on the editor queue.
   | `quitRequested` | 0 | None, and no text: the system asked the program to quit |
   | `menu` | 0 | None; the text is the chosen item's command name |
 
-  The modifiers are bits: shift 1, control 2, alt 4, super 8. A float
+  The modifiers are bits: shift 1, control 2, alt 4, super 8
+  (`modifierBits`, `modifiersOfBits?`). A float
   crosses as its IEEE 754 bits (`Float.ofBits`). These bindings carry the
   words as they are; the one place on the Lean side that reads them is
   `Editor/Event/Queue.lean`.
@@ -1883,6 +1884,25 @@ inductive WindowAsked where
   | menu (menu : Menu)
   deriving DecidableEq, Repr
 
+/-- The word of `modifiers` as the library reads it ("The window", in the
+module docs): shift 1, control 2, alt 4, the system key 8. The one encoding
+on the Lean side, for an event posted (`EventWords`), a menu's key
+equivalent in a scene (`RealDisplay.encodeMenu`) and what a window was
+asked (`askedOf`). -/
+def modifierBits (modifiers : Modifiers) : UInt64 :=
+  (if modifiers.shift then 1 else 0) ||| (if modifiers.control then 2 else 0) |||
+    (if modifiers.alt then 4 else 0) |||
+    (if modifiers.superKey then 8 else 0)
+
+/-- The modifiers the word `bits` holds (`modifierBits`); `none` when it has
+a bit past the system key's. -/
+def modifiersOfBits? (bits : UInt64) : Option Modifiers :=
+  if bits &&& ~~~15 != 0 then none
+  else
+    some
+      { shift := bits &&& 1 != 0, control := bits &&& 2 != 0, alt := bits &&& 4 != 0,
+        superKey := bits &&& 8 != 0 }
+
 /-- Reads the words of what a window was asked, from an index on: each
 reader gives what it read and the index after it, or `none` when the
 words spell nothing. -/
@@ -1948,14 +1968,8 @@ private def AskedReader.menu (words : Array UInt64) : AskedReader Menu := do
                     | 1 =>
                       do
                         let some character := AskedReader.char? scalar | failure
-                        unless bits < 16 do
-                          failure
-                        pure <|
-                            some
-                              { character
-                                modifiers :=
-                                  { shift := bits &&& 1 != 0, control := bits &&& 2 != 0
-                                    alt := bits &&& 4 != 0, superKey := bits &&& 8 != 0 } }
+                        let some modifiers := modifiersOfBits? bits | failure
+                        pure (some { character, modifiers })
                     | _ =>
                       failure
                   let action ←

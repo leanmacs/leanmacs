@@ -274,13 +274,6 @@ they are what `heights` defines ahead of the scene. -/
 def encodeDefinitions (encoded : Encoded) (theme : Theme) : Encoded :=
   theme.foldl encodeFace { encoded with words := encoded.words.push theme.size.toUInt64 }
 
-/-- The bits of `modifiers` as the library reads them: shift 1, control 2,
-alt 4, the system key 8. -/
-def modifierBits (modifiers : Modifiers) : UInt64 :=
-  (if modifiers.shift then 1 else 0) ||| (if modifiers.control then 2 else 0) |||
-    (if modifiers.alt then 4 else 0) |||
-    (if modifiers.superKey then 8 else 0)
-
 /-- The tag of a system action, as the library reads it: 0 about, 1
 services, 2 hide, 3 hide others, 4 show all, 5 quit. -/
 def systemTag : SystemAction → UInt64
@@ -304,7 +297,7 @@ def encodeMenuItem (encoded : Encoded) : MenuItem → Encoded
     let encoded := pushText { encoded with words := encoded.words.push kind } title
     let (scalar, bits) : UInt64 × UInt64 :=
       match key with
-      | some key => (key.character.toNat.toUInt64, modifierBits key.modifiers)
+      | some key => (key.character.toNat.toUInt64, Ffi.modifierBits key.modifiers)
       | none => (0, 0)
     let encoded :=
       { encoded with words := encoded.words.push key.isSome.toUInt64 |>.push scalar |>.push bits }

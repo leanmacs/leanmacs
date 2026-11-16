@@ -1826,11 +1826,24 @@ delivers decodes to its own variant, with its fields, and what cannot be read
 is refused. They are on events built by hand: they call no binding and need
 no window. -/
 def eventDecodeChecks (_ : Unit) : List Check :=
-  [{ name := "a message decodes with its source, its code and its text, whatever its words",
-     run :=
-       pure
-         ((decodedEvent { message 5 6 "hi" with words := #[1, 2] }).map (·.event) ==
-           some (.message { kind := .lean, id := 5 } 6 "hi")) },
+  [{  name :=
+        "the modifier bits are shift 1, control 2, alt 4 and super 8: each of the 16 sets round trips, and a bit past super reads as none"
+      run :=
+        pure
+          (Editor.Ffi.modifierBits { shift := true } == 1 &&
+            Editor.Ffi.modifierBits { control := true } == 2 &&
+            Editor.Ffi.modifierBits { alt := true } == 4 &&
+            Editor.Ffi.modifierBits { superKey := true } == 8 &&
+            (List.range 16).all
+              (fun bits =>
+                (Editor.Ffi.modifiersOfBits? bits.toUInt64).map Editor.Ffi.modifierBits ==
+                  some bits.toUInt64) &&
+            [16, 17, 32, UInt64.ofNat (2 ^ 63)].all (Editor.Ffi.modifiersOfBits? · == none)) },
+    { name := "a message decodes with its source, its code and its text, whatever its words"
+      run :=
+        pure
+          ((decodedEvent { message 5 6 "hi" with words := #[1, 2] }).map (·.event) ==
+            some (.message { kind := .lean, id := 5 } 6 "hi")) },
     { name := "a completion decodes with its source and its id, and a quit to quit"
       run :=
         pure
