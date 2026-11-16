@@ -632,6 +632,26 @@ def processChecks (_ : Unit) : List Check :=
               | some (.delivered _ _ (some (.exited (.code 4)))) => true
               | _ => false) },
     { name :=
+        "whether a streaming child is held crosses the bindings: a child that writes for ever, never read, comes to be held at its bound, an id the service does not hold is 2, and a cancel reaps the held child and forgets it"
+      run :=
+        inOwnDirectory fun directory => do
+          let before ← Editor.Ffi.processesPending
+          unless
+            ←
+              Editor.Ffi.processesOpen 1170 false false false "/bin/sh"
+                  #["-c", "while :; do echo y; done"] false #[] #[] directory.toString 16 do
+            return false
+          -- Every step runs whatever the one before it found, so the cancel
+          -- always comes and no child is left writing.
+          let opened ← streamReply 1170
+          let held ← eventually (return (← Editor.Ffi.processesHeld 1170) == 1)
+          let unknown ← Editor.Ffi.processesHeld 1171
+          let cancelled ← Editor.Ffi.processesCancel 1170
+          let reaped ← eventually (return (← Editor.Ffi.processesPending) == before)
+          let forgotten ← Editor.Ffi.processesHeld 1170
+          return opened == some .opened && held && unknown == 2 && cancelled && reaped &&
+              forgotten == 2 },
+    { name :=
         "a stream reply's words decode by its status: opened, written, input closed, each refusal, and a delivery's lines by their lengths, its bytes and each end"
       run :=
         pure
