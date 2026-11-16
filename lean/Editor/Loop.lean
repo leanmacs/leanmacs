@@ -4,6 +4,7 @@ import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Config.Stores
 import Editor.Event
+import Editor.Files
 import Editor.InputScheme
 import Editor.Key.Notation
 import Editor.State
@@ -517,6 +518,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `resize` | Sets the frame's size and whether the window is in fullscreen (`Frame.fullscreen`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: the scene has no field for it |
 | `focus gained` | Sets whether the frame has the keyboard focus |
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
+| `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
 
@@ -1590,6 +1592,10 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
   match event with
   | .closeRequested | .quit =>
     return { loop, next := .stop }
+  | .openFiles (path :: rest) =>
+    -- An invocation no key yielded, run as every command is, in the
+    -- focused window: config's command of the name runs in its place.
+    loop.invoke keys { command := Files.openName, arguments := (path :: rest).map .str }
   | _ =>
     let focused := loop.state.frame.focused
     let report := scheme.report loop.input focused

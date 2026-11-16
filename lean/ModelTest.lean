@@ -208,6 +208,11 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   command says when it starts nothing; and the commands and jobs as
   compiled code registers them (`Editor/Files/Compiled.lean`). They touch
   no file;
+- `openFilesChecks`: the loop's handling of the files a window asks to open
+  (`Event.openFiles`, `Editor/Loop.lean`) on that driver: it runs
+  `open-file` with the paths, so two paths leave two buffers and the last
+  path's is shown, whichever order its loads would finish in, and config's
+  command of that name runs in its place. They touch no file;
 - `dispatchQuitChecks`: quitting in the loop (`Editor/Loop.lean`, "Quit")
   on that driver and the model of files, with commands written here that
   ask the editor to quit: the step says stop once the editor can leave,
@@ -14342,7 +14347,101 @@ def windowStartChecks : List Check :=
                 opened.loop.state.windows.size == 1 &&
                 opened.pending.isEmpty &&
                 loading.pending.map (·.name) == #[Files.loadJob]
-            | _, _ => false }]
+            | _, _ => false },
+    { name :=
+        "the window mode started with no file and then handed an open-files input of one path shows that file's buffer once its load is finished, beside scratch"
+      run :=
+        pure <|
+          let path := inFiles "note.txt"
+          match ((parsed []).map (·.starts (.load "/xdg/leanmacs") #[])).bind started with
+          | none => false
+          | some empty =>
+            let (asked, _) := fedTo empty [.openFiles [path.toString]]
+            let (opened, _) := asked.finish 1
+            let state := opened.loop.state
+            empty.pending.isEmpty && asked.pending.map (·.name) == #[Files.loadJob] &&
+              state.buffers.size == 2 &&
+              (state.buffer? ⟨0⟩).map (·.name) == some "scratch" &&
+              state.findFile path == some ⟨1⟩ &&
+              (showing opened state.frame.focused).map (·.id) == some ⟨1⟩ &&
+              (showing opened state.frame.focused).bind (·.text) == some FileCases.noteText }]
+
+/-- The checks of the files a window asks to open (`Event.openFiles`): the
+loop runs the open command with them (`Editor/Loop.lean`, "What each event
+does"), on the driver of the file command checks. No file is touched. -/
+def openFilesChecks : List Check :=
+  let note := inFiles "note.txt"
+  let crlf := inFiles "crlf.txt"
+  let asked (paths : List System.FilePath) : Option TestDriver :=
+    filesDriver.map fun driver => (fedTo driver [.openFiles (paths.map (·.toString))]).1
+  [{  name :=
+        "an open-files input of two paths, once both loads are finished, leaves two new buffers holding those files"
+      run :=
+        pure <|
+          match asked [note, crlf] with
+          | none => false
+          | some asked =>
+            let (both, _) := (asked.finish 1).1.finish 2
+            let state := both.loop.state
+            state.buffers.size == 3 && state.findFile note == some ⟨1⟩ &&
+              state.findFile crlf == some ⟨2⟩ &&
+              (state.buffer? ⟨1⟩).map (·.name) == some "note.txt" &&
+              (state.buffer? ⟨2⟩).map (·.name) == some "crlf.txt" &&
+              both.model.texts.contents[1]? == some FileCases.noteText &&
+              state.wellFormed },
+    { name :=
+        "after an open-files input the focused view shows the buffer of its last path, whichever order its loads would finish in: only one is in flight at a time"
+      run :=
+        pure <|
+          match asked [note, crlf] with
+          | none => false
+          | some asked =>
+            let (first, _) := asked.finish 1
+            let (both, _) := first.finish 2
+            -- Only the first path's load is in flight after the event: the
+            -- second cannot finish before it, since it has not started.
+            asked.pending.map (·.name) == #[Files.loadJob] && (asked.finish 2).2.isNone &&
+              first.pending.map (·.id) == #[2] &&
+              (showing both both.loop.state.frame.focused).map (·.id) ==
+                both.loop.state.findFile crlf &&
+              (both.loop.state.findFile crlf).isSome },
+    { name := "an open-files input of one path selects that path's buffer once its load is finished"
+      run :=
+        pure <|
+          match asked [note] with
+          | none => false
+          | some asked =>
+            let (opened, _) := asked.finish 1
+            (showing asked).map (·.id) == some ⟨0⟩ && (showing opened).map (·.id) == some ⟨1⟩ &&
+              (showing opened).bind (·.text) == some FileCases.noteText },
+    { name := "an open-files input with no path starts nothing and publishes a scene"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (after, steps) := fedTo driver [.openFiles []]
+            after.pending.isEmpty && steps.map (·.map (·.next)) == #[some .continue] &&
+              after.model.display.scenes.size == driver.model.display.scenes.size + 1 &&
+              after.loop.state.buffers.size == 1 },
+    { name :=
+        "an open-files input is run as `open-file` is: config's command of that name runs in its place"
+      run :=
+        pure <|
+          let keys : Loop.Keys TestScheme.scheme :=
+            dispatchKeys []
+              [(Files.openName, fun call => do
+                  message s!"mine: {call.arguments.length}"
+                  return none)]
+          match
+            (Loop.Driver.over keys fileJobs (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let driver := { driver with jobs := { files := commandFiles } }
+            let (after, _) := fedTo driver [.openFiles [note.toString, crlf.toString]]
+            echoOf after == some "mine: 2" && after.pending.isEmpty &&
+              after.loop.state.buffers.size == 1 }]
 
 /-- The checks of the file commands (`Editor/Files.lean`), on the loop's
 driver over the editor's models and the model of files: opening a file into
@@ -19609,6 +19708,7 @@ def checks : List Check :=
     promptChecks ++
     candidateChecks ++
     fileCommandChecks ++
+    openFilesChecks ++
     dispatchQuitChecks ++
     exChecks ++
     evilRestChecks ++

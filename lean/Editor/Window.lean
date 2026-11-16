@@ -15,7 +15,9 @@ before the first event (`Options.starts`). It reads nothing itself, so
 - **The file** is resolved against the working directory: the file port
   takes absolute paths only. At most one file is taken; with none the
   editor starts on its one empty buffer, which is how Finder starts the
-  app.
+  app. A Finder start posts no open: the files Finder opens the app with
+  arrive from the window, as an `openFiles` event after it has opened,
+  and the loop opens them (`Editor/Loop.lean`, "What each event does").
 - **`--sysroot`** is the Lean toolchain's directory. When not given it is
   the bundle's, `Contents/Resources/lean/toolchain`, for an executable in a
   bundle (`Editor/ModuleLookup.lean`). Outside one there is no default: Lean

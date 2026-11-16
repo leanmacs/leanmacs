@@ -7,7 +7,10 @@ import Editor.Window
 
 `editor [<file>]`: the headless host's editor loop (`Editor/Headless.lean`)
 handed real collaborators, with the window on the process's main thread.
-With no file the loop shows its one empty buffer, `scratch`.
+With no file the loop shows its one empty buffer, `scratch`. The files
+Finder or the Dock opens the app with are no file of the command line: the
+window reports them as an `openFiles` event once it has opened, and the
+loop runs `open-file` with them, like every window event the host hands it.
 There is one editor loop; this module only wires it to a window:
 
 | Collaborator | The headless mode | The window mode |
