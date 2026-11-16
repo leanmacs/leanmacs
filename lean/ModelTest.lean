@@ -27350,6 +27350,21 @@ def shellChecks : List Check :=
               (showing finished).bind (·.text) == some "zb\nc\na\n" &&
               echoOf finished == some "%!sort: dropped: the buffer changed while it ran" },
     { name :=
+        "criterion 13: a filter whose buffer is removed before its child ends writes no text, and says it was dropped"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o s"
+            let (asked, _) := fedTo opened (exLine "%!sort")
+            let (removed, _) := fedTo asked (presses "C-e x")
+            let finished := asked.pending.foldl (fun driver job => (driver.finish job.id).1) removed
+            asked.pending.size == 1 && (removed.loop.state.findBuffer "s.txt").isNone &&
+              finished.pending.isEmpty &&
+              finished.model.texts.contents == removed.model.texts.contents &&
+              echoOf finished == some "%!sort: dropped: the buffer changed while it ran" },
+    { name :=
         "a filter of a range replaces only those lines; a last line with no line feed is fed with one, and the output's last line feed is dropped for it"
       run :=
         pure <|
