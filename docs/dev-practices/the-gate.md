@@ -201,7 +201,9 @@ write, written to, held at their bound and cancelled, every wait on a
 marker file a child makes or on the service's readout of a held child,
 never a fixed sleep. `crates/editor-process-std/tests/sigpipe.rs`, a test
 binary of its own, sets `SIGPIPE` to its default, as a Lean executable has
-it, and writes to an input its child closed. `crates/editor-ffi/tests/processes.rs`
+it, and writes to an input its child closed; `tests/large_write.rs` writes
+256 KiB, four times a pipe, to `/bin/cat` through the service and reads it
+all back. `crates/editor-ffi/tests/processes.rs`
 runs a command through the C functions, `tests/processes_stream.rs`
 streams a child through them and pulls one completion for a read from the
 real completion queue, and `crates/editor-ffi/tests/processes_shutdown.rs`,
