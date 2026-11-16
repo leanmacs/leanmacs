@@ -3094,13 +3094,14 @@ for each name and path of `opens`, a command of that name that opens that
 path (`opening`). Stops the host: `false` if the check did not hold or the
 host did not stop. -/
 def withFileHost (context : Context) (opens : List (String × System.FilePath))
-    (check : Session → IO Bool) : IO Bool :=
+    (check : Session → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
           { commands :=
               Files.commands ++ Minibuffer.commands ++
-                (opens.map fun (name, path) => opening name path).toArray
+                (opens.map fun (name, path) => opening name path).toArray ++
+                extra
             jobs := Files.jobs
             modes := Minibuffer.modes }
     onStage stage fun host stage =>
@@ -3321,6 +3322,48 @@ def fileChecks (context : Context) : List Check :=
                     #[s!"job 1 {Files.loadJob}: started", s!"job 1 {Files.loadJob}: ok"] &&
                   echo == "".quote &&
                   lines == #[viewLine noteText 0, statusOf (name := "note.txt")] }]
+
+/-- A compiled command called `name`, written for the reload checks, that
+puts the cursor of the window it is called with at the byte `offset`, in the
+shape the window's selection has. -/
+def placing (name : String) (offset : Nat) : Config.Registration :=
+  { name
+    action :=
+      .call fun call => do
+        let current ← call.target.selection
+        call.target.select
+            { current with
+              ranges := #[⟨offset, offset⟩], primary := 0 } }
+
+/-- The checks of reloading a buffer from its file (`Files.reload`,
+`Editor/Files.lean`) through the headless host, on real files, with the
+library's file and diff services. -/
+def reloadChecks (context : Context) : List Check :=
+  [{  name :=
+        "criterion 1: a file rewritten behind its buffer is reloaded by e: the reload job ends ok, show prints the new text, the scene's view shows it with the cursor on the same character of the unchanged second row, and the status line has neither the modified field nor any other"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          let (old, new) := ("one\ntwo\nthree\n", "one, and more\ntwo\nthree\n")
+          IO.FS.writeBinFile path old.toUTF8
+          withFileHost context [("open-note", path)] (extra := #[placing "cursor" 6]) fun session =>
+              do
+              unless ← session.ran "open-note" do
+                return false
+              -- Row 1, column 2: the "o" of "two".
+              session.ask [.run "cursor"]
+              let (_, placed) ← session.viewsAndStatus
+              IO.FS.writeBinFile path new.toUTF8
+              let reloaded ← session.ran Files.editName
+              let (echo, lines) ← session.viewsAndStatus
+              session.ask [.show]
+              let output ← session.output.get
+              -- The first line grew by ten bytes, so the "o" is at 16.
+              return reloaded && placed == #[viewLine old 6, statusOf (name := "note.txt")] &&
+                  output.contains s!"job 2 {Files.reloadJob}: ok" &&
+                  output.contains s!"text 1: {new.quote}" &&
+                  echo == "".quote &&
+                  lines == #[viewLine new 16, statusOf (name := "note.txt")] }]
 
 /-- The directives of one ex line of a script: the ex command run by its
 name, which asks, `line` committed into the minibuffer, and the accept
@@ -3801,6 +3844,7 @@ def checks (context : Context) : List Check :=
     reloadEchoChecks context ++
     faceChecks context ++
     fileChecks context ++
+    reloadChecks context ++
     exScriptChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that

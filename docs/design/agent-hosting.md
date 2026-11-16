@@ -205,6 +205,38 @@ executes. "Run this phase" is therefore: start an agent session in the right
 worktree with a prompt that invokes the skill, and record the plan item in
 the agent table. See review-and-navigation.md for the rdm client.
 
+## An agent's write under an open buffer
+
+An agent that goes through ACP writes to the buffer through the edit log
+("ACP", above), so it never races the editor. An agent that writes the file
+directly does, and so does any other program. What happens then (decided by
+the daily-driver floor's phase 5):
+
+- **Keep mine, and offer two explicit resolutions.** A buffer with unsaved
+  edits is never touched by a change on disk. A plain save of it is refused,
+  since the file is not the one the buffer loaded (`lean/Editor/File.lean`,
+  "A save says what it expects to find").
+- **`:e!` takes theirs**: the file's text comes in as one edit, of origin
+  `disk`, made from a line diff of the buffer and the file
+  (`lean/Editor/Files.lean`, "Reload"), so `u` brings the buffer's own text
+  back. Taking theirs loses nothing.
+- **`:w!` writes mine over theirs**: the forced save, which expects
+  whatever is on disk.
+- **`:e`** on a buffer with no unsaved edits takes the file's text the same
+  way; with unsaved edits it is refused and says that `:e!` discards them.
+- **A diff of the two**, reviewed hunk by hunk, is the third resolution. It
+  waits for the Diff service's review UI (`rust-library.md`,
+  `review-and-navigation.md`) and is not built.
+
+Why: neither side is ever lost in silence (the file is untouched until
+`:w!`, and the buffer's text stays reachable by undo after `:e!`), and the
+choice stays with the person, which keeps the owner's rule that reloading
+is an explicit action.
+
+**The invariant**: the editor watches no file; the reload is explicit; a
+config's job may watch, as a plugin would (`FileWatch.start` is a job
+request config can use).
+
 ## Open questions
 
 - **JSON throughput** of the ACP client in Lean under a fast-streaming
@@ -213,8 +245,6 @@ the agent table. See review-and-navigation.md for the rdm client.
 - **A detached supervisor**: should agent processes be children of the
   editor, or of a small separate process that outlives it, as VS Code now
   does? Persisted records plus resume may be enough at first.
-- **Agent writes and unsaved buffers**: when an agent writes a file that has
-  unsaved edits in the editor, who wins and how is the conflict shown?
 - **Context sharing**: how the selection, diagnostics and open files are
   offered to an agent.
 - **Usage and cost**: where it comes from (ACP usage updates, the agent's

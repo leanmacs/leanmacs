@@ -2866,7 +2866,7 @@ command loop's phase 14; "A prompt's candidates", under "The minibuffer").
   registry as it is when the line is asked for.
 - So while a name is typed the scene lists the names it matches, a key of
   the minibuffer chooses one, and accepting runs the chosen name. With the
-  names that ship, `e` lists `e` and then `reload`.
+  names that ship, `e` lists `e`, then `e!` and then `reload`.
 - **The typed line is the pattern, whole.** A line with an argument
   matches no name, so nothing is listed, and accepting runs the line as
   typed. A name is completed; an argument is not.
@@ -2949,7 +2949,9 @@ command an ex name runs is a step of its own.**
 | Ex name | Command | Takes | What it does |
 |---|---|---|---|
 | `w` | `save-buffer` | Nothing | Saves the buffer of the window the line was asked from |
-| `e` | `open-file` | Text | Opens the path the rest of the line is. With no argument, asks for one, by `open-file`'s own rule |
+| `w!` | `save-buffer`, with `true` first | Nothing | Saves it whatever the file on disk now is: "write mine over theirs" |
+| `e` | `edit-file` | Text | Opens the path the rest of the line is. With no argument, reloads the window's file (`reload-buffer`), refused while the buffer has unsaved changes; on a buffer with no file it asks for a path, by `open-file`'s own rule |
+| `e!` | `edit-file`, with `true` first | Text | As `e`, but with no argument the reload discards unsaved changes as one step `u` undoes: "take theirs" |
 | `q` | `quit` | Nothing | Quits the editor |
 | `wq` | `save-and-quit` | Nothing | Starts the save, and quits once it has ended |
 | `reload` | `reload-config` | Nothing | Reloads the config |
@@ -2965,8 +2967,13 @@ Where they differ from Vim:
   while a buffer that holds a file has unsaved changes.
 - **`q` quits the editor, not the current window.** No shipped command
   splits a window.
-- **`e` with no argument asks for a path.** Vim reads the current file
-  again, which is not built.
+- **`e` with no argument reloads as one edit.** Vim reads the current
+  file again and loses the undo history; here the file's text comes in as
+  one edit made from a line diff, so the cursor and the marks stay where
+  the diff kept the text, and `u` takes the reload back. On a buffer with
+  no file it asks for a path.
+- **`e!` and `w!` are names of their own**, bound with a fixed argument;
+  `!` is not parsed.
 - **`w` takes no file name.** Saving under another name is not built.
 - **`reload` is no Vim command.**
 - **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that

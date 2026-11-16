@@ -32,10 +32,21 @@ drops it.
     saves the buffer of the window the line was asked from. `w` with an
     argument is refused by the ex line (`Ex.noArgument`): saving under
     another name is not built, and the save command would ignore the name.
-  - `e` runs `open-file` and takes text: the rest of the line is the path,
-    whole, spaces included. `e` with no argument runs `open-file` with
-    none, which asks for a path, by that command's own rule. Vim's `e`
-    with no argument reads the current file again, which is not built.
+  - `w!` runs `save-buffer` with `true`, the forced save, and takes
+    nothing: it writes the buffer over whatever the file on disk now is,
+    the "write mine over theirs" resolution of a file that changed under
+    unsaved edits (`docs/design/agent-hosting.md`).
+  - `e` runs `edit-file` and takes text: the rest of the line is the path,
+    whole, spaces included, which it opens. `e` with no argument reads the
+    window's file again, as Vim's does (`Files.reload`), refused while the
+    buffer has unsaved changes; on a buffer with no file it asks for a
+    path, as `open-file` does.
+  - `e!` runs `edit-file` with `true` first, and takes text: with no
+    argument the reload is forced, the file's text taken as one step that
+    `u` undoes ("take theirs"); with a path it opens it as `e` does, since
+    buffers persist and nothing is discarded. `!` is not parsed: `e!` and
+    `w!` are names of their own (`Editor/Ex/Line.lean`), each a binding
+    with fixed arguments (`Binding.arguments`).
   - `q` runs `quit` and takes nothing. It quits the editor, not the
     window the line was asked from: no shipped command splits a window.
   - `wq` runs `save-and-quit` and takes nothing.
@@ -73,7 +84,9 @@ def commands : Array Config.Registration :=
 `compiled`. -/
 def bindings : Array Binding :=
   #[{ name := "w", command := Files.saveName },
-    { name := "e", command := Files.openName, takes := .text },
+    { name := "w!", command := Files.saveName, arguments := [.bool true] },
+    { name := "e", command := Files.editName, takes := .text },
+    { name := "e!", command := Files.editName, takes := .text, arguments := [.bool true] },
     { name := "q", command := quitName }, { name := "wq", command := saveQuitName },
     { name := "reload", command := reloadName },
     { name := "b", command := Buffers.switchName, takes := .text },

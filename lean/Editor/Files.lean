@@ -3,7 +3,7 @@ import Editor.Command.Call
 import Editor.Job
 
 /-!
-# Files: opening a file into a buffer, and saving a buffer
+# Files: opening a file into a buffer, saving a buffer, and reloading one
 
 The commands that open a file and save a buffer, written over the editor
 API (`Editor/Api.lean`) and the job port's file requests (`Editor/Job.lean`,
@@ -140,8 +140,9 @@ are in `Editor/Files/Compiled.lean`.
   the echo area (`notSaving`): the buffer is never left "being saved" with
   no job to end the save, and a later save is not refused for it.
 - **A forced save** (`Files.save id true`) expects whatever is there
-  (`File.Expect.whatever`), the port's override. Without it a buffer whose
-  file changed on disk could never be saved, since nothing reloads one.
+  (`File.Expect.whatever`), the port's override: the ex name `w!`, which
+  writes the buffer over a file another program changed ("Reload" below
+  takes the file's text instead).
 - **The job** (`saveWork`) saves the snapshot as the file (`File.save`)
   and finishes with the order and the reply. A refusal is a value in the
   reply: the job throws only for arguments that are not an order.
@@ -174,6 +175,55 @@ are in `Editor/Files/Compiled.lean`.
   it was loaded, so a buffer opened and saved with no edit leaves the
   file's bytes as they were, whatever its line endings.
 
+## Reload
+
+Reading a buffer's file again, after another program changed it, as one
+edit that keeps the cursor and the markers (`Files.reload id force`).
+
+- **The command** refuses, saying why and starting nothing: a buffer there
+  is none of (`noBufferToReload`), one with no file (`noReloadFile`), one
+  whose save is in flight (`beingSaved`), forced or not, and, unforced, one
+  with unsaved changes (`notReloading`, which names `:e!`). Otherwise it
+  takes a snapshot of the text and reads its revision, and starts the job
+  `reload-file` (`reloadJob`) with a reload order (`ReloadOrder`): the
+  buffer, the path, the force, the snapshot and that revision, the base.
+  A refused start releases the snapshot and is said (`notReloadingJob`).
+- **The job** (`reloadWork`) loads the file under the editor's limit, then
+  asks for the line diff of the snapshot and the file's text
+  (`Diff.lines`, `Editor/Diff.lean`) under `diffLineLimit`, and finishes
+  with the loaded file and the script, or the refusal's sentence. Both are
+  waits: the diff is worked on the library's diff service, off the editor
+  thread, which only applies the script.
+- **The job's command** (`reloaded`) releases the order's snapshot first,
+  whatever follows. A refusal is said (`cannotReload`). A buffer that is
+  gone or holds another path takes nothing in, silently. A save in flight
+  refuses it, and so, unforced, do unsaved changes made while the file
+  loaded: a reload never overwrites edits it was not told to discard.
+- **A text that moved.** The script fits the text at the base revision and
+  no other. If the text has moved since (an edit and its undo, a config
+  command's edit, keys typed during a forced reload), the script is not
+  applied: a first reload is started again at once with a fresh snapshot
+  and `retried`, saying nothing, and a retried one says `reloadOvertaken`
+  and leaves the buffer as it is. One retry, because a second move means
+  the user is editing while it reloads. The revision is read before
+  anything else, and `applyScript`'s own `moved` refusal is the port's
+  guarantee besides.
+- **Otherwise**, in order: the buffer's group is closed, so the reload is
+  not joined to pending edits; the loaded snapshot is adopted; the script
+  is applied as one transaction of origin `disk` (`TextId.applyScript`);
+  the adopted snapshot is released; the group is closed again; the history
+  is marked saved at the state the reload made; and the buffer holds the
+  path again with the stamp the load answered. So one `u` goes back to the
+  text from before the reload, and the buffer is then modified; a forced
+  reload is that same one step, which `u` undoes. The cursor is a marker,
+  so it moves through the script's changed ranges by bias: on a line the
+  diff kept it keeps its row and column.
+- **`edit-file`** (`editCommand`) is what `e` and `e!` run: a leading
+  `true` is the force; a path opens it; with no path it reloads the
+  window's buffer when that has a file, and otherwise asks for a path with
+  the open prompt. **`reload-buffer`** (`reloadCommand`) reloads the
+  window's buffer, forced when its first argument is `true`.
+
 ## Every refusal takes one route
 
 A refusal of the file port is a value (`FileError`), and reaches the echo
@@ -198,8 +248,10 @@ request holds plain data. So what a file job is started with is a
 structure, an order, with its encoding as a `List Argument` (`arguments`)
 and the way back (`ofArguments?`), which undoes it.
 
-Pinned by `ModelTest.fileCommandChecks`, on the loop's driver over the
-editor's models and the model of files.
+Pinned by `ModelTest.fileCommandChecks` and, for a reload,
+`ModelTest.fileReloadChecks`, on the loop's driver over the editor's models
+and the model of files; and by `ConfigTest.reloadChecks`, through the
+headless host on real files.
 -/
 
 namespace Editor.Files
@@ -520,5 +572,208 @@ are ignored: an input scheme hands a command a key is bound to arguments of
 its own, a count and a register. -/
 def saveCommand (call : Call) : EditorM Unit :=
   save call.target.window.buffer (call.arguments.head? == some (.bool true))
+
+/-- The most lines a side of the middle of a reload's diff that the engine is
+asked about: 100 000. Over it the middle is one hunk, replaced whole, so a
+diff of any file costs the diff service linear time ("Reload", in the module
+docs). Like `limit`, a round number with no measurement behind it. -/
+def diffLineLimit : Nat :=
+  100000
+
+/-- The name the reload command is registered under. -/
+def reloadName : String :=
+  "reload-buffer"
+
+/-- The name the command the ex names `e` and `e!` run is registered under. -/
+def editName : String :=
+  "edit-file"
+
+/-- The name the job that reloads a file is registered under. -/
+def reloadJob : String :=
+  "reload-file"
+
+/-- What the reload job is started with: the buffer, its file's path,
+whether the reload is forced, the snapshot the reload command took of the
+buffer's text and the revision it took it at, and whether this is the one
+retry of a reload whose text moved. -/
+structure ReloadOrder where
+  /-- The buffer that is reloaded. -/
+  buffer : BufferId
+  /-- The file's path. -/
+  path : System.FilePath
+  /-- Whether unsaved changes are discarded. -/
+  force : Bool
+  /-- The snapshot of the buffer's text the file is diffed against. -/
+  snapshot : SnapshotId
+  /-- The revision the text was at when the snapshot was taken. -/
+  base : Nat
+  /-- Whether this order is the retry of one whose text moved. -/
+  retried : Bool := false
+  deriving DecidableEq, Repr
+
+/-- The order as the arguments a job is started with: the buffer's number,
+the path, the force, the snapshot's number, the base and the retry. -/
+def ReloadOrder.arguments (order : ReloadOrder) : List Argument :=
+  [.nat order.buffer.index, .str order.path.toString, .bool order.force, .nat order.snapshot.index,
+    .nat order.base, .bool order.retried]
+
+/-- The order `arguments` are, if they are one (`ReloadOrder.arguments`). -/
+def ReloadOrder.ofArguments? : List Argument → Option ReloadOrder
+  | [.nat buffer, .str path, .bool force, .nat snapshot, .nat base, .bool retried] =>
+    some { buffer := ⟨buffer⟩, path, force, snapshot := ⟨snapshot⟩, base, retried }
+  | _ => none
+
+/-- What the echo area says when a buffer there is none of was to be
+reloaded. -/
+def noBufferToReload : String :=
+  "no such buffer to reload"
+
+/-- What the echo area says when the buffer called `name`, which shows no
+file, was to be reloaded. -/
+def noReloadFile (name : String) : String :=
+  s!"{name} has no file to reload"
+
+/-- What the echo area says when the buffer called `name` was to be reloaded,
+unforced, with unsaved changes: the reload changes nothing, and `:e!` is the
+way to take the file's text. -/
+def notReloading (name : String) : String :=
+  s!"{name} has unsaved changes; :e! discards them"
+
+/-- What the echo area says when the job that reloads `path` was not
+started. -/
+def notReloadingJob (path : System.FilePath) (refusal : JobRefusal) : String :=
+  s!"cannot reload {path}: {refusal.describe}"
+
+/-- What the echo area says when the reload of `path` was refused, by the
+load or by the diff: `detail` is the refusal's own sentence. -/
+def cannotReload (path : System.FilePath) (detail : String) : String :=
+  s!"cannot reload {path}: {detail}"
+
+/-- What the echo area says when the text of the buffer of `path` moved twice
+while it reloaded: it is left as it is. -/
+def reloadOvertaken (path : System.FilePath) : String :=
+  s!"{path} was edited while it reloaded; :e reloads it"
+
+/-- What the reload job finishes with: the file loaded and the script of its
+diff against the buffer's snapshot, or the sentence of the refusal of the
+load or of the diff. -/
+abbrev ReloadReply :=
+  Except String (File.Loaded × Diff.Script)
+
+/-- Starts the reload job with `order`. Where it is refused, it releases the
+order's snapshot and says so (`notReloadingJob`). -/
+def startReload (order : ReloadOrder) : EditorM Unit := do
+  if let .error refusal← startJob reloadJob order.arguments then
+    (TextSource.snapshot order.snapshot).release
+    message (notReloadingJob order.path refusal)
+
+/-- Reloads the buffer `id` from its file ("Reload", in the module docs): takes
+a snapshot of its text and its revision, and starts the job that loads the
+file and diffs the two. It starts nothing, and says why, for a buffer there
+is none of, one with no file, one whose save is in flight, forced or not,
+and, unless `force`, one with unsaved changes. -/
+def reload (id : BufferId) (force : Bool := false) : EditorM Unit := do
+  let some buffer := (← editorState).buffer? id | message noBufferToReload
+  let some file := buffer.file | message (noReloadFile buffer.name)
+  if file.saving.isSome then
+    message (beingSaved file.path)
+    return
+  if !force && buffer.unsavedAt (← buffer.history.sync) then
+    message (notReloading buffer.name)
+    return
+  let base ← buffer.text.revision
+  let snapshot ← buffer.text.snapshot
+  startReload { buffer := id, path := file.path, force, snapshot, base }
+
+/-- The command a finished reload job hands the loop ("Reload", in the module
+docs). It releases the order's snapshot first, whatever follows. A refusal is
+said. A buffer that is gone, or holds another path, takes nothing in. A save
+in flight, or, unforced, unsaved changes made while the file loaded, refuse
+it. A text that moved past the order's revision is reloaded once more, and
+after that is left as it is, saying so. Otherwise the script is applied as
+one edit of origin `disk`, between two boundaries, and the buffer is saved at
+the state it made, holding the stamp the load answered. -/
+def reloaded (order : ReloadOrder) (reply : ReloadReply) : EditorM Unit := do
+  (TextSource.snapshot order.snapshot).release
+  match reply with
+  | .error detail =>
+    message (cannotReload order.path detail)
+  | .ok (loaded, script) =>
+    let some buffer := (← editorState).buffer? order.buffer | return
+    let some file := buffer.file | return
+    if file.path != order.path then
+      return
+    if file.saving.isSome then
+      message (beingSaved order.path)
+      return
+    if !order.force && buffer.unsavedAt (← buffer.history.sync) then
+      message (notReloading buffer.name)
+      return
+    let revision ← buffer.text.revision
+    if revision != order.base then
+      if order.retried then
+        message (reloadOvertaken order.path)
+      else
+        let snapshot ← buffer.text.snapshot
+        startReload
+            { order with
+              snapshot, base := revision, retried := true }
+      return
+    -- The reload is a step of its own: not joined to edits still pending,
+    -- such as an insert session's.
+    discard <| order.buffer.closeGroup
+    let adopted ← loaded.snapshot.adopt
+    discard <| buffer.text.applyScript order.base (.snapshot adopted) script .disk
+    (TextSource.snapshot adopted).release
+    discard <| order.buffer.closeGroup
+    if let .ok synced← order.buffer.synced then
+      discard <| EditorState.ask (.setHistory order.buffer synced.history.markSaved)
+    discard <| order.buffer.attachFile order.path loaded.stamp (loaded.endings.dominant.getD .lf)
+
+/-- The reload job: loads the file its order names, unless it is longer than
+`limit` bytes, diffs it against the order's snapshot under `diffLineLimit`,
+and finishes with what the reply becomes (`reloaded`). A refusal is a value
+in the reply; it fails only for arguments that are not an order. Both are
+waits, so the job holds no thread while the file loads or the diff is
+worked. -/
+def reloadWork (limit : Nat := Files.limit) (arguments : List Argument) : Work := fun _ => do
+  let some order :=
+    ReloadOrder.ofArguments? arguments | throw s!"{reloadJob}: its arguments are not a reload order"
+  match ← File.load order.path limit with
+  | .error error =>
+    return reloaded order (.error error.describe)
+  | .ok loaded =>
+    match ← Diff.lines (.snapshot order.snapshot) (.held loaded.snapshot) diffLineLimit with
+    | .error error =>
+      return reloaded order (.error error.describe)
+    | .ok script =>
+      return reloaded order (.ok (loaded, script))
+
+/-- The reload command as it is called: reloads the buffer of the window it
+was called with, forced when its first argument is `true` (Emacs's
+`revert-buffer`). -/
+def reloadCommand (call : Call) : EditorM Unit :=
+  reload call.target.window.buffer (call.arguments.head? == some (.bool true))
+
+/-- The command the ex names `e` and `e!` run. A leading `true` is the force.
+Then a string opens that path and the strings after it, as `open-file` does,
+forced or not, since buffers persist and nothing is discarded. With no path
+it reloads the buffer of the window it was called with, as Vim's `:e` does,
+when that buffer has a file, and otherwise asks for a path as `open-file`
+does, whose continuation is `open-file`. -/
+def editCommand (call : Call) : EditorM Unit := do
+  let (force, rest) :=
+    match call.arguments with
+    | .bool true :: rest => (true, rest)
+    | rest => (false, rest)
+  match rest with
+  | .str path :: more =>
+    Files.open call.target.window.id path (leadingPaths more)
+  | _ =>
+    let buffer := call.target.window.buffer
+    if (((← editorState).buffer? buffer).bind (·.file)).isSome then
+      reload buffer force
+    else if let .error refusal← prompt openPrompt { command := openName } then
+      message (notAsking refusal)
 
 end Editor.Files

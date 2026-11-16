@@ -8378,7 +8378,20 @@ def exLineChecks : List Check :=
         pure
           (binding.invocation? (some "my notes.txt") ==
               some { command := "edit", arguments := [.str "my notes.txt"] } &&
-            binding.invocation? none == some { command := "edit" }) }]
+            binding.invocation? none == some { command := "edit" }) },
+    { name :=
+        "an ex binding's own arguments come before the line's, with an argument and without; one that takes nothing still refuses an argument"
+      run :=
+        let forced : Ex.Binding :=
+          { name := "e!", command := "edit", takes := .text, arguments := [.bool true] }
+        let write : Ex.Binding := { name := "w!", command := "write", arguments := [.bool true] }
+        pure
+          (forced.invocation? (some "a b") ==
+              some { command := "edit", arguments := [.bool true, .str "a b"] } &&
+            forced.invocation? none == some { command := "edit", arguments := [.bool true] } &&
+            write.invocation? none == some { command := "write", arguments := [.bool true] } &&
+            write.invocation? (some "x") == none &&
+            (Ex.parse "e! /tmp/a").map (·.name) == some "e!") }]
 
 /-- The key strings the scheme fixtures are written with. -/
 def schemeKeyStrings : List String :=
@@ -16008,7 +16021,7 @@ def fileCommandChecks : List Check :=
               saved.loop.state.buffers == removed.loop.state.buffers &&
               saved.loop.state.wellFormed },
     { name :=
-        "the file commands and their jobs as compiled code registers them: the open command and the save command are registered under their names and the load job and the save job under theirs, the open command with a path opens the file and the save command saves the buffer, and the open command with no path starts nothing and asks for one"
+        "the file commands and their jobs as compiled code registers them: the open, save, edit and reload commands are registered under their names and the load, save and reload jobs under theirs, the open command with a path opens the file and the save command saves the buffer, and the open command with no path starts nothing and asks for one"
       run :=
         pure <|
           match compiledDriver with
@@ -16021,8 +16034,9 @@ def fileCommandChecks : List Check :=
             let (opened, _) := asked.finish 1
             let (saving, _) := fedTo opened ([.commit "x"] ++ presses "C-o w")
             let (saved, _) := saving.finish 2
-            Files.commands.map (·.name) == #[Files.openName, Files.saveName] &&
-              Files.jobs.map (·.name) == #[Files.loadJob, Files.saveJob] &&
+            Files.commands.map (·.name) ==
+                #[Files.openName, Files.saveName, Files.editName, Files.reloadName] &&
+              Files.jobs.map (·.name) == #[Files.loadJob, Files.saveJob, Files.reloadJob] &&
               started steps == #[] &&
               bare.pending.isEmpty &&
               bare.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
@@ -16848,7 +16862,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then reload, and no other; the prompt the name e then asks for a path with has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e! and reload, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -16857,9 +16871,190 @@ def exChecks : List Check :=
             let (typed, _) := fedTo driver (presses "C-e e e")
             let (opening, _) := fedTo typed (presses "C-e t C-e y")
             candidatesOf typed == some (exListed "e" none Ex.bindings) &&
-              (candidatesOf typed).map (·.listed) == some #["e", "reload"] &&
+              (candidatesOf typed).map (·.listed) == some #["e", "e!", "reload"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
+
+/-- The commands compiled code registers for files, the minibuffer and the ex
+line, each under its name, and `undo` and `redo`, which move one step of the
+history of the buffer of the window they are called with. -/
+def reloadCommands : List (String × Dispatched) :=
+  let compiled : List (String × Dispatched) :=
+    (Ex.commands ++ Minibuffer.commands ++ Files.commands).toList.filterMap
+      fun (registration : Config.Registration) =>
+      match registration.action with
+      | .call run =>
+        let dispatched : Dispatched := fun call => do
+          run call
+          return none
+        some (registration.name, dispatched)
+      | _ => none
+  compiled ++
+    [("undo", fun call => do
+        discard <| call.target.window.buffer.undo
+        return none),
+      ("redo", fun call => do
+        discard <| call.target.window.buffer.redo
+        return none)]
+
+/-- A driver of the reload checks: the commands of `reloadCommands`, every job
+compiled code registers for files (`Files.jobs`), the ex names that ship, and
+the files of the file command checks. `C-o n` opens `note.txt`, `C-o r` runs
+the reload command, `C-o R` the forced reload, `C-o u` undoes and `C-o U`
+redoes; `C-e e` opens the ex line and `C-e y` accepts it. -/
+def reloadDriver : Option TestDriver :=
+  let keys : Loop.Keys TestScheme.scheme :=
+    {
+      dispatchKeys
+        [("C-o n", opens (inFiles "note.txt")), ("C-o r", invoke Files.reloadName),
+          ("C-o R", { command := Files.reloadName, arguments := [.bool true] }),
+          ("C-o u", invoke "undo"), ("C-o U", invoke "redo"), ("C-e e", invoke Ex.name),
+          ("C-e y", invoke Minibuffer.acceptName)]
+        reloadCommands with
+      registered :=
+        { ex := fun name => Ex.bindings.findRev? (·.name == name)
+          exNames := exNamesOf Ex.bindings } }
+  (Loop.Driver.over keys (fun name => (Files.jobs.find? (·.name == name)).map (·.work))
+        (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := { files := commandFiles } }
+
+/-- The text another program writes over `note.txt` in the reload checks:
+a new first line before what was there. -/
+def reloadedText : String :=
+  "a new first line\n" ++ FileCases.noteText
+
+/-- `reloadedText` as the file's bytes. -/
+def reloadedBytes : ByteArray :=
+  "a new first line\n".toUTF8 ++ FileCases.noteBytes
+
+/-- The id of the job of `driver` started under `name` and not yet
+delivered, the latest if there are several. -/
+def pendingOf (driver : TestDriver) (name : String) : Option Nat :=
+  ((driver.pending.filter (·.name == name)).back?).map (·.id)
+
+/-- Finishes the job of `driver` started under `name` and not yet delivered;
+`driver` as it was when there is none. -/
+def finishNamed (driver : TestDriver) (name : String) : TestDriver :=
+  match pendingOf driver name with
+  | some id => (driver.finish id).1
+  | none => driver
+
+/-- `reloadDriver` with `note.txt` open in view 0, its load finished, and
+then `note.txt` rewritten by another program with `reloadedBytes`. -/
+def noteRewritten : Option TestDriver :=
+  reloadDriver.map fun driver =>
+    rewritten (finishNamed (fedTo driver (presses "C-o n")).1 Files.loadJob) (inFiles "note.txt")
+      reloadedBytes
+
+/-- Whether some piece of the whole text of the buffer `driver`'s view 0
+shows was written by an edit of origin `origin`. -/
+def tracedTo (driver : TestDriver) (origin : Origin) : Bool :=
+  match showing driver with
+  | none => false
+  | some shown =>
+    match shown.text with
+    | none => false
+    | some text =>
+      match ((shown.buffer.text.trace 0 text.utf8ByteSize).runModel driver.model.texts).1 with
+      | .ok pieces =>
+        pieces.any fun piece =>
+          match piece.author with
+          | .entry _ by_ => by_ == origin
+          | .earlier _ => false
+      | .error _ => false
+
+/-- The checks of reloading a buffer from its file (`Files.reload`,
+`Files.reloaded`, `Editor/Files.lean`), on the loop's driver over the
+editor's models and the model of files, with the commands and the jobs
+compiled code registers. -/
+def fileReloadChecks : List Check :=
+  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
+  [{  name :=
+        "one undo after a reload is the text from before it: the reload shows the file's new text, not modified, as one step over the opened root traced to the disk origin, and one undo brings the old text back, modified"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (asked, _) := fedTo rewritten (presses "C-o r")
+            let reloaded := finishNamed asked Files.reloadJob
+            let (undone, _) := fedTo reloaded (presses "C-o u")
+            (pendingOf asked Files.reloadJob).isSome && textOf reloaded == some reloadedText &&
+              statusOf reloaded == some (named "note.txt") &&
+              (showing reloaded).map (·.buffer.history.nodes.size) == some 2 &&
+              tracedTo reloaded Origin.disk &&
+              (heldFile reloaded).map (·.stamp) == stampOf reloaded (inFiles "note.txt") &&
+              textOf undone == some FileCases.noteText &&
+              statusOf undone == some (namedModified "note.txt") },
+    { name :=
+        "a reload of a buffer with unsaved edits changes nothing and says why: no reload job is started, the text is the edited text, and the echo area names :e!; edits made while the file loaded refuse it the same way when it is delivered"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (edited, _) := fedTo rewritten [.commit "x"]
+            let (refused, _) := fedTo edited (presses "C-o r")
+            let (asked, _) := fedTo rewritten (presses "C-o r")
+            let (late, _) := fedTo asked [.commit "x"]
+            let lateRefused := finishNamed late Files.reloadJob
+            (pendingOf refused Files.reloadJob).isNone &&
+              textOf refused == some ("x" ++ FileCases.noteText) &&
+              echoOf refused == some (Files.notReloading "note.txt") &&
+              textOf lateRefused == some ("x" ++ FileCases.noteText) &&
+              echoOf lateRefused == some (Files.notReloading "note.txt") &&
+              (pendingOf lateRefused Files.reloadJob).isNone },
+    { name :=
+        "a forced reload takes the file's text as one step: after it the buffer is not modified, one undo brings the edited text back, modified, and one redo the file's text again; the ex line e! does the same"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (edited, _) := fedTo rewritten [.commit "x"]
+            let forced := finishNamed (fedTo edited (presses "C-o R")).1 Files.reloadJob
+            let (undone, _) := fedTo forced (presses "C-o u")
+            let (redone, _) := fedTo undone (presses "C-o U")
+            let byEx := finishNamed (fedTo edited (exLine "e!")).1 Files.reloadJob
+            textOf forced == some reloadedText && statusOf forced == some (named "note.txt") &&
+              textOf undone == some ("x" ++ FileCases.noteText) &&
+              statusOf undone == some (namedModified "note.txt") &&
+              textOf redone == some reloadedText &&
+              textOf byEx == some reloadedText &&
+              (showing byEx).map (·.buffer.isModified) == some false },
+    { name :=
+        "a forced reload whose text moves while it loads applies nothing and starts one more reload, which reloads; if the text moves again the echo area says it was overtaken and the edited text stays"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (asked, _) := fedTo rewritten (presses "C-o R")
+            let (moved, _) := fedTo asked [.commit "x"]
+            let retried := finishNamed moved Files.reloadJob
+            let settled := finishNamed retried Files.reloadJob
+            let (movedAgain, _) := fedTo retried [.commit "y"]
+            let overtaken := finishNamed movedAgain Files.reloadJob
+            textOf retried == textOf moved && (pendingOf retried Files.reloadJob).isSome &&
+              pendingOf retried Files.reloadJob != pendingOf moved Files.reloadJob &&
+              textOf settled == some reloadedText &&
+              echoOf overtaken == some (Files.reloadOvertaken (inFiles "note.txt")) &&
+              textOf overtaken == textOf movedAgain &&
+              (pendingOf overtaken Files.reloadJob).isNone },
+    { name :=
+        "the ex line e with no argument reloads the window's buffer, and on the scratch buffer, which has no file, still asks for a path; a reload of a buffer with no file says so"
+      run :=
+        pure <|
+          match noteRewritten, reloadDriver with
+          | some rewritten, some fresh =>
+            let byEx := finishNamed (fedTo rewritten (exLine "e")).1 Files.reloadJob
+            let (asking, _) := fedTo fresh (exLine "e")
+            let (noFile, _) := fedTo fresh (presses "C-o r")
+            textOf byEx == some reloadedText &&
+              asking.loop.state.prompt.map (·.label) == some Files.openPrompt &&
+              echoOf noFile == some (Files.noReloadFile "scratch") &&
+              (pendingOf noFile Files.reloadJob).isNone
+          | _, _ => false }]
 
 /-- What a step of the buffer command checks is handed. The commands are the
 ones compiled code registers for files, the minibuffer, the buffers and the
@@ -22734,6 +22929,7 @@ def checks : List Check :=
     openFilesChecks ++
     dispatchQuitChecks ++
     exChecks ++
+    fileReloadChecks ++
     bufferCommandChecks ++
     evilRestChecks ++
     evilMotionChecks ++
