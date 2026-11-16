@@ -617,7 +617,11 @@ changed the state or not (`Loop.publish`):
 2. **The scene** (`Loop.views`, `Loop.scene`). Each window the layout
    places, in drawing order, is a view in the rectangle `EditorState.rects`
    gives it in the frame; a window the layout does not show (monocle's
-   others) is not in the scene. While a prompt is open the minibuffer's
+   others) is not in the scene. The layout is the one the step's keys hand
+   the publish (`Loop.Keys.layout`, config's `layout` or the default
+   through the host), which the publish sets on the frame before it lays
+   the views out; a loop handed none keeps the frame's own. While a prompt
+   is open the minibuffer's
    window is a view too, in the strip the minibuffer's place then takes
    (`Editor/State.lean`, "The window list, the layout and their
    invariants"): its text is the input typed so far,
@@ -1066,6 +1070,12 @@ structure Loop.Keys (scheme : InputScheme) where
   (`framePadding`, `Editor/Setup.lean`), so a loop handed none draws and
   scrolls as with no padding. -/
   padding : Nat := 0
+  /-- The layout the frame's windows are arranged by (`Editor/Layout.lean`),
+  which the publish sets on the frame before it lays the views out; `none`
+  keeps the frame's own, so a state built by hand keeps the layout it was
+  built with. The host hands config's choice, or the default
+  (`Headless.keys`). -/
+  layout : Option Layout := none
   /-- The menu bar the scene names, its key equivalents filled from the
   registry's bindings as they are now (`Config.Registry.menuOf`,
   `Editor/Menu/Compiled.lean`); `none` for a host with no menu bar, whose
@@ -1425,14 +1435,15 @@ def followed (margin : Nat) (bottomOf : ViewId → Nat) (views : Array View) : E
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
 (`EditorState.settleQuit`), brings an open prompt's listing up to date
-(`listed`), has each view follow its cursor (`followed`), publishes a scene
+(`listed`), sets the frame's layout to `layout` when one is handed, has
+each view follow its cursor (`followed`), publishes a scene
 of the state, and releases each
 snapshot the last scene named that this one does not. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
-def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0) :
-    EditorM (Loop scheme) := do
+def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0)
+    (layout : Option Layout := none) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
@@ -1444,10 +1455,12 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let (state, unlisted) ← listed state
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
-  -- The padding the views are laid out with is the one handed in.
+  -- The padding the views are laid out with is the one handed in, and so
+  -- is the layout, when one is.
   let state :=
     { state with
-      heights := ← Display.heights, padding }
+      heights := ← Display.heights, padding
+      frame := { state.frame with layout := layout.getD state.frame.layout } }
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views modeLine
   -- Each view follows its cursor before the scene names its anchor: the
   -- snapshots the questions of layout need were taken just above. Each is
@@ -1992,14 +2005,15 @@ def keyedBy (keys : Keys scheme) (loop : Loop scheme) : Loop scheme :=
 
 /-- `stepped`, a step whose scene is not yet published, once it is
 (`publish`), its views' status lines drawn by the mode line `keys` names
-and padded by its padding (`Keys.modeLine`, `Keys.padding`): its loop is
+and padded by its padding, its windows laid out by its layout
+(`Keys.modeLine`, `Keys.padding`, `Keys.layout`): its loop is
 the one the publish left, with the file jobs it starts and cancels
 (`fileJobs`) after the step's own, and it says stop when the editor then
 leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
 scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
-  let loop ← stepped.loop.publish keys.modeLine keys.padding
+  let loop ← stepped.loop.publish keys.modeLine keys.padding keys.layout
   let (loop, starts, cancels) := loop.fileJobs keys
   return { stepped with
       loop, next := nextOf loop, starts := stepped.starts ++ starts

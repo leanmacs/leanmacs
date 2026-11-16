@@ -1,0 +1,28 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which chooses the monocle layout and binds
+# `C-c s` to split the window and `C-c o` to focus the next one. What it
+# prints must be exactly `expected`. It touches no file.
+
+reload
+settle
+
+# A frame of 640 by 480: the one window takes the area above the bottom
+# row.
+resize 640 480
+scene
+
+# `C-c s` splits the window: there are two, but monocle shows only the
+# focused one, still view 0, in the same rectangle.
+key c KeyC control
+key s KeyS -
+scene
+
+# `C-c o` focuses view 1, which monocle now shows in its place.
+key c KeyC control
+key o KeyO -
+scene
+
+# `:` opens the ex prompt: monocle still shows view 1, the prompt's asker,
+# above the minibuffer's strip, and not the minibuffer.
+key : Semicolon shift
+scene

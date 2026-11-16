@@ -63,6 +63,12 @@ the model tests run it with outcomes built by hand
   editor's 8 (`Loop.padding`), so a reload that sets none goes back to it.
   The host hands it to the loop for each step (`Headless.keys`), so it
   changes with no restart. A rejected outcome changes none of it.
+- **The layout follows config.** An install sets the layout in force
+  (`State.layout`) to the one the config chose, or none for the editor's
+  (`Layout.default`), so a reload that chooses none goes back to it. The
+  host hands it to the loop for each step (`Headless.keys`,
+  `Loop.Keys.layout`), so it changes with no restart. A rejected outcome
+  changes none of it.
 - **The window's appearance follows the paper.** Once the window has
   opened (`Event.windowOpened`), the reducer asks for the appearance that
   contrasts with the effective paper (`Theme.paper` of `State.theme`,
@@ -187,6 +193,10 @@ structure State (σ : Type) where
   editor's own (`Loop.padding`): set at every install, so a config that
   sets none goes back to it. -/
   framePadding : Option Nat := none
+  /-- The layout the installed config chose (`layout`), or none for the
+  editor's own (`Layout.default`): set at every install, so a config that
+  chooses none goes back to it. -/
+  layout : Option Layout := none
   /-- The title bar the installed config chose (`titleBar`), or none for the
   themed one: set at every install, so a config that chooses none goes
   back to it. The window mode reads it when it opens the window. -/
@@ -303,6 +313,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
     let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
     ({ state with
         themeName, modeLine, framePadding := built.registrations.framePadding
+        layout := built.registrations.layout
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments })

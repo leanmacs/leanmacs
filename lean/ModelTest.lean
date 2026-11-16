@@ -2642,6 +2642,24 @@ def setupChecks : List Check :=
               refusal (framePadding 0) == none)
         | _, _ => pure false },
     { name :=
+        "a setup's layout is collected, a setup that chooses none has none, one that chooses it twice is refused with a message that says so, and a master-and-stack share above 100 is refused with a message that names it"
+      run :=
+        let twice : SetupM Unit := do
+          layout .monocle
+          layout Layout.default
+        let chosen := Layout.masterStack { share := 60, side := .right }
+        match Config.Registrations.ofSetup (layout chosen),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.layout == some chosen && plain.layout == none &&
+              refusal twice == some "the layout is chosen twice" &&
+              refusal (layout (.masterStack { share := 101 })) == some (Layout.shareTooLarge 101) &&
+              (Layout.shareTooLarge 101).contains "101" &&
+              refusal (layout (.masterStack { share := 100 })) == none &&
+              refusal (layout .monocle) == none)
+        | _, _ => pure false },
+    { name :=
         "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
       run :=
         let twice : SetupM Unit := do
@@ -3474,6 +3492,16 @@ def reloadChecks : List Check :=
           (themed.framePadding == none && state.framePadding == some 12 &&
             dropped.framePadding == none &&
             kept.framePadding == some 12) },
+    { name :=
+        "an install sets the layout config chooses, a later install that chooses none goes back to none, the editor's own, and a rejected one changes nothing"
+      run :=
+        let (state, _) :=
+          reduceFrom themed [.requested, .finished (accepted ["a"] (layout .monocle))]
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        pure
+          (themed.layout == none && state.layout == some .monocle && dropped.layout == none &&
+            kept.layout == some .monocle) },
     { name :=
         "an install sets the mode line config lists, and its report names each segment nobody registered, which the echo area says after the unknown theme's sentence; a later install that lists none goes back to the default, and a rejected one changes nothing"
       run :=
@@ -10577,6 +10605,50 @@ def dispatchStateChecks : List Check :=
       [("split", split), ("fail", failingAfter fun call => discard <| splitting call),
         ("moving", moving)]
   [{  name :=
+        "criterion 3, on the models: a step handed monocle as its layout shows only the focused window, in the whole tiled area, and focusing the other window shows it in its place; a step handed no layout keeps the frame's; a step handed the default shows both again; no window is lost on the way"
+      run :=
+        pure <|
+          let others : Dispatched := fun call => do
+            let windows := (← editorState).frame.windows
+            if let some next := windows.find? (· != call.target.window.id) then
+              discard <| next.focus
+            return none
+          let keyed :=
+            dispatchKeys [("C-c s", invoke "split"), ("C-c o", invoke "other")]
+              [("split", split), ("other", others)]
+          let program : EditorM (Array EditorState) := do
+            let (split, _) ←
+              stepsWith keyed { state := ← EditorState.initial ⟨640, 480⟩ } (presses "C-c s")
+            let (alone, _) ← stepsWith { keyed with layout := some .monocle } split [pressF5]
+            let (kept, _) ← stepsWith keyed alone [pressF5]
+            let (other, _) ← stepsWith { keyed with layout := some .monocle } kept (presses "C-c o")
+            let (both, _) ← stepsWith { keyed with layout := some Layout.default } other [pressF5]
+            return #[split.state, alone.state, kept.state, other.state, both.state]
+          match program.runModel editorModel with
+          | (.ok states, model) =>
+            let scenes := model.display.scenes
+            let laid (scene : Scene) := scene.views.map fun view => (view.id, view.rect)
+            -- Every event publishes a scene: `C-c s` and `C-c o` are two
+            -- presses each, and the scene after a sequence's last key is the
+            -- one its command's step published.
+            match states, scenes with
+            | #[split, alone, kept, other, both], #[_, first, second, third, _, fourth, fifth] =>
+              states.all (·.frame.windows == #[⟨0⟩, ⟨1⟩]) && states.all (·.wellFormed) &&
+                split.frame.layout == Layout.default &&
+                alone.frame.layout == .monocle &&
+                kept.frame.layout == .monocle &&
+                both.frame.layout == Layout.default &&
+                first.views.map (·.id) == #[⟨0⟩, ⟨1⟩] &&
+                laid second == #[(⟨0⟩, alone.tiled)] &&
+                second.focused == some ⟨0⟩ &&
+                laid third == #[(⟨0⟩, kept.tiled)] &&
+                laid fourth == #[(⟨1⟩, other.tiled)] &&
+                fourth.focused == some ⟨1⟩ &&
+                laid fifth == both.rects &&
+                fifth.views.map (·.id) == #[⟨0⟩, ⟨1⟩]
+            | _, _ => false
+          | (.error _, _) => false },
+    { name :=
         "a key's command that splits its window by a state request: the loop keeps the new window after the step, well formed, and the scene shows both views"
       run :=
         pure <|

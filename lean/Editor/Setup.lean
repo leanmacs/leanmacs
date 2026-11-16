@@ -3,6 +3,7 @@ import Editor.Ex.Line
 import Editor.Face
 import Editor.Job
 import Editor.Key.Notation
+import Editor.Layout
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
@@ -190,6 +191,14 @@ window's text is inset from its edges, the bottom row at least as far as
 the window's corners reach. A config that sets none has the editor's 8,
 and a reload changes it. Setting it twice is refused.
 
+Config chooses the window layout (`layout`, `Editor/Layout.lean`), as a
+value with its parameters, the way it sets the frame padding:
+`layout (.masterStack { share := 60, side := .right })`, or
+`layout .monocle`. A config that chooses none has master-and-stack with
+main taking half on the left (`Layout.default`), and a reload changes it.
+Choosing it twice is refused, and so is a master-and-stack share above
+100.
+
 Config keeps the system's standard title bar with `titleBar .standard`, in
 place of the themed one, whose paper is the theme's. It is read when the
 window opens, so a reload changes it at the next start. Choosing it twice
@@ -287,6 +296,9 @@ inductive SetupRequest where
   how far every window's content is inset from its edges, and the bottom
   row at least (`EditorState.paddingOf`). -/
   | framePadding (points : Nat)
+  /-- Choose the layout the frame's windows are arranged by, once the config
+  is installed (`Editor/Layout.lean`). -/
+  | layout (chosen : Layout)
   /-- Choose the title bar the window opens with (`Window.TitleBar`). -/
   | titleBar (style : Window.TitleBar)
   /-- Choose where a child's environment comes from
@@ -314,6 +326,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .segment _ => Unit
   | .modeLine _ => Unit
   | .framePadding _ => Unit
+  | .layout _ => Unit
   | .titleBar _ => Unit
   | .processEnvironment _ => Unit
   | .autoReload _ => Unit
@@ -472,6 +485,20 @@ changes it with no restart. The editor refuses the `setup` for setting the
 frame padding twice. -/
 def framePadding (points : Nat) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.framePadding points))
+
+/-- Chooses the layout the frame's windows are arranged by once the config
+is installed: master-and-stack with main's share, in percent, and its side
+(`layout (.masterStack { share := 60, side := .right })`), or monocle, which
+shows only the selected window (`layout .monocle`). A config that chooses
+none has master-and-stack with main taking half on the left
+(`Layout.default`). A reload changes it with no restart. The editor refuses
+the `setup` for a share above 100 (`Layout.shareTooLarge`) and for
+choosing the layout twice. -/
+def layout (chosen : Layout) : SetupM Unit := do
+  if let .masterStack parameters := chosen then
+    if parameters.share > 100 then
+      throw (Layout.shareTooLarge parameters.share)
+  ExceptT.lift (Program.request (port := setupPort) (.layout chosen))
 
 /-- Chooses the title bar the window opens with: `titleBar .standard` keeps
 the system's standard title bar, above the content, in place of the themed

@@ -836,6 +836,41 @@ view 1 0,448 640x32: "", scroll 0, selections 0..0, padding 12 0
 status 1: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "e", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload"
 ```
 
+A fourteenth, `tests/headless/monocle/script`, runs on the config in
+`tests/headless/monocle/config`, which chooses the monocle layout
+(`layout .monocle`) and binds `C-c s` to a command that splits the window
+it is pressed in and `C-c o` to one that focuses the next window of the
+frame's list. After a resize to 640 by 480 each scene has one window's
+view, `640x464`, the area above the bottom row: view 0, view 0 again after
+the split, since the focus stays, then view 1 once `C-c o` focuses it; and
+with the ex prompt open, view 1, the prompt's asker, `640x448`, above the
+minibuffer's view. Its output must be exactly
+`tests/headless/monocle/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/monocle/config ../tests/headless/monocle/script
+reload 1: installed, 1 chunks, 2 commands
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 1, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: c KeyC control
+key arrived: s KeyS -
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 4, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: c KeyC control
+key arrived: o KeyO -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 7, theme "default"
+view 1 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: : Semicolon shift
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 9, theme "default"
+view 1 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 2 0,448 640x32: "", scroll 0, selections 0..0, padding 8 0
+status 2: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "w!", minibuffer.candidate "e", minibuffer.candidate "e!", minibuffer.candidate "autoread", minibuffer.candidate "noautoread", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload", minibuffer.candidate "b", minibuffer.candidate "ls", minibuffer.candidate "bd"
+```
+
 Two more runs of the gate are on a real file, and so on a script that
 cannot be checked in whole: the file port takes absolute paths only. Each
 is one entry of the `ffi-test` task, a shell of its own that makes a

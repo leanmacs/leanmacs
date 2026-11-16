@@ -1104,7 +1104,8 @@ whose on-enter actions a major mode runs, the jobs' names and the ex
 bindings); the mode line, config's listing or the default order resolved
 over the registry's segments, a name nobody registered left out
 (`Config.Registry.resolve`); the frame padding config set, or the editor's
-8 (`Loop.padding`); and the host's menu bar with its key equivalents filled
+8 (`Loop.padding`); the layout config chose, or the default
+(`Layout.default`); and the host's menu bar with its key equivalents filled
 from the registry's bindings (`Config.Registry.menuOf`). It is made for
 each window event, so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
@@ -1112,6 +1113,7 @@ def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     slowAfter := collaborators.slowAfter, registered := running.config.registry.registered
     modeLine := (running.config.registry.resolve (running.config.modeLine.getD .standard)).1
     padding := running.config.framePadding.getD Loop.padding
+    layout := some (running.config.layout.getD Layout.default)
     menu := collaborators.menu.map running.config.registry.menuOf }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
@@ -1123,7 +1125,8 @@ def publish (collaborators : Collaborators σ scheme) (running : Running σ sche
   let some frame := running.frame | return running
   let (published, running) ←
     running.attempt collaborators
-        (frame.publish (running.keys collaborators).modeLine (running.keys collaborators).padding)
+        (frame.publish (running.keys collaborators).modeLine (running.keys collaborators).padding
+          (running.keys collaborators).layout)
   return { running with frame := some (published.getD frame) }
 
 /-- The loop's frame, made if there is none (`Collaborators.start`): the

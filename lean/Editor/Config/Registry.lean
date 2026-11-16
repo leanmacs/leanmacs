@@ -558,6 +558,9 @@ accepted names at most one (`theme`). -/
   more than one is refused, so a `setup` that is accepted sets at most one
   (`framePadding`). -/
   framePaddings : Array Nat := #[]
+  /-- The layouts `setup` chose (`layout`), in order: more than one is
+  refused, so a `setup` that is accepted chooses at most one (`layout`). -/
+  layouts : Array Layout := #[]
   /-- The title bars `setup` chose (`titleBar`), in order: more than one is
   refused, so a `setup` that is accepted chooses at most one (`titleBar`). -/
   titleBars : Array Window.TitleBar := #[]
@@ -583,6 +586,10 @@ def modeLine (collected : Registrations) : Option ModeLine.Order :=
 /-- The frame padding a `setup` set, in points, if it set one. -/
 def framePadding (collected : Registrations) : Option Nat :=
   collected.framePaddings[0]?
+
+/-- The layout a `setup` chose, if it chose one. -/
+def layout (collected : Registrations) : Option Layout :=
+  collected.layouts[0]?
 
 /-- The title bar a `setup` chose, if it chose one. -/
 def titleBar (collected : Registrations) : Option Window.TitleBar :=
@@ -618,6 +625,7 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with modeLines := collected.modeLines.push order })
   | .framePadding points, collected =>
     ((), { collected with framePaddings := collected.framePaddings.push points })
+  | .layout chosen, collected => ((), { collected with layouts := collected.layouts.push chosen })
   | .titleBar style, collected =>
     ((), { collected with titleBars := collected.titleBars.push style })
   | .processEnvironment setting, collected =>
@@ -652,7 +660,7 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 twice, a command name or a job name registered twice, a face set twice, a
 theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
-twice, the title bar chosen twice, a key sequence bound twice, a binding of
+twice, the layout chosen twice, the title bar chosen twice, a key sequence bound twice, a binding of
 no keys, an ex name bound twice, the process environment set twice,
 auto-reload set twice, a workspace root declared twice, a command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
@@ -689,6 +697,8 @@ def problem? (collected : Registrations) : Option String := do
     return "the mode line is listed twice"
   if collected.framePaddings.size > 1 then
     return "the frame padding is set twice"
+  if collected.layouts.size > 1 then
+    return "the layout is chosen twice"
   if collected.titleBars.size > 1 then
     return "the title bar is chosen twice"
   if collected.environments.size > 1 then

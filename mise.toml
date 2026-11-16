@@ -242,6 +242,13 @@ run = [
   # the echo padded 12, and with the ex prompt open the minibuffer's view
   # padded 12 across and none down (`padding/expected`). It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/padding/config ../tests/headless/padding/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/padding/expected -",
+  # The monocle layout (tests/headless/monocle): a config that chooses it
+  # and binds keys to split the window and to focus the next one; each
+  # scene shows only the focused window's view, in the whole area above
+  # the bottom row: view 0, view 0 again after the split, view 1 once it is
+  # focused, and view 1, the asker, above the minibuffer's view with the ex
+  # prompt open (`monocle/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/monocle/config ../tests/headless/monocle/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/monocle/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed

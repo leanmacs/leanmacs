@@ -78,6 +78,12 @@ namespace Layout
 protected def default : Layout :=
   .masterStack {}
 
+/-- What a master-and-stack layout whose share of main is `share`, above
+100, is refused with when config chooses it (`layout`, `Editor/Setup.lean`):
+a share is a percentage. -/
+def shareTooLarge (share : Nat) : String :=
+  s!"main's share of a master-and-stack layout must be at most 100 percent, not {share}"
+
 /-- The extent of `rect` along `axis`: its height for rows, and its width for
 columns. -/
 def extent (axis : Axis) (rect : Rect) : Nat :=

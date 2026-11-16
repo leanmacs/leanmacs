@@ -476,6 +476,18 @@ elaborator.
   (`Loop.padding`), and the host hands it to the loop for each step
   (`Headless.keys`, `Loop.Keys.padding`): a reload changes it with no
   restart. Setting it twice rejects the reload.
+- **The layout is config's**: `layout (.masterStack { share := 60, side
+  := .right })` or `layout .monocle` chooses how the frame's windows are
+  arranged, as a value with its parameters (window-management phase 1,
+  `lean/Editor/Layout.lean`). It is the reducer's state (`State.layout`),
+  set at every install, so a config that chooses none has the default,
+  master-and-stack with main taking half on the left, and the host hands
+  it to the loop for each step (`Headless.keys`, `Loop.Keys.layout`),
+  whose publish sets it on the frame before the views are laid out: a
+  reload changes it with no restart. A loop handed none keeps the frame's
+  own. Choosing it twice, or a master-and-stack share above 100, rejects
+  the reload. It is chosen as a value, not by a registered name as a
+  theme is, until a command switches layouts by name.
 - **The title bar is config's, at the next start**: `titleBar .standard`
   keeps the system's standard title bar in place of the themed one, whose
   paper is the theme's (theming phase 7). It is the reducer's state
