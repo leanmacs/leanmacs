@@ -3033,7 +3033,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     Editor.Window.shutdown
   let status ←
     Editor.Window.host .scripted options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] shutdown
+        (← Editor.Clipboard.InProcess.new).handle #[] shutdown .headless
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host: the window mode ended with status {status}"
     return 1
@@ -3097,7 +3097,7 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
       composition := true }
   let status ←
     Editor.Window.host .scriptedUndrawn options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown
+        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless
   unless status == 1 do
     IO.eprintln s!"ffi-test window-host-undrawn: the window mode ended with status {status}, not 1"
     return 1

@@ -201,9 +201,11 @@ it could not be opened, when nothing could draw in it (`nothingDrew`, said
 on stderr, and in the echo area while the loop still runs), or when the loop
 ended with an error. -/
 def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (display : Ffi.Display)
-    (clipboard : ClipboardHandler) (said : Array String) (shutdown : IO Unit) : IO UInt32 := do
+    (clipboard : ClipboardHandler) (said : Array String) (shutdown : IO Unit)
+    (processes : Process.Host) : IO UInt32 := do
   let shipped ←
     Headless.shipped (options.sysroot.getD "") options.oleans (options.config.getD "") IO.eprintln
+        processes
   let collaborators :=
     { shipped with
       display := hostDisplay display platform
@@ -298,7 +300,10 @@ def main (arguments : List String) : IO UInt32 := do
       | .skip (some text) => #[text]
       | _ => #[]) ++
       unavailable
-  let status ← host .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
+  -- `auto` takes mise under the home directory first, when `HOME` names one.
+  let home := environment.home.filter (!·.isEmpty) |>.map System.FilePath.mk
+  let status ←
+    host .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown (.window home)
   IO.Process.exit status.toUInt8
 
 end Editor.Window

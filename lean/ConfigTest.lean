@@ -472,7 +472,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
       Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let watches ← Job.FakeFileWatches.new completions { directories := #["/watched"] }
-  let requests ← context.ids.modifyGet fun next => (next, next + 3)
+  let requests ← context.ids.modifyGet fun next => (next, next + 4)
   return {
       collaborators :=
         { elaborator, source,
@@ -481,10 +481,10 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
             output.modify (·.push line),
           services := { completions, timers := clock.timers, fileWatches := watches.fileWatches }
           published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
-          wakeups := requests + 1, jobs := requests + 2, commands := compiled.commands,
-          compiledJobs := compiled.jobs, bindings := compiled.bindings, modes := compiled.modes,
-          ex := compiled.ex, log := fun entry => log.modify (·.push entry),
-          slowAfter := compiled.slowAfter,
+          wakeups := requests + 1, jobs := requests + 2, environment := requests + 3
+          commands := compiled.commands, compiledJobs := compiled.jobs,
+          bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
+          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
             match compiled.major with
@@ -3794,6 +3794,72 @@ def watchReloadChecks (context : Context) : List Check :=
               lines.contains "job 1 follow: ok" &&
               lines.contains "text 1: \"v1\"" }]
 
+/-- Runs `check` against a host started on a fresh temporary directory
+holding `files`, with the real elaborator, whose jobs share the environments
+over a reference the check is handed, which reports as the executable's
+host does (`Headless.reportedEnvironments`), and stops the host. The
+directory is removed. -/
+def withEnvironments (context : Context) (files : List (String × String))
+    (check : Session → IO.Ref Process.Environments → Job.Environments → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory files
+    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+    let state ← IO.mkRef ({} : Process.Environments)
+    let environments := Headless.reportedEnvironments state stage.collaborators.environment
+    let collaborators :=
+      { stage.collaborators with services := { stage.collaborators.services with environments } }
+    onStage { stage with collaborators } fun host stage =>
+        check
+          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
+            watches := stage.watches, log := stage.log }
+          state environments
+
+/-- A chunk whose `setup` sets the process environment to `setting`, written
+as Lean. -/
+def environmentChunk (setting : String) : String :=
+  s!"def setup : SetupM Unit := do\n  processEnvironment {setting}\n"
+
+/-- An entry of a lookup that failed, as a host's environments hold one. -/
+def failedLookup : Process.Entry :=
+  { stamps := #[], found := .failed (.exited 1 "not trusted") }
+
+/-- The checks of the host's environments (`Editor/Headless.lean`, "A
+child's environment"), over the headless host and the real elaborator: a
+reload that installs puts config's setting in the state every job shares and
+drops every entry, a rejected one changes neither, and a message the
+environments report is the echo of the next scene. -/
+def environmentHostChecks (context : Context) : List Check :=
+  [{  name :=
+        "an installed reload whose setup sets the process environment puts that setting in the host's environments and drops every entry; a rejected reload changes neither"
+      run :=
+        withEnvironments context [("10-setup.lean", environmentChunk ".inherited")]
+          fun session state _ => do
+          state.set { entries := #[("/p/d", failedLookup)] }
+          session.ask [.reload]
+          let installed ← state.get
+          state.modify fun held => { held with entries := #[("/p/d", failedLookup)] }
+          session.write "10-setup.lean" "def setup : SetupM Unit := oops"
+          session.ask [.reload]
+          let rejected ← state.get
+          return installed.setting == .inherited && installed.entries.isEmpty &&
+              rejected.setting == .inherited &&
+              rejected.entries == #[(("/p/d" : System.FilePath), failedLookup)] },
+    { name := "a config that does not set the process environment installs auto"
+      run :=
+        withEnvironments context [("10-setup.lean", "def setup : SetupM Unit := pure ()")]
+          fun session state _ => do
+          state.set { setting := .mise none }
+          session.ask [.reload]
+          return (← state.get).setting == .auto },
+    { name := "a failed lookup the host's environments record is the echo of the next scene"
+      run :=
+        withEnvironments context [] fun session _ environments => do
+          session.host.resize 160 96
+          session.ask []
+          environments.ask (.record "/p/d" failedLookup)
+          let (echo, _) ← session.scene
+          return echo == (Process.failureMessage "/p/d" (.exited 1 "not trusted")).quote }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
@@ -3810,6 +3876,7 @@ def checks (context : Context) : List Check :=
     evilChecks context ++
     reloadEchoChecks context ++
     faceChecks context ++
+    environmentHostChecks context ++
     fileChecks context ++
     exScriptChecks context
 
@@ -3895,7 +3962,8 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
     Headless.start (scheme := TestScheme.scheme)
         { elaborator, source := { chunks := chunks.get }, emit,
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
-          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3 }
+          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3,
+          environment := 4 }
   return { host, chunks, reported, others }
 
 /-- Makes `config` the source's chunks, asks for a reload, and returns the
@@ -4169,14 +4237,14 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   -- cancels its jobs, and the row is over when every pool thread is free.
   let row (job : String) (count : Nat) (going : IO Unit) : IO (Array Nat × Nat × Nat) := do
     -- Hosts follow one another on one queue: each has source ids of its own.
-    let requests ← ids.modifyGet fun next => (next, next + 3)
+    let requests ← ids.modifyGet fun next => (next, next + 4)
     reloads.set #[]
     let host ←
       Headless.start (scheme := TestScheme.scheme)
           { elaborator, source := { chunks := pure jobsConfig }, emit,
             services := { completions, timers := counted }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
-            jobs := requests + 2 }
+            jobs := requests + 2, environment := requests + 3 }
     try
       host.send .reload
       unless ← host.settle patience do
