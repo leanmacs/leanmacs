@@ -514,7 +514,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped. Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
-| `resize` | Sets the frame's size; the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: the scene has no field for it |
+| `resize` | Sets the frame's size and whether the window is in fullscreen (`Frame.fullscreen`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: the scene has no field for it |
 | `focus gained` | Sets whether the frame has the keyboard focus |
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
@@ -1026,7 +1026,7 @@ echo area and the preedit, around the views made of its windows, with
 def scene (state : EditorState) (views : Array View) (pending : String) : Scene :=
   let frame := state.frame
   { size := frame.size, views, focused := if frame.hasFocus then some frame.focused else none
-    echo := state.echo, pending, preedit := state.preedit }
+    echo := state.echo, pending, preedit := state.preedit, title := state.title }
 
 /-- The keys the scheme reports as pending in the loop's state, as a key
 string (`Key.notations`): what the scene shows of a sequence begun and not
@@ -1151,7 +1151,10 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
   | .preedit text => return { state with preedit := if text.isEmpty then none else some text }
   | .compositionDisabled => return { state with preedit := none }
   | .resize resize =>
-    return { state with frame := { state.frame with size := ⟨resize.width, resize.height⟩ } }
+    return { state with
+        frame :=
+          { state.frame with
+            size := ⟨resize.width, resize.height⟩, fullscreen := resize.fullscreen } }
   | .focus gained => return { state with frame := { state.frame with hasFocus := gained } }
   | .commit text => do
     let some target := state.focusedTarget? | return { state with preedit := none }

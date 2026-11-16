@@ -142,7 +142,8 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
   let collaborators :=
     { shipped with
       display := fun snapshots => do
-        Headless.Host.Display.real (← RealDisplay.over display snapshots Theme.builtin)
+        Headless.Host.Display.real
+            (← RealDisplay.over display snapshots Theme.builtin (platform := some platform))
       clipboard := pure clipboard }
   display.present
   let host ← Headless.start collaborators

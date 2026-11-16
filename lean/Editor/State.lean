@@ -410,6 +410,14 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
   minibuffer's cursor is exclusive (`prompt`).
 - The frame's `hasFocus` is the platform window's keyboard focus. While the
   frame does not have it, the scene names no focused view.
+- The frame's `fullscreen` is whether the window last said it is in the
+  system's fullscreen, on a resize: a command reads it
+  (`toggle-fullscreen`, `Editor/FrameCommands.lean`), and nothing but a
+  resize changes it.
+- The selected view (`EditorState.selectedView`) is the open prompt's asker
+  while a prompt is open, and the focused view otherwise. The window's
+  title (`EditorState.title`) is its buffer's name, so it does not become
+  the minibuffer's while a prompt is typed into.
 - The preedit is the text an input method is composing in the focused
   window; `none` when it is composing nothing.
 - No ambient context: a handler is given the window it acts on and its
@@ -586,6 +594,10 @@ structure Frame where
   focused : ViewId
   /-- Whether it has the keyboard focus. -/
   hasFocus : Bool := true
+  /-- Whether the window last said it is in the system's fullscreen
+  (`Event.Resize.fullscreen`). A command reads it, and nothing but a resize
+  changes it. -/
+  fullscreen : Bool := false
   deriving DecidableEq, Repr
 
 /-- A job a command asked to be started: the name it is registered under,
@@ -953,6 +965,20 @@ def focusedTarget? (state : EditorState) : Option Target :=
 /-- The minibuffer's view: the open prompt's, if a prompt is open. -/
 def minibufferView? (state : EditorState) : Option ViewId :=
   state.prompt.map (·.view)
+
+/-- The selected view: the open prompt's asker while a prompt is open, and
+otherwise the focused one. It is the one the user is working in, so typing
+into a prompt does not take it into the minibuffer. -/
+def selectedView (state : EditorState) : ViewId :=
+  match state.prompt with
+  | some asking => asking.asker
+  | none => state.frame.focused
+
+/-- The window's title: the name of the selected view's buffer
+(`selectedView`), which a buffer with no file has too (`scratch`); empty
+when that view has no window, which a well-formed state rules out. -/
+def title (state : EditorState) : String :=
+  ((state.target? state.selectedView).map (·.buffer.name)).getD ""
 
 /-- The minibuffer's buffer: the one the open prompt's window shows, if a
 prompt is open. -/

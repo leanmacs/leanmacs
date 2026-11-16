@@ -84,14 +84,24 @@ structure RealDisplay where
   /-- The theme not yet sent: set by `over` and by `setTheme`, and none
   once a publish has sent it. -/
   theme : IO.Ref (Option Theme)
+  /-- The platform whose window the requests of the window go to; none for
+  a display that asks no window anything. -/
+  platform : Option Ffi.Platform := none
 
 namespace RealDisplay
 
 /-- The binding over `display` and `snapshots`, with `theme` to send with
-the first scene published. -/
-def over (display : Ffi.Display) (snapshots : SnapshotReader) (theme : Theme) :
-    BaseIO RealDisplay := do
-  return { display, snapshots, theme := ← IO.mkRef (some theme) }
+the first scene published, and the window of `platform` to send requests of
+the window to, when there is one. -/
+def over (display : Ffi.Display) (snapshots : SnapshotReader) (theme : Theme)
+    (platform : Option Ffi.Platform := none) : BaseIO RealDisplay := do
+  return { display, snapshots, theme := ← IO.mkRef (some theme), platform }
+
+/-- The library's name of a request of the window. -/
+def library : Display.FrameRequest → Ffi.WindowRequest
+  | .enterFullscreen => .enterFullscreen
+  | .leaveFullscreen => .leaveFullscreen
+  | .minimise => .minimise
 
 /-- Makes `theme` what the faces look like from the next publish on: it is
 sent with the next scene published, in place of the theme sent before,
@@ -319,6 +329,9 @@ def handle (real : RealDisplay) : (request : DisplayRequest) → IO request.Repl
   | .rows query => real.rows query
   | .move query => real.move query
   | .heights => real.heights
+  | .frame request => do
+    if let some platform := real.platform then
+      Ffi.windowRequest platform (library request)
 
 end RealDisplay
 

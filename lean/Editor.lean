@@ -6,6 +6,7 @@ import Editor.Evil.Scroll
 import Editor.Evil.Theorems
 import Editor.Evil.Undo
 import Editor.Ex
+import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
@@ -56,7 +57,11 @@ and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
 ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The file
 commands come with `Editor/Ex.lean`, whose save-and-quit command calls
-`Files.save`.
+`Files.save`. The frame's commands are here too
+(`Editor/FrameCommands.lean`): `toggle-fullscreen` and `minimise-window`,
+which ask the platform's window through the display; their registrations
+and default bindings (`Editor/FrameCommands/Compiled.lean`) are not
+imported.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they

@@ -9,6 +9,7 @@ import Editor.Event.Queue
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
 import Editor.Files.Compiled
+import Editor.FrameCommands.Compiled
 import Editor.Headless.CommandLine
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Jobs
@@ -619,6 +620,7 @@ def over (answer : DisplayHandler) (setTheme : Theme → BaseIO Unit := fun _ =>
       return reply
     | .move query => answer (.move query)
     | .heights => answer .heights
+    | .frame request => answer (.frame request)
   return { handle, last, count, asked, setTheme, frameRows }
 
 /-- The host's display over a recorder in `cells` that reads snapshots
@@ -1920,7 +1922,10 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
         { completions, timers := Job.realTimers completions,
           files := Job.realFiles completions published.reader held },
       published, held, requests := 1, wakeups := 2, jobs := 3
-      commands := Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands
+      commands :=
+        Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++
+          FrameCommands.commands
+      bindings := FrameCommands.bindings
       compiledJobs := Files.jobs
       modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln }
 

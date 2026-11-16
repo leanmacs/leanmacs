@@ -49,6 +49,21 @@ binding:
 | Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, its answer in the model, the recorder and the real binding, and a property in the contract | The display pipeline adds it when something needs it; `heights` came so, for sizing a view's text area and the minibuffer's place |
 | A field of what is published | A field of `Scene` (`Editor/Scene.lean`) | The command loop |
 | A request a command makes of the display | Nothing new: a command reaches this port through the editor's composite port (`Editor/Command.lean`), which lifts every operation here | The command loop |
+| A new thing to ask of the window | A constructor of `FrameRequest`, its case in the model, the recorder, the real binding, `Ffi.WindowRequest` and `editor-ffi`'s request tags, and a variant of `editor-platform`'s `Request` | The macOS app roadmap added the first three |
+
+## Asking the window
+
+The display is also how a command asks the platform's window to do
+something (`Display.askFrame`, a `FrameRequest`): enter or leave the system's
+fullscreen, or minimise. A frame request answers nothing and changes no
+answer of layout. Whether the window is then in fullscreen comes back as a
+resize (`Event.Resize.fullscreen`), which the loop keeps in the frame
+(`Frame.fullscreen`), whether a request or the user made the change. It is
+guarded like any request that is not the state's, and like the clipboard it
+is outside the editor: a command rolled back does not take it back. The
+model records each in order (`DisplayModel.asked`); the recorder, which has
+no window, answers it and does nothing; the real binding sends it to the
+window it was made with (`RealDisplay.platform`).
 -/
 
 namespace Editor
@@ -139,6 +154,21 @@ structure Moved where
 
 end Display
 
+namespace Display
+
+/-- What Lean asks of the platform's window, the frame (`Editor.Frame`). -/
+inductive FrameRequest where
+  /-- Put the window in the system's fullscreen; one in it stays there. -/
+  | enterFullscreen
+  /-- Take the window out of the system's fullscreen; one out of it stays
+  out. -/
+  | leaveFullscreen
+  /-- Minimise the window. -/
+  | minimise
+  deriving DecidableEq, Repr
+
+end Display
+
 /-- What Lean may ask of the display. A new question is a constructor here. -/
 inductive DisplayRequest where
   /-- Show `scene` from now on. -/
@@ -150,6 +180,8 @@ inductive DisplayRequest where
   /-- How tall a text row, a window's status row and the frame's bottom row
   are. -/
   | heights
+  /-- Ask the platform's window to do something: it answers nothing. -/
+  | frame (request : Display.FrameRequest)
 
 /-- The type of the reply to each request. -/
 def DisplayRequest.Reply : DisplayRequest → Type
@@ -157,6 +189,7 @@ def DisplayRequest.Reply : DisplayRequest → Type
   | .rows _ => Except DisplayError (Array Display.Row)
   | .move _ => Except DisplayError Display.Moved
   | .heights => Display.Heights
+  | .frame _ => Unit
 
 /-- The display port: `DisplayRequest` and the reply to each request. -/
 abbrev displayPort : Port :=
@@ -207,6 +240,12 @@ that sizes a view's text area as its height less its bottom row asks
 `rowsShown` for exactly the rows the frame shows. -/
 def heights : DisplayM Heights :=
   ExceptT.lift (Program.request (port := displayPort) .heights)
+
+/-- Asks the platform's window to do what `request` says. It answers
+nothing and changes no answer of layout: whether the window went into
+fullscreen comes back as a resize, an event like any other. -/
+def askFrame (request : FrameRequest) : DisplayM Unit :=
+  ExceptT.lift (Program.request (port := displayPort) (.frame request))
 
 end Display
 

@@ -58,6 +58,8 @@ structure DisplayModel where
   texts : Array (SnapshotId × String) := #[]
   /-- The scenes published to it, oldest first. -/
   published : Array Scene := #[]
+  /-- What it was asked of the window, oldest first. -/
+  asked : Array Display.FrameRequest := #[]
 
 namespace DisplayModel
 
@@ -233,13 +235,15 @@ def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayErro
     else if row.lastOfLine then row.row.stop else row.chars.back?.getD row.row.stop
   return { position, goal }
 
-/-- Answers `request`: a scene is recorded, and a query is answered from the
-model as it is. -/
+/-- Answers `request`: a scene is recorded, a request of the window is
+recorded and answers nothing, and a query is answered from the model as it
+is. -/
 def handle : (request : DisplayRequest) → DisplayModel → request.Reply × DisplayModel
   | .publish scene, model => ((), { model with published := model.published.push scene })
   | .rows query, model => (model.rows query, model)
   | .move query, model => (model.move query, model)
   | .heights, model => (model.cells.heights, model)
+  | .frame request, model => ((), { model with asked := model.asked.push request })
 
 end DisplayModel
 

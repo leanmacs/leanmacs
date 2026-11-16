@@ -2551,8 +2551,10 @@ sample window opens, reports its fixed input and asks to close, which ends
 the host's loop and closes the window, and the report is printed to stderr.
 0 when the window ran, the latest render session's counters, read once
 `windowRun` has returned (the presenter's last handle), show a frame drawn,
-and no surface said what it offered; 1 otherwise, saying why on stderr. The
-process starts no other render session, so the counters are this run's. -/
+and no surface said what it offered, and, with no file, the last title the
+scripted window was asked to show is `scratch`; 1 otherwise, saying why on
+stderr. The process starts no other render session, so the counters are this
+run's. -/
 def windowHostScenario (file : Option String) : IO UInt8 := do
   let options : Editor.Window.Options :=
     { file, config := none, configGiven := false, sysroot := none, oleans := ""
@@ -2574,6 +2576,18 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   unless (← Editor.Ffi.windowPresentation) == none do
     IO.eprintln "ffi-test window-host: a scripted window said what a surface offered"
     return 1
+  -- With no file the selected buffer is the one empty buffer, whose name is
+  -- the window's title. With a file, its load may not finish before the
+  -- sample asks to close, so the title is not looked at.
+  if file.isNone then
+    let titles :=
+      ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
+        | .title text => some text
+        | .request _ => none
+    unless titles.back? == some "scratch" do
+      IO.eprintln
+          s!"ffi-test window-host: the window was last asked for the title {titles.back?}, not scratch"
+      return 1
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
   return 0
 

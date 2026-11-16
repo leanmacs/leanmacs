@@ -15,6 +15,7 @@ import Editor.Face
 import Editor.File.Cases
 import Editor.File.Model
 import Editor.Files.Compiled
+import Editor.FrameCommands.Compiled
 import Editor.Fuzzy.Contract
 import Editor.Fuzzy.Model
 import Editor.Headless.CommandLine
@@ -19313,6 +19314,145 @@ def heightChecks : List Check :=
                 | _ => false
             | _ => false }]
 
+/-- The registry of the frame command checks: the frame's commands and their
+bindings registered for the owner `compiled`, as a host registers them, and
+`config` as config's bindings. -/
+def frameRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
+  ((({} : Config.Registry).replace .compiled FrameCommands.commands).replaceBindings .compiled
+        FrameCommands.bindings).replaceBindings
+    .config config
+
+/-- What a step of the frame command checks is handed: the active keymaps
+`registry` makes for the test scheme from the loop's state, and its plain
+commands. -/
+def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
+  { maps := registry.activeMaps TestScheme.scheme
+    command? := fun name =>
+      match registry.find? name with
+      | some { registration := { action := .plain run, .. }, .. } =>
+        some fun _ => do
+          run
+          return none
+      | _ => none }
+
+/-- A driver of the frame command checks over the initial state, with the
+keys of `registry`; `none` if making the state was refused. -/
+def frameDriver (registry : Config.Registry := frameRegistry) : Option TestDriver :=
+  (Loop.Driver.over (frameKeys registry) driverJobs (EditorState.initial ⟨640, 480⟩)
+      editorModel).toOption
+
+/-- The window's word that it is 640 by 480 at scale 1, in fullscreen or not. -/
+def resizedTo (fullscreen : Bool) : Event :=
+  .resize { width := 640, height := 480, scale := 1.0, fullscreen }
+
+/-- What `driver`'s display model was asked of the window, and whether the
+frame last said it is in fullscreen, after `events`; `none` without a
+driver. -/
+def framed (driver : Option TestDriver) (events : List Event) :
+    Option (Array Display.FrameRequest × Bool) :=
+  driver.map fun driver =>
+    let fed := (fedTo driver events).1
+    (fed.model.display.asked, fed.loop.state.frame.fullscreen)
+
+/-- The checks of the frame's commands (`Editor/FrameCommands.lean`,
+`Editor/FrameCommands/Compiled.lean`) and of the frame's last reported
+fullscreen state, on the loop's driver over the editor's models and the
+test scheme, with the registry's active keymaps. -/
+def frameCommandChecks : List Check :=
+  [{  name :=
+        "a resize in fullscreen sets the frame's last reported state, and a resize out of it clears it"
+      run :=
+        pure <|
+          match frameDriver with
+          | none => false
+          | some driver =>
+            let entered := (fedTo driver [resizedTo true]).1
+            let left := (fedTo entered [resizedTo false]).1
+            !driver.loop.state.frame.fullscreen && entered.loop.state.frame.fullscreen &&
+              !left.loop.state.frame.fullscreen &&
+              left.model.display.asked.isEmpty },
+    { name :=
+        "toggle-fullscreen, run with the window last reported windowed, asks the display to enter fullscreen and nothing else, and leaves the frame's state as it was"
+      run := pure (framed frameDriver (presses "C-s-f") == some (#[.enterFullscreen], false)) },
+    { name := "toggle-fullscreen, run with the window last reported in fullscreen, asks to leave it"
+      run :=
+        pure
+          (framed frameDriver (resizedTo true :: presses "C-s-f") ==
+            some (#[.leaveFullscreen], true)) },
+    { name :=
+        "C-s-f runs toggle-fullscreen: pressed twice with a resize in fullscreen between, it asks to enter and then to leave"
+      run :=
+        pure
+          (framed frameDriver (presses "C-s-f" ++ [resizedTo true] ++ presses "C-s-f") ==
+            some (#[.enterFullscreen, .leaveFullscreen], true)) },
+    { name := "s-m runs minimise-window, which asks the display to minimise the window"
+      run := pure (framed frameDriver (presses "s-m") == some (#[.minimise], false)) },
+    { name :=
+        "the compiled bindings are C-s-f to toggle-fullscreen and s-m to minimise-window, and config's binding of C-s-f is the one that runs while config binds it"
+      run :=
+        let rebound :=
+          frameRegistry #[{ keys := keys "C-s-f", command := FrameCommands.minimiseName }]
+        pure
+          (FrameCommands.bindings ==
+              #[{ keys := keys "C-s-f", command := FrameCommands.toggleFullscreenName },
+                { keys := keys "s-m", command := FrameCommands.minimiseName }] &&
+            FrameCommands.toggleFullscreenName == "toggle-fullscreen" &&
+            FrameCommands.minimiseName == "minimise-window" &&
+            FrameCommands.commands.map (·.name) == #["toggle-fullscreen", "minimise-window"] &&
+            framed (frameDriver rebound) (presses "C-s-f") == some (#[.minimise], false)) }]
+
+/-- The checks of a request of the window through the display interface,
+on its model. -/
+def frameDisplayChecks : List Check :=
+  [{  name :=
+        "a frame request is recorded by the model in order and changes no answer of rows, a move or the heights"
+      run := do
+        let query : Display.RowsQuery := { snapshot := ⟨0⟩, width := 2, height := 4, anchor := 0 }
+        let move : Display.MoveQuery :=
+          { snapshot := ⟨0⟩, width := 2, position := 0, lines := 1, goal := none }
+        let ask : DisplayM _ := do
+          return (← Display.rowsShown query, ← Display.linesFrom move, ← Display.heights)
+        let program : DisplayM _ := do
+          Display.askFrame .enterFullscreen
+          Display.askFrame .minimise
+          let answers ← ask
+          Display.askFrame .leaveFullscreen
+          return answers
+        let (asked, model) := program.runModel (displayOver ["abcd"])
+        let (unasked, plain) := ask.runModel (displayOver ["abcd"])
+        return asked.toOption == unasked.toOption && asked.toOption.isSome &&
+            model.asked == #[.enterFullscreen, .minimise, .leaveFullscreen] &&
+            plain.asked.isEmpty &&
+            model.scenes.isEmpty }]
+
+/-- The title of the last scene `driver`'s display recorded. -/
+def titleOf (driver : TestDriver) : Option String :=
+  driver.model.display.scenes.back?.map (·.title)
+
+/-- The checks of the scene's title: the selected buffer's name. -/
+def titleChecks : List Check :=
+  [{  name :=
+        "the scene's title is the selected buffer's name: scratch on the initial state, the file's name once one is opened, and the asking window's buffer's while a prompt is open, not the minibuffer's"
+      run :=
+        pure <|
+          match newDriver, noteOpen, minibufferDriver with
+          | some driver, some opened, some asking =>
+            let started := (fedTo driver [resizedTo false]).1
+            let prompting := (fedTo asking (presses "C-c a")).1
+            let minibuffer := do
+              let view ← prompting.loop.state.minibufferView?
+              let target ← prompting.loop.state.target? view
+              return target.buffer.name
+            EditorState.title started.loop.state == "scratch" &&
+              titleOf started == some "scratch" &&
+              titleOf opened == some "note.txt" &&
+              prompting.loop.state.prompt.isSome &&
+              minibuffer.isSome &&
+              minibuffer != some "scratch" &&
+              titleOf prompting == some "scratch" &&
+              EditorState.title EditorState.none == ""
+          | _, _, _ => false }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -19344,6 +19484,7 @@ def checks : List Check :=
     sceneChecks ++
     faceChecks ++
     displayChecks ++
+    frameDisplayChecks ++
     commandPortChecks ++
     watchChecks ++
     clipboardChecks ++
@@ -19390,7 +19531,9 @@ def checks : List Check :=
     evilOpenChecks ++
     evilUndoChecks ++
     evilRepeatChecks ++
-    viewChecks
+    viewChecks ++
+    frameCommandChecks ++
+    titleChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
