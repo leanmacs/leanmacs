@@ -2,6 +2,7 @@ import Editor.Command
 import Editor.File
 import Editor.FileWatch
 import Editor.Process
+import Editor.Process.Environment
 
 /-!
 # Jobs
@@ -64,6 +65,13 @@ its job: the runner ends every watch the job holds when the job ends,
 however it ends (`Editor/Job/Runner.lean`, "A watch does not outlive its
 job"). It is not the interrupt port `Editor/Watch.lean`.
 
+A job reaches the environments its host shares through one request,
+`environment`, which carries an `EnvironmentRequest`
+(`Editor/Process/Environment.lean`) and is answered at once, as `now` is:
+the setting config chose, what it resolved to, and each directory's cached
+lookup. The process operations ask it before they start a child, so a
+child gets its directory's environment (`Process.prepared`).
+
 No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
 something a job names.
@@ -92,6 +100,14 @@ says what it needs). Its model is `Editor/Process/Model.lean`, its fake
 `FakeProcesses` and its real implementation `realProcesses`; withdrawing a
 wait also tells the process service (`Handle.withdraw`), which is how a
 cancelled job's child is killed.
+
+The environments are the fourth, and answer at once: `JobRequest.environment`,
+whose requests are `EnvironmentRequest`s, so a new question of the shared
+state is a constructor there (`Editor/Process/Environment.lean` says what it
+needs) and not here. Its model is `JobModel.environments`, with what it said
+in `JobModel.reported`; the runner's port is `Job.Environments`, whose
+default answers as the default state does and whose shared form,
+`Job.sharedEnvironments`, is that state behind a reference.
 
 The file-watch service is the third, beside it: `JobRequest.fileWatch`,
 whose requests are `FileWatchRequest`s, so a `stop` that ends a watch early
@@ -146,6 +162,9 @@ inductive JobRequest where
   /-- Watch a file or a directory, or wait for a watch's next delivery
   (`Editor/FileWatch.lean`). -/
   | fileWatch (request : FileWatchRequest)
+  /-- Ask the environments the host's jobs share
+  (`Editor/Process/Environment.lean`): answered at once. -/
+  | environment (request : EnvironmentRequest)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -157,6 +176,7 @@ def JobRequest.Reply : JobRequest → Type
   | .file request => request.Reply
   | .process request => request.Reply
   | .fileWatch request => request.Reply
+  | .environment request => request.Reply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -278,6 +298,12 @@ taken, at most one a path, once the window from its first change has
 passed. -/
 def FileWatch.next (watch : FileWatch.Id) : JobM (Except FileWatchError (Array FileWatch.Change)) :=
   ExceptT.lift (Program.request (port := jobPort) (.fileWatch (.next watch)))
+
+/-- Asks the environments every job of the host shares: the setting, what it
+resolved to, and each directory's cached lookup (`EnvironmentRequest`). It is
+answered at once, as `now` is, and never waits. -/
+def Process.askEnvironment (request : EnvironmentRequest) : JobM request.Reply :=
+  ExceptT.lift (Program.request (port := jobPort) (.environment request))
 
 namespace Job
 

@@ -697,6 +697,25 @@ def jobModelChecks : List Check :=
             after.now == 20 &&
             after.processes.killed == #[slow]) },
     { name :=
+        "in the job model, environment requests are answered from its environments without moving the clock, and a message they say is reported"
+      run :=
+        let failure := Process.Failure.signalled 9
+        let entry : Process.Entry := { stamps := #[], found := .failed failure }
+        let job : JobM (Option Process.Entry × Process.Policy) := do
+          Process.askEnvironment (.record "/p/d" entry)
+          let found ← Process.askEnvironment (.cached "/p/d")
+          let policy ← Process.askEnvironment .policy
+          return (found, policy)
+        let (outcome, after) :=
+          job.runModel { now := 7, environments := { setting := .inherited, limit := 3 } }
+        pure
+          (outcome ==
+              .finished
+                (some entry,
+                  { setting := .inherited, host := .headless, resolved := none, limit := 3 }) &&
+            after.now == 7 &&
+            after.reported == #[Process.failureMessage "/p/d" failure]) },
+    { name :=
         "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
       run := do
         let properties : List JobContract.Property :=
@@ -1757,7 +1776,47 @@ def runnerChecks : List Check :=
               (← rig.services.completions.waiting) == 0
         finally
           short.handle.cancel
-          sleeper.handle.cancel }]
+          sleeper.handle.cancel },
+    { name :=
+        "over shared environments, a job's record of a failure reaches the report once, a second job finds the first one's entry, and no environment request registers a wait"
+      run := do
+        let rig ← Rig.new
+        let state ← IO.mkRef ({} : Process.Environments)
+        let said ← IO.mkRef #[]
+        let rig :=
+          { rig with
+            services :=
+              { rig.services with
+                environments := Job.sharedEnvironments state fun text => said.modify (·.push text) } }
+        let failure := Process.Failure.exited 1 "untrusted"
+        let entry : Process.Entry := { stamps := #[none], found := .failed failure }
+        let first ←
+          rig.spawn
+              (reporting fun _ => do
+                Process.askEnvironment (.record "/p/d" entry)
+                Process.askEnvironment (.record "/p/d" entry)
+                return true)
+        let firstEnded ← first.endedAs (.finished #["true"])
+        let second ←
+          rig.spawn
+              (reporting fun _ => do
+                let found : Option Process.Entry ← Process.askEnvironment (.cached "/p/d")
+                return found == some entry)
+        let secondEnded ← second.endedAs (.finished #["true"])
+        return firstEnded && secondEnded &&
+            (← said.get) == #[Process.failureMessage "/p/d" failure] &&
+            (← rig.services.completions.waiting) == 0 &&
+            (← rig.clock.started).isEmpty },
+    { name := "a runner given no environments answers the policy as inherited: auto in the headless mode"
+      run := do
+        let rig ← Rig.new
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                let policy : Process.Policy ← Process.askEnvironment .policy
+                return policy ==
+                    { setting := .auto, host := .headless, resolved := none, limit := 5000 })
+        job.endedAs (.finished #["true"]) }]
 
 /-- An owner of jobs. -/
 def anna : Config.Owner :=
