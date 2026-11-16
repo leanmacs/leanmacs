@@ -163,10 +163,10 @@ pub fn check<C: Carries>(mut make: impl FnMut() -> C) -> Result<(), RequestViola
             && shows_a(shown)
     };
     let menu_before = |shown: &Shown| shown.fullscreen && titled("a")(shown) && shows_a(shown);
-    // An appearance asked after a menu moves neither.
+    // An appearance asked before or after a menu moves neither.
     let menu_appears = |shown: &Shown| appears(Appearance::Dark)(shown) && shows_a(shown);
     let menu_rule = if C::MENU_BAR { MENU_SHOWN } else { NO_MENU_BAR };
-    let rules: [Rule<'_>; 27] = [
+    let rules: [Rule<'_>; 28] = [
         (vec![], &fresh, FRESH),
         (vec![Enter], &|shown| shown.fullscreen, ENTERS),
         (vec![Enter, Enter], &|shown| shown.fullscreen, ENTERS),
@@ -225,6 +225,7 @@ pub fn check<C: Carries>(mut make: impl FnMut() -> C) -> Result<(), RequestViola
         (vec![menu("a")], &menu_alone, MENU_APART),
         (vec![Enter, title("a"), menu("a")], &menu_after, MENU_APART),
         (vec![menu("a"), Enter, title("a")], &menu_before, MENU_APART),
+        (vec![dark.clone(), menu("a")], &menu_appears, MENU_APART),
         (vec![menu("a"), dark], &menu_appears, MENU_APART),
     ];
     for (asked, holds, rule) in rules {
@@ -534,6 +535,34 @@ mod tests {
     fn a_carrier_whose_menu_takes_it_out_of_fullscreen_is_refused() {
         let refused = check(MenuLeaves::default).expect_err("a menu leaves fullscreen be");
         assert_eq!(refused.rule, MENU_APART);
+    }
+
+    /// A window whose menu forgets the appearance it was asked.
+    #[derive(Default)]
+    struct MenuForgetsAppearance(Shown);
+
+    impl Carries for MenuForgetsAppearance {
+        fn carry_out(&mut self, request: Request) {
+            if matches!(request, Request::Menu(_)) {
+                self.0.appearance = None;
+            }
+            self.0.carry_out(&request);
+        }
+
+        fn shown(&self) -> Shown {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn a_carrier_whose_menu_forgets_the_appearance_is_refused() {
+        let refused =
+            check(MenuForgetsAppearance::default).expect_err("a menu leaves the appearance be");
+        assert_eq!(refused.rule, MENU_APART);
+        assert_eq!(
+            refused.asked,
+            [Request::Appearance(Appearance::Dark), menu("a")]
+        );
     }
 
     /// A window with no menu bar that shows the menus it is asked all the

@@ -667,8 +667,8 @@ run = "tools/milestone-bench.sh lean"
 # to; then, in a second process and a second window
 # (examples/contract/pending.rs), a close with a terminate pending must let
 # AppKit end the process, with status 0, only after the verdict. It needs
-# no key or pointer input. It prints one line, and its exit status is the
-# result.
+# no key or pointer input. It prints its verdict, then each resize the
+# window reported on a line of its own, and its exit status is the result.
 #
 # Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/
 # window.rs`): the window that draws. The wgpu renderer draws a fixture
