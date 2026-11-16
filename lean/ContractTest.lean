@@ -537,7 +537,11 @@ def fileWatchChecks (services : Job.Services) : List Check :=
               Process.run (JobContract.sh directory "printf x > \"$(printf '\\377')\"") 1000
             match made with
             | .ok { exit := .code 0, .. } =>
-              JobContract.readUntil watch (JobContract.toldIn · directory .missed)
+              let told ← JobContract.readUntil watch (JobContract.toldIn · directory .missed)
+              -- Lean cannot name the file to remove it: its name is not a
+              -- string. So the shell that made it removes it.
+              discard <| Process.run (JobContract.sh directory "rm -f \"$(printf '\\377')\"") 1000
+              return told
             | _ =>
               -- The volume refuses the name (APFS does): there is nothing
               -- to deliver, and the check says so on stderr.
