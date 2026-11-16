@@ -11,7 +11,7 @@
 //! a file or a directory, owned under an id of the caller's, whose changes
 //! are coalesced over a window and delivered a read at a time, each read
 //! completed through a closure the service is given. Time reaches the
-//! crate only through `clock::Clock`. The crate has no dependencies and
+//! crate only through [`clock::Clock`]. The crate has no dependencies and
 //! knows nothing about Lean.
 //!
 //! # The rules of the port
@@ -53,6 +53,7 @@
 //! | Another way for a test to set the fake up | A method of `fake::FakeWatch` | The fake's tests |
 
 pub mod batch;
+pub mod clock;
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
