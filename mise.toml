@@ -224,6 +224,14 @@ run = [
   # answered with `fairy-floss` in that (`shipped-themes/expected`). It
   # touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/shipped-themes/config ../tests/headless/shipped-themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/shipped-themes/expected -",
+  # The segmented mode line, on a config of its own (tests/headless/
+  # mode-line) that defines a segment and lists the mode line for each side,
+  # one name nobody registered among them: the reload says that name, on a
+  # line of its own and in the echo area, and each scene's status line has
+  # its left fields, ` | ` and its right ones, in the listing's order, with
+  # their paddings, in insert state, in normal state and with the ex prompt
+  # open (`mode-line/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/mode-line/config ../tests/headless/mode-line/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/mode-line/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed

@@ -4,21 +4,21 @@ job 1 load-file: started
 job 1 load-file: ok
 scene 0x0, focused 0, echo "", preedit -, published 7, theme "default"
 view 0 0,0 0x0: "one two three four five six\nalpha beta gamma\nlast line\n", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "verse.txt"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 key arrived: 2 Digit2 -
 key arrived: d KeyD -
 key arrived: w KeyW -
 scene 0x0, focused 0, echo "", preedit -, published 11, theme "default"
 view 0 0,0 0x0: "three four five six\nalpha beta gamma\nlast line\n", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 key arrived: . Period -
 scene 0x0, focused 0, echo "", preedit -, published 13, theme "default"
 view 0 0,0 0x0: "five six\nalpha beta gamma\nlast line\n", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 key arrived: u KeyU -
 scene 0x0, focused 0, echo "", preedit -, published 15, theme "default"
 view 0 0,0 0x0: "three four five six\nalpha beta gamma\nlast line\n", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 key arrived: j KeyJ -
 key arrived: c KeyC -
 key arrived: w KeyW -
@@ -27,42 +27,42 @@ key arrived: e KeyE -
 key arrived: w KeyW -
 scene 0x0, focused 0, echo "", preedit -, published 22, theme "default"
 view 0 0,0 0x0: "three four five six\nnew beta gamma\nlast line\n", scroll 0, selections 23..23
-status 0: status.state "insert", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "2:4" +4, mode-line.secondary "66%" +4
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", preedit -, published 24, theme "default"
 view 0 0,0 0x0: "three four five six\nnew beta gamma\nlast line\n", scroll 0, selections 22..22
-status 0: status.state "normal", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "2:3" +4, mode-line.secondary "66%" +4
 key arrived: w KeyW -
 key arrived: . Period -
 scene 0x0, focused 0, echo "", preedit -, published 27, theme "default"
 view 0 0,0 0x0: "three four five six\nnew new gamma\nlast line\n", scroll 0, selections 26..26
-status 0: status.state "normal", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "2:7" +4, mode-line.secondary "66%" +4
 key arrived: v KeyV -
 key arrived: e KeyE -
 scene 0x0, focused 0, echo "", preedit -, published 30, theme "default"
 view 0 0,0 0x0: "three four five six\nnew new gamma\nlast line\n", scroll 0, selections 26..32
-status 0: status.state "visual", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.visual "VISUAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "2:13" +4, mode-line.secondary "66%" +4
 key arrived: y KeyY -
 scene 0x0, focused 0, echo "", preedit -, published 32, theme "default"
 view 0 0,0 0x0: "three four five six\nnew new gamma\nlast line\n", scroll 0, selections 26..26
-status 0: status.state "normal", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "2:7" +4, mode-line.secondary "66%" +4
 key arrived: $ Digit4 shift
 key arrived: p KeyP -
 scene 0x0, focused 0, echo "", preedit -, published 35, theme "default"
 view 0 0,0 0x0: "three four five six\nnew new gammaw gamma\nlast line\n", scroll 0, selections 39..39
-status 0: status.state "normal", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "2:20" +4, mode-line.secondary "66%" +4
 key arrived: u KeyU -
 scene 0x0, focused 0, echo "", preedit -, published 37, theme "default"
 view 0 0,0 0x0: "three four five six\nnew new gamma\nlast line\n", scroll 0, selections 32..32
-status 0: status.state "normal", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "2:13" +4, mode-line.secondary "66%" +4
 key arrived: r KeyR control
 scene 0x0, focused 0, echo "", preedit -, published 39, theme "default"
 view 0 0,0 0x0: "three four five six\nnew new gammaw gamma\nlast line\n", scroll 0, selections 39..39
-status 0: status.state "normal", status.name "verse.txt", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "2:20" +4, mode-line.secondary "66%" +4
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 job 2 save-file: started
 job 2 save-file: ok
 scene 0x0, focused 0, echo "wrote @DIR@/verse.txt", preedit -, published 47, theme "default"
 view 0 0,0 0x0: "three four five six\nnew new gammaw gamma\nlast line\n", scroll 0, selections 39..39
-status 0: status.state "normal", status.name "verse.txt"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "verse.txt" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "2:20" +4, mode-line.secondary "66%" +4

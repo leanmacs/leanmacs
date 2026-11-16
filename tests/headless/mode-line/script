@@ -1,0 +1,32 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which defines a segment and lists the mode line,
+# naming one segment nobody registered. What it prints must be exactly
+# `expected`.
+
+# The reload installs, and says the segment nobody registered: on a line of
+# its own, and in the echo area of the first scene.
+reload
+settle
+
+# A key bound to nothing makes the frame and leaves the echo as it was.
+key <F5> F5 -
+scene
+
+# `i` begins an insert and `abc` is typed: the left side is the INSERT badge,
+# the buffer's name and the modified mark, and the right side the config's
+# own segment, line:col and the position.
+key i KeyI -
+key a KeyA -
+key b KeyB -
+key c KeyC -
+scene
+
+# `<Escape>` returns to normal state: the NORMAL badge, and the cursor one
+# cell back.
+key <Escape> Escape -
+scene
+
+# `:` opens the ex prompt: the window that asked keeps its badge, its buffer
+# and its position, and the minibuffer's view has the prompt's line.
+key : Semicolon shift
+scene

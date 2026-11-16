@@ -6,12 +6,12 @@ key arrived: l KeyL -
 key arrived: o KeyO -
 scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
-status 0: status.state "insert", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", preedit -, published 8, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 4..4
-status 0: status.state "normal", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 key arrived: 0 Digit0 -
 scene 0x0, focused 0, echo "", preedit -, published 10, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

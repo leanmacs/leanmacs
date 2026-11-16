@@ -2,10 +2,10 @@ reload 1: installed, 1 chunks, 1 commands
 run save-buffer: ok
 scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run open-relative: ok
 job 1 load-file: started
 job 1 load-file: ok
 scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

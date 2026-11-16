@@ -367,7 +367,7 @@ are skipped.
 | `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop steps the key through its input scheme, and runs the command a completed sequence is bound to. |
 | `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors where the view takes typed text: under the Vim scheme, in insert state and in the minibuffer. In normal state it is dropped. A `commit` with no text is refused. |
 | `resize <width> <height>` | Sends a resize of the frame to that many physical pixels across and down, at a scale of 1, the same way as `key`. The next scene's frame has that size and its views are laid out in it. Anything but two numbers is refused. Until a script resizes, the frame is 0 by 0, no view shows a row, and nothing scrolls (above). |
-| `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds, and after each view its status line: the name of the view's Vim state, its buffer's name, and a modified field while the buffer is modified. While a prompt is open the minibuffer's view is printed after the windows', with the prompt text as its status line. |
+| `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds, and after each view its status line: the mode line's left fields, then ` \| ` and its right ones, each with its face, its text and its padding. Under the default order that is the view's Vim state as a badge, its buffer's name, a modified mark while the buffer is modified and the directory its file was opened in, then its line:col and its position. While a prompt is open the minibuffer's view is printed after the windows', with the prompt text as its status line. |
 
 With the fixture the gate uses (`tests/headless`):
 
@@ -417,13 +417,13 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 key arrived: i KeyI -
 scene 0x0, focused 0, echo "", preedit -, published 2, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
-status 0: status.state "insert", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 reload 1: installed, 2 chunks, 1 commands
 spawn count: job 1
 job 1 count: ok
 scene 0x0, focused 0, echo "", preedit -, published 9, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
-status 0: status.state "insert", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 ```
 
 A fourth, `tests/headless/dispatch/script`, runs on a config of its own,
@@ -446,24 +446,24 @@ key arrived: s KeyS -
 key arrived: g KeyG control
 scene 0x0, focused 0, echo "spin: interrupted", preedit -, published 3, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: m KeyM -
 scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
 view 0 0,0 0x0: "mark", scroll 0, selections 4..4
-status 0: status.state "normal", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: d KeyD -
 job 1 double: started
 job 1 double: ok
 scene 0x0, focused 0, echo "doubled to 42", preedit -, published 11, theme "default"
 view 0 0,0 0x0: "mark", scroll 0, selections 4..4
-status 0: status.state "normal", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 ```
 
-The status line after the first scene's view has the state's name and the
-buffer's: `spin` was rolled back, so the buffer is not modified. After
-`mark` it has the modified field too.
+The status line after the first scene's view has the state's badge and the
+buffer's name: `spin` was rolled back, so the buffer is not modified. After
+`mark` it has the modified mark too, and its line:col is after the text.
 
 A fifth, `tests/headless/files/script`, runs the file commands the editor
 ships, on the config in `tests/headless/files/config`, and touches no file.
@@ -488,13 +488,13 @@ reload 1: installed, 1 chunks, 1 commands
 run save-buffer: ok
 scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run open-relative: ok
 job 1 load-file: started
 job 1 load-file: ok
 scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 A sixth, `tests/headless/prompt/script`, asks for a prompt and answers it,
@@ -539,25 +539,25 @@ run ask-name: ok
 key arrived: ! Digit1 shift
 scene 0x0, focused 1, echo "", preedit -, published 2, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "Ada!", scroll 0, selections 4..4
 status 1: minibuffer.prompt "Name: "
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "hello Ada!", preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run ask-name: ok
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", preedit -, published 8, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run open-file: ok
 key arrived: <Enter> Enter -
 job 1 load-file: started
 job 1 load-file: ok
 scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 15, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 A seventh, `tests/headless/evil-script`, runs on the first fixture's config
@@ -578,20 +578,20 @@ key arrived: l KeyL -
 key arrived: o KeyO -
 scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
-status 0: status.state "insert", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", preedit -, published 8, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 4..4
-status 0: status.state "normal", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 key arrived: 0 Digit0 -
 scene 0x0, focused 0, echo "", preedit -, published 10, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch", status.modified "[+]"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-The status line's first field is the name of the view's Vim state, in the
-face `status.state`: `insert` while the keys are typed text, and `normal`
-before `i` and after `<Escape>`. In insert state the selection is a bar
+The status line's first field is the badge of the view's Vim state, in the
+face `mode-line.state.<state>`: `INSERT` while the keys are typed text, and
+`NORMAL` before `i` and after `<Escape>`. In insert state the selection is a bar
 between characters, after what was typed; in normal state it is on a
 character. `scene` prints a selection's two ends and not its shape or the
 cursor's.
@@ -618,23 +618,23 @@ key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "bogus: not an ex command", preedit -, published 4, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run ex: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 10, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
 scene 0x0, focused 3, echo "", preedit -, published 13, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,0 0x0: "e", scroll 0, selections 1..1
 status 3: minibuffer.prompt ":", minibuffer.candidate "e", minibuffer.candidate "reload"
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
 scene 0x0, focused 4, echo "", preedit -, published 18, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 4 0,0 0x0: "", scroll 0, selections 0..0
 status 4: minibuffer.prompt "Open file: "
 key arrived: <Escape> Escape -
@@ -665,32 +665,32 @@ run pick: ok
 key arrived: w KeyW -
 scene 0x0, focused 1, echo "", preedit -, published 2, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "w", scroll 0, selections 1..1
 status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.candidate "wq"
 key arrived: <Tab> Tab -
 key arrived: <Tab> Tab -
 scene 0x0, focused 1, echo "", preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "w", scroll 0, selections 1..1
 status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.chosen "wq"
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked wq", preedit -, published 8, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run pick: ok
 key arrived: z KeyZ -
 scene 0x0, focused 2, echo "", preedit -, published 11, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 2 0,0 0x0: "z", scroll 0, selections 1..1
 status 2: minibuffer.prompt "Pick: "
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked z", preedit -, published 15, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 A tenth, `tests/headless/themes/script`, switches the theme, on the config
@@ -712,22 +712,22 @@ reload 1: installed, 1 chunks, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", preedit -, published 1, theme "first"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", preedit -, published 7, theme "second"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", preedit -, published 13, theme "solarized-dark"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", preedit -, published 19, theme "fairy-floss"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 An eleventh, `tests/headless/shipped-themes/script`, runs on the config in
@@ -744,12 +744,49 @@ reload 1: installed, 1 chunks, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", preedit -, published 1, theme "solarized-light"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", preedit -, published 7, theme "fairy-floss"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
-status 0: status.state "normal", status.name "scratch"
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+```
+
+A twelfth, `tests/headless/mode-line/script`, runs on the config in
+`tests/headless/mode-line/config`, which defines a segment of its own,
+`greeting` (`defineSegment`), and lists the mode line for each side
+(`modeLine`), naming one segment nobody registered, `nope`. The reload is
+installed, says the unknown segment on a line of its own and in the echo
+area, and draws the rest; then the scenes in normal state, in insert state
+with `abc` typed, after `<Escape>`, and with the ex prompt open, where the
+asking window keeps its badge. Its output must be exactly
+`tests/headless/mode-line/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/mode-line/config ../tests/headless/mode-line/script
+reload 1: installed, 1 chunks, 0 commands
+segment: no segment is registered as `nope`
+key arrived: <F5> F5 -
+scene 0x0, focused 0, echo "reload: no segment is registered as `nope`", preedit -, published 1, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: i KeyI -
+key arrived: a KeyA -
+key arrived: b KeyB -
+key arrived: c KeyC -
+scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
+view 0 0,0 0x0: "abc", scroll 0, selections 3..3
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:4" +4, mode-line.secondary "All" +4
+key arrived: <Escape> Escape -
+scene 0x0, focused 0, echo "", preedit -, published 8, theme "default"
+view 0 0,0 0x0: "abc", scroll 0, selections 2..2
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
+key arrived: : Semicolon shift
+scene 0x0, focused 1, echo "", preedit -, published 10, theme "default"
+view 0 0,0 0x0: "abc", scroll 0, selections 2..2
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "", scroll 0, selections 0..0
+status 1: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "e", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload"
 ```
 
 Two more runs of the gate are on a real file, and so on a script that
@@ -778,8 +815,8 @@ with a `scene` line after each step. The run must exit with status 0. Its
 output, with the temporary directory's path written `@DIR@`, must be
 exactly `tests/headless/session/expected`: each scene's text, its
 selection (`26..32` while the visual selection is open, one offset twice
-otherwise), the state's name in the status line (`normal`, `insert`,
-`visual`), and the echo, which is empty until the save says
+otherwise), the state's badge in the status line (`NORMAL`, `INSERT`,
+`VISUAL`), the cursor's line:col and position, and the echo, which is empty until the save says
 `wrote @DIR@/verse.txt`. And the copy must hold the bytes of
 `tests/headless/session/verse-expected`.
 
@@ -895,7 +932,7 @@ text <index>: <quoted text>
 store <name> v<version>: <value>
 scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>, theme <quoted name>
 view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
-status <view id>: <face> <quoted text>, …   (or "-" for no field)
+status <view id>[ in <status face>]: <face> <quoted text>[ +<padding>], … | <face> <quoted text>[ +<padding>], …   (or "-" for no field)
 scene: none
 loop: refused: <error>
 ```
@@ -908,18 +945,32 @@ or `load-theme` loads one); then, for
 each view in drawing order, its rectangle, the text of its snapshot, read
 from the library, and the offsets of its scroll anchor and of each range of
 its selection. After each view's line comes its status line, one entry a
-field, each the field's face and its text: the name of the view's Vim
-state in the face `status.state`, the buffer's name in the face
-`status.name`, and, while the buffer is modified, `[+]` in the face
-`status.modified`. A buffer that is not modified has no such field. This
-is how a script sees a view's state, its buffer's name and whether the
-buffer is modified.
+field, each the field's face, its text and, when it has one, its padding
+in points after `+`: the left fields, then ` | ` and the right fields when
+there are any. A view with a status face prints it after its id, as `in
+mode-line.inactive` for a window that is not selected. Under the default
+mode line (`Editor/ModeLine.lean`) the left side is the badge of the
+view's Vim state (`NORMAL` in `mode-line.state.normal`), the buffer's name
+in `mode-line.buffer`, while the buffer is modified `●` in
+`mode-line.modified`, and the directory its file was opened in; the right
+side its major mode, the cursor's line:col and its position, each in
+`mode-line.secondary`. A segment with nothing to say has no field: a
+buffer that is not modified has no mark, and the scratch buffer no
+directory. This is how a script sees a view's state, its buffer's name,
+whether the buffer is modified and where its cursor is. A temporary
+directory's path in the directory field is written `@DIR@` by the gate's
+`sed`, as it is everywhere else.
 `scene: none` means no scene has been published: the loop has not been
 needed yet.
 
 A reload whose config names a theme nobody registered is installed, and
 its report's lines end with `theme: no theme is registered as `<name>``;
-the echo area says ``reload: no theme is registered as `<name>` ``.
+the echo area says ``reload: no theme is registered as `<name>` ``. A
+reload whose config lists a segment nobody registered (`modeLine`) is
+installed too, the segment left out: its report has a line
+``segment: no segment is registered as `<name>` `` for each, after the
+theme's, and the echo area says each sentence after `reload: `, joined by
+`; ` (`tests/headless/mode-line`).
 
 What the editor loop is refused is in the scene's echo area, as
 `refused: <error>`: a commit the library refused, and a text or a snapshot
