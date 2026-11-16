@@ -992,8 +992,8 @@ lean_obj_res editor_glue_syntax_keep(b_lean_obj_arg snapshot, uint8_t kind,
 lean_obj_res editor_glue_syntax_kept_names(b_lean_obj_arg snapshot,
                                            uint8_t kind) {
   editor_ffi_raw_strings raw;
-  uint64_t status =
-      editor_ffi_syntax_kept_names(lean_get_external_data(snapshot), kind, &raw);
+  uint64_t status = editor_ffi_syntax_kept_names(
+      lean_get_external_data(snapshot), kind, &raw);
   lean_object *names;
   if (status == 0) {
     names = raw_strings_take(raw);
