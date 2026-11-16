@@ -254,6 +254,12 @@ pub struct Encoded {
 }
 
 /// The status of a refusal of `kind`.
+///
+/// The match on `editor-process`'s [`RefusalKind`] is exhaustive on
+/// purpose. This crate must act on every kind: each crosses the C boundary
+/// as a status this function chooses, so a new kind has to be given its
+/// status here, and a row in the module docs' tables, before the crate
+/// builds.
 const fn refusal_status(kind: RefusalKind) -> u64 {
     match kind {
         RefusalKind::RelativeDirectory => 1,
@@ -326,6 +332,12 @@ fn frames_words(frames: Frames, words: &mut Vec<u64>) -> Vec<u8> {
 
 /// A reply about a streaming child laid out as it crosses: the module
 /// docs' table.
+///
+/// The match on `editor-process`'s [`StreamReply`] and [`End`] is
+/// exhaustive on purpose. This crate must act on every variant: each reply
+/// must be given a status and words to cross the C boundary, so a new
+/// variant has to be given its encoding here, and a row in the module docs'
+/// table, before the crate builds.
 pub fn encoded_stream(reply: StreamReply) -> Encoded {
     let bare = |status, detail: String| Encoded {
         status,
