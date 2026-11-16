@@ -547,16 +547,15 @@ depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-jobs \"$(lean --print-prefix)\" .lake/build/lib/lean 10000"
 
-# Opt-in: run it by hand, at the keyboard, and do not add it to `ci` or to
-# hk.pkl. It opens a window on this desktop and waits for a person.
+# Opt-in: do not add it to `ci` or to hk.pkl. It opens a window on this
+# desktop.
 #
 # `editor window-check` opens the real window and counts what of the keyboard
 # reaches a Lean loop that pulls the editor queue: keys, the text they
 # typed, the latency of each from its arrival in Rust to its handling in
-# Lean, dead keys and an input method's composition. Type in the window, then
-# close it: the report is eight lines on stdout (lean/Editor/WindowCheck.lean
-# gives their form). Start it from a terminal that is in front, or the system
-# may not give the window the keyboard until it is clicked.
+# Lean, dead keys and an input method's composition. When the window closes
+# the report is eight lines on stdout (lean/Editor/WindowCheck.lean gives
+# their form).
 #
 # `mise run window-check -- --no-ime` runs the window with composition not
 # allowed, so a dead key arrives as a key; `-- --seconds <n>` sets how long
@@ -565,14 +564,14 @@ run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test
 # The gate runs the same loop on the library's scripted platform, which opens
 # nothing (`ffi-test`), and on a fake (`lean-test`).
 [tasks.window-check]
-description = "Opt-in, never part of ci: open a window and report what of the keyboard reaches the Lean loop, with the latency of each key (lean/Editor/WindowCheck.lean). Needs a display and a person"
+description = "Opt-in, never part of ci: open a window and report what of the keyboard reaches the Lean loop, with the latency of each key (lean/Editor/WindowCheck.lean). Needs a display"
 depends = ["lean"]
 dir = "lean"
 run = ".lake/build/bin/editor window-check"
 
 # Opt-in: the editor on a file, in a window (lean/Editor/Window/Real.lean).
-# Run it by hand, and do not add it to `ci` or to hk.pkl: it opens a window
-# and waits for a person. `mise run edit -- <file>` opens the file, resolved
+# Do not add it to `ci` or to hk.pkl: it opens a window and stays until it
+# is closed. `mise run edit -- <file>` opens the file, resolved
 # against the directory the task was run from (mise hands that directory
 # over as MISE_ORIGINAL_CWD), and `mise run edit` with no file opens the
 # editor on its one empty buffer; the options go before the file, as
@@ -583,7 +582,7 @@ run = ".lake/build/bin/editor window-check"
 # again on `:reload`. It runs in lean/, so mise picks that toolchain, and
 # hands the editor the build tree's `.olean` files.
 [tasks.edit]
-description = "Opt-in, never part of ci: open a file, or an empty buffer, in the editor's window (lean/Editor/Window/Real.lean); `mise run edit -- [options] [<file>]`. Needs a display and a person"
+description = "Opt-in, never part of ci: open a file, or an empty buffer, in the editor's window (lean/Editor/Window/Real.lean); `mise run edit -- [options] [<file>]`. Needs a display"
 depends = ["lean"]
 dir = "lean"
 run = 'lean_dir=$PWD && sysroot=$(lean --print-prefix) && cd "$MISE_ORIGINAL_CWD" && "$lean_dir/.lake/build/bin/editor" --sysroot "$sysroot" --oleans "$lean_dir/.lake/build/lib/lean"'
@@ -601,9 +600,8 @@ description = "Opt-in, never part of ci: measure milestone 1 headless (start, a 
 depends = ["lean"]
 run = "tools/milestone-bench.sh lean"
 
-# Opt-in: run it by hand, at the keyboard, and do not add it to `ci` or to
-# hk.pkl. It opens two windows on this desktop, one after the other, so it
-# needs a display and, for the second, a person.
+# Opt-in: do not add it to `ci` or to hk.pkl. It opens two windows on this
+# desktop, one after the other, so it needs a display.
 #
 # First it runs the winit adapter's example (`crates/editor-platform-winit/
 # examples/contract.rs`): the real window held to the window port's contract
@@ -618,11 +616,10 @@ run = "tools/milestone-bench.sh lean"
 # presented, that its picture is the frame's, that nothing is drawn that
 # nothing asked for, that input arrives on the queue, and that the window,
 # whenever it is left alone for a second, shows what was laid out for the
-# size and scale it last said. Once
-# it prints `window: ready for input`, type, click, drag, scroll and resize
-# in the window: each input is printed. It stays 20 seconds or until it is
-# closed (`-- --seconds <n>` does not reach it: run the example by hand for
-# another time). Its exit status is the result.
+# size and scale it last said. Each input is printed, and the run fails if
+# no key or pointer input arrives. It stays 20 seconds or until it is
+# closed (`-- --seconds <n>` does not reach it: run the example with
+# `cargo run` for another time). Its exit status is the result.
 #
 # It is run here without `--require-picture`. A picture that could not be
 # read back fails it, but a surface that says it does not let its texture
@@ -634,40 +631,19 @@ run = "tools/milestone-bench.sh lean"
 # under Xvfb, with no desktop, gives the second its input with xdotool,
 # and requires its picture.
 [tasks.window-contract]
-description = "Opt-in, never part of ci: hold the winit window to the window port's contract, then draw a fixture frame in a window and check the picture, that nothing is drawn while idle, and that input arrives. Opens two windows on this desktop; the second waits for a person"
+description = "Opt-in, never part of ci: hold the winit window to the window port's contract, then draw a fixture frame in a window and check the picture, that nothing is drawn while idle, and that input arrives. Opens two windows on this desktop; the second fails without a key or pointer input"
 run = [
   "cargo run --locked --package editor-platform-winit --example contract",
   "cargo run --locked --package editor-ffi --example window",
 ]
 
-# Opt-in: run it by hand, at the window, and do not add it to `ci` or to
-# hk.pkl. It opens a window on this desktop and leaves it open until a
-# person closes it.
-#
-# It runs the window that draws (`crates/editor-ffi/examples/window.rs`)
-# with `--until-closed --no-picture`: the window stays until it is closed,
-# and no picture is read back or compared, so a draw costs what the
-# editor's own would and a resize is not slowed by the check. It is for
-# what no program can do or see: holding the window's text beside the same
-# size in another app, dragging it between a display at scale 2 and one at
-# scale 1, putting it into the system's fullscreen and taking it out, and
-# going to another Space and back. The steps, and what to expect at each,
-# are in `docs/dev-practices/on-demand-checks.md`, "Scale and fullscreen,
-# by hand".
-#
-# What the program checks while a person does that: that each frame is
-# laid out at the scale the window said (`14 points are <p> pixels`), which
-# masks each draw used, that nothing is drawn that nothing asked for, and
-# that whenever the window is left alone for a second it shows what was
-# laid out for the size and scale it last said. Press a key or click in
-# the window before closing it, or the run fails for want of input. Its
-# exit status is the result.
-#
-# To lay the fixture out in a family another app has, run the example by
-# hand with `--family <name>` as well: this task gives no family, so its
-# text is in the fixture's Noto Sans.
+# Opt-in: do not add it to `ci` or to hk.pkl. It opens the window that
+# draws (`crates/editor-ffi/examples/window.rs`) with `--until-closed
+# --no-picture` and leaves it open until it is closed, for trying the
+# window out (`docs/dev-practices/on-demand-checks.md`, "The window to
+# try, on demand").
 [tasks.window-by-hand]
-description = "Opt-in, never part of ci: open the window that draws and leave it open for a person to compare its text's size, drag it between displays, and put it into fullscreen and on another Space. Reads no picture back. Needs a display and a person, who closes it"
+description = "Opt-in, never part of ci: open the window that draws and leave it open until it is closed, to try it out. Reads no picture back. Needs a display"
 run = "cargo run --locked --package editor-ffi --example window -- --until-closed --no-picture"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. What it

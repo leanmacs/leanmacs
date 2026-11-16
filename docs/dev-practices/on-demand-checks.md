@@ -1,9 +1,9 @@
 # Checks that are not part of the gate
 
 Each of these needs something the gate ([`the-gate.md`](the-gate.md)) must
-not need: a display, a person, a container, a quiet machine, the fonts of
-one machine, a GPU, or leave to write a crash report or a file of the
-repository. Run them by hand, when their section says.
+not need: a display, a container, a quiet machine, the fonts of one
+machine, a GPU, or leave to write a crash report or a file of the
+repository. Run them when their section says.
 
 ## The overflow check, on demand
 
@@ -20,7 +20,7 @@ entering the recursion. No core file is written.
 It is not part of the gate, and must not be added to it. On macOS every abort
 makes the system write a crash report for `ffi-test` under
 `~/Library/Logs/DiagnosticReports`, and the gate leaves the machine as it
-found it. Run it by hand when the Lean toolchain changes, or the way the
+found it. Run it when the Lean toolchain changes, or the way the
 executables are linked and started. The gate still builds the scenario and
 its fixture.
 
@@ -160,20 +160,18 @@ twice the larger of the two idle medians and whose 99th percentile is under
 100 µs. That is an observation about one run, and the maximum is printed and
 not judged. Run it on a quiet machine.
 
-## The keyboard check, at the keyboard
+## The keyboard check, on demand
 
 ```sh
 mise run window-check
 ```
 
 This opens a window and reports what of the keyboard reached a Lean loop. It
-needs a display and a person, so it is not part of the gate. It runs
-`editor window-check`: the real window, opened through the entry point on
-the process's main thread, and a loop on a dedicated Lean task that pulls the
-editor queue, as the command loop will. Start it from a terminal that is in
-front; the system may otherwise keep the keyboard from the window until it
-is clicked. Type in the window, then close it. The report is eight lines on
-stdout:
+needs a display, so it is not part of the gate. It runs `editor
+window-check`: the real window, opened through the entry point on the
+process's main thread, and a loop on a dedicated Lean task that pulls the
+editor queue, as the command loop will. It counts what is typed in the
+window until the window closes. The report is eight lines on stdout:
 
 ```
 window-check: composition <on|off>, limit <n> s; the main-thread service is on the process's main thread: <yes|no>
@@ -196,7 +194,7 @@ and an input method's composition arrive.
 
 | Option | Does |
 |---|---|
-| `mise run window-check -- --no-ime` | Runs the window with composition not allowed, so a dead key arrives as a key marked dead. Seen on Linux under Xvfb; not yet run on macOS. |
+| `mise run window-check -- --no-ime` | Runs the window with composition not allowed, so a dead key arrives as a key marked dead. Seen on Linux under Xvfb. |
 | `mise run window-check -- --seconds <n>` | Closes the window after that many seconds if nobody has (120 by default). |
 
 The exit status is 0 when the window ran, 1 when it could not be opened and
@@ -212,15 +210,10 @@ and checks there what each option asks for.
 mise run window-contract
 ```
 
-**Its first run on a desktop failed, and what was changed for it has not
-been confirmed by a person at the keyboard.** "What the first desktop run
-showed", below, says what failed and why. Both programs also run in the
-container, under Xvfb, as parts 1 and 4 of `linux-window`. These are the
-steps for the owner.
-
 It opens two windows on this desktop, one after the other, so it is not
 part of the gate, which builds both programs and runs neither. Of the
-second it runs the unit tests, which open no window.
+second it runs the unit tests, which open no window. Both programs also
+run in the container, under Xvfb, as parts 1 and 4 of `linux-window`.
 
 **The first** holds the real window to the window port's contract
 (`crates/editor-platform`, `contract`): it opens, it tells whatever draws
@@ -240,97 +233,44 @@ scale it tells its layout the scale, lays out a fixture frame with the
 real shaper over the fixture fonts, and publishes it. The fixture's text
 is 14 points, so it is 14 physical pixels on a display at scale 1 and 28
 at scale 2. The window stays for 20 seconds once it is ready, or until it
-is closed.
+is closed; `cargo run --locked --package editor-ffi --example window --
+--seconds <n>` runs it for another time.
 
-The steps:
+The first prints `window-contract: the winit platform keeps the window
+port's contract`. The second fails, with a line beginning `window:
+FAILED:` and exit status 1, unless all of these hold:
 
-1. Start `mise run window-contract` from a terminal that is in front.
-2. A window opens and closes within a second. Expected:
-   `window-contract: the winit platform keeps the window port's contract`.
-3. A second window opens. Look at it: two rows of text on a light
-   background, `fine שלום 日` with part of it selected and `the window
-   draws this`, and a dark status row at the bottom. The text is legible
-   and upright. Expected in the terminal as it opens, after `input:
-   resized <w> by <h> at scale <s>`: `window: frame 1 is laid out for <w>
-   by <h> at scale <s>: 14 points are <p> pixels`, with `<p>` 14 times
-   `<s>`: 28 on a display at scale 2. The same line is printed for each
-   frame published that is not the one before it, so again after a
-   resize. Any other `<p>` fails the run (`window: FAILED: frame <n> is
-   laid out for a window at scale <s>, where 14 points are <e> pixels,
-   and its glyphs are drawn at <p> pixels`).
-4. Leave it alone until the terminal prints `window: ready for input`.
-5. In the window: press `a`, Escape and Control-A; click, drag and scroll;
-   resize it. Each is printed on a line beginning `input:`, as it read
-   back from its event: check each line against what was done.
-6. Close the window, or wait for it to close. Expected, in order:
-   - `window: the renderer is on <the adapter> (<the back end>), blending
-     by a coverage for each channel: <true or false>`;
-   - `window: <n> frames presented, each with a journal entry; …`;
-   - perhaps, once or twice, `window: a draw was not presented: the
-     window's surface gave no texture: Occluded`: a window that was not
-     yet on the screen when its first frame was drawn. More than a few
-     is a finding: a draw refused so is not tried again until the window
-     says more;
-   - for each frame, `window: frame <n>: read back from the surface, <d>
-     of <p> pixels differ from the headless renderer's, the worst by <w>
-     of 255`, with `<w>` at most 3; or, on a surface that says it does
-     not let its texture be copied from, `window: frame <n>: the surface
-     does not let its texture be copied from, so its picture is not
-     compared`. That second line is not a failure here, and it means the
-     picture was not checked on this machine: write it down as that. A
-     picture that could not be read back for any other reason is a
-     failure (`window: FAILED: frame <n>'s picture could not be read
-     back: …`);
-   - the timeline, one line for each thing that asked for a draw and for
-     each draw, in the order they happened: `window: at <t> ms: <what>`,
-     with `<t>` the time since the window told its drawer it opened.
-     `<what>` is one of: `the window told its drawer it opened, <w> by
-     <h> at scale <s>, on a display that refreshes <r> thousandths of a
-     hertz`; `the window told its drawer it is <w> by <h> at scale <s>`;
-     `the window told its drawer it is damaged`; `the window told its
-     drawer <Hidden(true), Hidden(false), Refresh(..) or Closing>`;
-     `frame <n> was published`, with `again` when it is equal to the one
-     before; `draw <n> began, of frame <f> on <w> by <h> at scale <s>,
-     for <a frame not yet shown, a size not yet drawn at, damage>`;
-     `draw <n> ended, presented, its glyphs as <plain masks, or subpixel
-     masks, red first>` or `draw <n> ended, not presented`; `the idle
-     second began` and `ended`. No draw may say `for nothing that was
-     asked`. The masks are what the renderer says it drew that frame's
-     glyphs with: as the settings come, plain ones on a display at scale
-     2 and up and subpixel ones below it, on an adapter that blends by a
-     coverage for each channel, and plain ones always on one that does
-     not;
-   - for each frame presented, `window: the journal's frame <n> answers
-     something asked <t> ms after the window opened: its draw began at
-     <t> ms and it was presented at <t> ms`: the render loop's own
-     account, to hold against the timeline;
-   - `window: idle: over 1 s in which nothing was published, 0 frames
-     were drawn and the window asked for 0` (a system that uncovers the
-     window in that second may ask for a frame or two, and as many are
-     then drawn). The second begins once the window has drawn what was
-     asked of it as it opened; if five seconds pass and it has not, the
-     second begins anyway and `window: idle: the second began before the
-     window had settled: …` is printed first;
-   - `window: over the whole run, <d> draws for <a> things that asked for
-     one`, with `<d>` no more than `<a>`;
-   - `window: left alone <k> times, and each time the window showed what
-     was laid out for it`, with `<k>` at least 1 ("Left alone", below);
-   - `window: <n> inputs came off the queue, <k> of them keys or the
-     pointer`;
-   - `window: the window drew the fixture frame, drew nothing it was not
-     asked for, and its input arrived on the queue`; exit status 0.
+- each frame it publishes is laid out at the window's scale: it prints
+  `window: frame <n> is laid out for <w> by <h> at scale <s>: 14 points
+  are <p> pixels` for each, and `<p>` must be 14 times `<s>`;
+- a frame was presented, and each frame's picture, read back from the
+  surface, is within 3 of 255 of the headless renderer's. A picture that
+  could not be read back fails the run. A surface that says it does not
+  let its texture be copied from prints that the frame's picture was not
+  compared, which this task does not fail (`--require-picture` does);
+- no draw is for nothing that was asked, there are no more draws than
+  things that asked for one, and nothing is drawn over the idle second,
+  which begins once the window has drawn what was asked as it opened (or
+  after five seconds), but for a frame or two a system asks for as it
+  uncovers the window;
+- each time the window is left alone, it shows what was laid out for it
+  ("Left alone", below);
+- at least one key or pointer input came off the queue. Each input is
+  printed on a line beginning `input:`.
 
-A line beginning `window: FAILED:` says what did not hold, and the exit
-status is then 1. Do not loosen the 3 to make it pass: a difference past
-it is a finding. To keep the window longer or shorter, run the example by
-hand: `cargo run --locked --package editor-ffi --example window --
---seconds <n>`.
+It also prints the adapter and the back end the renderer is on, a
+timeline of each thing that asked for a draw and each draw (`window: at
+<t> ms: <what>`, with the masks each presented draw's glyphs were drawn
+with), and the journal's account of each frame presented. It ends
+`window: the window drew the fixture frame, drew nothing it was not asked
+for, and its input arrived on the queue`, with exit status 0. Do not
+loosen the 3 to make it pass: a difference past it is a finding.
 
 | Option of the example | Does |
 |---|---|
 | `--seconds <n>` | Closes the window that many seconds after it is ready, if nobody has (20 by default). |
 | `--require-picture` | Fails the run unless every frame's picture was read back and compared: a surface that does not let its texture be copied from is then a failure too. `linux-window` gives it; this task does not, since a desktop's surface may be such a one. |
-| `--until-closed` | The window stays until a person closes it. Not understood with `--seconds`. The timeline then prints up to 5000 lines, not 300. `window-by-hand` gives it. |
+| `--until-closed` | The window stays until it is closed. Not understood with `--seconds`. The timeline then prints up to 5000 lines, not 300. `window-by-hand` gives it. |
 | `--no-picture` | No picture is read back and none is compared: the run prints `window: pictures were not read back (--no-picture): the picture was not checked in this run`, once, and fails for no picture. Not understood with `--require-picture`. `window-by-hand` gives it: reading a picture back and comparing it takes about half a second a draw at 1600 by 1200, which makes every step of a resize look stalled. |
 | `--family <name>` | Lays the fixture out in that family of this machine's fonts, in place of the fixture fonts, and prints `window: the fixture is laid out in <name>, of this machine's fonts` first. A family the machine has not fails the run before any window opens (`window: FAILED: this machine has no font family named <name>, of its <n> families`). No task gives it. |
 
@@ -356,367 +296,81 @@ what the timeline says of a draw's masks, and which ledgers show a window
 left alone with something not laid out for it) is tested in the gate, by
 the example's own unit tests, which open no window.
 
-What to write down here when it has been run on a desktop: the machine,
-its GPU and the back end; the lines of step 6; and, on macOS, what the
-window looked like while it was resized and whether anything was drawn
-while it was covered.
-
 ### What the first desktop run showed
 
-The owner ran it on 2026-11-14 on macOS (aarch64, Apple M5 Max, Metal, a
-display at scale 2). The first program passed. The second failed:
-
-```
-window: 2 frames presented, each with a journal entry; the first 586.7 ms after the size it answers arrived, 3 rows built
-window: frame 1: read back from the surface, 31 of 1920000 pixels differ from the headless renderer's, the worst by 1 of 255
-window: frame 2: read back from the surface, 31 of 1920000 pixels differ from the headless renderer's, the worst by 1 of 255
-window: idle: over 1 s in which nothing was published, 1 frames were drawn and the window asked for 0
-window: over the whole run, 2 draws for 8 things that asked for one
-window: FAILED: 1 frames were drawn while idle and 0 were asked for
-```
-
-The picture held, on Metal, on a surface that lets its texture be copied
-from. The failure was the check's, not the window's. Four things were
-found, the first three since changed:
+It was first run on 2026-11-14 on macOS (aarch64, Apple M5 Max, Metal, a
+display at scale 2 that refreshes at 120 hertz). The first program passed.
+The second's picture held, on a surface that lets its texture be copied
+from: 31 of 1920000 pixels differed from the headless renderer's, the
+worst by 1 of 255. It failed on the check's own count, and four things
+were found, the first three since changed:
 
 - **The idle second was measured wrongly.** On macOS the system asks for
   a window's content a few milliseconds after it opens (`drawRect:`,
-  which the adapter tells as damage). The example's first draw had begun
-  by then, and it takes hundreds of milliseconds in this check, read back
-  and compared as it is; so the damage was answered by a second draw as
-  soon as the first ended. The idle second began at that same moment, and
-  counted a draw whose asking was before it. Under Xvfb the damage comes
-  before the first frame is published, and one draw answers both. The
-  example now enters what asks and what is drawn in one ledger and judges
-  each draw by what it was for, begins the idle second once what was
-  asked as the window opened is drawn, and prints the ledger
-  (`crates/editor-ffi/examples/window.rs`, "The ledger").
+  which the adapter tells as damage), while the first draw is still
+  running; the damage was answered by a second draw that the idle second
+  counted. Under Xvfb the damage comes before the first frame is
+  published, and one draw answers both. The example now enters what asks
+  and what is drawn in one ledger, judges each draw by what it was for,
+  and begins the idle second once what was asked as the window opened is
+  drawn (`crates/editor-ffi/examples/window.rs`, "The ledger").
 - **A window that opens is not on the screen at once, and does not say
-  so.** Seen when the example was started from a process that was not in
-  front: the surface answered `Occluded` for the window's first 140 ms,
-  the window told nothing until `Hidden(false)`, and the render loop
-  tried the refused draw again every refresh meanwhile, nine times, which
-  failed the count over the whole run (10 draws for 8 things that asked).
-  A draw refused because nobody can see its target now says so, and the
-  loop waits to be told more (`editor-render`'s `render_loop`, "A hidden
-  target"). The owner's run did not meet this: its first draw presented.
+  so.** Started from a process not in front, the surface answered
+  `Occluded` for the window's first 140 ms and the window told nothing
+  until `Hidden(false)`, while the render loop tried the refused draw
+  again every refresh. A draw refused because nobody can see its target
+  now says so, and the loop waits to be told more (`editor-render`'s
+  `render_loop`, "A hidden target").
 - **A click arrived as a press, a drag and a release, all at one place.**
   winit on macOS says where the pointer is before every press and every
   release. Being told the pointer is where it already was is no longer a
   drag.
 - **The window said its size four times as it opened, the same each
   time**: once from the adapter, straight after `Opened`, and three times
-  from winit, which says the size at each step of building the window,
-  before it is shown. They are reported as winit says them. Nothing is
-  drawn for them: the same size is no demand to the render loop, and a
-  frame equal to the one shown is none either (2 draws for 8 things that
-  asked). An editor that lays out at every resize lays out four times as
-  it opens there.
+  from winit, which says the size at each step of building the window.
+  They are reported as winit says them; nothing is drawn for them. An
+  editor that lays out at every resize lays out four times as it opens
+  there.
 
-The second program was then run on that desktop three more times, each
-for two seconds and each started by a tool and not from a terminal in
-front, so that its window was not on the screen at once. The first, with
-the check as it was, failed on the count over the whole run; the second,
-with the ledger, showed the nine refused draws; the last, on the tree
-with all three changes, exited 0:
+On the tree with the three changes, the second program, started so that
+its window was not on the screen at once, exited 0: two draws refused as
+`Occluded`, one presented after `Hidden(false)`, nothing drawn over the
+idle second, and a click arriving as a press and a release.
 
-```
-window: at       0.0 ms: the window told its drawer it opened, 1600 by 1200 at scale 2, on a display that refreshes 120000 thousandths of a hertz
-window: at      28.8 ms: frame 1 was published
-window: at      28.8 ms: draw 1 began, of frame 1 on 1600 by 1200 at scale 2, for a frame not yet shown
-window: at      35.4 ms: the window told its drawer it is damaged
-window: at      37.6 ms: the window told its drawer it is 1600 by 1200 at scale 2
-window: at      37.7 ms: the window told its drawer it is 1600 by 1200 at scale 2
-window: at      37.7 ms: frame 1 was published again
-window: at      37.8 ms: frame 1 was published again
-window: at      37.8 ms: the window told its drawer it is 1600 by 1200 at scale 2
-window: at      37.9 ms: frame 1 was published again
-window: at      64.4 ms: draw 1 ended, not presented
-window: at      64.4 ms: draw 2 began, of frame 1 on 1600 by 1200 at scale 2, for a frame not yet shown and damage
-window: at      64.6 ms: draw 2 ended, not presented
-window: at     147.9 ms: the window told its drawer Hidden(false)
-window: at     147.9 ms: draw 3 began, of frame 1 on 1600 by 1200 at scale 2, for a frame not yet shown and damage
-window: at     721.8 ms: draw 3 ended, presented
-window: at     731.6 ms: the idle second began
-window: at    1736.6 ms: the idle second ended
-window: idle: over 1 s in which nothing was published, 0 frames were drawn and the window asked for 0
-window: over the whole run, 3 draws for 8 things that asked for one
-```
+### The window at the macOS weight
 
-A click in that run arrived as a press and a release, with no drag
-between. **Not seen since the changes**: a run started from a terminal in
-front, where the first draw presents and a second answers the damage
-(the timeline should then show `draw 2 began, … for damage` before the
-idle second begins); the whole task, both programs; input checked line
-by line; a resize by hand; the window covered and uncovered.
+On 2026-11-14, on the same machine, the second program presented one
+frame in plain masks at scale 2 at the macOS weight
+(`Settings::core_text()`), and 64 of its 1920000 pixels differed from the
+headless renderer's at the same settings, the worst by 1 of 255: on
+Metal the window's picture at the macOS weight is the headless
+renderer's.
 
-### The window at the macOS weight, without a person
-
-On 2026-11-14 the agent that implemented the macOS weight ran the second
-program alone (`cargo run --locked --package editor-ffi --example
-window`), on the same machine, with no person at it. The window was
-occluded for its first 30 seconds (three draws not presented: `the
-window's surface gave no texture: Occluded`), then shown; one frame was
-presented, in plain masks at scale 2, and read back:
-
-```
-window: frame 1: read back from the surface, 64 of 1920000 pixels differ from the headless renderer's, the worst by 1 of 255
-```
-
-So on Metal the window's picture at the macOS weight is the headless
-renderer's at the same settings (`Settings::core_text()` on both). The
-run failed, exit status 1, on what needs a person or a shown window: `the
-window was never seen idle: no frame was presented` before the idle second
-could begin, and `no key and no pointer event came off the queue`. The
-first program, the contract, was not run. Nobody looked at the window.
-
-## Scale and fullscreen, by hand
+## The window to try, on demand
 
 ```sh
 mise run window-by-hand
 ```
 
-**These steps have not been run by a person.** They were written for the
-owner, who is the one to run them: no program can judge an apparent size,
-press the green button, move a window between two displays or switch
-Spaces, and nothing below was done in place of a person doing so. What was
-run without a person is under "What has been run without a person", at
-the end of this section. Until the steps are run and what was seen is
-recorded, nobody has seen a window of ours enter fullscreen, move between
-displays or change Space.
+This opens the window that draws (the second program of
+`window-contract`, above) with `--until-closed --no-picture` and leaves it
+open until it is closed, its own checks running, for trying the window
+out. `cargo run --locked --package editor-ffi --example window --
+--until-closed --no-picture --family <name>` lays the fixture out in a
+family of this machine's fonts in place of the fixture's Noto Sans.
 
-The task runs the window that draws (the second program of
-`window-contract`, above) with `--until-closed --no-picture`: the window
-stays until it is closed, and no picture is read back. It needs a Mac
-with a display at scale 2 and a second display at scale 1.
+### The window's scale, as seen
 
-**What the program checks for the person at the window**, each decided by
-a function that the example's own unit tests run in the gate:
-
-- For each frame it publishes, the scale it was laid out at and the size
-  its glyphs are drawn at, printed as it happens: `window: frame <n> is
-  laid out for <w> by <h> at scale <s>: 14 points are <p> pixels`. The
-  run fails if `<p>` is not 14 times `<s>` to within a 64th: that is the
-  path from the window's scale through layout to the shaper, on a real
-  window.
-- For each draw, the kind of mask the renderer drew its glyphs with, in
-  the timeline: `draw <n> ended, presented, its glyphs as plain masks`,
-  or `as subpixel masks, red first`. After a move from a display at scale
-  2 to one at scale 1 the line changes from the first to the second.
-- Left alone, the window shows what was laid out for it. Whenever a
-  second passes in which the window tells nothing, nothing is published
-  and no draw begins, and the window is not hidden, the last draw
-  presented must be of a frame laid out for the size and scale the window
-  last told, on that size and scale. It prints `window: left alone <k>
-  times, and each time the window showed what was laid out for it`, or
-  fails with which frame, laid out for what, was on what. This is "no
-  stale frame", after entering fullscreen, after leaving it, after a move
-  between displays and after coming back from another Space, for as often
-  as the person pauses a second.
-
-**What no program checks**: that 28 pixels looks like 14 points beside
-another app; that glyph edges are grey on one display and fringed with
-colour on the other; that nothing looked stretched while the system
-animated.
-
-The steps:
-
-1. With the terminal in front on the display at scale 2, run `mise run
-   window-by-hand`. To compare like with like, run it by hand in a family
-   another app has: `cargo run --locked --package editor-ffi --example
-   window -- --until-closed --no-picture --family Menlo` (it then prints
-   `window: the fixture is laid out in Menlo, of this machine's fonts`
-   first). Expected as the window opens: `input: resized <w> by <h> at
-   scale 2` and `window: frame 1 is laid out for <w> by <h> at scale 2:
-   14 points are 28 pixels`. Wait for `window: ready for input`.
-2. **Size.** Open TextEdit, type `the window draws this` in the same
-   family, regular, at 14 points, at 100%, and put it beside the window.
-   Pass: the letters are the same height and a row is as tall, by eye.
-   Before this phase's change the window's text was 16 pixels whatever
-   the display, a little over half that size at scale 2. **Weight.**
-   Pass: by eye, the window's text is not lighter than TextEdit's in
-   the same family and size. Check it in Menlo (`--family Menlo`, as
-   above): `mise run window-by-hand` lays the fixture out in Noto Sans,
-   which TextEdit shows only where Noto Sans is installed. On macOS the
-   window draws to Core Text's weight
-   (`Settings::core_text()`, "The renderer, as built" in
-   `docs/design/text-and-display.md`); before that change it was known
-   to look lighter. Record what was seen under "The weight beside
-   TextEdit, by eye", below.
-3. **Two displays.** Drag the window to the display at scale 1 and let
-   go; wait a second. Expected in the terminal: `input: resized … at
-   scale 1`, once for the scale and again for the size (winit sends one
-   and then the other: read, and not seen on macOS; on X11, in the
-   container, the first came every time and the second most times), and
-   `window: frame <n> is laid
-   out for <w> by <h> at scale 1: 14 points are 14 pixels`. On screen:
-   the text is the size TextEdit's is when its window is dragged over
-   too. Take a picture of the window (Command-Shift-4, Space, click) and
-   enlarge it in Preview until pixels show: on the display at scale 1 the
-   edges of glyphs are fringed with colour, on the display at scale 2
-   they are grey only. Drag it back; wait a second: scale 2 and 28 pixels
-   again.
-4. **Fullscreen.** Click the green button. (The window has no menu, so a
-   keyboard shortcut for fullscreen may do nothing: use the button.)
-   Watch the animation and write down whether the text looked stretched
-   or the window showed a black band at any moment. When it has settled,
-   wait a second. Pass: the status row is at the bottom of the screen and
-   reads `window  <w> by <h>` with the screen's size in pixels; the rows
-   of text are at the top left at the size they were; nothing is blurred
-   or stretched.
-5. **Spaces.** With the window fullscreen, go to another Space
-   (Control-Left or Control-Right, or a three-finger swipe), wait two
-   seconds, and come back. Pass: the scene is there at once, as it was;
-   not blank, and not at an older size. Wait a second.
-6. **Leaving fullscreen.** Move the pointer to the top of the screen and
-   click the green button. When it has settled, wait a second. Pass: the
-   window is its old size, with the status row at its bottom reading that
-   size.
-7. Press `a`, then Control-A, then Command-S, and click once in the
-   window, then close it with the red button. Expected as the keys are
-   pressed, among the lines of the modifiers' own presses and of the
-   releases: `input: key press 'a' at KeyA with none, text "a"`, `input:
-   key press 'a' at KeyA with control, text ""` and `input: key press
-   's' at KeyS with super, text ""`. A key pressed with Control or
-   Command held carries no text; winit gives it `a` and `s` there (read,
-   not seen), and the adapter drops them. A line that says `with none`
-   for the second or the third, or a text that is not empty, is a
-   finding: the first would mean macOS says a modifier is held after
-   the key it was held for. Expected, after the lines `window-contract`
-   already documents:
-   in the timeline, `the window told its drawer Hidden(true)` and
-   `Hidden(false)` around step 5, with no draw between them; draws at
-   scale 2 ending `its glyphs as plain masks` and those at scale 1 `as
-   subpixel masks, red first`; no draw `for nothing that was asked`;
-   `window: pictures were not read back (--no-picture): the picture was
-   not checked in this run`; `window: left alone <k> times, and each time
-   the window showed what was laid out for it`, with `<k>` at least 5;
-   exit status 0.
-8. **What to record in the phase body**: the machine, the two displays
-   and their scales; the lines of steps 1, 3 and 7; and what was seen at
-   steps 2 to 6, the animation of step 4 among it.
-
-A step that fails is a finding to bring back, not something to adjust the
-check for.
-
-Two things the phase asks for cannot be promised by a resize alone, and
-step 4 is where they would show. Between a change of the window's size
-and the next picture presented at that size, the system stretches the
-last picture to the window's new bounds (the default of the Metal layer
-wgpu makes: read, not seen). And the render loop's first draw on a new
-size is of the frame laid out for the old one, with black where that
-frame has no view, until the frame laid out for the new size arrives.
-Each lasts until the next draw or two. If either is visible during the
-system's animation and matters, the fix is code this phase does not have:
-a call on the layer for the first, and who lays out on a resize for the
-second ([`concurrency.md`](../design/concurrency.md)).
-
-What a point is, for step 2: a logical point, one physical pixel at scale
-1. On macOS that is the same number as the typographic point another app
-states. On a Linux desktop it is not: a "14 pt" font in another app is 14
-× 96/72 pixels at scale 1, and will not match.
-
-### What has been run without a person
-
-On 2026-11-14, on macOS (aarch64, Apple M5 Max, Metal), with the
-display asleep, so that no window could be seen and no draw presented:
-
-- `cargo run --locked --package editor-ffi --example window -- --seconds 2
-  --no-picture`: `input: resized 1600 by 1200 at scale 2`, then `window:
-  frame 1 is laid out for 1600 by 1200 at scale 2: 14 points are 28
-  pixels`. The surface answered `Occluded` to two draws, the window never
-  said it was shown, and nothing was drawn in the 31 seconds that
-  followed; the run failed, as it must, for no frame presented and no
-  input. It printed `window: pictures were not read back (--no-picture):
-  the picture was not checked in this run` and `window: the window was
-  never left alone for a second while it showed a frame, so what it shows
-  when it is left alone was not judged`.
-- The same with `--until-closed --no-picture --family Menlo`, stopped by
-  a time limit after eight seconds: `window: the fixture is laid out in
-  Menlo, of this machine's fonts`, then `window: frame 1 is laid out for
-  1600 by 1200 at scale 2: 14 points are 28 pixels`; the window did not
-  close by itself.
-- In the container (`mise run linux-window`, part 4), at scale 1: `14
-  points are 14 pixels` for the frame at 800 by 600 and for the one at
-  300 by 120, each of three draws `its glyphs as subpixel masks, red
-  first`, and `window: left alone 2 times, and each time the window
-  showed what was laid out for it`: the idle second, and the seconds
-  after xdotool's resize.
-
-- With the example changed by hand so that it does not tell its layout
-  the scale, and changed back: on the same desktop it printed `window:
-  frame 1 is laid out for 1600 by 1200 at scale 2: 14 points are 14
-  pixels` and failed with `frame 1 is laid out for a window at scale 2,
-  where 14 points are 28 pixels, and its glyphs are drawn at 14 pixels`.
-
-- In the container again, with part 4's second run, where winit is told
-  a scale of 2 (`WINIT_X11_SCALE_FACTOR=2`): `14 points are 28 pixels`
-  for the frame at 800 by 600 and for the one at 300 by 120, each of
-  three draws presented and ending `its glyphs as plain masks`, each
-  picture compared, and `window: left alone 2 times, and each time the
-  window showed what was laid out for it`. With the example changed by
-  hand as in the item above, and changed back, that run failed with the
-  same line as the desktop's and the run at scale 1 passed.
-
-So the window's scale reaching the shaper through layout is seen at scale
-2, on one display and in the container, and seen to fail the run when it
-does not. The container's run at scale 1 does not show it: there a
-layout told nothing lays out the same. Its run at scale 2 shows it each
-time `mise run linux-window` is run, on a window winit was told is at
-scale 2, with a draw presented and plain masks said, on llvmpipe. A
-change of scale under an open window is seen there too, each time, from
-1 to 2, on X11, by the display's settings being changed ("The window on
-Linux, on demand", "The change of scale"): the resize at the new scale
-comes off the queue, the frame laid out for it has glyphs of 28 pixels,
-and the draw after it says plain masks where the draws before said
-subpixel ones. **Not seen by anyone**: a draw at scale 2 presented on a
-display that is at scale 2, and on Metal; a window moved between two
-displays, and a change of scale from 2 to 1; fullscreen; another Space;
-the size beside another app.
-
-### What the owner's run showed
-
-Not yet run. Record here, and in the phase body: the machine, the two
-displays and their scales; the lines of steps 1, 3 and 7; and what was
-seen at steps 2 to 6.
-
-### The weight beside TextEdit, by eye
-
-**For the owner.** This is the check that the window's text, drawn on
-macOS to Core Text's weight, no longer looks lighter than TextEdit's
-(rdm task `editor-render-text-lighter-than-core-text`). The weight was
-fitted to Core Text drawing offscreen; only a person at the display can
-say whether it looks right beside TextEdit.
-
-On macOS, at a display of scale 2, run
-
-```sh
-cargo run --locked --package editor-ffi --example window -- --until-closed --no-picture --family Menlo
-```
-
-and put it beside TextEdit showing `the window draws this` in Menlo
-Regular, 14 points, at 100%. Pass: the window's text is not lighter than
-TextEdit's. (`mise run window-by-hand` is not this check: it lays the
-fixture out in its default family, Noto Sans, and TextEdit shows that
-only where Noto Sans is installed.)
-
-Record here, and in the task: the date, the machine and the display's
-scale; whether the window's text looked lighter, as heavy, or heavier
-than TextEdit's; and, if it helps, a screenshot of the pair.
-
-What the owner saw, on 2026-11-14, on the Mac the checks above ran on
-(Apple M5 Max; the display's scale not stated):
-
-- In Menlo, by the command above, beside TextEdit in Menlo Regular 14 pt
-  at 100%: the weight looks right, as heavy as TextEdit's and not
-  lighter. **Passes.**
-- In the fixture's default family: not compared. The first run was `mise
-  run window-by-hand`, in Noto Sans, beside TextEdit in Menlo; the owner
-  saw the family was wrong. TextEdit shows Noto Sans only where it is
-  installed, so that pair was not made like with like.
-- Outside this check: "some of the spacing and maybe the 'w' are not
-  quite the same" as TextEdit's. That is rdm task
-  `editor-render-glyph-spacing-and-shape-vs-core-text`.
+On 2026-11-14, on a macOS desktop at scale 2 (Apple M5 Max, Metal), the
+window's first frame was laid out at scale 2, its 14 points drawn at 28
+pixels. With the example changed for the run so that it did not tell its
+layout the scale, the run failed with `frame 1 is laid out for a window
+at scale 2, where 14 points are 28 pixels, and its glyphs are drawn at 14
+pixels`. In the container, `mise run linux-window` shows the scale
+reaching layout each time it is run, at a scale of 2 winit is told and
+across a change of scale from 1 to 2 ("The window on Linux, on demand",
+part 4). Not seen: a window moved between two displays, a change of scale
+from 2 to 1, the system's fullscreen, another Space.
 
 ## The system's fonts, on demand
 
@@ -880,8 +534,7 @@ fails:
    displays. Here one display changes its settings, on X11. winit sends
    the same event for both, and the adapter's line is the same; what
    macOS sends around it, in which order the scale and the size come,
-   and the antialiasing changing on a real display, are still step 3 of
-   "Scale and fullscreen, by hand";
+   and the antialiasing changing on a real display, are not seen;
 5. the clipboard adapter's example, as `clipboard-contract` runs it: that
    display's clipboard held to the clipboard port's contract, in one
    process;
@@ -921,8 +574,8 @@ nowhere in the gate:
 
 A change that touches the window, the surface or the clipboard is not done
 until both `mise run ci` and this task exit 0, every part, on the tree that
-is to land. Each of its checks was seen to fail once by hand, in the
-container: the picture, with the surface drawn through a view that is not
+is to land. Each of its checks was seen to fail once, in the container,
+with the code changed for the run: the picture, with the surface drawn through a view that is not
 sRGB (every pixel off, by 74 of 255); that a picture is compared at all,
 with the surface configured without the use that lets its texture be
 copied out, so that wgpu refuses the copy (`frame 1's picture could not
@@ -1009,20 +662,19 @@ gets on the new one; then the frame laid out for 600 by 240 at scale 2;
 those two in plain masks. Each picture was compared, the worst by 1 of
 255, and the window was left alone three times and showed what was laid
 out for it each time. Before that the scale was changed fourteen times
-as soon as the resize had arrived, without the wait, seven of them by
-hand with no pointer input: the required line came every time, and the
+as soon as the resize had arrived, without the wait, seven of them with
+no pointer input: the required line came every time, and the
 window grew to 600 by 240 in twelve and stayed 300 by 120 at scale 2 in
 two, where the run passed as well.
 
 ## The clipboard, on demand
 
-**This has not been run on any desktop.** It was written for the owner to
-run; on Linux its two halves are parts 5 and 6 of `linux-window`, above,
-which ran in the container.
-
 ```sh
 mise run clipboard-contract
 ```
+
+On Linux its two halves are parts 5 and 6 of `linux-window`, above, which
+run in the container. It has not been run on a desktop.
 
 **It writes the clipboard of the desktop it is started from.** It holds the
 system clipboard (`SystemClipboard` in `crates/editor-platform-arboard`) to
@@ -1038,23 +690,13 @@ back.** An image, a file or anything else that was on the clipboard is
 lost, and a clipboard that held no text is left holding the contract's
 last text, `a later text`.
 
-The steps:
-
-1. Copy something disposable, as text, so that nothing of value is on the
-   clipboard.
-2. Run `mise run clipboard-contract`.
-3. Expected: one line for each of the contract's four properties, each
-   beginning `clipboard-contract: holds:`; then `the text found on the
-   clipboard was put back`; then `the system clipboard keeps the clipboard
-   port's contract`; exit status 0.
-4. Paste somewhere: it is the text copied in step 1.
-
-A property that fails is printed with `FAILS` and the exit status is 1; so
-is a clipboard that could not be opened, with the reason.
-
-Not known, and for whoever runs it on macOS to write down here: whether the
-empty text written to the clipboard reads back as the empty text or as no
-text. The contract does not ask.
+It prints one line for each of the contract's four properties, each
+beginning `clipboard-contract: holds:`, then `the text found on the
+clipboard was put back` and `the system clipboard keeps the clipboard
+port's contract`, with exit status 0. A property that fails is printed
+with `FAILS` and the exit status is 1; so is a clipboard that could not be
+opened, with the reason. The contract does not ask whether the empty text
+reads back as the empty text or as no text.
 
 ## The renderer on a real GPU, on demand
 
@@ -1148,8 +790,7 @@ This writes `tests/render/frame.png`, the picture the gate compares the
 headless renderer's with, by running the example `reference` of
 `crates/editor-render-wgpu`. It writes a file of the repository, which no
 gate may do, so the gate only builds it. `tests/render/README.md` says
-what the image shows, when to make it again, and what to do then: look at
-it, enlarged, before committing it.
+what the image shows and when to make it again.
 
 ## The Core Text reference, on demand
 
@@ -1167,76 +808,26 @@ macOS. It writes a file of the repository, which no gate may do, so it is
 not in the gate, and nothing in the gate runs Swift.
 
 Run it on a new major version of macOS, or when the fixture font changes.
-`tests/coretext/README.md` records how the file was last captured and
-what to do with a new one: look at it, enlarged, before committing it, and
-fit the weight again if it no longer matches.
+`tests/coretext/README.md` records how the file was last captured. If a
+new capture no longer matches the renderer's weight, the weight is fitted
+again.
 
-## The editor on a file, by hand
+## The editor on a file, on demand
 
-`mise run edit -- <file>` (`lean/Editor/Window/Real.lean`): the editor on a
-file, in a window. The gate runs the same wiring on the library's scripted
-platform (`ffi-test window-host`), and `mise run linux-window` runs it on
-a real window under Xvfb with xdotool typing (its seventh part); neither
-is a person at a window. This is the owner's procedure, for milestone 1's
-fourth criterion. Record in the phase body, for each run: the date, the
-commit, the machine, the macOS version, the display or displays with their
-scale and refresh rate, the command, and what was seen at each step marked
-**Record**.
-
-On macOS, in a terminal at the checkout, at the reviewed commit:
-
-1. `mise install`, then `mise run lean`.
-2. `cp lean/Editor/Loop.lean /tmp/dp6-session.lean`, so that no tracked
-   file is edited, then `mkdir -p /tmp/dp6-config` and
-   `cp tests/headless/config/*.lean /tmp/dp6-config/`.
-3. `mise run edit -- --report --config /tmp/dp6-config /tmp/dp6-session.lean`.
-   **Record**: that the window shows the file's first rows in a monospace
-   font at the size of other apps' text, with a status line reading
-   `normal` and `dp6-session.lean`, and that the bottom row below it is
-   empty.
-4. An evil edit, with what is seen after each: `j j j` (the cursor moves
-   down), `dw` (a word goes, and the status line shows the modified mark),
-   `i`, type `hello `, `<Escape>` (the text appears as typed, once per key
-   and not twice, with the bar cursor in insert state and the block after
-   `<Escape>`), `u` then `C-r` (the edit goes and comes back), `C-f` then
-   `C-b` (the view scrolls a page and back), and `"+yw` (yank a word to the
-   clipboard). Then paste into TextEdit. **Record** that the word arrives.
-5. `:w` and `<Enter>`. **Record**: that while `:w` is typed it shows in the
-   input row above the bottom row, with the prompt in the bottom row; and
-   that after `<Enter>` the input row is gone, the modified mark goes, and
-   the bottom row says the file was written. In a second terminal,
-   `diff lean/Editor/Loop.lean /tmp/dp6-session.lean`. **Record** that the
-   diff is the edit.
-6. A broken config: `printf 'def broken : Nat := "x"\n' > /tmp/dp6-config/30-broken.lean`,
-   then `:reload` and `<Enter>`. **Record**: that the bottom row shows
-   `reload: 30-broken.lean:1:…: error: …`, and that `j` and `dw` still
-   work. Then `rm /tmp/dp6-config/30-broken.lean`.
-7. Idle: note the time and leave the window untouched for 60 s, with no
-   pointer over it. In the second terminal, run
-   `ps -o time=,rss= -p $(pgrep -n editor)` at the start and at the end.
-8. The external change, which no phase builds (task
-   `display-pipeline-open-file-reload`): optionally
-   `echo '-- external' >> /tmp/dp6-session.lean`. **Record** what the
-   window shows. The expected answer is nothing new.
-9. `:q` and `<Enter>`. The window closes and the report prints on
-   stderr. **Record**: the report's frame count, its `present - input`
-   figures, and the longest stretch with no frame, which must cover step
-   7's 60 s. That stretch and the CPU time from step 7 are "the journal
-   shows no work while idle".
-
-On Linux, on a desktop and not under Xvfb, if there is one: steps 3 to 5
-and 9, with a text editor of the desktop in place of TextEdit. If there is
-none, record "not measured on Linux: no desktop".
+`mise run edit -- <file>` (`lean/Editor/Window/Real.lean`) opens the
+editor on a file, in a window, to use. The gate runs the same wiring on
+the library's scripted platform (`ffi-test window-host`), and `mise run
+linux-window` runs it on a real window under Xvfb with xdotool typing
+(its seventh part).
 
 ## Milestone 1, measured
 
 Milestone 1's figures: key press to frame submitted (median and 99th
 percentile), idle CPU, memory at startup, memory after opening a 10 MiB
 file, and scrolling through it. Each figure goes in the phase body with
-the command or procedure that gave it, and with what it is: headless
-(below) or a window's (the owner's, after it).
+the command that gave it, and with what it is: headless, or a window's.
 
-**Headless, by an agent or anyone: `mise run milestone-bench`**
+**Headless: `mise run milestone-bench`**
 (`tools/milestone-bench.sh`), on a quiet machine, twice. It runs five
 scripts of `editor headless --render` under `/usr/bin/time -l`, and prints
 the machine first. Every figure it gives is labelled "headless: cell
@@ -1255,45 +846,17 @@ not what a window costs.
 asked for and is at rest, so that no key's frame is replaced in the
 mailbox before it is drawn.
 
-**In a window, by the owner.** Two sessions, each started with
-`mise run edit -- --report <file>`:
-
-- Typing, on a one-line file, `printf 'x\n' > /tmp/dp6-one.txt`:
-  1. Memory at startup: once the window shows,
-     `ps -o rss= -p $(pgrep -n editor)` and
-     `footprint $(pgrep -n editor) | tail -1`.
-  2. `A`, then type `the quick brown fox jumps over the lazy dog` three
-     times at an even pace, then `<Escape>`, `:w` and `:q`. Record the
-     report's median and 99th percentile.
-  3. Idle CPU: in another run on the same file, `ps -o time=` 60 s apart,
-     untouched.
-- The 10 MiB file, written with
-  `awk 'BEGIN{for(i=0;i<201650;i++) printf "%07d the quick brown fox jumps over the lazy dog\n", i}' > /tmp/dp6-ten.txt`:
-  1. `mise run edit -- --report /tmp/dp6-ten.txt`, and note how long the
-     window takes to show the text, by eye or by stopwatch.
-  2. Memory once shown: `ps` and `footprint` as above.
-  3. Hold `C-f` for 10 s, then `G`, then `gg`.
-  4. `:q`. Record the report's figures and the counters' rows rebuilt.
+`mise run edit -- --report <file>` prints a window's figures from the
+frame journal when the window closes ("The present mode, measured on a
+window", below).
 
 ## The present mode, measured on a window
 
-**No figure exists yet: these are the owner's steps, at a real window.**
-These are the steps by which the display pipeline's phase 6 measures the
-present mode on a window. They are written down now because the decision was
-taken first, by reading: `Fifo` at a frame latency of 1 on every platform
-([`rendering-prior-art.md`](../design/rendering-prior-art.md), "Present
-mode and pacing"). A measurement needs a window on a display. A window
-that draws exists since the display pipeline's phase 5, and has run under
-Xvfb, which has no display to pace against, and for a few seconds at a
-time on one macOS desktop, where nothing was measured; these steps are how
-that decision is borne out or overturned.
-
-Who runs it, and when: whoever builds phase 6, at a real window, on a
-quiet machine, once on macOS and once on Linux on a desktop (not under
-Xvfb, which has no display to pace against).
-
-What is there already, built by phase 5, and so no longer phase 6's to
-build first:
+The decision was taken by reading: `Fifo` at a frame latency of 1 on
+every platform ([`rendering-prior-art.md`](../design/rendering-prior-art.md),
+"Present mode and pacing"). No figure from a window on a display has
+been taken yet; Xvfb has no display to pace against. The window mode has
+what a measurement needs:
 
 - a surface on the window, configured from what `present::choose`
   (`crates/editor-render-wgpu`) gives for the modes the surface offers
@@ -1302,11 +865,6 @@ build first:
 - the render loop running on its thread, on the clock that stamps window
   input (`editor-ffi`'s), so that an entry's input time and its present
   time are on one clock;
-- the frame journal, read through the loop's handle at the end of a run,
-  in Rust (`crates/editor-ffi/examples/window.rs` reads it so).
-
-What phase 6 built for it:
-
 - `--present-mode fifo|fifo-relaxed|immediate|mailbox` and
   `--frame-latency <n>`, flags of the window mode for one run, not
   settings, each on its own: the renderer gives the mode asked when the
@@ -1322,33 +880,9 @@ What phase 6 built for it:
   median, 99th percentile (nearest rank) and largest, and the longest
   stretch with no frame.
 
-The steps, for each platform (O3; on Linux, O4, on a desktop and not under
-Xvfb):
-
-1. Run `mise run edit -- --report /tmp/dp6-one.txt` once (the one-line
-   file of "Milestone 1, measured"), and record the modes the report's
-   `presentation:` line says the surface offered. Compare them with the
-   table in `rendering-prior-art.md`, of which the Vulkan row has been
-   seen on a surface (llvmpipe, under Xvfb) and the others only read in
-   wgpu's source, and correct the table where they differ.
-2. For each of these that the surface offers, one run each:
-   `mise run edit -- --report --present-mode fifo --frame-latency 1 /tmp/dp6-one.txt`,
-   then `--present-mode fifo --frame-latency 2`, `--present-mode immediate`,
-   `--present-mode mailbox` and `--present-mode fifo-relaxed`.
-3. In each run, type the same sentence three times at the same pace, then
-   resize the window by dragging its corner, then `:w` and `:q`.
-4. Record, from each report: the median and the 99th percentile of
-   `present - input`, the entry count, and the longest stretch with no
-   frame.
-5. Look at the window while it is resized, and write down what is seen:
-   whether the content lags the window's edge. That is what presenting
-   with the transaction would change on macOS, and it cannot be asked for
-   through a surface's configuration.
-
-What to record, in phase 6's body: for each platform and each run, the
-figures of step 4; the machine, its GPU and driver, the display and its
-refresh rate, and whether the display has a variable refresh; the wgpu
-back end; the command that was run; and one sentence that says whether
-the figures bear out `Fifo` at a frame latency of 1 or what they favour
-instead. If they favour another, the decision in `rendering-prior-art.md`
-and `present::PREFERRED` change in the same commit.
+The modes a report says a surface offered are held against the table in
+`rendering-prior-art.md`, of which the Vulkan row has been seen on a
+surface (llvmpipe, under Xvfb) and the others only read in wgpu's source.
+If figures from a window favour another presentation, the decision in
+`rendering-prior-art.md` and `present::PREFERRED` change in the same
+commit.

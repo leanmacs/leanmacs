@@ -28,7 +28,7 @@
 //! measurements say otherwise, and then it changes here and in the record
 //! in one commit. A renderer on a window says what its surface offered,
 //! only what was asked, and what it was configured with ([`Offered`]).
-//! The measurements are taken by the steps of
+//! How a window's figures are taken is in
 //! `docs/dev-practices/on-demand-checks.md`, "The present mode, measured
 //! on a window".
 //!

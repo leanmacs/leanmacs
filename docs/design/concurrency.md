@@ -219,9 +219,9 @@ mailbox. The window mode runs the window on Lean's main thread
 window to close when it ends; the headless mode's `--render` runs a render
 session on a thread of the library's with no window. In a real window the
 session has run with the wgpu renderer under Xvfb (`mise run
-linux-window`); at a person's desktop it is the owner's to run
-(`docs/dev-practices/on-demand-checks.md`, "The editor on a file, by
-hand").
+linux-window`); on a desktop it is `mise run edit`
+(`docs/dev-practices/on-demand-checks.md`, "The editor on a file, on
+demand").
 
 ## Foreground: commands
 
@@ -1612,14 +1612,12 @@ handler never runs.
   minute it stays; and a frame laid out at scale 2, with 14 points drawn
   at 28 pixels. What has not:
 
-  - **macOS, with a person at it.** A run started from a terminal in
-    front; input checked line by line; a live resize, where the content
-    may lag the window's edge; a window covered and uncovered; the order
-    of a modifier's own press and the change that names it; Command and
+  - **macOS, in use.** A run started from a terminal in front; input
+    read back event by event; a live resize, where the content may lag
+    the window's edge; a window covered and uncovered; the order of a
+    modifier's own press and the change that names it; Command and
     Option; what text Escape, Enter and a letter under Control carry; a
-    trackpad's wheel in pixels. The steps are in
-    [on-demand-checks.md](../dev-practices/on-demand-checks.md), "The
-    window's contract, on a desktop".
+    trackpad's wheel in pixels.
   - **Two displays, fullscreen and Spaces, on macOS.** A change of scale
     as a window is dragged from a display at scale 2 to one at scale 1,
     and the antialiasing changing with it; the system's fullscreen, in
@@ -1627,9 +1625,8 @@ handler never runs.
     back, which is hidden and shown; and whether the text is the size of
     the same 14 points in another app. All of it is read in this tree
     and in winit's source and pinned on fakes, and none of it has been
-    seen: the steps are written for the owner and not yet run
-    ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
-    and fullscreen, by hand"). Two things there may show and are not
+    seen ([on-demand-checks.md](../dev-practices/on-demand-checks.md),
+    "The window's scale, as seen"). Two things there may show and are not
     ours to prevent with what is built: the system stretching the last
     picture between two sizes, and a frame of the old size on the new
     one for a draw.

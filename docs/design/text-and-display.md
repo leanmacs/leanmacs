@@ -2136,8 +2136,8 @@ bound submits nothing.
   drawing offscreen into a bitmap, not TextEdit on screen. Beside
   TextEdit, by eye, the owner saw on 2026-11-14 that the window in Menlo
   14 pt is as heavy as TextEdit in Menlo Regular 14 pt at 100%, not
-  lighter (`docs/dev-practices/on-demand-checks.md`, "The weight beside
-  TextEdit, by eye"; the display's scale not stated). Some of the
+  lighter, compared in Menlo by the example `window` with `--family
+  Menlo` (the display's scale not stated). Some of the
   spacing, and maybe the `w`, are not quite the same as TextEdit's: rdm
   task `editor-render-glyph-spacing-and-shape-vs-core-text`.
 
@@ -2312,9 +2312,9 @@ window is still run with nothing drawing in it. The threads are in
   the frame laid out for the old one, with the target cleared to black
   where that frame has no view, until the frame for the new size
   arrives. Each lasts a draw or two; whether either shows during the
-  system's animation is for a person to see
-  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
-  and fullscreen, by hand"). Changing the first is a call on the layer,
+  system's animation has not been seen
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "The
+  window's scale, as seen"). Changing the first is a call on the layer,
   and the second is who lays out on a resize
   ([concurrency.md](concurrency.md)); neither is built.
 - **Fullscreen and minimise are commands too.** `toggle-fullscreen` and
@@ -2762,9 +2762,9 @@ frame journal and the renderer's counters.
   offers is still what was read. The editor can now be measured on a
   window: `--present-mode`, `--frame-latency` and `--report` ask for
   another presentation for one run and print what the surface offered and
-  the journal's figures. The owner's run on a real window
+  the journal's figures. No figure from a real window has been taken yet
   (`docs/dev-practices/on-demand-checks.md`, "The present mode, measured
-  on a window") is still to be made
+  on a window")
   ([rendering-prior-art.md](rendering-prior-art.md), "Present mode and
   pacing").
 - **Where the window has drawn, and where it has not.** The surface, the
@@ -2790,11 +2790,8 @@ frame journal and the renderer's counters.
   it stands, the text of the fake's sample key with Control held is the
   next thing to change; if it does not, the port says that text is not
   dropped under those modifiers and whoever inserts it checks them); and
-  where the clipboard's port lives. What that rule does on macOS has
-  been read and not seen: step 7 of the owner's check by hand presses
-  Control-A and Command-S
-  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
-  and fullscreen, by hand").
+  where the clipboard's port lives. What that rule does on macOS for
+  Control-A and Command-S has been read and not seen.
 - **The GPU's picture is checked on demand only.** The gate checks the
   wgpu adapter's calls, on a back end that draws nothing, and the CPU
   compositor's picture. That a real GPU draws the same is seen when

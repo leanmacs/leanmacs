@@ -59,10 +59,10 @@
 # - `editor_ffi_display_new_system` in `src/display.rs`, the process's
 #   display, made for Lean's window mode, which lays out in the machine's
 #   fonts;
-# - `fonts` in `examples/window.rs`, reached only when a person gives
-#   `--family <name>` to lay the fixture out in a family another app has
-#   (`docs/dev-practices/on-demand-checks.md`, "Scale and fullscreen, by
-#   hand").
+# - `fonts` in `examples/window.rs`, reached only when a run gives
+#   `--family <name>` to lay the fixture out in a family of this machine's
+#   fonts (`docs/dev-practices/on-demand-checks.md`, "The window to try, on
+#   demand").
 #
 # No test calls either: every test, and every other run of the example,
 # `linux-window`'s and `window-contract`'s among them, is on the fixture

@@ -298,10 +298,9 @@ source and documentation say at the pin, and each row says so. A surface
 exists since the display pipeline's phase 5, which configures one with
 this choice and presents to it; one row below has since been seen on a
 surface, and says so. Seeing what a surface offers is not measuring a
-mode: the measurements are the display pipeline's phase 6's, by the steps
-written down in
+mode: a measurement is a window's figures, from the report
 [on-demand-checks.md](../dev-practices/on-demand-checks.md), "The present
-mode, measured on a window". They may overturn the choice. Since that
+mode, measured on a window", describes. They may overturn the choice. Since that
 phase the editor has what the steps need: `editor --present-mode <mode>
 --frame-latency <n> --report <file>` asks for another presentation for
 one run, and its report says what the surface offered and was configured
