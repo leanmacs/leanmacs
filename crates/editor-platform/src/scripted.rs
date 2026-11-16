@@ -4,12 +4,40 @@
 //! above the port, and the Lean test executable through `editor-ffi`, run on
 //! it. It opens nothing and needs no display.
 
+use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::{
     Button, CannotOpen, Canvas, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
-    PhysicalKey, Platform, Pointer, PointerAction, Report, Resize, WindowOptions,
+    PhysicalKey, Platform, Pointer, PointerAction, Report, Request, Resize, WindowOptions,
 };
+
+/// What a window shows, as far as requests go: the pure model that
+/// [`contract::requests`](crate::contract::requests) is held against.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Shown {
+    /// Whether the window is in the system's fullscreen.
+    pub fullscreen: bool,
+    /// Whether the window has been minimised.
+    pub minimised: bool,
+    /// The title asked last; `None` until one is.
+    pub title: Option<String>,
+}
+
+impl Shown {
+    /// Carries out `request` on the window.
+    ///
+    /// Entering and leaving fullscreen set it, and are not toggles; a
+    /// minimise minimises; a title replaces the title.
+    pub fn carry_out(&mut self, request: &Request) {
+        match request {
+            Request::EnterFullscreen => self.fullscreen = true,
+            Request::LeaveFullscreen => self.fullscreen = false,
+            Request::Minimise => self.minimised = true,
+            Request::Title(title) => self.title = Some(title.clone()),
+        }
+    }
+}
 
 /// A platform whose window reports [`Input::Opened`], then a script of
 /// inputs in order, and then waits for [`close`](Platform::close).
@@ -21,13 +49,22 @@ use crate::{
 ///
 /// It records the options of every run. It can be run again once a run has
 /// returned; it is not meant to be run from two threads at once.
+///
+/// It records what each run is asked ([`asked`](Self::asked)), while the
+/// run is in progress only, and carries each request out on its model,
+/// [`Shown`]. A request that takes the window into fullscreen or out of it
+/// is told to the drawer and reported as a [`Input::Resized`] at the size
+/// the run last reported (its [`SIZE`](Self::SIZE), or the script's last
+/// resize) carrying the new state, on the run's thread and before the
+/// window closes. Any other request reports nothing.
 pub struct ScriptedPlatform {
     /// What a run reports after [`Input::Opened`], or the reason no window
     /// can be opened.
     script: Result<Vec<Input>, String>,
     /// Whether a run is in progress and what it has been asked.
     state: Mutex<State>,
-    /// Signalled when a close is asked of a run in progress.
+    /// Signalled when a close is asked of a run in progress, or a request
+    /// gives it something to report.
     changed: Condvar,
 }
 
@@ -40,6 +77,15 @@ struct State {
     close_asked: bool,
     /// The options of every run so far, oldest first.
     runs: Vec<WindowOptions>,
+    /// What the latest run has been asked, oldest first.
+    asked: Vec<Request>,
+    /// What the running window shows, as requests have left it.
+    shown: Shown,
+    /// The size the run last reported, with the fullscreen state it said;
+    /// `None` before a run has said one, when it is [`ScriptedPlatform::SIZE`].
+    size: Option<Resize>,
+    /// What requests have given the run to report, oldest first.
+    to_report: VecDeque<Resize>,
 }
 
 impl ScriptedPlatform {
@@ -52,6 +98,7 @@ impl ScriptedPlatform {
         width: 640,
         height: 480,
         scale: 1.0,
+        fullscreen: false,
     };
 
     /// A platform whose window reports `script` after [`Input::Opened`].
@@ -128,6 +175,7 @@ impl ScriptedPlatform {
                 width: 800,
                 height: 600,
                 scale: 2.0,
+                fullscreen: false,
             }),
             Input::CloseRequested,
         ]
@@ -136,6 +184,12 @@ impl ScriptedPlatform {
     /// The options of every run so far, oldest first.
     pub fn runs(&self) -> Vec<WindowOptions> {
         self.state().runs.clone()
+    }
+
+    /// What the latest run was asked while it was in progress, oldest
+    /// first; nothing before any run. A run begins with nothing asked.
+    pub fn asked(&self) -> Vec<Request> {
+        self.state().asked.clone()
     }
 
     /// Locks the state. The lock is never held while other code runs, so a
@@ -160,6 +214,10 @@ impl Platform for ScriptedPlatform {
             let mut state = self.state();
             state.running = true;
             state.close_asked = false;
+            state.asked.clear();
+            state.shown = Shown::default();
+            state.size = None;
+            state.to_report.clear();
         }
 
         drawer(Canvas::Opened {
@@ -173,20 +231,34 @@ impl Platform for ScriptedPlatform {
         for input in script {
             if options.composition || !matches!(input, Input::Composition(_)) {
                 if let Input::Resized(size) = input {
+                    {
+                        let mut state = self.state();
+                        state.size = Some(*size);
+                        state.shown.fullscreen = size.fullscreen;
+                    }
                     drawer(Canvas::Resized(*size));
                 }
                 report(input.clone());
             }
         }
 
-        {
-            let mut state = self.state();
-            while !state.close_asked {
-                state = self
-                    .changed
-                    .wait(state)
-                    .unwrap_or_else(PoisonError::into_inner);
-            }
+        // Until a close is asked, and then until nothing is left to
+        // report: what a request gave it to report is reported before the
+        // window closes, and the lock is not held while it is.
+        loop {
+            let next = {
+                let mut state = self.state();
+                while !state.close_asked && state.to_report.is_empty() {
+                    state = self
+                        .changed
+                        .wait(state)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+                state.to_report.pop_front()
+            };
+            let Some(size) = next else { break };
+            drawer(Canvas::Resized(size));
+            report(Input::Resized(size));
         }
         // The run is still in progress while the drawer lets go of what it
         // made: a drawer may take its time over that, and the lock is not
@@ -200,6 +272,26 @@ impl Platform for ScriptedPlatform {
         let mut state = self.state();
         if state.running {
             state.close_asked = true;
+            self.changed.notify_all();
+        }
+    }
+
+    fn request(&self, request: Request) {
+        let mut state = self.state();
+        if !state.running {
+            return;
+        }
+        let was = state.shown.fullscreen;
+        state.shown.carry_out(&request);
+        state.asked.push(request);
+        let fullscreen = state.shown.fullscreen;
+        if fullscreen != was {
+            let size = Resize {
+                fullscreen,
+                ..state.size.unwrap_or(Self::SIZE)
+            };
+            state.size = Some(size);
+            state.to_report.push_back(size);
             self.changed.notify_all();
         }
     }
@@ -376,7 +468,8 @@ mod tests {
             Resize {
                 width: 640,
                 height: 480,
-                scale: 1.0
+                scale: 1.0,
+                fullscreen: false,
             }
         );
     }
@@ -387,11 +480,13 @@ mod tests {
             width: 300,
             height: 120,
             scale: 1.0,
+            fullscreen: false,
         };
         let large = Resize {
             width: 800,
             height: 600,
             scale: 2.0,
+            fullscreen: false,
         };
         let script = vec![Input::Resized(small), press("a"), Input::Resized(large)];
         let platform = Arc::new(ScriptedPlatform::new(script));
@@ -619,6 +714,7 @@ mod tests {
                     width: 800,
                     height: 600,
                     scale: 2.0,
+                    fullscreen: false,
                 }),
                 Input::CloseRequested,
             ]
@@ -641,6 +737,169 @@ mod tests {
                     super_key: false,
                 },
                 text: String::new(),
+            }
+        );
+    }
+
+    /// The size the scripted platform opens at, in fullscreen or not.
+    fn opened_size(fullscreen: bool) -> Resize {
+        Resize {
+            fullscreen,
+            ..ScriptedPlatform::SIZE
+        }
+    }
+
+    #[test]
+    fn requests_asked_while_a_window_runs_are_recorded_in_the_order_they_were_sent() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(1), [opened()]);
+
+        let asked = [
+            Request::EnterFullscreen,
+            Request::Minimise,
+            Request::LeaveFullscreen,
+            Request::Title("notes.txt".into()),
+        ];
+        for request in asked.clone() {
+            platform.request(request);
+        }
+
+        assert_eq!(platform.asked(), asked);
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
+    fn a_request_with_no_run_in_progress_is_not_recorded_and_ends_no_later_run() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+
+        platform.request(Request::EnterFullscreen);
+        platform.request(Request::Title("before".into()));
+        let run = start(&platform, COMPOSING);
+
+        assert_eq!(run.next(1), [opened()]);
+        assert!(
+            run.is_waiting(),
+            "an earlier request reports nothing and ends nothing"
+        );
+        assert_eq!(platform.asked(), []);
+        platform.request(Request::Minimise);
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+
+        // Nor is one asked once the run has returned.
+        platform.request(Request::Title("after".into()));
+        assert_eq!(platform.asked(), [Request::Minimise]);
+    }
+
+    #[test]
+    fn the_record_of_requests_is_the_latest_runs() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+
+        let first = start(&platform, COMPOSING);
+        assert_eq!(first.next(1), [opened()]);
+        platform.request(Request::Minimise);
+        platform.close();
+        assert_eq!(first.result(), Ok(()));
+        assert_eq!(platform.asked(), [Request::Minimise]);
+
+        let second = start(&platform, COMPOSING);
+        assert_eq!(second.next(1), [opened()]);
+        assert_eq!(platform.asked(), [], "a run begins with nothing asked");
+        platform.request(Request::Title("todo.txt".into()));
+        platform.close();
+        assert_eq!(second.result(), Ok(()));
+        assert_eq!(platform.asked(), [Request::Title("todo.txt".into())]);
+    }
+
+    #[test]
+    fn a_fullscreen_request_that_changes_the_window_is_told_and_reported_as_a_resize_at_its_last_size_carrying_the_new_state()
+     {
+        let large = Resize {
+            width: 800,
+            height: 600,
+            scale: 2.0,
+            fullscreen: false,
+        };
+        let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(large)]));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(2), [opened(), Input::Resized(large)]);
+
+        let entered = Resize {
+            fullscreen: true,
+            ..large
+        };
+        platform.request(Request::EnterFullscreen);
+        assert_eq!(run.next(1), [Input::Resized(entered)]);
+        platform.request(Request::LeaveFullscreen);
+        assert_eq!(run.next(1), [Input::Resized(large)]);
+        platform.close();
+
+        assert_eq!(
+            run.all_said(),
+            [
+                told_opened(),
+                Said::Reported(opened()),
+                Said::Resized(large),
+                Said::Reported(Input::Resized(large)),
+                Said::Resized(entered),
+                Said::Reported(Input::Resized(entered)),
+                Said::Resized(large),
+                Said::Reported(Input::Resized(large)),
+                Said::Closing,
+                Said::Returned,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_fullscreen_request_that_changes_nothing_a_minimise_and_a_title_report_nothing() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(1), [opened()]);
+
+        platform.request(Request::LeaveFullscreen);
+        platform.request(Request::Minimise);
+        platform.request(Request::Title("notes.txt".into()));
+        assert!(run.is_waiting(), "none of these changes fullscreen");
+
+        platform.request(Request::EnterFullscreen);
+        assert_eq!(run.next(1), [Input::Resized(opened_size(true))]);
+        platform.request(Request::EnterFullscreen);
+        assert!(run.is_waiting(), "a window in fullscreen stays there");
+
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
+    fn the_model_carries_out_each_request() {
+        let mut shown = Shown::default();
+        assert_eq!(
+            shown,
+            Shown {
+                fullscreen: false,
+                minimised: false,
+                title: None,
+            }
+        );
+
+        shown.carry_out(&Request::EnterFullscreen);
+        shown.carry_out(&Request::EnterFullscreen);
+        assert!(shown.fullscreen, "entering is not a toggle");
+        shown.carry_out(&Request::Title("a".into()));
+        shown.carry_out(&Request::Title("b".into()));
+        assert_eq!(shown.title.as_deref(), Some("b"));
+        shown.carry_out(&Request::LeaveFullscreen);
+        shown.carry_out(&Request::LeaveFullscreen);
+        shown.carry_out(&Request::Minimise);
+        assert_eq!(
+            shown,
+            Shown {
+                fullscreen: false,
+                minimised: true,
+                title: Some("b".into()),
             }
         );
     }

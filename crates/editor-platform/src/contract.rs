@@ -11,6 +11,13 @@
 //! - **Nothing is reported once the run has returned.**
 //! - **A close with no run in progress is harmless**: before a run it does
 //!   not end the run that follows, and after one it reports nothing.
+//! - **A request with no run in progress is harmless**: one asked before a
+//!   run is not reported first by the run that follows, and one asked after
+//!   a run reports nothing. The check asks for a title, which is harmless
+//!   on a real desktop.
+//!
+//! What a window does with a request while it runs is the contract of
+//! [`requests`], which needs no platform.
 //! - **The drawer is told the window opened before anyone hears of it.**
 //!   The first thing a run tells its [`Drawer`] is [`Canvas::Opened`], and it
 //!   tells it before it reports its first input: whoever learns of the
@@ -45,12 +52,14 @@
 //!
 //! The crate docs say where the real adapter is held to this.
 
+pub mod requests;
+
 use std::fmt;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{CannotOpen, Canvas, Drawer, Input, Platform, Report, WindowOptions};
+use crate::{CannotOpen, Canvas, Drawer, Input, Platform, Report, Request, WindowOptions};
 
 /// A rule of the contract that a platform broke. It is `PartialEq` only, as
 /// [`Input`] is.
@@ -144,6 +153,10 @@ fn name(canvas: &Canvas) -> &'static str {
 /// close, unless [`Check::settling_for`] says otherwise. A run that a close
 /// made before it would end returns in this time.
 pub const SETTLE: Duration = Duration::from_millis(50);
+
+/// The title the check asks for with no run in progress, before the run and
+/// after it.
+const STRAY_TITLE: &str = "editor: asked with no window running";
 
 /// One run of a platform under the contract.
 ///
@@ -296,10 +309,13 @@ impl Check {
     /// A platform that has reported nothing by the bound is asked to close
     /// all the same, so that the run can end.
     pub fn run(&self, platform: &impl Platform) {
-        // With no run in progress this must do nothing: were it remembered,
-        // the run below would end before the close that is meant for it,
-        // which the settling time below is there to see.
+        // With no run in progress these must do nothing: were the close
+        // remembered, the run below would end before the close that is
+        // meant for it, which the settling time below is there to see; were
+        // the request, the run would report it before `Opened`. A title is
+        // asked because it is harmless on a real desktop.
         platform.close();
+        platform.request(Request::Title(STRAY_TITLE.into()));
 
         self.progress
             .update(|progress| progress.started = Some(Instant::now()));
@@ -322,8 +338,9 @@ impl Check {
                 .update(|progress| progress.returned = Some((Instant::now(), result)));
         });
 
-        // Anything this makes the platform report is reported after its run.
+        // Anything these make the platform report is reported after its run.
         platform.close();
+        platform.request(Request::Title(STRAY_TITLE.into()));
         self.progress.update(|progress| progress.finished = true);
     }
 
@@ -598,6 +615,8 @@ mod tests {
                 drawer(Canvas::Closing);
             }
         }
+
+        fn request(&self, _: Request) {}
     }
 
     /// A platform that tells the drawer its window is open and then cannot
@@ -618,6 +637,8 @@ mod tests {
         }
 
         fn close(&self) {}
+
+        fn request(&self, _: Request) {}
     }
 
     #[test]
@@ -791,6 +812,8 @@ mod tests {
         fn close(&self) {
             self.closing.ask();
         }
+
+        fn request(&self, _: Request) {}
     }
 
     /// A platform that reports `Opened` and ignores every close. Its run
@@ -817,6 +840,8 @@ mod tests {
         }
 
         fn close(&self) {}
+
+        fn request(&self, _: Request) {}
     }
 
     /// A platform that keeps what it was given to report with, and reports
@@ -852,6 +877,8 @@ mod tests {
                 report(Input::Focus(false));
             }
         }
+
+        fn request(&self, _: Request) {}
     }
 
     /// A platform that remembers a close made before its run: the run
@@ -882,6 +909,8 @@ mod tests {
         fn close(&self) {
             self.closed.open();
         }
+
+        fn request(&self, _: Request) {}
     }
 
     #[test]
@@ -895,6 +924,67 @@ mod tests {
         thread::spawn(move || runner.run(&*platform));
 
         assert_eq!(check.verdict(), Err(Violation::ReturnedBeforeClose));
+    }
+
+    /// A platform that remembers a request made with no run in progress,
+    /// and reports it, as a resize, first when its next run begins: as an
+    /// adapter would whose channel outlives its window.
+    #[derive(Default)]
+    struct RemembersRequests {
+        /// The close the run waits for.
+        closing: Closing,
+        /// The requests asked so far, whether a run was in progress or not.
+        remembered: Mutex<Vec<Request>>,
+    }
+
+    impl Platform for RemembersRequests {
+        fn run(
+            &self,
+            _options: WindowOptions,
+            report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
+            self.closing.begin();
+            drawer(told_opened());
+            let remembered = std::mem::take(
+                &mut *self
+                    .remembered
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner),
+            );
+            if !remembered.is_empty() {
+                report(Input::Resized(ScriptedPlatform::SIZE));
+            }
+            report(opened("remembers requests"));
+            self.closing.wait();
+            drawer(Canvas::Closing);
+            Ok(())
+        }
+
+        fn close(&self) {
+            self.closing.ask();
+        }
+
+        fn request(&self, request: Request) {
+            self.remembered
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(request);
+        }
+    }
+
+    #[test]
+    fn a_platform_that_remembers_a_request_made_before_its_run_is_refused() {
+        assert_eq!(
+            check(
+                Arc::new(RemembersRequests::default()),
+                WindowOptions::default(),
+                GENEROUS
+            ),
+            Err(Violation::FirstInputNotOpened(Input::Resized(
+                ScriptedPlatform::SIZE
+            )))
+        );
     }
 
     #[test]

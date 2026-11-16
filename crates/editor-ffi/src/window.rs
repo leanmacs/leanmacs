@@ -419,6 +419,7 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
                 width: reader.word()?,
                 height: reader.word()?,
                 scale: f64::from_bits(reader.word()?),
+                fullscreen: false,
             })
         }
         EventKind::CloseRequested => {
@@ -1222,6 +1223,7 @@ mod tests {
                 width: 800,
                 height: 600,
                 scale: 2.0,
+                fullscreen: false,
             }),
             Input::CloseRequested,
         ];
@@ -1489,6 +1491,7 @@ mod tests {
                 width: 800,
                 height: 600,
                 scale: 2.0,
+                fullscreen: false,
             })),
             (
                 EventKind::Resize,
@@ -1579,6 +1582,7 @@ mod tests {
                 width: 800,
                 height: 600,
                 scale: 2.0,
+                fullscreen: false,
             }),
             Input::CloseRequested,
         ]
@@ -1729,6 +1733,7 @@ mod tests {
             width: 1,
             height: 2,
             scale: 1.5,
+            fullscreen: false,
         });
         let posted = event(input, 0);
         let bytes = crate::words::tests::buffer(&posted.words);
@@ -1927,6 +1932,7 @@ mod tests {
             width: 300,
             height: 120,
             scale: 2.0,
+            fullscreen: false,
         })]));
         let queue = Arc::new(Queue::new());
         // Which kind of thing the drawer was told, in order: the thing
@@ -2255,6 +2261,7 @@ mod tests {
             width: 800,
             height: 600,
             scale: 2.0,
+            fullscreen: false,
         };
         let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(resized)]));
         let queue = Arc::new(Queue::new());

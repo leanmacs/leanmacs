@@ -19,7 +19,8 @@
 //! physical keys are W3C UI Events names, as strings, so a new one needs no
 //! number on either side of the Lean boundary. A pointer ([`Pointer`]) with
 //! its action, position, button and modifiers; a resize ([`Resize`]) with
-//! the size and the scale factor; the focus; an input method's composition;
+//! the size, the scale factor and whether the window is in fullscreen; the
+//! focus; an input method's composition;
 //! that the window opened; and a request to close.
 //!
 //! The command loop fixed this shape (its phase 1), so that it and the
@@ -51,6 +52,21 @@
 //!   as it opens: a `Resized` says how large the window is, not that it
 //!   is another size than before. The fake reports what its script says
 //!   and no more.
+//! - **A resize says whether the window is in the system's fullscreen**
+//!   ([`Resize::fullscreen`]). A platform that carries out a request that
+//!   changes fullscreen, or sees the window enter or leave it by other
+//!   means (the green button on macOS), reports a `Resized` carrying the
+//!   new state, at the size it last said if the size did not change.
+//!
+//! # What a window is asked
+//!
+//! The editor asks things of the running window with [`Platform::request`]:
+//! a [`Request`], one variant for each thing asked (enter or leave
+//! fullscreen, minimise, a title). A request asked with no window running
+//! does nothing and is not remembered. [`Platform::close`] stays a method
+//! of its own: it ends the run, which no request does. What a request does
+//! to the window is held to [`contract::requests`], against the pure model
+//! [`scripted::Shown`].
 //!
 //! # What a window tells whatever draws in it
 //!
@@ -73,8 +89,10 @@
 //!
 //! # Where an addition goes
 //!
-//! The port grows by data, not by methods. Each addition to what a window
-//! reports crosses to Lean as a row of the table in `editor-ffi`'s
+//! The port grows by data, not by methods. A new thing Lean asks of a
+//! window crosses as a tag of `editor-ffi`'s `editor_ffi_window_request`
+//! (the title does not: it is a field of the scene). Each addition to what
+//! a window reports crosses to Lean as a row of the table in `editor-ffi`'s
 //! `window.rs` and a case in Lean's `Editor/Event/Queue.lean`;
 //! `Editor/Event.lean` says which roadmap owns each side. An addition to
 //! what a window tells the drawer crosses nothing: it becomes a call on the
@@ -83,6 +101,7 @@
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
 //! | Something more a window reports | A variant of [`Input`] (as [`Input::Pointer`] and [`Input::Resized`] were), or a field of one | The fake's tests in [`scripted`], and the adapter's translation tests |
+//! | Something more a window is asked | A variant of [`Request`] | The fake's tests in [`scripted`], [`contract::requests`], the adapter's translation tests, and `editor-ffi`'s request tags |
 //! | Something more a window tells what draws in it | A variant of [`Canvas`], or a field of one | The fake's tests in [`scripted`], the adapter's translation tests, and `editor-ffi`'s tests of what each becomes |
 //! | A new key attribute | A field of [`Key`] or of [`Modifiers`] | The same |
 //! | A new named key or physical key | Nothing here: the adapter produces its W3C name in [`LogicalKey::Named`] or [`PhysicalKey::Code`] | The adapter's translation tests |
@@ -297,7 +316,8 @@ pub enum Button {
     Other(u16),
 }
 
-/// The window's new size and scale factor.
+/// The window's new size and scale factor, and whether it is in the
+/// system's fullscreen.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Resize {
     /// The drawable width, in physical pixels.
@@ -306,6 +326,27 @@ pub struct Resize {
     pub height: u64,
     /// How many physical pixels a logical pixel is.
     pub scale: f64,
+    /// Whether the window is in the system's fullscreen.
+    pub fullscreen: bool,
+}
+
+/// One thing the editor asks of the running window.
+///
+/// The port grows by a variant here for each new thing asked, never by a
+/// method. A request asked of a platform that runs no window does nothing
+/// and is not remembered, as a close is not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Request {
+    /// Put the window in the system's fullscreen. A window already in it
+    /// stays there: this is not a toggle.
+    EnterFullscreen,
+    /// Take the window out of the system's fullscreen. A window not in it
+    /// stays out.
+    LeaveFullscreen,
+    /// Minimise the window.
+    Minimise,
+    /// Show this as the window's title.
+    Title(String),
 }
 
 /// A step of an input method's composition (IME).
@@ -467,4 +508,12 @@ pub trait Platform: Sync {
     /// It may be called from any thread, and does nothing when no window is
     /// running.
     fn close(&self);
+
+    /// Asks the running window to do what `request` says. It may be called
+    /// from any thread, as [`close`](Self::close) may, never blocks on the
+    /// window, and does nothing, remembering nothing, when no window is
+    /// running.
+    ///
+    /// It has no default, so that no adapter ignores requests unawares.
+    fn request(&self, request: Request);
 }

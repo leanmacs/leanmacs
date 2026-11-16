@@ -811,6 +811,7 @@ mod tests {
         width: 400,
         height: 300,
         scale: 1.0,
+        fullscreen: false,
     };
 
     /// Another size.
@@ -818,6 +819,7 @@ mod tests {
         width: 800,
         height: 600,
         scale: 2.0,
+        fullscreen: false,
     };
 
     /// A long time on the loop's clock: longer than any refresh interval a
@@ -916,6 +918,7 @@ mod tests {
                 width: 1,
                 height: 0,
                 scale: 1.25,
+                fullscreen: false,
             }),
             Target {
                 width: 1,
@@ -928,6 +931,7 @@ mod tests {
             width: u64::MAX,
             height: u64::from(u32::MAX) + 1,
             scale: 1.0,
+            fullscreen: false,
         });
         assert_eq!((huge.width, huge.height), (u32::MAX, u32::MAX));
     }

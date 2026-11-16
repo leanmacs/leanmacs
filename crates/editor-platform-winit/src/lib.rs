@@ -100,10 +100,10 @@ mod translate;
 
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 
 use editor_platform::{
-    CannotOpen, Canvas, Drawer, Input, NativeWindow, Platform, Report, WindowOptions,
+    CannotOpen, Canvas, Drawer, Input, NativeWindow, Platform, Report, Request, WindowOptions,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -127,13 +127,15 @@ pub struct WinitPlatform {
     running: Mutex<Option<Running>>,
 }
 
-/// The way to end a running window's loop: ask it to close, then wake it to
-/// see that.
+/// The way to a running window's loop: ask it to close, or send it a
+/// request, then wake it to see that.
 struct Running {
     /// What wakes the loop.
     proxy: EventLoopProxy,
     /// Whether a close has been asked, which the loop reads when woken.
     closing: Closing,
+    /// Where requests go, which the loop takes when woken.
+    requests: mpsc::Sender<Request>,
 }
 
 impl WinitPlatform {
@@ -177,9 +179,11 @@ impl Platform for WinitPlatform {
 
         let mut event_loop = event_loop().map_err(cannot_open)?;
         let closing = Closing::default();
+        let (requests, _asked) = mpsc::channel();
         *self.running() = Some(Running {
             proxy: event_loop.create_proxy(),
             closing: closing.clone(),
+            requests,
         });
         let mut app = App {
             options,
@@ -216,6 +220,16 @@ impl Platform for WinitPlatform {
             // Asked first, so that the loop it wakes sees it. A loop that
             // has already ended is woken for nothing.
             running.closing.ask();
+            running.proxy.wake_up();
+        }
+    }
+
+    fn request(&self, request: Request) {
+        if let Some(running) = self.running().as_ref() {
+            // Sent first, as a close is asked first, so that the loop it
+            // wakes finds it. A loop that has ended has dropped its end of
+            // the channel, and the request goes nowhere.
+            let _ = running.requests.send(request);
             running.proxy.wake_up();
         }
     }
@@ -461,6 +475,7 @@ mod tests {
         *platform.running() = Some(Running {
             proxy: EventLoopProxy::new(waker.clone()),
             closing,
+            requests: mpsc::channel().0,
         });
 
         platform.close();
@@ -468,6 +483,56 @@ mod tests {
         // Woken once, with the close already asked: the loop that wakes
         // sees it.
         assert_eq!(*waker.woken.lock().unwrap(), [true]);
+    }
+
+    /// A loop's waker that takes, at each wake-up, the requests already on
+    /// the channel by then.
+    #[derive(Debug)]
+    struct RequestWaker {
+        requests: Mutex<mpsc::Receiver<Request>>,
+        woken: Mutex<Vec<Vec<Request>>>,
+    }
+
+    impl EventLoopProxyProvider for RequestWaker {
+        fn wake_up(&self) {
+            let found = self.requests.lock().unwrap().try_iter().collect();
+            self.woken.lock().unwrap().push(found);
+        }
+    }
+
+    #[test]
+    fn a_request_while_a_window_runs_is_sent_before_its_loop_is_woken() {
+        let platform = WinitPlatform::new(|| false);
+        let (requests, asked) = mpsc::channel();
+        let waker = Arc::new(RequestWaker {
+            requests: Mutex::new(asked),
+            woken: Mutex::new(Vec::new()),
+        });
+        let closing = Closing::default();
+        *platform.running() = Some(Running {
+            proxy: EventLoopProxy::new(waker.clone()),
+            closing: closing.clone(),
+            requests,
+        });
+
+        platform.request(Request::EnterFullscreen);
+        platform.request(Request::Title("notes.txt".into()));
+
+        // Woken once for each, with it already on the channel: the loop
+        // that wakes finds it. A request asks no close.
+        assert_eq!(
+            *waker.woken.lock().unwrap(),
+            [
+                vec![Request::EnterFullscreen],
+                vec![Request::Title("notes.txt".into())]
+            ]
+        );
+        assert!(!closing.asked());
+    }
+
+    #[test]
+    fn a_request_with_no_window_running_does_nothing() {
+        WinitPlatform::new(|| false).request(Request::Minimise);
     }
 
     #[test]

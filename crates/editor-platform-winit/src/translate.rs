@@ -384,6 +384,7 @@ impl Seen {
             width: u64::from(self.size.width),
             height: u64::from(self.size.height),
             scale: self.scale,
+            fullscreen: false,
         }
     }
 
@@ -1055,6 +1056,7 @@ mod tests {
             width,
             height,
             scale,
+            fullscreen: false,
         })
     }
 
@@ -1122,6 +1124,7 @@ mod tests {
             width,
             height,
             scale,
+            fullscreen: false,
         }
     }
 

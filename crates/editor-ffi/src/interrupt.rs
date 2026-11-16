@@ -311,6 +311,7 @@ mod tests {
                 width: 1,
                 height: 1,
                 scale: 1.0,
+                fullscreen: false,
             }),
             Input::CloseRequested,
         ] {

@@ -2522,6 +2522,7 @@ mod tests {
             width: 800,
             height: 600,
             scale: 2.0,
+            fullscreen: false,
         };
         assert_eq!(
             happened(&Canvas::Opened {

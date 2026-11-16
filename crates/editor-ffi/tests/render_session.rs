@@ -55,6 +55,7 @@ const RESIZED: Resize = Resize {
     width: 800,
     height: 600,
     scale: 2.0,
+    fullscreen: false,
 };
 
 /// What a watched renderer says of itself.
