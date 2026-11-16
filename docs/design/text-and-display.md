@@ -1015,7 +1015,11 @@ of a run is that of the highest layer over the run that sets it:
 The same rule orders definitions: where what is sent defines a name more
 than once, a later definition's set attributes are over an earlier one's.
 So a theme is overridden by appending to it. A status field's face is over
-`mode-line` over `default`, and a cursor's face is over `default`. A name
+the view's status face (`mode-line.inactive` for a window that is not
+selected), over `mode-line`, over `default`, and a cursor's face is over
+`default`. A face's vertical padding is neither font nor paint: layout
+reads it only from `mode-line` and `echo-area`, to size the status rows,
+and it is a length in points like a size. A name
 nothing defines sets nothing. A decoration source added later (syntax
 highlighting) states its place in this order when it is added.
 
@@ -1074,11 +1078,18 @@ face in `setup`, `face "name" { … }`; a name is set once in a `setup`.
 **The face vocabulary** (`lean/Editor/Face/Vocabulary.lean`) is the list of
 face names a shipped theme defines, each with a sentence of what is drawn
 in it and by whom: layout's four; `cursor`, and `cursor.<state>` for each
-state of the shipped Vim scheme; the status fields (`status.state`,
-`status.name`, `status.modified`) and the minibuffer's (`minibuffer.prompt`,
-`minibuffer.candidate`, `minibuffer.chosen`). Faces are declared there ahead
-of the features that draw them, so the shipped themes colour them before
-those land: `mode-line.inactive`; `syntax.` and each top-level name of
+state of the shipped Vim scheme; the mode line's (theming phase 5):
+`mode-line.state.<state>`, the badge, for each state of the shipped Vim
+scheme, `mode-line.buffer`, `mode-line.modified`, `mode-line.secondary`
+for the directory, the major mode, line:col and the position, and
+`mode-line.inactive` for every field and the row of a window that is not
+selected; and the minibuffer's (`minibuffer.prompt`,
+`minibuffer.candidate`, `minibuffer.chosen`). The status fields' faces of
+before (`status.state`, `status.name`, `status.modified`) were replaced by
+these, not kept as aliases: a config that defined them defines faces
+nothing draws. Faces are declared there ahead of the features that draw
+them, so the shipped themes colour them before those land: `syntax.` and
+each top-level name of
 tree-sitter's common highlight captures (`syntax.keyword`,
 `syntax.comment`, …; a dotted capture's mapping to its first component is
 the syntax roadmap's); `diff.added`, `diff.removed`, `diff.changed`,
@@ -1507,7 +1518,15 @@ Each view (`View`):
 | `selections` | Its selections, as selection markers of that text; each carries its ranges and its shape |
 | `cursor` | Its cursor shape (block, bar, underline, hollow) and the name of the face its cursors take |
 | `decorations` | Byte ranges of its snapshot, each naming a face |
-| `status` | Its status line: text fields, each naming a face |
+| `status` | Its status line: text fields, each naming a face, with a side (left, the default, or right) and a horizontal padding in whole points, which its face's background fills |
+| `statusFace` | The face of its status row, over `mode-line` and under every field's, which gives the row its background: `mode-line.inactive` for a window that is not selected, none for the selected one and the minibuffer's view. It neither makes the row taller nor moves its line |
+
+A field's side and padding and a view's status face cross the wire as
+data (a field is four words: its text's and face's lengths, its side and
+its padding; a view ends with its status face's presence and length), and
+a face definition is 24 words with its vertical padding last
+(`crates/editor-ffi/src/display/wire.rs`). Their defaults keep every scene
+that names none as it was.
 
 Content is named only by handles, never by copied text, so an unchanged
 view is sent as the same handles. Faces are names; what they look like is
@@ -1670,19 +1689,29 @@ decided 2026-11-13 by its phase 2):
   has no decorations until later phases choose them. The focused view is
   named only while the frame has the keyboard focus, and the preedit is
   the input method's text for it.
-- A view's status line (`Loop.statusOf`) is the fields the input scheme
-  reports of the view and then its buffer's (`Loop.status`, built by the
-  command loop's phase 9): the buffer's name in the face `status.name`,
-  and, while the buffer is modified, the text `[+]` in the face
-  `status.modified`. Under the Vim scheme the scheme's is one field, the
-  name of the view's Vim state in the face `status.state`, so the line
-  reads `normal`, `scratch`. "Modified" is the presence of the field in
-  the face `status.modified`: a buffer that is not modified has no such
-  field, not one with an empty text. Whether a buffer is modified is its
-  undo tree's answer, and it is right in a scene because every tree is
-  told its text's revision before the scene is made; a buffer is modified
-  while its group is open, so during an insert session. The scene's shape
-  did not change.
+- A view's status line (`Loop.statusOf`) is the segmented mode line's
+  (theming phase 5, `lean/Editor/ModeLine.lean`): segments registered by
+  name and owner, each a function from what the window shows (its buffer,
+  the scheme's reported fields, its cursor's row and column in cells, its
+  rows, whether it is the selected window) to fields, listed by config for
+  each side (`modeLine`) or in the default order. Shipped, on the left:
+  the state badge (the scheme's field, `NORMAL` in
+  `mode-line.state.normal` under the Vim scheme, padded 8 points), the
+  buffer's name, `●` while the buffer is modified and the directory its
+  file was opened in; on the right, ending at the row's end: the major
+  mode, line:col and the position (`All`, `Top`, `Bot` or a percentage,
+  from the cursor's row as lualine's `progress`, not from the rows shown
+  as Vim's ruler). Every other field is padded 4. A segment with nothing
+  to say gives no field. The selected window is `EditorState.selectedView`
+  (the prompt's asker while one is open), whether or not the frame has the
+  keyboard focus; a window that is not has no badge and every field in
+  `mode-line.inactive`, and the view carries that face for its row
+  (`View.statusFace`). Whether a buffer is modified is its undo tree's
+  answer, and it is right in a scene because every tree is told its
+  text's revision before the scene is made; a buffer is modified while its
+  group is open, so during an insert session. A status field carries a
+  side and a padding, and a view a status face (below, "The scene, as
+  built").
 - **While a prompt is open the minibuffer's view is a view of the scene**
   like any other (built by the command loop's phase 10), where the
   minibuffer's place is in drawing order: its snapshot is the input typed
@@ -2044,22 +2073,34 @@ part are in the module docs; these are the decisions.
   generation nor the table. The `Renderer` port that takes these frames
   was made later, in a crate of its own ("The renderer, as built").
 - **The mode line.** A view with at least one status field has a status
-  row: its fields' texts one after another with no separator, each in its
-  face over `mode-line` over `default`, shaped as one unbroken line
-  through the `Shaper` port, at the bottom of the view's rectangle. A tab,
-  a carriage return or a line feed in a field is shaped as a space. The
-  row is exactly the mode line's line height, rounded up to a whole
-  pixel, whatever height its line was shaped at, and the view's text rows
-  are those that fit whole in the whole pixels that remain (display
-  pipeline phase 6). A view whose rectangle reaches the frame's bottom
+  row at the bottom of its rectangle. Each field is shaped through the
+  `Shaper` port as a line of its own, in its face over the view's status
+  face over `mode-line` over `default`, so a field that changes, a
+  line:col, reshapes that field alone. A tab, a carriage return or a line
+  feed in a field is shaped as a space. There is no separator glyph, so
+  nothing depends on a patched font: fields are told apart by padding and
+  background (theming phase 5, after lualine.nvim and doom-modeline).
+  Each field has a side and a horizontal padding in points: left fields
+  run from the row's start and right fields end at its end, each in a box
+  of its padding and its text. When both sides do not fit, the right side
+  keeps its place and the left side is cut where it begins; a right side
+  wider than the row starts at the row's start and is clipped by the
+  view. The frame carries each field's box in its face's background
+  (`StatusBox`), so the renderer paints padding, which has no glyph. A
+  face's vertical padding, read from `mode-line` (and from `echo-area` for
+  the echo), makes the row taller: it is the line height and twice the
+  padding, rounded up to a whole pixel, whatever height its line was
+  shaped at, and its line sits below the padding. The shipped themes pad
+  both 3 points. The view's text rows are those that fit whole in the
+  whole pixels that remain (display pipeline phase 6). A view whose rectangle reaches the frame's bottom
   edge and that has a status field has a status row of the message
   height instead, the taller of `echo-area` and `mode-line`: that row is
   the minibuffer's bottom row. A view with no status field is laid out
   across its whole rectangle, at the bottom edge or not. `Layout::heights`
   answers the three heights, text, status and message, so a caller that
   asks the rows query at a view's height less its bottom row is answered
-  with the rows the frame shows. The row is kept per view and
-  shaped again only when its text or its font runs change. The
+  with the rows the frame shows. Each field's line is kept per view and
+  shaped again only when its text or its font change. The
   alternatives were to draw it over the last text row, which hides rows,
   or outside the view's rectangle, for which the scene has no rectangle.
 - **Counters** count segments shaped, broken and reused, each once per call;
@@ -2155,8 +2196,9 @@ bound submits nothing.
   rectangles of whole pixels that are filled with a colour or read a
   rectangle of a glyph atlas, in drawing order: per view its background,
   each run's background where it is not the view's, the selection areas,
-  the glyphs, underlines and strike-throughs, the status row, the
-  cursors. A row's quads are kept by its hash, relative to its own start.
+  the glyphs, underlines and strike-throughs, the status row (its
+  background, then each field's box where its colour is not the row's,
+  then its runs), the cursors. A row's quads are kept by its hash, relative to its own start.
   Behind the painter is one of two devices, which only blend the quads:
   the CPU compositor (`HeadlessRenderer`) and wgpu (`WgpuRenderer`). So
   the two adapters are the same code down to the quads and the atlas's

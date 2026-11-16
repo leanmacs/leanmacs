@@ -261,7 +261,7 @@ report : State → ViewId → InputScheme.Report   -- defaults to the default re
 | Field of `InputScheme.Report` | Default | Read by |
 |---|---|---|
 | `cursor : Cursor` | A bar in the face `cursor` | The scene: how the view's cursors are drawn |
-| `status : Array StatusField` | None | The scene: the view's status line begins with these fields |
+| `status : Array StatusField` | None | The mode line's `state` segment, which draws these fields as its badge on the selected window |
 | `shape : Shape` | `exclusive` | The first window's selection, and a command that places one |
 | `selecting : Bool` | `false` | A command: a motion moves the head and keeps the anchor |
 | `session : Bool` | `false` | The loop: the view is in an insert session ("Insert sessions") |
@@ -953,12 +953,17 @@ for the rule).
   can read one: the record's cursor shape in the face `cursor.` followed
   by the state's name (`cursor.normal`, `cursor.insert`, `cursor.visual`,
   `cursor.visual-line`, `cursor.minibuffer`), one status field with the
-  state's name in the face `status.state` (`Vim.stateFace`), the record's
-  shape, `selecting` from `operatesOnSelection`, and `session` and
-  `takesText` both from `insertsText`. So the scene's cursor shape and
-  the state's name in the status line change when the state changes, and
-  a view's status line under the Vim scheme reads
-  `status.state "normal", status.name "scratch"`.
+  state's name in capitals in the face `mode-line.state.` followed by the
+  state's name (`NORMAL` in `mode-line.state.normal`, `Vim.stateFace`),
+  the record's shape, `selecting` from `operatesOnSelection`, and
+  `session` and `takesText` both from `insertsText`. The mode line's
+  `state` segment draws that field as its badge
+  ([text-and-display.md](text-and-display.md), "The scene", as built;
+  `lean/Editor/ModeLine.lean`), on the selected window only. So the
+  scene's cursor shape and the badge change when the state changes, and
+  a view's status line under the Vim scheme on the scratch buffer reads
+  `mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 |
+  mode-line.secondary "1:1" +4, mode-line.secondary "All" +4`.
 - **If a state ever needs `selecting`, `session` and `takesText` apart**
   from the two fields they are read off, each becomes a field of the
   record, and the report does not change.
@@ -3121,9 +3126,11 @@ every build). The second is proved on the text model
 - **The column of a cursor on a tab** ("The wanted column"). It is the
   tab's first display column, and Vim's is its last. Vim's needs the x of
   a character's last cell, which the display interface does not answer.
-- **The status line's order and the face names**: the state's field
-  first, in the face `status.state`; the cursor faces `cursor.` followed
-  by the state's name.
+- **The status line's order and the face names**: the state's badge
+  first, in the face `mode-line.state.` followed by the state's name, as
+  the segmented mode line's default order puts it (theming phase 5,
+  `lean/Editor/ModeLine.lean`); the cursor faces `cursor.` followed by
+  the state's name.
 - **A view follows by the least movement** ("Scrolling as built";
   [text-and-display.md](text-and-display.md), "Views as built"). Vim
   centres the cursor's line after a far jump. Centring is another target

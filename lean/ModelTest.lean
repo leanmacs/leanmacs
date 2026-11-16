@@ -4635,8 +4635,8 @@ def twoViews : Scene where
         cursor := { shape := .block, face := ⟨"cursor.normal"⟩ }
         decorations := #[{ start := 4, stop := 9, face := ⟨"search.match"⟩ }]
         status :=
-          #[{ text := "notes.txt", face := ⟨"status.name"⟩ },
-            { text := "[+]", face := ⟨"status.modified"⟩ }] },
+          #[{ text := "notes.txt", face := ⟨"mode-line.buffer"⟩, padding := 4 },
+            { text := "1:1", face := ⟨"mode-line.secondary"⟩, side := .right, padding := 4 }] },
       { id := ⟨1⟩, rect := { x := 800, y := 0, width := 800, height := 1160 }, snapshot := ⟨4⟩
         scroll := { text := ⟨2⟩, index := 0 }, selections := #[]
         cursor := { shape := .bar, face := ⟨"cursor.insert"⟩ }, decorations := #[], status := #[] }]
@@ -4654,7 +4654,8 @@ def sceneChecks : List Check :=
            (twoViews.views[0]?.map (·.selections.size)) == some 2 &&
            (twoViews.views[0]?.map (·.decorations)) ==
              some #[{ start := 4, stop := 9, face := ⟨"search.match"⟩ }] &&
-           (twoViews.views[0]?.map (·.status.map (·.text))) == some #["notes.txt", "[+]"] &&
+           (twoViews.views[0]?.map (·.status.map (·.text))) == some #["notes.txt", "1:1"] &&
+           (twoViews.views[0]?.map (·.status.map (·.side))) == some #[.left, .right] &&
            (twoViews.views[1]?.map (·.cursor)) ==
              some { shape := .bar, face := ⟨"cursor.insert"⟩ } &&
            (twoViews.views[1]?.map (·.rect.x)) == some 800 &&
@@ -8206,7 +8207,7 @@ the scene shows: a block in a face of its own, one status field, an
 inclusive selection, and selecting. -/
 def markedReport : InputScheme.Report :=
   { cursor := { shape := .block, face := ⟨"cursor.marked"⟩ }
-    status := #[{ text := "marked", face := ⟨"status.marked"⟩ }]
+    status := #[{ text := "marked", face := ⟨"mode-line.state.marked"⟩ }]
     shape := .inclusive
     selecting := true }
 
@@ -8214,7 +8215,7 @@ def markedReport : InputScheme.Report :=
 minibuffer's: an underline in a face of its own, and one status field. -/
 def askedReport : InputScheme.Report :=
   { cursor := { shape := .underline, face := ⟨"cursor.asked"⟩ }
-    status := #[{ text := "asked", face := ⟨"status.asked"⟩ }] }
+    status := #[{ text := "asked", face := ⟨"mode-line.state.asked"⟩ }] }
 
 /-- The reports the scheme `switching` switches a view between: a command's
 name, the key string a loop over it binds to that command, and what the

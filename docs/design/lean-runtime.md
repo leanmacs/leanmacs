@@ -297,7 +297,8 @@ elaborator.
 | Diagnostics: failure as data | `lean/Editor/Config/Diagnostic.lean` |
 | Owners: who registered or started something | `lean/Editor/Config/Owner.lean` |
 | Faces: what a face looks like, as data, the built-in theme and a theme with its name | `lean/Editor/Face.lean` |
-| The registry of commands, of jobs, of key bindings, of modes, of ex bindings, of faces and of themes, replaced by owner, the keymap of the bindings, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| The registry of commands, of jobs, of key bindings, of modes, of ex bindings, of faces, of themes and of mode-line segments, replaced by owner, the keymap of the bindings, a mode line resolved from a listing, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| The mode line: segments, from what a window shows to status fields; the shipped ones and their default order; a listing resolved into a mode line; and the fields of a window, selected or not | `lean/Editor/ModeLine.lean` |
 | An ex line and an ex binding, as data | `lean/Editor/Ex/Line.lean` |
 | What a command is run with when a key runs it: the focused window and its buffer, the arguments and the keys | `lean/Editor/Command/Call.lean` |
 | The cells of the stores, and the rule that installs a config's stores | `lean/Editor/Config/Stores.lean` |
@@ -434,7 +435,21 @@ elaborator.
   no theme is registered as `<name>` ``, and on the report's lines
   (`theme: …`). `load-theme` switches it with no reload, through the
   reducer's `choose` event. Defining a theme name twice, or naming a theme
-  twice, rejects the reload. A rejected reload's first error
+  twice, rejects the reload.
+- **Segments of the mode line are named, and config lists them**:
+  compiled code registers the shipped segments (`ModeLine.shipped`, the
+  host's `Collaborators.segments`), and `setup` registers more with
+  `defineSegment "name" fun context => …` and lists each side's with
+  `modeLine ["state", "buffer"] ["position"]`; the registry holds them by
+  owner and an install replaces config's as a set. The listing in force is
+  the reducer's state (`State.modeLine`), set at every install, so a
+  config that lists none has the default order. A listed name nobody
+  registered is left out and said, in the echo area after the unknown
+  theme's sentence, joined by `; `, and on the report's lines
+  (`segment: no segment is registered as `<name>``). The host resolves the
+  listing over the registry for each step (`Headless.keys`,
+  `Loop.Keys.modeLine`). Defining a segment name twice, or listing the
+  mode line twice, rejects the reload. A rejected reload's first error
   is said in the echo area (`Config.Report.echo`), and its whole report is
   printed: on stdout in the headless mode, on stderr in the window mode.
 - **The session runs no `IO` action from config.** A chunk is elaborated,

@@ -9,6 +9,10 @@
 //! is the same for every back end; the payload it keeps for a row is the
 //! back end's own.
 //!
+//! A status row's [`RowRef`] carries its fields' boxes, which its hash
+//! covers, so a back end builds the fill of each box with the row and
+//! keeps it by the same hash.
+//!
 //! It keeps one payload for each distinct hash of the frame it was last
 //! given, text rows and status rows alike, builds a payload only for a hash
 //! it does not hold, and hands back those of rows the frame no longer
