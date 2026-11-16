@@ -544,11 +544,13 @@ def fileWatchChecks (services : Job.Services) : List Check :=
               return told
             | _ =>
               -- The volume refuses the name (APFS does): there is nothing
-              -- to deliver, and the check says so on stderr.
+              -- to deliver. The job leaves a marker, and the check says so
+              -- on stderr.
+              discard <| Process.run (JobContract.sh directory ": > refused") 1000
               return true
           let outcome ← runOnTimers services job
           if outcome == .finished true then
-            if (← directory.readDir).size == 0 then
+            if ← (directory / "refused").pathExists then
               IO.eprintln
                   "contract-test: the volume refuses a name that is not UTF-8, so the change of one was not checked here"
           return outcome == .finished true
