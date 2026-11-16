@@ -35,7 +35,11 @@ the last scene published, on its own thread, so painting never waits on Lean
   input scheme's to say (`InputScheme.report`, `Editor/InputScheme.lean`):
   the Vim scheme's is the cursor of the view's Vim state. The pending key
   prefix is rendered by Lean into a string.
-- Sizes and rectangles are in the frame's physical pixels.
+- Sizes and rectangles are in the frame's physical pixels. Paddings (a
+  view's `padding`, the scene's `echoPadding`, a status field's `padding`)
+  are in whole points, as a face's lengths are: layout multiplies them by
+  the scale it lays out at, and Lean multiplies nothing
+  (`crates/editor-layout/src/frame.rs`, "The padding").
 
 ## Where an addition goes
 
@@ -131,6 +135,18 @@ structure Rect where
   height : Nat
   deriving DecidableEq, Repr
 
+/-- How far a view's content is inset from its edges, in whole points
+(logical pixels), which layout multiplies by the window's scale. All 0 by
+default, which lays out as a view with no padding. -/
+structure Padding where
+  /-- The inset of the text, and of the status row's first and last fields,
+  from the view's left and right edges. -/
+  across : Nat := 0
+  /-- The inset of the text rows from the view's top and from the top of its
+  status row (its bottom when it has none). -/
+  down : Nat := 0
+  deriving DecidableEq, Repr
+
 /-- The name of a view in a scene. -/
 structure ViewId where
   /-- Which view: the command loop's number for it. -/
@@ -163,6 +179,10 @@ structure View where
   that is not selected, and none for the selected one and the minibuffer's
   view. It neither makes the row taller nor moves its line. -/
   statusFace : Option FaceName := none
+  /-- How far its text and its status fields are inset from its edges, in
+  points (`EditorState.paddingOf`). The status row's background still spans
+  the whole view, and the text's padding is the default face's paper. -/
+  padding : Padding := {}
   deriving DecidableEq, Repr
 
 /-- Everything the display shows, as published after a command. -/
@@ -175,6 +195,10 @@ structure Scene where
   focused : Option ViewId
   /-- The echo area's text. -/
   echo : String
+  /-- How far the echo is inset from the frame's left and right edges, in
+  points, when layout draws it in the bottom row (`EditorState.bottomInset`):
+  at least the window's corner clearance. -/
+  echoPadding : Nat := 0
   /-- The pending key prefix, as Lean renders it; empty when there is
   none. -/
   pending : String

@@ -89,10 +89,31 @@ fn rows(
     height: u64,
     anchor: usize,
 ) -> Result<Vec<(usize, usize)>, u64> {
+    rows_padded(display, snapshot, width, height, (0, 0), anchor)
+}
+
+/// [`rows`] of a view padded `padding` points across and down.
+fn rows_padded(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    padding: (u64, u64),
+    anchor: usize,
+) -> Result<Vec<(usize, usize)>, u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
     // SAFETY: both handles are live, and `raw` is writable.
     let (status, words) = unsafe {
-        editor_ffi_display_rows(display, snapshot, width, height, anchor, raw.as_mut_ptr());
+        editor_ffi_display_rows(
+            display,
+            snapshot,
+            width,
+            height,
+            padding.0,
+            padding.1,
+            anchor,
+            raw.as_mut_ptr(),
+        );
         take(raw.assume_init())
     };
     if status != DisplayStatus::Done as u64 {
@@ -116,6 +137,19 @@ fn moved(
     lines: i64,
     goal: Option<u64>,
 ) -> Result<(usize, u64), u64> {
+    moved_padded(display, snapshot, width, 0, position, lines, goal)
+}
+
+/// [`moved`] in a view padded `across` points across.
+fn moved_padded(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    across: u64,
+    position: usize,
+    lines: i64,
+    goal: Option<u64>,
+) -> Result<(usize, u64), u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
     // SAFETY: both handles are live, and `raw` is writable.
     let (status, words) = unsafe {
@@ -123,6 +157,7 @@ fn moved(
             display,
             snapshot,
             width,
+            across,
             position,
             lines,
             goal.is_some(),
@@ -390,7 +425,9 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
                 ..WireField::default()
             }],
             status_face: None,
+            padding: Padding::default(),
         }],
+        echo_padding: 0,
         faces: None,
     };
     let (words, strings) = wire.encode();
@@ -558,8 +595,53 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
         .collect();
     assert_eq!(expected.len(), 2);
     assert_eq!(rows(display, snapshot, 160, 64, 0), Ok(expected));
+    // A padded question is answered at the scale too: 8 points are 16
+    // pixels, so a view 160 by 96 padded 8 each way lays out in 128 by
+    // 64, as layout's own padded query does.
+    let long = "abcdefghijkl\nmnop\nqrst\nuvwx";
+    let padded_document = document_new(long);
+    // SAFETY: `padded_document` is live.
+    let padded = unsafe { editor_ffi_document_snapshot(padded_document) };
+    // A key of its own: layout keeps what it laid out per key.
+    let direct = TextRef::fixed(TextKey(1), Text::from(long).snapshot());
+    let expected: Vec<(usize, usize)> = layout
+        .rows_shown(&direct, 160.0, 96.0, Padding { across: 8, down: 8 }, 0)
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.start, row.stop))
+        .collect();
+    assert_eq!(
+        expected,
+        layout
+            .rows_shown(&direct, 128.0, 64.0, Padding::default(), 0)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.start, row.stop))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        expected.len(),
+        2,
+        "the long line wraps at 128: {expected:?}"
+    );
+    assert_eq!(
+        rows_padded(display, padded, 160, 96, (8, 8), 0),
+        Ok(expected)
+    );
+    let along = layout.lines_from(&direct, 160.0, 8, 2, 1, None).unwrap();
+    assert_eq!(
+        moved_padded(display, padded, 160, 8, 2, 1, None),
+        Ok((along.position, along.goal as u64))
+    );
+    assert_ne!(
+        moved(display, padded, 160, 2, 1, None),
+        moved_padded(display, padded, 160, 8, 2, 1, None),
+        "unpadded, the first line wraps after 10 cells, not 8"
+    );
     // SAFETY: each handle is live and freed once.
     unsafe {
+        editor_ffi_snapshot_free(padded);
+        editor_ffi_document_free(padded_document);
         editor_ffi_snapshot_free(snapshot);
         editor_ffi_document_free(document);
         editor_ffi_display_free(display);
@@ -847,6 +929,7 @@ fn published_scene() -> (
                 ..WireField::default()
             }],
             status_face: None,
+            padding: Padding::default(),
         }],
         ..WireScene::default()
     };
@@ -963,6 +1046,46 @@ fn a_scene_published_with_faces_comes_back_with_them() {
     wire.faces = Some(some_faces());
     let (words, strings) = wire.encode();
     assert!(publish(display, &words, &strings, &[snapshot]));
+    let (mut back, mut text) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: `display` is live, and both records are writable and filled
+    // before they are read.
+    let (status, back, text) = unsafe {
+        editor_ffi_display_scene(display, back.as_mut_ptr(), text.as_mut_ptr());
+        let (status, back) = take(back.assume_init());
+        (status, back, take_text(text.assume_init()))
+    };
+    let sent: Vec<u64> = words
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|word| u64::from_le_bytes(*word))
+        .collect();
+    assert_eq!((status, back, text), (0, sent, strings));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+#[test]
+fn a_views_padding_and_the_echos_cross_reach_layout_and_come_back() {
+    let _alone = alone();
+    let (display, document, snapshot, mut wire) = published_scene();
+    wire.views[0].padding = Padding { across: 8, down: 4 };
+    wire.echo_padding = 14;
+    let (words, strings) = wire.encode();
+    assert!(publish(display, &words, &strings, &[snapshot]));
+    // Layout's frame of the same scene padded the same way.
+    let mut direct_scene = scene_directly();
+    direct_scene.views[0].padding = Padding { across: 8, down: 4 };
+    direct_scene.echo_padding = 14;
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    let direct = layout.frame(&direct_scene).describe();
+    assert_eq!(frame_text(display), direct);
+    assert!(direct.contains("row x 8 y 4"), "{direct}");
+    // And the scene comes back as it was sent.
     let (mut back, mut text) = (MaybeUninit::uninit(), MaybeUninit::uninit());
     // SAFETY: `display` is live, and both records are writable and filled
     // before they are read.

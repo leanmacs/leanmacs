@@ -114,13 +114,19 @@ holds is the largest, past the end of every text. -/
 def offset (number : Nat) : USize :=
   if number < USize.size then number.toUSize else (USize.size - 1).toUSize
 
+/-- The word of a padding in points (a status field's, a view's, the echo's,
+or a query's): a padding no `u32` holds is sent as the largest one does,
+which is what the library would refuse otherwise. -/
+def paddingWord (padding : Nat) : UInt64 :=
+  (min padding (UInt32.size - 1)).toUInt64
+
 /-- The rows a view shows: `Display.rowsShown`'s answer. -/
 def rows (real : RealDisplay) (query : Display.RowsQuery) :
     IO (Except DisplayError (Array Display.Row)) := do
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
   let answer ←
     real.display.rows snapshot (RealTexts.word query.width) (RealTexts.word query.height)
-        (offset query.anchor)
+        (offset query.anchor) (paddingWord query.padding.across) (paddingWord query.padding.down)
   match answer with
   | some rows =>
     return .ok (rows.map fun row => { start := row.start.toNat, stop := row.stop.toNat })
@@ -133,7 +139,7 @@ def move (real : RealDisplay) (query : Display.MoveQuery) :
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
   let answer ←
     real.display.move snapshot (RealTexts.word query.width) (offset query.position) query.lines
-        (query.goal.map RealTexts.word)
+        (query.goal.map RealTexts.word) (paddingWord query.across)
   match answer with
   | some moved =>
     return .ok { position := moved.position.toNat, goal := moved.goal.toNat }
@@ -184,11 +190,6 @@ def sideTag : StatusSide → UInt64
   | .left => 0
   | .right => 1
 
-/-- The word of a status field's padding: a padding no `u32` holds is sent
-as the largest one does, which is what the library would refuse otherwise. -/
-def paddingWord (padding : Nat) : UInt64 :=
-  (min padding (UInt32.size - 1)).toUInt64
-
 /-- `view` added to `encoded`: its snapshot, found in the table, as the
 next handle when the table holds it. -/
 def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encoded := do
@@ -235,7 +236,8 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
   encoded :=
     pushText { encoded with words := encoded.words.push view.statusFace.isSome.toUInt64 }
       ((view.statusFace.map (·.name)).getD "")
-  return encoded
+  let padding := #[paddingWord view.padding.across, paddingWord view.padding.down]
+  return { encoded with words := encoded.words ++ padding }
 
 /-- The library's tag of a slant. -/
 def slantTag : Slant → UInt64
@@ -297,8 +299,10 @@ def encode (real : RealDisplay) (scene : Scene) (faces : Option Theme) : IO Enco
   let words :=
     pushOptional #[RealTexts.word scene.size.width, RealTexts.word scene.size.height]
       (scene.focused.map (RealTexts.word ·.index))
+  let echoed := pushText { words, strings := "", snapshots := #[] } scene.echo
   let encoded :=
-    pushText (pushText { words, strings := "", snapshots := #[] } scene.echo) scene.pending
+    pushText { echoed with words := echoed.words.push (paddingWord scene.echoPadding) }
+      scene.pending
   let encoded := { encoded with words := encoded.words.push scene.preedit.isSome.toUInt64 }
   let encoded := pushText encoded (scene.preedit.getD "")
   let encoded := pushText encoded scene.title

@@ -59,6 +59,14 @@
 //! - where a move goes ([`editor_ffi_display_move`]): the position, and the
 //!   goal to pass to the next move, in whole pixels.
 //!
+//! Each question carries the view's padding in whole points (across and
+//! down for the rows, across for a move), because it is the view's and
+//! not the display's: the scale is one for the display and set by the
+//! presenter, while a window and the minibuffer's view are padded
+//! differently. Layout takes the points off at the scale the display lays
+//! out at, by the rule its frames take them off by ([`Layout::rows_shown`],
+//! `editor_layout::frame`, "The padding"), so no scale crosses.
+//!
 //! **A scene is published** as words, one string and the list of snapshot
 //! handles its views show ([`editor_ffi_display_publish`]; the layout is
 //! [`WireScene`]'s). The definitions of the faces it names are in the same
@@ -148,6 +156,7 @@ trait Lays: Send {
         text: &TextRef,
         width: f32,
         height: f32,
+        padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError>;
     /// [`Layout::lines_from`].
@@ -155,6 +164,7 @@ trait Lays: Send {
         &mut self,
         text: &TextRef,
         width: f32,
+        across: u32,
         position: usize,
         lines: i64,
         goal: Option<f32>,
@@ -182,20 +192,22 @@ where
         text: &TextRef,
         width: f32,
         height: f32,
+        padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
-        Layout::rows_shown(self, text, width, height, Padding::default(), anchor)
+        Layout::rows_shown(self, text, width, height, padding, anchor)
     }
 
     fn lines_from(
         &mut self,
         text: &TextRef,
         width: f32,
+        across: u32,
         position: usize,
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
-        Layout::lines_from(self, text, width, 0, position, lines, goal)
+        Layout::lines_from(self, text, width, across, position, lines, goal)
     }
 
     fn heights(&mut self) -> Heights {
@@ -390,25 +402,35 @@ impl Display {
         layout
     }
 
-    /// The rows of `snapshot` a view `width` pixels wide and `height` tall
-    /// shows from `anchor` ([`Layout::rows_shown`]).
+    /// The rows of `snapshot` a view `width` pixels wide and `height` tall,
+    /// padded `padding` points, shows from `anchor`
+    /// ([`Layout::rows_shown`]): the padding is taken off at the scale the
+    /// display lays out at, as its frames take it off.
     pub fn rows(
         &self,
         snapshot: &Snapshot,
         width: u64,
         height: u64,
+        padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
-        self.layout()
-            .rows_shown(&text_ref(snapshot), width as f32, height as f32, anchor)
+        self.layout().rows_shown(
+            &text_ref(snapshot),
+            width as f32,
+            height as f32,
+            padding,
+            anchor,
+        )
     }
 
     /// Where `position` of `snapshot` goes `lines` visual lines away in a
-    /// view `width` pixels wide, aiming for `goal` ([`Layout::lines_from`]).
+    /// view `width` pixels wide padded `across` points each side, aiming
+    /// for `goal` ([`Layout::lines_from`]).
     pub fn lines_from(
         &self,
         snapshot: &Snapshot,
         width: u64,
+        across: u32,
         position: usize,
         lines: i64,
         goal: Option<u64>,
@@ -416,11 +438,17 @@ impl Display {
         self.layout().lines_from(
             &text_ref(snapshot),
             width as f32,
+            across,
             position,
             lines,
             goal.map(|goal| goal as f32),
         )
     }
+}
+
+/// The `u32` of a padding in points, the largest for one no `u32` holds.
+fn points(count: u64) -> u32 {
+    u32::try_from(count).unwrap_or(u32::MAX)
 }
 
 /// The record for `answer`: its words, or the status of its refusal.
@@ -708,8 +736,11 @@ pub unsafe extern "C" fn editor_ffi_display_define(
 }
 
 /// Fills `out` with the rows of `snapshot` a view `width` pixels wide and
-/// `height` tall shows from `anchor`: their count, then a start and a stop
-/// for each; or with [`DisplayStatus::BadPosition`].
+/// `height` tall, its content inset `across` and `down` points (taken off
+/// at the display's scale; [`Display::rows`]), shows from `anchor`: their
+/// count, then a start and a stop for each; or with
+/// [`DisplayStatus::BadPosition`]. A padding no `u32` holds is the
+/// largest.
 ///
 /// # Safety
 ///
@@ -722,13 +753,19 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
     snapshot: *const Snapshot,
     width: u64,
     height: u64,
+    across: u64,
+    down: u64,
     anchor: usize,
     out: *mut RawWords,
 ) {
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
+    let padding = Padding {
+        across: points(across),
+        down: points(down),
+    };
     let raw = answered(
-        display.rows(snapshot, width, height, anchor),
+        display.rows(snapshot, width, height, padding, anchor),
         |rows, writer| {
             writer.size(rows.len());
             for row in rows {
@@ -742,9 +779,11 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
 }
 
 /// Fills `out` with where `position` of `snapshot` goes `lines` visual
-/// lines down (up when negative) in a view `width` pixels wide, aiming for
-/// `goal` when `goal_present`: the position reached and the goal to pass
-/// on; or with [`DisplayStatus::BadPosition`].
+/// lines down (up when negative) in a view `width` pixels wide whose text
+/// is inset `across` points each side, aiming for `goal` when
+/// `goal_present`: the position reached and the goal to pass on; or with
+/// [`DisplayStatus::BadPosition`]. A move only wraps, so it takes no
+/// padding down.
 ///
 /// # Safety
 ///
@@ -754,6 +793,7 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     display: *const Display,
     snapshot: *const Snapshot,
     width: u64,
+    across: u64,
     position: usize,
     lines: i64,
     goal_present: bool,
@@ -764,7 +804,7 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
     let goal = goal_present.then_some(goal);
     let raw = answered(
-        display.lines_from(snapshot, width, position, lines, goal),
+        display.lines_from(snapshot, width, points(across), position, lines, goal),
         |moved, writer| {
             writer.size(moved.position);
             writer.word(moved.goal.max(0.0) as u64);

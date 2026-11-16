@@ -2045,34 +2045,37 @@ private def rowsOf? (raw : RawWords) : IO (Option (Array DisplayRow)) := do
 /-- `Display.rows` as it crosses: the answer as words, and its status. -/
 @[extern "editor_glue_display_rows"]
 private opaque Display.rowsRaw (display : @& Display) (snapshot : @& Snapshot)
-    (width height : UInt64) (anchor : USize) : IO RawWords
+    (width height across down : UInt64) (anchor : USize) : IO RawWords
 
-/-- The rows a view `width` pixels wide and `height` tall shows of
-`snapshot`, from the visual row that holds `anchor`: as many as fit whole,
-fewer at the end of the text. `none` when `anchor` is not a position of the
-text. -/
-def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64)
-    (anchor : USize) : IO (Option (Array DisplayRow)) := do
-  rowsOf? (← display.rowsRaw snapshot width height anchor)
+/-- The rows a view `width` pixels wide and `height` tall, its content inset
+`across` and `down` points from its edges, shows of `snapshot`, from the
+visual row that holds `anchor`: as many as fit whole, fewer at the end of
+the text. The library takes the padding off at the scale it lays out at,
+as its frames take it off; a padding no `u32` holds is the largest. `none`
+when `anchor` is not a position of the text. -/
+def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64) (anchor : USize)
+    (across down : UInt64 := 0) : IO (Option (Array DisplayRow)) := do
+  rowsOf? (← display.rowsRaw snapshot width height across down anchor)
 
 /-- `Display.move` as it crosses: the lines as a 64-bit two's complement
 number, the goal as a presence flag and a value, and the answer as words. -/
 @[extern "editor_glue_display_move"]
-private opaque Display.moveRaw (display : @& Display) (snapshot : @& Snapshot) (width : UInt64)
-    (position : USize) (lines : UInt64) (goalPresent : Bool) (goal : UInt64) : IO RawWords
+private opaque Display.moveRaw (display : @& Display) (snapshot : @& Snapshot)
+    (width across : UInt64) (position : USize) (lines : UInt64) (goalPresent : Bool)
+    (goal : UInt64) : IO RawWords
 
 /-- The position of `snapshot` `lines` visual rows below `position` (above
-when negative) in a view `width` pixels wide, aiming for `goal`, or for the
-position's own x when there is none; and the goal to pass on. A count of
-lines past what 64 bits hold is cut to the largest, which is past every
-text's first and last row anyway. `none` when `position` is not a position
-of the text. -/
+when negative) in a view `width` pixels wide whose text is inset `across`
+points each side, aiming for `goal`, or for the position's own x when there
+is none; and the goal to pass on. A count of lines past what 64 bits hold
+is cut to the largest, which is past every text's first and last row
+anyway. `none` when `position` is not a position of the text. -/
 def Display.move (display : Display) (snapshot : Snapshot) (width : UInt64) (position : USize)
-    (lines : Int) (goal : Option UInt64) : IO (Option DisplayMoved) := do
+    (lines : Int) (goal : Option UInt64) (across : UInt64 := 0) : IO (Option DisplayMoved) := do
   let bound : Int := 2 ^ 63
   let clamped := max (-bound) (min lines (bound - 1))
   let word := if clamped < 0 then (2 ^ 64 + clamped).toNat.toUInt64 else clamped.toNat.toUInt64
-  let raw ← display.moveRaw snapshot width position word goal.isSome (goal.getD 0)
+  let raw ← display.moveRaw snapshot width across position word goal.isSome (goal.getD 0)
   if raw.status != 0 then
     return none
   match wordsOf? raw.words with

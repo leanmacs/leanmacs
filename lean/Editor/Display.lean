@@ -10,6 +10,15 @@ layout the two questions commands need of it, answered in the same call:
 - **the rows a view shows** from its scroll anchor (`Display.rowsShown`): the
   byte range of each visual row, from the one that holds the anchor, as many
   as fit the view's height;
+
+Each question carries the view's padding in points (`RowsQuery.padding`,
+`MoveQuery.across`), because it differs by view, and the display takes it
+off the width and the height at the scale it lays out at, as its frame
+does, so the answer is the rows the frame shows. Lean never handles a
+scale (`docs/design/README.md`, "The window's scale"). The model and the
+recorder, which lay out in cells at scale 1, take the points off as
+pixels; the contract holds every binding to "a padded question is the
+unpadded question of the smaller area" (`Display/Contract.lean`).
 - **the position some visual lines away** from a position
   (`Display.linesFrom`), with the x it aimed for passed back so that the next
   move aims for it too (Vim's "curswant").
@@ -120,21 +129,29 @@ structure Row where
 structure RowsQuery where
   /-- The text the view shows. -/
   snapshot : SnapshotId
-  /-- The view's width, in pixels: where rows wrap. -/
+  /-- The view's width, in pixels: where rows wrap, less its padding. -/
   width : Nat
-  /-- The view's height, in pixels: how many rows fit. -/
+  /-- The view's height, in pixels: how many rows fit, less its padding. -/
   height : Nat
   /-- The scroll anchor's byte offset: the rows start at the one that holds
   it. -/
   anchor : Nat
+  /-- The view's padding, in points: the display takes twice `across` off the
+  width and twice `down` off the height, at the scale it lays out at, as its
+  frame does. Lean subtracts nothing. -/
+  padding : Padding := {}
   deriving DecidableEq, Repr
 
 /-- Where a position goes when it moves some visual lines. -/
 structure MoveQuery where
   /-- The text. -/
   snapshot : SnapshotId
-  /-- The view's width, in pixels: where rows wrap. -/
+  /-- The view's width, in pixels: where rows wrap, less its padding. -/
   width : Nat
+  /-- The view's padding across, in points: the display takes it off both
+  sides of the width, at its scale. A move only wraps, so it takes no
+  padding down. -/
+  across : Nat := 0
   /-- The byte offset to move from. -/
   position : Nat
   /-- How many visual rows to move: down when positive, up when negative. -/

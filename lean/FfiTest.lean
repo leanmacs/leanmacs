@@ -2248,8 +2248,8 @@ def SceneFixture.own (index : Nat) : Editor.MarkerId :=
   { text := ⟨0⟩, index }
 
 /-- A scene that takes the branches of the binding's encoding the display
-fixture does not: a pending prefix and a preedit; view 1, of a snapshot the
-table does not hold, before view 2, of the one it holds, scrolled to its
+fixture does not: a pending prefix and a preedit, and an echo padding; view
+1, of a snapshot the table does not hold and padded, before view 2, of the one it holds, scrolled to its
 second row with a selection, a right status field with a padding and a
 status face; and view 3, of the same snapshot, whose scroll
 marker is `scroll` and whose selection markers are `selections`. Each view
@@ -2261,7 +2261,8 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
     views :=
       #[{ id := ⟨1⟩, rect := rect 0, snapshot := ⟨fixture.snapshot.index + 1⟩
           scroll := SceneFixture.own fixture.anchor, selections := #[]
-          cursor := { shape := .block, face := ⟨"c1"⟩ }, decorations := #[], status := #[] },
+          cursor := { shape := .block, face := ⟨"c1"⟩ }, decorations := #[], status := #[]
+          padding := { across := 8, down := 4 } },
         { id := ⟨2⟩, rect := rect 48, snapshot := fixture.snapshot
           scroll := SceneFixture.own fixture.anchor
           selections := #[SceneFixture.own fixture.selection]
@@ -2273,8 +2274,8 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
           statusFace := some ⟨"dim"⟩ },
         { id := ⟨3⟩, rect := rect 96, snapshot := fixture.snapshot, scroll, selections
           cursor := { shape := .underline, face := ⟨"c3"⟩ }, decorations := #[], status := #[] }]
-    focused := some ⟨2⟩, echo := "fixture", pending := "g", preedit := some "é"
-    title := "notes.txt" }
+    focused := some ⟨2⟩, echo := "fixture", echoPadding := 14, pending := "g"
+    preedit := some "é", title := "notes.txt" }
 
 /-- The fixture's scene with view 3's markers of two texts: its scroll
 marker is the text's anchor at offset 3, and its selection marker is a
@@ -2343,20 +2344,21 @@ def sceneChecks (_ : Unit) : List Check :=
         let encoded ← fixture.real.encode fixture.mixed none
         let anchor := fixture.anchor.toUInt64
         let selection := fixture.selection.toUInt64
-        -- The title's length after the preedit's presence and length.
-        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 1, 1, 2, 9, 3]
+        -- The echo's padding after its length, and the title's length after
+        -- the preedit's presence and length.
+        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 14, 1, 1, 2, 9, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor; no
-        -- status field and no status face.
-        let first : Array UInt64 := #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0]
+        -- status field and no status face; padded 8 across and 4 down.
+        let first : Array UInt64 := #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4]
         -- The first handle; its scroll marker and its selection; a bar
         -- cursor; a decoration; a left status field with no padding and a
         -- right one padded 4; and a status face.
         let second : Array UInt64 :=
           #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 2, 6, 4, 0, 0, 3, 3,
-            1, 4, 1, 3]
+            1, 4, 1, 3, 0, 0]
         -- The second handle; no scroll marker and no selection; an
         -- underline cursor.
-        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0]
+        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0]
         -- No faces: as last published.
         let faces : Array UInt64 := #[0]
         return encoded.words == scene ++ first ++ second ++ third ++ faces &&
@@ -2406,7 +2408,7 @@ def sceneChecks (_ : Unit) : List Check :=
         let fixture ← sceneFixture everyTheme
         let real := fixture.real
         let encoded ← real.encode emptyScene (some everyTheme)
-        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0]
+        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- Present, and seven definitions.
         let faces : Array UInt64 := #[1, 7]
         -- Its name; a family; 20 pixels; weight 700; italic; a foreground
