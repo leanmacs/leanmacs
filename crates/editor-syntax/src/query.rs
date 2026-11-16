@@ -222,6 +222,9 @@ mod tests {
         fn nodes(&self, tree: &Self::Tree) -> Vec<crate::Node> {
             Parens.nodes(tree)
         }
+        fn has_errors(&self, tree: &Self::Tree) -> bool {
+            Parens.has_errors(tree)
+        }
     }
 
     /// The ranges of the captures `syntax` answers of `range` in `(a b)

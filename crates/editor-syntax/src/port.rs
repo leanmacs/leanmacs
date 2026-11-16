@@ -189,4 +189,9 @@ pub trait Syntax: Send + Sync + 'static {
 
     /// The whole tree as plain data, in pre-order.
     fn nodes(&self, tree: &Self::Tree) -> Vec<Node>;
+
+    /// Whether `tree` has a node that is an error or missing
+    /// ([`Node::error`], [`Node::missing`]): what [`nodes`](Self::nodes)
+    /// would show, answered without reading the tree out.
+    fn has_errors(&self, tree: &Self::Tree) -> bool;
 }

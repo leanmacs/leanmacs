@@ -1202,20 +1202,23 @@ for the editor's own language, and JSON, which the Lean model reproduces.
 (handed an old tree that has been told every edit since, it reuses what the
 edits left alone), an edit told to a tree, a query compiled or refused as a
 value with its kind and offset, a query's capture names, its captures in or
-around a range, and a tree read as plain `Node`s in pre-order (kind, named,
-field, depth, range and points, error, missing). Two trees are equal when
-their nodes are. The tree, the parser and the query are the
+around a range, a tree read as plain `Node`s in pre-order (kind, named,
+field, depth, range and points, error, missing), and whether a tree has an
+error or a missing node, answered without reading it out. Two trees are
+equal when their nodes are. The tree, the parser and the query are the
 implementation's own types. `fake::Parens` is the published fake, a toy
 grammar of parens and atoms that reparses whole.
 
 **The contract** (`editor_syntax::contract::check`, over a `Corpus` of a
 grammar: texts, pieces random edits insert, a query and its names, bad
-queries with their kinds) holds every implementation to eight properties:
+queries with their kinds) holds every implementation to nine properties:
 the grammar listed and opening a parser; a whole tree (the root reaches
 the text's end, each node within its parent on positions with their points,
 siblings in order; the root may start after the blanks that lead the text,
-as tree-sitter's does); two fresh parses equal; the incremental reparse
-equal to a fresh parse; queries refused by kind; capture names in order; a
+as tree-sitter's does); two fresh parses equal; a tree having errors
+exactly when one of its nodes is an error or missing, over a corpus with
+texts of both; the incremental reparse, as the core makes it, equal to a
+fresh parse; queries refused by kind; capture names in order; a
 range answering the whole text's captures that overlap it; and every
 capture naming one of the query's and being a node's range, in the core's
 order. Each property is seen to bite on an implementation written to break
@@ -1227,15 +1230,25 @@ it. The fake passes it, and the adapter passes it for Rust and for JSON.
   changes, several transactions pulled as one patch) and on a sweep of
   random edit sequences from a fixed seed, each ended by its own inverse.
   Every edit goes through a real `Text`, and the tree is told the log's own
-  patch, so this is where `Edit::input_edit` is held to tree-sitter.
-- **Error recovery is the exception.** Where the fresh parse has an error
-  or a missing node, the two trees may differ: how tree-sitter recovers
-  depends on what it reuses, and its own randomized tests compare only
-  texts without errors. Seen on 2026-11-16: 11 of some 6,700 reparses of
-  random edits of Rust differed, every one of a text with errors, and none
-  of JSON. There the reparsed tree must still be whole, and every sequence
-  ends in an exact comparison of a text without errors reparsed from a
-  tree with them.
+  patch, so this is where `Edit::input_edit` is held to tree-sitter. Every
+  reparse is compared exactly, texts with errors among them, and at least
+  one incremental parse must be kept, so the property is never held only by
+  whole parses.
+- **A reparse with an error is parsed again whole** (the fallback rule,
+  `session::reparse`, which the session and the contract both run). How
+  tree-sitter recovers from an error depends on what it reuses, and its own
+  randomized tests compare reparses with fresh parses only of texts without
+  errors: seen on 2026-11-16, 11 of some 6,700 incremental parses of random
+  edits of Rust differed from the fresh parse, every one with an error, and
+  none of JSON. So the core drops an incremental parse whose tree has an
+  error or a missing node and parses the snapshot whole, with no old tree,
+  and the tree a round makes is always the tree a fresh parse gives. The
+  second parse is on the worker thread; the editor thread never waits for
+  it. It costs a whole parse for every edit while a text has an error. On
+  sweeps of five times the contract's, from three seeds (some 23,000
+  reparses of Rust and JSON), every incremental parse with no error equalled
+  the fresh parse, and every fresh parse had an error exactly when the
+  incremental one did.
 
 **What a range answers** is the core's rule (`query::captures_in`), so the
 model and every implementation answer alike: the captures whose node
@@ -1260,7 +1273,8 @@ base, delivered or not) and the newest revision it has been told of.
    otherwise (the first parse, a log that has forgotten the base's
    revision, a patch that does not chain) it is parsed whole. The bytes go
    from the snapshot's chunks to the parser; parsing never passes through
-   Lean.
+   Lean. An incremental parse whose tree has an error or a missing node is
+   dropped and the text parsed whole (the fallback rule above).
 3. **The delivery rule.** The result is the new base. It is delivered only
    if its revision is at least the newest the session has been told of;
    delivering moves that revision to the result's, keeps the result and

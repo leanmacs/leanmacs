@@ -163,6 +163,10 @@ impl Syntax for Parens {
     fn nodes(&self, tree: &ParensTree) -> Vec<Node> {
         tree.nodes.as_ref().clone()
     }
+
+    fn has_errors(&self, tree: &ParensTree) -> bool {
+        tree.nodes.iter().any(|node| node.error || node.missing)
+    }
 }
 
 /// A node being built: the node, with its depth left to the flattening,

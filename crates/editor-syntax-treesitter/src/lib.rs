@@ -269,6 +269,11 @@ impl Syntax for TreeSitter {
             }
         }
     }
+
+    fn has_errors(&self, tree: &TreeSitterTree) -> bool {
+        // The library's error cost counts missing nodes as well as errors.
+        tree.0.root_node().has_error()
+    }
 }
 
 #[cfg(test)]

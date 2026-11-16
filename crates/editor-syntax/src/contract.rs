@@ -22,6 +22,7 @@ use editor_text::{ChangeSet, Origin, Revision, Snapshot, Text, Transaction};
 
 use crate::port::{Capture, GrammarName, Node, QueryErrorKind, Syntax};
 use crate::query::{captures_in, overlaps};
+use crate::session::reparse;
 
 /// What is language-specific in the contract: a grammar, texts of it, and
 /// queries.
@@ -56,19 +57,23 @@ pub const GRAMMARS: &str =
 pub const WHOLE: &str = "the root reaches the end of the text, every node lies within its parent on positions with their points, and siblings are in order";
 /// Two fresh parses of one snapshot are equal.
 pub const DETERMINISTIC: &str = "two fresh parses of one snapshot are equal";
-/// After edits, the tree told the log's patch and reparsed with it equals a
-/// fresh parse of the same snapshot, wherever that fresh parse has no error
-/// and no missing node; where it has, the reparsed tree is still
-/// [`WHOLE`].
+/// After edits, the tree told the log's patch and reparsed with it, as the
+/// core reparses ([`crate::session::reparse`]), equals a fresh parse of the
+/// same snapshot, for every text, with errors or without.
 ///
-/// Error recovery is the one place the two may differ: how the library
-/// recovers depends on what it reuses, and tree-sitter's own randomized
-/// tests compare reparses with fresh parses only of texts without errors.
-/// Seen on 2026-11-16, on a sweep of five times this one's sequences: 11 of
-/// some 6,700 reparses of random edits of Rust differed from the fresh
-/// parse, every one of a text with errors, and none of JSON.
+/// The core drops an incremental parse whose tree has an error or a missing
+/// node and parses the text whole, since how a library recovers from an
+/// error can depend on what it reuses (tree-sitter's did, on 11 of some
+/// 6,700 reparses of random edits of Rust, seen on 2026-11-16). So what
+/// this holds the implementation to is that an incremental parse with no
+/// error equals a fresh one, and [`ERRORS`] that it says truly when a tree
+/// has one; and at least one incremental parse must be kept, so the
+/// property is never held only by whole parses.
 pub const INCREMENTAL: &str =
     "after an edit, the incrementally reparsed tree equals a fresh full parse of the same snapshot";
+/// A tree has errors ([`Syntax::has_errors`]) exactly when one of its
+/// nodes is an error or missing; and the corpus has texts of both.
+pub const ERRORS: &str = "a tree has errors exactly when one of its nodes is an error or missing";
 /// Each bad query is refused with its kind, and one that names an unknown
 /// node kind with [`QueryErrorKind::NodeType`].
 pub const QUERY_REFUSED: &str =
@@ -85,10 +90,11 @@ pub const ORDER: &str =
     "every capture names a capture of the query and is a node's range, in the core's order, once";
 
 /// Every property, by name.
-pub const PROPERTIES: [&str; 8] = [
+pub const PROPERTIES: [&str; 9] = [
     GRAMMARS,
     WHOLE,
     DETERMINISTIC,
+    ERRORS,
     INCREMENTAL,
     QUERY_REFUSED,
     QUERY_NAMES,
@@ -116,6 +122,7 @@ pub fn check<S: Syntax>(syntax: &S, corpus: &Corpus) -> Vec<&'static str> {
         (GRAMMARS, grammars),
         (WHOLE, parses(whole)),
         (DETERMINISTIC, parses(deterministic)),
+        (ERRORS, parses(errors)),
         (INCREMENTAL, parses(incremental)),
         (QUERY_REFUSED, query_refused(syntax, &grammar, corpus)),
         (QUERY_NAMES, query_names(syntax, &grammar, corpus)),
@@ -205,6 +212,22 @@ fn deterministic<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus)
     })
 }
 
+/// [`ERRORS`].
+fn errors<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> bool {
+    let (mut with, mut without) = (false, false);
+    let every = corpus.texts.iter().all(|text| {
+        let tree = syntax.parse(parser, &snapshot_of(text), None);
+        let shown = syntax
+            .nodes(&tree)
+            .iter()
+            .any(|node| node.error || node.missing);
+        with |= shown;
+        without |= !shown;
+        syntax.has_errors(&tree) == shown
+    });
+    every && with && without
+}
+
 /// A text being edited, and the tree that follows it by reparsing from the
 /// log's patches.
 struct Run<'a, S: Syntax> {
@@ -216,15 +239,15 @@ struct Run<'a, S: Syntax> {
     tree: S::Tree,
     /// The revision the tree is of.
     revision: Revision,
-    /// How many reparses of texts without errors were compared with a
-    /// fresh parse, across every run of one check.
-    exact: &'a Cell<usize>,
+    /// How many incremental parses were kept and compared with a fresh
+    /// parse, across every run of one check.
+    kept: &'a Cell<usize>,
 }
 
 impl<'a, S: Syntax> Run<'a, S> {
-    /// A run from `text`, parsed fresh, that counts its exact comparisons
-    /// in `exact`.
-    fn new(syntax: &'a S, parser: &mut S::Parser, text: &str, exact: &'a Cell<usize>) -> Self {
+    /// A run from `text`, parsed fresh, that counts the incremental parses
+    /// it keeps in `kept`.
+    fn new(syntax: &'a S, parser: &mut S::Parser, text: &str, kept: &'a Cell<usize>) -> Self {
         let text = Text::from(text);
         let snapshot = text.snapshot();
         let tree = syntax.parse(parser, &snapshot, None);
@@ -233,7 +256,7 @@ impl<'a, S: Syntax> Run<'a, S> {
             text,
             tree,
             revision: snapshot.revision(),
-            exact,
+            kept,
         }
     }
 
@@ -276,10 +299,9 @@ impl<'a, S: Syntax> Run<'a, S> {
                 .is_ok()
     }
 
-    /// Tells the tree the log's patch since its revision, reparses with it,
-    /// keeps the result, and returns whether it equals a fresh parse, or,
-    /// where the fresh parse recovered from an error, is whole
-    /// ([`INCREMENTAL`]).
+    /// Tells the tree the log's patch since its revision, reparses with it
+    /// as the core does, keeps the result, and returns whether it equals a
+    /// fresh parse ([`INCREMENTAL`]).
     fn reparse(&mut self, parser: &mut S::Parser) -> bool {
         let Ok(patch) = self.text.changes_since(self.revision) else {
             return false;
@@ -289,17 +311,13 @@ impl<'a, S: Syntax> Run<'a, S> {
             self.syntax.edit(&mut edited, &edit.input_edit());
         }
         let snapshot = self.snapshot();
-        let reparsed = self.syntax.parse(parser, &snapshot, Some(&edited));
-        let fresh = self.syntax.parse(parser, &snapshot, None);
-        let (reparsed_nodes, fresh_nodes) =
-            (self.syntax.nodes(&reparsed), self.syntax.nodes(&fresh));
-        let recovered = fresh_nodes.iter().any(|node| node.error || node.missing);
-        if !recovered {
-            self.exact.set(self.exact.get() + 1);
+        let reparsed = reparse(self.syntax, parser, &snapshot, Some(&edited));
+        if reparsed.incremental {
+            self.kept.set(self.kept.get() + 1);
         }
-        let holds =
-            reparsed_nodes == fresh_nodes || (recovered && is_whole(&reparsed_nodes, &snapshot));
-        self.tree = reparsed;
+        let fresh = self.syntax.parse(parser, &snapshot, None);
+        let holds = self.syntax.nodes(&reparsed.tree) == self.syntax.nodes(&fresh);
+        self.tree = reparsed.tree;
         self.revision = snapshot.revision();
         holds
     }
@@ -399,13 +417,13 @@ const NAMED_CASES: [NamedCase; 10] = [
 ];
 
 /// [`INCREMENTAL`]: the named cases from every text, and the sweep; and at
-/// least one reparse of a text without errors, so that the property is
-/// never held only by texts it compares loosely.
+/// least one incremental parse kept, so that the property is never held
+/// only by whole parses.
 fn incremental<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> bool {
-    let exact = Cell::new(0);
+    let kept = Cell::new(0);
     let named = corpus.texts.iter().all(|text| {
         NAMED_CASES.iter().all(|case| {
-            let mut run = Run::new(syntax, parser, text, &exact);
+            let mut run = Run::new(syntax, parser, text, &kept);
             let transactions = case(&run.snapshot(), corpus);
             let applied = transactions.iter().all(|changes| {
                 // A case computes each transaction from the text before
@@ -427,26 +445,24 @@ fn incremental<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -
             applied && run.reparse(parser)
         })
     });
-    named && sweep(syntax, parser, corpus, &exact) && exact.get() > 0
+    named && sweep(syntax, parser, corpus, &kept) && kept.get() > 0
 }
 
 /// The sweep of [`INCREMENTAL`]: from each text, random sequences of
 /// transactions, each step one to three transactions of one to three
 /// changes, reparsed once a step; and then the inverse of the whole
-/// sequence, which puts the text back as it was, reparsed once more. Random
-/// edits leave most texts with errors, which are compared loosely; the
-/// text put back is compared exactly whenever the corpus's text has no
-/// errors, from a tree that had them.
+/// sequence, which puts the text back as it was, reparsed once more. Every
+/// reparse is compared exactly.
 fn sweep<S: Syntax>(
     syntax: &S,
     parser: &mut S::Parser,
     corpus: &Corpus,
-    exact: &Cell<usize>,
+    kept: &Cell<usize>,
 ) -> bool {
     let mut random = Random(0x5eed_5eed_5eed_5eed);
     corpus.texts.iter().all(|text| {
         (0..SEQUENCES).all(|_| {
-            let mut run = Run::new(syntax, parser, text, exact);
+            let mut run = Run::new(syntax, parser, text, kept);
             (0..STEPS).all(|_| {
                 let transactions = 1 + random.below(3);
                 let applied = (0..transactions).all(|_| {
@@ -613,11 +629,11 @@ mod tests {
     use crate::port::QueryError;
 
     #[test]
-    fn the_properties_are_eight_and_each_is_named_once() {
+    fn the_properties_are_nine_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 8);
+        assert_eq!(names.len(), 9);
     }
 
     /// One rule a broken syntax breaks; everything else it answers as the
@@ -634,6 +650,14 @@ mod tests {
         Flaky,
         /// A reparse handed an old tree answers the old tree.
         StaleReuse,
+        /// A reparse handed an old tree, whose tree has an error, answers
+        /// another tree than a fresh parse: it recovers otherwise, as a
+        /// real library may.
+        RecoversOtherwise,
+        /// No tree has errors.
+        NeverErrors,
+        /// Every tree has errors.
+        AlwaysErrors,
         /// Every query compiles.
         AcceptsAll,
         /// The capture names come back reversed.
@@ -683,6 +707,15 @@ mod tests {
         ) -> ParensTree {
             match (self.flaw, old) {
                 (Flaw::StaleReuse, Some(old)) => old.clone(),
+                (Flaw::RecoversOtherwise, Some(old)) => {
+                    let tree = Parens.parse(parser, text, Some(old));
+                    if Parens.has_errors(&tree) {
+                        let other = Text::from(format!("{text} x").as_str()).snapshot();
+                        Parens.parse(parser, &other, None)
+                    } else {
+                        tree
+                    }
+                }
                 _ => Parens.parse(parser, text, old),
             }
         }
@@ -743,6 +776,14 @@ mod tests {
             }
             nodes
         }
+
+        fn has_errors(&self, tree: &ParensTree) -> bool {
+            match self.flaw {
+                Flaw::NeverErrors => false,
+                Flaw::AlwaysErrors => true,
+                _ => Parens.has_errors(tree),
+            }
+        }
     }
 
     /// The properties `flaw` fails.
@@ -773,6 +814,22 @@ mod tests {
     #[test]
     fn a_syntax_that_reuses_a_stale_tree_is_reported() {
         assert_eq!(failed(Flaw::StaleReuse), [INCREMENTAL]);
+    }
+
+    #[test]
+    fn a_syntax_that_recovers_otherwise_when_reparsing_keeps_the_contract_since_the_core_parses_it_whole()
+     {
+        assert_eq!(failed(Flaw::RecoversOtherwise), [""; 0]);
+    }
+
+    #[test]
+    fn a_syntax_that_says_no_tree_has_errors_is_reported() {
+        assert_eq!(failed(Flaw::NeverErrors), [ERRORS]);
+    }
+
+    #[test]
+    fn a_syntax_that_says_every_tree_has_errors_is_reported_and_keeps_no_incremental_parse() {
+        assert_eq!(failed(Flaw::AlwaysErrors), [ERRORS, INCREMENTAL]);
     }
 
     #[test]

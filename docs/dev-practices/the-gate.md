@@ -194,15 +194,16 @@ reaches a parser only through the `Syntax` port it defines, and is tested
 on the port's published fake, a toy grammar of parens: the rule for what a
 query answers of a range, on syntaxes that answer out of order, twice and
 as tree-sitter does at a range's ends; a session's round, the delivery
-rule and its stale results, on a recording mock, single-threaded; and the
+rule and its stale results, and the fallback to a whole parse when an
+incremental one has an error, on a recording mock, single-threaded; and the
 worker stepped by hand and, in `tests/worker.rs`, on a real thread while
 another edits and touches, with every wait bounded. The port's contract is
 tested on the fake and on implementations written to break each of its
-eight properties. The real adapter, over tree-sitter with the Rust and
+nine properties. The real adapter, over tree-sitter with the Rust and
 JSON grammars compiled in (`crates/editor-syntax-treesitter`), is held to
 that contract for each grammar, over fixtures under `tests/syntax/`: among
-it, that a tree told the edit log's patches and reparsed equals a fresh
-parse, on named cases and on a sweep of random edits from a fixed seed.
+it, that a tree told the edit log's patches and reparsed as the core
+reparses equals a fresh parse, texts with errors among them, on named cases and on a sweep of random edits from a fixed seed.
 `crates/editor-ffi/tests/syntax.rs` runs the syntax service on real
 documents through their edit paths and the C functions. `mise run deny`
 holds that only the adapter depends on tree-sitter and its grammars, and

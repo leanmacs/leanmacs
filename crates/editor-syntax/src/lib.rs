@@ -12,7 +12,9 @@
 //!   The port may answer more; the rule decides.
 //! - **A session** ([`Session`]) is one text's parse state: it pulls the
 //!   text and the edit log's patch through a [`Source`], reparses
-//!   incrementally from its last tree, and delivers each result, tagged
+//!   incrementally from its last tree (and parses whole instead when the
+//!   incremental tree has an error, so every tree equals a fresh parse's),
+//!   and delivers each result, tagged
 //!   with the revision it parsed, to its [`Consumer`]s, unless a newer
 //!   revision has been told by then: a stale result is never handed out.
 //! - **The worker** ([`Worker`]) runs sessions' rounds on whichever thread
