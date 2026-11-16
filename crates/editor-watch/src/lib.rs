@@ -54,6 +54,7 @@
 
 pub mod batch;
 pub mod clock;
+pub mod fake;
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
