@@ -6912,15 +6912,33 @@ def sampleRects : List Rect :=
   sampleSizes.flatMap fun size =>
     [frameRect size, { x := 5, y := 7, width := size.width, height := size.height }]
 
+/-- The trees of the manual split layout reached from one tile by up to
+`splits` splits, each of any tile on either axis, and each then balanced
+along its axis or not: every tree once per way of reaching it. -/
+def splitsReached (splits : Nat) : List Splits :=
+  (List.range splits).foldl
+      (fun (all, last) _ =>
+        let next :=
+          last.flatMap fun tree =>
+            (List.range tree.size).flatMap fun index =>
+              [Axis.rows, .columns].flatMap fun axis =>
+                let inserted := tree.insert index axis
+                [inserted, inserted.balance (· == axis)]
+        (all ++ next, next))
+      ([Splits.tile], [Splits.tile]) |>.1
+
 /-- The checks of the layouts (`Editor/Layout.lean`): master-and-stack's
-rectangles tile the area for any number of windows and any size, with its
-geometry pinned, and monocle gives the whole area to one window. -/
+rectangles tile the area for any number of windows, any count of main's
+and any size, with its geometry pinned; monocle gives the whole area to
+one window; and the manual split layout's rectangles tile the area for
+every tree its operations reach, with its geometry and its operations
+pinned. -/
 def layoutChecks : List Check :=
   let rect (x y width height : Nat) : Rect := { x, y, width, height }
   let shares := [0, 1, 33, 50, 61, 99, 100, 150]
   let sides := [Side.left, .right, .top, .bottom]
   [{  name :=
-        "criterion 1: master-and-stack gives each of one to eight windows exactly one rectangle, in list order, and they tile the area: each inside it, no two overlapping, their areas summing to its, at even, odd, small and zero sizes, for every share and every side"
+        "criterion 1: master-and-stack gives each of one to eight windows exactly one rectangle, in list order, and they tile the area: each inside it, no two overlapping, their areas summing to its, at even, odd, small and zero sizes, for every share, every side and every count of main's windows from 0 to 9"
       run :=
         pure <|
           (List.range 8).all fun index =>
@@ -6928,8 +6946,121 @@ def layoutChecks : List Check :=
             sampleRects.all fun whole =>
               shares.all fun share =>
                 sides.all fun side =>
-                  let laid := (Layout.masterStack { share, side }).place windows ⟨0⟩ whole
-                  laid.map (·.1) == windows && tiles whole (laid.map (·.2)) },
+                  (List.range 10).all fun count =>
+                    let laid := (Layout.masterStack { share, side, count }).place windows ⟨0⟩ whole
+                    laid.map (·.1) == windows && tiles whole (laid.map (·.2)) },
+    { name :=
+        "master-and-stack's count of main's windows: with 2 of 4 the first two divide main's half and the other two the stack's, each the other way; with 0, and with as many as there are windows or more, every window divides the whole area that way"
+      run :=
+        pure <|
+          let four := windowsUpTo 4
+          let whole := rect 0 0 640 480
+          let rows : Array (ViewId × Rect) :=
+            #[(⟨0⟩, rect 0 0 640 120), (⟨1⟩, rect 0 120 640 120), (⟨2⟩, rect 0 240 640 120),
+              (⟨3⟩, rect 0 360 640 120)]
+          (Layout.masterStack { count := 2 }).place four ⟨0⟩ whole ==
+              #[(⟨0⟩, rect 0 0 320 240), (⟨1⟩, rect 0 240 320 240), (⟨2⟩, rect 320 0 320 240),
+                (⟨3⟩, rect 320 240 320 240)] &&
+            (Layout.masterStack { count := 0 }).place four ⟨0⟩ whole == rows &&
+            (Layout.masterStack { count := 4 }).place four ⟨0⟩ whole == rows &&
+            (Layout.masterStack { count := 5 }).place four ⟨0⟩ whole == rows },
+    { name :=
+        "the manual split layout gives each window of the list exactly one rectangle, in list order, and they tile the area, for every tree reached from one tile by up to four splits at every tile on both axes, balanced or not, and for trees whose weights are 0 and 0, 0 and 1, and 3 and 1, at even, odd, small and zero sizes"
+      run :=
+        pure <|
+          let weighted : List Splits :=
+            [.split .rows 0 0 .tile .tile, .split .columns 0 1 .tile .tile,
+              .split .rows 3 1 .tile (.split .columns 0 0 .tile .tile),
+              .split .columns 3 1 (.split .rows 0 1 .tile .tile) .tile]
+          (splitsReached 4 ++ weighted).all fun tree =>
+            let windows := windowsUpTo tree.size
+            sampleRects.all fun whole =>
+              let laid := (Layout.splits tree).place windows ⟨0⟩ whole
+              laid.map (·.1) == windows && tiles whole (laid.map (·.2)) },
+    { name :=
+        "the manual split layout's geometry: two splits of the first tile on rows at 640 by 464, each balanced, give rows of 154, 155 and 155, each cut rounding its first part down; a column split inside a row split cuts the row; a tree whose tiles are as many as the windows is kept, and any other is fitted to as many even rows"
+      run :=
+        pure <|
+          let twice :=
+            (((Splits.tile.insert 0 .rows).balance (· == .rows)).insert 0 .rows).balance
+              (· == .rows)
+          let grid := Splits.split .rows 1 1 (.split .columns 1 1 .tile .tile) .tile
+          (Layout.splits twice).place (windowsUpTo 3) ⟨0⟩ (rect 0 0 640 464) ==
+              #[(⟨0⟩, rect 0 0 640 154), (⟨1⟩, rect 0 154 640 155), (⟨2⟩, rect 0 309 640 155)] &&
+            (Layout.splits grid).place (windowsUpTo 3) ⟨0⟩ (rect 0 0 640 480) ==
+              #[(⟨0⟩, rect 0 0 320 240), (⟨1⟩, rect 320 0 320 240), (⟨2⟩, rect 0 240 640 240)] &&
+            grid.fit 3 == grid &&
+            grid.fit 2 == Splits.even .rows 2 &&
+            (Splits.even .rows 3).size == 3 &&
+            (Layout.splits grid).place (windowsUpTo 2) ⟨0⟩ (rect 0 0 640 480) ==
+              #[(⟨0⟩, rect 0 0 640 240), (⟨1⟩, rect 0 240 640 240)] &&
+            Layout.manual.place (windowsUpTo 1) ⟨0⟩ (rect 0 0 640 480) ==
+              #[(⟨0⟩, rect 0 0 640 480)] &&
+            Layout.manual.place #[] ⟨0⟩ (rect 0 0 640 480) == #[] },
+    { name :=
+        "the manual split layout's operations: a split then the removal of either of its two tiles gives back the tree; a removed tile's parent is replaced by its sibling, and the tile that inherits its place is the first of the next part of its group, or the last of the previous part when it was last, with the group's axis"
+      run :=
+        pure <|
+          let three := Splits.split .columns 1 1 (.split .rows 1 1 .tile .tile) .tile
+          let nested := Splits.split .rows 1 1 (.split .rows 1 1 .tile .tile) .tile
+          (splitsReached 3).all
+              (fun tree =>
+                (List.range tree.size).all fun index =>
+                  [Axis.rows, .columns].all fun axis =>
+                    ((tree.insert index axis).remove index).map (·.1) == some tree &&
+                      ((tree.insert index axis).remove (index + 1)).map (·.1) == some tree) &&
+            three.remove 1 == some (.split .columns 1 1 .tile .tile, 0, .rows) &&
+            three.remove 0 == some (.split .columns 1 1 .tile .tile, 0, .rows) &&
+            three.remove 2 == some (.split .rows 1 1 .tile .tile, 1, .columns) &&
+            nested.remove 1 == some (.split .rows 1 1 .tile .tile, 1, .rows) &&
+            Splits.tile.remove 0 == none &&
+            three.remove 3 == none },
+    { name :=
+        "balancing the manual split layout sets each split on a chosen axis to the slots of its parts along it: a tile one, a split on the same axis the sum of its parts', and one on the other axis the larger of its parts'; three tiles in a row are 1 to 2 and then 1 to 1"
+      run :=
+        pure <|
+          let row := Splits.split .columns 5 1 .tile (.split .columns 3 3 .tile .tile)
+          let mixed :=
+            Splits.split .columns 7 1 (.split .rows 1 4 .tile (.split .rows 1 1 .tile .tile))
+              (.split .rows 2 1 .tile .tile)
+          row.balance (· == .columns) ==
+              .split .columns 1 2 .tile (.split .columns 1 1 .tile .tile) &&
+            mixed.balance (· == .columns) ==
+              .split .columns 1 1 (.split .rows 1 4 .tile (.split .rows 1 1 .tile .tile))
+                (.split .rows 2 1 .tile .tile) &&
+            mixed.balance (· == .rows) ==
+              .split .columns 7 1 (.split .rows 1 2 .tile (.split .rows 1 1 .tile .tile))
+                (.split .rows 1 1 .tile .tile) &&
+            (mixed.balance fun _ => true) ==
+              .split .columns 1 1 (.split .rows 1 2 .tile (.split .rows 1 1 .tile .tile))
+                (.split .rows 1 1 .tile .tile) },
+    { name :=
+        "resizing in the manual split layout moves the boundary of the deepest split on the axis that holds the tile by 5 percent a step, growing the tile's part or shrinking it, clamped to 0 and 100; with no split on the axis holding the tile it is none"
+      run :=
+        pure <|
+          let grid := Splits.split .rows 1 1 (.split .columns 1 1 .tile .tile) .tile
+          grid.resize 1 .columns true 1 ==
+              some (.split .rows 1 1 (.split .columns 45 55 .tile .tile) .tile) &&
+            grid.resize 0 .columns true 2 ==
+              some (.split .rows 1 1 (.split .columns 60 40 .tile .tile) .tile) &&
+            grid.resize 0 .rows false 1 ==
+              some (.split .rows 45 55 (.split .columns 1 1 .tile .tile) .tile) &&
+            grid.resize 2 .rows true 30 ==
+              some (.split .rows 0 100 (.split .columns 1 1 .tile .tile) .tile) &&
+            grid.resize 2 .columns true 1 == none &&
+            Splits.tile.resize 0 .rows true 1 == none },
+    { name :=
+        "rotating the windows: under master-and-stack the stack rotates and main stays, forward putting the last first, as Vim's C-w r, and back the reverse; under the manual split layout and monocle the whole list rotates"
+      run :=
+        pure <|
+          let four := windowsUpTo 4
+          let ids (indices : List Nat) : Array ViewId := indices.toArray.map (⟨·⟩)
+          Layout.default.rotated four true == ids [0, 3, 1, 2] &&
+            Layout.default.rotated four false == ids [0, 2, 3, 1] &&
+            (Layout.masterStack { count := 2 }).rotated four true == ids [0, 1, 3, 2] &&
+            Layout.manual.rotated four true == ids [3, 0, 1, 2] &&
+            Layout.monocle.rotated four false == ids [1, 2, 3, 0] &&
+            Layout.default.rotated #[⟨0⟩] true == #[⟨0⟩] },
     { name :=
         "master-and-stack's geometry: main takes its share of the extent on its side, rounded down, and the stack the rest, cut the other way into equal parts, the first ones a pixel larger; one window takes the whole area, and no window none"
       run :=
