@@ -1271,7 +1271,8 @@ def recordedRequest : SyntaxTreeRequest → String
 /-- Runs `check` against a host over a config of `highlightChunk`, whose
 syntax tree collaborator is the real binding over the library's syntax
 service with every request recorded (`recordedRequest`) in the array `check`
-is handed, and stops the host. `check` is handed too how many scenes the
+is handed, and which after an attach waits, with a bound, for the attached
+text's tree to be delivered, and stops the host. `check` is handed too how many scenes the
 host's display has had published to it, read from the display the host's
 collaborator made, with no request of the driver's. `false` if the check
 did not hold or the host did not stop. The directory is removed. -/
@@ -1285,7 +1286,14 @@ def withRecordedSyntaxTree (context : Context)
       let real ← RealSyntaxTree.new snapshots
       return fun request => do
         asked.modify (·.push (recordedRequest request))
-        real.handle request
+        let reply ← real.handle request
+        -- An attach waits for the attached text's tree, so the highlighter
+        -- set after it sees no delivery of that parse, and no `parsed`
+        -- event of it is left for a later check's host to take.
+        if let .attach snapshot _ := request then
+          if let some found← snapshots.find? snapshot then
+            discard (Ffi.syntaxSettle found 5000)
+        return reply
     let made : IO.Ref (Option Headless.Host.Display) ← IO.mkRef none
     let display (snapshots : SnapshotReader) : IO Headless.Host.Display := do
       let shown ← Headless.Host.Display.recorder Headless.cells snapshots
