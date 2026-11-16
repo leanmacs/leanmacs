@@ -6,10 +6,11 @@ import Editor.Text.Real
 /-!
 # The job runner's real services
 
-The clock port, the file port and the process port (`Job.Timers`,
-`Job.Files`, `Job.Processes`, `Editor/Job/Runner.lean`) answered by the Rust
-library's timer service, its file service and its process service, and the
-completion pump. This is the only job module that
+The clock port, the file port, the process port and the file-watch port
+(`Job.Timers`, `Job.Files`, `Job.Processes`, `Job.FileWatches`,
+`Editor/Job/Runner.lean`) answered by the Rust library's timer service, its
+file service, its process service and its watch service, and the completion
+pump. This is the only job module that
 imports `Editor.Ffi`, so only an executable linked with the library imports
 it: the editor, and `contract-test`, which runs the job port's contract
 against it.
@@ -86,6 +87,28 @@ once.
   run is. Cancelling the child's id kills it; cancelling a read's or a
   write's withdraws that wait alone.
 
+## The file watches
+
+`realFileWatches` is a thin adapter over the bindings of the library's watch
+service. A start goes to the library under its wait's id, which names the
+watch from then on; a `next` goes with its own wait's id, and each reply is
+taken once (`Ffi.watchesTake`).
+
+- **A request the library does not take is refused here, at once**, as
+  `failed`, as a run is; the refusal is kept until it is taken
+  (`RealWatches`).
+- **Numbers are machine words there.** A window or a bound no 64-bit word
+  holds is sent as the largest, never wrapped.
+- **A path that is not UTF-8** is delivered as a change of the watch's own
+  path with `missed`: the job is told that something changed which it
+  cannot name. APFS refuses such names, so this happens only on Linux, or on
+  a volume that is not APFS. The adapter keeps each watch's path for it.
+- **A refusal as shut down** becomes `failed` with the library's words: the
+  editor shuts the service down only as it quits.
+- **Cancelling** the id of a watch ends it at the library, which drops its
+  registration once no other watch shares it; cancelling a `next`'s id
+  withdraws that wait alone.
+
 `finishWith` is how a finished job's command is run: it hands the run what
 the job held, then settles the job. The program it is handed is the
 caller's: the headless host hands it the command loop's delivery of the
@@ -101,8 +124,8 @@ completion queue and, for each completion, ends the wait whose id it
 carries (`Completions.finish`). It blocks in the library, so it runs on a
 dedicated task, never one of the pool's, and there is one for the process's
 one table of waits. Quitting the queues ends it. A completion carries an id
-whichever service queued it, so the pump serves the timers, the files and
-the processes alike.
+whichever service queued it, so the pump serves the timers, the files, the
+processes and the file watches alike.
 
 A completion for an id that is no longer waiting, because its job was
 cancelled meanwhile, is dropped by the table.
@@ -112,8 +135,9 @@ cancelled meanwhile, is dropped by the table.
 `contract-test` (`ContractTest.lean`), in the gate: the job port's contract
 over these services, its file properties on real files in temporary
 directories, its process properties on real processes in temporary
-directories, and what only the real services can show, a cancelled job's
-child reaped among them. `config-test`
+directories, its watch properties on real files in temporary directories,
+and what only the real services can show, a cancelled job's child reaped and
+a job's watch ended with it among them. `config-test`
 (`ConfigTest.fileChecks`): a job that loads a file through the headless
 host.
 -/
@@ -473,6 +497,138 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) : Processe
     cancel := fun id => do
       refused.refused.modify (·.erase id)
       (discard <| Ffi.processesCancel id : IO Unit).catchExceptions fun _ => pure () }
+
+/-- What the watch service's adapter keeps of its own: the refusals of the
+requests that never reached the library, by the id of their wait, until
+they are taken or withdrawn; and the path of each watch, by its id, for a
+change whose path is not UTF-8. Every change is one atomic step. -/
+structure RealWatches where private mk ::
+  /-- The refusals, by the id of their wait. -/
+  private refused : IO.Ref (Std.HashMap UInt64 FileWatchError)
+  /-- Each watch's own path, by its id. -/
+  private roots : IO.Ref (Std.HashMap UInt64 System.FilePath)
+
+/-- A table that holds nothing. -/
+def RealWatches.new : BaseIO RealWatches :=
+  return ⟨← IO.mkRef {}, ← IO.mkRef {}⟩
+
+/-- The port's refusal for the library's. A refusal as shut down is `failed`
+with its words: a job sees it only if it watches while the editor quits. -/
+def watchErrorOf : Ffi.WatchRefusal → String → FileWatchError
+  | .notAbsolute, detail => .notAbsolute detail
+  | .notFound, detail => .notFound detail
+  | .notADirectory, detail => .notADirectory detail
+  | .denied, detail => .denied detail
+  | .limit, detail => .limit detail
+  | .shutDown, detail => .failed detail
+  | .failed, detail => .failed detail
+
+/-- `changes` with `kinds` recorded at `path`: added to its change if it has
+one, or a change of its own at the end. -/
+def putChange (changes : Array FileWatch.Change) (path : System.FilePath)
+    (kinds : FileWatch.Kinds) : Array FileWatch.Change :=
+  match changes.findIdx? (·.path == path) with
+  | some index =>
+    changes.modify index fun change =>
+      { change with
+        kinds :=
+          { created := change.kinds.created || kinds.created
+            written := change.kinds.written || kinds.written
+            renamed := change.kinds.renamed || kinds.renamed
+            removed := change.kinds.removed || kinds.removed
+            missed := change.kinds.missed || kinds.missed } }
+  | none => changes.push { path, kinds }
+
+/-- The port's changes for a delivery's paths and bits: a path that is not
+UTF-8 is a change of `root`, the watch's own path, with `missed`. -/
+def changesOf (root : System.FilePath) (raw : Array (ByteArray × UInt64)) :
+    Array FileWatch.Change :=
+  raw.foldl (init := #[]) fun changes (bytes, bits) =>
+    match String.fromUTF8? bytes with
+    | some path => putChange changes path (FileWatch.Kinds.ofBits bits.toNat)
+    | none => putChange changes root { missed := true }
+
+/-- What a watch request is refused with when the library's service did not
+take it. -/
+def watchNotTaken : FileWatchError :=
+  .failed "the watch service did not take the request"
+
+/-- What a watch request is refused with when the library kept no reply for
+it, though its wait completed, or sent one of another request's kind. -/
+def watchNoReply : FileWatchError :=
+  .failed "the watch service kept no reply for the request"
+
+/-- The library's reply to the wait `id`, which has completed: the refusal
+the adapter kept for a request that never reached the library, or else what
+the library hands over, once. -/
+def takenWatch (state : RealWatches) (id : UInt64) :
+    BaseIO (Except FileWatchError Ffi.WatchReply) := do
+  let refusal? ← state.refused.modifyGet fun refused => (refused[id]?, refused.erase id)
+  if let some refusal := refusal? then
+    return .error refusal
+  let taken ←
+    (return .ok (← Ffi.watchesTake id) :
+            IO (Except FileWatchError (Option Ffi.WatchReply))).catchExceptions
+        fun error => pure (.error (.failed (toString error)))
+  match taken with
+  | .error refusal =>
+    return .error refusal
+  | .ok (some reply) =>
+    return .ok reply
+  | .ok none =>
+    return .error watchNoReply
+
+/-- The file-watch port answered by the library's watch service.
+`completions` is the table its waits are registered in, and `state` what it
+keeps of its own. A watch is named by its start's wait, and each `next` of
+it goes to the library with its own wait's id. -/
+def realFileWatches (completions : Completions) (state : RealWatches) : FileWatches :=
+  { start := fun id request => do
+      let started ←
+        (match request with
+                | .start target coalescing => do
+                  state.roots.modify (·.insert id target.path)
+                  let kind : UInt64 :=
+                    match target with
+                    | .file _ => 0
+                    | .directory _ false => 1
+                    | .directory _ true => 2
+                  Ffi.watchesStart id kind (word coalescing.window) (word coalescing.bound)
+                      target.path.toString
+                | .next watch => Ffi.watchesNext (word watch.number) id :
+                IO Bool).catchExceptions
+            fun _ => pure false
+      unless started do
+        state.refused.modify (·.insert id watchNotTaken)
+        completions.finish id .completed
+    take := fun id request =>
+      match request with
+      | .start .. => do
+        match ← takenWatch state id with
+        | .ok .started =>
+          return .ok ⟨id.toNat⟩
+        | .ok (.refused refusal detail) =>
+          state.roots.modify (·.erase id)
+          return .error (watchErrorOf refusal detail)
+        | .ok (.changes _) =>
+          state.roots.modify (·.erase id)
+          return .error watchNoReply
+        | .error refusal =>
+          state.roots.modify (·.erase id)
+          return .error refusal
+      | .next watch => do
+        match ← takenWatch state id with
+        | .ok (.changes raw) =>
+          let root := ((← state.roots.get)[(word watch.number)]?).getD "/"
+          return .ok (changesOf root raw)
+        | .ok _ =>
+          return .error watchNoReply
+        | .error refusal =>
+          return .error refusal
+    cancel := fun id => do
+      state.refused.modify (·.erase id)
+      state.roots.modify (·.erase id)
+      (discard <| Ffi.watchesCancel id : IO Unit).catchExceptions fun _ => pure () }
 
 /-- Runs `command`, the command a finished job ended with or a program that
 runs it, against the Rust library on the editor thread, with `display`

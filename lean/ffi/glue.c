@@ -1010,6 +1010,86 @@ lean_obj_res editor_glue_processes_shutdown(void) {
   return lean_io_result_mk_ok(lean_box(0));
 }
 
+// ---- The watch service ----
+//
+// The fourth service behind the completion queue. A start goes in with an
+// id, three words and the path's bytes (both borrowed for the call). Its
+// completion comes back on the completion queue, and its reply is then
+// taken by the id; a read is a wait of its own, its delivery taken the same
+// way, as one record: a status, words, a detail and the paths end to end,
+// each a buffer the library lends and the glue hands back once copied.
+
+// The library's `RawWatchReply`.
+typedef struct {
+  uint64_t status;
+  uint8_t *words;
+  size_t words_len;
+  uint8_t *detail;
+  size_t detail_len;
+  uint8_t *paths;
+  size_t paths_len;
+} editor_ffi_raw_watch_reply;
+bool editor_ffi_watches_start(uint64_t id, const uint8_t *words,
+                              size_t words_len, const uint8_t *path,
+                              size_t path_len);
+bool editor_ffi_watches_next(uint64_t watch, uint64_t wait);
+bool editor_ffi_watches_take(uint64_t wait, editor_ffi_raw_watch_reply *out);
+bool editor_ffi_watches_cancel(uint64_t id);
+uint64_t editor_ffi_watches_pending(void);
+void editor_ffi_watches_shutdown(void);
+
+// `Editor.Ffi.watchesStartRaw : UInt64 → @& ByteArray → @& String → IO Bool`
+lean_obj_res editor_glue_watches_start(uint64_t id, b_lean_obj_arg words,
+                                       b_lean_obj_arg path) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_watches_start(
+      id, byte_array_bytes(words), byte_array_len(words), string_bytes(path),
+      string_len(path))));
+}
+
+// `Editor.Ffi.watchesNext : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_watches_next(uint64_t watch, uint64_t wait) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_watches_next(watch, wait)));
+}
+
+// `Editor.Ffi.watchesTakeRaw : UInt64 → IO (Option RawWatchReply)`. `none`
+// when the service keeps nothing for the wait.
+lean_obj_res editor_glue_watches_take(uint64_t wait) {
+  editor_ffi_raw_watch_reply raw;
+  if (!editor_ffi_watches_take(wait, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *detail =
+      lean_mk_string_from_bytes((const char *)raw.detail, raw.detail_len);
+  // `RawWatchReply`: the object fields `words`, `detail` and `paths`, then
+  // `status`.
+  lean_object *reply = lean_alloc_ctor(0, 3, sizeof(uint64_t));
+  lean_ctor_set(reply, 0, byte_array_copy(raw.words, raw.words_len));
+  lean_ctor_set(reply, 1, detail);
+  lean_ctor_set(reply, 2, byte_array_copy(raw.paths, raw.paths_len));
+  lean_ctor_set_uint64(reply, uint64_field(3, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.words_len);
+  editor_ffi_text_free(raw.detail, raw.detail_len);
+  editor_ffi_text_free(raw.paths, raw.paths_len);
+  return lean_io_result_mk_ok(option_some(reply));
+}
+
+// `Editor.Ffi.watchesCancel : UInt64 → IO Bool`
+lean_obj_res editor_glue_watches_cancel(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_watches_cancel(id)));
+}
+
+// `Editor.Ffi.watchesPending : IO UInt64`
+lean_obj_res editor_glue_watches_pending(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_watches_pending()));
+}
+
+// `Editor.Ffi.watchesShutdown : IO Unit`. Returns once every watch is ended
+// and every start in flight has returned.
+lean_obj_res editor_glue_watches_shutdown(void) {
+  editor_ffi_watches_shutdown();
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
 // ---- The window ----
 //
 // Running the window is one blocking call: the library's main-thread service

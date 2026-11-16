@@ -219,8 +219,9 @@ def main (arguments : List String) : IO UInt32 := do
       unavailable
   let status ← host .winit options plan (← Ffi.Display.newSystem) clipboard said
   -- Every child the library started is killed and reaped before the queues
-  -- are quit.
+  -- are quit, and every watch is ended.
   Ffi.processesShutdown
+  Ffi.watchesShutdown
   Ffi.quit
   IO.Process.exit status.toUInt8
 

@@ -1904,9 +1904,8 @@ def drawnDisplay (snapshots : SnapshotReader) : IO Host.Display := do
 mode's and the window mode's: the real elaborator over the toolchain in
 `sysroot` and the editor's `.olean` files in `oleanDir`, the config
 directory `configDir` as the source, `emit` as the output and stderr as the
-log, the library's timer service, file service and process service for the
-jobs, and, as its
-compiled ones, the file commands with their jobs, the minibuffer's commands
+log, the library's timer service, file service, process service and watch
+service for the jobs, and, as its compiled ones, the file commands with their jobs, the minibuffer's commands
 with its mode, evil's commands and the ex line's commands with the ex names
 that ship. Its display is the recorder and its clipboard its own, as a
 host's are by default.
@@ -1924,13 +1923,15 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
   let refused ← Job.RefusedRuns.new
+  let watches ← Job.RealWatches.new
   return {
       elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
       source := Config.Directory.source configDir, emit,
       services :=
         { completions, timers := Job.realTimers completions,
           files := Job.realFiles completions published.reader held
-          processes := Job.realProcesses completions refused },
+          processes := Job.realProcesses completions refused
+          fileWatches := Job.realFileWatches completions watches },
       published, held, requests := 1, wakeups := 2, jobs := 3
       commands := Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands
       compiledJobs := Files.jobs
@@ -1994,6 +1995,8 @@ def main (arguments : List String) : IO UInt32 := do
   -- Every child the library started is killed and reaped before the queues
   -- are quit: `run` has returned, so the loop has cancelled every job.
   Ffi.processesShutdown
+  -- And every watch is ended.
+  Ffi.watchesShutdown
   -- Shutdown: quit lets every task parked in a pull return, the pump among
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.
