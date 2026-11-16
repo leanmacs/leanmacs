@@ -18807,6 +18807,31 @@ def evilCrlfDriver (contents : String) (head : Nat) (model : EditorModel := edit
         return { state with buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) })
       model).toOption
 
+/-- What a step of the replace checks is handed: evil's commands, with
+`<F5>` bound in an active keymap to the operator `replace`, which no
+default key binds, so that a visual state's selection is replaced by key. -/
+def replaceHanded : Loop.Keys Vim.Default.scheme :=
+  { evilHanded with
+    maps := fun _ _ => [Vim.Default.keymap [("<F5>", .operator { name := Evil.replace.name })]] }
+
+/-- A driver of the replace checks over the text and cursor `fixture` says,
+with the unnamed register holding `evilSentinel`, on the editor's models
+with the clipboard model `clipboard`. -/
+def replaceDriver (fixture : String) (clipboard : ClipboardModel := {}) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  (Loop.Driver.over replaceHanded (fun _ => none)
+      (do
+        return (← evilState contents head).setRegister Evil.unnamed evilSentinel)
+      { editorModel with clipboard }).toOption
+
+/-- The keys `typed` pressed on `replaceDriver`: what they left, and the
+text the clipboard model then holds. -/
+def evilReplaced (fixture typed : String) (clipboard : ClipboardModel := {}) :
+    Option (EvilEdited × Option String) :=
+  (replaceDriver fixture clipboard).map fun driver =>
+    let after := evilFed driver typed
+    (evilLeft after, after.model.clipboard.held)
+
 /-- The checks of evil's registers and of the commands that read and set
 them without an operator's key (`Editor/Evil/Registers.lean`,
 `Editor/Evil/Operators.lean`), by key, as `evilOperatorChecks` are. -/
@@ -18983,7 +19008,49 @@ def evilRegisterChecks : List Check :=
           put "ab\r\ncd" 5 "\" + p" "xy\r\n" == some "ab\r\ncd\r\n|xy" &&
             put "ab\r\ncd" 0 "\" + p" "xy\r\n" == some "ab\r\n|xy\r\ncd" &&
             put "ab\r\ncd" 5 "\" + P" "xy\r\n" == some "ab\r\n|xy\r\ncd" &&
-            put "ab\r\ncd" 5 "\" + p" "xy\n" == some "ab\r\ncd\r\n|xy" }]
+            put "ab\r\ncd" 5 "\" + p" "xy\n" == some "ab\r\ncd\r\n|xy" },
+    { name :=
+        "the operator replace over a character-wise selection puts the clipboard's text in place of it, the cursor on the last cell put, or on the first when the text holds a line break, which goes in as it is; the unnamed register holds the replaced text and the clipboard model what it held; the view is in normal state"
+      run :=
+        pure <|
+          evilReplaced "a|bcd" "v l \" + <F5>" { held := some "XY" } ==
+              some (⟨"aX|Yd", charwise "bc", false, ""⟩, some "XY") &&
+            evilReplaced "a|bcd" "v l \" + <F5>" { held := some "XY\n" } ==
+              some (⟨"a|XY\nd", charwise "bc", false, ""⟩, some "XY\n") &&
+            ((replaceDriver "a|bcd" { held := some "XY" }).map fun driver =>
+                (evilSeen (evilFed driver "v l \" + <F5>")).bind (·.status[0]?)) ==
+              some (evilLooks "").2[0]? },
+    { name :=
+        "the operator replace over a line-wise selection puts the clipboard's text in place of the lines, a character-wise text with the buffer's line ending added, and the cursor on the first non-blank of the first line put; below a last line with no line break the text's last line break is left out; the unnamed register holds the lines, line-wise"
+      run :=
+        pure <|
+          evilReplaced "ab\nc|d\nef" "V \" + <F5>" { held := some "XY" } ==
+              some (⟨"ab\n|XY\nef", linewise "cd\n", false, ""⟩, some "XY") &&
+            evilReplaced "ab\nc|d\nef" "V \" + <F5>" { held := some "  XY\n" } ==
+              some (⟨"ab\n  |XY\nef", linewise "cd\n", false, ""⟩, some "  XY\n") &&
+            evilReplaced "ab\nc|d" "V \" + <F5>" { held := some "XY\n" } ==
+              some (⟨"ab\n|XY", linewise "cd\n", false, ""⟩, some "XY\n") &&
+            evilReplaced "a|b\ncd\nef" "V j \" + <F5>" { held := some "XY" } ==
+              some (⟨"|XY\nef", linewise "ab\ncd\n", false, ""⟩, some "XY") },
+    { name :=
+        "the operator replace with a clipboard model holding no text gives up with nothingToPut, and with one not available with clipboardUnavailable, and the buffer is as it was"
+      run :=
+        pure <|
+          evilGaveUp ((evilReplaced "a|bcd" "v l \" + <F5>").map (·.1)) "ab|cd" Evil.nothingToPut &&
+            evilGaveUp ((evilReplaced "a|bcd" "v l \" + <F5>" { available := false }).map (·.1))
+              "ab|cd" Evil.clipboardUnavailable &&
+            evilGaveUp ((evilReplaced "ab\nc|d\nef" "V \" + <F5>").map (·.1)) "ab\nc|d\nef"
+              Evil.nothingToPut },
+    { name :=
+        "the operator replace is one step of the history: one undo request gives the text from before it"
+      run :=
+        pure <|
+          match replaceDriver "a|bcd" { held := some "XY" } with
+          | none => false
+          | some driver =>
+            let replaced := evilFed driver "v l \" + <F5>"
+            evilText replaced == some "aXYd" && evilHistory replaced == some (2, false) &&
+              evilText (evilUndone replaced) == some "abcd" }]
 
 /-- The checks of the two commands that open a line (`Evil.openBelow`,
 `Evil.openAbove`), by key, as `evilOperatorChecks` are. -/
