@@ -768,6 +768,64 @@ fn the_glyph_under_a_block_cursor_is_cut_to_the_cursors_area() {
 }
 
 #[test]
+fn a_rows_x_moves_its_glyphs_its_run_backgrounds_and_a_block_cursors_glyphs() {
+    // One glyph at 10 across on a red background, in a row that a padded
+    // view puts 8.4 pixels in and 8 down: drawn at 8 (8.4 on its pixel,
+    // as a row's top is), and its cursor's cell 8.4 further in too.
+    let on_red = Paint {
+        foreground: BLACK,
+        background: RED,
+        ..Paint::default()
+    };
+    let at = |x: f32| FrameRow {
+        x,
+        ..row(8.0, vec![glyph(2, 0, 10.0)], vec![(0..1, on_red)], 1)
+    };
+    let cursor = |x: f32| CursorBox {
+        area: Area {
+            x: x + 10.0,
+            y: 8.0,
+            width: 10.0,
+            height: 16.0,
+        },
+        shape: CursorShape::Block,
+        paint: Paint {
+            foreground: WHITE,
+            background: GREEN,
+            ..Paint::default()
+        },
+    };
+    let painted = |x: f32| {
+        let mut shown = view(vec![at(x)]);
+        shown.cursors = vec![cursor(x)];
+        let mut painter = painter();
+        painter.paint(&frame(vec![shown]), target(1.0));
+        (
+            boxes(&quads_of(&painter, QuadKind::Mask, BLACK)),
+            fills(&painter, RED),
+            boxes(&quads_of(&painter, QuadKind::Mask, WHITE)),
+        )
+    };
+    let (glyphs, backgrounds, under) = painted(0.0);
+    let (moved_glyphs, moved_backgrounds, moved_under) = painted(8.4);
+    let by = |quads: Vec<(i32, i32, u32, u32)>| -> Vec<(i32, i32, u32, u32)> {
+        quads
+            .into_iter()
+            .map(|(x, y, width, height)| (x + 8, y, width, height))
+            .collect()
+    };
+    assert_eq!(glyphs.len(), 1);
+    assert_eq!(moved_glyphs, by(glyphs));
+    assert_eq!(backgrounds.len(), 1);
+    assert_eq!(moved_backgrounds, by(backgrounds));
+    // The glyph a block cursor draws again is the row's, moved with it,
+    // and cut to the cursor's cell.
+    assert_eq!(under.len(), 1);
+    assert_eq!(moved_under.len(), 1);
+    assert_eq!(moved_under[0].0, under[0].0 + 8);
+}
+
+#[test]
 fn a_bar_an_underline_and_a_hollow_cursor_are_lines_as_thick_as_the_scale() {
     let green = |shape, scale| boxes(&cursor_quads(shape, CELL, scale).0);
     assert_eq!(green(CursorShape::Bar, 1.0), vec![(10, 16, 1, 16)]);

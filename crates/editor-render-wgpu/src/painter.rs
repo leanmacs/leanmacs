@@ -27,9 +27,12 @@
 //! # Where a glyph goes
 //!
 //! A glyph's image is placed by the frame's own numbers and no others. Its
-//! place across is its `x` plus its `dx`, from its view's left edge,
-//! rounded to a quarter of a pixel: the whole pixels place the quad and
-//! the quarters pick the image ([`bin_of`]). Its place down is its row's
+//! place across is its `x` plus its `dx`, from its row's left, rounded to
+//! a quarter of a pixel: the whole pixels place the quad and the quarters
+//! pick the image ([`bin_of`]). A row's left is its view's left edge plus
+//! the row's `x` (a padded view's padding across), rounded to a pixel as
+//! its top is, so a fractional padding draws on a whole pixel and the
+//! glyph's quarters are its own. Its place down is its row's
 //! top, rounded to a pixel, plus the row's baseline plus its `dy`, rounded
 //! to a pixel: a baseline is a whole pixel. The image's own offsets from
 //! that point are the rasteriser's.
@@ -40,8 +43,8 @@
 //!
 //! # What is kept per row
 //!
-//! A row's quads are built relative to the row's own start (its view's
-//! left edge and its own top), so they are the same wherever the row is,
+//! A row's quads are built relative to the row's own start (its left and
+//! its own top), so they are the same wherever the row is,
 //! and kept by the row's content hash. A row seen again costs nothing but
 //! adding its position to its quads: the rasteriser is not asked.
 //! Cursors and selections are not part of any row and are made anew each
@@ -519,32 +522,45 @@ fn place_view(
         ),
         clip,
     );
-    // Each text row's quads, with where its top and its bottom are.
-    let placed: Vec<(&RowQuads, i32, i32)> = view
+    // Each text row's quads, with where its left, its top and its bottom
+    // are: its `x` and `y` on whole pixels, as a padded view's may not be.
+    let placed: Vec<Placed<'_>> = view
         .rows
         .iter()
         .filter_map(|row| {
             let built = rows.get(row.hash)?;
-            Some((built, top + pixel(row.y), top + pixel(row.y + row.height)))
+            Some(Placed {
+                quads: built,
+                left: left + pixel(row.x),
+                from: top + pixel(row.y),
+                to: top + pixel(row.y + row.height),
+            })
         })
         .collect();
-    for (row, from, to) in &placed {
-        backgrounds(row, view.background, left, *from, *to, &mut |quad| {
-            push(quad, clip);
-        });
+    for row in &placed {
+        backgrounds(
+            row.quads,
+            view.background,
+            row.left,
+            row.from,
+            row.to,
+            &mut |quad| {
+                push(quad, clip);
+            },
+        );
     }
     for area in &view.selections {
         let quad = Quad::over(area.x, area.y, area.width, area.height, view.selection);
         push(quad.moved(left, top), clip);
     }
-    for (row, from, _) in &placed {
-        for quad in &row.glyphs {
-            push(quad.moved(left, *from), clip);
+    for row in &placed {
+        for quad in &row.quads.glyphs {
+            push(quad.moved(row.left, row.from), clip);
         }
     }
-    for (row, from, _) in &placed {
-        for quad in &row.lines {
-            push(quad.moved(left, *from), clip);
+    for row in &placed {
+        for quad in &row.quads.lines {
+            push(quad.moved(row.left, row.from), clip);
         }
     }
     if let Some(status) = &view.status {
@@ -568,6 +584,19 @@ fn place_view(
     }
 }
 
+/// A text row's kept quads, where they are placed: its left and its top,
+/// and its bottom, in the target's whole pixels.
+struct Placed<'a> {
+    /// The row's quads, relative to its start.
+    quads: &'a RowQuads,
+    /// Its left: the view's, and the row's `x` on a whole pixel.
+    left: i32,
+    /// Its top.
+    from: i32,
+    /// Its bottom.
+    to: i32,
+}
+
 /// Hands `push` the background of each run of `row` that is not `behind`,
 /// the colour already there, from `from` down to `to`.
 fn backgrounds(
@@ -587,10 +616,10 @@ fn backgrounds(
 }
 
 /// Hands `push` the quads of `cursor`, a cursor of a view whose top left
-/// is `origin` and whose text rows are `rows`.
+/// is `origin` and whose text rows are `rows`, placed.
 fn place_cursor(
     cursor: &CursorBox,
-    rows: &[(&RowQuads, i32, i32)],
+    rows: &[Placed<'_>],
     origin: (i32, i32),
     clip: Clip,
     line: u32,
@@ -607,12 +636,12 @@ fn place_cursor(
             // far as the cursor reaches. A colour glyph keeps its
             // colours.
             let under = Clip::of(cell.x, cell.y, cell.width, cell.height).and(clip);
-            for (row, from, _) in rows {
-                for quad in &row.glyphs {
+            for row in rows {
+                for quad in &row.quads.glyphs {
                     push(
                         Quad {
                             color: cursor.paint.foreground,
-                            ..quad.moved(origin.0, *from)
+                            ..quad.moved(row.left, row.from)
                         },
                         under,
                     );
