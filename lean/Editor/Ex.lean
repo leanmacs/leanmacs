@@ -42,9 +42,12 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
     and the accept key is the name `r`, which nobody bound, and not
     `reload`.
 - **Running a line** (`run`):
-  1. the line is parsed into its name and its argument (`Ex.parse`,
-     `Editor/Ex/Line.lean`). A line that is empty or all white space runs
-     nothing and says nothing, as Vim's does;
+  1. the line is parsed into its range, its name and its argument
+     (`Ex.parse`, `Editor/Ex/Line.lean`). A line that is empty or all
+     white space runs nothing and says nothing, as Vim's does. A range
+     before a name, which no name takes, is said (`noRange`), and nothing
+     runs; so is a range alone, which in Vim goes to a line
+     (`rangeAlone`);
   2. the command asks which command the name is bound to (`exBinding`),
      which the loop answers from the registry as it is at this step. A
      name nobody bound is said in the echo area (`unknown`), and the
@@ -154,7 +157,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 |---|---|
 | An ex name | A binding in `Editor/Ex/Compiled.lean`, or config's `exCommand` (`Editor/Setup.lean`); nothing here |
 | A command an ex name runs | Here if it is the ex line's own, with its name and its messages, and its registration in `Editor/Ex/Compiled.lean` |
-| A part of a line (a range, `!`) | `Editor/Ex/Line.lean`, and its use in `run` |
+| A part of a line | `Editor/Ex/Line.lean`, and its use in `run` |
 
 Pinned by `ModelTest.exChecks`, on the loop's driver over the editor's
 models and the test scheme.
@@ -179,6 +182,16 @@ takes nothing. -/
 def noArgument (name : String) : String :=
   s!"{name}: takes no argument"
 
+/-- What the echo area says when a line gives a range to a name: no name
+but the bang form's takes one. -/
+def noRange (name : String) : String :=
+  s!"{name}: takes no range"
+
+/-- What the echo area says for a line that is a range alone: Vim goes to
+that line, which is not built. -/
+def rangeAlone : String :=
+  "a range alone, to go to a line, is not built"
+
 /-- What the echo area says when the ex command was called with no line and
 could not ask for one: the refusal's own sentence, after the command's
 name. -/
@@ -193,6 +206,9 @@ name that takes nothing, are each said in the echo area, and nothing
 runs. -/
 def run (line : String) : EditorM Unit := do
   let some parsed := parse line | return
+  if parsed.range.isSome && !parsed.bang then
+    message (if parsed.name.isEmpty then rangeAlone else noRange parsed.name)
+    return
   let some binding ← exBinding parsed.name | message (unknown parsed.name)
   let some invocation := binding.invocation? parsed.argument | message (noArgument parsed.name)
   invoke invocation

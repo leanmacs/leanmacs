@@ -2481,6 +2481,16 @@ def setupChecks : List Check :=
           (["", "w q", " w", "w\t"].all
               (fun name => refusal (after name) == some (unusableExName name "write")) &&
             refusal (after "w-q!") == none) },
+    { name :=
+        "a setup that binds an ex name the ex line cannot read back as that name, one that starts with `!`, `%`, `.`, `$`, `,` or a digit, is refused as one that cannot be typed; `w!` and a name with a digit after its first character are taken"
+      run :=
+        let after (name : String) : SetupM Unit := do
+          command "write" (makes "1")
+          exCommand name "write"
+        pure
+          (["!x", "%s", ".x", "$x", ",x", "3x", "!"].all
+              (fun name => refusal (after name) == some (unusableExName name "write")) &&
+            ["w!", "e2", "w-q!"].all (fun name => refusal (after name) == none)) },
     { name := "defineMode registers the mode, in order, beside the commands"
       run :=
         let setup : SetupM Unit := do
@@ -9635,7 +9645,68 @@ def exLineChecks : List Check :=
             forced.invocation? none == some { command := "edit", arguments := [.bool true] } &&
             write.invocation? none == some { command := "write", arguments := [.bool true] } &&
             write.invocation? (some "x") == none &&
-            (Ex.parse "e! /tmp/a").map (·.name) == some "e!") }]
+            (Ex.parse "e! /tmp/a").map (·.name) == some "e!") },
+    { name :=
+        "criterion 1: an ex line whose first non-blank after its range is `!` is the bang form, named `!`, with the rest as its argument: `!echo hi` has no range, `%!sort` the range 1,$, `.,$!sort` the range .,$ and `3,5!sort` the range 3,5; `w!` is still the name `w!`, with no range and no bang"
+      run :=
+        let shell (range : Option Ex.Range) (argument : String) : Option Ex.Line :=
+          some { name := "!", argument := some argument, range, bang := true }
+        pure
+          (Ex.parse "!echo hi" == shell none "echo hi" &&
+            Ex.parse "%!sort" == shell (some { start := .line 1, stop := .last }) "sort" &&
+            Ex.parse ".,$!sort" == shell (some { start := .current, stop := .last }) "sort" &&
+            Ex.parse "3,5!sort" == shell (some { start := .line 3, stop := .line 5 }) "sort" &&
+            Ex.parse "w!" == some { name := "w!" }) },
+    { name :=
+        "a range of one address is that line to itself, an address left out beside the comma is the cursor's line, spaces may stand between the range, the `!` and the command, `!` alone is the bang form with no argument, line 0 and a range that runs backwards still parse, and a range before a name is kept with the name"
+      run :=
+        pure
+          (Ex.parse "3!sort" ==
+              some
+                { name := "!", argument := some "sort",
+                  range := some { start := .line 3, stop := .line 3 }
+                  bang := true } &&
+            Ex.parse "  % !  sort -r " ==
+              some
+                { name := "!", argument := some "sort -r"
+                  range := some { start := .line 1, stop := .last }, bang := true } &&
+            Ex.parse "!" == some { name := "!", bang := true } &&
+            Ex.parse " ! " == some { name := "!", bang := true } &&
+            (Ex.parse "0!x").bind (·.range) == some { start := .line 0, stop := .line 0 } &&
+            (Ex.parse "5,3!x").bind (·.range) == some { start := .line 5, stop := .line 3 } &&
+            Ex.parse "3,5w" ==
+              some { name := "w", range := some { start := .line 3, stop := .line 5 } } &&
+            (Ex.parse ",5!x").bind (·.range) == some { start := .current, stop := .line 5 } &&
+            (Ex.parse "3,!x").bind (·.range) == some { start := .line 3, stop := .current } &&
+            Ex.parse "12,$ e a b" ==
+              some
+                { name := "e", argument := some "a b"
+                  range := some { start := .line 12, stop := .last } }) },
+    { name :=
+        "criterion 2: a range is resolved against the buffer's lines and the cursor's: over three lines `%` is 1 to 3 and `.` the cursor's line, and line 0, a range that runs backwards and a line past the end are refused, the last with a message naming the line and the count"
+      run :=
+        let over (range : Ex.Range) (current : Nat) : String ⊕ (Nat × Nat) :=
+          match range.resolve current 3 with
+          | .ok lines => .inr lines
+          | .error why => .inl why
+        pure
+          (over { start := .line 1, stop := .line 7 } 1 == .inl (Ex.pastEnd 7 3) &&
+            Ex.pastEnd 7 3 == "line 7 is past the end of the buffer (3 lines)" &&
+            over { start := .line 1, stop := .last } 2 == .inr (1, 3) &&
+            over { start := .current, stop := .current } 2 == .inr (2, 2) &&
+            over { start := .current, stop := .last } 2 == .inr (2, 3) &&
+            over { start := .line 0, stop := .line 0 } 1 == .inl Ex.lineZero &&
+            over { start := .line 3, stop := .line 2 } 1 == .inl (Ex.backwards 3 2) &&
+            over { start := .line 5, stop := .line 3 } 1 == .inl (Ex.pastEnd 5 3) &&
+            over { start := .line 9, stop := .line 8 } 1 == .inl (Ex.pastEnd 9 3)) },
+    { name :=
+        "a buffer's lines are its rows, but for the empty row after a last line feed: three lines and a last line feed are three lines, the empty text is one, and a last line with no line feed counts"
+      run :=
+        pure
+          (Ex.lineCount "b\nc\na\n" == 3 && Ex.lineCount "" == 1 && Ex.lineCount "a" == 1 &&
+            Ex.lineCount "a\nb" == 2 &&
+            Ex.lineCount "\n" == 1 &&
+            Ex.lineCount "a\n\n" == 2) }]
 
 /-- The key strings the scheme fixtures are written with. -/
 def schemeKeyStrings : List String :=
@@ -18165,6 +18236,21 @@ def exChecks : List Check :=
             promptEcho refused == Ex.noArgument "plain" && closed refused &&
               !(echoesSince driver refused).contains (greeted hello) &&
               promptEcho ran == greeted [] },
+    { name :=
+        "a range before an ex name, which no shipped name takes, leaves the ex line's message for it in the echo area and runs nothing; a range alone, which would go to a line in Vim, says that is not built"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver (exLine "3,5plain")
+            let (spaced, _) := fedTo driver (exLine "% plain")
+            let (alone, _) := fedTo driver (exLine "3")
+            promptEcho refused == Ex.noRange "plain" && closed refused &&
+              !(echoesSince driver refused).contains (greeted []) &&
+              promptEcho spaced == Ex.noRange "plain" &&
+              promptEcho alone == Ex.rangeAlone &&
+              closed alone },
     { name :=
         "an empty line and a line of white space run nothing and leave the echo area empty, with the prompt closed"
       run :=

@@ -105,8 +105,10 @@ def setup : SetupM Unit := do
 
 The command's name is looked up when the line is run, as a key binding's
 is. An ex binding is not a command and is not counted as one. `exCommand`
-refuses a name that is empty or holds white space, which could not be
-typed as a line's first word.
+refuses a name the ex line cannot read back as itself: one that is empty,
+holds white space, or starts with `!`, `%`, `.`, `$`, `,` or a digit, which
+the line reads as a range or as `:!` (`Ex.reachable`,
+`Editor/Ex/Line.lean`).
 
 `setup` is a program over a port of its own, the *setup port*, whose requests
 carry what is registered. It is plain data like any program
@@ -395,9 +397,11 @@ def bindKey (keys : String) (command : String) : SetupM Unit := do
     ExceptT.lift (Program.request (port := setupPort) (.bind chords command))
 
 /-- The message a binding of the ex name `name` to the command called
-`command` is refused with when the name is empty or holds white space. -/
+`command` is refused with when the ex line cannot read the name back as
+itself (`Ex.reachable`): it is empty, holds white space, or starts with
+what the line reads as a range or as `!`. -/
 def unusableExName (name command : String) : String :=
-  s!"the ex name `{name}` of the command `{command}` cannot be typed: it is empty or holds white space"
+  s!"the ex name `{name}` of the command `{command}` cannot be typed: it is empty, holds white space, or starts with a range or `!`"
 
 /-- Binds the ex name `name` to the command called `command`: a line of the
 ex command line whose first word is `name` runs that command. With
@@ -406,10 +410,12 @@ string; by default the name takes nothing, and a line with more is refused
 when it is run. The command's name is looked up when the line is run, so
 the command need not be one this `setup` registers.
 
-Refuses the `setup` for a name that is empty or holds white space, which
-could not be typed as a line's first word. -/
+Refuses the `setup` for a name the ex line cannot read back as itself
+(`Ex.reachable`): one that is empty, holds white space, or starts with `!`,
+`%`, `.`, `$`, `,` or a digit, which the line reads as a range or as the
+bang form. -/
 def exCommand (name command : String) (takes : Ex.Takes := .nothing) : SetupM Unit := do
-  if name.isEmpty || name.any (·.isWhitespace) then
+  if !Ex.reachable name then
     throw (unusableExName name command)
   ExceptT.lift (Program.request (port := setupPort) (.ex { name, command, takes }))
 
