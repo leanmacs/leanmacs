@@ -362,10 +362,11 @@
 //!   own loop, not the main-thread service, which still answers nothing
 //!   else while the window runs. Whether the window is in fullscreen comes
 //!   back on every resize, as bit 0 of its code.
-//! - **The window's title is the scene's.** A display bound to the
-//!   presenter hands it the title of each scene it publishes, and the
-//!   presenter sends it to the open window when it changes
-//!   ([`render`], "What reaches the window: the title").
+//! - **The window's title and the menu bar are the scene's.** A display
+//!   bound to the presenter hands it the title of each scene it publishes,
+//!   and the menu bar of each that names one, and the presenter sends each
+//!   to the open window when it changes ([`render`], "What reaches the
+//!   window: the title and the menu").
 //! - **The platform is named by a tag** ([`window::PlatformId`]), checked
 //!   like a queue's. The two scripted platforms, the one that reports a
 //!   sample and the one that cannot open a window, are reachable for the

@@ -357,6 +357,9 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
         none .quitRequested
       else
         throw "a quit the system asked has no text"
+    | .menu, 0 =>
+      -- An empty name crosses as it is: the loop says no such command.
+      none (.menu event.text)
     | kind, code =>
       throw s!"{repr kind} has no code {code}"
   return { event := decoded, stamp := event.stamp, interrupt }
@@ -384,6 +387,7 @@ def Event.post : Event → IO Bool
   | .closeRequested => Ffi.postInput .closeRequested 0 "" #[]
   | .openFiles paths => Ffi.postInput .openFiles 0 "" (EventWords.pathWords paths)
   | .quitRequested => Ffi.postInput .quitRequested 0 "" #[]
+  | .menu command => Ffi.postInput .menu 0 command #[]
   | .message .. | .completion .. | .quit => pure false
 
 /-- Tells the library which key is the interrupt key, or that there is none:

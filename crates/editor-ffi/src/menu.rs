@@ -1,5 +1,6 @@
 //! The menu bar as it crosses: one layout of words and texts, written into
-//! what a scripted window was asked ([`crate::window::asked_words`]).
+//! a scene ([`crate::display`]'s wire) and into what a scripted window was
+//! asked ([`crate::window::asked_words`]), and read back from a scene.
 //!
 //! The layout, after whatever says the menu is there:
 //!
@@ -13,14 +14,19 @@
 //!   `MODIFIER_*`). A command item then has its command's name, and a
 //!   system item its action's tag ([`system_tag`]).
 //!
-//! A text is written as the [`Sink`] writes one: in what a window was
-//! asked, the count of its scalar values and each of them. Lean's
-//! `Ffi.askedOf` is the other side.
+//! A text is written as the [`Sink`] writes one: in a scene, its length in
+//! bytes, with the text in the scene's string; in what a window was asked,
+//! the count of its scalar values and each of them. Lean's
+//! `Display/Real.encode` and `Ffi.askedOf` are the other side of each.
+//!
+//! Reading refuses a role, a kind or a system tag out of range, a key's
+//! presence that is neither 0 nor 1, a character that is no `char`, and
+//! modifier bits past the system key's.
 
 use editor_platform::Menu;
-use editor_platform::menu::{Action, Item, Role, System};
+use editor_platform::menu::{Action, Item, KeyEquivalent, Role, Submenu, System};
 
-use crate::window::modifier_bits;
+use crate::window::{modifier_bits, read_modifiers};
 
 /// A plain menu's role tag.
 pub const ROLE_NONE: u64 = 0;
@@ -63,6 +69,17 @@ pub(crate) trait Sink {
     fn text(&mut self, text: &str);
 }
 
+/// Where the layout is read from.
+pub(crate) trait Source {
+    /// The next word.
+    fn word(&mut self) -> Option<u64>;
+    /// The next text.
+    fn text(&mut self) -> Option<String>;
+    /// A count of things each at least `each` words long, bounded by the
+    /// words left.
+    fn count(&mut self, each: usize) -> Option<usize>;
+}
+
 /// Writes `menu` in the layout of the module docs.
 pub(crate) fn write(sink: &mut impl Sink, menu: &Menu) {
     sink.word(menu.menus.len() as u64);
@@ -93,4 +110,55 @@ pub(crate) fn write(sink: &mut impl Sink, menu: &Menu) {
             }
         }
     }
+}
+
+/// Reads a menu in the layout of the module docs; `None` when the words
+/// and texts spell none.
+pub(crate) fn read(source: &mut impl Source) -> Option<Menu> {
+    // A menu is at least its title, its role and its count of items.
+    let count = source.count(3)?;
+    let menus = (0..count).map(|_| submenu(source)).collect::<Option<_>>()?;
+    Some(Menu { menus })
+}
+
+/// Reads one menu of the bar.
+fn submenu(source: &mut impl Source) -> Option<Submenu> {
+    let title = source.text()?;
+    let role = match source.word()? {
+        ROLE_NONE => None,
+        ROLE_APP => Some(Role::App),
+        ROLE_WINDOW => Some(Role::Window),
+        _ => return None,
+    };
+    let count = source.count(1)?;
+    let items = (0..count).map(|_| item(source)).collect::<Option<_>>()?;
+    Some(Submenu { title, role, items })
+}
+
+/// Reads one item.
+fn item(source: &mut impl Source) -> Option<Item> {
+    let kind = source.word()?;
+    if kind == ITEM_SEPARATOR {
+        return Some(Item::Separator);
+    }
+    if kind != ITEM_COMMAND && kind != ITEM_SYSTEM {
+        return None;
+    }
+    let title = source.text()?;
+    let (present, character, bits) = (source.word()?, source.word()?, source.word()?);
+    let key = match present {
+        0 => None,
+        1 => Some(KeyEquivalent {
+            character: char::from_u32(u32::try_from(character).ok()?)?,
+            modifiers: read_modifiers(bits)?,
+        }),
+        _ => return None,
+    };
+    let action = if kind == ITEM_COMMAND {
+        Action::Command(source.text()?)
+    } else {
+        let tag = usize::try_from(source.word()?).ok()?;
+        Action::System(*SYSTEMS.get(tag)?)
+    };
+    Some(Item::Entry { title, key, action })
 }

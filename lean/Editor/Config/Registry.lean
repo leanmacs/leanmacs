@@ -3,6 +3,7 @@ import Editor.Command.Dispatch
 import Editor.Config.Owner
 import Editor.Ex.Line
 import Editor.InputScheme
+import Editor.Menu
 import Editor.Mode
 import Editor.Setup
 import Editor.State
@@ -58,6 +59,17 @@ owners that bind one sequence the later owner's binding is the keymap's, as
 `Keymap.ofList` has it. The name is not looked up here: a binding to a name
 nobody registered is kept, and the name is looked up when the keys are
 typed.
+
+**The menu bar shows a command's key from these bindings**
+(`keyEquivalent?`): of the sequences the bindings, as one keymap, bind to
+the command's name, the one bound last that is a single chord of one
+character with the system key held, as a menu's key equivalent must be (a
+key equivalent with no Command would take a plain key from typing, and a
+named key has none). So config's binding is shown over a compiled one, a
+sequence config binds to another command shows for that one, and a
+command bound only to a longer sequence, a named key or a chord without
+the system key shows none. Mode-local bindings and an input scheme's own
+keys are not looked at: the menu bar is the application's.
 
 ## Modes
 
@@ -308,6 +320,24 @@ def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding 
   Keymap.ofList
     (registry.bindings.toList.map fun entry =>
       (entry.binding.keys, scheme.command entry.binding.command))
+
+/-- The key equivalent the menu bar shows for the command `command`: the
+last chord the bindings bind to it alone that is one character with the
+system key held ("Key bindings", in the module docs); `none` when no
+binding is such a chord. -/
+def keyEquivalent? (registry : Registry) (command : String) : Option KeyEquivalent :=
+  let keymap : Keymap String :=
+    Keymap.ofList
+      (registry.bindings.toList.map fun entry => (entry.binding.keys, entry.binding.command))
+  (keymap.keysFor (· == command)).reverse.findSome? fun
+    | [chord] =>
+      match chord.logical, chord.modifiers.superKey with
+      | .character text, true =>
+        match text.toList with
+        | [character] => some { character, modifiers := chord.modifiers }
+        | _ => none
+      | _, _ => none
+    | _ => none
 
 /-- `registry` with every mode entry of `owner` removed and `modes` added as
 its mode entries. -/

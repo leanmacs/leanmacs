@@ -1,3 +1,5 @@
+import Editor.Menu
+
 /-!
 # Bindings to the Rust library
 
@@ -250,6 +252,7 @@ arrives on the editor queue.
   | `resize` | Bit 0 in fullscreen | `[width, height, scale]` |
   | `openFiles` | 0 | `[n, then for each of the n paths: m, m scalars]`; the text is empty |
   | `quitRequested` | 0 | None, and no text: the system asked the program to quit |
+  | `menu` | 0 | None; the text is the chosen item's command name |
 
   The modifiers are bits: shift 1, control 2, alt 4, super 8. A float
   crosses as its IEEE 754 bits (`Float.ofBits`). These bindings carry the
@@ -1368,6 +1371,9 @@ inductive EventKind where
   a logout, restart or shutdown. The code is 0, and there is no text and no
   word. -/
   | quitRequested
+  /-- A command item of the menu bar was chosen. The code is 0, the text
+  the command's name, and there is no word. -/
+  | menu
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
@@ -1384,6 +1390,7 @@ def EventKind.ofTag? : UInt64 → Option EventKind
   | 9 => some .resize
   | 10 => some .openFiles
   | 11 => some .quitRequested
+  | 12 => some .menu
   | _ => none
 
 /-- What kind of thing an event came from. -/
@@ -1865,22 +1872,125 @@ queue, as a resize. -/
 def windowRequest (platform : Platform) (request : WindowRequest) : IO Unit :=
   windowRequestRaw platform request.tag
 
-/-- One thing a scripted window was asked: a request, or a title the
-presenter sent it from a scene. -/
+/-- One thing a scripted window was asked: a request, or a title or a menu
+bar the presenter sent it from a scene. -/
 inductive WindowAsked where
   /-- A request Lean made. -/
   | request (request : WindowRequest)
   /-- A title. -/
   | title (text : String)
+  /-- A menu bar. -/
+  | menu (menu : Menu)
   deriving DecidableEq, Repr
+
+/-- Reads the words of what a window was asked, from an index on: each
+reader gives what it read and the index after it, or `none` when the
+words spell nothing. -/
+private abbrev AskedReader :=
+  StateT Nat Option
+
+/-- The next word. -/
+private def AskedReader.word (words : Array UInt64) : AskedReader UInt64 := fun at_ =>
+  words[at_]?.map (·, at_ + 1)
+
+/-- A count of things, each at least one word, that the words left can
+hold. -/
+private def AskedReader.count (words : Array UInt64) : AskedReader Nat := do
+  let count := (← AskedReader.word words).toNat
+  if count ≤ words.size - (← get) then
+    pure count
+  else
+    failure
+
+/-- The character the scalar value `scalar` numbers, if it is one. -/
+private def AskedReader.char? (scalar : UInt64) : Option Char :=
+  if scalar < 0x110000 && Nat.isValidChar scalar.toNat then some (Char.ofNat scalar.toNat) else none
+
+/-- A text: the count of its scalar values, and each of them. -/
+private def AskedReader.text (words : Array UInt64) : AskedReader String := do
+  let count ← AskedReader.count words
+  let chars ←
+    (List.range count).mapM fun _ => do
+        let some char := AskedReader.char? (← AskedReader.word words) | failure
+        pure char
+  return String.ofList chars
+
+/-- A menu bar in the layout of `editor-ffi`'s `menu.rs`: its menus, each
+with its title, its role and its items. -/
+private def AskedReader.menu (words : Array UInt64) : AskedReader Menu := do
+  let word := AskedReader.word words
+  let menus ←
+    (List.range (← AskedReader.count words)).mapM fun _ => do
+        let title ← AskedReader.text words
+        let role ←
+          match ← word with
+          | 0 =>
+            pure none
+          | 1 =>
+            pure (some MenuRole.app)
+          | 2 =>
+            pure (some MenuRole.window)
+          | _ =>
+            failure
+        let items ←
+          (List.range (← AskedReader.count words)).mapM fun _ => do
+              match ← word with
+              | 0 =>
+                pure MenuItem.separator
+              | kind@(1 : UInt64) | kind@2 =>
+                do
+                  let title ← AskedReader.text words
+                  let (present, scalar, bits) := (← word, ← word, ← word)
+                  let key ←
+                    match present with
+                    | 0 =>
+                      pure none
+                    | 1 =>
+                      do
+                        let some character := AskedReader.char? scalar | failure
+                        unless bits < 16 do
+                          failure
+                        pure <|
+                            some
+                              { character
+                                modifiers :=
+                                  { shift := bits &&& 1 != 0, control := bits &&& 2 != 0
+                                    alt := bits &&& 4 != 0, superKey := bits &&& 8 != 0 } }
+                    | _ =>
+                      failure
+                  let action ←
+                    if kind == 1 then
+                      MenuAction.command <$> AskedReader.text words
+                    else
+                      match ← word with
+                      | 0 =>
+                        pure (.system .about)
+                      | 1 =>
+                        pure (.system .services)
+                      | 2 =>
+                        pure (.system .hide)
+                      | 3 =>
+                        pure (.system .hideOthers)
+                      | 4 =>
+                        pure (.system .showAll)
+                      | 5 =>
+                        pure (.system .quit)
+                      | _ =>
+                        failure
+                  pure (MenuItem.item title key action)
+              | _ =>
+                failure
+        pure { title, role, items := items.toArray }
+  return { menus := menus.toArray }
 
 /-- `windowAsked` as it crosses. -/
 @[extern "editor_glue_window_asked"]
 private opaque windowAskedRaw (platform : Platform) : IO RawWords
 
 /-- What the words of `windowAsked` spell from the index `at_` on, each
-thing asked in order: a request's tag, or the tag 3, a count and the
-scalar values of a title's characters. `none` when they spell nothing. -/
+thing asked in order: a request's tag, the tag 3, a count and the scalar
+values of a title's characters, or the tag 5 and a menu bar's layout
+(`AskedReader.menu`). `none` when they spell nothing. -/
 private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     (asked : Array WindowAsked := #[]) : Option (Array WindowAsked) :=
   if at_ >= words.size then some asked
@@ -1899,6 +2009,9 @@ private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
               some (Char.ofNat scalar.toNat)
             else none
       askedOf words (at_ + 2 + count) (asked.push (.title (String.ofList chars)))
+    | 5 => do
+      let (menu, next) ← (AskedReader.menu words).run (at_ + 1)
+      askedOf words next (asked.push (.menu menu))
     | _ => none
 
 /-- What the scripted window of `platform` was asked in its latest run, in

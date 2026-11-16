@@ -177,13 +177,14 @@ def dataChecks (_ : Unit) : List Check :=
     { name := "the tags of a window's events and of the window source are known"
       run :=
         pure
-          ((([3, 4, 5, 6, 7, 8, 9, 10, 11] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
+          ((([3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
               [some .windowOpened, some .windowFocus, some .key, some .composition, some .pointer,
-                some .closeRequested, some .resize, some .openFiles, some .quitRequested] &&
+                some .closeRequested, some .resize, some .openFiles, some .quitRequested,
+                some .menu] &&
             Editor.Ffi.SourceKind.ofTag? 3 == some .window) },
     { name := "a tag the bindings do not know is refused"
       run :=
-        pure ((Editor.Ffi.EventKind.ofTag? 12).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
+        pure ((Editor.Ffi.EventKind.ofTag? 13).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
 
 /-- An hour, in milliseconds: a deadline no check reaches. -/
 def hour : UInt64 :=
@@ -1429,12 +1430,13 @@ def runScriptedAsking (requests : List Editor.Ffi.WindowRequest) : IO AskedRun :
     for request in requests do
       Editor.Ffi.windowRequest .scripted request
 
-/-- The requests in `asked`, without the titles: a title is the presenter's,
-sent when the window opens if a scene bound to it named one. -/
+/-- The requests in `asked`, without the titles and the menu bars: each is
+the presenter's, sent when the window opens if a scene bound to it named
+one. -/
 def requestsOf (asked : Array Editor.Ffi.WindowAsked) : Array Editor.Ffi.WindowRequest :=
   asked.filterMap fun
     | .request request => some request
-    | .title _ => none
+    | .title _ | .menu _ => none
 
 /-- What the window mode's closer (`Editor.Window.closeOnceEnded`) did once a
 loop that ended with `ended` had: whether it said the loop ended well, the
@@ -1915,6 +1917,14 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             (decodedWindow .quitRequested 0 #[0]).isNone &&
             (decodedWindow .quitRequested 0 #[] "x").isNone) },
     { name :=
+        "a menu item chosen decodes to its command's name, an empty name as it is, and is refused with a code and with a word"
+      run :=
+        pure
+          (decodedWindow .menu 0 #[] "undo" == some (.menu "undo") &&
+            decodedWindow .menu 0 == some (.menu "") &&
+            (decodedWindow .menu 1 #[] "undo").isNone &&
+            (decodedWindow .menu 0 #[0] "undo").isNone) },
+    { name :=
         "files to open decode with their paths in order, each its count of characters and its characters, and no path to none"
       run :=
         pure
@@ -2028,7 +2038,7 @@ def eventChecks (_ : Unit) : List Check :=
             events.head? == some (.windowOpened "scripted") &&
             events.getLast? == some .closeRequested },
     { name :=
-        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, files to open, none to open, a request to close and a quit the system asked posted as a window would come back from the library equal"
+        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, files to open, none to open, a request to close, a quit the system asked and two menu items chosen posted as a window would come back from the library equal"
       run := do
         let events : List Editor.Event :=
           [.windowOpened "x", .focus true, .focus false,
@@ -2044,7 +2054,7 @@ def eventChecks (_ : Unit) : List Check :=
             .resize { width := 1920, height := 1080, scale := 1.25 },
             .resize { width := 1920, height := 1080, scale := 1.25, fullscreen := true },
             .openFiles ["/Users/me/notes.txt", "/tmp/é x.lean"], .openFiles [], .closeRequested,
-            .quitRequested]
+            .quitRequested, .menu "undo", .menu "é"]
         events.allM fun event => return (← roundTrip event) == some event },
     { name := "an event no window reports is not posted: a message, a completion and a quit"
       run := do
@@ -2305,12 +2315,33 @@ def sceneFixture (theme : Editor.Theme := #[]) : IO SceneFixture := do
 def SceneFixture.own (index : Nat) : Editor.MarkerId :=
   { text := ⟨0⟩, index }
 
+/-- A menu bar with each kind of item, each role and a key with every
+modifier: the menu `crates/editor-ffi/src/display/wire.rs`'s own round trip
+crosses. -/
+def fixtureMenu : Editor.Menu :=
+  {
+    menus :=
+      #[{ title := "Ap", role := some .app
+          items :=
+            #[.item "Q" (some { character := 'q', modifiers := { superKey := true } })
+                (.system .quit),
+              .item "S" none (.system .services), .separator] },
+        { title := "é", role := some .window
+          items :=
+            #[.item "U"
+                (some
+                  { character := 'Z'
+                    modifiers :=
+                      { shift := true, control := true, alt := true, superKey := true } })
+                (.command "undo")] },
+        { title := "" }] }
+
 /-- A scene that takes the branches of the binding's encoding the display
-fixture does not: a pending prefix and a preedit; view 1, of a snapshot the
-table does not hold, before view 2, of the one it holds, scrolled to its
-second row with a selection; and view 3, of the same snapshot, whose scroll
-marker is `scroll` and whose selection markers are `selections`. Each view
-is 4 columns by 3 rows. -/
+fixture does not: a pending prefix, a preedit and a menu bar; view 1, of a
+snapshot the table does not hold, before view 2, of the one it holds,
+scrolled to its second row with a selection; and view 3, of the same
+snapshot, whose scroll marker is `scroll` and whose selection markers are
+`selections`. Each view is 4 columns by 3 rows. -/
 def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
     (selections : Array Editor.MarkerId) : Editor.Scene :=
   let rect (y : Nat) : Editor.Rect := { x := 0, y, width := 32, height := 48 }
@@ -2328,7 +2359,7 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
         { id := ⟨3⟩, rect := rect 96, snapshot := fixture.snapshot, scroll, selections
           cursor := { shape := .underline, face := ⟨"c3"⟩ }, decorations := #[], status := #[] }]
     focused := some ⟨2⟩, echo := "fixture", pending := "g", preedit := some "é"
-    title := "notes.txt" }
+    title := "notes.txt", menu := some fixtureMenu }
 
 /-- The fixture's scene with view 3's markers of two texts: its scroll
 marker is the text's anchor at offset 3, and its selection marker is a
@@ -2390,14 +2421,21 @@ and a frame with another frame, never with a colour or a size written
 here. -/
 def sceneChecks (_ : Unit) : List Check :=
   [{  name :=
-        "a scene with a pending prefix, a preedit, a title, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
+        "a scene with a pending prefix, a preedit, a title, a menu bar with each kind of item, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
       run := do
         let fixture ← sceneFixture
         let encoded ← fixture.real.encode fixture.mixed none
         let anchor := fixture.anchor.toUInt64
         let selection := fixture.selection.toUInt64
         -- The title's length after the preedit's presence and length.
-        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 1, 1, 2, 9, 3]
+        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 1, 1, 2, 9]
+        -- The menu's presence and three menus: "Ap", the application's,
+        -- with Quit (s-q), Services and a separator; "é", the windows
+        -- menu, with the command undo on every modifier and Z; and an
+        -- untitled plain menu with no item. Then the count of views.
+        let menu : Array UInt64 :=
+          #[1, 3, 2, 1, 3, 2, 1, 1, 0x71, 8, 5, 2, 1, 0, 0, 0, 1, 0, 2, 2, 1, 1, 1, 1, 0x5a, 15, 4,
+            0, 0, 0, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor.
         let first : Array UInt64 := #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0]
         -- The first handle; its scroll marker and its selection; a bar
@@ -2409,8 +2447,8 @@ def sceneChecks (_ : Unit) : List Check :=
         let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0]
         -- No faces: as last published.
         let faces : Array UInt64 := #[0]
-        return encoded.words == scene ++ first ++ second ++ third ++ faces &&
-            encoded.strings == "fixturegénotes.txtc1c2kwNORMALmodec3" &&
+        return encoded.words == scene ++ menu ++ first ++ second ++ third ++ faces &&
+            encoded.strings == "fixturegénotes.txtApQSéUundoc1c2kwNORMALmodec3" &&
             encoded.snapshots.size == 2 },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
@@ -2456,7 +2494,7 @@ def sceneChecks (_ : Unit) : List Check :=
         let fixture ← sceneFixture everyTheme
         let real := fixture.real
         let encoded ← real.encode emptyScene (some everyTheme)
-        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0]
+        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- Present, and seven definitions.
         let faces : Array UInt64 := #[1, 7]
         -- Its name; a family; 20 pixels; weight 700; italic; a foreground
@@ -2999,10 +3037,25 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     let titles :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .title text => some text
-        | .request _ => none
+        | .request _ | .menu _ => none
     unless titles.back? == some "scratch" do
       IO.eprintln
           s!"ffi-test window-host: the window was last asked for the title {titles.back?}, not scratch"
+      return 1
+    -- The menu bar crossed whole, from Lean through the scene to the
+    -- scripted window's record and back: the standard one, with the keys
+    -- the compiled bindings give it, asked once, since it never changed.
+    let menus :=
+      ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
+        | .menu menu => some menu
+        | .request _ | .title _ => none
+    let compiled :=
+      ({} : Editor.Config.Registry).replaceBindings .compiled
+        (Editor.FrameCommands.bindings ++ Editor.Menu.bindings)
+    let expected := compiled.menuOf Editor.Menu.standard
+    unless menus == #[expected] do
+      IO.eprintln
+          s!"ffi-test window-host: the window was asked for {menus.size} menu bars, not the standard one once: {repr menus}"
       return 1
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
   return 0

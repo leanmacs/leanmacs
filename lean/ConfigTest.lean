@@ -3690,7 +3690,25 @@ def shippedChecks (_ : Unit) : List Check :=
         return bound "C-s-f" == some { command := "toggle-fullscreen" } &&
             bound "s-m" == some { command := "minimise-window" } &&
             compiled "toggle-fullscreen" &&
-            compiled "minimise-window" }]
+            compiled "minimise-window" },
+    { name :=
+        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z and s-Z to open-file, save-buffer, undo and redo for the owner compiled"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let bound (text : String) : Option Invocation :=
+          (registry.keymap TestScheme.scheme).find? (keysOf text)
+        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        return shipped.menu == some Menu.standard &&
+            bound "s-o" == some { command := "open-file" } &&
+            bound "s-s" == some { command := "save-buffer" } &&
+            bound "s-z" == some { command := "undo" } &&
+            bound "s-Z" == some { command := "redo" } &&
+            ["open-file", "save-buffer", "undo", "redo"].all compiled }]
 
 /-- A chunk whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and

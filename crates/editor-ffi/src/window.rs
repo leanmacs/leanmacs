@@ -71,9 +71,10 @@
 //! system asked when the editor does not quit ([`request_of`]). It never blocks, and it goes through
 //! the window's own loop ([`Platform::request`]), not the main-thread
 //! service, which still answers nothing else while the window runs. No tag
-//! names a title: the title is a field of the scene Lean publishes, and
-//! reaches the window from the presenter ([`crate::render`], "What reaches
-//! the window: the title"). What a scripted window was asked is read back
+//! names a title or a menu bar: each is a field of the scene Lean
+//! publishes, and reaches the window from the presenter ([`crate::render`],
+//! "What reaches the window: the title and the menu"). What a scripted
+//! window was asked is read back
 //! for tests with [`editor_ffi_window_asked`] ([`asked_words`]).
 //!
 //! What draws in the process's window is a render session over the

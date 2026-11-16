@@ -1,3 +1,4 @@
+import Editor.Menu
 import Editor.Text
 
 /-!
@@ -38,6 +39,7 @@ the last scene published, on its own thread, so painting never waits on Lean
 | A new field of the scene or of a view | A field here, which the command loop fills | The same field in the Rust scene and its binding (its phase 1); drawing a new face (its phase 2) |
 | A new cursor shape | A constructor of `CursorShape` | Its drawing |
 | A new kind of thing a view shows (a terminal) | A field or a constructor here | The view's renderer |
+| Something more the menu bar shows | A field or a constructor of `Editor/Menu.lean`'s types | `editor_platform::menu`, and the scene's crossing (`editor-ffi`'s `display/wire.rs` and `menu.rs`) |
 
 The scene is pinned by `ModelTest.sceneChecks`. It is published through the
 display interface (`Editor/Display.lean`).
@@ -158,6 +160,11 @@ structure Scene where
   /-- The window's title: the selected buffer's name (`EditorState.title`).
   It is empty only in a scene no command loop made. -/
   title : String := ""
+  /-- The application's menu bar, with its key equivalents filled from the
+  registry's bindings as they were at the step that published it
+  (`Loop.menu`, `Editor/Menu.lean`); `none` in a scene no command loop of
+  a host with a menu made, which leaves the menu bar as it was. -/
+  menu : Option Menu := none
   deriving DecidableEq, Repr
 
 end Editor

@@ -274,6 +274,61 @@ they are what `heights` defines ahead of the scene. -/
 def encodeDefinitions (encoded : Encoded) (theme : Theme) : Encoded :=
   theme.foldl encodeFace { encoded with words := encoded.words.push theme.size.toUInt64 }
 
+/-- The bits of `modifiers` as the library reads them: shift 1, control 2,
+alt 4, the system key 8. -/
+def modifierBits (modifiers : Modifiers) : UInt64 :=
+  (if modifiers.shift then 1 else 0) ||| (if modifiers.control then 2 else 0) |||
+    (if modifiers.alt then 4 else 0) |||
+    (if modifiers.superKey then 8 else 0)
+
+/-- The tag of a system action, as the library reads it: 0 about, 1
+services, 2 hide, 3 hide others, 4 show all, 5 quit. -/
+def systemTag : SystemAction → UInt64
+  | .about => 0
+  | .services => 1
+  | .hide => 2
+  | .hideOthers => 3
+  | .showAll => 4
+  | .quit => 5
+
+/-- `item` added to `encoded`: its kind (0 a separator, 1 a command, 2 a
+system item), then for an item its title, its key's presence, scalar value
+and modifier bits, and its command's name or its system action's tag. -/
+def encodeMenuItem (encoded : Encoded) : MenuItem → Encoded
+  | .separator => { encoded with words := encoded.words.push 0 }
+  | .item title key action =>
+    let kind : UInt64 :=
+      match action with
+      | .command _ => 1
+      | .system _ => 2
+    let encoded := pushText { encoded with words := encoded.words.push kind } title
+    let (scalar, bits) : UInt64 × UInt64 :=
+      match key with
+      | some key => (key.character.toNat.toUInt64, modifierBits key.modifiers)
+      | none => (0, 0)
+    let encoded :=
+      { encoded with words := encoded.words.push key.isSome.toUInt64 |>.push scalar |>.push bits }
+    match action with
+    | .command name => pushText encoded name
+    | .system system => { encoded with words := encoded.words.push (systemTag system) }
+
+/-- `menu` added to `encoded` (`crates/editor-ffi/src/menu.rs`): its count of
+menus, then each menu's title, role (0 none, 1 the application's, 2 the
+windows menu) and count of items, and each item. -/
+def encodeMenu (encoded : Encoded) (menu : Menu) : Encoded :=
+  menu.menus.foldl
+    (fun encoded submenu =>
+      let role : UInt64 :=
+        match submenu.role with
+        | none => 0
+        | some .app => 1
+        | some .window => 2
+      let encoded := pushText encoded submenu.title
+      let encoded :=
+        { encoded with words := encoded.words.push role |>.push submenu.items.size.toUInt64 }
+      submenu.items.foldl encodeMenuItem encoded)
+    { encoded with words := encoded.words.push menu.menus.size.toUInt64 }
+
 /-- `scene` as it crosses to the library, with the definitions `faces`
 after its views when there are any to send: none is sent as their absence,
 which is "as last published". A view whose snapshot the table does not
@@ -287,6 +342,8 @@ def encode (real : RealDisplay) (scene : Scene) (faces : Option Theme) : IO Enco
   let encoded := { encoded with words := encoded.words.push scene.preedit.isSome.toUInt64 }
   let encoded := pushText encoded (scene.preedit.getD "")
   let encoded := pushText encoded scene.title
+  let encoded := { encoded with words := encoded.words.push scene.menu.isSome.toUInt64 }
+  let encoded := (scene.menu.map (encodeMenu encoded)).getD encoded
   let encoded := { encoded with words := encoded.words.push scene.views.size.toUInt64 }
   let encoded ← scene.views.foldlM real.encodeView encoded
   match faces with

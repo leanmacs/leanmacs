@@ -30,6 +30,7 @@ import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Key.Notation
 import Editor.Loop.Driver
+import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModuleLookup
@@ -8129,7 +8130,18 @@ def keymapChecks : List Check :=
             odd.find? [controlKey "x", charKey "b"] == none &&
             !odd.continues [controlKey "x"] &&
             (keymap.filter (· > 3)).continues [controlKey "x"] &&
-            (keymap.filter fun _ => true).bindings == keymap.bindings) }]
+            (keymap.filter fun _ => true).bindings == keymap.bindings) },
+    { name :=
+        "keysFor gives the sequences bound to the bindings a predicate keeps, in the order each was last bound, and a sequence rebound to another binding is not among them"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofList
+            [([charKey "a"], 1), ([charKey "b"], 2), ([controlKey "x", charKey "c"], 1),
+              ([charKey "d"], 1), ([charKey "a"], 1), ([charKey "d"], 2)]
+        pure
+          (keymap.keysFor (· == 1) == [[controlKey "x", charKey "c"], [charKey "a"]] &&
+            keymap.keysFor (· == 2) == [[charKey "b"], [charKey "d"]] &&
+            keymap.keysFor (· == 3) == []) }]
 
 /-- Whether `text` is a key string that names exactly `keys`. -/
 def parses (text : String) (keys : List Key) : Bool :=
@@ -20146,16 +20158,20 @@ def heightChecks : List Check :=
             | _ => false }]
 
 /-- The registry of the frame command checks: the frame's commands and their
-bindings registered for the owner `compiled`, as a host registers them, and
-`config` as config's bindings. -/
-def frameRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
-  ((({} : Config.Registry).replace .compiled FrameCommands.commands).replaceBindings .compiled
-        FrameCommands.bindings).replaceBindings
-    .config config
+bindings, with the menu bar's bindings, registered for the owner
+`compiled`, as a host registers them, and `config` as config's bindings and
+`commands` as config's commands. -/
+def frameRegistry (config : Array Config.KeyBinding := #[])
+    (commands : Array Config.Registration := #[]) : Config.Registry :=
+  (((({} : Config.Registry).replace .compiled FrameCommands.commands).replaceBindings .compiled
+            (FrameCommands.bindings ++ Menu.bindings)).replaceBindings
+        .config config).replace
+    .config commands
 
 /-- What a step of the frame command checks is handed: the active keymaps
-`registry` makes for the test scheme from the loop's state, and its plain
-commands. -/
+`registry` makes for the test scheme from the loop's state, its plain
+commands, and the menu bar that ships with its key equivalents filled from
+`registry`, as a host's are. -/
 def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
   { maps := registry.activeMaps TestScheme.scheme
     command? := fun name =>
@@ -20164,7 +20180,8 @@ def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
         some fun _ => do
           run
           return none
-      | _ => none }
+      | _ => none
+    menu := some (registry.menuOf Menu.standard) }
 
 /-- A driver of the frame command checks over the initial state, with the
 keys of `registry`; `none` if making the state was refused. -/
@@ -20283,6 +20300,108 @@ def titleChecks : List Check :=
               titleOf prompting == some "scratch" &&
               EditorState.title EditorState.none == ""
           | _, _, _ => false }]
+
+/-- The menu bar the frame driver over `registry` publishes once the window
+has said its size; `none` without one. -/
+def menuShown (registry : Config.Registry) : Option Menu := do
+  let driver ← frameDriver registry
+  let scene ← (fedTo driver [resizedTo false]).1.model.display.scenes.back?
+  scene.menu
+
+/-- The key equivalent of `character` with `modifiers` held, the system key
+alone unless told. -/
+def equivalent (character : Char) (modifiers : Modifiers := { superKey := true }) :
+    Option KeyEquivalent :=
+  some { character, modifiers }
+
+/-- The key equivalents the compiled bindings give the menu's commands. -/
+def compiledEquivalents : String → Option KeyEquivalent
+  | "open-file" => equivalent 'o'
+  | "save-buffer" => equivalent 's'
+  | "undo" => equivalent 'z'
+  | "redo" => equivalent 'Z'
+  | "minimise-window" => equivalent 'm'
+  | "toggle-fullscreen" => equivalent 'f' { control := true, superKey := true }
+  | _ => none
+
+/-- The key equivalent `menu`'s item that runs `command` shows; `none` when
+no item runs it. -/
+def keyShown (menu : Menu) (command : String) : Option (Option KeyEquivalent) :=
+  menu.menus.findSome? fun submenu =>
+    submenu.items.findSome? fun
+      | .item _ key (.command name) => if name == command then some key else none
+      | _ => none
+
+/-- The registry of nothing but the binding of `text` to `open-file`. -/
+def openBoundTo (text : String) : Config.Registry :=
+  ({} : Config.Registry).replaceBindings .compiled #[{ keys := keys text, command := "open-file" }]
+
+/-- The checks of the menu bar (`Editor/Menu.lean`, `Editor/Menu/Compiled.lean`):
+a command item chosen runs its command as an invocation, and the key
+equivalents the published menu shows are the chords the registry binds. -/
+def menuChecks : List Check :=
+  [{  name :=
+        "a menu's undo undoes as u does: after x over abc, both leave abc and the same selection"
+      run :=
+        pure <|
+          match evilDriver "|abc" with
+          | none => false
+          | some driver =>
+            let cut := evilFed driver "x"
+            let byKey := evilFed cut "u"
+            let byMenu := (cut.feed { event := .menu "undo", stamp := 0 }).1
+            evilShown cut != evilShown byKey && evilShown byMenu == evilShown byKey &&
+              (evilShown byKey).replace "|" "" == "abc" &&
+              evilSelection byMenu == evilSelection byKey },
+    { name := "a menu's minimise-window asks the frame to minimise"
+      run := pure (framed frameDriver [.menu "minimise-window"] == some (#[.minimise], false)) },
+    { name :=
+        "a menu runs config's command of its name in place of the compiled one, and a command only config registers"
+      run :=
+        let replaced :=
+          frameRegistry (commands :=
+            #[{ name := "minimise-window", action := .plain (Display.askFrame .enterFullscreen) }])
+        let greeting :=
+          frameRegistry (commands :=
+            #[{ name := "greet", action := .plain (Display.askFrame .leaveFullscreen) }])
+        pure
+          (framed (frameDriver replaced) [.menu "minimise-window"] ==
+              some (#[.enterFullscreen], false) &&
+            framed (frameDriver greeting) [.menu "greet"] == some (#[.leaveFullscreen], false)) },
+    { name :=
+        "a menu naming no command says no such command as an invocation does, and asks the frame nothing"
+      run :=
+        pure <|
+          match frameDriver with
+          | none => false
+          | some driver =>
+            let fed := (fedTo driver [.menu "nope"]).1
+            fed.loop.state.echo == "nope: no such command" && fed.model.display.asked.isEmpty },
+    { name :=
+        "on the compiled registry the published menu is the standard one with the chords bound to its commands: s-o, s-s, s-z, s-Z, s-m and C-s-f, and the system items' own"
+      run :=
+        pure
+          (menuShown frameRegistry == some (Menu.standard.withKeys compiledEquivalents) &&
+            ["open-file", "save-buffer", "undo", "redo", "minimise-window", "toggle-fullscreen",
+                  "nope"].all
+              fun name => frameRegistry.keyEquivalent? name == compiledEquivalents name) },
+    { name := "after config binds toggle-fullscreen to M-s-f, Enter Full Screen shows M-s-f"
+      run :=
+        let rebound :=
+          frameRegistry #[{ keys := keys "M-s-f", command := FrameCommands.toggleFullscreenName }]
+        let shown := equivalent 'f' { alt := true, superKey := true }
+        pure
+          (rebound.keyEquivalent? "toggle-fullscreen" == shown &&
+            ((menuShown rebound).bind (keyShown · "toggle-fullscreen")) == some shown) },
+    { name :=
+        "an item whose command has no single chord with the system key shows none: s-o rebound by config to another command, only C-x C-f, only C-o"
+      run :=
+        let taken := frameRegistry #[{ keys := keys "s-o", command := "save-buffer" }]
+        let registries := [taken, openBoundTo "C-x C-f", openBoundTo "C-o"]
+        pure <|
+          registries.all fun registry =>
+            registry.keyEquivalent? "open-file" == none &&
+              ((menuShown registry).bind (keyShown · "open-file")) == some none }]
 
 /-- What the watch model answers a start of `target` coalesced as
 `coalescing`, made at `now`. -/
@@ -20622,7 +20741,8 @@ def checks : List Check :=
     evilRepeatChecks ++
     viewChecks ++
     frameCommandChecks ++
-    titleChecks
+    titleChecks ++
+    menuChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

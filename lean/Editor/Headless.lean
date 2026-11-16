@@ -16,6 +16,7 @@ import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Loop
+import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.Text.Real
 import Editor.Watch.Real
@@ -686,6 +687,10 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The compiled key bindings: registered for the owner `compiled` when
   the loop starts, before any config. -/
   bindings : Array Config.KeyBinding := #[]
+  /-- The menu bar the loop's scenes name, before its command items' keys
+  are filled from the registry at each step (`Config.Registry.menuOf`);
+  `none` for a host with no menu bar. -/
+  menu : Option Menu := none
   /-- The compiled modes: registered for the owner `compiled` when the loop
   starts, before any config. -/
   modes : Array Mode := #[]
@@ -981,11 +986,13 @@ its own state; the lookup an invocation uses (`Config.State.command?`);
 the host's threshold for a slow command; and what a command's state
 requests are told of the registry (`Config.Registry.registered`: the modes
 whose on-enter actions a major mode runs, the jobs' names and the ex
-bindings). It is made for each window
+bindings); and the host's menu bar with its key equivalents filled from the
+registry's bindings (`Config.Registry.menuOf`). It is made for each window
 event, so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
-    slowAfter := collaborators.slowAfter, registered := running.config.registry.registered }
+    slowAfter := collaborators.slowAfter, registered := running.config.registry.registered
+    menu := collaborators.menu.map running.config.registry.menuOf }
 
 /-- The loop's frame, made if there is none (`Collaborators.start`): the
 frame is made when the loop is first needed, for a window event, a command
@@ -1900,8 +1907,9 @@ the real elaborator over the toolchain in `sysroot` and the editor's
 source, `emit` as the output and stderr as the log, and, as its compiled
 ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
-and the frame's commands with their bindings. Its display is the recorder
-and its clipboard its own, as a host's are by default.
+the frame's commands with their bindings, and the menu bar
+(`Menu.standard`) with its items' bindings (`Menu.bindings`). Its display is
+the recorder and its clipboard its own, as a host's are by default.
 
 It is apart from `shipped`, which makes what it is over, so that what the
 hosts are handed as compiled code can be read with no pump started
@@ -1915,7 +1923,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     commands :=
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++
         FrameCommands.commands
-    bindings := FrameCommands.bindings
+    bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
     compiledJobs := Files.jobs
     modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln }
 
