@@ -58,6 +58,12 @@
 //!   the window's fullscreen is read and a change of it reported as a
 //!   resize. A request asked with no window running does nothing, and one
 //!   that arrives before the window is made is dropped.
+//! - **It holds the files the system asks the app to open until the window
+//!   has opened.** They are taken off a channel of their own when the loop
+//!   is woken, as requests are, and when the window opens; the module
+//!   `files` decides what is reported and when: after `Opened` and the
+//!   `Resized` after it, each list as one [`Input::OpenFiles`], in the order
+//!   they arrived. A close drops them with the requests.
 //!
 //! # Tests
 //!
@@ -66,8 +72,10 @@
 //! window asks of its input method (`ime_request`), that a close is asked
 //! and a request sent before the loop is woken, what a wake-up comes to
 //! (`wake`, over `Closing::ends_on_wake`), what each request does to the
-//! window (`asked`, which runs the port's request contract), and the
-//! refusal off the main thread. The event
+//! window (`asked`, which runs the port's request contract), the files to
+//! open (`files`: the translation of paths and the holding of them until
+//! the window opened; and `Handing::hand`, which sends before it wakes),
+//! and the refusal off the main thread. The event
 //! loop itself needs a display, and so do the lines here that only a real
 //! window runs. They are few, and each is a reading of the window or a
 //! call with no decision in it:
@@ -87,8 +95,10 @@
 //! - handing what an event comes to on: each `Canvas` to the drawer, then
 //!   the `Input` to the report;
 //! - ending the loop when it is woken and `wake` says it ends, and taking
-//!   the requests off the channel then. What a wake-up comes to is
-//!   `wake`'s, and tested;
+//!   the requests and the files to open off their channels then. What a
+//!   wake-up comes to is `wake`'s, and tested;
+//! - reporting the files to open that `files` gives, when the loop is woken
+//!   and when the window opens. What it gives is `files`'s, and tested;
 //! - the four lines of `Control` for winit's window, which carry out a
 //!   request: reading `fullscreen().is_some()`, and calling
 //!   `set_fullscreen` with `Fullscreen::Borderless(None)` or `None`,
@@ -118,11 +128,13 @@
 //! not been seen.
 
 mod asked;
+mod files;
 mod names;
 mod native;
 mod translate;
 
 use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 
@@ -141,6 +153,9 @@ use winit::window::{
 };
 
 use crate::asked::{Asked, Control};
+use crate::files::Arrivals;
+#[cfg(test)]
+use crate::files::Handing;
 use crate::translate::{KeyParts, Seen, Told};
 
 /// The window port over winit. It opens one window, on the process's main
@@ -207,6 +222,9 @@ impl Platform for WinitPlatform {
         let mut event_loop = event_loop().map_err(cannot_open)?;
         let closing = Closing::default();
         let (requests, asked) = mpsc::channel();
+        // Where the files the system asks the app to open are handed. No
+        // sender is kept yet, so the channel stays empty.
+        let files = mpsc::channel().1;
         *self.running() = Some(Running {
             proxy: event_loop.create_proxy(),
             closing: closing.clone(),
@@ -222,6 +240,8 @@ impl Platform for WinitPlatform {
             closing,
             requests: asked,
             asked: Asked::default(),
+            files,
+            arrivals: Arrivals::default(),
         };
         // What winit's `run_app` does on macOS and on Linux, with the
         // handler borrowed so that it is still here once the loop has ended.
@@ -289,24 +309,39 @@ impl Closing {
 }
 
 /// What a wake-up of the loop comes to: the requests to carry out on the
-/// window, in the order asked, and whether the loop ends.
+/// window, in the order asked, the lists of files to open, in the order
+/// handed, and whether the loop ends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Woken {
     /// The requests to carry out, oldest first.
     carry: Vec<Request>,
+    /// The lists of files to open, oldest first.
+    files: Vec<Vec<PathBuf>>,
     /// Whether the loop ends.
     ends: bool,
 }
 
 /// What a wake-up of the loop comes to, with `closing` as it is and
-/// `requests` taken off the channel. A loop that ends drops what is
-/// pending: the window is going. One that does not carries every request
-/// out, in order; with none it still goes on, since winit may wake a loop
-/// nobody woke.
-fn wake(closing: &Closing, requests: impl Iterator<Item = Request>) -> Woken {
+/// `requests` and `files` taken off their channels. A loop that ends drops
+/// what is pending, files to open with the requests: the window is going.
+/// One that does not takes every request and every list of files, in order;
+/// with none it still goes on, since winit may wake a loop nobody woke.
+fn wake(
+    closing: &Closing,
+    requests: impl Iterator<Item = Request>,
+    files: impl Iterator<Item = Vec<PathBuf>>,
+) -> Woken {
     let ends = closing.ends_on_wake();
+    if ends {
+        return Woken {
+            carry: Vec::new(),
+            files: Vec::new(),
+            ends,
+        };
+    }
     Woken {
-        carry: if ends { Vec::new() } else { requests.collect() },
+        carry: requests.collect(),
+        files: files.collect(),
         ends,
     }
 }
@@ -332,6 +367,11 @@ struct App {
     requests: mpsc::Receiver<Request>,
     /// What the translation of requests remembers of the window.
     asked: Asked,
+    /// The lists of files the system asks the app to open, taken when the
+    /// loop is woken and when the window opens.
+    files: mpsc::Receiver<Vec<PathBuf>>,
+    /// The files to open that arrived, held until the window has opened.
+    arrivals: Arrivals,
 }
 
 impl ApplicationHandler for App {
@@ -363,6 +403,11 @@ impl ApplicationHandler for App {
                     platform: WinitPlatform::NAME.into(),
                 });
                 (self.report)(size);
+                // The files that arrived before the window, and those still
+                // waiting on the channel, after them.
+                for input in self.arrivals.open(self.files.try_iter()) {
+                    (self.report)(input);
+                }
             }
             Err(error) => {
                 self.failure = Some(error.to_string());
@@ -372,10 +417,20 @@ impl ApplicationHandler for App {
     }
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let woken = wake(&self.closing, self.requests.try_iter());
+        let woken = wake(
+            &self.closing,
+            self.requests.try_iter(),
+            self.files.try_iter(),
+        );
         if woken.ends {
             event_loop.exit();
             return;
+        }
+        // Files need no window: they are held until it has opened.
+        for paths in woken.files {
+            if let Some(input) = self.arrivals.arrive(paths) {
+                (self.report)(input);
+            }
         }
         // A request asked before the window was made is dropped.
         let Some(window) = self.window.as_deref() else {
@@ -612,6 +667,43 @@ mod tests {
         WinitPlatform::new(|| false).request(Request::Minimise);
     }
 
+    /// A loop's waker that takes, at each wake-up, the lists of paths
+    /// already on the channel by then.
+    #[derive(Debug)]
+    struct FilesWaker {
+        files: Mutex<mpsc::Receiver<Vec<PathBuf>>>,
+        woken: Mutex<Vec<Vec<Vec<PathBuf>>>>,
+    }
+
+    impl EventLoopProxyProvider for FilesWaker {
+        fn wake_up(&self) {
+            let found = self.files.lock().unwrap().try_iter().collect();
+            self.woken.lock().unwrap().push(found);
+        }
+    }
+
+    #[test]
+    fn paths_handed_by_the_delegate_are_sent_before_the_loop_is_woken() {
+        let (files, taken) = mpsc::channel();
+        let waker = Arc::new(FilesWaker {
+            files: Mutex::new(taken),
+            woken: Mutex::new(Vec::new()),
+        });
+        let handing = Handing {
+            files,
+            proxy: EventLoopProxy::new(waker.clone()),
+        };
+        let first = vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")];
+        let second = vec![PathBuf::from("/tmp/c")];
+
+        handing.hand(first.clone());
+        handing.hand(second.clone());
+
+        // Woken once for each, with it already on the channel: the loop
+        // that wakes finds it.
+        assert_eq!(*waker.woken.lock().unwrap(), [vec![first], vec![second]]);
+    }
+
     #[test]
     fn a_wake_up_with_requests_and_no_close_carries_them_out_in_order_and_goes_on() {
         let asked = [
@@ -620,9 +712,34 @@ mod tests {
             Request::Minimise,
         ];
         assert_eq!(
-            wake(&Closing::default(), asked.clone().into_iter()),
+            wake(
+                &Closing::default(),
+                asked.clone().into_iter(),
+                std::iter::empty()
+            ),
             Woken {
                 carry: asked.to_vec(),
+                files: Vec::new(),
+                ends: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_files_and_no_close_takes_every_list_in_order() {
+        let lists = vec![
+            vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")],
+            vec![PathBuf::from("/tmp/c")],
+        ];
+        assert_eq!(
+            wake(
+                &Closing::default(),
+                std::iter::empty(),
+                lists.clone().into_iter()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: lists,
                 ends: false,
             }
         );
@@ -633,9 +750,32 @@ mod tests {
         let closing = Closing::default();
         closing.ask();
         assert_eq!(
-            wake(&closing, [Request::EnterFullscreen].into_iter()),
+            wake(
+                &closing,
+                [Request::EnterFullscreen].into_iter(),
+                std::iter::empty()
+            ),
             Woken {
                 carry: Vec::new(),
+                files: Vec::new(),
+                ends: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_a_close_asked_drops_the_files_too() {
+        let closing = Closing::default();
+        closing.ask();
+        assert_eq!(
+            wake(
+                &closing,
+                std::iter::empty(),
+                [vec![PathBuf::from("/tmp/a")]].into_iter()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: Vec::new(),
                 ends: true,
             }
         );
