@@ -14708,6 +14708,68 @@ def highlightEnterChecks : List Check :=
                 model.attached.isEmpty &&
                 model.highlighted.isEmpty
             | _ => false },
+    { name :=
+        "a mode with an injections source finds its text's injections with it, and gives a language for the model's grammar, its shipped highlights in the default faces and the mode's injections; every query is released"
+      run :=
+        pure <|
+          let injecting :=
+            parsedMode "injecting"
+              { grammar := "json", injections := some "(pair value: (string) @injection.content)" }
+          match highlightedBy #[injecting] ["injecting"] with
+          | some ([""], _, model) =>
+            model.injected.size == 1 &&
+              model.languages.map
+                  (fun (_, name, _, faces, injections) =>
+                    (name, faceNames faces, injections.isSome)) ==
+                #[("json", #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"],
+                    true)] &&
+              model.queries.all (·.isNone)
+          | _ => false },
+    { name :=
+        "a grammar that ships no injections, text objects or indents query records no injection, no language and no kept query"
+      run :=
+        pure <|
+          match highlightedBy #[parsedMode "json"] ["json"] with
+          | some ([""], _, model) =>
+            model.injected.isEmpty && model.languages.isEmpty && model.kept.isEmpty &&
+              !model.highlighted.isEmpty
+          | _ => false },
+    { name :=
+        "a mode's own text objects and indents sources are kept, each as its kind, and their queries released"
+      run :=
+        pure <|
+          let keeping :=
+            parsedMode "keeping"
+              { grammar := "json", textObjects := some "(object) @function.outer"
+                indents := some "(array) @indent.begin" }
+          match highlightedBy #[keeping] ["keeping"] with
+          | some ([""], _, model) =>
+            model.kept.map (fun (_, kind, query) => (kind, query.names)) ==
+                #[(.textObjects, #["function.outer"]), (.indents, #["indent.begin"])] &&
+              model.queries.all (·.isNone)
+          | _ => false },
+    { name :=
+        "an injections, text objects or indents source that does not compile is said in the echo area under the mode's name, stops its own step alone, and leaves the highlights and the text attached"
+      run :=
+        pure <|
+          let broken (injections textObjects indents : Option String) :=
+            parsedMode "broken" { grammar := "json", injections, textObjects, indents }
+          let said (mode : Mode) (start : String) : Bool :=
+            match highlightedBy #[mode] ["broken"] with
+            | some ([echo], major, model) =>
+              echo.startsWith start && major == some "broken" && !model.attached.isEmpty &&
+                !model.highlighted.isEmpty
+            | _ => false
+          let keptIndents :=
+            match
+              highlightedBy #[broken (some "((") none (some "(array) @indent.begin")]
+                ["broken"] with
+            | some (_, _, model) => model.kept.map (·.2.1) == #[.indents]
+            | none => false
+          said (broken (some "((") none none) "injections: `broken`: the query is not one" &&
+            said (broken none (some "((") none) "text objects: `broken`: the query is not one" &&
+            said (broken none none (some "((")) "indents: `broken`: the query is not one" &&
+            keptIndents },
     { name := "a derived mode that says nothing of a syntax tree takes its parent's"
       run :=
         pure <|

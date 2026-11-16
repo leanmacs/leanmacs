@@ -923,6 +923,16 @@ def pulledParsed : IO Bool := do
   let event ← Ffi.nextEvent .editor
   return event.kind == .parsed && event.source.kind == .library
 
+/-- How many events the editor queue held, each pulled: what a mode set over
+a highlighted text leaves once its tree and its layers are delivered, the
+library's reports of parses. It never parks a pull on an empty queue. -/
+def drainedParsed : IO Nat := do
+  let mut pulled := 0
+  while (← Ffi.queued .editor) > 0 do
+    discard (Ffi.nextEvent .editor)
+    pulled := pulled + 1
+  return pulled
+
 /-- What a check of the runner over the library's file service works with: a
 text store whose table of snapshots is published, the file service over its
 read half, and a fake clock a check parks a job on. The file waits are
@@ -1656,7 +1666,43 @@ def syntaxTreeChecks : List Check :=
         let (published, _) ← publish.runReal texts shown.handle
         let frame ← display.frameText
         -- Each row starts with `fn`: its first run, two bytes, in red.
-        return reported && published.isOk && (frame.splitOn "runs 0..2:cc0000ff/").length == 3 }]
+        return reported && published.isOk && (frame.splitOn "runs 0..2:cc0000ff/").length == 3 },
+    { name :=
+        "a Markdown text with a fenced Rust block, entered with the shipped default, is drawn by the real display with the fence's `fn` in the keyword face's colour"
+      run := do
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let syntaxTree := settlingAttach table real.handle
+        let red := Color.rgb 0xcc 0 0
+        let display ← Ffi.Display.newCells 8 16
+        let shown ←
+          RealDisplay.over display table.reader
+              #[{ name := ⟨"syntax.keyword"⟩, face := { foreground := some red } }]
+        let entered : EditorM (SnapshotId × MarkerId) := do
+          let text ← createText "# Title\n\n```rust\nfn one() {}\n```\n"
+          Highlight.enter "markdown" text { grammar := "markdown" }
+          return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
+        let (.ok (snapshot, scroll), texts) ←
+          entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
+        let some found ← table.find? snapshot | return false
+        -- The settle waits for the layers the injections find, which the
+        -- library delivers at the same revision.
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        let reported ← drainedParsed
+        let scene : Scene :=
+          { size := { width := 160, height := 96 }
+            views :=
+              #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 160, height := 96 }, snapshot
+                  scroll, selections := #[], cursor := { shape := .block, face := ⟨"cursor"⟩ }
+                  decorations := #[], status := #[] }]
+            focused := none, echo := "", pending := "", preedit := none }
+        let publish : EditorM Unit := Display.publish scene
+        let (published, _) ← publish.runReal texts shown.handle
+        let frame ← display.frameText
+        -- One row starts with a keyword: the fence's `fn`, in red.
+        return reported > 0 && published.isOk &&
+            (frame.splitOn "runs 0..2:cc0000ff/").length == 2 }]
 
 /-- Runs a property of the watch port's contract against the real binding
 over `timers`. The library is told the interrupt key, and the property's

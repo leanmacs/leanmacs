@@ -29,9 +29,10 @@ scheme are made from that (`Mode.keymaps`).
   cannot choose it.
 - **`syntaxTree` is how the mode's text is parsed and drawn**
   (`Mode.SyntaxTree`): a grammar of the library's syntax service, the
-  source of the highlights query (none: the grammar's shipped one), and
+  source of the highlights query (none: the grammar's shipped one),
   config's mapping of capture names to faces, over the shipped default
-  (`Editor/Highlight.lean`). A derived mode with none takes the nearest one
+  (`Editor/Highlight.lean`), and the sources of the injections, text
+  objects and indents queries (each none: the grammar's shipped one). A derived mode with none takes the nearest one
   of its lineage (`Mode.syntaxTreeOf`). When the mode becomes a buffer's
   major mode, the loop attaches and highlights the buffer's text before
   the lineage's on-enter actions run (`Editor/Command/Dispatch.lean`). It
@@ -86,8 +87,9 @@ Pinned by `ModelTest.modeRecordChecks`, on the test scheme.
 namespace Editor
 
 /-- How a mode's text is parsed and drawn: a grammar of the library's
-syntax service, the highlights query's source, and config's mapping of
-capture names to faces (`Editor/Highlight.lean`). -/
+syntax service, the highlights query's source, config's mapping of capture
+names to faces (`Editor/Highlight.lean`), and the sources of its
+injections, text objects and indents queries. -/
 structure Mode.SyntaxTree where
   /-- The grammar the text is parsed with: `rust`, `json`. -/
   grammar : String
@@ -98,6 +100,16 @@ structure Mode.SyntaxTree where
   (`Highlight.defaultFaces`): a capture's full name, or a first component,
   and its face, `none` for one that draws nothing (`Highlight.faceOf`). -/
   captures : List (String × Option FaceName) := []
+  /-- The source of the injections query, which finds text of another
+  language in the mode's text; `none` for the one the grammar ships. An
+  empty source captures nothing, which turns injections off. -/
+  injections : Option String := none
+  /-- The source of the text objects query (`Editor/Evil/TreeObjects.lean`);
+  `none` for the one the grammar ships. -/
+  textObjects : Option String := none
+  /-- The source of the indents query (`Editor/Indent.lean`); `none` for the
+  one the grammar ships. -/
+  indents : Option String := none
   deriving DecidableEq, Repr
 
 /-- A mode: what it is called, what it derives from, the roles it fills,
