@@ -249,6 +249,7 @@ arrives on the editor queue.
   | `pointer` | 0 press, 1 drag, 2 release, 3 wheel | `[x, y, button tag, other, modifiers, delta tag, dx, dy]`; button 0 none, 1 primary, 2 secondary, 3 middle, 4 back, 5 forward, 6 another (its number in `other`); delta 0 none, 1 lines, 2 pixels |
   | `resize` | Bit 0 in fullscreen | `[width, height, scale]` |
   | `openFiles` | 0 | `[n, then for each of the n paths: m, m scalars]`; the text is empty |
+  | `quitRequested` | 0 | None, and no text: the system asked the program to quit |
 
   The modifiers are bits: shift 1, control 2, alt 4, super 8. A float
   crosses as its IEEE 754 bits (`Float.ofBits`). These bindings carry the
@@ -258,9 +259,11 @@ arrives on the editor queue.
   `closeRequested` and stays open until `windowClose`, which any thread may
   call.
 - Lean asks things of the window with `windowRequest`: enter or leave
-  fullscreen, or minimise (`WindowRequest`, tags 0, 1 and 2). It never
-  blocks, and it goes through the window's own loop, not the main-thread
-  service, which still answers nothing else while the window runs. Whether
+  fullscreen, minimise, or keep running, the answer to a quit the system
+  asked when the editor does not quit (`WindowRequest`, tags 0, 1, 2 and
+  4). It never blocks, and it goes through the window's own loop, not the
+  main-thread service, which still answers nothing else while the window
+  runs. Whether
   the window is in fullscreen comes back on every resize, bit 0 of its
   code. The title is no request: it is the scene's (`Scene.title`), and the
   library sends it to the window when it changes. `windowAsked` reads what
@@ -1361,6 +1364,10 @@ inductive EventKind where
   empty; the words are the paths: their count, then each path's count of
   characters and its characters ("The window" in the module docs). -/
   | openFiles
+  /-- The system asked the program to quit: Command-Q, Quit from the Dock,
+  a logout, restart or shutdown. The code is 0, and there is no text and no
+  word. -/
+  | quitRequested
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
@@ -1376,6 +1383,7 @@ def EventKind.ofTag? : UInt64 → Option EventKind
   | 8 => some .closeRequested
   | 9 => some .resize
   | 10 => some .openFiles
+  | 11 => some .quitRequested
   | _ => none
 
 /-- What kind of thing an event came from. -/
@@ -1810,8 +1818,9 @@ no window. -/
 @[extern "editor_glue_window_close"]
 opaque windowClose (platform : Platform) : IO Unit
 
-/-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0, 1
-and 2, in this order). The title is not one: it is a field of the scene. -/
+/-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0, 1,
+2 and 4: `WindowRequest.tag`). The title is not one: it is a field of the
+scene, and the tag 3 is the title's in what a scripted window was asked. -/
 inductive WindowRequest where
   /-- Put the window in the system's fullscreen; one in it stays there. -/
   | enterFullscreen
@@ -1820,15 +1829,31 @@ inductive WindowRequest where
   | leaveFullscreen
   /-- Minimise the window. -/
   | minimise
+  /-- The editor refused, or withdrew, the quit the system asked
+  (`EventKind.quitRequested`). It changes nothing the window shows, and a
+  platform with no quit pending does nothing with it. -/
+  | keepRunning
   deriving DecidableEq, Repr
+
+/-- The library's number for `request`: 0, 1, 2 and 4. It is not the
+constructor's index, which for `keepRunning` would be the title's 3. -/
+def WindowRequest.tag : WindowRequest → UInt8
+  | .enterFullscreen => 0
+  | .leaveFullscreen => 1
+  | .minimise => 2
+  | .keepRunning => 4
+
+/-- `windowRequest` as it crosses: the request's tag. -/
+@[extern "editor_glue_window_request"]
+private opaque windowRequestRaw (platform : Platform) (tag : UInt8) : IO Unit
 
 /-- Asks the window `platform` is running to do what `request` says. Any
 thread may call it, it never blocks, and it does nothing when that platform
 runs no window. It goes through the window's own loop, not the main-thread
 service. Whether the window is then in fullscreen comes back on the editor
 queue, as a resize. -/
-@[extern "editor_glue_window_request"]
-opaque windowRequest (platform : Platform) (request : WindowRequest) : IO Unit
+def windowRequest (platform : Platform) (request : WindowRequest) : IO Unit :=
+  windowRequestRaw platform request.tag
 
 /-- One thing a scripted window was asked: a request, or a title the
 presenter sent it from a scene. -/
@@ -1854,6 +1879,7 @@ private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     | 0 => askedOf words (at_ + 1) (asked.push (.request .enterFullscreen))
     | 1 => askedOf words (at_ + 1) (asked.push (.request .leaveFullscreen))
     | 2 => askedOf words (at_ + 1) (asked.push (.request .minimise))
+    | 4 => askedOf words (at_ + 1) (asked.push (.request .keepRunning))
     | 3 => do
       let count := (← words[at_ + 1]?).toNat
       let scalars ← (List.range count).mapM fun index => words[at_ + 2 + index]?

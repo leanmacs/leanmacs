@@ -177,13 +177,13 @@ def dataChecks (_ : Unit) : List Check :=
     { name := "the tags of a window's events and of the window source are known"
       run :=
         pure
-          ((([3, 4, 5, 6, 7, 8, 9, 10] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
+          ((([3, 4, 5, 6, 7, 8, 9, 10, 11] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
               [some .windowOpened, some .windowFocus, some .key, some .composition, some .pointer,
-                some .closeRequested, some .resize, some .openFiles] &&
+                some .closeRequested, some .resize, some .openFiles, some .quitRequested] &&
             Editor.Ffi.SourceKind.ofTag? 3 == some .window) },
     { name := "a tag the bindings do not know is refused"
       run :=
-        pure ((Editor.Ffi.EventKind.ofTag? 11).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
+        pure ((Editor.Ffi.EventKind.ofTag? 12).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
 
 /-- An hour, in milliseconds: a deadline no check reaches. -/
 def hour : UInt64 :=
@@ -1557,6 +1557,15 @@ def windowChecks (_ : Unit) : List Check :=
             resized &&
             ran.ran.result matches some (.ok _) },
     { name :=
+        "asked while the scripted window runs, keeping running crosses as its own tag and is what the window was asked, before the fullscreen request after it"
+      run := do
+        -- Keeping running reports nothing; the enter after it gives the run
+        -- the resize it waits for.
+        let ran ← runScriptedAsking [.keepRunning, .enterFullscreen]
+        return isWindowSample true ran.ran.events &&
+            (ran.asked.map requestsOf) == some #[.keepRunning, .enterFullscreen] &&
+            ran.ran.result matches some (.ok _) },
+    { name :=
         "a frame request asked of the real display binding made over the scripted platform, directly and through the window mode's host display, is what the scripted window was asked, in order"
       run := do
         let table ← Editor.Snapshots.new
@@ -1571,14 +1580,16 @@ def windowChecks (_ : Unit) : List Check :=
               discard <| (Editor.Display.askFrame .enterFullscreen).runReal real
               hosted.handle (.frame .leaveFullscreen)
               hosted.handle (.frame .minimise)
+              hosted.handle (.frame .keepRunning)
         return (ran.asked.map requestsOf) ==
-              some #[.enterFullscreen, .leaveFullscreen, .minimise] &&
+              some #[.enterFullscreen, .leaveFullscreen, .minimise, .keepRunning] &&
             ran.ran.result matches some (.ok _) },
     { name :=
         "a request to a window that is not running is not recorded, and the real platform records nothing"
       run := do
         Editor.Ffi.windowRequest .scriptedFailing .enterFullscreen
         Editor.Ffi.windowRequest .scriptedFailing .minimise
+        Editor.Ffi.windowRequest .scriptedFailing .keepRunning
         return (← Editor.Ffi.windowAsked .scriptedFailing) == some #[] &&
             (← Editor.Ffi.windowAsked .winit) == none },
     { name := "the input clock is never 0 and does not go back"
@@ -1849,6 +1860,14 @@ def eventDecodeChecks (_ : Unit) : List Check :=
               some (.resize { width := 1440, height := 900, scale := 2.0, fullscreen := true }) &&
             decodedWindow .closeRequested 0 == some .closeRequested) },
     { name :=
+        "a quit the system asked decodes to itself, and is refused with a code, with a word and with text"
+      run :=
+        pure
+          (decodedWindow .quitRequested 0 == some .quitRequested &&
+            (decodedWindow .quitRequested 1).isNone &&
+            (decodedWindow .quitRequested 0 #[0]).isNone &&
+            (decodedWindow .quitRequested 0 #[] "x").isNone) },
+    { name :=
         "files to open decode with their paths in order, each its count of characters and its characters, and no path to none"
       run :=
         pure
@@ -1962,7 +1981,7 @@ def eventChecks (_ : Unit) : List Check :=
             events.head? == some (.windowOpened "scripted") &&
             events.getLast? == some .closeRequested },
     { name :=
-        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, files to open, none to open, and a request to close posted as a window would come back from the library equal"
+        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, files to open, none to open, a request to close and a quit the system asked posted as a window would come back from the library equal"
       run := do
         let events : List Editor.Event :=
           [.windowOpened "x", .focus true, .focus false,
@@ -1977,7 +1996,8 @@ def eventChecks (_ : Unit) : List Check :=
             .pointer (pointerAt (.wheel (.pixels 0.25 8)) none),
             .resize { width := 1920, height := 1080, scale := 1.25 },
             .resize { width := 1920, height := 1080, scale := 1.25, fullscreen := true },
-            .openFiles ["/Users/me/notes.txt", "/tmp/é x.lean"], .openFiles [], .closeRequested]
+            .openFiles ["/Users/me/notes.txt", "/tmp/é x.lean"], .openFiles [], .closeRequested,
+            .quitRequested]
         events.allM fun event => return (← roundTrip event) == some event },
     { name := "an event no window reports is not posted: a message, a completion and a quit"
       run := do

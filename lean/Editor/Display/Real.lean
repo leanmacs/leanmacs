@@ -102,6 +102,7 @@ def library : Display.FrameRequest → Ffi.WindowRequest
   | .enterFullscreen => .enterFullscreen
   | .leaveFullscreen => .leaveFullscreen
   | .minimise => .minimise
+  | .keepRunning => .keepRunning
 
 /-- Makes `theme` what the faces look like from the next publish on: it is
 sent with the next scene published, in place of the theme sent before,

@@ -382,6 +382,12 @@ A command asks the editor to quit, and the editor quits once it can
     was refused, so `settleQuit` alone would let the editor leave with
     the save's refusal unseen. The state does not keep which save a quit
     waits for: any save that is refused withdraws it.
+- **The system's quit is remembered until it is answered**
+  (`EditorState.systemQuit`), set by the loop when the system asks
+  (`Event.quitRequested`) before it runs `quit`. `answerSystemQuit` answers
+  it once the editor is not asked to quit: the quit was refused, or
+  withdrawn in one of the two places above. While the editor is asked, it
+  waits or leaves, and the system is not answered.
 
 ## A buffer's modes
 
@@ -738,6 +744,9 @@ structure EditorState where
   /-- Whether a command asked the editor to quit ("Quit", in the module
   docs). -/
   quitting : Bool := false
+  /-- Whether the system asked the program to quit and has not been
+  answered (`Event.quitRequested`; "Quit", in the module docs). -/
+  systemQuit : Bool := false
   /-- Whether a command asked for the config to be reloaded, which the loop
   has not yet handed to its host. -/
   reload : Bool := false
@@ -1160,6 +1169,16 @@ a buffer has unsaved changes, it is no longer asked. Any other state is as
 it was. -/
 def settleQuit (state : EditorState) : EditorState :=
   if state.quitting && state.unsaved.isSome then { state with quitting := false } else state
+
+/-- Whether the system's quit is to be answered now, and `state` with it
+answered ("Quit", in the module docs): when the system asked and the editor
+is not asked to quit, the quit was refused or withdrawn, so the answer is
+to keep running, `true`, and the system's quit is no longer pending. While
+the editor is asked to quit, it is waiting or leaving, and nothing is
+answered yet. With no system quit pending nothing is answered. -/
+def answerSystemQuit (state : EditorState) : EditorState × Bool :=
+  if state.systemQuit && !state.quitting then ({ state with systemQuit := false }, true)
+  else (state, false)
 
 /-- An editor with no buffer and no window, in a frame of no size whose tree
 is the minibuffer's place alone. It is not well formed: nothing is focused.

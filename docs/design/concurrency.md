@@ -553,6 +553,35 @@ command cannot end the process.
 - **Not changed: a window's close request** stops the loop whatever is
   unsaved. The rule here could be applied there; it is not this phase's.
 
+**The system's quit is put through `quit`** (decided and built
+2026-11-15, the macOS integration roadmap's phase 3:
+`lean/Editor/Loop.lean`, "Quit"; `lean/Editor/State.lean`, "Quit";
+`crates/editor-platform-winit/src/terminate.rs`).
+
+- **It reaches the loop as an event** (`Event.quitRequested`): Command-Q,
+  Quit from the Dock's menu, a logout, restart or shutdown. It is not the
+  queue's `quit`, nor the window's close request.
+- **The step runs `quit` as an invocation no key yielded**, after it has
+  remembered the system's quit (`EditorState.systemQuit`). So it is
+  guarded, rolled back and published as every command is, config's
+  command named `quit` runs in its place, and the rules above hold of it:
+  with nothing unsaved the step says stop, as for `:q`; with unsaved
+  changes it is refused and says why; with a save in flight it waits.
+- **When the editor does not quit, the system is told once.** When the
+  state is not asked to quit after the publish's `settleQuit`, the quit
+  was refused, did not ask, or was withdrawn (an edit while it waited, a
+  refused save), and the publish asks the frame `keepRunning`
+  (`EditorState.answerSystemQuit`) and forgets the system's quit. On macOS
+  that replies `NO` to AppKit's wait, which also cancels a logout, as
+  TextEdit's unsaved document does. A quit typed in the editor asks the
+  frame nothing.
+- **When the editor leaves, the process ends by its own path**: the step
+  says stop, the host closes the window, the run returns and `main`
+  returns. The window adapter cancels a terminate still pending as the
+  window closes, since otherwise its run cannot return through AppKit's
+  wait; so a logout the editor went along with is cancelled all the same
+  (rdm task `macos-terminate-close-cancels-logout`).
+
 **`quit` refuses while a buffer that holds a file has unsaved changes, and
 waits for a save in flight.**
 
@@ -1620,6 +1649,12 @@ reload leaves the old config's watch delivering.
   one buffer (that `NSTreatUnknownArgumentsAsOpen = NO` took). Everything
   but receiving the real Apple Event is pinned by tests; trying it is the
   roadmap `macos-app`'s phase 6, the owner's.
+- The system's quit has been seen only in the window adapter's contract
+  example, which calls `terminate:` and sends its own process the quit
+  Apple Event. A Quit from the Dock's menu and a logout from loginwindow
+  have not been seen reaching the editor; nor has the editor's window
+  answering them, since the editor runs in a window only once the macOS
+  app is installed.
 - An input method's composition on macOS. Real keyboard input reaching the
   Lean loop there is no longer open: the owner checked it by hand on
   2026-11-12, with `mise run window-check` started from Ghostty, and the

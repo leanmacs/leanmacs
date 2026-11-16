@@ -225,6 +225,13 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   when the save is refused and when the buffer is edited meanwhile. They
   name no ex name. They are apart from `dispatchChecks`, which are
   defined before the driver;
+- `systemQuitChecks`: the system's quit (`Event.quitRequested`,
+  `Editor/Loop.lean`, "Quit") on that driver, with the compiled `quit`
+  registered: with nothing unsaved the step says stop; with unsaved
+  changes the editor goes on, says why, and asks the frame `keepRunning`
+  once; with a save in flight it waits, and a refused save withdraws the
+  quit and asks `keepRunning`; config's `quit` runs in its place; and a
+  quit the system did not ask asks the frame nothing;
 - `exChecks`: the ex command line (`Editor/Ex.lean`) on that driver, with
   the commands compiled code registers for it, for the minibuffer and for
   files, keys of the test scheme bound to the ex command and to the accept
@@ -15918,6 +15925,124 @@ def dispatchQuitChecks : List Check :=
               twice.reloads == 2 &&
               driver.reloads == 0 }]
 
+/-- The compiled quit command (`Ex.quitCommand`), as the system quit checks
+register it. -/
+def compiledQuit : Dispatched := fun call => do
+  Ex.quitCommand call
+  return none
+
+/-- What a step of the system quit checks is handed: the open command with
+the path of `note.txt` (`C-o n`) and the save command (`C-o w`), as the
+quit checks have them, and `quit` (`Ex.quitName`), bound to `C-l q`, as
+`command` does it: the compiled one, or one config registered in its
+place. -/
+def systemQuitKeys (command : Dispatched := compiledQuit) : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
+      ("C-l q", invoke Ex.quitName)]
+    [(Files.openName, fun call => do
+        Files.openCommand call
+        return none),
+      (Files.saveName, fun call => do
+        Files.saveCommand call
+        return none),
+      (Ex.quitName, command)]
+
+/-- A driver of the system quit checks, with `quit` as `command` does it
+and the file `note.txt` open in view 0, as `quitDriver` opens it. -/
+def systemQuitDriver (command : Dispatched := compiledQuit) : Option TestDriver :=
+  (Loop.Driver.over (systemQuitKeys command) fileJobs (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver =>
+    ((fedTo { driver with jobs := { files := commandFiles } } (presses "C-o n")).1.finish 1).1
+
+/-- How many times `driver`'s frame was asked to keep running. -/
+def keptRunning (driver : TestDriver) : Nat :=
+  (driver.model.display.asked.filter (· == .keepRunning)).size
+
+/-- The checks of the system's quit in the loop (`Editor/Loop.lean`,
+"Quit"): `Event.quitRequested` runs `quit` as an invocation no key yielded,
+so the editor leaves as it does for `:q`, or keeps running and asks the
+frame `keepRunning` once, when `quit` is refused or a quit it asked is
+withdrawn. -/
+def systemQuitChecks : List Check :=
+  let next (steps : Array (Option (Loop.Stepped TestScheme.scheme))) : Array (Option Loop.Next) :=
+    steps.map (·.map (·.next))
+  let path := inFiles "note.txt"
+  [{  name :=
+        "the system asks to quit with nothing unsaved: the step says stop, the driver has stopped, and the frame is not asked to keep running"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (left, steps) := fedTo driver [.quitRequested]
+            next steps == #[some .stop] && left.stopped && keptRunning left == 0 },
+    { name :=
+        "the system asks to quit with a file's buffer that has unsaved changes: the editor goes on, the echo area says why, the frame is asked to keep running once, and the system's quit is no longer pending; a later edit asks nothing more"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (refused, steps) := fedTo driver [.commit "x", .quitRequested]
+            let (edited, _) := fedTo refused [.commit "y"]
+            next steps == #[some .continue, some .continue] && !refused.stopped &&
+              echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              echoOf refused == some "quit: note.txt has unsaved changes" &&
+              keptRunning refused == 1 &&
+              !refused.loop.state.systemQuit &&
+              keptRunning edited == 1 },
+    { name :=
+        "the system asks to quit with a save in flight: the step says continue and asks nothing, and the delivery of the save's result says stop; when that save is refused, the delivery says continue, the frame is asked to keep running once, and the echo area has the save's refusal"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (saving, _) := fedTo driver ([.commit "x"] ++ presses "C-o w")
+            let (asked, steps) := fedTo saving [.quitRequested]
+            let (left, delivered) := asked.finish 2
+            let changed := rewritten driver path JobContract.otherFile
+            let (refusing, _) := fedTo changed ([.commit "x"] ++ presses "C-o w")
+            let (pending, _) := fedTo refusing [.quitRequested]
+            let (refused, undelivered) := pending.finish 2
+            next steps == #[some .continue] && !asked.stopped && keptRunning asked == 0 &&
+              delivered.map (·.next) == some .stop &&
+              left.stopped &&
+              keptRunning left == 0 &&
+              keptRunning pending == 0 &&
+              undelivered.map (·.next) == some .continue &&
+              !refused.stopped &&
+              keptRunning refused == 1 &&
+              !refused.loop.state.systemQuit &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
+    { name :=
+        "config's command named quit runs in place of the compiled one on the system's quit: its message is the echo, and since nothing asked to quit the frame is asked to keep running once"
+      run :=
+        pure <|
+          match
+            systemQuitDriver fun _ => do
+              message "mine"
+              return none with
+          | none => false
+          | some driver =>
+            let (ran, steps) := fedTo driver [.commit "x", .quitRequested]
+            next steps == #[some .continue, some .continue] && !ran.stopped &&
+              echoOf ran == some "mine" &&
+              keptRunning ran == 1 &&
+              !ran.loop.state.systemQuit },
+    { name :=
+        "a quit typed, not asked by the system, that is refused asks the frame nothing: it was the editor's own quit"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver ([.commit "x"] ++ presses "C-l q")
+            !refused.stopped && echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              keptRunning refused == 0 }]
+
 /-- The ex bindings of the ex line's own checks, written here: `say` runs
 the command `greet` of the prompt checks with the rest of the line, and
 `plain` runs it and takes nothing; `ghost` is bound to a command nobody
@@ -20483,6 +20608,7 @@ def checks : List Check :=
     fileCommandChecks ++
     openFilesChecks ++
     dispatchQuitChecks ++
+    systemQuitChecks ++
     exChecks ++
     evilRestChecks ++
     evilMotionChecks ++

@@ -352,6 +352,11 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
         Event.openFiles <$> EventWords.readAll EventWords.paths event.words
       else
         throw "files to open have no text"
+    | .quitRequested, 0 =>
+      if event.text.isEmpty then
+        none .quitRequested
+      else
+        throw "a quit the system asked has no text"
     | kind, code =>
       throw s!"{repr kind} has no code {code}"
   return { event := decoded, stamp := event.stamp, interrupt }
@@ -378,6 +383,7 @@ def Event.post : Event → IO Bool
       #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits]
   | .closeRequested => Ffi.postInput .closeRequested 0 "" #[]
   | .openFiles paths => Ffi.postInput .openFiles 0 "" (EventWords.pathWords paths)
+  | .quitRequested => Ffi.postInput .quitRequested 0 "" #[]
   | .message .. | .completion .. | .quit => pure false
 
 /-- Tells the library which key is the interrupt key, or that there is none:

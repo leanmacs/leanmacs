@@ -788,6 +788,38 @@ built"):
   kind `OpenFiles`, code 0, no text, and the words `[n, then for each of
   the n paths: m, m scalars]`. Nobody has seen it arrive from Finder or the
   Dock yet ([concurrency.md](concurrency.md), "Still to verify").
+- **The system's quit** (`Input::QuitRequested`, `Request::KeepRunning`).
+  macOS asks an app to quit in one way, whatever the user chose:
+  Command-Q's `terminate:`, Quit from the Dock's menu, a logout, restart
+  or shutdown. The Dock and loginwindow send the quit Apple Event, whose
+  handler in AppKit calls `terminate:`, which asks the application
+  delegate's `applicationShouldTerminate:`. The same delegate answers
+  every ask `NSTerminateLater`, so AppKit waits inside `terminate:` for a
+  reply, and hands the ask on through a channel and a wake of the loop. It
+  decides nothing. The pure module `terminate.rs` does: the first ask once
+  the window has opened is reported once (one held before it opened is
+  reported after `Opened`, the `Resized` and the files); an ask while one
+  is pending is not reported again; `KeepRunning` with one pending replies
+  `replyToApplicationShouldTerminate:NO`, once, and is otherwise nothing;
+  a close with one pending replies `NO` too. The editor decides in Lean
+  ([concurrency.md](concurrency.md), "Quit"). On the queue the input is the
+  kind `QuitRequested` (11), code 0, no text and no words; the request is
+  tag 4 of `editor_ffi_window_request`.
+
+  What the contract example showed (`examples/contract/`, on macOS):
+  winit's loop handles its wake-ups and the requests they carry while
+  AppKit waits, since winit adds its run-loop sources and observers in
+  the common modes, which hold AppKit's modal-panel mode; a reply made
+  from the loop lets `terminate:` return within a few milliseconds; and an
+  ask made in those milliseconds is folded into the terminate AppKit is
+  finishing (a quit Apple Event is answered and dropped, and a nested
+  `terminate:` ends the process). With a terminate pending and no reply, a
+  close leaves winit's run unable to return, since AppKit's wait is
+  under it. So a close cancels a pending terminate: the editor still
+  quits by its own path, but a logout it went along with is cancelled,
+  and macOS says the app cancelled it. That is a known limit, the rdm
+  task `macos-terminate-close-cancels-logout`. Answering `YES` instead
+  would have AppKit call `exit` itself, before the editor's own path ran.
 - **What a window tells whatever draws in it** (`Canvas`): that it
   opened, with its native window (`NativeWindow`: an AppKit view, an Xlib
   window or a Wayland surface, as plain data that names no library), its

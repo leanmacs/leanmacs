@@ -4,6 +4,7 @@ import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Config.Stores
 import Editor.Event
+import Editor.Ex
 import Editor.Files
 import Editor.InputScheme
 import Editor.Key.Notation
@@ -337,6 +338,19 @@ request sets a flag of the editor state (`EditorState.quitting`,
   the command ("Rollback").
 - **A close request is not this.** It stops the loop whatever is unsaved,
   and publishes nothing ("What each event does").
+- **The system's quit is put through `quit`** (`Event.quitRequested`:
+  Command-Q, the Dock's Quit, a logout). The step remembers it
+  (`EditorState.systemQuit`) and runs the command named `quit`
+  (`Ex.quitName`) as an invocation no key yielded, so the rules above hold
+  of it: config's command of that name runs in its place, and the step
+  says stop when the editor leaves, as for `:q`. When the editor does not
+  quit, because `quit` was refused or did not ask, or a quit that waited is
+  withdrawn, the publish asks the frame `keepRunning` once
+  (`EditorState.answerSystemQuit`, `Display.askFrame`), and the system's
+  quit is forgotten. While it waits for a save, nothing is asked. A quit
+  typed in the editor asks the frame nothing.
+
+Pinned by `ModelTest.systemQuitChecks`.
 
 Pinned by `ModelTest.dispatchQuitChecks`.
 
@@ -519,6 +533,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `focus gained` | Sets whether the frame has the keyboard focus |
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
 | `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
+| `quitRequested` | Remembers that the system asked to quit (`EditorState.systemQuit`) and runs `quit` (`Ex.quitName`) with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The step says stop when the editor leaves; otherwise the publish asks the frame `keepRunning` once ("Quit") |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
 
@@ -1119,6 +1134,11 @@ def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
+  -- A system quit that was refused or withdrawn is answered, once: the
+  -- system stops waiting for the editor to quit ("Quit", in the module docs).
+  let (state, keepRunning) := state.answerSystemQuit
+  if keepRunning then
+    Display.askFrame .keepRunning
   let (state, unlisted) ← listed state
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
@@ -1596,6 +1616,12 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     -- An invocation no key yielded, run as every command is, in the
     -- focused window: config's command of the name runs in its place.
     loop.invoke keys { command := Files.openName, arguments := (path :: rest).map .str }
+  | .quitRequested =>
+    -- The system's quit is remembered first, so that a `quit` that is
+    -- refused or interrupted rolls back to a state that still holds it,
+    -- and the publish answers it.
+    ({ loop with state := { loop.state with systemQuit := true } }).invoke keys
+        { command := Ex.quitName }
   | _ =>
     let focused := loop.state.frame.focused
     let report := scheme.report loop.input focused
