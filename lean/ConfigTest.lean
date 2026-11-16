@@ -37,14 +37,16 @@ fakes. The checks here pin what only real collaborators can show:
   reported;
 - `shippedChecks`: what the executable's hosts are handed as compiled code
   (`Headless.shippedOver`): the registry they start with binds `C-s-f` to
-  `toggle-fullscreen` and `s-m` to `minimise-window`, both compiled;
+  `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, all
+  compiled, and registers the buffer commands with the ex names `b`, `ls`
+  and `bd` bound to them;
 - `scriptChecks`: the headless mode's script and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command
   once the frame exists, the scene whose echo is the refusal once a command
   has released the focused buffer's text, the line the host prints for a
-  program of the loop that is refused, and a window's close request ending
-  the loop;
+  program of the loop that is refused, and a window's close request with
+  nothing unsaved ending the loop;
 - `dispatchChecks`: keys through the host, with the test scheme and
   compiled commands and bindings written here: a compiled binding runs its
   command, a command that fails is rolled back and says so, the interrupt
@@ -1768,7 +1770,7 @@ def scriptChecks (context : Context) : List Check :=
         return refused == none && printed == #["loop: refused: no such text"] &&
             kept == some "made before the refusal" &&
             (← stage.output.get) == printed },
-    { name := "a window's close request ends the host's loop"
+    { name := "a window's close request with nothing unsaved ends the host's loop"
       run := do
         let stage ← Stage.new context context.elaborator { chunks := pure #[] }
         let host ← Headless.start stage.collaborators
@@ -3676,7 +3678,7 @@ keymap of its bindings. Its services are a fake clock's over a table of
 waits of its own, which no pump reads: nothing here starts a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
-        "the executable's hosts start with C-s-f bound to toggle-fullscreen and s-m to minimise-window, both registered for the owner compiled"
+        "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, each registered for the owner compiled; with switch-buffer, list-buffers and close-buffer registered for it, and the ex names b, ls and bd bound to them"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -3687,10 +3689,17 @@ def shippedChecks (_ : Unit) : List Check :=
         let bound (text : String) : Option Invocation :=
           (registry.keymap TestScheme.scheme).find? (keysOf text)
         let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        let ex (name : String) : Option String := (registry.ex? name).map (·.command)
         return bound "C-s-f" == some { command := "toggle-fullscreen" } &&
             bound "s-m" == some { command := "minimise-window" } &&
+            bound "s-q" == some { command := Ex.quitName } &&
             compiled "toggle-fullscreen" &&
-            compiled "minimise-window" }]
+            compiled "minimise-window" &&
+            compiled Ex.quitName &&
+            [Buffers.switchName, Buffers.listName, Buffers.closeName].all compiled &&
+            ex "b" == some Buffers.switchName &&
+            ex "ls" == some Buffers.listName &&
+            ex "bd" == some Buffers.closeName }]
 
 /-- A chunk whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and

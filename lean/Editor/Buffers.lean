@@ -1,0 +1,295 @@
+import Editor.Api
+import Editor.Command.Call
+import Editor.Files
+import Editor.Fuzzy
+
+/-!
+# Buffers: switching a window to another buffer, listing them, closing one
+
+The commands over the editor's open buffers, written over the editor API
+(`Editor/Api.lean`): `switch-buffer`, `list-buffers` and `close-buffer`,
+which the ex names `b`, `ls` and `bd` run (`Editor/Ex/Compiled.lean`). Each
+reads the order the buffers were last used in, which the state keeps
+(`EditorState.recent`, `openBuffers`, `mostRecent`: `Editor/State.lean`,
+"Most recently used"), so none of them keeps that order by hand.
+
+`Editor.lean` imports this module, so config calls the commands. Their
+registrations, which name the registry, are in
+`Editor/Buffers/Compiled.lean`. Each message is a function here, and the
+checks compare the echo area with that function, never with a sentence.
+
+## Switch
+
+- **With a string first argument** (`switchCommand`) the command shows the
+  buffer it names in the window it was called with: the buffer of exactly
+  that name, and otherwise the best of the open buffers' names the fuzzy
+  matcher answers for it (`Fuzzy.rank`, `Editor/Fuzzy.lean`). Nothing
+  matching is said (`noMatch`), and the window keeps its buffer. A window
+  that is the minibuffer's shows the buffer in the window the prompt was
+  asked from (`Files.shownIn`), as the open command does.
+- **With anything else first** it asks, with a prompt labelled
+  `switchPrompt` whose continuation is the command itself, as `open-file`
+  and `ex` ask. A key bound to it under the Vim scheme hands it a count and
+  a register, so it asks. The prompt's candidates are the open buffers'
+  names, most recently used first, with the asking window's own buffer
+  last: the empty pattern lists the buffer used before this one first, so
+  choosing the first candidate and accepting is "the other buffer".
+- **So a buffer is chosen by fuzzy match both ways.** A pattern typed and
+  accepted with nothing chosen answers the text, and the command takes the
+  best match; a key of the minibuffer that chooses a listed candidate
+  makes the answer exactly that candidate's name.
+- Where the prompt is refused, because one is open, the echo area says so
+  (`notAsking`).
+
+## List
+
+- **The list is a text view over generated text** (`listCommand`): a buffer
+  called `listBuffer`, with no file, whose text is one line per open buffer
+  (`listing`), most recently used first, the list's own buffer and the
+  minibuffer's left out. Each line is a mark, `+` for a buffer with unsaved
+  changes and a space otherwise, a space and the buffer's name, and for a
+  buffer with a file two spaces and its path.
+- **"Unsaved" is what `quit` asks** (`BufferId.hasUnsavedChanges`), so an
+  edit made earlier in the same command counts, and a buffer with no file
+  never has unsaved changes.
+- **The first list makes the buffer, and a later one replaces its text**,
+  whole: there is one list. Either way it is shown in the window the
+  command was called with. The text is what the buffers were when the
+  command ran; listing again brings it up to date.
+- **It is an ordinary buffer.** Motions and search work in it, it is a
+  candidate of the switch, and closing it is closing a buffer. A mode of
+  its own, with keys that act on the line's buffer, is not built.
+
+## Close
+
+- **The buffer closed** (`closeCommand`) is the one a string first argument
+  names, exactly, and otherwise the buffer of the window the command was
+  called with. A name no buffer has is said (`noBuffer`). The minibuffer's
+  buffer is not closed this way (`ofMinibuffer`).
+- **A buffer with unsaved changes is not closed**: it is a buffer that
+  holds a file, and nothing changes but the echo area, which says so
+  (`notClosing`), in the shape `quit` says it. A buffer with no file never
+  blocks it, by `quit`'s rule (`Editor/Ex.lean`, "Quit"). A buffer whose
+  save in flight covers its text has no unsaved changes, so it closes; the
+  save's result then finds no buffer, and says what became of the file all
+  the same (`Editor/Files.lean`, "Save").
+- **Every window that showed it shows the most recently used buffer left**
+  (`EditorState.mostRecent`), with one cursor at its start (`ViewId.show`),
+  and then the buffer is removed. The loop releases the windows' old
+  markers and the buffer's text once the command has run to its end
+  (`Editor/Loop.lean`, "What a finished command gave up"). It says
+  nothing, as Vim's `:bd` says nothing.
+- **The last open buffer leaves an empty one** with no file, called
+  `EditorState.scratchName`, as the initial buffer is: it is made, shown in
+  every window that showed the closed one, the closed one is removed, and
+  the new one is then renamed to `scratchName`, which is free by then even
+  when the closed buffer was the initial `scratch`. A buffer that is shown
+  cannot be removed and a name that is taken cannot be given, so the new
+  buffer is made under a free name first. Vim calls its equivalent
+  `[No Name]`.
+- **Not built**: a buffer's last cursor, which Vim gives back when a window
+  shows it again.
+
+Pinned by `ModelTest.bufferCommandChecks`, on the loop's driver over the
+editor's models, and the order the state keeps by `ModelTest.stateChecks`.
+-/
+
+namespace Editor.Buffers
+
+/-- The name the switch command is registered under. -/
+def switchName : String :=
+  "switch-buffer"
+
+/-- The name the list command is registered under. -/
+def listName : String :=
+  "list-buffers"
+
+/-- The name the close command is registered under. -/
+def closeName : String :=
+  "close-buffer"
+
+/-- The label of the prompt the switch command asks for a buffer with. -/
+def switchPrompt : String :=
+  "Buffer: "
+
+/-- What the name of the buffer the list command makes is. -/
+def listBuffer : String :=
+  "buffer-list"
+
+/-- What the echo area says when no open buffer matches `text`. -/
+def noMatch (text : String) : String :=
+  s!"{switchName}: no buffer matches {text}"
+
+/-- What the echo area says when the switch command was called with no
+buffer and could not ask for one: the refusal's own sentence, after the
+command's name. -/
+def notAsking (refusal : PromptRefusal) : String :=
+  s!"{switchName}: {refusal.describe}"
+
+/-- What the echo area says when the buffer called `name` was chosen and
+the state refused to show it. -/
+def notShown (name : String) : String :=
+  s!"{switchName}: could not show {name}"
+
+/-- What the echo area says when the list could not be made or shown. -/
+def notListed : String :=
+  s!"{listName}: could not show the list"
+
+/-- What the echo area says when no buffer is called `name`. -/
+def noBuffer (name : String) : String :=
+  s!"{closeName}: no buffer called {name}"
+
+/-- What the echo area says when the buffer to close is the minibuffer's. -/
+def ofMinibuffer : String :=
+  s!"{closeName}: the minibuffer is closed by answering or cancelling its prompt"
+
+/-- What the echo area says when the buffer called `name` was not closed
+because it has unsaved changes. -/
+def notClosing (name : String) : String :=
+  s!"{closeName}: {name} has unsaved changes"
+
+/-- The open buffers of `state` and their names, most recently used first
+(`EditorState.openBuffers`). -/
+def named (state : EditorState) : Array (BufferId × String) :=
+  state.openBuffers.filterMap fun id => (state.buffer? id).map fun buffer => (id, buffer.name)
+
+/-- The switch prompt's candidates, as `state` is: the open buffers' names,
+most recently used first, with the name of `asking`, the asking window's
+buffer, last. -/
+def candidates (state : EditorState) (asking : BufferId) : Array String :=
+  let all := named state
+  ((all.filter (·.1 != asking)) ++ all.filter (·.1 == asking)).map (·.2)
+
+/-- The open buffer `text` names, as `state` is: the one of exactly that
+name, and otherwise the best of the open buffers' names the fuzzy matcher
+answers for it; `none` when none matches. -/
+def resolve (state : EditorState) (text : String) : EditorM (Option BufferId) := do
+  let all := named state
+  if let some (id, _) := all.find? (·.2 == text) then
+    return some id
+  let ranked ← Fuzzy.rank text (all.map (·.2))
+  return (ranked[0]?.bind (all[·]?)).map (·.1)
+
+/-- Shows the open buffer `text` names (`resolve`) in `view`, or, for the
+minibuffer's view, in the window its prompt was asked from
+(`Files.shownIn`). Nothing matching is said (`noMatch`), and the window
+keeps its buffer. -/
+def switchTo (view : ViewId) (text : String) : EditorM Unit := do
+  let state ← editorState
+  let some id ← resolve state text | message (noMatch text)
+  let name := ((state.buffer? id).map (·.name)).getD text
+  if let .error _← (Files.shownIn state view).show id then
+    message (notShown name)
+
+/-- The switch command as it is called ("Switch", in the module docs): shows
+the buffer its first argument, a string, names (`switchTo`). With anything
+else first, or nothing, it asks for one (`prompt`, labelled
+`switchPrompt`), with itself as the continuation and the open buffers'
+names as the candidates (`candidates`). Where the prompt is refused it says
+so (`notAsking`). -/
+def switchCommand (call : Call) : EditorM Unit := do
+  match call.arguments with
+  | .str text :: _ =>
+    switchTo call.target.window.id text
+  | _ =>
+    let asking := call.target.window.buffer
+    if let .error refusal←
+        prompt switchPrompt { command := switchName } (candidates :=
+          return candidates (← editorState) asking) then
+      message (notAsking refusal)
+
+/-- The text of the buffer list ("List", in the module docs): one line per
+open buffer of `state` (`EditorState.openBuffers`) but the list's own, each
+`+` when `unsaved` says the buffer has unsaved changes and a space
+otherwise, a space and the buffer's name, and for a buffer with a file two
+spaces and its path, each line ending in a line feed. -/
+def listing (state : EditorState) (unsaved : BufferId → Bool) : String :=
+  let list := state.findBuffer listBuffer
+  String.join <|
+    (state.openBuffers.filterMap fun id => do
+        guard (list != some id)
+        let buffer ← state.buffer? id
+        let mark := if unsaved id then "+" else " "
+        let path := (buffer.file.map fun file => s!"  {file.path}").getD ""
+        return s!"{mark} {buffer.name}{path}\n").toList
+
+/-- The list command as it is called ("List", in the module docs): makes the
+text of the buffer list (`listing`), with each buffer's unsaved changes as
+`BufferId.hasUnsavedChanges` answers them; puts it in the buffer called
+`listBuffer`, made by the first list and with its whole text replaced by a
+later one; and shows that buffer in the window it was called with. It reads
+nothing else of its call. -/
+def listCommand (call : Call) : EditorM Unit := do
+  let state ← editorState
+  let mut unsaved : Array BufferId := #[]
+  for id in state.openBuffers do
+    if let .ok true← id.hasUnsavedChanges then
+      unsaved := unsaved.push id
+  let text := listing state unsaved.contains
+  let mut made : Option BufferId := none
+  if let some id := state.findBuffer listBuffer then
+    if let .ok held← id.text then
+      let length ← held.byteLength
+      held.replaceRange 0 length text
+      made := some id
+  else
+    made := (← createBuffer listBuffer text).toOption
+  let some id := made | message notListed
+  if let .error _← (Files.shownIn state call.target.window.id).show id then
+    message notListed
+
+/-- Ends the command, rolled back, for a request the command's own reading
+of the state says cannot be refused. -/
+def unrefused {ε : Type} (what : String) : Except ε Unit → EditorM Unit
+  | .ok () => pure ()
+  | .error _ => giveUp s!"{what} was refused"
+
+/-- Closes the buffer `id` ("Close", in the module docs): every window of the
+tree that shows it shows `fallback`, and then it is removed. -/
+def closeInto (id fallback : BufferId) : EditorM Unit := do
+  let state ← editorState
+  for view in state.frame.tree.windows do
+    if (state.window? view).any (·.buffer == id) then
+      unrefused "showing the buffer left" (← view.show fallback)
+  unrefused "removing the buffer" (← id.remove)
+
+/-- The close command as it is called ("Close", in the module docs): closes
+the buffer its first argument, a string, names exactly, and otherwise the
+buffer of the window it was called with. A name no buffer has is said
+(`noBuffer`), and so is the minibuffer's buffer (`ofMinibuffer`). A buffer
+with unsaved changes is not closed, and the echo area says so
+(`notClosing`). Otherwise every window that showed it shows the most
+recently used buffer left, and when none is left, a new empty buffer with
+no file called `EditorState.scratchName`. -/
+def closeCommand (call : Call) : EditorM Unit := do
+  let state ← editorState
+  let named? : Option BufferId :=
+    match call.arguments with
+    | .str name :: _ => state.findBuffer name
+    | _ => some call.target.window.buffer
+  let some id := named? |
+    match call.arguments with
+    | .str name :: _ =>
+      message (noBuffer name)
+    | _ =>
+      pure ()
+  if state.minibufferBuffer? == some id then
+    message ofMinibuffer
+    return
+  let name := ((state.buffer? id).map (·.name)).getD ""
+  if let .ok true← id.hasUnsavedChanges then
+    message (notClosing name)
+    return
+  match state.mostRecent id with
+  | some fallback =>
+    closeInto id fallback
+  | none =>
+    -- The last buffer: an empty one takes its place, made under a free name
+    -- and renamed once the closed one has given its name up.
+    let .ok made ←
+      createBuffer
+          (state.freeName EditorState.scratchName) | giveUp "making the empty buffer was refused"
+    closeInto id made
+    unrefused "naming the empty buffer" (← made.rename EditorState.scratchName)
+
+end Editor.Buffers

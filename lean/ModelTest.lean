@@ -1,4 +1,5 @@
 import Editor.Api.Cases
+import Editor.Buffers.Compiled
 import Editor.Clipboard.Contract
 import Editor.Clipboard.Model
 import Editor.Command.Append
@@ -5838,7 +5839,11 @@ def spoilings : List (String × (EditorState → EditorState)) :=
           asking.prompt.map
             ({ · with
               candidates :=
-                { all := #["a"], listedFor := some "", listed := #["a"], chosen := some 1 } }) })]
+                { all := #["a"], listedFor := some "", listed := #["a"], chosen := some 1 } }) }),
+    ("with an order of use that names a buffer there is none of", fun state =>
+      { state with recent := state.recent.push ⟨5⟩ }),
+    ("with an order of use that names one buffer twice", fun state =>
+      { state with recent := state.recent ++ state.recent })]
 
 /-- `state` with a prompt asked for from its focused view, and the reply: the
 label `Name: `, the continuation `asked`, and a minibuffer over the text
@@ -5909,6 +5914,54 @@ def stateChecks : List Check :=
               state.echo == "" &&
               state.preedit == none },
     { name :=
+        "the order buffers were used in: the initial state's is its one buffer; focusing a window puts its buffer first, adding a buffer puts it last, showing a buffer puts it first, removing one takes it out; opening a prompt, focusing the minibuffer and closing the prompt leave it as it was; each state is well formed"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, focused) := state.focusWindow ⟨1⟩
+            let (_, added) := focused.addBuffer "third" ⟨2⟩ (UndoTree.new ⟨2⟩ 0)
+            let (_, shown) := added.showBuffer ⟨0⟩ ⟨2⟩ ⟨⟨2⟩, 0⟩ ⟨⟨2⟩, 1⟩
+            let (_, removed) := shown.removeBuffer ⟨0⟩
+            let (_, asking) := prompted removed
+            let (_, back) := asking.focusWindow ⟨1⟩
+            let (_, again) := back.focusWindow (asking.minibufferView?.getD ⟨9⟩)
+            let (_, closed) := again.closePrompt none
+            state.recent == #[⟨0⟩] && focused.recent == #[⟨1⟩, ⟨0⟩] &&
+              added.recent == #[⟨1⟩, ⟨0⟩, ⟨2⟩] &&
+              shown.recent == #[⟨2⟩, ⟨1⟩, ⟨0⟩] &&
+              removed.recent == #[⟨2⟩, ⟨1⟩] &&
+              asking.recent == removed.recent &&
+              asking.minibufferView?.isSome &&
+              back.recent == #[⟨1⟩, ⟨2⟩] &&
+              again.recent == back.recent &&
+              again.frame.focused == asking.frame.focused &&
+              closed.recent == back.recent &&
+              [state, focused, added, shown, removed, asking, back, again, closed].all
+                (·.wellFormed) },
+    { name :=
+        "the most recently used buffer but one is the first of the order that is open and is neither it nor the minibuffer's, and with no order the first such buffer by slot; none when no other buffer is open; the open buffers are the order's, then the rest by slot, without the minibuffer's"
+      run :=
+        pure <|
+          match onTextModel twoBuffers, onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | some state, some alone =>
+            let (_, added) := state.addBuffer "third" ⟨2⟩ (UndoTree.new ⟨2⟩ 0)
+            let (_, asking) := prompted { added with recent := #[⟨2⟩, ⟨0⟩] }
+            let unordered := { asking with recent := #[] }
+            let (_, lonely) := prompted alone
+            asking.mostRecent ⟨2⟩ == some ⟨0⟩ && asking.mostRecent ⟨0⟩ == some ⟨2⟩ &&
+              unordered.mostRecent ⟨0⟩ == some ⟨1⟩ &&
+              unordered.mostRecent ⟨1⟩ == some ⟨0⟩ &&
+              alone.mostRecent ⟨0⟩ == none &&
+              lonely.minibufferBuffer? == some ⟨1⟩ &&
+              lonely.mostRecent ⟨0⟩ == none &&
+              { lonely with recent := #[] }.mostRecent ⟨0⟩ == none &&
+              asking.minibufferBuffer? == some ⟨3⟩ &&
+              asking.openBuffers == #[⟨2⟩, ⟨0⟩, ⟨1⟩] &&
+              unordered.openBuffers == #[⟨0⟩, ⟨1⟩, ⟨2⟩]
+          | _, _ => false },
+    { name :=
         "the initial state's buffer has no file, and its line ending is a line feed; no path finds a buffer"
       run :=
         pure <|
@@ -5939,7 +5992,7 @@ def stateChecks : List Check :=
               (named ["other<2>", "other<3>"]).freeName "other" == "other<4>" &&
               (named ["other<2>"]).freeName "other<2>" == "other<2><2>" },
     { name :=
-        "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the tree, a prompt whose choice is past its listing; and the same prompt with a choice in its listing is well formed"
+        "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the tree, a prompt whose choice is past its listing, an order of use that names a removed buffer or one buffer twice; and the same prompt with a choice in its listing is well formed"
       run := do
         let some state := onTextModel threeWindows | return false
         -- A failure names the spoiled states that were taken for well formed.
@@ -6732,6 +6785,25 @@ def stateRequestChecks : List Check :=
               replied astray == .inl .notItsHistory &&
               still == state },
     { name :=
+        "renaming a buffer gives it the name, which then finds it; its own name changes nothing; a name another buffer has is refused with nameTaken, and a buffer there is none of with noSuchBuffer, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (renamed, after) := state.handle (.renameBuffer ⟨1⟩ "renamed")
+            let (own, same) := state.handle (.renameBuffer ⟨1⟩ "other")
+            let (taken, kept) := state.handle (.renameBuffer ⟨1⟩ EditorState.scratchName)
+            let (absent, still) := state.handle (.renameBuffer ⟨9⟩ "x")
+            replied renamed == .inr () && after.findBuffer "renamed" == some ⟨1⟩ &&
+              after.findBuffer "other" == none &&
+              replied own == .inr () &&
+              same == state &&
+              replied taken == .inl (.nameTaken EditorState.scratchName) &&
+              kept == state &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              still == state },
+    { name :=
         "removing a buffer empties its slot, and its id is not given to the next buffer; a buffer a window shows is refused with shown and that view, and one there is none of with noSuchBuffer, each with the state as it was"
       run :=
         pure <|
@@ -7496,11 +7568,12 @@ def loopChecks : List Check :=
               nexts == #[.continue, .continue, .continue] &&
               model.display.scenes.size == 3
           | (.error _, _) => false },
-    { name := "a close request and a quit say stop and publish nothing"
+    { name :=
+        "a queue's quit says stop and publishes nothing; a close request on a state with nothing unsaved publishes one scene and says stop"
       run :=
         pure <|
           (match looped threeWindows [.closeRequested] with
-            | some ((_, nexts), scenes, _) => nexts == #[.stop] && scenes.isEmpty
+            | some ((_, nexts), scenes, _) => nexts == #[.stop] && scenes.size == 1
             | none => false) &&
             match looped threeWindows [.quit] with
             | some ((_, nexts), scenes, _) => nexts == #[.stop] && scenes.isEmpty
@@ -15932,6 +16005,63 @@ def dispatchQuitChecks : List Check :=
               next last == #[some .continue, some .stop] &&
               left.stopped },
     { name :=
+        "a close request while a file's buffer has unsaved changes: the step says continue and publishes one scene, whose echo area has the quit command's refusal, the state is not asked to quit, and the next key's command runs"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (edited, _) := fedTo driver [.commit "x"]
+            let (refused, steps) := fedTo edited [.closeRequested]
+            let (after, _) := fedTo refused (presses "C-l o")
+            next steps == #[some .continue] &&
+              refused.model.display.scenes.size == edited.model.display.scenes.size + 1 &&
+              echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              !refused.loop.state.quitting &&
+              !refused.stopped &&
+              promptEcho after == "other" },
+    { name :=
+        "a close request with nothing unsaved publishes one scene, the last, and says stop, and the driver has stopped"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (left, steps) := fedTo driver [.closeRequested]
+            next steps == #[some .stop] && left.stopped &&
+              left.model.display.scenes.size == driver.model.display.scenes.size + 1 },
+    { name :=
+        "a close request while a save is in flight says continue, and the delivery of the save's result says stop"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (asked, steps) :=
+              fedTo driver ([.commit "x"] ++ presses "C-o w" ++ [.closeRequested])
+            let (left, delivered) := asked.finish 2
+            steps.back?.join.map (·.next) == some .continue && asked.loop.state.quitting &&
+              !asked.stopped &&
+              delivered.map (·.next) == some .stop &&
+              left.stopped },
+    { name :=
+        "a close request while a save is in flight that is then refused, the file having changed behind the editor: the delivery says continue, the driver has not stopped, and the echo area has the save's refusal"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let changed := rewritten driver path JobContract.otherFile
+            let (asked, steps) :=
+              fedTo changed ([.commit "x"] ++ presses "C-o w" ++ [.closeRequested])
+            let (refused, delivered) := asked.finish 2
+            steps.back?.join.map (·.next) == some .continue && asked.loop.state.quitting &&
+              delivered.map (·.next) == some .continue &&
+              !refused.stopped &&
+              !refused.loop.state.quitting &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
+    { name :=
         "the driver records that a step said stop when the step was one it ran for an invocation a command asked for: the fed step says continue and the driver has stopped"
       run :=
         pure <|
@@ -16525,6 +16655,313 @@ def exChecks : List Check :=
               (candidatesOf typed).map (·.listed) == some #["e", "reload"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
+
+/-- What a step of the buffer command checks is handed. The commands are the
+ones compiled code registers for files, the minibuffer, the buffers and the
+ex line (`Files.commands`, `Minibuffer.commands`, `Buffers.commands`,
+`Ex.commands`), each under the name it is registered under, told of the ex
+names that ship (`Ex.bindings`), and two written here: `split`, which
+splits the window it is called with and leaves the focus, and
+`edit-then-close`, which inserts `x` at its window's cursors and then runs
+`close-buffer` inside itself, so the edit and the close are one command.
+
+One keymap, the same for every view: `C-e e` runs the ex command, `C-e y`
+and `C-e t` the minibuffer's accept command and its command that moves to
+the next candidate, `C-b b` runs `switch-buffer` with the arguments the Vim
+scheme gives a command a key is bound to, a count and a register, `C-b n`
+runs it with `note.txt`, `C-b s` runs `split` and `C-b x` runs
+`edit-then-close`. -/
+def bufferKeys : Loop.Keys TestScheme.scheme :=
+  let registrations := Files.commands ++ Minibuffer.commands ++ Buffers.commands ++ Ex.commands
+  let compiled : List (String × Dispatched) :=
+    registrations.toList.filterMap fun registration =>
+      match registration.action with
+      | .call run =>
+        some
+          (registration.name, fun call => do
+            run call
+            return none)
+      | _ => none
+  let written : List (String × Dispatched) :=
+    [("split", fun call => do
+        discard <| call.target.window.id.split .rows
+        return none),
+      ("edit-then-close", fun call => do
+        discard <| call.target.window.id.insertAtSelections "x"
+        discard <| runCommand Buffers.closeName { call with arguments := [] }
+        return none)]
+  {
+    dispatchKeys
+      [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName),
+        ("C-e t", invoke Minibuffer.nextName),
+        ("C-b b", { command := Buffers.switchName, arguments := [.nat 0, .str ""] }),
+        ("C-b n", { command := Buffers.switchName, arguments := [.str "note.txt"] }),
+        ("C-b s", invoke "split"), ("C-b x", invoke "edit-then-close")]
+      (compiled ++ written) with
+    registered :=
+      { ex := fun name => Ex.bindings.findRev? (·.name == name),
+        exNames := exNamesOf Ex.bindings } }
+
+/-- A driver of the buffer command checks over the initial state, with the
+file commands' jobs and the files of the file command checks; `none` if
+making the state was refused. -/
+def buffersDriver : Option TestDriver :=
+  (Loop.Driver.over bufferKeys fileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := { files := commandFiles } }
+
+/-- `driver` with `note.txt`, `crlf.txt` and `lf.txt` opened in view 0, in
+that order, each by the ex line `e` and its path, and each load finished
+before the next: the loads are jobs 1, 2 and 3. The open buffers are then
+`scratch`, `note.txt`, `crlf.txt` and `lf.txt`, and `lf.txt` is the most
+recently used. -/
+def threeOpen (driver : TestDriver) : TestDriver :=
+  [("note.txt", 1), ("crlf.txt", 2), ("lf.txt", 3)].foldl
+    (fun driver (name, job) => ((fedTo driver (exLine s!"e {inFiles name}")).1.finish job).1) driver
+
+/-- `buffersDriver` with `threeOpen`'s three files open. -/
+def buffersOpen : Option TestDriver :=
+  buffersDriver.map threeOpen
+
+/-- The name of the buffer view `view` of `driver` shows. -/
+def shownName (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option String :=
+  (showing driver view).map (·.buffer.name)
+
+/-- The buffer called `name` in `driver`'s state. -/
+def bufferNamed (driver : TestDriver) (name : String) : Option BufferId :=
+  driver.loop.state.findBuffer name
+
+/-- The checks of the buffer commands (`Editor/Buffers.lean`,
+`Editor/Buffers/Compiled.lean`) and the ex names `b`, `ls` and `bd`, on the
+loop's driver over the editor's models, the model of files and the test
+scheme. Each message is read from the function that makes it, and an order
+the fuzzy matcher decides is computed with its model. -/
+def bufferCommandChecks : List Check :=
+  [{  name :=
+        "b with no argument opens a prompt labelled with the switch prompt's label, whose continuation is switch-buffer, and whose candidates are the open buffers' names, most recently used first and the asking window's buffer last, without the minibuffer's; called with a count and a register, as a key under the Vim scheme calls it, it asks the same"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let asked (events : List Event) : Bool :=
+              let (asking, _) := fedTo opened events
+              let state := asking.loop.state
+              let minibuffer := (state.minibufferBuffer?.bind state.buffer?).map (·.name)
+              state.prompt.map (fun asked => (asked.label, asked.continuation)) ==
+                  some (Buffers.switchPrompt, { command := Buffers.switchName }) &&
+                (candidatesOf asking).map (·.all) ==
+                  some #["crlf.txt", "note.txt", "scratch", "lf.txt"] &&
+                minibuffer.isSome &&
+                !((candidatesOf asking).any fun candidates =>
+                    minibuffer.any candidates.all.contains)
+            asked (exLine "b") && asked (presses "C-b b") },
+    { name :=
+        "a pattern typed after b and accepted with nothing chosen shows the best match in the window: its status line names it and it is the most recently used; where more than one buffer matches, the one the fuzzy model ranks first"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (switched, _) := fedTo opened (exLine "b nte")
+            let state := opened.loop.state
+            let names := state.openBuffers.filterMap fun id => (state.buffer? id).map (·.name)
+            let best := (FuzzyModel.rank "txt" names)[0]?.bind (names[·]?)
+            let (several, _) := fedTo opened (exLine "b txt")
+            shownName switched == some "note.txt" && statusOf switched == some (named "note.txt") &&
+              switched.loop.state.recent[0]? == bufferNamed switched "note.txt" &&
+              switched.loop.state.prompt == none &&
+              best.isSome &&
+              shownName several == best },
+    { name :=
+        "a candidate chosen with the minibuffer's next command and accepted is the buffer shown"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (chosen, _) := fedTo opened (exLine "b" ++ presses "C-e t")
+            let (switched, _) := fedTo chosen (presses "C-e y")
+            let expected := (candidatesOf chosen).bind (·.listed[0]?)
+            expected.isSome && (candidatesOf chosen).bind (·.chosen) == some 0 &&
+              shownName switched == expected &&
+              switched.loop.state.prompt == none },
+    { name :=
+        "b with an exact name switches with no prompt; b with a pattern nothing matches leaves the window as it was and says so by the switch command's message"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (exact, _) := fedTo opened (exLine "b scratch")
+            let (missed, _) := fedTo opened (exLine "b zzz")
+            shownName exact == some "scratch" && exact.loop.state.prompt == none &&
+              shownName missed == some "lf.txt" &&
+              promptEcho missed == Buffers.noMatch "zzz" &&
+              missed.loop.state.wellFormed },
+    { name :=
+        "switch-buffer called with a name from the minibuffer's view shows the buffer in the window the prompt was asked from, and the prompt stays open"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (asking, _) := fedTo opened (presses "C-e e")
+            let (switched, _) := fedTo asking (presses "C-b n")
+            asking.loop.state.minibufferView? == some asking.loop.state.frame.focused &&
+              shownName switched == some "note.txt" &&
+              switched.loop.state.prompt.isSome &&
+              switched.loop.state.wellFormed },
+    { name :=
+        "ls shows, in the window it was called in, a buffer called buffer-list with no file, whose text is one line per open buffer, most recently used first, + for unsaved changes and the path of a buffer with a file; the minibuffer and the list itself are not in it, and the modified scratch buffer, which holds no file, has no +"
+      run :=
+        pure <|
+          match buffersDriver with
+          | none => false
+          | some driver =>
+            let opened := threeOpen (fedTo driver [.commit "typed"]).1
+            let (listed, _) := fedTo opened (exLine "b note.txt" ++ [.commit "x"] ++ exLine "ls")
+            let path (name : String) : String := (inFiles name).toString
+            let expected :=
+              s!"+ note.txt  {path "note.txt"}\n  lf.txt  {path "lf.txt"}\n  crlf.txt  {path "crlf.txt"}\n  scratch\n"
+            ((showing listed).map fun shown => (shown.buffer.name, shown.buffer.file.isNone)) ==
+                some (Buffers.listBuffer, true) &&
+              (showing listed).bind (·.text) == some expected &&
+              listed.loop.state.wellFormed },
+    { name :=
+        "ls again replaces the list's text and makes no second buffer: after note.txt is saved its line has no +"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (first, _) := fedTo opened (exLine "b note.txt" ++ [.commit "x"] ++ exLine "ls")
+            let (saved, _) := fedTo first (exLine "b note.txt" ++ exLine "w")
+            let (saved, _) := saved.finish 4
+            let (again, _) := fedTo saved (exLine "ls")
+            let path (name : String) : String := (inFiles name).toString
+            let expected :=
+              s!"  note.txt  {path "note.txt"}\n  lf.txt  {path "lf.txt"}\n  crlf.txt  {path "crlf.txt"}\n  scratch\n"
+            bufferNamed first Buffers.listBuffer != none &&
+              bufferNamed again Buffers.listBuffer == bufferNamed first Buffers.listBuffer &&
+              shownName again == some Buffers.listBuffer &&
+              (showing again).bind (·.text) == some expected &&
+              (again.loop.state.buffers.filter
+                    (·.any (·.name.startsWith Buffers.listBuffer))).size ==
+                1 },
+    { name :=
+        "bd closes an unmodified file buffer shown in two windows: it is gone, no buffer holds its file, both windows show crlf.txt, the buffer used before it, and their status lines name it, the order of use lacks it, the state is well formed, and its text is released; a second bd falls back to note.txt"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (split, _) := fedTo opened (presses "C-b s")
+            let before := split.loop.state
+            let other := (before.frame.tree.windows.filter (· != ⟨0⟩))[0]?.getD ⟨0⟩
+            let closed := bufferNamed split "lf.txt"
+            let text := (closed.bind before.buffer?).map (·.text)
+            let (after, _) := fedTo split (exLine "bd")
+            let state := after.loop.state
+            let (second, _) := fedTo after (exLine "bd")
+            other != ⟨0⟩ && shownName split other == some "lf.txt" && closed.isSome &&
+              (closed.bind state.buffer?).isNone &&
+              state.findFile (inFiles "lf.txt") == none &&
+              shownName after == some "crlf.txt" &&
+              shownName after other == some "crlf.txt" &&
+              (closed.bind before.mostRecent) == bufferNamed after "crlf.txt" &&
+              statusOf after == some (named "crlf.txt") &&
+              statusOf after other == some (named "crlf.txt") &&
+              closed.all (!state.recent.contains ·) &&
+              state.wellFormed &&
+              (text.bind fun text => (after.model.texts.texts[text.index]?).join).isNone &&
+              text.isSome &&
+              shownName second == some "note.txt" &&
+              shownName second other == some "note.txt" &&
+              second.loop.state.wellFormed },
+    { name :=
+        "bd with a name closes the named buffer, not the window's; bd with a name no buffer has says so by the close command's message and closes nothing"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (named', _) := fedTo opened (exLine "bd note.txt")
+            let (missed, _) := fedTo opened (exLine "bd nope")
+            bufferNamed named' "note.txt" == none && shownName named' == some "lf.txt" &&
+              named'.loop.state.wellFormed &&
+              promptEcho missed == Buffers.noBuffer "nope" &&
+              missed.loop.state.openBuffers == opened.loop.state.openBuffers },
+    { name :=
+        "a modified buffer with no file closes, by q's rule: bd on the scratch buffer with text typed in it closes it and the window shows the buffer used before it"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (closed, _) := fedTo opened (exLine "b scratch" ++ [.commit "typed"] ++ exLine "bd")
+            bufferNamed closed "scratch" == none && shownName closed == some "lf.txt" &&
+              closed.loop.state.wellFormed },
+    { name :=
+        "a buffer whose save in flight covers its text closes, and the save's delivery still says the file was written"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (saving, _) := fedTo opened ([.commit "x"] ++ exLine "w")
+            let (closed, _) := fedTo saving (exLine "bd")
+            let (delivered, _) := closed.finish 4
+            (heldFile saving).bind (·.saving) != none &&
+              closed.loop.state.findFile (inFiles "lf.txt") == none &&
+              shownName closed == some "crlf.txt" &&
+              echoOf delivered == some (Files.wrote (inFiles "lf.txt")) },
+    { name :=
+        "bd on the only buffer, the initial scratch with text typed in it: the window shows a buffer called scratch with no file, whose text is empty; the old slot is empty, one buffer is open, and the state is well formed"
+      run :=
+        pure <|
+          match buffersDriver with
+          | none => false
+          | some driver =>
+            let (closed, _) := fedTo driver ([.commit "typed"] ++ exLine "bd")
+            let state := closed.loop.state
+            driverText driver == some "" &&
+              ((showing closed).map fun shown =>
+                  (shown.buffer.name, shown.buffer.file.isNone, shown.text, shown.id != ⟨0⟩)) ==
+                some (EditorState.scratchName, true, some "", true) &&
+              state.buffers[0]? == some none &&
+              state.openBuffers.size == 1 &&
+              state.wellFormed },
+    { name :=
+        "bd on each of threeOpen's buffers in turn leaves, after the last, an empty buffer called scratch with no file, the one open buffer"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (closed, _) :=
+              fedTo opened (exLine "bd" ++ exLine "bd" ++ exLine "bd" ++ exLine "bd")
+            let state := closed.loop.state
+            ((showing closed).map fun shown =>
+                  (shown.buffer.name, shown.buffer.file.isNone, shown.text)) ==
+                some (EditorState.scratchName, true, some "") &&
+              state.openBuffers.size == 1 &&
+              ["note.txt", "crlf.txt", "lf.txt"].all (bufferNamed closed · == none) &&
+              state.wellFormed },
+    { name :=
+        "bd on note.txt with an edit committed leaves the buffer open and shown, with the edit, and the echo area says why by the close command's message; and so when the edit and the close are one command"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let text := "x" ++ FileCases.noteText
+            let (refused, _) := fedTo opened (exLine "b note.txt" ++ [.commit "x"] ++ exLine "bd")
+            let (onePass, _) := fedTo opened (exLine "b note.txt" ++ presses "C-b x")
+            [refused, onePass].all fun driver =>
+              bufferNamed driver "note.txt" != none && shownName driver == some "note.txt" &&
+                (showing driver).bind (·.text) == some text &&
+                echoOf driver == some (Buffers.notClosing "note.txt") &&
+                driver.loop.state.wellFormed }]
 
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,
@@ -20318,17 +20755,19 @@ def heightChecks : List Check :=
                 | _ => false
             | _ => false }]
 
-/-- The registry of the frame command checks: the frame's commands and their
-bindings registered for the owner `compiled`, as a host registers them, and
-`config` as config's bindings. -/
+/-- The registry of the frame command checks: the frame's commands, and the
+ex line's, whose `quit` the frame's `s-q` names, and the frame's bindings,
+registered for the owner `compiled`, as a host registers them, and `config`
+as config's bindings. -/
 def frameRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
-  ((({} : Config.Registry).replace .compiled FrameCommands.commands).replaceBindings .compiled
-        FrameCommands.bindings).replaceBindings
+  ((({} : Config.Registry).replace .compiled
+            (FrameCommands.commands ++ Ex.commands)).replaceBindings
+        .compiled FrameCommands.bindings).replaceBindings
     .config config
 
 /-- What a step of the frame command checks is handed: the active keymaps
 `registry` makes for the test scheme from the loop's state, and its plain
-commands. -/
+commands and those given their call. -/
 def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
   { maps := registry.activeMaps TestScheme.scheme
     command? := fun name =>
@@ -20337,13 +20776,25 @@ def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
         some fun _ => do
           run
           return none
+      | some { registration := { action := .call run, .. }, .. } =>
+        some fun call => do
+          run call
+          return none
       | _ => none }
 
 /-- A driver of the frame command checks over the initial state, with the
-keys of `registry`; `none` if making the state was refused. -/
-def frameDriver (registry : Config.Registry := frameRegistry) : Option TestDriver :=
-  (Loop.Driver.over (frameKeys registry) driverJobs (EditorState.initial ⟨640, 480⟩)
-      editorModel).toOption
+keys of `registry`; `none` if making the state was refused. With `held`
+the scratch buffer holds a file, made up and never loaded, so that an edit
+of it is an unsaved change. -/
+def frameDriver (registry : Config.Registry := frameRegistry) (held : Bool := false) :
+    Option TestDriver :=
+  let start : TextM EditorState := do
+    let state ← EditorState.initial ⟨640, 480⟩
+    if held then
+      return (state.attachFile ⟨0⟩ "/files/note.txt" { seconds := 0, nanoseconds := 0, size := 0 }
+            .lf).2
+    return state
+  (Loop.Driver.over (frameKeys registry) driverJobs start editorModel).toOption
 
 /-- The window's word that it is 640 by 480 at scale 1, in fullscreen or not. -/
 def resizedTo (fullscreen : Bool) : Event :=
@@ -20392,14 +20843,28 @@ def frameCommandChecks : List Check :=
     { name := "s-m runs minimise-window, which asks the display to minimise the window"
       run := pure (framed frameDriver (presses "s-m") == some (#[.minimise], false)) },
     { name :=
-        "the compiled bindings are C-s-f to toggle-fullscreen and s-m to minimise-window, and config's binding of C-s-f is the one that runs while config binds it"
+        "s-q runs quit: with a buffer that holds a file edited, it is refused with the quit command's message and the driver goes on; with nothing unsaved it stops the driver"
+      run :=
+        pure <|
+          match frameDriver (held := true) with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver ([.commit "x"] ++ presses "s-q")
+            let (left, steps) := fedTo driver (presses "s-q")
+            !refused.stopped && !refused.loop.state.quitting &&
+              echoOf refused == some (Ex.notQuitting (.unsaved "scratch")) &&
+              left.stopped &&
+              steps.back?.join.map (·.next) == some .stop },
+    { name :=
+        "the compiled bindings are C-s-f to toggle-fullscreen, s-m to minimise-window and s-q to quit, and config's binding of C-s-f is the one that runs while config binds it"
       run :=
         let rebound :=
           frameRegistry #[{ keys := keys "C-s-f", command := FrameCommands.minimiseName }]
         pure
           (FrameCommands.bindings ==
               #[{ keys := keys "C-s-f", command := FrameCommands.toggleFullscreenName },
-                { keys := keys "s-m", command := FrameCommands.minimiseName }] &&
+                { keys := keys "s-m", command := FrameCommands.minimiseName },
+                { keys := keys "s-q", command := Ex.quitName }] &&
             FrameCommands.toggleFullscreenName == "toggle-fullscreen" &&
             FrameCommands.minimiseName == "minimise-window" &&
             FrameCommands.commands.map (·.name) == #["toggle-fullscreen", "minimise-window"] &&
@@ -20782,6 +21247,7 @@ def checks : List Check :=
     openFilesChecks ++
     dispatchQuitChecks ++
     exChecks ++
+    bufferCommandChecks ++
     evilRestChecks ++
     evilMotionChecks ++
     evilStateChecks ++

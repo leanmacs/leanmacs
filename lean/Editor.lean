@@ -1,4 +1,5 @@
 import Editor.Api.Theorems
+import Editor.Buffers
 import Editor.Command.Append
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
@@ -59,7 +60,11 @@ and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
 ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The file
 commands come with `Editor/Ex.lean`, whose save-and-quit command calls
-`Files.save`. The frame's commands are here too
+`Files.save`. The buffer commands are here too (`Editor/Buffers.lean`):
+`Buffers.switchCommand`, `Buffers.listCommand` and `Buffers.closeCommand`,
+which switch a window to another buffer, list the open buffers and close
+one; their registrations (`Editor/Buffers/Compiled.lean`) are not
+imported. The frame's commands are here too
 (`Editor/FrameCommands.lean`): `toggle-fullscreen` and `minimise-window`,
 which ask the platform's window through the display; their registrations
 and default bindings (`Editor/FrameCommands/Compiled.lean`) are not

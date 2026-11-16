@@ -287,6 +287,15 @@ prompt labelled `:`, whose answer is run as a named ex command.
 | `save-and-quit` | Saves the buffer of the window it is called with, as `save-buffer` does, and asks the editor to quit if the save started. The quit waits for the save. |
 | `reload-config` | Asks for the config to be reloaded, as the `reload` directive does. It says nothing: the reload's report is printed. |
 
+And it ships the buffer commands, compiled in (`lean/Editor/Buffers.lean`),
+which the ex names `b`, `ls` and `bd` run.
+
+| Command | Does |
+|---|---|
+| `switch-buffer` | Shows another open buffer in the window it is called with: the buffer of exactly the name that is its first argument, or else the best fuzzy match of the open buffers' names. With no string it asks, with a prompt labelled `Buffer: ` whose candidates are the open buffers' names, most recently used first and the window's own buffer last. Nothing matching says `switch-buffer: no buffer matches <text>`. |
+| `list-buffers` | Shows a buffer called `buffer-list`, with no file, whose text lists the open buffers, most recently used first: `+` for one with unsaved changes, its name, and its path for a buffer with a file. A later list replaces the text. |
+| `close-buffer` | Closes the buffer its first argument names, or the window's buffer: every window that showed it shows the most recently used buffer left, and closing the last leaves an empty `scratch`. It is refused while the buffer holds a file and has unsaved changes, and says `close-buffer: <name> has unsaved changes`. |
+
 | Ex name | Runs | Takes |
 |---|---|---|
 | `w` | `save-buffer` | Nothing |
@@ -294,6 +303,9 @@ prompt labelled `:`, whose answer is run as a named ex command.
 | `q` | `quit` | Nothing |
 | `wq` | `save-and-quit` | Nothing |
 | `reload` | `reload-config` | Nothing |
+| `b <buffer>` | `switch-buffer` | The rest of the line, the buffer's name or a pattern. With none it asks for one |
+| `ls` | `list-buffers` | Nothing |
+| `bd <buffer>` | `close-buffer` | The rest of the line, a buffer's name. With none it closes the window's buffer |
 
 - A line is its first word and the rest. White space round the line and
   after the name is dropped; the rest is one argument, spaces included.
@@ -371,12 +383,12 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-newline insert-tab insert-left insert-right insert-up insert-down ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-newline insert-tab insert-left insert-right insert-up insert-down ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -386,8 +398,10 @@ Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
 `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`,
 `minibuffer-previous`, evil's twenty-five, from `move` to
-`scroll-line-to-bottom`, and the ex line's four, from `ex` to
-`reload-config`, are
+`scroll-line-to-bottom`, the ex line's four, from `ex` to
+`reload-config`, the three buffer commands, from `switch-buffer` to
+`close-buffer`, and the frame's two, `toggle-fullscreen` and
+`minimise-window`, are
 the commands the editor ships, compiled in: `show` lists them before
 config's.
 
@@ -775,10 +789,12 @@ every event the editor handles is followed by one scene, published to a
 recorder that stands in for the window's display: a window event, a
 request, a reload that installs, a job's command. `published` counts them,
 so the second `scene` of the third script, seven events after the first,
-shows that the reload and the job were each followed by one. A window's
-close request ends the loop, and so does a command that quits the editor
-(`quit`, `save-and-quit`), once no buffer that holds a file has unsaved
-changes and no save is in flight. The editor then cancels the jobs that
+shows that the reload and the job were each followed by one. A command
+that quits the editor (`quit`, `save-and-quit`) ends the loop once no
+buffer that holds a file has unsaved changes and no save is in flight, and
+a window's close request is a quit by the same rule: while a buffer that
+holds a file has unsaved changes it is refused, with `quit: <name> has
+unsaved changes` in the echo area, and the loop goes on. The editor then cancels the jobs that
 are left and prints nothing more, and the lines of the script after the
 quit are not run: a `settle` or a `join` that was waiting ends at once,
 and is no failure.

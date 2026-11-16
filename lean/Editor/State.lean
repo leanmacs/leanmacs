@@ -293,6 +293,38 @@ A prompt is a request for one string, with a text to show beside the input
   over another text.
 - `setValue` sets a buffer-local value under a name, in place of the one
   the name had; `value?` reads one.
+- `renameBuffer` gives a buffer another name. It refuses `noSuchBuffer`,
+  and `nameTaken` for a name another buffer has; a buffer renamed to its
+  own name is as it was. It is there for one rule: the buffer left after
+  the last one is closed is called `scratchName`, the name the initial
+  buffer has, which is free only once the closed buffer is removed, and a
+  shown buffer cannot be removed (`Editor/Buffers.lean`, "Close").
+- `scratchName` is the editor's one name for its empty buffer with no file:
+  the initial state's, and the one left after the last buffer is closed.
+
+### Most recently used
+
+The state keeps the open buffers in the order they were last used
+(`EditorState.recent`, most recent first, each once), so that a closed
+buffer's windows show the one used before it, and a switch lists the
+buffers in that order.
+
+- **The operations that already exist keep it**, so no command keeps it
+  by hand: `showBuffer` puts the shown buffer first; `focusWindow` puts
+  the focused window's buffer first, unless it is the minibuffer's;
+  `addBuffer` puts the new buffer last, so a buffer that was made and never
+  shown is still in the order; `removeBuffer` takes the buffer out.
+  `openPrompt` and `closePrompt` leave it: the minibuffer's buffer is never
+  in it.
+- **`mostRecent except`** is the first buffer of the order that is open
+  and is neither `except` nor the minibuffer's, and failing that the first
+  such buffer in the order of the slots, so a state built by hand with no
+  order still has an answer. `none` when no other buffer is open.
+- **`openBuffers`** is every open buffer but the minibuffer's in that same
+  order: the order first, then the rest by slot. The buffer list and the
+  switch prompt read it (`Editor/Buffers.lean`).
+- `wellFormed` asks that every buffer of the order is open, and that none
+  is there twice.
 
 ## A buffer's file
 
@@ -441,7 +473,7 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
 | One buffer (its line ending, its modes) | A field of `Buffer` |
 | The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
-| The whole editor (registers, the scroll margin, the pending key prefix) | A field of `EditorState` |
+| The whole editor (registers, the scroll margin, the pending key prefix, the order buffers were used in) | A field of `EditorState` |
 | The open prompt (what completes it, what it has shown) | A field of `Prompt` |
 | What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
 
@@ -753,6 +785,10 @@ structure EditorState where
   docs). A publish asks them again (`Loop.publish`); before the first, a
   16-pixel cell's. -/
   heights : Display.Heights := { text := 16, status := 16, message := 16 }
+  /-- The open buffers in the order they were last used, most recent first,
+  each once, without the minibuffer's ("Most recently used", in the module
+  docs). -/
+  recent : Array BufferId := #[]
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -1025,7 +1061,8 @@ def rect? (state : EditorState) (id : ViewId) : Option Rect :=
 window is among them, the tree has one minibuffer leaf, the views' ids are
 distinct and are exactly the windows' ids, and each window's buffer
 exists. And whether an open prompt's choice, if it has one, is an index of
-its listing. -/
+its listing, and whether every buffer of the order they were used in
+(`recent`) is open and is there once. -/
 def wellFormed (state : EditorState) : Bool :=
   let ids := state.views
   ids.contains state.frame.focused && state.frame.tree.minibuffers == 1 &&
@@ -1033,9 +1070,22 @@ def wellFormed (state : EditorState) : Bool :=
     ids.size == state.windows.size &&
     ids.all (fun id => (state.window? id).isSome) &&
     (state.windows.all fun window => (state.buffer? window.buffer).isSome) &&
-    state.prompt.all fun asked => asked.candidates.chosen.all (· < asked.candidates.listed.size)
+    (state.prompt.all fun asked =>
+      asked.candidates.chosen.all (· < asked.candidates.listed.size)) &&
+    state.recent.all (fun id => (state.buffer? id).isSome) &&
+    state.recent.toList.eraseDups.length == state.recent.size
 
-/-- A buffer called `scratch` over a new empty text, and one window on it,
+/-- The name the editor gives its empty buffer with no file: the initial
+state's buffer's, and the one left after the last buffer is closed
+(`Editor/Buffers.lean`, "Close"). -/
+def scratchName : String :=
+  "scratch"
+
+/-- `recent` with `id` first, and nowhere else. -/
+def Recent.touch (recent : Array BufferId) (id : BufferId) : Array BufferId :=
+  #[id] ++ recent.filter (· != id)
+
+/-- A buffer called `scratch` (`scratchName`) over a new empty text, and one window on it,
 focused, in a frame of `size` with the minibuffer's place below it. The
 window's scroll anchor is at 0, and its selection one cursor at 0 of the
 shape `shape`, exclusive unless the caller says another. -/
@@ -1045,9 +1095,10 @@ def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := d
   let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩], shape })
   let history ← UndoTree.over text
   return {
-      buffers := #[some { name := "scratch", text, history }]
+      buffers := #[some { name := scratchName, text, history }]
       windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
-      frame := { size, tree := .split .rows (.window ⟨0⟩) .minibuffer, focused := ⟨0⟩ } }
+      frame := { size, tree := .split .rows (.window ⟨0⟩) .minibuffer, focused := ⟨0⟩ }
+      recent := #[⟨0⟩] }
 
 /-- Removes the window `id` from the frame: its sibling takes the place of
 the split that held both, and the window is handed back, its markers the
@@ -1079,11 +1130,20 @@ def removeWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Wind
   | false, _, _ => (.error (.noSuchWindow id), state)
 
 /-- Focuses the window `id`: a window of the tree, or the minibuffer's while
-a prompt is open. Refused, with the state unchanged, with `noSuchWindow`
+a prompt is open. Its buffer is then the most recently used, unless it is
+the minibuffer's. Refused, with the state unchanged, with `noSuchWindow`
 for any other. -/
 def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
   if state.views.contains id then
-    (.ok (), { state with frame := { state.frame with focused := id } })
+    let recent :=
+      match state.window? id with
+      | some window =>
+        if state.minibufferBuffer? == some window.buffer then state.recent
+        else Recent.touch state.recent window.buffer
+      | none => state.recent
+    (.ok (),
+      { state with
+        frame := { state.frame with focused := id }, recent })
   else (.error (.noSuchWindow id), state)
 
 /-- Has the window `id` keep `wanted` as its wanted column, or none. Any
@@ -1168,6 +1228,28 @@ the command. -/
 protected def none : EditorState :=
   { buffers := #[], windows := #[],
     frame := { size := ⟨0, 0⟩, tree := .minibuffer, focused := ⟨0⟩ } }
+
+/-- The first buffer of the order buffers were used in (`recent`) that is
+open and is neither `except` nor the minibuffer's, and failing that the
+first such buffer in the order of the slots; `none` when no other buffer is
+open ("Most recently used", in the module docs). -/
+def mostRecent (state : EditorState) (except : BufferId) : Option BufferId :=
+  let other (id : BufferId) : Bool :=
+    id != except && (state.buffer? id).isSome && state.minibufferBuffer? != some id
+  match state.recent.find? other with
+  | some id => some id
+  | none => ((List.range state.buffers.size).map (⟨·⟩)).find? other
+
+/-- The open buffers but the minibuffer's: those of the order they were used
+in (`recent`) first, in that order, and then the rest in the order of the
+slots ("Most recently used", in the module docs). -/
+def openBuffers (state : EditorState) : Array BufferId :=
+  let open? (id : BufferId) : Bool :=
+    (state.buffer? id).isSome && state.minibufferBuffer? != some id
+  let first := state.recent.filter open?
+  first ++
+    ((List.range state.buffers.size).map (⟨·⟩) |>.filter fun id =>
+        open? id && !first.contains id).toArray
 
 /-- The buffer called `name`, if there is one. Names are unique among the
 buffers a request added (`addBuffer`), so there is at most one. -/
@@ -1298,7 +1380,8 @@ def value? (state : EditorState) (id : BufferId) (name : String) : Option Value 
   (← buffer.locals.find? (·.1 == name)).2
 
 /-- Adds a buffer called `name` over `text`, whose history is `history`, in
-the next slot, and hands back its id. Refused, with the state unchanged,
+the next slot, and hands back its id. It is the least recently used buffer
+(`recent`). Refused, with the state unchanged,
 with `nameTaken` for a name a buffer already has, and with `notItsHistory`
 for a history over another text. -/
 def addBuffer (name : String) (text : TextId) (history : UndoTree) (state : EditorState) :
@@ -1308,17 +1391,36 @@ def addBuffer (name : String) (text : TextId) (history : UndoTree) (state : Edit
     if history.text != text then (.error .notItsHistory, state)
     else
       (.ok ⟨state.buffers.size⟩,
-        { state with buffers := state.buffers.push (some { name, text, history }) })
+        { state with
+          buffers := state.buffers.push (some { name, text, history })
+          recent := state.recent.push ⟨state.buffers.size⟩ })
 
-/-- Removes the buffer `id`: its slot is empty from then on, and its id is
-never used again. Its text is the caller's to release. Refused, with the
+/-- Removes the buffer `id`: its slot is empty from then on, its id is never
+used again, and it leaves the order buffers were used in (`recent`). Its
+text is the caller's to release. Refused, with the
 state unchanged, with `noSuchBuffer` for a buffer there is none of, and
 with `shown`, and the first such view, while a window shows it. -/
 def removeBuffer (id : BufferId) (state : EditorState) : Except BufferRefusal Unit × EditorState :=
   match state.buffer? id, state.windows.find? (·.buffer == id) with
   | none, _ => (.error (.noSuchBuffer id), state)
   | some _, some window => (.error (.shown window.id), state)
-  | some _, none => (.ok (), { state with buffers := state.buffers.set! id.index none })
+  | some _, none =>
+    (.ok (),
+      { state with
+        buffers := state.buffers.set! id.index none
+        recent := state.recent.filter (· != id) })
+
+/-- Gives the buffer `id` the name `name`. Renaming a buffer to its own name
+changes nothing. Refused, with the state unchanged, with `noSuchBuffer` for
+a buffer there is none of, and with `nameTaken` for a name another buffer
+has. -/
+def renameBuffer (id : BufferId) (name : String) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id, state.findBuffer name with
+  | none, _ => (.error (.noSuchBuffer id), state)
+  | some _, some holder =>
+    if holder == id then (.ok (), state) else (.error (.nameTaken name), state)
+  | some _, none => changeBuffer id (fun buffer => ((), { buffer with name })) state
 
 /-- Makes `history` the undo tree of the buffer `id`. Refused, with the
 state unchanged, with `noSuchBuffer` for a buffer there is none of, and
@@ -1377,7 +1479,8 @@ def splitWindow (id : ViewId) (axis : Axis) (scroll selection : MarkerId) (state
 
 /-- Has the window `id` show the buffer `buffer`, with `scroll` and
 `selection` as its markers, and no wanted column: an offset of one text
-means nothing in another. Refused, with the state unchanged, with
+means nothing in another. The buffer is then the most recently used
+(`recent`). Refused, with the state unchanged, with
 `ofMinibuffer`, and the minibuffer's view, for the minibuffer's window and
 for the minibuffer's buffer in another window, with `noSuchWindow` for a
 window not in the tree, with `noSuchBuffer` for a buffer there is none of,
@@ -1411,7 +1514,8 @@ where
                   if window.id == id then
                     { window with
                       buffer, scroll, selection, wanted := none }
-                  else window })
+                  else window
+              recent := Recent.touch state.recent buffer })
 
 /-- Opens a prompt, asked from the focused view: a buffer in the next slot
 over `text`, whose history is `history`, with the minibuffer's mode

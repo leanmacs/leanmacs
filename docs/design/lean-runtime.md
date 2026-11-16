@@ -111,7 +111,7 @@ event `main` posts the open command with the file, when one was given
 to say, and a reload when config is loaded at start; the editor is usable
 before the reload installs, as above. Then it runs the window on its own
 thread (`Ffi.windowRun`) with the editor loop on a dedicated task; when the
-loop ends, on `:q` or a close request, a task waits briefly for the last
+loop ends, once a close request or `:q` can leave, a task waits briefly for the last
 frame to be drawn and asks the window to close. Then `main` quits the
 queues and exits.
 
@@ -162,7 +162,8 @@ asks (`quit`, `lean/Editor/Api.lean`), which sets a flag of the editor
 state; the loop's step says stop once the editor can leave, when no buffer
 that holds a file has unsaved changes and no save is in flight
 ([concurrency.md](concurrency.md), "Quit"); the host ends its loop, as it
-does for a window's close request; and the executable's `main` then quits
+does once a window's close request, a quit by the same rule, can leave;
+and the executable's `main` then quits
 the queues and exits, as it does at the end of a script. The headless
 mode's driver sees a loop that ended by itself, stops reading its script
 there, and exits with status 0

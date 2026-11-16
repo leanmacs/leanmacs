@@ -1,12 +1,13 @@
 import Editor.Config.Registry
+import Editor.Ex
 import Editor.FrameCommands
 
 /-!
 # The frame's commands and their bindings, as compiled code registers them
 
-What a host is handed so that the window can be put in fullscreen and
-minimised from the keyboard (`Editor/FrameCommands.lean`): the registrations
-of the two commands, and their default key bindings. A host registers both
+What a host is handed so that the window can be put in fullscreen,
+minimised and quit from the keyboard (`Editor/FrameCommands.lean`): the
+registrations of the two frame commands, and the default key bindings. A host registers both
 for the owner `compiled` when its loop starts, before any config
 (`Editor/Config/Registry.lean`, "Compiled commands"), so they hold when
 config fails to load, and config's binding of the same keys is the one that
@@ -19,6 +20,11 @@ runs while config binds them.
   `toggle-fullscreen`, and `s-m` (Command-M) runs `minimise-window`. The
   window's event loop is built without winit's default menu, so neither
   chord is a menu item's and both reach the window.
+- **`s-q`** (Command-Q) runs `quit` (`Ex.quitName`), so Command-Q follows
+  the rule `:q` and the close button follow (`Editor/Ex.lean`, "A window's
+  close request"). Without the default menu Command-Q is a key like any
+  other, and nothing else binds it. The command is the ex line's, so a host
+  must be handed `Ex.commands` too for the key to run anything.
 
 This module is apart from `Editor/FrameCommands.lean` because it names the
 registry, which is the config session's.
@@ -42,10 +48,15 @@ def fullscreenChord : Key :=
 def minimiseChord : Key :=
   Key.chord { logical := .character "m", modifiers := { superKey := true } }
 
+/-- The chord `q` with the system key held: `s-q`. -/
+def quitChord : Key :=
+  Key.chord { logical := .character "q", modifiers := { superKey := true } }
+
 /-- The frame's default key bindings, as a host registers them for the
 owner `compiled`. -/
 def bindings : Array Config.KeyBinding :=
   #[{ keys := [fullscreenChord], command := toggleFullscreenName },
-    { keys := [minimiseChord], command := minimiseName }]
+    { keys := [minimiseChord], command := minimiseName },
+    { keys := [quitChord], command := Ex.quitName }]
 
 end Editor.FrameCommands

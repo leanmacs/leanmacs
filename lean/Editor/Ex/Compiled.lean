@@ -1,3 +1,4 @@
+import Editor.Buffers
 import Editor.Config.Registry
 import Editor.Ex
 import Editor.Files
@@ -39,6 +40,15 @@ drops it.
     window the line was asked from: no shipped command splits a window.
   - `wq` runs `save-and-quit` and takes nothing.
   - `reload` runs `reload-config` and takes nothing.
+  - `b` runs `switch-buffer` (`Editor/Buffers.lean`) and takes text: the
+    rest of the line names the buffer, exactly or by fuzzy match. `b` with
+    no argument runs it with none, which asks, by that command's own rule,
+    as `e` does. Vim's `b` refuses a pattern that matches more than one
+    buffer; this one takes the best match.
+  - `ls` runs `list-buffers` and takes nothing.
+  - `bd` runs `close-buffer` and takes text: the rest of the line is the
+    name of the buffer to close, and with none it closes the buffer of the
+    window the line was asked from.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -65,6 +75,9 @@ def bindings : Array Binding :=
   #[{ name := "w", command := Files.saveName },
     { name := "e", command := Files.openName, takes := .text },
     { name := "q", command := quitName }, { name := "wq", command := saveQuitName },
-    { name := "reload", command := reloadName }]
+    { name := "reload", command := reloadName },
+    { name := "b", command := Buffers.switchName, takes := .text },
+    { name := "ls", command := Buffers.listName },
+    { name := "bd", command := Buffers.closeName, takes := .text }]
 
 end Editor.Ex

@@ -4,6 +4,7 @@ import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Config.Stores
 import Editor.Event
+import Editor.Ex
 import Editor.Files
 import Editor.InputScheme
 import Editor.Key.Notation
@@ -313,8 +314,8 @@ request sets a flag of the editor state (`EditorState.quitting`,
   (`EditorState.leaves`: asked to quit, no buffer with unsaved changes, no
   save in flight) and to go on otherwise (`Loop.nextOf`,
   `Stepped.published`). The scene is published first, so the scene of the
-  step that says stop is the last one. A host ends its loop at a stop, as
-  it does for a close request; nothing else crosses to it.
+  step that says stop is the last one. A host ends its loop at a stop,
+  whatever step said it; nothing else crosses to it.
 - **A quit waits for a save in flight.** Asked to quit while a save is in
   flight, the step says to go on, and the editor goes on handling events.
   The step that delivers the save's result finds the buffer saved and says
@@ -335,8 +336,20 @@ request sets a flag of the editor state (`EditorState.quitting`,
 - **A command that asks and does not run to its end has not asked.** The
   flag is editor state, and the loop's state is then the one from before
   the command ("Rollback").
-- **A close request is not this.** It stops the loop whatever is unsaved,
-  and publishes nothing ("What each event does").
+- **A window's close request is a quit by `q`'s rule.** The loop runs the
+  rule itself (`Ex.closeRequested`, `Editor/Ex.lean`, "A window's close
+  request") as it runs a delivered command (`deliver`, labelled
+  `Ex.quitName`): guarded, rolled back and published, with the echo area
+  not cleared first, and saying stop only when the state it left leaves.
+  So a close request while a buffer that holds a file has unsaved changes
+  publishes one scene, with the refusal in the bottom row, and the loop
+  goes on; one with a save in flight waits for the save's delivery; and
+  one with nothing unsaved publishes one scene, the last, and says stop.
+  The loop runs the rule rather than the command registered as `quit`, so
+  a host that registers no ex command still closes, and config's `quit`
+  does not replace the close button's rule.
+- **A queue's quit is not this.** It stops the loop and publishes nothing
+  ("What each event does"): the host must return.
 
 Pinned by `ModelTest.dispatchQuitChecks`.
 
@@ -517,7 +530,8 @@ is queued, and marks that event. What the loop does with the flag is here
 | `compositionDisabled` | Clears the preedit |
 | `resize` | Sets the frame's size and whether the window is in fullscreen (`Frame.fullscreen`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: the scene has no field for it |
 | `focus gained` | Sets whether the frame has the keyboard focus |
-| `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
+| `closeRequested` | Runs the quit rule (`Ex.closeRequested`) as a delivered command is run (`Loop.deliver`), labelled `quit`: it publishes a scene, and says stop only once the editor leaves ("Quit") |
+| `quit` | Nothing: the step says stop, and publishes nothing |
 | `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
@@ -546,7 +560,7 @@ the store; what a command leaves behind is rolled back ("Rollback").
 
 ## After each event
 
-Every event but `closeRequested` and `quit` publishes a scene, whether it
+Every event but `quit` publishes a scene, whether it
 changed the state or not (`Loop.publish`):
 
 1. **The histories.** Each buffer's undo tree is told the revision its text
@@ -1584,7 +1598,9 @@ def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command 
 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on: stop, once the editor leaves ("Quit", in the module
-docs). A close request and a quit stop the loop and publish nothing. A key press is stepped through the scheme, and the invocation it
+docs). A queue's quit stops the loop and publishes nothing; a window's
+close request is a quit by `q`'s rule (`Ex.closeRequested`), run as a
+delivered command is (`deliver`). A key press is stepped through the scheme, and the invocation it
 yields is run (`stepped?`, `key`). A handler that is refused leaves the
 state as it was, with the refusal in the echo area. The step itself is not
 refused: the publish puts a refusal of its own in the echo area too ("When
@@ -1593,8 +1609,13 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
   if let some pressed := stepped? event then
     return ← (← loop.key keys pressed).published
   match event with
-  | .closeRequested | .quit =>
+  | .quit =>
     return { loop, next := .stop }
+  | .closeRequested =>
+    -- A quit by `q`'s rule, run as a delivered command is: guarded, rolled
+    -- back and published, with the echo left, and stop once the editor
+    -- leaves.
+    loop.deliver keys Ex.quitName Ex.closeRequested
   | .openFiles (path :: rest) =>
     -- An invocation no key yielded, run as every command is, in the
     -- focused window: config's command of the name runs in its place.

@@ -38,6 +38,12 @@ nothing in it.
   by the loop once the command has run to its end (`Editor/Loop.lean`,
   "What a finished command gave up"), so a command that fails afterwards
   is rolled back whole.
+- `BufferId.rename id name` gives a buffer another name; a name another
+  buffer has is refused (`nameTaken`).
+- `BufferId.hasUnsavedChanges id` is whether a buffer has unsaved changes
+  (`Buffer.unsavedAt`), by a copy of its undo tree told the revision its
+  text is at, so an edit made earlier in the same command counts. `quit`,
+  `list-buffers` and `close-buffer` all ask it (`Editor/Buffers.lean`).
 - `BufferId.text` is the buffer's text. Reading a buffer is the text
   port's reads on it (`TextId.read`, `rowContent`, `slice`, `byteLength`
   and the rest of `Editor/Text.lean`): there is no read request of the
@@ -626,6 +632,19 @@ command that does not run to its end has nothing run after it. -/
 def invoke (invocation : Invocation) : EditorM Unit :=
   EditorState.ask (.invoke invocation)
 
+/-- Whether the buffer `id` has unsaved changes (`Buffer.unsavedAt`): it
+holds a file, and its text is in another state than the one last saved and
+than the one a save in flight writes, by a copy of its undo tree told the
+revision its text is at, so an edit made earlier in the same command
+counts. A buffer with no file has none, and its text is not asked. Refused
+with `noSuchBuffer` for a buffer there is none of. -/
+def BufferId.hasUnsavedChanges (id : BufferId) : EditorM (Except BufferRefusal Bool) := do
+  let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+  -- A buffer with no file never has: it cannot be saved.
+  if buffer.file.isNone then
+    return .ok false
+  return .ok (buffer.unsavedAt (← buffer.history.sync))
+
 /-- Why the editor was not asked to quit. -/
 inductive QuitRefusal where
   /-- The buffer called `name`, which holds a file, has unsaved changes. -/
@@ -637,12 +656,11 @@ nothing asked, with `unsaved` and the name of the first buffer that holds a
 file and has unsaved changes, by its history once told the revision its
 text is at, so an edit made earlier in the same command counts. -/
 def quit : EditorM (Except QuitRefusal Unit) := do
-  for slot in (← editorState).buffers do
-    let some buffer := slot | continue
-    -- A buffer with no file never blocks, and its text is not asked.
-    if buffer.file.isSome then
-      if buffer.unsavedAt (← buffer.history.sync) then
-        return .error (.unsaved buffer.name)
+  let state ← editorState
+  for index in List.range state.buffers.size do
+    let some buffer := state.buffer? ⟨index⟩ | continue
+    if let .ok true← (⟨index⟩ : BufferId).hasUnsavedChanges then
+      return .error (.unsaved buffer.name)
   return .ok (← EditorState.ask .quit)
 
 /-- Asks for the config to be reloaded, once this command has run to its
@@ -777,6 +795,12 @@ def text (id : BufferId) : EditorM (Except BufferRefusal TextId) := do
 is none of, and with `shown` while a window shows it. -/
 def remove (id : BufferId) : EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.removeBuffer id)
+
+/-- Gives the buffer `id` the name `name`; its own name changes nothing.
+Refused with `noSuchBuffer` for a buffer there is none of, and with
+`nameTaken` for a name another buffer has. -/
+def rename (id : BufferId) (name : String) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.renameBuffer id name)
 
 /-- Has the buffer `id` hold the file at `path`, whose stamp is `stamp`,
 with `ending` as the buffer's line ending. Refused with `noSuchBuffer` for a

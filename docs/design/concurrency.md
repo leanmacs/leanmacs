@@ -532,8 +532,8 @@ command cannot end the process.
 - **The step says stop.** Every step that publishes a scene says stop
   when the state it left leaves, and to go on otherwise. The scene is
   published first, so a quitting command's scene is the last one. A step
-  that says stop already ends a host's loop, as a window's close request
-  does: nothing new crosses to the host. The executable's `main` then
+  that says stop already ends a host's loop: nothing new crosses to the
+  host. The executable's `main` then
   quits the queues and exits, as it does at the end of a script.
 - **A quit that cannot go ahead is withdrawn when the scene is made.**
   After the histories were told their texts' revisions, so that "unsaved"
@@ -550,8 +550,18 @@ command cannot end the process.
 - **Set aside: a one-shot output of the step**, like the jobs to start. A
   quit that waits for a save must outlive the command that asked, so it
   is state.
-- **Not changed: a window's close request** stops the loop whatever is
-  unsaved. The rule here could be applied there; it is not this phase's.
+- **A window's close request is a quit by `q`'s rule.** The loop runs the
+  quit rule itself for it (`Ex.closeRequested`), as it runs a delivered
+  command: guarded, rolled back, and followed by a scene, with the echo
+  area not cleared first. So it is refused, with `quit: <name> has unsaved
+  changes` in the bottom row and the loop running, while a buffer that
+  holds a file has unsaved changes; it waits for a save in flight; and it
+  is withdrawn by a save that is refused. With nothing unsaved its step
+  publishes one scene, the last, and says stop, and the host closes the
+  window once that scene is drawn. Command-Q is the key `s-q`, bound to
+  the command `quit`, so it follows the same rule. The loop runs the rule
+  and not the command registered as `quit`, so a host handed no ex
+  command still closes its window.
 
 **`quit` refuses while a buffer that holds a file has unsaved changes, and
 waits for a save in flight.**
@@ -587,8 +597,10 @@ waits for a save in flight.**
 - **Set aside: quitting at once.** The host cancels its jobs when its
   loop ends, the save among them.
 - **A quit that waits can wait for ever**, if a save's job never ends.
-  The editor goes on answering, and a window's close request still ends
-  it.
+  The editor goes on answering, and a window's close request waits as `q`
+  does, so the close button no longer ends it either: the way out is the
+  system's force quit. That is the price of the close button following
+  the rule.
 
 **`save-and-quit` is one command: it starts the save, and asks to quit
 only if the save started.**

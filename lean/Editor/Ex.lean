@@ -88,6 +88,17 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 - **It quits the editor, not a window.** Vim's `q` closes the current
   window and quits when it is the last.
 
+## A window's close request
+
+- **A close request is a quit by `q`'s rule.** The rule is one program,
+  `closeRequested`, which `quitCommand` is, and which the loop runs itself
+  for a window's close request (`Editor/Loop.lean`, "Quit"): refused with
+  `notQuitting` while a buffer that holds a file has unsaved changes,
+  waiting for a save in flight, and withdrawn by a save that is refused.
+- **The loop runs the rule, not the command registered as `quit`**, so a
+  host that registers no ex command still closes its window, and config's
+  `quit` does not replace what the close button does.
+
 ## Save and quit
 
 - **`save-and-quit`** (`saveQuitName`, `saveQuitCommand`) is one command:
@@ -205,12 +216,21 @@ then why. -/
 def notQuitting : QuitRefusal → String
   | .unsaved name => s!"{quitName}: {name} has unsaved changes"
 
-/-- The quit command as it is called: asks the editor to quit (`quit`,
-`Editor/Api.lean`), and says a refusal in the echo area (`notQuitting`). It
-reads nothing of its call. -/
-def quitCommand (_ : Call) : EditorM Unit := do
+/-- The quit rule, as the quit command and a window's close request run it
+("A window's close request", in the module docs): asks the editor to quit
+(`quit`, `Editor/Api.lean`), and says a refusal in the echo area
+(`notQuitting`). The loop runs it for a close request (`Editor/Loop.lean`,
+"Quit"). -/
+def closeRequested : EditorM Unit := do
   if let .error refusal← quit then
     message (notQuitting refusal)
+
+/-- The quit command as it is called: asks the editor to quit (`quit`,
+`Editor/Api.lean`), and says a refusal in the echo area (`notQuitting`), by
+the rule a close request runs (`closeRequested`). It reads nothing of its
+call. -/
+def quitCommand (_ : Call) : EditorM Unit :=
+  closeRequested
 
 /-- The name the save-and-quit command is registered under. -/
 def saveQuitName : String :=

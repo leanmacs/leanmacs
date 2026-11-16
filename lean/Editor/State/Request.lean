@@ -145,6 +145,8 @@ inductive StateRequest where
   | addBuffer (name : String) (text : TextId) (history : UndoTree)
   /-- Remove the buffer `id`. -/
   | removeBuffer (id : BufferId)
+  /-- Give the buffer `id` the name `name`. -/
+  | renameBuffer (id : BufferId) (name : String)
   /-- Make `history` the undo tree of the buffer `id`. -/
   | setHistory (id : BufferId) (history : UndoTree)
   /-- Have the buffer `id` keep `value` under `name`. -/
@@ -227,6 +229,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .read => EditorState
   | .addBuffer .. => Except BufferRefusal BufferId
   | .removeBuffer _ => Except BufferRefusal Unit
+  | .renameBuffer .. => Except BufferRefusal Unit
   | .setHistory .. => Except BufferRefusal Unit
   | .setValue .. => Except BufferRefusal Unit
   | .setMajorMode .. => Except ModeRefusal Bool
@@ -279,6 +282,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .read, state => (state, state)
   | .addBuffer name text history, state => state.addBuffer name text history
   | .removeBuffer id, state => state.removeBuffer id
+  | .renameBuffer id name, state => state.renameBuffer id name
   | .setHistory id history, state => state.setHistory id history
   | .setValue id name value, state => state.setValue id name value
   | .setMajorMode view name, state => state.setMajorModeOf view name

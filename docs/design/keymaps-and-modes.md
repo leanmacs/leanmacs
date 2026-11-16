@@ -2715,6 +2715,9 @@ command an ex name runs is a step of its own.**
 | `q` | `quit` | Nothing | Quits the editor |
 | `wq` | `save-and-quit` | Nothing | Starts the save, and quits once it has ended |
 | `reload` | `reload-config` | Nothing | Reloads the config |
+| `b` | `switch-buffer` | Text | Shows the buffer the rest of the line names, exactly or by fuzzy match. With no argument, asks with the open buffers as candidates, by `switch-buffer`'s own rule |
+| `ls` | `list-buffers` | Nothing | Shows the buffer list, a text view of the open buffers, most recently used first, with `+` for unsaved changes |
+| `bd` | `close-buffer` | Text | Closes the buffer the rest of the line names, or the window's own: refused for a buffer of a file with unsaved changes, and every window that showed it shows the most recently used buffer left |
 
 Where they differ from Vim:
 
@@ -2728,11 +2731,20 @@ Where they differ from Vim:
   again, which is not built.
 - **`w` takes no file name.** Saving under another name is not built.
 - **`reload` is no Vim command.**
+- **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
+  matches more than one buffer.
+- **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it
+  cannot be saved.
+- **The buffer left after the last `bd` is `scratch`**, empty and with no
+  file, the name the initial buffer has. Vim calls it `[No Name]`.
+- **A buffer's cursor is not given back.** A window shown a buffer again,
+  by `b` or after a `bd`, has its cursor at the buffer's start; Vim gives
+  back where the cursor last was in that buffer.
 
 Pinned by `ModelTest.exLineChecks` (the parser and the binding),
 `registryChecks`, `setupChecks` and `reloadChecks` (ex bindings by owner,
-from `setup`, and across an install), `exChecks` (the ex line and the five
-names, on the loop's driver over the editor's models and the model of
+from `setup`, and across an install), `exChecks` (the ex line and the
+first five names, and `bufferCommandChecks` the last three, on the loop's driver over the editor's models and the model of
 files, with the test scheme), `ConfigTest.exChecks` and
 `ConfigTest.exScriptChecks` (through the headless host, with the real
 elaborator and the library's file service), the fixture

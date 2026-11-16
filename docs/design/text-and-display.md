@@ -1495,8 +1495,9 @@ decided 2026-11-13 by its phase 2):
 - Once a frame exists, a scene is published after every event the loop
   handles, whether the event changed the state or not: an input event, a
   driver's request, a reload's install, a job's command, any of which may
-  have edited a text a view shows. A close request and a quit end the loop
-  and publish nothing.
+  have edited a text a view shows. A queue's quit ends the loop and
+  publishes nothing. A window's close request is a quit by `q`'s rule: it
+  publishes a scene, and ends the loop only once the editor can leave.
 - Before the scene is made, each buffer's undo tree is told its text's
   revision and its group is closed, so what one event edited is one step of
   the history. **But for a buffer in an insert session** (built by the

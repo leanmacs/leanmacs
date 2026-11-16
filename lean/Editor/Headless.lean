@@ -1,3 +1,4 @@
+import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Config.Directory
 import Editor.Config.Display
@@ -112,10 +113,12 @@ as before, so reload and job completion work as they did.
 - **A window event goes to the loop** (`Running.input`): `Loop.take`, run
   against the library with the recorder as the display, handles it and
   publishes a scene. A key press is still printed with its identity, as the
-  host's own output. A close request ends the loop, as the driver's `stop`
-  does, and so does any step that says stop: a command asked the editor
-  to quit and it can leave (`Editor/Loop.lean`, "Quit"). A window event
-  that cannot be read is ignored.
+  host's own output. Any step that says stop ends the loop, as the
+  driver's `stop` does: a command asked the editor to quit and it can
+  leave (`Editor/Loop.lean`, "Quit"). A close request is a quit by `q`'s
+  rule: it ends the loop once the editor can leave, and while a buffer that
+  holds a file has unsaved changes the loop goes on, with the refusal in
+  the echo area. A window event that cannot be read is ignored.
 - **A key press is dispatched.** The loop steps it through the host's
   scheme and runs the command it yields (`Editor/Loop.lean`, "Running an
   invocation"). What the keys are looked up in is made for each window
@@ -156,10 +159,14 @@ as before, so reload and job completion work as they did.
   that ship (`Ex.commands`, `Ex.bindings`, `Editor/Ex/Compiled.lean`):
   `ex`, which opens the ex line and runs its answer, `quit`,
   `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`,
-  `wq` and `reload`. The Vim scheme's default table binds `:` to the name
-  `ex`, so that key opens the ex line. It is handed no key binding: the
-  Vim scheme's keys are its states' own keymaps. Every default key names
-  a command the host is handed.
+  `wq`, `reload`, `b`, `ls` and `bd`, the last three bound to the buffer
+  commands it is handed (`Buffers.commands`,
+  `Editor/Buffers/Compiled.lean`): `switch-buffer`, `list-buffers` and
+  `close-buffer`. The Vim scheme's default table binds `:` to the name
+  `ex`, so that key opens the ex line. The ex line is handed no key
+  binding: the Vim scheme's keys are its states' own keymaps. The frame's
+  bindings bind `s-q` to `quit`. Every default key names a command the host
+  is handed.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run
@@ -1070,7 +1077,10 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
 identity, makes the frame if there is none, and has the editor loop take the
 event (`Loop.take`), which lowers the interrupt flag for an interrupt key,
 steps the event, runs the command a key yields and publishes a scene. What
-the step handed back is taken in (`took`). A close request ends the loop.
+the step handed back is taken in (`took`). A close request is a quit by
+`q`'s rule: it ends the loop once the editor can leave, and otherwise the
+loop goes on with the refusal in the echo area (`Editor/Loop.lean`,
+"Quit").
 
 Making the frame and the step are each printed when refused (`attempt`):
 after a refused step the frame stays as it was. With no frame made the event
@@ -1900,7 +1910,7 @@ the real elaborator over the toolchain in `sysroot` and the editor's
 source, `emit` as the output and stderr as the log, and, as its compiled
 ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
-and the frame's commands with their bindings. Its display is the recorder
+the buffer commands, and the frame's commands with their bindings. Its display is the recorder
 and its clipboard its own, as a host's are by default.
 
 It is apart from `shipped`, which makes what it is over, so that what the
@@ -1913,7 +1923,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
     wakeups := 2, jobs := 3
     commands :=
-      Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++
+      Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
         FrameCommands.commands
     bindings := FrameCommands.bindings
     compiledJobs := Files.jobs
