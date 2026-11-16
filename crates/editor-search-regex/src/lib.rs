@@ -15,8 +15,10 @@
 //!
 //! - **No line feed is matched.** `.`, a negated collection and the
 //!   negated classes `\S`, `\D` and `\W` are classes of every character
-//!   but theirs and a line feed. `\s` is a space or a tab, `\d` is
-//!   `[0-9]` and `\w` is `[0-9A-Za-z_]`, ASCII only.
+//!   but theirs and a line feed. A collection's ranges hold no line feed
+//!   (the parser cuts a range that spans one, such as `[\t-~]`), so a
+//!   positive collection is the class of its ranges. `\s` is a space or a
+//!   tab, `\d` is `[0-9]` and `\w` is `[0-9A-Za-z_]`, ASCII only.
 //! - **`^` and `$` are a row's**: `Look::StartLF` and `Look::EndLF`, at
 //!   the text's ends or beside a line feed. A carriage return is a
 //!   character of its row, as the core has it, so in a text with CRLF
@@ -53,8 +55,9 @@
 //!
 //! # Tests
 //!
-//! What only a regex shows, by name: `.` and the negated collections and
-//! classes never match a line feed; `\s` is a space or a tab; `^` and `$`
+//! What only a regex shows, by name: `.`, the collections, a range that
+//! spans a line feed among them, and the negated classes never match a
+//! line feed, and `search` and `matches` agree on such a range; `\s` is a space or a tab; `^` and `$`
 //! hold per row, see the text outside the span, and treat a carriage
 //! return as a character; alternation is leftmost-first; `*` is greedy
 //! and `\{-}` lazy; a regex is matched across pieces, and how a text is
@@ -382,6 +385,50 @@ mod tests {
         assert_eq!(first("[é-ü]", "aö"), Some(1..3));
         assert_eq!(first(r"[\t-]", "a-"), Some(1..2));
         assert_eq!(first("[^a-z]", "abC"), Some(2..3));
+    }
+
+    #[test]
+    fn a_collection_whose_range_spans_a_line_feed_never_matches_one() {
+        // `[\t-~]` is U+0009 to U+007E, which holds U+000A. As in Vim
+        // without `\_[`, a collection never matches the end of a row.
+        assert_eq!(first(r"x[\t-~]", "zz\nx\ny"), None);
+        assert_eq!(first(r"a[\t-~]b", "a\nb"), None);
+        assert_eq!(first(r"[\t-~]", "\na"), Some(1..2));
+        assert_eq!(first(r"[\t-~]\+", "ab\ncd"), Some(0..2));
+        assert_eq!(first("[\u{1}-\u{10ffff}]*", "é\nx"), Some(0..2));
+        assert_eq!(first(r"[^\t-~]", "\né"), Some(1..3));
+        // A carriage return is a character of its row, as it is to `.`: a
+        // collection that holds it matches it, before `$`.
+        assert_eq!(first(r"[\t-~]$", "a\r\nb"), Some(1..2));
+        assert_eq!(first(r"a[\t-~]*", "a\r\nb"), Some(0..2));
+    }
+
+    #[test]
+    fn search_and_matches_agree_on_a_collection_whose_range_spans_a_line_feed() {
+        for (pattern, text) in [(r"a[\t-~]b", "a\nb"), (r"x[\t-~]", "zz\nx\ny")] {
+            assert_eq!(all(pattern, text), [], "{pattern:?} in {text:?}");
+            for (forward, at) in [(true, 0), (false, text.len())] {
+                assert_eq!(
+                    search(&mut RegexEngine, pattern, &[text], &word, forward, at),
+                    Ok(Searched::NotFound),
+                    "{pattern:?} in {text:?}, forward {forward}"
+                );
+            }
+        }
+        // On one row, both answer the match.
+        let text = "a\nb a-b";
+        assert_eq!(all(r"a[\t-~]b", text), [(4, 7)]);
+        for (forward, at) in [(true, 0), (false, text.len())] {
+            assert_eq!(
+                search(&mut RegexEngine, r"a[\t-~]b", &[text], &word, forward, at),
+                Ok(Searched::Found {
+                    start: 4,
+                    stop: 7,
+                    wrapped: false
+                }),
+                "forward {forward}"
+            );
+        }
     }
 
     #[test]

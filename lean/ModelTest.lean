@@ -19382,6 +19382,8 @@ def searchMoveRows : List SearchRow :=
     { before := "foo |foo", keys := "/ f o o RET", after := "|foo foo", echo := bottom },
     { before := "|foo", keys := "/ f o o RET", after := "|foo", echo := bottom },
     { before := "|abc", keys := "/ x RET", after := "|abc", echo := Evil.patternNotFound "x" },
+    -- The failed search is kept, so `n` repeats it, and says E486, not E35.
+    { before := "|abc", keys := "/ z RET n", after := "|abc", echo := Evil.patternNotFound "z" },
     { before := "foo foo |foo", keys := "? f o o RET", after := "foo |foo foo" },
     { before := "|foo foo", keys := "? f o o RET", after := "foo |foo", echo := top },
     { before := "|x foo foo foo", keys := "/ f o o RET n", after := "x foo |foo foo" },
@@ -19490,7 +19492,7 @@ def evilSearchChecks : List Check :=
               asked.loop.state.echo.isEmpty &&
               evilShown asked == "x |foo" },
     { name :=
-        "a search is kept as the last search, pattern and direction: * keeps the whole word, escaped, and # keeps it going back; n and N keep it as it was; a search under an operator that gives up is rolled back with the command"
+        "a search is kept as the last search, pattern and direction: * keeps the whole word, escaped, and # keeps it going back; n and N keep it as it was; a search that fails as a move is kept, as Vim keeps the pattern; a search under an operator that gives up is rolled back with the command, so the last search is the one from before it"
       run :=
         let last (fixture typed : String) : Option (Option Search) :=
           (evilDriver fixture).map fun driver => (evilFed driver typed).loop.state.lastSearch
@@ -19503,6 +19505,16 @@ def evilSearchChecks : List Check :=
             last "|a.b" "*" == some (some { pattern := "\\<a\\>", forward := true }) &&
             last "|$^ $^" "*" == some (some { pattern := "\\$\\^", forward := true }) &&
             last "a\n|  \nb" "d *" == some none &&
+            -- A failed move keeps its pattern: the motion hands it back.
+            last "|abc" "/ z RET" == some (some { pattern := "z", forward := true }) &&
+            last "|abc" "? z RET" == some (some { pattern := "z", forward := false }) &&
+            -- An operator's give-up rolls the pattern it set back, to none
+            -- and to the one kept before it.
+            last "|abc" "d / z RET" == some none &&
+            last "|foo foo" "* d / z RET" ==
+              some (some { pattern := "\\<foo\\>", forward := true }) &&
+            last "|foo foo" "/ f RET d ? z RET" ==
+              some (some { pattern := "f", forward := true }) &&
             (evilDriver "|x foo").map
                 (fun driver =>
                   (evilSearchedBy driver "search-backward" "foo").loop.state.lastSearch) ==

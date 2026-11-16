@@ -16,7 +16,7 @@
 //! |---|---|
 //! | Any other character, and `\` before one of `\ / . * [ ] ~ ^ $` | That character |
 //! | `.` | Any character but a line feed |
-//! | `[…]`, `[^…]` | A collection, with ranges `a-z`, `]` first literal, and `\\ \] \^ \- \t` inside. A negated one never matches a line feed. A `[` with no closing `]` is a literal `[` |
+//! | `[…]`, `[^…]` | A collection, with ranges `a-z`, `]` first literal, and `\\ \] \^ \- \t` inside. None matches a line feed, as in Vim without `\_[`: a range that spans U+000A (`[\t-~]`) is cut around it, and a negated one leaves it out. A `[` with no closing `]` is a literal `[` |
 //! | `*` after an atom; `\+`; `\=` and `\?`; `\{n,m}` `\{n}` `\{n,}` `\{,m}` `\{}`; `\{-…}` | Greedy repetition; one or more; zero or one; counted; and the same lazily. `*` at the start of a sequence is a literal `*` |
 //! | `^` at the start of a sequence, `$` at its end | The start and the end of a row. Elsewhere each is literal |
 //! | `\(…\)`, `\|` | A group, and alternatives (leftmost-first) |
@@ -520,7 +520,7 @@ impl Parser {
                             if high < low {
                                 refusal.get_or_insert(Refusal::new(REVERSE_RANGE));
                             }
-                            ranges.push((low, high));
+                            push_without_line_feed(&mut ranges, low, high);
                             at = after;
                         }
                     }
@@ -561,6 +561,20 @@ impl Parser {
             ('\n', _) => Element::Refused(not_built(r"\n"), at + 1),
             (c, _) => Element::Char(c, at + 1),
         }
+    }
+}
+
+/// Pushes the range `low..=high` onto `ranges` without the line feed: a
+/// range that spans U+000A is cut into the part before it and the part
+/// after it, as Vim leaves the end of a row out of a collection without
+/// `\_[`. Neither end is a line feed, which an element refuses, so each
+/// part pushed holds something.
+fn push_without_line_feed(ranges: &mut Vec<(char, char)>, low: char, high: char) {
+    if (low..=high).contains(&'\n') {
+        ranges.push((low, '\t'));
+        ranges.push(('\u{b}', high));
+    } else {
+        ranges.push((low, high));
     }
 }
 
@@ -822,6 +836,76 @@ mod tests {
             ))]
         );
         assert_eq!(items("[é-ü]"), [once(collection(false, &[('é', 'ü')]))]);
+    }
+
+    #[test]
+    fn a_range_that_spans_a_line_feed_is_cut_around_it() {
+        // `\t-~` is U+0009 to U+007E: the line feed between is left out, as
+        // Vim leaves the end of a row out of a collection without `\_[`.
+        assert_eq!(
+            items(r"[\t-~]"),
+            [once(collection(false, &[('\t', '\t'), ('\u{b}', '~')]))]
+        );
+        assert_eq!(
+            items(r"[^\t-~]"),
+            [once(collection(true, &[('\t', '\t'), ('\u{b}', '~')]))]
+        );
+        assert_eq!(
+            items("[\u{1}-\u{10ffff}]"),
+            [once(collection(
+                false,
+                &[('\u{1}', '\t'), ('\u{b}', '\u{10ffff}')]
+            ))]
+        );
+        // A range that ends beside the line feed keeps its end.
+        assert_eq!(
+            items("[\u{1}-\t\u{b}-\r]"),
+            [once(collection(false, &[('\u{1}', '\t'), ('\u{b}', '\r')]))]
+        );
+    }
+
+    #[test]
+    fn no_parsed_collection_holds_a_line_feed() {
+        // The module's promise that no pattern that parses matches a line
+        // feed, over collections with ranges: no range of one holds it.
+        fn holds_a_line_feed(sequence: &Sequence) -> bool {
+            sequence.items().iter().any(|item| match item.atom() {
+                Atom::Collection(collection) => collection
+                    .ranges()
+                    .iter()
+                    .any(|&(low, high)| (low..=high).contains(&'\n')),
+                Atom::Group(alternatives) => alternatives.iter().any(holds_a_line_feed),
+                Atom::Char(c) => *c == '\n',
+                Atom::Any | Atom::Class(_) => false,
+            })
+        }
+        let edges = [
+            '\u{0}',
+            '\u{1}',
+            '\t',
+            '\u{b}',
+            '\r',
+            ' ',
+            '~',
+            'é',
+            '\u{10ffff}',
+        ];
+        for &low in &edges {
+            for &high in edges.iter().filter(|&&high| high >= low) {
+                for text in [
+                    format!("[{low}-{high}]"),
+                    format!("[^{low}-{high}]"),
+                    format!("a\\([x{low}-{high}y]\\|b\\)c"),
+                ] {
+                    let pattern = Pattern::parse(&text).unwrap_or_else(|refusal| {
+                        panic!("{text:?} was refused: {}", refusal.reason());
+                    });
+                    for branch in pattern.branches() {
+                        assert!(!holds_a_line_feed(branch.sequence()), "{text:?}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

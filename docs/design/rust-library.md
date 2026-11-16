@@ -1058,7 +1058,7 @@ with case kept (`ignorecase` is off):
 |---|---|
 | Any other character, and `\` before one of `\ / . * [ ] ~ ^ $` | That character |
 | `.` | Any character but a line feed |
-| `[…]`, `[^…]` | A collection, with ranges `a-z`, `]` first literal, and `\\ \] \^ \- \t` inside. A negated one never matches a line feed. A `[` with no closing `]` is a literal `[`, as in Vim |
+| `[…]`, `[^…]` | A collection, with ranges `a-z`, `]` first literal, and `\\ \] \^ \- \t` inside. None matches a line feed, as in Vim without `\_[`: a range that spans U+000A (`[\t-~]`) is cut around it, and a negated one leaves it out. A `[` with no closing `]` is a literal `[`, as in Vim |
 | `*` after an atom; `\+`; `\=` and `\?`; `\{n,m}` `\{n}` `\{n,}` `\{,m}` `\{}`; `\{-…}` | Greedy repetition; one or more; zero or one; counted; and the same lazily. `*` at the start of a branch is a literal `*`, as in Vim |
 | `^` at the start of a branch, `$` at its end | The start and the end of a row (before its line feed, or the text's end). Elsewhere each is literal, as in Vim; a group's alternatives have them too |
 | `\(…\)`, `\|` | A group, and alternatives (leftmost-first) |
@@ -1133,7 +1133,9 @@ library's `Hir` from our tree. No type of either is public, and
 `deny.toml` lets no other crate depend on them, nor on `regex-automata`.
 
 - `.`, a negated collection and `\S \D \W` are classes of every character
-  but theirs and a line feed; `\s` is a space or a tab.
+  but theirs and a line feed; `\s` is a space or a tab. A collection's
+  ranges never hold a line feed (the parser cuts one that spans it), so a
+  positive collection is the class of its ranges as they are.
 - `^` and `$` are the library's `StartLF` and `EndLF`. A carriage return is
   a character of its row, so in CRLF rows `$` holds after the `\r`:
   `a$` does not match `a\r\n`.
