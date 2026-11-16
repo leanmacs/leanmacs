@@ -275,6 +275,7 @@ def encode (real : RealDisplay) (scene : Scene) (faces : Option Theme) : IO Enco
     pushText (pushText { words, strings := "", snapshots := #[] } scene.echo) scene.pending
   let encoded := { encoded with words := encoded.words.push scene.preedit.isSome.toUInt64 }
   let encoded := pushText encoded (scene.preedit.getD "")
+  let encoded := pushText encoded scene.title
   let encoded := { encoded with words := encoded.words.push scene.views.size.toUInt64 }
   let encoded ← scene.views.foldlM real.encodeView encoded
   match faces with

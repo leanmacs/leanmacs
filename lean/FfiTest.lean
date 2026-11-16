@@ -1543,11 +1543,14 @@ def eventDecodeChecks (_ : Unit) : List Check :=
               some (.pointer (pointerAt (.wheel (.lines 0 (-1.5))) none)) &&
             decodedWindow .pointer 3 (pointerWords 0 0 2 7 0.5) ==
               some (.pointer (pointerAt (.wheel (.pixels 7 0.5)) none))) },
-    { name := "a resize decodes with its size and its scale, and a request to close to itself"
+    { name :=
+        "a resize decodes with its size, its scale and whether it is in fullscreen, and a request to close to itself"
       run :=
         pure
           (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits] ==
               some (.resize { width := 800, height := 600, scale := 2.0 }) &&
+            decodedWindow .resize 1 #[1440, 900, (2.0 : Float).toBits] ==
+              some (.resize { width := 1440, height := 900, scale := 2.0, fullscreen := true }) &&
             decodedWindow .closeRequested 0 == some .closeRequested) },
     { name := "the stamp of an event is kept beside it"
       run := pure ((decodedEvent (windowEvent .closeRequested 0)).map (·.stamp) == some 7) },
@@ -1578,7 +1581,7 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             !Editor.Event.interruptMarked (windowEvent .composition 8) &&
             !Editor.Event.interruptMarked (message 5 8 "")) },
     { name :=
-        "a code the table does not have is refused: a focus of 2, a composition of 4, a key with a bit past the interrupt mark, a key with the mark that was not pressed, a pointer of 4, a resize of 1"
+        "a code the table does not have is refused: a focus of 2, a composition of 4, a key with a bit past the interrupt mark, a key with the mark that was not pressed, a pointer of 4, a resize of 2"
       run :=
         pure
           ((decodedWindow .windowFocus 2).isNone && (decodedWindow .composition 4).isNone &&
@@ -1586,7 +1589,7 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             (decodedWindow .key 17 #[0, 0, 0, 0, 0]).isNone &&
             (decodedWindow .key 8 #[0, 0, 0, 0, 0]).isNone &&
             (decodedWindow .pointer 4 (pointerWords 1 0 0)).isNone &&
-            (decodedWindow .resize 1 #[1, 1, 0]).isNone) },
+            (decodedWindow .resize 2 #[1, 1, 0]).isNone) },
     { name :=
         "malformed words are refused: too few, left over, an unknown tag, a scalar that is not a character, modifier bits past super, a dead bit with no dead key, a named button with a number, a pointer that is not a wheel with a delta"
       run :=
@@ -1647,7 +1650,7 @@ def eventChecks (_ : Unit) : List Check :=
             events.head? == some (.windowOpened "scripted") &&
             events.getLast? == some .closeRequested },
     { name :=
-        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize and a request to close posted as a window would come back from the library equal"
+        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, and a request to close posted as a window would come back from the library equal"
       run := do
         let events : List Editor.Event :=
           [.windowOpened "x", .focus true, .focus false,
@@ -1660,7 +1663,9 @@ def eventChecks (_ : Unit) : List Check :=
             .pointer (pointerAt .release (some (.other 12))),
             .pointer (pointerAt (.wheel (.lines 1 (-2))) none),
             .pointer (pointerAt (.wheel (.pixels 0.25 8)) none),
-            .resize { width := 1920, height := 1080, scale := 1.25 }, .closeRequested]
+            .resize { width := 1920, height := 1080, scale := 1.25 },
+            .resize { width := 1920, height := 1080, scale := 1.25, fullscreen := true },
+            .closeRequested]
         events.allM fun event => return (← roundTrip event) == some event },
     { name := "an event no window reports is not posted: a message, a completion and a quit"
       run := do
@@ -1943,7 +1948,8 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
           status := #[{ text := "NORMAL", face := ⟨"mode"⟩ }] },
         { id := ⟨3⟩, rect := rect 96, snapshot := fixture.snapshot, scroll, selections
           cursor := { shape := .underline, face := ⟨"c3"⟩ }, decorations := #[], status := #[] }]
-    focused := some ⟨2⟩, echo := "fixture", pending := "g", preedit := some "é" }
+    focused := some ⟨2⟩, echo := "fixture", pending := "g", preedit := some "é"
+    title := "notes.txt" }
 
 /-- The fixture's scene with view 3's markers of two texts: its scroll
 marker is the text's anchor at offset 3, and its selection marker is a
@@ -2005,13 +2011,14 @@ and a frame with another frame, never with a colour or a size written
 here. -/
 def sceneChecks (_ : Unit) : List Check :=
   [{  name :=
-        "a scene with a pending prefix, a preedit, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
+        "a scene with a pending prefix, a preedit, a title, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
       run := do
         let fixture ← sceneFixture
         let encoded ← fixture.real.encode fixture.mixed none
         let anchor := fixture.anchor.toUInt64
         let selection := fixture.selection.toUInt64
-        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 1, 1, 2, 3]
+        -- The title's length after the preedit's presence and length.
+        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 1, 1, 2, 9, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor.
         let first : Array UInt64 := #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0]
         -- The first handle; its scroll marker and its selection; a bar
@@ -2024,7 +2031,7 @@ def sceneChecks (_ : Unit) : List Check :=
         -- No faces: as last published.
         let faces : Array UInt64 := #[0]
         return encoded.words == scene ++ first ++ second ++ third ++ faces &&
-            encoded.strings == "fixturegéc1c2kwNORMALmodec3" &&
+            encoded.strings == "fixturegénotes.txtc1c2kwNORMALmodec3" &&
             encoded.snapshots.size == 2 },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
@@ -2070,7 +2077,7 @@ def sceneChecks (_ : Unit) : List Check :=
         let fixture ← sceneFixture everyTheme
         let real := fixture.real
         let encoded ← real.encode emptyScene (some everyTheme)
-        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0]
+        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0]
         -- Present, and seven definitions.
         let faces : Array UInt64 := #[1, 7]
         -- Its name; a family; 20 pixels; weight 700; italic; a foreground

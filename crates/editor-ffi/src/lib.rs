@@ -280,13 +280,24 @@
 //! - **Lean closes the window.** A window that is asked to close reports it
 //!   and stays open until [`window::editor_ffi_window_close`] is called,
 //!   which any thread may do.
+//! - **Lean asks things of the window** with
+//!   [`window::editor_ffi_window_request`]: enter or leave fullscreen, or
+//!   minimise, by tag. It never blocks, and it goes through the window's
+//!   own loop, not the main-thread service, which still answers nothing
+//!   else while the window runs. Whether the window is in fullscreen comes
+//!   back on every resize, as bit 0 of its code.
+//! - **The window's title is the scene's.** A display bound to the
+//!   presenter hands it the title of each scene it publishes, and the
+//!   presenter sends it to the open window when it changes
+//!   ([`render`], "What reaches the window: the title").
 //! - **The platform is named by a tag** ([`window::PlatformId`]), checked
 //!   like a queue's. The two scripted platforms, the one that reports a
 //!   sample and the one that cannot open a window, are reachable for the
 //!   Lean test executable, as the scripted event source is.
 //!
 //! Tests: the unit tests of `window.rs` (the event each input becomes, the
-//! stamps, the options, a platform that cannot open), on the port's fake
+//! stamps, the options, a platform that cannot open, the request tags), on
+//! the port's fake
 //! with a clock and a queue of their own; the request's test in
 //! `main_thread.rs`;
 //! `the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed`

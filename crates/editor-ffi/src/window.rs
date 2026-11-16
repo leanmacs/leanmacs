@@ -16,7 +16,7 @@
 //! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 a dead logical key, bit 3 the interrupt mark | What the key produced, or empty | The logical key, the physical key, the modifiers |
 //! | `Composition` | `Composition` | 0 enabled, 1 preedit, 2 commit, 3 disabled | The preedit or the committed text | None |
 //! | `Pointer` | `Pointer` | 0 press, 1 drag, 2 release, 3 wheel | Empty | The position, the button, the modifiers, the wheel's delta |
-//! | `Resized` | `Resize` | 0 | Empty | The width, the height, the scale |
+//! | `Resized` | `Resize` | Bit 0 in fullscreen ([`RESIZE_FULLSCREEN`]) | Empty | The width, the height, the scale |
 //! | `CloseRequested` | `CloseRequested` | 0 | Empty | None |
 //!
 //! The words (`words.rs`) of each kind that has them:
@@ -55,6 +55,16 @@
 //! asked to close reports `CloseRequested` and stays open until Lean calls
 //! [`editor_ffi_window_close`].
 //!
+//! **Lean asks things of the window** with [`editor_ffi_window_request`]:
+//! a platform's tag and a request's, 0 enter fullscreen, 1 leave fullscreen
+//! and 2 minimise ([`request_of`]). It never blocks, and it goes through
+//! the window's own loop ([`Platform::request`]), not the main-thread
+//! service, which still answers nothing else while the window runs. No tag
+//! names a title: the title is a field of the scene Lean publishes, and
+//! reaches the window from the presenter ([`crate::render`], "What reaches
+//! the window: the title"). What a scripted window was asked is read back
+//! for tests with [`editor_ffi_window_asked`] ([`asked_words`]).
+//!
 //! What draws in the process's window is a render session over the
 //! process's presenter ([`run_on_this_thread`], [`crate::render`]): while
 //! the window is open the session's loop is the presenter's target, so a
@@ -83,8 +93,8 @@ use std::time::Instant;
 
 use editor_platform::{
     Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers, NativeWindow,
-    PhysicalKey, Platform, Pointer, PointerAction, Report, Resize, ScriptedPlatform, WheelDelta,
-    WindowOptions,
+    PhysicalKey, Platform, Pointer, PointerAction, Report, Request as WindowRequest, Resize,
+    ScriptedPlatform, WheelDelta, WindowOptions,
 };
 use editor_platform_winit::WinitPlatform;
 use editor_render::fake::RecordingRenderer;
@@ -120,6 +130,19 @@ pub const KEY_DEAD: u64 = 1 << 2;
 /// event that carries it, so [`input`] refuses it and a poster cannot forge
 /// it.
 pub const KEY_INTERRUPT: u64 = 1 << 3;
+
+/// The bit of a resize event's code that is set when the window is in the
+/// system's fullscreen.
+pub const RESIZE_FULLSCREEN: u64 = 1;
+
+/// The tags of a request to the window, as `editor_ffi_window_request`
+/// takes them and `editor_ffi_window_asked` writes them.
+const REQUEST_ENTER_FULLSCREEN: u8 = 0;
+const REQUEST_LEAVE_FULLSCREEN: u8 = 1;
+const REQUEST_MINIMISE: u8 = 2;
+/// The tag of a title in what a scripted window was asked. No request
+/// from Lean has it: the title is a field of the scene.
+const REQUEST_TITLE: u64 = 3;
 
 /// The bit of a modifier word that is set when shift is held.
 pub const MODIFIER_SHIFT: u64 = 1;
@@ -270,7 +293,11 @@ pub fn event(input: Input, stamp: u64) -> Event {
         }
         Input::Resized(resize) => (
             EventKind::Resize,
-            0,
+            if resize.fullscreen {
+                RESIZE_FULLSCREEN
+            } else {
+                0
+            },
             String::new(),
             vec![resize.width, resize.height, resize.scale.to_bits()],
         ),
@@ -414,12 +441,16 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
         }
         EventKind::Resize => {
             no_text()?;
-            (code == 0).then_some(())?;
+            let fullscreen = match code {
+                0 => false,
+                RESIZE_FULLSCREEN => true,
+                _ => return None,
+            };
             Input::Resized(Resize {
                 width: reader.word()?,
                 height: reader.word()?,
                 scale: f64::from_bits(reader.word()?),
-                fullscreen: false,
+                fullscreen,
             })
         }
         EventKind::CloseRequested => {
@@ -659,6 +690,16 @@ impl PlatformId {
     }
 
     /// The process-wide platform this names.
+    /// The scripted platform this names, when it names one.
+    pub fn scripted(self) -> Option<&'static ScriptedPlatform> {
+        match self {
+            Self::Scripted => Some(&*SCRIPTED),
+            Self::ScriptedFailing => Some(&*SCRIPTED_FAILING),
+            Self::ScriptedUndrawn => Some(&*SCRIPTED_UNDRAWN),
+            Self::Winit => None,
+        }
+    }
+
     fn platform(self) -> &'static dyn Platform {
         match self {
             Self::Scripted => &*SCRIPTED,
@@ -912,7 +953,10 @@ pub(crate) fn run_on_this_thread(
         Arc::new(ProcessClock),
         move |window, _| window_renderer(platform, window, presentation, &PRESENTATION),
         Arc::clone(&PRESENTER),
-    );
+    )
+    .asking(Arc::new(move |request| {
+        platform.platform().request(request)
+    }));
     run_with(
         platform.platform(),
         options,
@@ -1034,6 +1078,80 @@ pub extern "C" fn editor_ffi_window_close(platform: u8) -> bool {
     };
     platform.platform().close();
     true
+}
+
+/// The request Lean's tag `tag` names: 0 enter fullscreen, 1 leave
+/// fullscreen, 2 minimise. No tag names a title.
+pub fn request_of(tag: u8) -> Option<WindowRequest> {
+    match tag {
+        REQUEST_ENTER_FULLSCREEN => Some(WindowRequest::EnterFullscreen),
+        REQUEST_LEAVE_FULLSCREEN => Some(WindowRequest::LeaveFullscreen),
+        REQUEST_MINIMISE => Some(WindowRequest::Minimise),
+        _ => None,
+    }
+}
+
+/// Asks the window the platform `platform` is running to do what the
+/// request tagged `request` names ([`request_of`]), from any thread, and
+/// returns whether both tags name something. It never blocks: the request
+/// goes through the window's own loop, not the main-thread service. It
+/// does nothing when that platform runs no window.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_window_request(platform: u8, request: u8) -> bool {
+    let (Some(platform), Some(request)) = (PlatformId::from_tag(platform), request_of(request))
+    else {
+        return false;
+    };
+    platform.platform().request(request);
+    true
+}
+
+/// The words of what a window was asked, oldest first: for each request its
+/// tag, and for a title the tag 3 followed by the count and the scalar
+/// values of its characters.
+///
+/// The match on [`WindowRequest`] is exhaustive on purpose: this crate must
+/// give every variant its words.
+pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
+    let mut words = Vec::new();
+    for request in asked {
+        match request {
+            WindowRequest::EnterFullscreen => words.push(u64::from(REQUEST_ENTER_FULLSCREEN)),
+            WindowRequest::LeaveFullscreen => words.push(u64::from(REQUEST_LEAVE_FULLSCREEN)),
+            WindowRequest::Minimise => words.push(u64::from(REQUEST_MINIMISE)),
+            WindowRequest::Title(title) => {
+                words.push(REQUEST_TITLE);
+                push_scalars(&mut words, title);
+            }
+        }
+    }
+    words
+}
+
+/// Writes to `out` what the scripted window of `platform` was asked in its
+/// latest run ([`ScriptedPlatform::asked`]): status 0 and the words of
+/// [`asked_words`]. For the real platform, which records nothing, and for
+/// a tag that names no platform, status 1 and no words. For tests.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawWords`](crate::log::RawWords).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_window_asked(platform: u8, out: *mut crate::log::RawWords) {
+    let scripted = PlatformId::from_tag(platform).and_then(PlatformId::scripted);
+    let raw = match scripted {
+        None => crate::log::RawWords::with_status(1, Vec::new()),
+        Some(scripted) => {
+            let asked = asked_words(&scripted.asked());
+            let mut writer = words::Writer::with_capacity(asked.len());
+            for word in asked {
+                writer.word(word);
+            }
+            crate::log::RawWords::with_status(0, writer.finish())
+        }
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
 }
 
 /// Posts to the editor queue the event the process's window would push if
@@ -1503,6 +1621,93 @@ mod tests {
     }
 
     #[test]
+    fn a_resize_in_fullscreen_sets_bit_zero_of_its_code() {
+        assert_eq!(RESIZE_FULLSCREEN, 1);
+        assert_eq!(
+            encoded(Input::Resized(Resize {
+                width: 1440,
+                height: 900,
+                scale: 2.0,
+                fullscreen: true,
+            })),
+            (
+                EventKind::Resize,
+                RESIZE_FULLSCREEN,
+                String::new(),
+                vec![1440, 900, bits(2.0)]
+            )
+        );
+    }
+
+    #[test]
+    fn each_request_is_its_tag_and_an_unknown_tag_is_refused() {
+        assert_eq!(request_of(0), Some(WindowRequest::EnterFullscreen));
+        assert_eq!(request_of(1), Some(WindowRequest::LeaveFullscreen));
+        assert_eq!(request_of(2), Some(WindowRequest::Minimise));
+        // No tag names a title: Lean never asks for one.
+        assert_eq!(request_of(3), None);
+        assert_eq!(request_of(u8::MAX), None);
+    }
+
+    #[test]
+    fn a_request_to_a_platform_tag_that_names_none_is_refused() {
+        assert!(!editor_ffi_window_request(4, 0));
+        assert!(!editor_ffi_window_request(u8::MAX, 0));
+        // A platform that names one, with a request that names none.
+        assert!(!editor_ffi_window_request(
+            PlatformId::ScriptedFailing.tag(),
+            3
+        ));
+        // Both name something: asked of a platform that runs no window, it
+        // does nothing.
+        assert!(editor_ffi_window_request(
+            PlatformId::ScriptedFailing.tag(),
+            0
+        ));
+    }
+
+    /// What `editor_ffi_window_asked` writes for the platform tagged `tag`:
+    /// its status and its words.
+    fn asked_of(tag: u8) -> (u64, Vec<u64>) {
+        let mut raw = std::mem::MaybeUninit::<crate::log::RawWords>::uninit();
+        // SAFETY: `raw` is writable.
+        unsafe { editor_ffi_window_asked(tag, raw.as_mut_ptr()) };
+        // SAFETY: the library filled it.
+        let raw = unsafe { raw.assume_init() };
+        // SAFETY: the buffer is `len` bytes, owned here until handed back.
+        let bytes = unsafe { std::slice::from_raw_parts(raw.words, raw.len) }.to_vec();
+        // SAFETY: the buffer came from the library, and is handed back once.
+        unsafe { crate::text::editor_ffi_text_free(raw.words, raw.len) };
+        let (words, rest) = bytes.as_chunks::<8>();
+        assert!(rest.is_empty(), "whole words");
+        (
+            raw.status,
+            words.iter().copied().map(u64::from_le_bytes).collect(),
+        )
+    }
+
+    #[test]
+    fn what_a_scripted_window_was_asked_crosses_as_tags_and_a_titles_characters() {
+        assert_eq!(
+            asked_words(&[
+                WindowRequest::EnterFullscreen,
+                WindowRequest::Minimise,
+                WindowRequest::Title("é😀".into()),
+                WindowRequest::LeaveFullscreen,
+                WindowRequest::Title(String::new()),
+            ]),
+            [0, 2, 3, 2, 0xe9, 0x1_f600, 1, 3, 0]
+        );
+        // A scripted platform answers what its latest run was asked: this
+        // one has never run.
+        assert_eq!(asked_of(PlatformId::ScriptedFailing.tag()), (0, vec![]));
+        // The real platform records nothing, and a tag that names none is
+        // no platform.
+        assert_eq!(asked_of(PlatformId::Winit.tag()), (1, vec![]));
+        assert_eq!(asked_of(4), (1, vec![]));
+    }
+
+    #[test]
     fn every_other_input_has_no_words() {
         for input in [
             Input::Opened {
@@ -1583,6 +1788,12 @@ mod tests {
                 height: 600,
                 scale: 2.0,
                 fullscreen: false,
+            }),
+            Input::Resized(Resize {
+                width: 1440,
+                height: 900,
+                scale: 1.0,
+                fullscreen: true,
             }),
             Input::CloseRequested,
         ]
@@ -1682,7 +1893,7 @@ mod tests {
             read(EventKind::Pointer, 4, "", &[0, 0, 0, 0, 0, 0, 0, 0]),
             None
         );
-        assert_eq!(read(EventKind::Resize, 1, "", &[1, 1, 0]), None);
+        assert_eq!(read(EventKind::Resize, 2, "", &[1, 1, 0]), None);
     }
 
     #[test]

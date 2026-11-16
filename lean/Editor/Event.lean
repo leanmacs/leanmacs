@@ -31,8 +31,10 @@ event (`Event.key`), because a key may have an identity and produce no text
 
 A pointer event is a press, a drag, a release or a wheel, with the position
 in the frame, the button and the modifiers (`Pointer`). A resize is the
-frame's new size and its scale factor (`Resize`). Positions and sizes are in
-the frame's physical pixels.
+frame's new size and its scale factor, and whether the window is in the
+system's fullscreen (`Resize`): the window says so after every change of it,
+whether a request or the user (the green button) made it. Positions and sizes
+are in the frame's physical pixels.
 
 ## Where an addition goes
 
@@ -249,7 +251,8 @@ structure Pointer where
   modifiers : Modifiers := {}
   deriving BEq, Repr
 
-/-- The frame's new size and scale factor. -/
+/-- The frame's new size and scale factor, and whether the window is in the
+system's fullscreen. -/
 structure Resize where
   /-- The drawable width, in physical pixels. -/
   width : Nat
@@ -257,6 +260,8 @@ structure Resize where
   height : Nat
   /-- How many physical pixels a logical pixel is. -/
   scale : Float
+  /-- Whether the window is in the system's fullscreen. -/
+  fullscreen : Bool := false
   deriving BEq, Repr
 
 /-- What kind of thing an event came from. -/

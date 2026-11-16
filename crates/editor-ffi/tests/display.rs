@@ -361,6 +361,7 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
         echo: "hello".to_owned(),
         pending: String::new(),
         preedit: None,
+        title: String::new(),
         views: vec![WireView {
             id: 3,
             rect: [0, 0, 96, 64],

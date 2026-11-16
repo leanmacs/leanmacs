@@ -276,18 +276,22 @@ impl Display {
 
     /// Publishes the scene `words` and `strings` spell ([`WireScene`]),
     /// whose views' snapshots are `snapshots`, by their index: lays it out
-    /// and keeps its frame as the latest. False, keeping what was
-    /// published before, when they spell no scene.
+    /// and keeps its frame as the latest. A display bound to a presenter
+    /// presents the frame and names the scene's title to it
+    /// ([`Presenter::name`]). False, keeping what was published before,
+    /// when they spell no scene.
     pub fn publish(&self, words: &[u8], strings: &str, snapshots: &[&Snapshot]) -> bool {
         let Some(wire) = WireScene::decode(words, strings) else {
             return false;
         };
         let scene = wire.resolve(snapshots);
+        let title = wire.title.clone();
         let frame = Arc::new(self.layout().frame(&scene));
         *self.frame.lock().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&frame);
         *self.scene.lock().unwrap_or_else(PoisonError::into_inner) = Some(wire);
         if let Some(presenter) = self.presenter() {
             presenter.present(frame, (scene.size.width, scene.size.height));
+            presenter.name(&title);
         }
         true
     }

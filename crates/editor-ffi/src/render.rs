@@ -10,12 +10,12 @@
 //!
 //! | The window tells | The session |
 //! |---|---|
-//! | `Opened` | Makes the renderer, on the calling thread, with the native window and the size; makes the loop over it; starts the render thread, which runs the loop until it is stopped. Then leaves word of the size and of the refresh rate |
+//! | `Opened` | Makes the renderer, on the calling thread, with the native window and the size; makes the loop over it; starts the render thread, which runs the loop until it is stopped. Then leaves word of the size and of the refresh rate. A session made `asking` hands its asker to the presenter (`Presenter::open_window`), whether or not a renderer could be made |
 //! | `Resized` | `RenderHandle::resize`, with the size as a target |
 //! | `Refresh` | `RenderHandle::set_refresh`, with the rate as an interval; nothing when the display does not say |
 //! | `Damaged` | `RenderHandle::mark_dirty` |
 //! | `Hidden` | `RenderHandle::set_hidden` |
-//! | `Closing` | `RenderHandle::stop`; then joins the render thread and drops the renderer, on the calling thread |
+//! | `Closing` | `RenderHandle::stop`; then joins the render thread and drops the renderer, on the calling thread. The presenter lets the window go (`Presenter::close_window`) |
 //!
 //! [`leave_word`] is the right-hand column but for making and ending the
 //! thread, as one function over a handle, so that it is pinned on a loop
@@ -54,6 +54,24 @@
 //! a key's arrival in Rust to the frame that answers it. A display that is
 //! not bound presents nothing, and a presenter with no target lets the
 //! frame go and spends the stamp.
+//!
+//! # What reaches the window: the title
+//!
+//! The scene's title is the window's ([`crate::display::WireScene`]'s
+//! `title`): a display bound to a presenter hands it the title of each
+//! scene it publishes ([`Presenter::name`]). The presenter keeps the title
+//! named last and sends it to the open window as a
+//! `editor_platform::Request::Title`, through the asker the session was
+//! made with ([`Session::asking`], [`Asker`]), only when it is not the
+//! title last sent there: a publish per key does not wake the window's
+//! loop per key. A window that opens is sent the title named so far
+//! ([`Presenter::open_window`]); the scene is published before the window
+//! opens, and the platform counts its window as running before it tells
+//! `Opened`, so the first title is never dropped. Once the window closes
+//! ([`Presenter::close_window`]) a title named is kept for the next one.
+//! These rules are pinned here on a recording asker; that a published
+//! title reaches the scripted window is wiring, in
+//! `tests/render_session.rs`.
 //!
 //! The presenter is a value, handed explicitly to whatever uses it, and
 //! every test makes its own. The process has one, [`PRESENTER`], reached
@@ -105,7 +123,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use editor_layout::frame::Frame;
-use editor_platform::{Canvas, Drawer, NativeWindow, Resize};
+use editor_platform::{Canvas, Drawer, NativeWindow, Request, Resize};
 use editor_render::clock::Clock;
 use editor_render::journal::Entry;
 use editor_render::port::{Renderer, Target};
@@ -250,6 +268,11 @@ pub enum Follows {
 ///
 /// Each part is behind its own lock or atomic. The process has one, at the
 /// C edge only ([`PRESENTER`]); every test makes its own.
+/// Where the presenter sends a request to the open window: the platform's
+/// [`Platform::request`](editor_platform::Platform::request), in the
+/// process. It never calls back into the presenter.
+pub type Asker = Arc<dyn Fn(Request) + Send + Sync>;
+
 pub struct Presenter {
     /// The handle that takes submits, and whose size it follows.
     target: Mutex<Option<(RenderHandle, Follows)>>,
@@ -259,6 +282,31 @@ pub struct Presenter {
     scale: AtomicU32,
     /// The stamp the next frame answers.
     answering: Answering,
+    /// The title the scenes name, and the open window it goes to.
+    titles: Mutex<Titles>,
+}
+
+/// What [`Presenter::titles`] guards.
+#[derive(Default)]
+struct Titles {
+    /// The title the last scene published names, if one has been.
+    named: Option<String>,
+    /// The open window, and the title last sent to it.
+    window: Option<(Asker, Option<String>)>,
+}
+
+impl Titles {
+    /// Sends the title named to the open window, when there is one and it
+    /// is not the title last sent there.
+    fn send(&mut self) {
+        let (Some(named), Some((asker, sent))) = (&self.named, &mut self.window) else {
+            return;
+        };
+        if sent.as_ref() != Some(named) {
+            *sent = Some(named.clone());
+            asker(Request::Title(named.clone()));
+        }
+    }
 }
 
 impl Presenter {
@@ -270,6 +318,7 @@ impl Presenter {
             last: Mutex::new(None),
             scale: AtomicU32::new(1.0_f32.to_bits()),
             answering: Answering::default(),
+            titles: Mutex::default(),
         })
     }
 
@@ -309,6 +358,30 @@ impl Presenter {
     }
 
     /// The stamp the next frame presented answers.
+    /// Keeps `title` as the one the scenes name, and sends it to the open
+    /// window when it is not the title last sent there: a publish per key
+    /// does not ask the window per key. The asker is called under the
+    /// lock, so titles reach the window in the order they were named.
+    pub fn name(&self, title: &str) {
+        let mut titles = locked(&self.titles);
+        titles.named = Some(title.to_owned());
+        titles.send();
+    }
+
+    /// Makes `asker` the open window's, and sends it the title named so
+    /// far, if one has been: a window opens with the platform's own title.
+    pub fn open_window(&self, asker: Asker) {
+        let mut titles = locked(&self.titles);
+        titles.window = Some((asker, None));
+        titles.send();
+    }
+
+    /// Lets the open window go: a title named from now on is kept, and
+    /// goes to the next window that opens.
+    pub fn close_window(&self) {
+        locked(&self.titles).window = None;
+    }
+
     pub fn answering(&self) -> &Answering {
         &self.answering
     }
@@ -651,6 +724,9 @@ struct State<R> {
     thread: Option<JoinHandle<R>>,
     /// Why nothing draws in the window, when nothing does.
     failure: Option<String>,
+    /// Where requests to the window go, which the presenter is handed when
+    /// the window opens; none for a session that asks the window nothing.
+    asker: Option<Asker>,
 }
 
 impl<R: Renderer + Send + 'static> Session<R> {
@@ -674,6 +750,7 @@ impl<R: Renderer + Send + 'static> Session<R> {
                     handle: None,
                     thread: None,
                     failure: None,
+                    asker: None,
                 }),
             }),
         }
@@ -697,6 +774,16 @@ impl<R: Renderer + Send + 'static> Session<R> {
     /// Why nothing draws in the window, when nothing does: what the factory
     /// said, or that the render thread could not be started or did not end
     /// well.
+    /// The same session, which hands `asker` to its presenter when the
+    /// window opens ([`Presenter::open_window`]), so that the title the
+    /// scenes name reaches the window, and lets it go when the window is
+    /// closing.
+    #[must_use]
+    pub fn asking(self, asker: Asker) -> Self {
+        self.state().asker = Some(asker);
+        self
+    }
+
     pub fn failure(&self) -> Option<String> {
         self.state().failure.clone()
     }
@@ -711,10 +798,19 @@ impl<R: Renderer + Send + 'static> Session<R> {
                 if let Some(handle) = self.open(window.as_ref(), target(*size)) {
                     presenter.start(handle, Follows::Window);
                 }
+                // A window nothing draws in still has a title.
+                let asker = self.state().asker.clone();
+                if let Some(asker) = asker {
+                    presenter.open_window(asker);
+                }
             }
             Canvas::Resized(size) => presenter.set_scale(size.scale as f32),
-            // Nothing takes submits from here on, before the loop stops.
-            Canvas::Closing => presenter.end(),
+            // Nothing takes submits from here on, before the loop stops,
+            // and no title goes to the window.
+            Canvas::Closing => {
+                presenter.end();
+                presenter.close_window();
+            }
             _ => {}
         }
         // Before the window has opened, and when no renderer could be
@@ -803,7 +899,9 @@ mod tests {
     use editor_render::port::Target;
     use editor_render::render_loop::{RecordingPark, RenderHandle, RenderLoop, Step};
 
-    use super::{Answering, Follows, Presenter, leave_word, refresh_ns, target};
+    use editor_platform::Request;
+
+    use super::{Answering, Asker, Follows, Presenter, Session, leave_word, refresh_ns, target};
     use crate::window::{CountingClock, InputClock, Monotonic};
 
     /// The size the loops begin at, and the target it is.
@@ -1135,6 +1233,140 @@ mod tests {
         assert_eq!(presenter.scale(), 2.0);
         presenter.set_scale(1.25);
         assert_eq!(presenter.scale(), 1.25);
+    }
+
+    /// An asker that records what it is asked, and what it recorded.
+    fn recording_asker() -> (Asker, Arc<std::sync::Mutex<Vec<Request>>>) {
+        let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let asker: Asker = {
+            let asked = Arc::clone(&asked);
+            Arc::new(move |request| {
+                asked
+                    .lock()
+                    .expect("nothing panics holding it")
+                    .push(request)
+            })
+        };
+        (asker, asked)
+    }
+
+    /// The request for the title `text`.
+    fn title(text: &str) -> Request {
+        Request::Title(text.to_owned())
+    }
+
+    /// What `asked` holds.
+    fn held(asked: &std::sync::Mutex<Vec<Request>>) -> Vec<Request> {
+        asked.lock().expect("nothing panics holding it").clone()
+    }
+
+    #[test]
+    fn a_title_named_before_the_window_opens_is_sent_when_it_opens() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        presenter.name("scratch");
+        presenter.name("notes.txt");
+
+        presenter.open_window(asker);
+
+        assert_eq!(held(&asked), [title("notes.txt")]);
+    }
+
+    #[test]
+    fn a_window_that_opens_before_any_title_is_named_is_sent_none() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        presenter.open_window(asker);
+        assert_eq!(held(&asked), []);
+        presenter.name("scratch");
+        assert_eq!(held(&asked), [title("scratch")]);
+    }
+
+    #[test]
+    fn a_title_is_sent_to_the_open_window_only_when_it_changes() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        presenter.open_window(asker);
+
+        for named in [
+            "notes.txt",
+            "notes.txt",
+            "todo.txt",
+            "todo.txt",
+            "notes.txt",
+        ] {
+            presenter.name(named);
+        }
+
+        assert_eq!(
+            held(&asked),
+            [title("notes.txt"), title("todo.txt"), title("notes.txt")]
+        );
+    }
+
+    #[test]
+    fn once_the_window_closes_a_title_goes_nowhere_and_is_kept() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        presenter.open_window(asker);
+        presenter.name("notes.txt");
+        presenter.close_window();
+
+        presenter.name("todo.txt");
+
+        assert_eq!(held(&asked), [title("notes.txt")]);
+        let (again, asked_again) = recording_asker();
+        presenter.open_window(again);
+        assert_eq!(held(&asked_again), [title("todo.txt")]);
+    }
+
+    #[test]
+    fn a_window_that_opens_after_another_closed_is_sent_the_title_named_last() {
+        let presenter = Presenter::new();
+        let (first, _) = recording_asker();
+        presenter.open_window(first);
+        presenter.name("notes.txt");
+        presenter.close_window();
+
+        // The title it names is the one the first window was sent: the new
+        // window shows its own until it is told.
+        let (second, asked) = recording_asker();
+        presenter.open_window(second);
+        assert_eq!(held(&asked), [title("notes.txt")]);
+        presenter.name("notes.txt");
+        assert_eq!(held(&asked), [title("notes.txt")]);
+    }
+
+    /// The window opened, with no native window, at [`SIZE`].
+    fn opened() -> Canvas {
+        Canvas::Opened {
+            window: None,
+            size: SIZE,
+            refresh_millihertz: None,
+        }
+    }
+
+    #[test]
+    fn a_window_nothing_can_draw_in_is_still_sent_its_title() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        let session: Session<RecordingRenderer> = Session::new(
+            Arc::new(FakeClock::new()),
+            |_, _| Err("no adapter".to_owned()),
+            Arc::clone(&presenter),
+        )
+        .asking(asker);
+        presenter.name("scratch");
+        let drawer = session.drawer();
+
+        drawer(opened());
+        assert_eq!(session.failure().as_deref(), Some("no adapter"));
+        assert_eq!(held(&asked), [title("scratch")]);
+        presenter.name("notes.txt");
+        drawer(Canvas::Closing);
+        presenter.name("todo.txt");
+
+        assert_eq!(held(&asked), [title("scratch"), title("notes.txt")]);
     }
 
     #[test]

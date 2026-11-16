@@ -27,16 +27,17 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
+use editor_ffi::display::{Display, WireScene};
 use editor_ffi::events::{EventKind, Queue};
 use editor_ffi::interrupt::Interrupt;
-use editor_ffi::render::{Presenter, Session, target};
+use editor_ffi::render::{Asker, Presenter, Session, target};
 use editor_ffi::window::{self, CountingClock};
 use editor_layout::Layout;
 use editor_layout::frame::Frame;
 use editor_layout::scene::{Rect, Scene};
 use editor_layout::shaper::fake::CellShaper;
 use editor_platform::{
-    CannotOpen, Canvas, Drawer, Input, Platform, Resize, ScriptedPlatform, WindowOptions,
+    CannotOpen, Canvas, Drawer, Input, Platform, Request, Resize, ScriptedPlatform, WindowOptions,
 };
 use editor_render::clock::FakeClock;
 use editor_render::fake::RecordingRenderer;
@@ -443,5 +444,55 @@ fn a_factory_that_fails_leaves_a_window_that_runs_and_a_reason() {
     assert_eq!(
         session.failure().as_deref(),
         Some("no adapter: pas de carte")
+    );
+}
+
+/// Publishes to `display` a scene of no view whose title is `title`.
+fn publish_titled(display: &Display, title: &str) {
+    let wire = WireScene {
+        size: [80, 32],
+        title: title.to_owned(),
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(display.publish(&words, &strings, &[]));
+}
+
+#[test]
+fn a_published_scenes_title_reaches_the_scripted_window_as_the_title_it_sets_once_for_each_change()
+{
+    let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+    let presenter = Presenter::new();
+    let asker: Asker = {
+        let platform = Arc::clone(&platform);
+        Arc::new(move |request| platform.request(request))
+    };
+    let session: Session<RecordingRenderer> = Session::new(
+        Arc::new(FakeClock::new()),
+        |_, _| Ok(RecordingRenderer::new()),
+        Arc::clone(&presenter),
+    )
+    .asking(asker);
+    let display = Display::cells(8, 16);
+    display.present_to(Arc::clone(&presenter));
+    let queue = Arc::new(Queue::new());
+
+    // Named before the window opens: sent when it does.
+    publish_titled(&display, "notes.txt");
+    let done = run_on_a_thread(&platform, &queue, session.drawer());
+    assert_eq!(kinds(&queue, 1), [EventKind::WindowOpened]);
+    // The same title again is not sent again; another is.
+    publish_titled(&display, "notes.txt");
+    publish_titled(&display, "todo.txt");
+    platform.close();
+    let (result, _) = done.recv_timeout(BOUND).expect("the run returns");
+    assert_eq!(result, Ok(()));
+
+    assert_eq!(
+        platform.asked(),
+        [
+            Request::Title("notes.txt".into()),
+            Request::Title("todo.txt".into())
+        ]
     );
 }

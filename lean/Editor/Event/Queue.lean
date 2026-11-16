@@ -311,12 +311,18 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
       none .compositionDisabled
     | .pointer, code =>
       Event.pointer <$> EventWords.readAll (EventWords.pointer code) event.words
-    | .resize, 0 =>
-      match event.words with
-      | #[width, height, scale] =>
-        pure (.resize { width := width.toNat, height := height.toNat, scale := Float.ofBits scale })
-      | _ =>
-        throw "a resize has three words"
+    | .resize, code =>
+      if code > 1 then
+        throw s!"{repr Ffi.EventKind.resize} has no code {code}"
+      else
+        match event.words with
+        | #[width, height, scale] =>
+          pure
+              (.resize
+                { width := width.toNat, height := height.toNat, scale := Float.ofBits scale
+                  fullscreen := code == 1 })
+        | _ =>
+          throw "a resize has three words"
     | .closeRequested, 0 =>
       none .closeRequested
     | kind, code =>
@@ -341,7 +347,8 @@ def Event.post : Event → IO Bool
     let (code, words) := EventWords.pointerWords what
     Ffi.postInput .pointer code "" words
   | .resize size =>
-    Ffi.postInput .resize 0 "" #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits]
+    Ffi.postInput .resize (if size.fullscreen then 1 else 0) ""
+      #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits]
   | .closeRequested => Ffi.postInput .closeRequested 0 "" #[]
   | .message .. | .completion .. | .quit => pure false
 

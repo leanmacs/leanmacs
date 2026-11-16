@@ -7,7 +7,7 @@
 //!
 //! | Part | Words |
 //! |---|---|
-//! | The scene | its width and height; the focus's presence and view id; the echo's length; the pending prefix's length; the preedit's presence and length; the count of views; each view |
+//! | The scene | its width and height; the focus's presence and view id; the echo's length; the pending prefix's length; the preedit's presence and length; the title's length; the count of views; each view |
 //! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length and face's length |
 //! | The faces, after the last view | their presence (0: as last published); when present, the count of definitions and each definition |
 //! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a point; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 a length in 64ths of a point) followed by its value |
@@ -22,7 +22,7 @@
 //!
 //! The string is every text of the scene one after another, in the order
 //! the words give their lengths: the echo, the pending prefix, the preedit
-//! if present, then for each view its cursor's face, its decorations' faces
+//! if present, the title, then for each view its cursor's face, its decorations' faces
 //! and its status fields' texts and faces, then for each definition its
 //! name and its family when present. A length that does not end on a
 //! character boundary, and text left over, are refusals.
@@ -122,6 +122,9 @@ pub struct WireScene {
     pub pending: String,
     /// The preedit text, if any.
     pub preedit: Option<String>,
+    /// The window's title. Layout draws no title: [`WireScene::resolve`]
+    /// leaves it out, and the display hands it to its presenter.
+    pub title: String,
     /// The views, in drawing order.
     pub views: Vec<WireView>,
     /// The definitions of the faces, in the order they were made; `None`
@@ -426,6 +429,7 @@ impl WireScene {
             Some(len) => Some(texts.take(crate::words::size(len))?),
             None => None,
         };
+        let title = texts.take(words.size()?)?;
         // A view is at least fourteen words.
         let count = words.count(14)?;
         let views = (0..count)
@@ -443,6 +447,7 @@ impl WireScene {
             echo,
             pending,
             preedit,
+            title,
             views,
             faces,
         })
@@ -450,7 +455,7 @@ impl WireScene {
 
     /// The words and the string that spell this scene.
     pub fn encode(&self) -> (Vec<u8>, String) {
-        let mut words = Writer::with_capacity(9 + 20 * self.views.len());
+        let mut words = Writer::with_capacity(10 + 20 * self.views.len());
         let mut strings = String::new();
         /// Writes `text`'s length and adds it to the string.
         fn text(words: &mut Writer, strings: &mut String, text: &str) {
@@ -468,6 +473,7 @@ impl WireScene {
             &mut strings,
             self.preedit.as_deref().unwrap_or(""),
         );
+        text(&mut words, &mut strings, &self.title);
         words.size(self.views.len());
         for view in &self.views {
             words.word(view.id);
@@ -605,6 +611,7 @@ mod tests {
             echo: "fixture".to_owned(),
             pending: "g".to_owned(),
             preedit: Some("é".to_owned()),
+            title: "notes.txt".to_owned(),
             views: vec![WireView {
                 id: 1,
                 rect: [0, 0, 96, 80],
@@ -626,30 +633,59 @@ mod tests {
         assert_eq!(
             words,
             buffer(&[
-                96, 112, 1, 1, 7, 1, 1, 2, 1, // the scene
+                96, 112, 1, 1, 7, 1, 1, 2, 9, 1, // the scene
                 1, 0, 0, 96, 80, 1, 0, 1, 0, 2, 1, 2, 2, 13, // the view
                 1, 0, 2, 7, 1, 6, 4, // its decorations and status
                 0, // no faces
             ])
         );
-        assert_eq!(strings, "fixturegécursor.normalkeywordNORMALmode");
+        assert_eq!(strings, "fixturegénotes.txtcursor.normalkeywordNORMALmode");
         assert_eq!(WireScene::decode(&words, &strings), Some(full()));
+    }
+
+    #[test]
+    fn a_scenes_title_crosses_after_the_preedit_and_comes_back_as_sent() {
+        let titled = WireScene {
+            preedit: Some("é".to_owned()),
+            title: "todo.txt".to_owned(),
+            ..WireScene::default()
+        };
+        let (words, strings) = titled.encode();
+        // The preedit's presence and length, then the title's length, then
+        // no view and no faces.
+        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 1, 2, 8, 0, 0]));
+        assert_eq!(strings, "étodo.txt");
+        assert_eq!(WireScene::decode(&words, &strings), Some(titled));
+    }
+
+    #[test]
+    fn a_title_that_ends_inside_a_character_is_refused() {
+        let titled = WireScene {
+            title: "é".to_owned(),
+            ..WireScene::default()
+        };
+        let (mut words, strings) = titled.encode();
+        assert_eq!(WireScene::decode(&words, &strings), Some(titled));
+        // The title's length, 2, made 1: it ends inside "é", and the byte
+        // left over is no text.
+        words[8 * 8] = 1;
+        assert_eq!(WireScene::decode(&words, &strings), None);
     }
 
     #[test]
     fn absent_parts_are_written_as_zero_and_read_back_absent() {
         let empty = WireScene::default();
         let (words, strings) = empty.encode();
-        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         assert_eq!(WireScene::decode(&words, &strings), Some(empty));
         // A view with nothing in it is its fourteen words, between the
-        // scene's nine and the faces' presence.
+        // scene's ten and the faces' presence.
         let bare = WireScene {
             views: vec![WireView::default()],
             ..WireScene::default()
         };
         let (words, strings) = bare.encode();
-        assert_eq!(words.len(), (9 + 14 + 1) * 8);
+        assert_eq!(words.len(), (10 + 14 + 1) * 8);
         assert_eq!(WireScene::decode(&words, &strings), Some(bare));
     }
 
@@ -716,7 +752,7 @@ mod tests {
         };
         let scene = with_faces(vec![every, unset]);
         let (words, strings) = scene.encode();
-        let mut expected = vec![0; 9];
+        let mut expected = vec![0; 10];
         // Present, and two definitions.
         expected.extend([1, 2]);
         expected.extend(every_words);
@@ -731,7 +767,10 @@ mod tests {
         let mut full = full();
         full.faces = Some(vec![self::every().0]);
         let (words, strings) = full.encode();
-        assert_eq!(strings, "fixturegécursor.normalkeywordNORMALmodekwmono");
+        assert_eq!(
+            strings,
+            "fixturegénotes.txtcursor.normalkeywordNORMALmodekwmono"
+        );
         assert_eq!(WireScene::decode(&words, &strings), Some(full));
     }
 
@@ -739,9 +778,9 @@ mod tests {
     fn faces_that_are_absent_are_one_word_and_no_definitions_are_two() {
         let absent = WireScene::default();
         let none = with_faces(vec![]);
-        assert_eq!(absent.encode().0, buffer(&[0; 10]));
+        assert_eq!(absent.encode().0, buffer(&[0; 11]));
         let (words, strings) = none.encode();
-        let mut expected = vec![0; 9];
+        let mut expected = vec![0; 10];
         expected.extend([1, 0]);
         assert_eq!(words, buffer(&expected));
         // They read back apart: absent is "as last published", and no
@@ -749,7 +788,7 @@ mod tests {
         assert_eq!(WireScene::decode(&words, &strings), Some(none));
         assert_ne!(
             WireScene::decode(&words, &strings),
-            WireScene::decode(&buffer(&[0; 10]), "")
+            WireScene::decode(&buffer(&[0; 11]), "")
         );
     }
 
@@ -766,7 +805,7 @@ mod tests {
                 WireScene::decode(&words, &strings),
                 Some(with_faces(vec![definition]))
             );
-            crate::words::tests::words_of(&words)[18..].to_vec()
+            crate::words::tests::words_of(&words)[19..].to_vec()
         };
         let slants = [Slant::Upright, Slant::Italic, Slant::Oblique];
         for (tag, slant) in (0..).zip(slants) {
@@ -816,7 +855,7 @@ mod tests {
         let (every, _) = every();
         let (bytes, strings) = with_faces(vec![every]).encode();
         let words = crate::words::tests::words_of(&bytes);
-        assert_eq!(words.len(), 9 + 2 + 22);
+        assert_eq!(words.len(), 10 + 2 + 22);
         // The scene's words with the word at `index` made `value`.
         let with = |index: usize, value: u64| {
             let mut words = words.clone();
@@ -824,34 +863,34 @@ mod tests {
             WireScene::decode(&buffer(&words), &strings)
         };
         // As they are, they spell it.
-        assert!(with(9, 1).is_some());
+        assert!(with(10, 1).is_some());
         let too_big = u64::from(u32::MAX) + 1;
         let refused = [
-            (9, 2, "a presence of the faces that is neither 0 nor 1"),
-            (10, 2, "more definitions than there are words for"),
-            (12, 2, "a presence of an attribute that is neither 0 nor 1"),
-            (14, 2, "the size's presence"),
-            (15, too_big, "a size no u32 holds"),
-            (16, 2, "the weight's presence"),
-            (17, 0, "a weight under 1"),
-            (17, 1001, "a weight over 1000"),
-            (18, 2, "the slant's presence"),
-            (19, 3, "a slant that is none"),
-            (20, 2, "the foreground's presence"),
-            (21, too_big, "a foreground no u32 holds"),
-            (22, 2, "the background's presence"),
-            (23, too_big, "a background no u32 holds"),
-            (24, 2, "the underline's presence"),
-            (25, 6, "an underline style that is none"),
-            (26, 2, "the underline's colour's presence"),
-            (27, too_big, "an underline colour no u32 holds"),
-            (28, 2, "strike-through's presence"),
-            (29, 2, "a strike-through that is neither 0 nor 1"),
-            (30, 2, "the line height's presence"),
-            (31, 2, "a line height's kind that is none"),
-            (32, too_big, "a line height no u32 holds"),
-            (11, 3, "a name that takes the family's text"),
-            (13, 5, "a family longer than the text left"),
+            (10, 2, "a presence of the faces that is neither 0 nor 1"),
+            (11, 2, "more definitions than there are words for"),
+            (13, 2, "a presence of an attribute that is neither 0 nor 1"),
+            (15, 2, "the size's presence"),
+            (16, too_big, "a size no u32 holds"),
+            (17, 2, "the weight's presence"),
+            (18, 0, "a weight under 1"),
+            (18, 1001, "a weight over 1000"),
+            (19, 2, "the slant's presence"),
+            (20, 3, "a slant that is none"),
+            (21, 2, "the foreground's presence"),
+            (22, too_big, "a foreground no u32 holds"),
+            (23, 2, "the background's presence"),
+            (24, too_big, "a background no u32 holds"),
+            (25, 2, "the underline's presence"),
+            (26, 6, "an underline style that is none"),
+            (27, 2, "the underline's colour's presence"),
+            (28, too_big, "an underline colour no u32 holds"),
+            (29, 2, "strike-through's presence"),
+            (30, 2, "a strike-through that is neither 0 nor 1"),
+            (31, 2, "the line height's presence"),
+            (32, 2, "a line height's kind that is none"),
+            (33, too_big, "a line height no u32 holds"),
+            (12, 3, "a name that takes the family's text"),
+            (14, 5, "a family longer than the text left"),
         ];
         for (index, value, what) in refused {
             assert_eq!(with(index, value), None, "{what}");
@@ -859,11 +898,11 @@ mod tests {
         // The largest values are taken.
         let largest = u64::from(u32::MAX);
         for (index, value) in [
-            (15, largest),
-            (17, 1),
-            (17, 1000),
-            (21, largest),
-            (32, largest),
+            (16, largest),
+            (18, 1),
+            (18, 1000),
+            (22, largest),
+            (33, largest),
         ] {
             assert!(with(index, value).is_some(), "word {index} as {value}");
         }
@@ -872,12 +911,12 @@ mod tests {
         // another length.
         let face_with = |index: usize| with(index, 0)?.faces?.pop().map(|flat| flat.face);
         assert_eq!(
-            face_with(15).map(|face| face.size),
+            face_with(16).map(|face| face.size),
             Some(Some(Length(0))),
             "a size of 0"
         );
         assert_eq!(
-            face_with(32).map(|face| face.line_height),
+            face_with(33).map(|face| face.line_height),
             Some(Some(LineHeight::Pixels(Length(0)))),
             "a line height of 0"
         );
@@ -893,7 +932,7 @@ mod tests {
         assert_eq!(WireScene::decode(&longer, &strings), None);
         assert_eq!(WireScene::decode(&bytes, &format!("{strings}x")), None);
         // Words that stop where the faces' presence would be.
-        assert_eq!(WireScene::decode(&buffer(&[0; 9]), ""), None);
+        assert_eq!(WireScene::decode(&buffer(&[0; 10]), ""), None);
     }
 
     #[test]
@@ -916,9 +955,9 @@ mod tests {
             Some(definitions.clone())
         );
         // The words and the string a scene of no view carries them in,
-        // after its nine words and the faces' presence.
+        // after its ten words and the faces' presence.
         let (scene_words, scene_strings) = with_faces(definitions).encode();
-        assert_eq!(scene_words[10 * 8..], words[..]);
+        assert_eq!(scene_words[11 * 8..], words[..]);
         assert_eq!(scene_strings, strings);
         // No definitions is a count of 0, and undefines every face.
         let (none, none_strings) = encode_definitions(&[]);

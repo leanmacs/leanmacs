@@ -155,6 +155,9 @@ structure Scene where
   /-- The text an input method is composing in the focused view, if it is
   composing. -/
   preedit : Option String
+  /-- The window's title: the selected buffer's name (`EditorState.title`).
+  It is empty only in a scene no command loop made. -/
+  title : String := ""
   deriving DecidableEq, Repr
 
 end Editor
