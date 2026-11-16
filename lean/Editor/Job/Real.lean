@@ -618,6 +618,10 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) (timers : 
                   let environment := command.environment
                   Ffi.processesRun id command.program command.arguments environment.clear
                     environment.set environment.unset command.directory.toString (word limit)
+                | .runInput command input limit _ =>
+                  let environment := command.environment
+                  Ffi.processesRunInput id command.program command.arguments environment.clear
+                    environment.set environment.unset command.directory.toString (word limit) input
                 | .start command streaming =>
                   let environment := command.environment
                   Ffi.processesOpen id streaming.input (streaming.stdout == .bytes)
@@ -630,15 +634,18 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) (timers : 
                 IO Bool).catchExceptions
             fun _ => pure false
       if started then
-        if let .runWithin _ _ time := request then
+        match request with
+        | .runWithin _ _ time | .runInput _ _ _ time =>
           arm completions timers timed id time
+        | _ =>
+          pure ()
       else
         refused.refused.modify (·.insert id runNotTaken)
         completions.finish id .completed
     take := fun id request =>
       match request with
       | .run .. => takenRun refused id
-      | .runWithin _ _ time => do
+      | .runWithin _ _ time | .runInput _ _ _ time => do
         match ← timed.take id with
         | some run =>
           disarm completions timers run

@@ -675,6 +675,15 @@ def ranOk (command : Process.Command) (limit : Nat := roomyOutput) : JobM Proces
 def errBytes : ByteArray :=
   "err".toUTF8.push 0xFF
 
+/-- What the fed run's property feeds `/bin/cat`: lines, a NUL and the byte
+`FF`, which is not UTF-8. -/
+def fedBytes : ByteArray :=
+  ("b\nc\na\n".toUTF8.push 0 |>.push 0xFF).push 10
+
+/-- `/bin/cat` in `directory`. -/
+def cat (directory : System.FilePath) : Process.Command :=
+  { program := "/bin/cat", directory }
+
 /-- The script that writes `out` and a line feed, `err` and the byte `FF`, and
 ends with the status 3. -/
 def runScript : String :=
@@ -985,6 +994,32 @@ def processProperties : List ProcessProperty :=
               match within with
               | .ok ran => ran.exit == .code 0
               | .error _ => false },
+      { name :=
+          "a run fed its standard input hands it to the child whole, then end of file: `/bin/cat` answers it byte for byte"
+        scripts := fun root =>
+          #[{ command := cat root,
+              reply := .ok { exit := .code 0, stdout := fedBytes, stderr := .empty } }]
+        holds := fun root => do
+          match ← Process.runWithInput (cat root) fedBytes roomyOutput 10000 with
+          | .ok ran =>
+            return ran.exit == .code 0 && ran.stdout == fedBytes && ran.stderr.isEmpty
+          | .error _ =>
+            return false },
+      { name :=
+          "a fed run that outlives its time limit is refused as timedOut, its child killed, and the job goes on"
+        scripts := fun root =>
+          #[{ command := sh root "/bin/sleep 600"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+              takes := 600000 },
+            { command := sh root "exit 0"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
+        holds := fun root => do
+          let late ← Process.runWithInput (sh root "/bin/sleep 600") fedBytes roomyOutput 50
+          let after ← ranOk (sh root "exit 0")
+          return (match late with
+              | .error (.timedOut 50) => true
+              | _ => false) &&
+              after.exit == .code 0 },
       { name := "output past the limit is refused as too large, with the stream and the limit"
         scripts := fun root =>
           #[{ command := sh root "printf 0123456789"

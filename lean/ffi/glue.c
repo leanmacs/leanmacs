@@ -1062,6 +1062,10 @@ typedef struct {
 bool editor_ffi_processes_run(uint64_t id, const uint8_t *words,
                               size_t words_len, const uint8_t *strings,
                               size_t strings_len);
+bool editor_ffi_processes_run_input(uint64_t id, const uint8_t *words,
+                                    size_t words_len, const uint8_t *strings,
+                                    size_t strings_len, const uint8_t *input,
+                                    size_t input_len);
 bool editor_ffi_processes_take(uint64_t id, editor_ffi_raw_process_result *out);
 bool editor_ffi_processes_cancel(uint64_t id);
 uint64_t editor_ffi_processes_pending(void);
@@ -1083,6 +1087,17 @@ lean_obj_res editor_glue_processes_run(uint64_t id, b_lean_obj_arg words,
   return lean_io_result_mk_ok(lean_box(editor_ffi_processes_run(
       id, byte_array_bytes(words), byte_array_len(words), string_bytes(strings),
       string_len(strings))));
+}
+
+// `Editor.Ffi.processesRunInputRaw : UInt64 → @& ByteArray → @& String →
+// @& ByteArray → IO Bool`. The library copies the input, which is borrowed
+// for the call.
+lean_obj_res editor_glue_processes_run_input(uint64_t id, b_lean_obj_arg words,
+                                             b_lean_obj_arg strings,
+                                             b_lean_obj_arg input) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_run_input(
+      id, byte_array_bytes(words), byte_array_len(words), string_bytes(strings),
+      string_len(strings), byte_array_bytes(input), byte_array_len(input))));
 }
 
 // The Lean `RawProcessResult` of a record the library filled, as

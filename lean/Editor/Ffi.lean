@@ -189,7 +189,7 @@ stamp's three numbers. A stamp's seconds are an `Int`, and cross as a 64-bit
 two's complement word in both directions.
 
 The process service is the third: `processesRun` starts a run of a command
-to its end, `processesTake` hands its result over once its completion has
+to its end, `processesRunInput` one fed its standard input, `processesTake` hands its result over once its completion has
 arrived, `processesCancel` cancels it, which kills the child's process
 group, `processesShutdown` kills every group and blocks until every child is
 reaped, and `processesPending` is a readout for tests. A command crosses as
@@ -3160,6 +3160,22 @@ def processesRun (id : UInt64) (program : String) (arguments : Array String) (cl
     IO Bool :=
   let (words, strings) := runLayout program arguments clear set unset directory limit
   processesRunRaw id words strings
+
+/-- `processesRunInput` as it crosses: a run's words and string, and the
+input's bytes. -/
+@[extern "editor_glue_processes_run_input"]
+private opaque processesRunInputRaw (id : UInt64) (words : @& ByteArray) (strings : @& String)
+    (input : @& ByteArray) : IO Bool
+
+/-- Asks the library's process service to run a command as `processesRun`
+does, with `input` as the child's standard input, followed by end of file.
+The bytes are copied. A child that does not read them is no refusal: the
+run answers what it did. -/
+def processesRunInput (id : UInt64) (program : String) (arguments : Array String) (clear : Bool)
+    (set : Array (String × String)) (unset : Array String) (directory : String) (limit : UInt64)
+    (input : ByteArray) : IO Bool :=
+  let (words, strings) := runLayout program arguments clear set unset directory limit
+  processesRunInputRaw id words strings input
 
 /-- `processesOpen` as it crosses: the open's three words and a run's words,
 and one string. -/
