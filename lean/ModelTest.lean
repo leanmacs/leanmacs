@@ -20850,6 +20850,18 @@ def insertBackspaceRows : List (String × String × String) :=
     ("i <Backspace> <Escape>", "aé|b", "|ab"),
     ("a x <Backspace> <Backspace> <Escape>", "a|bc", "|ac")]
 
+/-- The rows of the oracle table for `C-w` in insert state, Vim 9.1's
+`i_CTRL-W` under its default `backspace=indent,eol,start`: the word before
+the bar goes, with the blanks between it and the bar; a run of punctuation
+is a word; blanks back to the line's start go when no word is before them
+on the line; at a line's start the line break before it goes, a carriage
+return and line feed whole, so the line is joined to the one above; and at
+the text's start nothing. -/
+def insertWordDeleteRows : List (String × String × String) :=
+  [("A C-w", "foo ba|r", "foo |"), ("A C-w", "f|oo   ", "|"), ("A C-w", "f|oo.bar", "foo.|"),
+    ("A C-w", "f|oo..", "foo|"), ("i C-w", "  |x", "|x"), ("i C-w", "ab\n  |x", "ab\n|x"),
+    ("i C-w", "ab\n|cd", "ab|cd"), ("i C-w", "|abc", "|abc"), ("i C-w", "ab\r\n|cd", "ab|cd")]
+
 /-- The rows of the oracle table for `RET` in insert state: the line is
 broken at the bar, with no indent, and the bar is at the new line's
 start. -/
@@ -20959,6 +20971,18 @@ def evilInsertChecks : List Check :=
           | some driver =>
             let typed := evilFed driver "i x <Backspace> y <Escape>"
             evilText typed == some "ayb" && evilHistory typed == some (2, false) &&
+              evilText (evilUndone typed) == some "ab"
+        return rows && step },
+    { name :=
+        "C-w in insert state deletes the word before the bar and the blanks after it, a run of punctuation being a word, and blanks back to the line's start when no word is before them on the line; at a line's start it joins the line to the one above, a carriage return and line feed whole; at the text's start it deletes nothing; and it is one step of the history with the text typed around it"
+      run := do
+        let rows ← evilRows insertWordDeleteRows
+        let step :=
+          match evilDriver "a|b" with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "i x y SPC z C-w w <Escape>"
+            evilText typed == some "axy wb" && evilHistory typed == some (2, false) &&
               evilText (evilUndone typed) == some "ab"
         return rows && step },
     { name :=
@@ -23701,6 +23725,7 @@ with that text (`ins-special-special`); an arrow key with nothing typed
 after it, and one that did not move, leave the change as it was. -/
 def insertKeysRepeatRows : List (String × String × String) :=
   [("i x <Backspace> y <Escape> .", "a|b", "a|yyb"),
+    ("i a b SPC c d C-w <Escape> .", "|x", "abab|  x"),
     ("a <Backspace> X <Escape> .", "ab|cd", "ab|Xd"),
     ("i x RET y <Escape> .", "a|b", "ax\nx\n|yyb"), ("i x TAB y <Escape> .", "a|b", "ax\tx\t|yyb"),
     ("i x <ArrowLeft> y <Escape> .", "a|b", "a|yyxb"),
@@ -23740,7 +23765,7 @@ def evilRepeatChecks : List Check :=
         ". replays the last change: after d w it deletes the next word, and after c w, typed text and <Escape> it makes the same change with the same text at the cursor; a count before it replaces the change's and is kept; x, the doubled operator, o, O, i, a, I, A, p and P are replayed, and a yank is not the last change"
       run := evilRows repeatRows },
     { name :=
-        ". after a session that used <Backspace>, RET or TAB replays them as typed, a <Backspace> past where the insert began included, and RET with the buffer's line ending; after an arrow key that moved and a text typed after it, . is i with that text, as in Vim 9.1; after an arrow key with nothing typed after it, or one that did not move, . replays the change as it was"
+        ". after a session that used <Backspace>, C-w, RET or TAB replays them as typed, a <Backspace> past where the insert began included, and RET with the buffer's line ending; after an arrow key that moved and a text typed after it, . is i with that text, as in Vim 9.1; after an arrow key with nothing typed after it, or one that did not move, . replays the change as it was"
       run := do
         let rows ← evilRows insertKeysRepeatRows
         let crlf :=

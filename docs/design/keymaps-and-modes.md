@@ -1588,8 +1588,8 @@ report says the view takes text** (`InputScheme.Report.takesText`,
 Status: built, by the command loop's phase 11 (`lean/Editor/Evil.lean`;
 pinned by `evilInsertChecks`).
 
-Four commands place the bar, one inserts typed text, and seven named keys
-edit or move inside the session.
+Four commands place the bar, one inserts typed text, and eight keys edit
+or move inside the session.
 
 | Key | Command | Where the insert begins |
 |---|---|---|
@@ -1618,14 +1618,17 @@ edit or move inside the session.
 - **Not built: a count before `i a I A o O`.** Vim repeats the inserted
   text. The six commands ignore their count and their register.
 
-The editing keys are named keys, which print nothing (`Key.printed?`), so
-each is a row of `insertCommands` (`Evil.deleteBackward`, `Evil.newline`,
-`Evil.insertTab`, `Evil.insertMove`; Daily-driver floor phase 1). Each
-follows Vim 9.1 with its default options:
+The editing keys are named keys or control keys, which print nothing
+(`Key.printed?`), so each is a row of `insertCommands`
+(`Evil.deleteBackward`, `Evil.deleteWordBackward`, `Evil.newline`,
+`Evil.insertTab`, `Evil.insertMove`; Daily-driver floor phase 1, and
+`C-w` window-management phase 2). Each follows Vim 9.1 with its default
+options:
 
 | Key | Command | Behaviour, as Vim 9.1 documents it |
 |---|---|---|
 | `<Backspace>` | `insert-delete-backward` | Deletes the character before the bar; a carriage return and line feed, or a character of several bytes, goes whole. At a line's start it joins the line to the one above, and it deletes past where the insert began: `i_<BS>` under `backspace=indent,eol,start`, Vim 9.1's default. At the text's start it deletes nothing |
+| `C-w` | `insert-delete-word-backward` | "Delete the word before the cursor" (`i_CTRL-W`): from the later of the line's start and the start of the word before the bar (`previousWordStart .word`) to the bar, so the blanks before the bar and the word before them go, as Vim's `ins_bs` with `BACKSPACE_WORD` does; a run of punctuation is a word; blanks back to the line's start go when no word is before them on the line. At a line's start it joins the line to the one above, as `<Backspace>` does there (`backspace=eol`); at the text's start it deletes nothing |
 | `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent`, and indentation waits for syntax |
 | `TAB` | `insert-tab` | Inserts a tab character: Vim's defaults `noexpandtab` and `softtabstop=0` |
 | `<ArrowLeft>` | `insert-left` | One cell back, no further than the line's start (`whichwrap=b,s`: no wrap) |
@@ -1633,19 +1636,30 @@ follows Vim 9.1 with its default options:
 | `<ArrowUp>` | `insert-up` | A line up, at the wanted column, clamped to a shorter line and kept through it; nothing on the first line |
 | `<ArrowDown>` | `insert-down` | A line down, the same; nothing on the last line |
 
-- **Built: `<Backspace>`, `RET`, `TAB`, `<ArrowLeft>`, `<ArrowRight>`,
-  `<ArrowUp>` and `<ArrowDown>` in insert state.**
+- **Built: `<Backspace>`, `C-w`, `RET`, `TAB`, `<ArrowLeft>`,
+  `<ArrowRight>`, `<ArrowUp>` and `<ArrowDown>` in insert state.**
 - **An arrow key that moves starts a new undo step** ("Insert sessions");
-  the other three join the session's step.
+  the other four join the session's step.
+- **`C-w` is the shipped default, and a config can shadow it.** A config
+  that binds the window commands under `C-w` with `bindKey` makes `C-w` a
+  prefix in insert state, which shadows the word delete ("Which keymaps a
+  key is looked up in"); one that does not keeps it ("Extending from
+  config").
+- **A recorded departure: `C-w` deletes past where the insert began.** Vim
+  stops once at the insert's start (`backspace=start`); the session here
+  does not keep where the insert began, and `<Backspace>` already deletes
+  past it, so `C-w` does too, as under Vim's `nostop`.
 - **Each is bound as a command that changes no text for the grammar**, so
   it is not the last change and keeps the recording of the session's typed
   text ("The last change").
 - **Dot repeat replays them as Vim 9.1's does** ("The last change", "Dot
-  repeat as built"). `<Backspace>`, `RET` and `TAB` are kept in the
+  repeat as built"). `<Backspace>`, `C-w`, `RET` and `TAB` are kept in the
   session's typed text, in the order typed (`Command.typed`: the backspace
-  character, a line feed and a tab), and `.` runs them again, so it makes
-  the session's result: after `i x <BS> y <Esc>` it inserts `y`, a
-  `<Backspace>` past where the insert began deletes there too, and `RET`
+  character, Vim's `CTRL-W` character U+0017 (`Vim.wordDeleteTyped`), a
+  line feed and a tab), and `.` runs them again, so it makes the session's
+  result: after `i x <BS> y <Esc>` it inserts `y`, a `<Backspace>` past
+  where the insert began deletes there too, `C-w` deletes the word before
+  the bar, and `RET`
   breaks the line with the buffer's line ending. An arrow key that moved
   restarts the last change as `i` once something is typed after it, with
   the text typed from there on (`Command.restarts`), as
@@ -1656,9 +1670,8 @@ follows Vim 9.1 with its default options:
   up (`cannotMove`, said in the echo area where Vim beeps), so the loop puts
   the scheme back in its state from before the key and nothing restarts,
   as Vim's beep restarts nothing.
-- **Not built: the other keys of Vim's insert state**: `C-w`, `C-u`,
-  `C-o`, `C-r`, `<Home>` and `<End>` do nothing there (the open
-  questions).
+- **Not built: the other keys of Vim's insert state**: `C-u`, `C-o`,
+  `C-r`, `<Home>` and `<End>` do nothing there (the open questions).
 
 ### Motions as built
 
@@ -2367,7 +2380,7 @@ Which names have something behind them:
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
 | `self-insert`, which no table names: typed text | Built and registered |
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
-| `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
+| `insert-delete-backward`, `insert-delete-word-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
 | The operators (`delete`, `change`, `yank`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
 | The sixteen text objects of `objects` | Built: entries of `Evil.objects`, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
 | `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
@@ -2383,7 +2396,7 @@ Which names have something behind them:
 | `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
 | `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
-| `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `RET` insert-newline, `TAB` insert-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down (each enters no state, and none is a change dot repeat replays) |
+| `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `C-w` insert-delete-word-backward, `RET` insert-newline, `TAB` insert-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down (each enters no state, and none is a change dot repeat replays) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
 | `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
@@ -3482,9 +3495,11 @@ every build). The second is proved on the text model
   rest, which removes the consequence after an insert and makes `G` on a
   file land one row below Vim's.
 - **Insert state's other editing keys** ("Insert state"). `<Backspace>`,
-  `RET`, `TAB` and the arrow keys are built; `C-w`, `C-u`, `C-o`, `C-r`,
+  `C-w`, `RET`, `TAB` and the arrow keys are built; `C-u`, `C-o`, `C-r`,
   `<Home>` and `<End>` are not. Dot repeat replays the built keys as Vim
-  does.
+  does. `C-w` does not stop once at the insert's start as Vim's does
+  (`backspace=start`): the session would have to keep where the insert
+  began.
 - **A count before `i a I A o O` is ignored.** Vim repeats the insert.
   Dot repeat is built and replays a session's text, so the repeat is now
   a matter of running that replay `count - 1` times when the session

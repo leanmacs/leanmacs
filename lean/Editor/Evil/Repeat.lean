@@ -42,7 +42,9 @@ table of them.
   neither mark below is inserted at the bar (`Target.insertAtSelections`);
   the backspace character (`Vim.backspaceTyped`), which `<Backspace>`
   added, deletes the cell before the bar as `<Backspace>` does
-  (`deleteBackward`), past where the insert began too; and a line feed
+  (`deleteBackward`), past where the insert began too; Vim's `CTRL-W`
+  character (`Vim.wordDeleteTyped`), which `C-w` added, deletes the word
+  before the bar as `C-w` does (`deleteWordBackward`); and a line feed
   (`Vim.lineBreakTyped`), which `RET` added, breaks the line with the
   buffer's own line ending (`Target.insertLineBreak`). `TAB` added a tab,
   which is inserted as text. So `.` makes the session's result, as Vim
@@ -115,6 +117,10 @@ private def replayTyped (call : Call) (text : String) : EditorM Unit := do
       insert run
       run := ""
       deleteBackward call
+    else if char.toString == Vim.wordDeleteTyped then
+      insert run
+      run := ""
+      deleteWordBackward call
     else if char.toString == Vim.lineBreakTyped then
       insert run
       run := ""

@@ -268,8 +268,9 @@ for), since typed text is no edit and a replay of the change needs it:
   included, is not.
 - A command that changes no text, run in the recording view, adds what its
   binding says it adds (`Command.typed`), as typed text is added: insert
-  state's `<Backspace>`, `RET` and `TAB` add `backspaceTyped`,
-  `lineBreakTyped` and a tab, which the repeat runs again.
+  state's `<Backspace>`, `C-w`, `RET` and `TAB` add `backspaceTyped`,
+  `wordDeleteTyped`, `lineBreakTyped` and a tab, which the repeat runs
+  again.
 - A command that restarts the last change (`Command.restarts`, insert
   state's arrow keys), run in the recording view, leaves a restart waiting
   (`State.restart`): the command it names, as a change that enters the Vim
@@ -386,7 +387,7 @@ structure Command where
   /-- What running it in the insert session the last change began adds to
   the text kept for that change, as typed text is added, so that the repeat
   replays it: insert state's editing keys say so (`backspaceTyped`,
-  `lineBreakTyped`, a tab). None for a command that adds nothing. Read only
+  `wordDeleteTyped`, `lineBreakTyped`, a tab). None for a command that adds nothing. Read only
   of a command that changes no text. -/
   typed : Option String := none
   /-- The name of the command the last change restarts as once something
@@ -403,6 +404,13 @@ key prints. The repeat deletes the cell before the bar for it
 (`Editor/Evil/Repeat.lean`). -/
 def backspaceTyped : String :=
   "\x08"
+
+/-- What `C-w` in an insert session adds to the text kept for the last
+change (`Command.typed`): Vim's own `CTRL-W` character, U+0017, which no
+key prints. The repeat deletes the word before the bar for it
+(`Editor/Evil/Repeat.lean`). -/
+def wordDeleteTyped : String :=
+  "\x17"
 
 /-- What `RET` in an insert session adds to the text kept for the last
 change: a line feed. The repeat breaks the line there with the buffer's own

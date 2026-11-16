@@ -204,6 +204,7 @@ Vim state. Each follows Vim 9.1 with its default options:
 | Key | Command | What it does |
 |---|---|---|
 | `<Backspace>` | `deleteBackward` | Deletes the cell before the bar (`previousCell`, so a carriage return and line feed, or a character of several bytes, goes whole). At a line's start it joins the line to the one above, and it deletes past where the insert began: Vim's `i_<BS>` under `backspace=indent,eol,start`. At the text's start it deletes nothing |
+| `C-w` | `deleteWordBackward` | Deletes the word before the bar and the blanks between it and the bar, from the later of the line's start and the start of the word before the bar (`previousWordStart .word`): a run of punctuation is a word, and blanks back to the line's start go when no word is before them on the line. At a line's start it deletes the line break, joining the line to the one above, as `<Backspace>` does there; at the text's start it deletes nothing. Vim's `i_CTRL-W` under `backspace=indent,eol,start`, as its `ins_bs` deletes with `BACKSPACE_WORD` |
 | `RET` | `newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent` |
 | `TAB` | `insertTab` | Inserts a tab character: Vim's `noexpandtab` and `softtabstop=0` |
 | `<ArrowLeft>`, `<ArrowRight>`, `<ArrowUp>`, `<ArrowDown>` | `insertMove motions` with `left`, `right`, `up`, `down` | The move command by that motion, with no count. Left and right stop at the line's start and where its content ends, so neither wraps (`whichwrap=b,s`); up and down keep the wanted column across short lines |
@@ -217,22 +218,26 @@ Vim state. Each follows Vim 9.1 with its default options:
   boundary and the loop puts the scheme back as it was before the key.
   Placing a marker is no edit, so closing the group after the move is the
   same as before it.
-- **Backspace, Enter and Tab join the session's step.** Their keys are
+- **`C-w` deletes past where the insert began**, as `<Backspace>` does. A
+  recorded departure: Vim stops once at the insert's start
+  (`backspace=start`), and here the session does not keep where the insert
+  began, so `C-w` deletes past it as Vim's `nostop` does.
+- **Backspace, `C-w`, Enter and Tab join the session's step.** Their keys are
   bound as commands that change no text for the grammar, so none becomes
   the last change.
 - **Dot repeat replays the keys as Vim 9.1's does**
   (`Editor/InputScheme/Vim.lean`, "The last change";
-  `Editor/Evil/Repeat.lean`). `<Backspace>`, `RET` and `TAB` are kept in
-  the text recorded for the last change, in the order typed, and `.` runs
-  them again: a `<Backspace>` deletes the cell before the bar, past where
-  the insert began too, `RET` breaks the line with the buffer's line ending,
+  `Editor/Evil/Repeat.lean`). `<Backspace>`, `C-w`, `RET` and `TAB` are
+  kept in the text recorded for the last change, in the order typed, and
+  `.` runs them again: a `<Backspace>` deletes the cell before the bar,
+  past where the insert began too, `C-w` the word before the bar, `RET` breaks the line with the buffer's line ending,
   and `TAB` inserts a tab. An arrow key that moved restarts the change as
   `i` once something is typed after it, with the text typed from there on:
   `ins-special-special`'s "only the last change can be redone and always
   behaves like an i command". With nothing typed after it, and when it did
   not move, the change is as it was.
-- **Not built: the other keys of Vim's insert state** (`C-w`, `C-u`,
-  `C-o`, `C-r`, `<Home>`, `<End>`, ...): they do nothing there.
+- **Not built: the other keys of Vim's insert state** (`C-u`, `C-o`,
+  `C-r`, `<Home>`, `<End>`, ...): they do nothing there.
 
 ## Where a cursor rests
 
@@ -543,6 +548,28 @@ def deleteBackward (call : Call) : EditorM Unit := do
   let some range := selection.ranges[selection.primary]? | throw .badSelection
   -- At the text's start the cell before is none: the extent is empty.
   let start ← call.target.buffer.text.motion .previousCell range.head
+  call.target.replaceExtents selection #[⟨start, range.head⟩] ""
+
+/-- The command `C-w` runs in insert state, as it is called ("Editing keys",
+in the module docs): before the head of the primary range of the target's
+selection, the word and the blanks between it and the head are deleted,
+from the later of the line's start and the start of the word before the
+head, as one transaction that carries the selection before and the cursor
+after. At a line's start the line break before it goes whole, as
+`<Backspace>` deletes it there, and at the text's start nothing changes. -/
+def deleteWordBackward (call : Call) : EditorM Unit := do
+  let selection ← call.target.selection
+  let some range := selection.ranges[selection.primary]? | throw .badSelection
+  let text := call.target.buffer.text
+  let lineStart ← text.motion .lineStart range.head
+  -- At a line's start the cell before is its line break, and at the text's
+  -- start it is none: the extent is empty.
+  let start ←
+    if lineStart == range.head then
+      text.motion .previousCell range.head
+    else
+      do
+        pure (max lineStart (← text.motion (.previousWordStart .word) range.head))
   call.target.replaceExtents selection #[⟨start, range.head⟩] ""
 
 /-- The command `RET` runs in insert state, as it is called: the line is
