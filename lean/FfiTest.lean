@@ -3173,6 +3173,133 @@ def fuzzyChecks (_ : Unit) : List Check :=
             ranked.all (· < 10000) &&
             (← Editor.Ffi.fuzzyRank "" candidates).size == 10000 }]
 
+/-- A document of `text`, a snapshot of it, attached to `grammar` in the
+library's syntax service, once the tree of the snapshot is delivered; or
+`none`. The document is returned so that the caller keeps it alive: Lean
+frees an object after its last use, and a document freed is detached, so a
+caller uses the document after its last question of the service. -/
+def parsedSnapshot (text grammar : String) :
+    IO (Option (Editor.Ffi.Document × Editor.Ffi.Snapshot)) := do
+  let document ← Editor.Ffi.Document.new text
+  let snapshot ← document.snapshot
+  unless (← Editor.Ffi.syntaxAttach snapshot grammar) matches .ok () do
+    return none
+  unless ← Editor.Ffi.syntaxSettle snapshot 5000 do
+    return none
+  return some (document, snapshot)
+
+/-- A query of `grammar` compiled in the library, or `none`. -/
+def syntaxQuery (grammar source : String) : IO (Option Editor.Ffi.SyntaxQuery) := do
+  return (← Editor.Ffi.SyntaxQuery.new grammar source).toOption
+
+/-- The capture names of a query of `grammar` compiled in the library, and
+how many queries the library holds while it is held; `none` when it is not
+made. The query is dropped on return. -/
+def namesWhileHeld (grammar source : String) : IO (Option (Array String × UInt64)) := do
+  let some query ← syntaxQuery grammar source | return none
+  let held ← Editor.Ffi.SyntaxQuery.live
+  return some (← query.captureNames, held)
+
+/-- The checks of the syntax service's bindings: a list of strings out, a
+query as a handle with its refusals as a status, a tag and an offset, and
+captures as words with their refusals as statuses. What is parsed and what a
+query answers are the library's rules; these pin that each request, its
+answer and each refusal cross. -/
+def syntaxChecks (_ : Unit) : List Check :=
+  [{  name := "the grammars the library has cross as a list of strings"
+      run := return (← Editor.Ffi.syntaxGrammars) == #["json", "rust"] },
+    { name :=
+        "a query crosses as a handle, with its capture names as a list of strings, and is freed when the last reference to it goes"
+      run := do
+        let before ← Editor.Ffi.SyntaxQuery.live
+        let names ← namesWhileHeld "json" "(pair key: (string) @key value: (_) @value) @pair"
+        return names == some (#["key", "value", "pair"], before + 1) &&
+            (← Editor.Ffi.SyntaxQuery.live) == before },
+    { name :=
+        "a query refused crosses with the library's tag of why and the byte offset it found it at, and one of a grammar the library lacks as that"
+      run := do
+        let refused ← Editor.Ffi.SyntaxQuery.new "json" "(object) @o\n(no_such_kind) @x"
+        let field ← Editor.Ffi.SyntaxQuery.new "json" "(pair nope: (string)) @x"
+        let malformed ← Editor.Ffi.SyntaxQuery.new "json" "(("
+        let unknown ← Editor.Ffi.SyntaxQuery.new "cobol" "(x) @x"
+        return (match refused with
+            | .error (.refused 1 13) => true
+            | _ => false) &&
+            (match field with
+            | .error (.refused 2 _) => true
+            | _ => false) &&
+            (match malformed with
+            | .error (.refused 0 _) => true
+            | _ => false) &&
+            (match unknown with
+            | .error .unknownGrammar => true
+            | _ => false) },
+    { name :=
+        "captures cross as words, four a capture: a Rust function's name, by its pattern, its capture and its range"
+      run := do
+        let some (document, snapshot) ←
+          parsedSnapshot "fn one() {}\nfn two() {}\n" "rust" | return false
+        let some query ←
+          syntaxQuery "rust" "(function_item name: (identifier) @name) @function" | return false
+        let found ← Editor.Ffi.syntaxCaptures snapshot query 0 24
+        let some names ←
+          (Editor.Ffi.syntaxCaptures snapshot query 15 16).map (·.toOption) | return false
+        let kept ← document.read
+        return found.toOption ==
+              some
+                #[{ pattern := 0, capture := 1, start := 0, stop := 11 },
+                  { pattern := 0, capture := 0, start := 3, stop := 6 },
+                  { pattern := 0, capture := 1, start := 12, stop := 23 },
+                  { pattern := 0, capture := 0, start := 15, stop := 18 }] &&
+            names.size == 2 &&
+            !kept.isEmpty },
+    { name :=
+        "each refusal of captures crosses as its status: a text not attached, a tree not delivered of the snapshot's revision, a query of another grammar and a range that is not two positions in order"
+      run := do
+        let some (document, snapshot) ← parsedSnapshot "fn one() {}\n" "rust" | return false
+        let some rust ← syntaxQuery "rust" "(identifier) @id" | return false
+        let some json ← syntaxQuery "json" "(number) @n" | return false
+        let other ← (← Editor.Ffi.Document.new "fn x() {}").snapshot
+        let notAttached ← Editor.Ffi.syntaxCaptures other rust 0 2
+        let wrongGrammar ← Editor.Ffi.syntaxCaptures snapshot json 0 2
+        let badRange ← Editor.Ffi.syntaxCaptures snapshot rust 5 2
+        let pastTheEnd ← Editor.Ffi.syntaxCaptures snapshot rust 0 100
+        -- An edit the snapshot taken before it is not of: once the tree of
+        -- the edit is delivered, the earlier snapshot has none.
+        unless ← document.replace 0 0 "fn zero() {}\n" do
+          return false
+        unless ← Editor.Ffi.syntaxSettle (← document.snapshot) 5000 do
+          return false
+        let notParsed ← Editor.Ffi.syntaxCaptures snapshot rust 0 2
+        -- The document is read here, so it is alive until now: a document
+        -- freed is detached.
+        let kept ← document.read
+        return !kept.isEmpty && notAttached matches .error .notAttached &&
+            wrongGrammar matches .error .wrongGrammar &&
+            badRange matches .error .badRange &&
+            pastTheEnd matches .error .badRange &&
+            notParsed matches .error .notParsed },
+    { name :=
+        "a document is attached and detached through a snapshot of it, and one of a grammar the library lacks is refused"
+      run := do
+        let document ← Editor.Ffi.Document.new "[1]"
+        let snapshot ← document.snapshot
+        let unknown ← Editor.Ffi.syntaxAttach snapshot "cobol"
+        let attached ← Editor.Ffi.syntaxAttach snapshot "json"
+        let first ← Editor.Ffi.syntaxDetach snapshot
+        let second ← Editor.Ffi.syntaxDetach snapshot
+        let kept ← document.read
+        return kept == "[1]" && unknown matches .error .unknownGrammar && attached matches .ok () &&
+            first &&
+            !second },
+    { name := "the text of a file the file service loaded is of no document, and is refused as that"
+      run :=
+        inOwnDirectory fun directory => do
+          let path := directory / "loaded.json"
+          IO.FS.writeFile path "[1]"
+          let some (.loaded snapshot _ _ _) ← loadResult 1090 path 100 | return false
+          return (← Editor.Ffi.syntaxAttach snapshot "json") matches .error .noDocument }]
+
 /-- How many frames the library's latest render session was submitted; 0
 when none has started. -/
 def framesSubmitted : IO UInt64 := do
@@ -3466,6 +3593,7 @@ def checks (_ : Unit) : List Check :=
     eventChecks () ++
     interruptChecks () ++
     fuzzyChecks () ++
+    syntaxChecks () ++
     pictureChecks () ++
     themePicturesChecks () ++
     paddingChecks () ++

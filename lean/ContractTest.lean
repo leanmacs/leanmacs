@@ -18,6 +18,8 @@ import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Key.Notation
 import Editor.Loop
+import Editor.SyntaxTree.Contract
+import Editor.SyntaxTree.Real
 import Editor.Text.Contract
 import Editor.Text.Model
 import Editor.Text.Real
@@ -151,6 +153,22 @@ job port's, read from a fake clock here, and, with the command loop over
 the real text binding, an interrupt key that arrives while a command runs.
 That check is single-threaded, so where the key arrives is exact: the
 display handler posts it during one of the command's own publishes.
+
+The syntax tree interface's contract (`Editor/SyntaxTree/Contract.lean`) is
+run against its real binding (`Editor/SyntaxTree/Real.lean`), so against the
+library's syntax service, tree-sitter's JSON grammar over its worker thread
+(`syntaxTreeFailures`): each property's texts are made documents and
+snapshots in the library, entered in a table of the text binding, and the
+property runs against a new binding over that table. The library parses off
+the editor thread, so the runner's handler waits, with a bound, for the
+snapshot's tree to be delivered before it forwards each question of
+captures (`Ffi.syntaxSettle`): the one difference from `model-test`'s run of
+the same list against the model. `syntaxTreeChecks` pins what only the real
+binding shows: that the library has a Rust grammar, a Rust function's name
+captured, a query of one grammar asked of a text parsed with another, and a
+text edited through its document reparsed, its new function's name captured
+once the tree of the edit is delivered. That the text of a file the file
+service loaded is of no document is `ffi-test`'s (`FfiTest.syntaxChecks`).
 
 The cases of the editor API (`Editor/Api/Cases.lean`) are played on the
 real text binding, with a recorder as the display and nothing watched
@@ -1347,6 +1365,112 @@ def fuzzyChecks : List Check :=
           | .ok ranked => ranked == #[2, 0]
           | .error _ => false }]
 
+/-- Documents of `texts` in the library, a table of a snapshot of each, the
+ids of those snapshots in the order of `texts`, and a real syntax tree
+binding over the table whose handler waits, with a bound, for a snapshot's
+tree to be delivered before it forwards a question of its captures. The
+documents are returned so that the caller keeps them alive: a document
+freed detaches its text. -/
+def syntaxTreeOver (texts : Array String) :
+    IO (Array Ffi.Document × Snapshots × Array SnapshotId × SyntaxTreeHandler) := do
+  let table ← Snapshots.new
+  let documents ← texts.mapM Ffi.Document.new
+  let ids ←
+    documents.mapM fun document => do
+        table.add (← document.snapshot)
+  let real ← RealSyntaxTree.new table.reader
+  let handler : SyntaxTreeHandler := fun request => do
+    if let .captures snapshot _ _ _ := request then
+      if let some found← table.find? snapshot then
+        discard (Ffi.syntaxSettle found 5000)
+    real.handle request
+  return (documents, table, ids, handler)
+
+/-- Runs `property` of the syntax tree interface's contract against the real
+binding, over documents of its texts. -/
+def runOnRealSyntaxTree (property : SyntaxTreeContract.Property) : IO Bool := do
+  let (documents, _, ids, handler) ← syntaxTreeOver property.texts
+  let result ← (property.holds ids).runWith handler
+  -- The documents are read here, so they are alive for the whole run.
+  for document in documents do
+    discard document.read
+  return result matches .ok true
+
+/-- The names of the syntax tree interface's contract properties that do not
+hold of its real binding. -/
+def syntaxTreeFailures : IO (List String) := do
+  let failed ← SyntaxTreeContract.failures runOnRealSyntaxTree SyntaxTreeContract.properties
+  return failed.map (s!"the real syntax tree binding: {·}")
+
+/-- Runs `check` against the real syntax tree binding over documents of
+`texts`, handed the documents, which it may edit, the table of snapshots the
+binding reads, which it may add to, the snapshots' ids and the binding's
+handler; whether it answered `true`. -/
+def onRealSyntaxTree (texts : Array String)
+    (check : Array Ffi.Document → Snapshots → Array SnapshotId → SyntaxTreeHandler → IO Bool) :
+    IO Bool := do
+  let (documents, table, ids, handler) ← syntaxTreeOver texts
+  let held ← check documents table ids handler
+  for document in documents do
+    discard document.read
+  return held
+
+/-- The captures `query` answers of the whole of `text`, as the texts of
+their nodes. -/
+def capturedTexts (text : String) (captures : Array SyntaxTree.Capture) : Array String :=
+  captures.map fun capture => String.fromUTF8! (text.toUTF8.extract capture.start capture.stop)
+
+/-- What only the real syntax tree binding shows: the library's Rust
+grammar, a query of one grammar asked of a text parsed with another, and a
+text edited through its document reparsed. -/
+def syntaxTreeChecks : List Check :=
+  [{  name := "the library's syntax service has a Rust grammar beside JSON"
+      run := do
+        let grammars ←
+          SyntaxTree.grammars.runWith fun request => do
+              let (_, _, _, handler) ← syntaxTreeOver #[]
+              handler request
+        return grammars.toOption.any fun names => names.contains "rust" && names.contains "json" },
+    { name := "a Rust function's name is captured through the binding, by its field"
+      run :=
+        onRealSyntaxTree #["fn one() {}\nstruct S;\nfn two(x: u8) {}\n"] fun _ _ ids handler => do
+          let program : SyntaxTreeM (Array SyntaxTree.Capture) := do
+            SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust"
+            let query ← SyntaxTree.compile "rust" "(function_item name: (identifier) @name)"
+            SyntaxTree.captures (SyntaxTreeContract.nth ids 0) query 0 39
+          let text := "fn one() {}\nstruct S;\nfn two(x: u8) {}\n"
+          return match ← program.runWith handler with
+            | .ok captures => capturedTexts text captures == #["one", "two"]
+            | .error _ => false },
+    { name := "a query of JSON asked of a text parsed as Rust is refused as of the wrong grammar"
+      run :=
+        onRealSyntaxTree #["fn one() {}"] fun _ _ ids handler => do
+          let program : SyntaxTreeM Bool := do
+            SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust"
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTreeContract.refusedWith .wrongGrammar
+                (SyntaxTree.captures (SyntaxTreeContract.nth ids 0) query 0 3)
+          return (← program.runWith handler) matches .ok true },
+    { name :=
+        "a text edited through its document is reparsed: its new function's name is captured once the tree of the edit is delivered"
+      run :=
+        onRealSyntaxTree #["fn one() {}\n"] fun documents table ids handler => do
+          let some document := documents[0]? | return false
+          let attached ← (SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust").runWith handler
+          unless ← document.replace 0 0 "fn zero() {}\n" do
+            return false
+          -- The snapshot of the edited text enters the table, as the
+          -- editor's would after the edit.
+          let edited ← table.add (← document.snapshot)
+          let program : SyntaxTreeM (Array SyntaxTree.Capture) := do
+            let query ← SyntaxTree.compile "rust" "(function_item name: (identifier) @name)"
+            SyntaxTree.captures edited query 0 25
+          let text := "fn zero() {}\nfn one() {}\n"
+          return attached matches .ok () &&
+              match ← program.runWith handler with
+              | .ok captures => capturedTexts text captures == #["zero", "one"]
+              | .error _ => false }]
+
 /-- Runs a property of the watch port's contract against the real binding
 over `timers`. The library is told the interrupt key, and the property's
 interrupt keys arrive through the library's window input, as a window's
@@ -1678,6 +1802,9 @@ def main (arguments : List String) : IO UInt32 := do
   let fuzzyFailed ← ContractTest.fuzzyFailures
   let fuzzyChecks := ContractTest.fuzzyChecks
   let fuzzyCheckFailed ← ContractTest.checkFailures fuzzyChecks
+  let syntaxTreeFailed ← ContractTest.syntaxTreeFailures
+  let syntaxTreeChecks := ContractTest.syntaxTreeChecks
+  let syntaxTreeCheckFailed ← ContractTest.checkFailures syntaxTreeChecks
   let watchFailed ← ContractTest.watchFailures services.timers
   let watchChecks := ContractTest.watchChecks services.timers
   let watchCheckFailed ← ContractTest.checkFailures watchChecks
@@ -1701,6 +1828,8 @@ def main (arguments : List String) : IO UInt32 := do
       clipboardCheckFailed ++
       fuzzyFailed ++
       fuzzyCheckFailed ++
+      syntaxTreeFailed ++
+      syntaxTreeCheckFailed ++
       watchFailed ++
       watchCheckFailed ++
       apiFailed ++
@@ -1710,6 +1839,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

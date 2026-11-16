@@ -664,6 +664,154 @@ lean_obj_res editor_glue_fuzzy_rank(b_lean_obj_arg pattern,
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
+// ---- The syntax service ----
+//
+// A query is a handle like a document: an external object whose finaliser
+// is the only caller of the library's `free`. A list of strings comes back
+// as words and one string, each a buffer the library lent and the glue
+// copies and hands back. Captures come back as words, as a document's log
+// does.
+
+typedef struct editor_ffi_syntax_query editor_ffi_syntax_query;
+// The library's `RawStrings`.
+typedef struct {
+  uint8_t *words;
+  size_t words_len;
+  uint8_t *text;
+  size_t text_len;
+} editor_ffi_raw_strings;
+// The library's `RawQuery`.
+typedef struct {
+  uint64_t status;
+  uint64_t kind;
+  uint64_t offset;
+  editor_ffi_syntax_query *query;
+} editor_ffi_raw_query;
+void editor_ffi_syntax_grammars(editor_ffi_raw_strings *out);
+uint64_t editor_ffi_syntax_attach(const editor_ffi_snapshot *snapshot,
+                                  const uint8_t *grammar, size_t len);
+bool editor_ffi_syntax_detach(const editor_ffi_snapshot *snapshot);
+void editor_ffi_syntax_query_new(const uint8_t *grammar, size_t grammar_len,
+                                 const uint8_t *source, size_t source_len,
+                                 editor_ffi_raw_query *out);
+void editor_ffi_syntax_query_free(editor_ffi_syntax_query *query);
+uint64_t editor_ffi_syntax_query_live(void);
+void editor_ffi_syntax_capture_names(const editor_ffi_syntax_query *query,
+                                     editor_ffi_raw_strings *out);
+void editor_ffi_syntax_captures(const editor_ffi_snapshot *snapshot,
+                                const editor_ffi_syntax_query *query,
+                                size_t start, size_t end,
+                                editor_ffi_raw_words *out);
+bool editor_ffi_syntax_settle(const editor_ffi_snapshot *snapshot,
+                              uint64_t bound_ms);
+
+static lean_external_class *syntax_query_class;
+static pthread_once_t syntax_query_class_once = PTHREAD_ONCE_INIT;
+
+// Runs when Lean drops the last reference to a query, on whichever thread
+// dropped it. The only caller of the library's `free`.
+static void syntax_query_finalize(void *query) {
+  editor_ffi_syntax_query_free(query);
+}
+
+// A query holds no Lean objects, so there is nothing to visit.
+static void syntax_query_foreach(void *query, b_lean_obj_arg visitor) {
+  (void)query;
+  (void)visitor;
+}
+
+static void syntax_query_class_register(void) {
+  syntax_query_class =
+      lean_register_external_class(syntax_query_finalize, syntax_query_foreach);
+}
+
+// Lean's `RawStrings` for a record the library filled: a copy of its words
+// and of its text. Both buffers are handed back.
+static lean_object *raw_strings_take(editor_ffi_raw_strings raw) {
+  // `RawStrings`: the object fields `words` and `text`, no scalars.
+  lean_object *strings = lean_alloc_ctor(0, 2, 0);
+  lean_ctor_set(strings, 0, byte_array_copy(raw.words, raw.words_len));
+  lean_ctor_set(
+      strings, 1,
+      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len));
+  editor_ffi_text_free(raw.words, raw.words_len);
+  editor_ffi_text_free(raw.text, raw.text_len);
+  return strings;
+}
+
+// `Editor.Ffi.syntaxGrammarsRaw : IO RawStrings`
+lean_obj_res editor_glue_syntax_grammars(void) {
+  editor_ffi_raw_strings raw;
+  editor_ffi_syntax_grammars(&raw);
+  return lean_io_result_mk_ok(raw_strings_take(raw));
+}
+
+// `Editor.Ffi.syntaxAttachRaw : @& Snapshot → @& String → IO UInt64`
+lean_obj_res editor_glue_syntax_attach(b_lean_obj_arg snapshot,
+                                       b_lean_obj_arg grammar) {
+  return lean_io_result_mk_ok(lean_box_uint64(
+      editor_ffi_syntax_attach(lean_get_external_data(snapshot),
+                               string_bytes(grammar), string_len(grammar))));
+}
+
+// `Editor.Ffi.syntaxDetach : @& Snapshot → IO Bool`
+lean_obj_res editor_glue_syntax_detach(b_lean_obj_arg snapshot) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_syntax_detach(lean_get_external_data(snapshot))));
+}
+
+// `Editor.Ffi.SyntaxQuery.newRaw : @& String → @& String → IO
+// RawSyntaxQuery`
+lean_obj_res editor_glue_syntax_query_new(b_lean_obj_arg grammar,
+                                          b_lean_obj_arg source) {
+  editor_ffi_raw_query raw;
+  editor_ffi_syntax_query_new(string_bytes(grammar), string_len(grammar),
+                              string_bytes(source), string_len(source), &raw);
+  lean_object *query = lean_box(0); // `none`
+  if (raw.query != NULL) {
+    pthread_once(&syntax_query_class_once, syntax_query_class_register);
+    query = option_some(lean_alloc_external(syntax_query_class, raw.query));
+  }
+  // `RawSyntaxQuery`: the object field `query`, then `status`, `kind` and
+  // `offset`.
+  lean_object *made = lean_alloc_ctor(0, 1, 3 * sizeof(uint64_t));
+  lean_ctor_set(made, 0, query);
+  lean_ctor_set_uint64(made, uint64_field(1, 0), raw.status);
+  lean_ctor_set_uint64(made, uint64_field(1, 1), raw.kind);
+  lean_ctor_set_uint64(made, uint64_field(1, 2), raw.offset);
+  return lean_io_result_mk_ok(made);
+}
+
+// `Editor.Ffi.SyntaxQuery.captureNamesRaw : @& SyntaxQuery → IO RawStrings`
+lean_obj_res editor_glue_syntax_capture_names(b_lean_obj_arg query) {
+  editor_ffi_raw_strings raw;
+  editor_ffi_syntax_capture_names(lean_get_external_data(query), &raw);
+  return lean_io_result_mk_ok(raw_strings_take(raw));
+}
+
+// `Editor.Ffi.SyntaxQuery.live : IO UInt64`
+lean_obj_res editor_glue_syntax_query_live(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_syntax_query_live()));
+}
+
+// `Editor.Ffi.syntaxCapturesRaw : @& Snapshot → @& SyntaxQuery → USize →
+// USize → IO RawWords`
+lean_obj_res editor_glue_syntax_captures(b_lean_obj_arg snapshot,
+                                         b_lean_obj_arg query, size_t start,
+                                         size_t stop) {
+  editor_ffi_raw_words raw;
+  editor_ffi_syntax_captures(lean_get_external_data(snapshot),
+                             lean_get_external_data(query), start, stop, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.syntaxSettle : @& Snapshot → UInt64 → IO Bool`
+lean_obj_res editor_glue_syntax_settle(b_lean_obj_arg snapshot,
+                                       uint64_t bound_ms) {
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_syntax_settle(lean_get_external_data(snapshot), bound_ms)));
+}
+
 // ---- The event queues ----
 //
 // Rust threads push events and Lean pulls them: nothing here calls Lean. A
