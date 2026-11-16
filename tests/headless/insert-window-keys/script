@@ -1,0 +1,31 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which binds every key of the Vim scheme's `C-w`
+# table with `bindKey`, so the window commands are reached in insert state
+# without leaving it. What it prints must be exactly `expected`. It touches
+# no file.
+
+reload
+settle
+resize 640 480
+
+# `C-w v` splits view 0. Under master-and-stack the new window, view 1, goes
+# right after it in the list, so it is the stack, on the right, and focused.
+# `i` begins an insert in it, and `ab` is typed.
+key w KeyW control
+key v KeyV -
+key i KeyI -
+commit ab
+
+# `C-w h` in insert state focuses the window on the left, view 0, main.
+key w KeyW control
+key h KeyH -
+scene
+
+# `C-w l` focuses view 1 again, which is still in insert state.
+key w KeyW control
+key l KeyL -
+scene
+
+# `c` is typed after `ab`: both views show `abc`.
+commit c
+scene

@@ -4152,7 +4152,7 @@ def shippedChecks (_ : Unit) : List Check :=
             ex "ls" == some Buffers.listName &&
             ex "bd" == some Buffers.closeName },
     { name :=
-        "the executable's hosts start with every window command registered for the owner compiled"
+        "the executable's hosts start with every window command registered for the owner compiled, every command the Vim scheme's C-w table names among them"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -4161,7 +4161,8 @@ def shippedChecks (_ : Unit) : List Check :=
             (← Snapshots.new) (← Job.HeldSnapshots.new)
         let registry := Headless.compiled shipped
         let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
-        return !WindowCommands.commands.isEmpty && WindowCommands.commands.all (compiled ·.name) },
+        return !WindowCommands.commands.isEmpty && WindowCommands.commands.all (compiled ·.name) &&
+            Vim.Default.windowKeys.all (compiled ·.2) },
     { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
       run := do

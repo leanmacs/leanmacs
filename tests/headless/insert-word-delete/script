@@ -1,0 +1,19 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which binds no key under `C-w`, so insert state's
+# `C-w` is Vim's word delete. What it prints must be exactly `expected`. It
+# touches no file.
+
+reload
+settle
+resize 640 480
+
+# `i` begins an insert, `hello world` is typed, and `C-w` deletes the word
+# before the bar: `hello ` is left, in insert state.
+key i KeyI -
+commit hello world
+key w KeyW control
+scene
+
+# `l` is a key that prints, and it is text: `C-w` was no prefix.
+key l KeyL -
+scene

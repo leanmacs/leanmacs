@@ -924,6 +924,128 @@ view 1 320,0 320x104: "hello,world\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12",
 status 1 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "12:1" +4, mode-line.inactive "Bot" +4
 ```
 
+A sixteenth, `tests/headless/manual-splits/script`, runs on the config in
+`tests/headless/manual-splits/config`, which chooses the manual split layout
+(`layout Layout.manual`) and binds no key: the window commands are reached
+by the keys the Vim scheme ships under `C-w`. In a frame of 640 by 480,
+`C-w s` puts view 1 above view 0 and focuses it, each `0,0 640x232` and
+`0,232 640x232`; `C-w v` puts view 2 left of view 1 and focuses it, each
+`320x232`, view 0's row as it was; `C-w j` focuses view 0, below; `C-w C-w`
+wraps from view 0, the last in Vim's numbering, to view 2, the first; and
+`C-w C-c` three times closes view 2 and view 1 and is refused on view 0,
+the last, which takes the whole tiled area, with
+`window-close: the last window cannot be closed` in the echo area. Its
+output must be exactly `tests/headless/manual-splits/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/manual-splits/config ../tests/headless/manual-splits/script
+reload 1: installed, 1 chunks, 0 commands
+key arrived: w KeyW control
+key arrived: s KeyS -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
+view 1 0,0 640x232: "", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 0 0,232 640x232: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+key arrived: w KeyW control
+key arrived: v KeyV -
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 2 0,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 320,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 0 0,232 640x232: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+key arrived: w KeyW control
+key arrived: j KeyJ -
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 9, theme "default"
+view 2 0,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 320,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 0 0,232 640x232: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: w KeyW control
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 12, theme "default"
+view 2 0,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 320,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 0 0,232 640x232: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+key arrived: w KeyW control
+key arrived: c KeyC control
+key arrived: w KeyW control
+key arrived: c KeyC control
+key arrived: w KeyW control
+key arrived: c KeyC control
+scene 640x480, focused 0, echo "window-close: the last window cannot be closed", echo padding 8, preedit -, published 19, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+```
+
+A seventeenth, `tests/headless/insert-window-keys/script`, runs on the
+config in `tests/headless/insert-window-keys/config`, which binds every key
+of the Vim scheme's `C-w` table with `bindKey` (`for (keys, name) in
+Vim.Default.windowKeys do bindKey keys name`) and keeps the default layout.
+A binding of config's holds in every Vim state, and its `C-w` prefix
+shadows insert state's own `C-w`, the word delete. `C-w v` splits view 0:
+under master-and-stack the new window goes right after it, so view 1 is
+the stack, on the right, and focused. `i` and a committed `ab` type in
+view 1; `C-w h` in insert state focuses view 0, on the left, and `C-w l`
+focuses view 1 again, whose status line still says `INSERT`; a committed
+`c` then goes after `ab`, and both views show `abc`. Its output must be
+exactly `tests/headless/insert-window-keys/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/insert-window-keys/config ../tests/headless/insert-window-keys/script
+reload 1: installed, 1 chunks, 0 commands
+key arrived: w KeyW control
+key arrived: v KeyV -
+key arrived: i KeyI -
+key arrived: w KeyW control
+key arrived: h KeyH -
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 7, theme "default"
+view 0 0,0 320x464: "ab", scroll 0, selections 2..2, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
+view 1 320,0 320x464: "ab", scroll 0, selections 2..2, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:3" +4, mode-line.inactive "All" +4
+key arrived: w KeyW control
+key arrived: l KeyL -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 10, theme "default"
+view 0 0,0 320x464: "ab", scroll 0, selections 2..2, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:3" +4, mode-line.inactive "All" +4
+view 1 320,0 320x464: "ab", scroll 0, selections 2..2, padding 8 8
+status 1: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 12, theme "default"
+view 0 0,0 320x464: "abc", scroll 0, selections 3..3, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:4" +4, mode-line.inactive "All" +4
+view 1 320,0 320x464: "abc", scroll 0, selections 3..3, padding 8 8
+status 1: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:4" +4, mode-line.secondary "All" +4
+```
+
+An eighteenth, `tests/headless/insert-word-delete/script`, runs on the
+config in `tests/headless/insert-word-delete/config`, which binds no key
+under `C-w`, so insert state keeps Vim's word delete there: after `i` and a
+committed `hello world`, `C-w` leaves `hello `, still in insert state, and
+the `l` pressed after it is text, `hello l`. Its output must be exactly
+`tests/headless/insert-word-delete/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script
+reload 1: installed, 1 chunks, 0 commands
+key arrived: i KeyI -
+key arrived: w KeyW control
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 4, theme "default"
+view 0 0,0 640x464: "hello ", scroll 0, selections 6..6, padding 8 8
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:7" +4, mode-line.secondary "All" +4
+key arrived: l KeyL -
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 0 0,0 640x464: "hello l", scroll 0, selections 7..7, padding 8 8
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:8" +4, mode-line.secondary "All" +4
+```
+
 Two more runs of the gate are on a real file, and so on a script that
 cannot be checked in whole: the file port takes absolute paths only. Each
 is one entry of the `ffi-test` task, a shell of its own that makes a

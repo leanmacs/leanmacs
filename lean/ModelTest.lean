@@ -14898,7 +14898,41 @@ def vimDefaultChecks : List Check :=
             Vim.Default.scheme.report told ⟨0⟩ == vimDefaultReport "" &&
             reports.all (·.status.size == 1) &&
             (reports.map (·.status)).eraseDups.length == 5 &&
-            (reports.map (·.cursor.face)).eraseDups.length == 5) }]
+            (reports.map (·.cursor.face)).eraseDups.length == 5) },
+    { name :=
+        "criterion 2: in normal state C-w C-n, C-w C-p, C-w C-c and C-w C-w run the window commands Vim binds to C-w n, C-w p, C-w c and C-w w, each changing no text and entering no state"
+      run :=
+        pure <|
+          [("C-w C-n", WindowCommands.newName), ("C-w C-p", WindowCommands.lastName),
+                ("C-w C-c", WindowCommands.closeName), ("C-w C-w", WindowCommands.nextName)].all
+            fun (text, name) =>
+            vimDefaultCommand text == some { name } && (vimDefault text).2.head? == some .nothing },
+    { name :=
+        "C-w n, C-w p, C-w c and C-w w are left for tab pages: each yields nothing and leaves nothing pending"
+      run :=
+        pure <|
+          ["C-w n", "C-w p", "C-w c", "C-w w"].all fun text =>
+            (vimDefault text).2.getLast? == some .nothing && (vimDefault text).1.typed == [] },
+    { name :=
+        "C-w alone is pending in normal state; after an operator's key C-w s resets and leaves nothing pending; in the state i enters C-w runs a command that changes no text and enters no state, so the view stays there"
+      run :=
+        pure <|
+          (vimDefault "C-w").2 == [.nothing] && (vimDefault "C-w").1.typed == keys "C-w" &&
+            (vimDefault "d C-w s").2.getLast? == some .nothing &&
+            (vimDefault "d C-w s").1.typed == [] &&
+            (vimDefaultCommand "i C-w").any
+              (fun command => !command.changes && command.enters.isNone) &&
+            (vimDefaultRecord "i C-w").name == (vimDefaultRecord "i").name },
+    { name :=
+        "every row of the window commands' table binds its keys in normal state to the command it names, and every command it names is a window command that is registered"
+      run :=
+        pure <|
+          let registered := WindowCommands.commands.map (·.name)
+          !Vim.Default.windowKeys.isEmpty &&
+            (Vim.Default.keymap Vim.Default.windowCommands).bindings.length ==
+              Vim.Default.windowKeys.length &&
+            Vim.Default.windowKeys.all fun (text, name) =>
+              vimDefaultCommand text == some { name } && registered.contains name }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/
@@ -25814,23 +25848,6 @@ def frameCommandChecks : List Check :=
             FrameCommands.commands.map (·.name) == #["toggle-fullscreen", "minimise-window"] &&
             framed (frameDriver rebound) (presses "C-s-f") == some (#[.minimise], false)) }]
 
-/-- The keys the window checks press, each bound to a window command's name
-as config's `bindKey` binds a key to a name (`InputScheme.command`). -/
-def windowTestKeys : List (String × String) :=
-  [("C-w s", WindowCommands.splitName), ("C-w v", WindowCommands.splitVerticallyName),
-    ("C-w C-n", WindowCommands.newName), ("C-w C-c", WindowCommands.closeName),
-    ("C-w q", WindowCommands.quitName), ("C-w o", WindowCommands.onlyName),
-    ("C-w h", WindowCommands.leftName), ("C-w j", WindowCommands.downName),
-    ("C-w k", WindowCommands.upName), ("C-w l", WindowCommands.rightName),
-    ("C-w C-w", WindowCommands.nextName), ("C-w W", WindowCommands.previousName),
-    ("C-w t", WindowCommands.topName), ("C-w b", WindowCommands.bottomName),
-    ("C-w C-p", WindowCommands.lastName), ("C-w x", WindowCommands.exchangeName),
-    ("C-w r", WindowCommands.rotateName), ("C-w R", WindowCommands.rotateBackName),
-    ("C-w =", WindowCommands.balanceName), ("C-w >", WindowCommands.widerName),
-    ("C-w <", WindowCommands.narrowerName), ("C-w z", WindowCommands.zoomName),
-    ("C-w m", WindowCommands.promoteName), ("C-w M", WindowCommands.demoteName),
-    ("C-w ,", WindowCommands.mainMoreName), ("C-w .", WindowCommands.mainFewerName)]
-
 /-- Active keymaps, for every view, that bind each key string of `table` to
 the command name beside it, as config's `bindKey` binds one. -/
 def windowMaps (table : List (String × String)) : EditorState → ViewId → List (Keymap Vim.Bound) :=
@@ -25838,9 +25855,11 @@ def windowMaps (table : List (String × String)) : EditorState → ViewId → Li
 
 /-- What a step of the window checks is handed: evil's commands, the
 minibuffer's, the ex line's and the window commands, `layout` as config's
-layout, and `maps` as the active keymaps. -/
+layout, and `maps` as the active keymaps, none unless a check names them,
+so the window commands are reached by the keys the Vim scheme that ships
+binds. -/
 def windowHanded (layout : Layout)
-    (maps : EditorState → ViewId → List (Keymap Vim.Bound) := windowMaps windowTestKeys) :
+    (maps : EditorState → ViewId → List (Keymap Vim.Bound) := fun _ _ => []) :
     Loop.Keys Vim.Default.scheme :=
   { evilHanded (Ex.commands ++ WindowCommands.commands) with
     layout := some layout, maps }
@@ -26063,6 +26082,28 @@ def windowCommandChecks : List Check :=
             focus Layout.default "C-w l C-w j C-w h" == some 0 &&
             focus .monocle "C-w l" == some 0 &&
             focus .monocle "C-w j" == some 0 },
+    { name :=
+        "criterion 6, on the models, over two windows side by side: with no active keymaps C-w in insert state deletes the word before the bar and l after it is text, the view staying in insert state and focused; with active keymaps that bind the window keys, as a config's bindKey binds them, C-w l and C-w h in insert state focus the window on the right and come back without leaving insert state, and typing goes on where it was"
+      run :=
+        pure <|
+          let stateOf (driver : EvilDriver) (view : Nat) : String :=
+            (driver.loop.input : Vim.State).stateOf Vim.Default.states ⟨view⟩
+          let bound := windowHanded Layout.default (windowMaps Vim.Default.windowKeys)
+          match (windowDriver 2 Layout.default).map (evilFed · "i h e l l o SPC w o r l d C-w l"),
+            windowDriver 2 Layout.default 0 bound with
+          | some plain, some driver =>
+            let typed := evilFed driver "i a b C-w l"
+            let back := evilFed typed "C-w h"
+            let more := evilFed back "c"
+            evilText plain == some "hello l" && plain.loop.state.frame.focused == ⟨0⟩ &&
+              stateOf plain 0 == "insert" &&
+              typed.loop.state.frame.focused == ⟨1⟩ &&
+              stateOf typed 0 == "insert" &&
+              back.loop.state.frame.focused == ⟨0⟩ &&
+              stateOf back 0 == "insert" &&
+              evilText more == some "abc" &&
+              stateOf more 0 == "insert"
+          | _, _ => false },
     { name :=
         "window-close on the minibuffer's view, by a config's binding that holds there, is refused with ofMinibuffer, the echo area says why, and the prompt stays open"
       run :=

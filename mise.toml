@@ -257,6 +257,26 @@ run = [
   # side with the edit, each with its own cursor and scroll anchor, moved
   # by the edit (`two-windows/expected`). It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/two-windows/config ../tests/headless/two-windows/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/two-windows/expected -",
+  # The manual split layout (tests/headless/manual-splits): a config that
+  # chooses it and binds no key, so the Vim scheme's own `C-w` keys reach
+  # the window commands. `C-w s` puts the new window above and focuses it,
+  # `C-w v` the next one on its left, `C-w j` focuses the window below,
+  # `C-w C-w` wraps from the last window to the first, and `C-w C-c` three
+  # times closes two windows and is refused on the last, with the reason in
+  # the echo area (`manual-splits/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/manual-splits/config ../tests/headless/manual-splits/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/manual-splits/expected -",
+  # The window commands in insert state (tests/headless/insert-window-keys):
+  # a config that binds every key of the Vim scheme's `C-w` table with
+  # `bindKey`. `C-w v` puts view 1 on the right, under master-and-stack,
+  # and `C-w h` and `C-w l` in insert state focus view 0 and view 1 again
+  # without leaving insert state, so the text typed after them goes on
+  # where it was (`insert-window-keys/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-window-keys/config ../tests/headless/insert-window-keys/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-window-keys/expected -",
+  # Vim's word delete in insert state (tests/headless/insert-word-delete):
+  # a config that binds no key under `C-w`, so `C-w` deletes the word
+  # before the bar and the `l` after it is text (`insert-word-delete/expected`).
+  # It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-word-delete/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed

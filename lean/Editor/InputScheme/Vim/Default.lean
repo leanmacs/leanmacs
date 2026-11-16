@@ -34,13 +34,14 @@ The operators' entries are `Evil.operators`
 | `insertCommands` | Insert state's: the key that returns to normal state, and its editing keys, `<Backspace>`, `C-w` (Vim's word delete), `RET`, `TAB` and the four arrow keys (`Editor/Evil.lean`, "Editing keys"), each bound as a command that changes no text for the grammar, so it is not the last change. `<Backspace>`, `C-w`, `RET` and `TAB` add themselves to the session's recording (`Command.typed`), so `.` replays them; each arrow key restarts the last change as `i` once something is typed after it (`Command.restarts`), as Vim 9.1's `ins-special-special` says |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
 | `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, `<Escape>`, which cancels it, `TAB` and `C-n`, which move to the next of its candidates, `S-TAB` and `C-p`, which move to the previous, `<Backspace>`, which deletes the character before the bar, and cancels the prompt when the minibuffer is empty, as Vim's command line does, `<ArrowLeft>` and `<ArrowRight>`, the motions `left` and `right`, and `C-u`, which deletes from the bar to the input's start |
+| `windowCommands` | Normal state's window commands under `C-w`, Vim 9.1's keys (`windowKeys`, a key string and a command name each, `Editor/WindowCommands.lean`): split (`s`, `S`, `C-s`), split vertically (`v`, `C-v`), new (`C-n`), close (`C-c`), quit (`q`, `C-q`), only (`o`, `C-o`), focus by direction (`h j k l`, their control spellings and the arrow keys, and `<Backspace>` left), next (`C-w`), previous (`W`), top (`t`, `C-t`), bottom (`b`, `C-b`), last (`C-p`), exchange (`x`, `C-x`), rotate (`r`, `C-r`) and back (`R`), balance (`=`), taller and shorter (`+`, `-`), wider and narrower (`>`, `<`), and three keys Vim does not bind this way: zoom (`z`, which displaces Vim's preview close), promote and demote (`m`, `M`), and main's count up and down (`,`, `.`, xmonad's). `C-w n`, `C-w p`, `C-w c` and `C-w w` are left for tab pages, and Vim's commands of those keys keep their control spellings. Each changes no text and enters no state. It is not in the pending keymaps, so `d C-w s` resets |
 | `scrollCommands` | The commands that scroll a view, of normal state and the two visual states: `C-d` and `C-u`, by half a view, `C-f` and `C-b`, by a view, and `z t`, `z z` and `z b`, which put the cursor's row at the top, in the middle and at the bottom of the view (`Editor/Evil/Scroll.lean`). Each changes no text and enters no state, so none is the last change. They are commands and not motions, so an operator's key before one is dropped. `z` begins the three sequences and is bound to nothing itself, so it is a prefix in those states. Insert state and the minibuffer's do not have the table: there `C-d` and `C-u` are Vim's editing keys, and `z` is text. `C-u` is built in the minibuffer's state, which binds it in its own table; in insert state neither is built |
 
 ## The states
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads | Run table |
 |---|---|---|---|---|---|
-| `normal`, the initial state | `normalCommands`, `scrollCommands`, `operators`, `motions`; while an operator waits, `objects`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | | `normalRuns` |
+| `normal`, the initial state | `normalCommands`, `windowCommands`, `scrollCommands`, `operators`, `motions`; while an operator waits, `objects`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | | `normalRuns` |
 | `insert` | `insertCommands` | Bar | Exclusive | Typing is text | `insertRuns` |
 | `visual` | `visualCommands`, `scrollCommands`, `operators`, `motions`, `objects` | Block | Inclusive | Operators act on the selection | `visualRuns` |
 | `visual-line` | `visualLineCommands`, `scrollCommands`, `operators`, `motions`, `objects` | Block | Line | Operators act on the selection, and a text object enters `visual` | `visualRuns` |
@@ -262,6 +263,39 @@ def minibufferCommands : List (String × Bound) :=
     ("<Backspace>", running "minibuffer-delete-backward"), ("<ArrowLeft>", .motion "left"),
     ("<ArrowRight>", .motion "right"), ("C-u", running "minibuffer-delete-to-start")]
 
+/-- The window commands' keys, Vim 9.1's under `C-w` (`CTRL-W`): each key
+string, and the name of the window command it runs
+(`Editor/WindowCommands.lean`). Where tmux's keys win, `C-w n`, `C-w p`,
+`C-w c` and `C-w w`, which are for tab pages, Vim's commands keep their
+control spellings, `C-w C-n`, `C-w C-p`, `C-w C-c` and `C-w C-w`. It is
+data a config can bind too: `for (keys, name) in Vim.Default.windowKeys do
+bindKey keys name` puts the window commands in every state. -/
+def windowKeys : List (String × String) :=
+  [("C-w s", "window-split"), ("C-w S", "window-split"), ("C-w C-s", "window-split"),
+    ("C-w v", "window-split-vertically"), ("C-w C-v", "window-split-vertically"),
+    ("C-w C-n", "window-new"), ("C-w C-c", "window-close"), ("C-w q", "window-quit"),
+    ("C-w C-q", "window-quit"), ("C-w o", "window-only"), ("C-w C-o", "window-only"),
+    ("C-w h", "window-focus-left"), ("C-w C-h", "window-focus-left"),
+    ("C-w <ArrowLeft>", "window-focus-left"), ("C-w <Backspace>", "window-focus-left"),
+    ("C-w j", "window-focus-down"), ("C-w C-j", "window-focus-down"),
+    ("C-w <ArrowDown>", "window-focus-down"), ("C-w k", "window-focus-up"),
+    ("C-w C-k", "window-focus-up"), ("C-w <ArrowUp>", "window-focus-up"),
+    ("C-w l", "window-focus-right"), ("C-w C-l", "window-focus-right"),
+    ("C-w <ArrowRight>", "window-focus-right"), ("C-w C-w", "window-focus-next"),
+    ("C-w W", "window-focus-previous"), ("C-w t", "window-focus-top"),
+    ("C-w C-t", "window-focus-top"), ("C-w b", "window-focus-bottom"),
+    ("C-w C-b", "window-focus-bottom"), ("C-w C-p", "window-focus-last"),
+    ("C-w x", "window-exchange"), ("C-w C-x", "window-exchange"), ("C-w r", "window-rotate"),
+    ("C-w C-r", "window-rotate"), ("C-w R", "window-rotate-back"), ("C-w =", "window-balance"),
+    ("C-w +", "window-taller"), ("C-w -", "window-shorter"), ("C-w >", "window-wider"),
+    ("C-w <", "window-narrower"), ("C-w z", "window-zoom"), ("C-w m", "window-promote"),
+    ("C-w M", "window-demote"), ("C-w ,", "window-main-more"), ("C-w .", "window-main-fewer")]
+
+/-- The window commands' keys as a table of normal state's: each runs its
+command, which changes no text and enters no state. -/
+def windowCommands : List (String × Bound) :=
+  windowKeys.map fun (keys, name) => (keys, running name)
+
 /-- The commands that scroll a view, of normal state and the visual states:
 each changes no text and enters no state. -/
 def scrollCommands : List (String × Bound) :=
@@ -306,7 +340,7 @@ def keymap (table : List (String × Bound)) : Keymap Bound :=
 def states : States :=
   { initial :=
       { name := "normal"
-        keymaps := [normalCommands, scrollCommands, operators, motions].map keymap
+        keymaps := [normalCommands, windowCommands, scrollCommands, operators, motions].map keymap
         pending := [objects, scrollCommands, operators, motions].map keymap
         runs := normalRuns }
     others :=

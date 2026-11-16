@@ -1,0 +1,46 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which chooses the manual split layout and binds no
+# key: the window commands are reached by the Vim scheme's own `C-w` keys.
+# It shows Vim 9.1's split, focus and close, and the last window refused
+# with a reason in the echo area. What it prints must be exactly
+# `expected`. It touches no file.
+
+reload
+settle
+
+# A frame of 640 by 480: the tiled area is 640 by 464, above the bottom row.
+resize 640 480
+
+# `C-w s` splits the window: the new one, view 1, is above it and focused,
+# and the two rows are equal.
+key w KeyW control
+key s KeyS -
+scene
+
+# `C-w v` splits view 1 side by side: the new one, view 2, is on its left
+# and focused, and the two columns are equal; view 0's row is as it was.
+key w KeyW control
+key v KeyV -
+scene
+
+# `C-w j` focuses the window below view 2: view 0.
+key w KeyW control
+key j KeyJ -
+scene
+
+# `C-w C-w` focuses the next window in the order Vim numbers them, top-left
+# to bottom-right: from view 0, the last, it wraps to view 2, the first.
+key w KeyW control
+key w KeyW control
+scene
+
+# `C-w C-c` three times: view 2 is closed and view 1 takes its row whole,
+# then view 1 is closed and view 0 takes the tiled area, and the last window
+# is refused, with the reason in the echo area.
+key w KeyW control
+key c KeyC control
+key w KeyW control
+key c KeyC control
+key w KeyW control
+key c KeyC control
+scene
