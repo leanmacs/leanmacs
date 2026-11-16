@@ -116,7 +116,7 @@
 //! | [`editor_ffi_processes_held`] | Whether a child is held at its bound: 0 no, 1 yes, 2 no such child. A readout for tests |
 //! | [`editor_ffi_processes_cancel`] | Cancels a run, a streaming child or a wait on one, killing the child's group, and says whether there was anything to cancel |
 //! | [`editor_ffi_processes_pending`] | Runs and streaming children whose child is not yet reaped, results not taken, and waits not answered or not taken |
-//! | [`editor_ffi_processes_shutdown`] | Kills every group and returns once every child is reaped; a later run is refused as shut down |
+//! | [`editor_ffi_processes_shutdown`] | Kills every group, runs and streaming children alike, and returns once every child is reaped; a later run or open is refused as shut down |
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -483,19 +483,26 @@ pub unsafe extern "C" fn editor_ffi_processes_take(id: u64, out: *mut RawProcess
     true
 }
 
-/// Cancels the run `id`, killing its child's group if the child is
-/// running, and returns whether there was anything to cancel: a run not
-/// over, or a result not taken. It is safe for an id that is unknown. A
-/// cancelled run is never completed; a completion already on the queue is
-/// still delivered, and the caller ignores it.
+/// Cancels the run, the streaming child or the wait `id`, and returns
+/// whether there was anything to cancel: a run or a streaming child not
+/// over, a wait not answered, or a result or a reply not taken. Cancelling
+/// a run or a streaming child kills its child's group if the child is
+/// running; a streaming child's waits, a pending read or write among them,
+/// are dropped with it. Cancelling a pending read or write drops that wait
+/// alone: the child keeps running and keeps what it wrote. It is safe for
+/// an id that is unknown. What is cancelled is never completed; a
+/// completion already on the queue is still delivered, and the caller
+/// ignores it.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_processes_cancel(id: u64) -> bool {
     PROCESSES.cancel(id)
 }
 
-/// How many runs have a child not yet reaped, and how many results have
-/// not been taken, together. A readout for tests, which use it to see that
-/// a cancelled run's child was reaped.
+/// How many runs and streaming children are not over, a cancelled one
+/// being over once its child is reaped; how many results have not been
+/// taken; and how many waits on streaming children have not been answered
+/// or not taken: all together. A readout for tests, which use it to see
+/// that a cancelled run's or streaming child's child was reaped.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_processes_pending() -> u64 {
     words::word(PROCESSES.pending())
@@ -604,11 +611,13 @@ pub extern "C" fn editor_ffi_processes_held(child: u64) -> u64 {
 /// delivery's standard output and standard error end to end.
 pub type RawStreamReply = RawProcessResult;
 
-/// Shuts the process's service down: kills every child's group, drops
-/// every result not taken, and returns once every child it started has
-/// been reaped. A run asked for later is accepted, refused as shut down
-/// (status 6) and completed at once. The editor calls it before it quits;
-/// it is safe to call again.
+/// Shuts the process's service down: cancels every run and every
+/// streaming child, killing each child's group, drops every result and
+/// every wait or reply not taken, and returns once every child it started
+/// has been reaped. It does not wait for a stream to close. A run or an
+/// open asked for later is accepted, refused as shut down (status 6) and
+/// completed at once. The editor calls it before it quits; it is safe to
+/// call again.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_processes_shutdown() {
     PROCESSES.shutdown();
