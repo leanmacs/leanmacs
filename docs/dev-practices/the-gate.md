@@ -479,7 +479,7 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and
-then the editor: once as `editor demo`, the demonstration, nine times in its headless
+then the editor: once as `editor demo`, the demonstration, ten times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must
 be exactly `expected`; with `keys-script`, which sends keys with their
@@ -492,7 +492,14 @@ exactly `scene-expected`; and with `dispatch/script` on the config in
 interrupt key, then the keys of a command that ends, then the keys of a
 command that starts a job with an argument, whose result the job's command
 says in the echo area, and whose output must
-be exactly `dispatch/expected`; and with `files/script` on the config in
+be exactly `dispatch/expected`; and with `finder-session/script` on the
+config in `finder-session/config`, the fixture
+`tools/prepare-finder-session.sh` installs for the owner's Finder session
+([`finder-session.md`](finder-session.md)), which runs that config's
+command by its key `C-c h` and by its ex name `finder-hello`, so the
+fixture the owner loads is known to load and to say
+`finder-session: config loaded`, and whose output must be exactly
+`finder-session/expected`; and with `files/script` on the config in
 `files/config`, which runs the file commands the editor ships and touches
 no file: `save-buffer` on the scratch buffer says it has no file, and a
 command of config's opens a path that is not absolute, which starts the

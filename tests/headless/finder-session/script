@@ -1,0 +1,20 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, the fixture `tools/prepare-finder-session.sh`
+# installs to `~/.config/leanmacs` for the owner's Finder session
+# (docs/dev-practices/finder-session.md). It runs the fixture's command the
+# two ways the checklist does, and each scene's echo area must show its
+# message. What it prints must be exactly `expected`. It touches no file.
+
+reload
+settle
+
+# `C-c h`, the key the fixture binds.
+key c KeyC control
+key h KeyH -
+scene
+
+# `:finder-hello`, the ex name the fixture binds.
+key : Semicolon shift
+commit finder-hello
+key <Enter> Enter -
+scene

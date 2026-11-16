@@ -166,6 +166,12 @@ run = [
   # (`dispatch/expected`). A command that is not stopped loops for longer
   # than the time limit.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
+  # The config fixture of the owner's Finder session (tests/headless/
+  # finder-session), the one tools/prepare-finder-session.sh installs to
+  # ~/.config/leanmacs: it loads, and its command, run by its key `C-c h`
+  # and by its ex name `finder-hello`, says `finder-session: config loaded`
+  # in the echo area each time (`finder-session/expected`).
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/finder-session/config ../tests/headless/finder-session/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/finder-session/expected -",
   # The file commands the editor ships, on a config of its own (tests/
   # headless/files): `save-buffer`, which no config registers, says the
   # scratch buffer has no file, and a command of config's opens a path that
