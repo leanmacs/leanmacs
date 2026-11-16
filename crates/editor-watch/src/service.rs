@@ -19,7 +19,7 @@
 //!   are each seen under the file's name; a watch on the file's own inode
 //!   would lose track at the first rename over it. A file that is not
 //!   there yet can be watched, and its creation is told. Its directory
-//!   must be there.
+//!   must be there: a file with none, `/`, is [`RefusalKind::NotFound`].
 //! - **What is refused**, before the port is asked: a path that is not
 //!   absolute, or has a `..` component ([`refusal_before_watch`]), and a
 //!   bound of 0 ([`RefusalKind::Failed`]). Then whatever the port refuses.
@@ -536,8 +536,8 @@ impl<W: Watch, C: Clock> Inner<W, C> {
                 .map(|dir| (dir.to_path_buf(), Depth::Entries))
                 .ok_or_else(|| {
                     Refusal::new(
-                        RefusalKind::NotADirectory,
-                        format!("cannot watch {}: it is a directory", file.display()),
+                        RefusalKind::NotFound,
+                        format!("cannot watch {}: it has no directory", file.display()),
                     )
                 }),
         }
@@ -1367,6 +1367,28 @@ mod tests {
         );
         assert!(service.cancel(2));
         assert_eq!(fake.live(), []);
+    }
+
+    #[test]
+    fn a_file_watch_of_the_root_is_refused_as_not_found_since_it_has_no_directory() {
+        let (fake, _ground, clock) = fake();
+        let (service, completed) = service(&fake, &clock);
+
+        assert!(service.start(1, file("/"), AT_ONCE));
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+
+        match service.take(1) {
+            Some(WatchReply::Refused(refusal)) => {
+                assert_eq!(refusal.kind, RefusalKind::NotFound);
+                assert!(
+                    refusal.detail.contains("has no directory"),
+                    "{}",
+                    refusal.detail
+                );
+            }
+            other => panic!("not refused: {other:?}"),
+        }
+        assert_eq!(fake.record().watched, [], "the port is not asked");
     }
 
     #[test]

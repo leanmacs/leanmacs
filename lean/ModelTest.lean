@@ -19604,10 +19604,13 @@ def fileWatchModelChecks : List Check :=
         let (bound, c, _) := watchStart watchModel (.file "/nowhere/f") zero
         let (missing, d, _) := watchStart watchModel (.directory "/nowhere" true) atOnce
         let (fileMissing, e, _) := watchStart watchModel (.file "/nowhere/f") atOnce
+        -- The library refuses a file with no directory as not found too.
+        let (noDirectory, f, _) := watchStart watchModel (.file "/") atOnce
         return isNotAbsolute relative && isNotAbsolute parent && isFailed bound &&
             isNotFound missing &&
             isNotFound fileMissing &&
-            [a, b, c, d, e].all (·.watches.isEmpty) },
+            isNotFound noDirectory &&
+            [a, b, c, d, e, f].all (·.watches.isEmpty) },
     { name :=
         "the watch model's next with nothing recorded fails, or is the cancel at its instant, and a next of a watch it does not have is noSuchWatch"
       run := do
