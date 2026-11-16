@@ -38,8 +38,9 @@ pub fn overlaps(node: Range<usize>, range: Range<usize>) -> bool {
 /// then by pattern, then by capture.
 ///
 /// Refused when the range is not two positions of the text in order. The
-/// port is asked about the range and may answer more, or the same capture
-/// twice: what it answers is filtered and sorted here.
+/// port is asked about the range widened by a byte on each side, within the
+/// text, and may answer more, or the same capture twice: what it answers is
+/// filtered and sorted here.
 pub fn captures_in<S: Syntax>(
     syntax: &S,
     query: &S::Query,
@@ -53,8 +54,13 @@ pub fn captures_in<S: Syntax>(
     if !positions {
         return Err(BadRange);
     }
+    // The port is asked a byte wider on each side: a library may leave out
+    // a node that only touches an end of the range, and answer nothing of
+    // an empty range (tree-sitter does both). What it answers beyond the
+    // range is filtered out below.
+    let asked = range.start.saturating_sub(1)..range.end.saturating_add(1).min(text.len());
     let mut captures: Vec<Capture> = syntax
-        .captures(query, tree, text, range.clone())
+        .captures(query, tree, text, asked)
         .into_iter()
         .filter(|capture| overlaps(capture.range(), range.clone()))
         .collect();
@@ -153,11 +159,26 @@ mod tests {
         );
     }
 
-    /// A syntax that answers the fake's captures backwards and twice: the
-    /// rule must put them right.
-    struct Shuffled;
+    /// A syntax that answers the fake's captures as its function makes of
+    /// them and the range it was asked.
+    struct Answering(fn(Vec<Capture>, Range<usize>) -> Vec<Capture>);
 
-    impl Syntax for Shuffled {
+    /// Backwards and twice: the rule must put them right.
+    const SHUFFLED: Answering = Answering(|mut captures, _| {
+        captures.extend(captures.clone());
+        captures.reverse();
+        captures
+    });
+
+    /// Only the captures that share a byte with the range asked, as
+    /// tree-sitter answers: none that only touch it, and none at all of an
+    /// empty range.
+    const STRICT: Answering = Answering(|mut captures, asked| {
+        captures.retain(|capture| capture.start < asked.end && asked.start < capture.end);
+        captures
+    });
+
+    impl Syntax for Answering {
         type Parser = ParensParser;
         type Tree = <Parens as Syntax>::Tree;
         type Query = <Parens as Syntax>::Query;
@@ -196,35 +217,46 @@ mod tests {
             text: &Snapshot,
             range: Range<usize>,
         ) -> Vec<Capture> {
-            let mut captures = Parens.captures(query, tree, text, range);
-            captures.extend(captures.clone());
-            captures.reverse();
-            captures
+            (self.0)(Parens.captures(query, tree, text, range.clone()), range)
         }
         fn nodes(&self, tree: &Self::Tree) -> Vec<crate::Node> {
             Parens.nodes(tree)
         }
     }
 
-    #[test]
-    fn a_range_answers_the_captures_of_the_nodes_in_it_in_the_cores_order() {
+    /// The ranges of the captures `syntax` answers of `range` in `(a b)
+    /// (c)`, for atoms and lists.
+    fn ranges(syntax: &Answering, range: Range<usize>) -> Vec<Range<usize>> {
         let snapshot = Text::from("(a b) (c)").snapshot();
-        let tree = Shuffled.parse(&mut ParensParser, &snapshot, None);
-        let query = Shuffled
+        let tree = syntax.parse(&mut ParensParser, &snapshot, None);
+        let query = syntax
             .compile(&GrammarName::new(GRAMMAR), "atom @atom\nlist @list")
             .unwrap();
+        captures_in(syntax, &query, &tree, &snapshot, range)
+            .unwrap()
+            .iter()
+            .map(Capture::range)
+            .collect()
+    }
 
-        let ranges = |range| -> Vec<Range<usize>> {
-            captures_in(&Shuffled, &query, &tree, &snapshot, range)
-                .unwrap()
-                .iter()
-                .map(Capture::range)
-                .collect()
-        };
-        assert_eq!(ranges(0..9), [0..5, 1..2, 3..4, 6..9, 7..8]);
-        assert_eq!(ranges(3..7), [0..5, 3..4, 6..9]);
-        assert_eq!(ranges(5..6), Vec::<Range<usize>>::new());
-        assert_eq!(ranges(6..6), vec![6..9]);
+    #[test]
+    fn a_range_answers_the_captures_of_the_nodes_in_it_in_the_cores_order() {
+        assert_eq!(ranges(&SHUFFLED, 0..9), [0..5, 1..2, 3..4, 6..9, 7..8]);
+        assert_eq!(ranges(&SHUFFLED, 3..7), [0..5, 3..4, 6..9]);
+        assert_eq!(ranges(&SHUFFLED, 5..6), Vec::<Range<usize>>::new());
+        assert_eq!(ranges(&SHUFFLED, 6..6), vec![6..9]);
+    }
+
+    #[test]
+    fn the_port_is_asked_a_byte_wider_so_a_library_that_leaves_out_what_touches_the_range_answers_the_rule()
+     {
+        // An empty range at a list's start: the list starts in it.
+        assert_eq!(ranges(&STRICT, 6..6), vec![6..9]);
+        // An empty range at an atom's start, inside a list: the atom
+        // starts in it, the list does not.
+        assert_eq!(ranges(&STRICT, 1..1), vec![1..2]);
+        assert_eq!(ranges(&STRICT, 3..7), [0..5, 3..4, 6..9]);
+        assert_eq!(ranges(&STRICT, 9..9), Vec::<Range<usize>>::new());
     }
 
     #[test]

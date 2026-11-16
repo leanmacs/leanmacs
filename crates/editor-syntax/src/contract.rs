@@ -15,6 +15,7 @@
 //! from a fixed seed, with a small generator here and not a property-test
 //! library, since the contract is published code.
 
+use std::cell::Cell;
 use std::ops::Range;
 
 use editor_text::{ChangeSet, Origin, Revision, Snapshot, Text, Transaction};
@@ -46,14 +47,26 @@ pub struct Corpus {
 /// listed opens none.
 pub const GRAMMARS: &str =
     "the corpus's grammar is listed and opens a parser, and one not listed opens none";
-/// The root covers the text, from its start point to its end point; every
+/// The root is the one node at depth 0 and reaches the text's end; every
 /// node lies within its parent, on positions of the text, with points that
 /// are its offsets'; and siblings are in order.
-pub const WHOLE: &str = "the root covers the text, every node lies within its parent on positions with their points, and siblings are in order";
+///
+/// The root may start after the text's start: tree-sitter's starts where
+/// its first token or extra does, after any blanks that lead the text.
+pub const WHOLE: &str = "the root reaches the end of the text, every node lies within its parent on positions with their points, and siblings are in order";
 /// Two fresh parses of one snapshot are equal.
 pub const DETERMINISTIC: &str = "two fresh parses of one snapshot are equal";
 /// After edits, the tree told the log's patch and reparsed with it equals a
-/// fresh parse of the same snapshot.
+/// fresh parse of the same snapshot, wherever that fresh parse has no error
+/// and no missing node; where it has, the reparsed tree is still
+/// [`WHOLE`].
+///
+/// Error recovery is the one place the two may differ: how the library
+/// recovers depends on what it reuses, and tree-sitter's own randomized
+/// tests compare reparses with fresh parses only of texts without errors.
+/// Seen on 2026-11-16, on a sweep of five times this one's sequences: 11 of
+/// some 6,700 reparses of random edits of Rust differed from the fresh
+/// parse, every one of a text with errors, and none of JSON.
 pub const INCREMENTAL: &str =
     "after an edit, the incrementally reparsed tree equals a fresh full parse of the same snapshot";
 /// Each bad query is refused with its kind, and one that names an unknown
@@ -151,7 +164,7 @@ pub fn is_whole(nodes: &[Node], text: &Snapshot) -> bool {
     let Some(root) = nodes.first() else {
         return false;
     };
-    if root.depth != 0 || root.start != 0 || root.end != len {
+    if root.depth != 0 || root.end != len {
         return false;
     }
     let mut levels: Vec<Level> = Vec::new();
@@ -203,11 +216,15 @@ struct Run<'a, S: Syntax> {
     tree: S::Tree,
     /// The revision the tree is of.
     revision: Revision,
+    /// How many reparses of texts without errors were compared with a
+    /// fresh parse, across every run of one check.
+    exact: &'a Cell<usize>,
 }
 
 impl<'a, S: Syntax> Run<'a, S> {
-    /// A run from `text`, parsed fresh.
-    fn new(syntax: &'a S, parser: &mut S::Parser, text: &str) -> Self {
+    /// A run from `text`, parsed fresh, that counts its exact comparisons
+    /// in `exact`.
+    fn new(syntax: &'a S, parser: &mut S::Parser, text: &str, exact: &'a Cell<usize>) -> Self {
         let text = Text::from(text);
         let snapshot = text.snapshot();
         let tree = syntax.parse(parser, &snapshot, None);
@@ -216,6 +233,7 @@ impl<'a, S: Syntax> Run<'a, S> {
             text,
             tree,
             revision: snapshot.revision(),
+            exact,
         }
     }
 
@@ -246,8 +264,22 @@ impl<'a, S: Syntax> Run<'a, S> {
             .is_ok()
     }
 
+    /// Applies the inverse of every transaction applied so far, as one
+    /// transaction, which puts the text back as it was made. False when the
+    /// text refused it.
+    fn undo(&mut self) -> bool {
+        let last = self.text.current().revision();
+        last == Revision::new(0)
+            || self
+                .text
+                .apply_inverse(Revision::new(1), last, Origin::default())
+                .is_ok()
+    }
+
     /// Tells the tree the log's patch since its revision, reparses with it,
-    /// keeps the result, and returns whether it equals a fresh parse.
+    /// keeps the result, and returns whether it equals a fresh parse, or,
+    /// where the fresh parse recovered from an error, is whole
+    /// ([`INCREMENTAL`]).
     fn reparse(&mut self, parser: &mut S::Parser) -> bool {
         let Ok(patch) = self.text.changes_since(self.revision) else {
             return false;
@@ -259,10 +291,17 @@ impl<'a, S: Syntax> Run<'a, S> {
         let snapshot = self.snapshot();
         let reparsed = self.syntax.parse(parser, &snapshot, Some(&edited));
         let fresh = self.syntax.parse(parser, &snapshot, None);
-        let equal = self.syntax.nodes(&reparsed) == self.syntax.nodes(&fresh);
+        let (reparsed_nodes, fresh_nodes) =
+            (self.syntax.nodes(&reparsed), self.syntax.nodes(&fresh));
+        let recovered = fresh_nodes.iter().any(|node| node.error || node.missing);
+        if !recovered {
+            self.exact.set(self.exact.get() + 1);
+        }
+        let holds =
+            reparsed_nodes == fresh_nodes || (recovered && is_whole(&reparsed_nodes, &snapshot));
         self.tree = reparsed;
         self.revision = snapshot.revision();
-        equal
+        holds
     }
 }
 
@@ -359,11 +398,14 @@ const NAMED_CASES: [NamedCase; 10] = [
     },
 ];
 
-/// [`INCREMENTAL`]: the named cases from every text, and the sweep.
+/// [`INCREMENTAL`]: the named cases from every text, and the sweep; and at
+/// least one reparse of a text without errors, so that the property is
+/// never held only by texts it compares loosely.
 fn incremental<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> bool {
+    let exact = Cell::new(0);
     let named = corpus.texts.iter().all(|text| {
         NAMED_CASES.iter().all(|case| {
-            let mut run = Run::new(syntax, parser, text);
+            let mut run = Run::new(syntax, parser, text, &exact);
             let transactions = case(&run.snapshot(), corpus);
             let applied = transactions.iter().all(|changes| {
                 // A case computes each transaction from the text before
@@ -385,17 +427,26 @@ fn incremental<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -
             applied && run.reparse(parser)
         })
     });
-    named && sweep(syntax, parser, corpus)
+    named && sweep(syntax, parser, corpus, &exact) && exact.get() > 0
 }
 
 /// The sweep of [`INCREMENTAL`]: from each text, random sequences of
 /// transactions, each step one to three transactions of one to three
-/// changes, reparsed once a step.
-fn sweep<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> bool {
+/// changes, reparsed once a step; and then the inverse of the whole
+/// sequence, which puts the text back as it was, reparsed once more. Random
+/// edits leave most texts with errors, which are compared loosely; the
+/// text put back is compared exactly whenever the corpus's text has no
+/// errors, from a tree that had them.
+fn sweep<S: Syntax>(
+    syntax: &S,
+    parser: &mut S::Parser,
+    corpus: &Corpus,
+    exact: &Cell<usize>,
+) -> bool {
     let mut random = Random(0x5eed_5eed_5eed_5eed);
     corpus.texts.iter().all(|text| {
         (0..SEQUENCES).all(|_| {
-            let mut run = Run::new(syntax, parser, text);
+            let mut run = Run::new(syntax, parser, text, exact);
             (0..STEPS).all(|_| {
                 let transactions = 1 + random.below(3);
                 let applied = (0..transactions).all(|_| {
@@ -407,7 +458,8 @@ fn sweep<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> bool
                     run.apply(&changes)
                 });
                 applied && run.reparse(parser)
-            })
+            }) && run.undo()
+                && run.reparse(parser)
         })
     })
 }
