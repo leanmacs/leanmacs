@@ -1,0 +1,96 @@
+//! The application delegate: where macOS hands the files it asks the app to
+//! open. This is the only code in the workspace that names AppKit.
+//!
+//! When Finder opens a file with the app ("Open With", a double-click on a
+//! document of a type the app claims, or a drop on its Dock icon), AppKit
+//! calls the application delegate's `application:openURLs:`. winit 0.31
+//! passes none of this on, and guarantees that it never registers an
+//! application delegate of its own (winit-appkit 0.31's crate docs,
+//! "Custom `NSApplicationDelegate`"), which this module relies on: it
+//! registers its own, as those docs show.
+//!
+//! It must be installed after winit's `EventLoop` is built (winit-appkit:
+//! "Call `sharedApplication` after `EventLoop::new`") and before the loop
+//! runs. The open-documents event of a cold start is delivered during
+//! `-[NSApplication run]`'s `finishLaunching`, before winit makes the
+//! window, so a delegate installed later would miss it.
+//!
+//! Every decision is in `files.rs`. The delegate's one method is the one
+//! untested forward: it reads each URL's file path (a URL that is not a
+//! file's gives none) and hands the list to `Handing::hand`.
+//!
+//! [`install`] also registers `NSTreatUnknownArgumentsAsOpen = NO` in the
+//! volatile registration domain, which writes nothing to disk. Otherwise
+//! AppKit would take a command-line argument it does not know (`editor
+//! notes.txt`) for a file to open, once a delegate can open files, and the
+//! command line is the program's.
+
+use objc2::rc::Retained;
+use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2_app_kit::{NSApplication, NSApplicationDelegate};
+use objc2_foundation::{
+    NSArray, NSDictionary, NSObject, NSObjectProtocol, NSString, NSURL, NSUserDefaults,
+};
+
+use crate::files::Handing;
+
+define_class!(
+    /// The app's delegate: it hands the files it is asked to open on.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "EditorPlatformWinitApplicationDelegate"]
+    #[ivars = Handing]
+    struct Delegate;
+
+    unsafe impl NSObjectProtocol for Delegate {}
+
+    unsafe impl NSApplicationDelegate for Delegate {
+        /// The files the system asks the app to open.
+        #[unsafe(method(application:openURLs:))]
+        fn open_urls(&self, _application: &NSApplication, urls: &NSArray<NSURL>) {
+            self.ivars()
+                .hand(urls.iter().filter_map(|url| url.to_file_path()).collect());
+        }
+    }
+);
+
+/// The installed delegate. The application does not retain its delegate,
+/// so this keeps it alive; dropping it clears the application's delegate.
+pub(crate) struct Installed {
+    /// The delegate the application was given, kept alive and never read.
+    _delegate: Retained<Delegate>,
+    /// The thread it was installed on, the main one.
+    mtm: MainThreadMarker,
+}
+
+impl Drop for Installed {
+    fn drop(&mut self) {
+        // The application holds its delegate weakly: it is taken away
+        // before the delegate goes.
+        NSApplication::sharedApplication(self.mtm).setDelegate(None);
+    }
+}
+
+/// Makes the delegate that hands its files to `handing` the application's.
+/// `None` off the main thread, where AppKit cannot be asked.
+pub(crate) fn install(handing: Handing) -> Option<Installed> {
+    let mtm = MainThreadMarker::new()?;
+    let key = NSString::from_str("NSTreatUnknownArgumentsAsOpen");
+    let no = NSString::from_str("NO");
+    let defaults: Retained<NSDictionary<NSString, AnyObject>> =
+        NSDictionary::from_slices(&[&*key], &[no.as_ref()]);
+    // SAFETY: the dictionary's keys are strings and its value a string, a
+    // property-list object, as `registerDefaults:` asks.
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+
+    let this = Delegate::alloc(mtm).set_ivars(handing);
+    // SAFETY: `init` is `NSObject`'s initialiser, called once on the
+    // allocation, as `define_class!` asks.
+    let delegate: Retained<Delegate> = unsafe { msg_send![super(this), init] };
+    NSApplication::sharedApplication(mtm).setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    Some(Installed {
+        _delegate: delegate,
+        mtm,
+    })
+}

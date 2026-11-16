@@ -20,11 +20,11 @@
 //!   a list is reported as it arrives.
 
 use std::path::PathBuf;
-#[cfg(test)]
+#[cfg(any(target_os = "macos", test))]
 use std::sync::mpsc;
 
 use editor_platform::Input;
-#[cfg(test)]
+#[cfg(any(target_os = "macos", test))]
 use winit::event_loop::EventLoopProxy;
 
 /// The input asking for `paths` to be opened, in the order given; `None`
@@ -71,7 +71,7 @@ impl Arrivals {
 
 /// Where the application delegate hands the paths it is given: a channel
 /// the loop takes them from when it is woken, and the loop's waker.
-#[cfg(test)]
+#[cfg(any(target_os = "macos", test))]
 pub(crate) struct Handing {
     /// Where the paths go.
     pub(crate) files: mpsc::Sender<Vec<PathBuf>>,
@@ -79,7 +79,7 @@ pub(crate) struct Handing {
     pub(crate) proxy: EventLoopProxy,
 }
 
-#[cfg(test)]
+#[cfg(any(target_os = "macos", test))]
 impl Handing {
     /// Sends `paths`, then wakes the loop, as a request is sent before the
     /// wake-up, so the loop that wakes finds them. A loop that has ended has

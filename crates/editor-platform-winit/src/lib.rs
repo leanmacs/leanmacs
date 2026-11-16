@@ -4,8 +4,9 @@
 //! The port, its fake and its contract are `editor-platform`'s. This crate
 //! is thin: it opens one window, translates what winit says of it into the
 //! port's [`Input`] and [`Canvas`], and ends its loop when it is asked to
-//! close. No winit type is public, and no other crate depends on winit
-//! (`deny.toml`).
+//! close. No winit or objc2 type is public, no other crate depends on
+//! winit or on the objc2 crates it names (`deny.toml`), and AppKit is named
+//! only in the module `delegate`, on macOS.
 //!
 //! The translation is the module `translate`'s, with a key's names in
 //! `names` and the window's native handles in `native`: every key with its
@@ -58,12 +59,18 @@
 //!   the window's fullscreen is read and a change of it reported as a
 //!   resize. A request asked with no window running does nothing, and one
 //!   that arrives before the window is made is dropped.
-//! - **It holds the files the system asks the app to open until the window
-//!   has opened.** They are taken off a channel of their own when the loop
-//!   is woken, as requests are, and when the window opens; the module
-//!   `files` decides what is reported and when: after `Opened` and the
-//!   `Resized` after it, each list as one [`Input::OpenFiles`], in the order
-//!   they arrived. A close drops them with the requests.
+//! - **It receives the files the system asks the app to open (macOS)**,
+//!   through an application delegate of its own (the module `delegate`),
+//!   installed once winit's event loop is built and before it runs, since a
+//!   cold start's files arrive before the window is made. winit 0.31
+//!   guarantees it registers no delegate. The delegate sends each list on a
+//!   channel of the files' own and wakes the loop, as a request is sent.
+//! - **It holds those files until the window has opened.** They are taken
+//!   off their channel when the loop is woken, as requests are, and when
+//!   the window opens; the module `files` decides what is reported and
+//!   when: after `Opened` and the `Resized` after it, each list as one
+//!   [`Input::OpenFiles`], in the order they arrived. A close drops them
+//!   with the requests.
 //!
 //! # Tests
 //!
@@ -108,7 +115,14 @@
 //!   translation asks for it, after a resize, a change of scale, a move or
 //!   an occlusion, and after requests are carried out. When it is read and
 //!   what is reported of it are the translation's, and tested;
-//! - telling the drawer the window is closing once the loop has ended.
+//! - telling the drawer the window is closing once the loop has ended;
+//! - on macOS, the application delegate's one method, which reads each
+//!   URL's file path and hands the list to `Handing::hand`, and
+//!   `delegate::install`, which registers `NSTreatUnknownArgumentsAsOpen`,
+//!   makes the delegate and gives it to the application. No test can make
+//!   AppKit send an open-documents event; Finder and the Dock are tried by
+//!   hand (the roadmap `macos-app`, phase 6). Installing it in `run` is
+//!   reached by any run on macOS, so `mise run window-contract` runs it.
 //!
 //! They are held to the port's contract by `examples/contract.rs`, which
 //! two opt-in tasks run: `mise run linux-window`, under Xvfb in a
@@ -128,6 +142,8 @@
 //! not been seen.
 
 mod asked;
+#[cfg(target_os = "macos")]
+mod delegate;
 mod files;
 mod names;
 mod native;
@@ -154,7 +170,7 @@ use winit::window::{
 
 use crate::asked::{Asked, Control};
 use crate::files::Arrivals;
-#[cfg(test)]
+#[cfg(any(target_os = "macos", test))]
 use crate::files::Handing;
 use crate::translate::{KeyParts, Seen, Told};
 
@@ -222,9 +238,19 @@ impl Platform for WinitPlatform {
         let mut event_loop = event_loop().map_err(cannot_open)?;
         let closing = Closing::default();
         let (requests, asked) = mpsc::channel();
-        // Where the files the system asks the app to open are handed. No
-        // sender is kept yet, so the channel stays empty.
-        let files = mpsc::channel().1;
+        // Where the files the system asks the app to open are handed: by the
+        // application delegate on macOS, installed now, after the event
+        // loop is built and before it runs, since a cold start's files
+        // arrive as the loop starts. Elsewhere nothing hands them, and the
+        // channel stays empty.
+        let (handing, files) = mpsc::channel();
+        #[cfg(target_os = "macos")]
+        let installed = delegate::install(Handing {
+            files: handing,
+            proxy: event_loop.create_proxy(),
+        });
+        #[cfg(not(target_os = "macos"))]
+        drop(handing);
         *self.running() = Some(Running {
             proxy: event_loop.create_proxy(),
             closing: closing.clone(),
@@ -253,8 +279,11 @@ impl Platform for WinitPlatform {
             (app.drawer)(Canvas::Closing);
         }
         let failure = app.failure.take();
-        // The window goes before its loop, as in winit's `run_app`.
+        // The window goes before its loop, as in winit's `run_app`, and the
+        // application's delegate with it.
         drop(app);
+        #[cfg(target_os = "macos")]
+        drop(installed);
         drop(event_loop);
 
         match (failure, ended) {
