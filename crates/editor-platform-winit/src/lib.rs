@@ -71,6 +71,20 @@
 //!   when: after `Opened` and the `Resized` after it, each list as one
 //!   [`Input::OpenFiles`], in the order they arrived. A close drops them
 //!   with the requests.
+//! - **It reports the system's quit and answers it (macOS).** The same
+//!   delegate answers every `applicationShouldTerminate:` (Command-Q's
+//!   `terminate:`, the Dock's Quit, a logout) with `NSTerminateLater`, so
+//!   AppKit waits inside `terminate:`, and hands the ask on through a
+//!   channel of its own and a wake of the loop. The module `terminate`
+//!   decides what comes of it: the first ask is reported once as
+//!   [`Input::QuitRequested`], after `Opened`, and not again while it is
+//!   pending; [`Request::KeepRunning`] cancels a pending one
+//!   (`replyToApplicationShouldTerminate:NO`) and is otherwise nothing; and
+//!   a close cancels one still pending, since the run cannot return through
+//!   AppKit's wait. Keep running is taken out of the requests the loop
+//!   finds, and never reaches the window. winit's loop handles its
+//!   wake-ups and requests while AppKit waits, since winit runs them in the
+//!   common modes, which include AppKit's modal-panel mode.
 //!
 //! # Tests
 //!
@@ -82,6 +96,8 @@
 //! window (`asked`, which runs the port's request contract), the files to
 //! open (`files`: the translation of paths and the holding of them until
 //! the window opened; and `Handing::hand`, which sends before it wakes),
+//! the system's quit (`terminate`'s rules, `Handing::terminate`, which
+//! sends before it wakes, and `wake`, which drops the asks on a close),
 //! and the refusal off the main thread. The event
 //! loop itself needs a display, and so do the lines here that only a real
 //! window runs. They are few, and each is a reading of the window or a
@@ -122,9 +138,15 @@
 //!   makes the delegate and gives it to the application. No test can make
 //!   AppKit send an open-documents event; Finder and the Dock are tried by
 //!   hand (the roadmap `macos-app`, phase 6). Installing it in `run` is
-//!   reached by any run on macOS, so `mise run window-contract` runs it.
+//!   reached by any run on macOS, so `mise run window-contract` runs it;
+//! - on macOS, the delegate's `applicationShouldTerminate:`, which hands
+//!   the ask to `Handing::terminate` and answers `NSTerminateLater`, and
+//!   `delegate::reply`, which makes the reply `terminate` gave; and the
+//!   loop's forwarding of each ask and each keep running to `terminate`,
+//!   and of its reply to the delegate. What comes of them is `terminate`'s,
+//!   and tested. The contract example asks them of a running window.
 //!
-//! They are held to the port's contract by `examples/contract.rs`, which
+//! They are held to the port's contract by `examples/contract/main.rs`, which
 //! two opt-in tasks run: `mise run linux-window`, under Xvfb in a
 //! container, and `mise run window-contract`, on the desktop it is started
 //! from. Run the first after a change to this crate. Under Xvfb the
@@ -147,6 +169,7 @@ mod delegate;
 mod files;
 mod names;
 mod native;
+mod terminate;
 mod translate;
 
 use std::num::NonZeroU32;
@@ -172,6 +195,7 @@ use crate::asked::{Asked, Control};
 use crate::files::Arrivals;
 #[cfg(any(target_os = "macos", test))]
 use crate::files::Handing;
+use crate::terminate::{Reply, Terminate};
 use crate::translate::{KeyParts, Seen, Told};
 
 /// The window port over winit. It opens one window, on the process's main
@@ -244,13 +268,16 @@ impl Platform for WinitPlatform {
         // arrive as the loop starts. Elsewhere nothing hands them, and the
         // channel stays empty.
         let (handing, files) = mpsc::channel();
+        // The system's asks to terminate, handed the same way.
+        let (terminating, terminations) = mpsc::channel();
         #[cfg(target_os = "macos")]
         let installed = delegate::install(Handing {
             files: handing,
+            terminations: terminating,
             proxy: event_loop.create_proxy(),
         });
         #[cfg(not(target_os = "macos"))]
-        drop(handing);
+        drop((handing, terminating));
         *self.running() = Some(Running {
             proxy: event_loop.create_proxy(),
             closing: closing.clone(),
@@ -268,6 +295,8 @@ impl Platform for WinitPlatform {
             asked: Asked::default(),
             files,
             arrivals: Arrivals::default(),
+            terminations,
+            terminate: Terminate::default(),
         };
         // What winit's `run_app` does on macOS and on Linux, with the
         // handler borrowed so that it is still here once the loop has ended.
@@ -337,42 +366,57 @@ impl Closing {
     }
 }
 
-/// What a wake-up of the loop comes to: the requests to carry out on the
-/// window, in the order asked, the lists of files to open, in the order
-/// handed, and whether the loop ends.
+/// What a wake-up of the loop comes to: the requests to carry out, in the
+/// order asked, the lists of files to open, in the order handed, how many
+/// times the system asked to terminate, and whether the loop ends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Woken {
     /// The requests to carry out, oldest first.
     carry: Vec<Request>,
     /// The lists of files to open, oldest first.
     files: Vec<Vec<PathBuf>>,
+    /// How many asks to terminate arrived.
+    terminations: usize,
     /// Whether the loop ends.
     ends: bool,
 }
 
 /// What a wake-up of the loop comes to, with `closing` as it is and
-/// `requests` and `files` taken off their channels. A loop that ends drops
-/// what is pending, files to open with the requests: the window is going.
-/// One that does not takes every request and every list of files, in order;
-/// with none it still goes on, since winit may wake a loop nobody woke.
+/// `requests`, `files` and `terminations` taken off their channels. A loop
+/// that ends drops what is pending, files to open and asks to terminate
+/// with the requests: the window is going. One that does not takes every
+/// request, every list of files and every ask, in order; with none it
+/// still goes on, since winit may wake a loop nobody woke.
 fn wake(
     closing: &Closing,
     requests: impl Iterator<Item = Request>,
     files: impl Iterator<Item = Vec<PathBuf>>,
+    terminations: impl Iterator<Item = ()>,
 ) -> Woken {
     let ends = closing.ends_on_wake();
     if ends {
         return Woken {
             carry: Vec::new(),
             files: Vec::new(),
+            terminations: 0,
             ends,
         };
     }
     Woken {
         carry: requests.collect(),
         files: files.collect(),
+        terminations: terminations.count(),
         ends,
     }
+}
+
+/// Makes `reply` to the system: on macOS through the application delegate,
+/// elsewhere nowhere, since nothing there asks.
+fn answer(reply: Reply) {
+    #[cfg(target_os = "macos")]
+    delegate::reply(reply);
+    #[cfg(not(target_os = "macos"))]
+    let _ = reply;
 }
 
 /// The window and its loop's handler: what [`WinitPlatform::run`] hands to
@@ -401,6 +445,11 @@ struct App {
     files: mpsc::Receiver<Vec<PathBuf>>,
     /// The files to open that arrived, held until the window has opened.
     arrivals: Arrivals,
+    /// The system's asks to terminate, taken when the loop is woken and
+    /// when the window opens.
+    terminations: mpsc::Receiver<()>,
+    /// What is known of those asks, and of the answers to them.
+    terminate: Terminate,
 }
 
 impl ApplicationHandler for App {
@@ -437,6 +486,11 @@ impl ApplicationHandler for App {
                 for input in self.arrivals.open(self.files.try_iter()) {
                     (self.report)(input);
                 }
+                // An ask to terminate that came before the window, or is
+                // still waiting, after the files.
+                if let Some(input) = self.terminate.open(self.terminations.try_iter().count()) {
+                    (self.report)(input);
+                }
             }
             Err(error) => {
                 self.failure = Some(error.to_string());
@@ -450,8 +504,14 @@ impl ApplicationHandler for App {
             &self.closing,
             self.requests.try_iter(),
             self.files.try_iter(),
+            self.terminations.try_iter(),
         );
         if woken.ends {
+            // What a close says to a terminate still pending is
+            // `terminate`'s to decide.
+            if let Some(reply) = self.terminate.close() {
+                answer(reply);
+            }
             event_loop.exit();
             return;
         }
@@ -461,11 +521,28 @@ impl ApplicationHandler for App {
                 (self.report)(input);
             }
         }
+        // Nor do the asks to terminate: they are held as files are.
+        for _ in 0..woken.terminations {
+            if let Some(input) = self.terminate.ask() {
+                (self.report)(input);
+            }
+        }
+        // Keeping running answers the system, and is no request of the
+        // window's; every other request is the window's.
+        let (keep_running, carry): (Vec<_>, Vec<_>) = woken
+            .carry
+            .into_iter()
+            .partition(|request| *request == Request::KeepRunning);
+        for _ in keep_running {
+            if let Some(reply) = self.terminate.keep_running() {
+                answer(reply);
+            }
+        }
         // A request asked before the window was made is dropped.
         let Some(window) = self.window.as_deref() else {
             return;
         };
-        for request in woken.carry {
+        for request in carry {
             asked::carry_out(&mut self.asked, window, request);
         }
         // What carrying them out did to fullscreen, as the drawer and the
@@ -720,6 +797,7 @@ mod tests {
         });
         let handing = Handing {
             files,
+            terminations: mpsc::channel().0,
             proxy: EventLoopProxy::new(waker.clone()),
         };
         let first = vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")];
@@ -744,11 +822,13 @@ mod tests {
             wake(
                 &Closing::default(),
                 asked.clone().into_iter(),
+                std::iter::empty(),
                 std::iter::empty()
             ),
             Woken {
                 carry: asked.to_vec(),
                 files: Vec::new(),
+                terminations: 0,
                 ends: false,
             }
         );
@@ -764,11 +844,13 @@ mod tests {
             wake(
                 &Closing::default(),
                 std::iter::empty(),
-                lists.clone().into_iter()
+                lists.clone().into_iter(),
+                std::iter::empty()
             ),
             Woken {
                 carry: Vec::new(),
                 files: lists,
+                terminations: 0,
                 ends: false,
             }
         );
@@ -782,11 +864,13 @@ mod tests {
             wake(
                 &closing,
                 [Request::EnterFullscreen].into_iter(),
+                std::iter::empty(),
                 std::iter::empty()
             ),
             Woken {
                 carry: Vec::new(),
                 files: Vec::new(),
+                terminations: 0,
                 ends: true,
             }
         );
@@ -800,14 +884,90 @@ mod tests {
             wake(
                 &closing,
                 std::iter::empty(),
-                [vec![PathBuf::from("/tmp/a")]].into_iter()
+                [vec![PathBuf::from("/tmp/a")]].into_iter(),
+                std::iter::empty()
             ),
             Woken {
                 carry: Vec::new(),
                 files: Vec::new(),
+                terminations: 0,
                 ends: true,
             }
         );
+    }
+
+    #[test]
+    fn a_wake_up_with_terminations_and_no_close_takes_them_all() {
+        assert_eq!(
+            wake(
+                &Closing::default(),
+                std::iter::empty(),
+                std::iter::empty(),
+                [(), ()].into_iter()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: Vec::new(),
+                terminations: 2,
+                ends: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_a_close_asked_drops_the_terminations_too() {
+        let closing = Closing::default();
+        closing.ask();
+        assert_eq!(
+            wake(
+                &closing,
+                std::iter::empty(),
+                std::iter::empty(),
+                [()].into_iter()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: Vec::new(),
+                terminations: 0,
+                ends: true,
+            }
+        );
+    }
+
+    /// A loop's waker that counts, at each wake-up, the terminations already
+    /// on the channel by then.
+    #[derive(Debug)]
+    struct TerminationsWaker {
+        terminations: Mutex<mpsc::Receiver<()>>,
+        woken: Mutex<Vec<usize>>,
+    }
+
+    impl EventLoopProxyProvider for TerminationsWaker {
+        fn wake_up(&self) {
+            let found = self.terminations.lock().unwrap().try_iter().count();
+            self.woken.lock().unwrap().push(found);
+        }
+    }
+
+    #[test]
+    fn a_terminate_handed_by_the_delegate_is_sent_before_the_loop_is_woken() {
+        let (terminations, taken) = mpsc::channel();
+        let waker = Arc::new(TerminationsWaker {
+            terminations: Mutex::new(taken),
+            woken: Mutex::new(Vec::new()),
+        });
+        let handing = Handing {
+            files: mpsc::channel().0,
+            terminations,
+            proxy: EventLoopProxy::new(waker.clone()),
+        };
+
+        handing.terminate();
+        handing.terminate();
+
+        // Woken once for each, with it already on the channel: the loop
+        // that wakes finds it.
+        assert_eq!(*waker.woken.lock().unwrap(), [1, 1]);
     }
 
     #[test]

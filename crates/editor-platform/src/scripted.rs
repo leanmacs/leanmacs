@@ -28,13 +28,18 @@ impl Shown {
     /// Carries out `request` on the window.
     ///
     /// Entering and leaving fullscreen set it, and are not toggles; a
-    /// minimise minimises; a title replaces the title.
+    /// minimise minimises; a title replaces the title; keeping running
+    /// changes nothing shown.
+    ///
+    /// The match is exhaustive: this is the model every request is held
+    /// to, so a new request must say here what it does.
     pub fn carry_out(&mut self, request: &Request) {
         match request {
             Request::EnterFullscreen => self.fullscreen = true,
             Request::LeaveFullscreen => self.fullscreen = false,
             Request::Minimise => self.minimised = true,
             Request::Title(title) => self.title = Some(title.clone()),
+            Request::KeepRunning => {}
         }
     }
 }
@@ -135,7 +140,9 @@ impl ScriptedPlatform {
     ///
     /// It leaves out files to open ([`Input::OpenFiles`]): the sample drives
     /// the Lean window-host scenarios, where files to open would start
-    /// loads. A script that needs them says them itself.
+    /// loads. It leaves out a quit the system asked
+    /// ([`Input::QuitRequested`]) for the same reason: there it would stop
+    /// the loop. A script that needs either says it itself.
     pub fn sample_script() -> Vec<Input> {
         vec![
             Input::Focus(true),
@@ -576,6 +583,20 @@ mod tests {
     }
 
     #[test]
+    fn a_quit_asked_by_the_system_in_a_script_is_reported_after_opened_in_order() {
+        let script = vec![press("a"), Input::QuitRequested, Input::Focus(false)];
+        let platform = Arc::new(ScriptedPlatform::new(script.clone()));
+
+        let run = start(&platform, COMPOSING);
+
+        assert_eq!(run.next(1), [opened()]);
+        assert_eq!(run.next(3), script);
+        assert!(run.is_waiting(), "a quit asked ends nothing by itself");
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
     fn a_close_with_no_run_in_progress_does_nothing() {
         let platform = Arc::new(ScriptedPlatform::new(vec![press("a")]));
 
@@ -776,6 +797,7 @@ mod tests {
             Request::EnterFullscreen,
             Request::Minimise,
             Request::LeaveFullscreen,
+            Request::KeepRunning,
             Request::Title("notes.txt".into()),
         ];
         for request in asked.clone() {
@@ -793,6 +815,7 @@ mod tests {
 
         platform.request(Request::EnterFullscreen);
         platform.request(Request::Title("before".into()));
+        platform.request(Request::KeepRunning);
         let run = start(&platform, COMPOSING);
 
         assert_eq!(run.next(1), [opened()]);
@@ -807,6 +830,7 @@ mod tests {
 
         // Nor is one asked once the run has returned.
         platform.request(Request::Title("after".into()));
+        platform.request(Request::KeepRunning);
         assert_eq!(platform.asked(), [Request::Minimise]);
     }
 
@@ -871,7 +895,8 @@ mod tests {
     }
 
     #[test]
-    fn a_fullscreen_request_that_changes_nothing_a_minimise_and_a_title_report_nothing() {
+    fn a_fullscreen_request_that_changes_nothing_a_minimise_a_title_and_keep_running_report_nothing()
+     {
         let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
         let run = start(&platform, COMPOSING);
         assert_eq!(run.next(1), [opened()]);
@@ -879,6 +904,7 @@ mod tests {
         platform.request(Request::LeaveFullscreen);
         platform.request(Request::Minimise);
         platform.request(Request::Title("notes.txt".into()));
+        platform.request(Request::KeepRunning);
         assert!(run.is_waiting(), "none of these changes fullscreen");
 
         platform.request(Request::EnterFullscreen);
@@ -911,6 +937,9 @@ mod tests {
         shown.carry_out(&Request::LeaveFullscreen);
         shown.carry_out(&Request::LeaveFullscreen);
         shown.carry_out(&Request::Minimise);
+        let before = shown.clone();
+        shown.carry_out(&Request::KeepRunning);
+        assert_eq!(shown, before, "keeping running changes nothing shown");
         assert_eq!(
             shown,
             Shown {

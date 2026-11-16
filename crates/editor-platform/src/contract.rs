@@ -18,7 +18,8 @@
 //! - **A request with no run in progress is harmless**: one asked before a
 //!   run is not reported first by the run that follows, and one asked after
 //!   a run reports nothing. The check asks for a title, which is harmless
-//!   on a real desktop.
+//!   on a real desktop, and to keep running ([`Request::KeepRunning`]),
+//!   with no quit pending.
 //! - **The drawer is told the window opened before anyone hears of it.**
 //!   The first thing a run tells its [`Drawer`] is [`Canvas::Opened`], and it
 //!   tells it before it reports its first input: whoever learns of the
@@ -317,9 +318,11 @@ impl Check {
         // remembered, the run below would end before the close that is
         // meant for it, which the settling time below is there to see; were
         // the request, the run would report it before `Opened`. A title is
-        // asked because it is harmless on a real desktop.
+        // asked because it is harmless on a real desktop; keeping running
+        // is asked because it answers a quit, and none is pending.
         platform.close();
         platform.request(Request::Title(STRAY_TITLE.into()));
+        platform.request(Request::KeepRunning);
 
         self.progress
             .update(|progress| progress.started = Some(Instant::now()));
@@ -345,6 +348,7 @@ impl Check {
         // Anything these make the platform report is reported after its run.
         platform.close();
         platform.request(Request::Title(STRAY_TITLE.into()));
+        platform.request(Request::KeepRunning);
         self.progress.update(|progress| progress.finished = true);
     }
 
@@ -982,6 +986,47 @@ mod tests {
         assert_eq!(
             check(
                 Arc::new(RemembersRequests::default()),
+                WindowOptions::default(),
+                GENEROUS
+            ),
+            Err(Violation::FirstInputNotOpened(Input::Resized(
+                ScriptedPlatform::SIZE
+            )))
+        );
+    }
+
+    /// A platform that remembers only a [`Request::KeepRunning`] made with
+    /// no run in progress, as an adapter would whose pending quit outlives
+    /// its window, and reports it as [`RemembersRequests`] does.
+    #[derive(Default)]
+    struct RemembersKeepRunning(RemembersRequests);
+
+    impl Platform for RemembersKeepRunning {
+        fn run(
+            &self,
+            options: WindowOptions,
+            report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
+            self.0.run(options, report, drawer)
+        }
+
+        fn close(&self) {
+            self.0.close();
+        }
+
+        fn request(&self, request: Request) {
+            if request == Request::KeepRunning {
+                self.0.request(request);
+            }
+        }
+    }
+
+    #[test]
+    fn a_platform_that_remembers_a_keep_running_asked_before_its_run_is_refused() {
+        assert_eq!(
+            check(
+                Arc::new(RemembersKeepRunning::default()),
                 WindowOptions::default(),
                 GENEROUS
             ),

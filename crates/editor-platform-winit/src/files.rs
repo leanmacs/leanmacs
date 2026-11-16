@@ -69,12 +69,16 @@ impl Arrivals {
     }
 }
 
-/// Where the application delegate hands the paths it is given: a channel
-/// the loop takes them from when it is woken, and the loop's waker.
+/// Where the application delegate hands what it is given: the paths to
+/// open and the system's asks to terminate, each on a channel the loop
+/// takes them from when it is woken, and the loop's waker.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) struct Handing {
     /// Where the paths go.
     pub(crate) files: mpsc::Sender<Vec<PathBuf>>,
+    /// Where each ask to terminate goes (`terminate.rs` decides what comes
+    /// of it).
+    pub(crate) terminations: mpsc::Sender<()>,
     /// What wakes the loop.
     pub(crate) proxy: EventLoopProxy,
 }
@@ -86,6 +90,12 @@ impl Handing {
     /// dropped its end of the channel, and the paths go nowhere.
     pub(crate) fn hand(&self, paths: Vec<PathBuf>) {
         let _ = self.files.send(paths);
+        self.proxy.wake_up();
+    }
+
+    /// Sends an ask to terminate, then wakes the loop, as `hand` does.
+    pub(crate) fn terminate(&self) {
+        let _ = self.terminations.send(());
         self.proxy.wake_up();
     }
 }

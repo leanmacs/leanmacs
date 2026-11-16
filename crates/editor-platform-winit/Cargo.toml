@@ -27,3 +27,15 @@ winit = "=0.31.0-beta.4"
 objc2 = "=0.6.5"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSString", "NSURL", "NSUserDefaults"] }
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# For the contract example alone (examples/contract/terminate.rs), which
+# asks the app to terminate as the system does and reads the window's title
+# back on the main thread. Each is already in the resolved graph at this
+# version, through winit-appkit, so no crate is added: `dispatch2` for
+# `run_on_main` (its `objc2` feature), and the bindings the example names
+# (`NSAppleEventDescriptor` and `NSThread`'s `performSelectorOnMainThread:`,
+# and `NSWindow`'s title).
+dispatch2 = { version = "=0.3.1", default-features = false, features = ["std", "objc2"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSAppleEventDescriptor", "NSThread"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow"] }

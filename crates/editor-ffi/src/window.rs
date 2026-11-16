@@ -19,6 +19,7 @@
 //! | `Resized` | `Resize` | Bit 0 in fullscreen ([`RESIZE_FULLSCREEN`]) | Empty | The width, the height, the scale |
 //! | `CloseRequested` | `CloseRequested` | 0 | Empty | None |
 //! | `OpenFiles` | `OpenFiles` | 0 | Empty | The paths |
+//! | `QuitRequested` | `QuitRequested` | 0 | Empty | None |
 //!
 //! The words (`words.rs`) of each kind that has them:
 //!
@@ -64,8 +65,9 @@
 //! [`editor_ffi_window_close`].
 //!
 //! **Lean asks things of the window** with [`editor_ffi_window_request`]:
-//! a platform's tag and a request's, 0 enter fullscreen, 1 leave fullscreen
-//! and 2 minimise ([`request_of`]). It never blocks, and it goes through
+//! a platform's tag and a request's, 0 enter fullscreen, 1 leave
+//! fullscreen, 2 minimise and 4 keep running, the answer to a quit the
+//! system asked when the editor does not quit ([`request_of`]). It never blocks, and it goes through
 //! the window's own loop ([`Platform::request`]), not the main-thread
 //! service, which still answers nothing else while the window runs. No tag
 //! names a title: the title is a field of the scene Lean publishes, and
@@ -151,6 +153,9 @@ const REQUEST_MINIMISE: u8 = 2;
 /// The tag of a title in what a scripted window was asked. No request
 /// from Lean has it: the title is a field of the scene.
 const REQUEST_TITLE: u64 = 3;
+/// The tag of keeping running: the editor's answer to a quit the system
+/// asked, when it does not quit. It is 4 and not 3, which is the title's.
+const REQUEST_KEEP_RUNNING: u8 = 4;
 
 /// The bit of a modifier word that is set when shift is held.
 pub const MODIFIER_SHIFT: u64 = 1;
@@ -317,6 +322,7 @@ pub fn event(input: Input, stamp: u64) -> Event {
             (EventKind::OpenFiles, 0, String::new(), words)
         }
         Input::CloseRequested => (EventKind::CloseRequested, 0, String::new(), Vec::new()),
+        Input::QuitRequested => (EventKind::QuitRequested, 0, String::new(), Vec::new()),
     };
     Event {
         source: Source {
@@ -472,6 +478,11 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
             no_text()?;
             (code == 0).then_some(())?;
             Input::CloseRequested
+        }
+        EventKind::QuitRequested => {
+            no_text()?;
+            (code == 0).then_some(())?;
+            Input::QuitRequested
         }
         EventKind::OpenFiles => {
             no_text()?;
@@ -1107,12 +1118,14 @@ pub extern "C" fn editor_ffi_window_close(platform: u8) -> bool {
 }
 
 /// The request Lean's tag `tag` names: 0 enter fullscreen, 1 leave
-/// fullscreen, 2 minimise. No tag names a title.
+/// fullscreen, 2 minimise, 4 keep running. No tag names a title, so 3
+/// names nothing.
 pub fn request_of(tag: u8) -> Option<WindowRequest> {
     match tag {
         REQUEST_ENTER_FULLSCREEN => Some(WindowRequest::EnterFullscreen),
         REQUEST_LEAVE_FULLSCREEN => Some(WindowRequest::LeaveFullscreen),
         REQUEST_MINIMISE => Some(WindowRequest::Minimise),
+        REQUEST_KEEP_RUNNING => Some(WindowRequest::KeepRunning),
         _ => None,
     }
 }
@@ -1137,7 +1150,8 @@ pub extern "C" fn editor_ffi_window_request(platform: u8, request: u8) -> bool {
 /// values of its characters.
 ///
 /// The match on [`WindowRequest`] is exhaustive on purpose: this crate must
-/// give every variant its words.
+/// give every variant its words, since a request with none could not be
+/// read back by Lean's tests, and a new one would cross unseen.
 pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
     let mut words = Vec::new();
     for request in asked {
@@ -1145,6 +1159,7 @@ pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
             WindowRequest::EnterFullscreen => words.push(u64::from(REQUEST_ENTER_FULLSCREEN)),
             WindowRequest::LeaveFullscreen => words.push(u64::from(REQUEST_LEAVE_FULLSCREEN)),
             WindowRequest::Minimise => words.push(u64::from(REQUEST_MINIMISE)),
+            WindowRequest::KeepRunning => words.push(u64::from(REQUEST_KEEP_RUNNING)),
             WindowRequest::Title(title) => {
                 words.push(REQUEST_TITLE);
                 push_scalars(&mut words, title);
@@ -1705,6 +1720,8 @@ mod tests {
         assert_eq!(request_of(2), Some(WindowRequest::Minimise));
         // No tag names a title: Lean never asks for one.
         assert_eq!(request_of(3), None);
+        assert_eq!(request_of(4), Some(WindowRequest::KeepRunning));
+        assert_eq!(request_of(5), None);
         assert_eq!(request_of(u8::MAX), None);
     }
 
@@ -1754,8 +1771,9 @@ mod tests {
                 WindowRequest::Title("é😀".into()),
                 WindowRequest::LeaveFullscreen,
                 WindowRequest::Title(String::new()),
+                WindowRequest::KeepRunning,
             ]),
-            [0, 2, 3, 2, 0xe9, 0x1_f600, 1, 3, 0]
+            [0, 2, 3, 2, 0xe9, 0x1_f600, 1, 3, 0, 4]
         );
         // A scripted platform answers what its latest run was asked: this
         // one has never run.
@@ -1775,9 +1793,26 @@ mod tests {
             Input::Focus(true),
             Input::Composition(Composition::Preedit("´".into())),
             Input::CloseRequested,
+            Input::QuitRequested,
         ] {
             assert_eq!(encoded(input).3, Vec::<u64>::new());
         }
+    }
+
+    #[test]
+    fn a_quit_asked_by_the_system_crosses_as_its_kind_with_no_code_text_or_words() {
+        assert_eq!(
+            encoded(Input::QuitRequested),
+            (EventKind::QuitRequested, 0, String::new(), vec![])
+        );
+        assert_eq!(EventKind::QuitRequested.tag(), 11);
+        assert_eq!(
+            read(EventKind::QuitRequested, 0, "", &[]),
+            Some(Input::QuitRequested)
+        );
+        assert_eq!(read(EventKind::QuitRequested, 1, "", &[]), None);
+        assert_eq!(read(EventKind::QuitRequested, 0, "x", &[]), None);
+        assert_eq!(read(EventKind::QuitRequested, 0, "", &[0]), None);
     }
 
     /// One of each row of the table in the module docs, and of each value
@@ -1857,6 +1892,7 @@ mod tests {
             Input::OpenFiles(vec!["/Users/me/notes.txt".into(), "/tmp/é ü.lean".into()]),
             Input::OpenFiles(vec![]),
             Input::CloseRequested,
+            Input::QuitRequested,
         ]
     }
 

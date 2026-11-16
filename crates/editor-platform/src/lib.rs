@@ -21,8 +21,10 @@
 //! its action, position, button and modifiers; a resize ([`Resize`]) with
 //! the size, the scale factor and whether the window is in fullscreen; the
 //! focus; an input method's composition; files the system asks the program
-//! to open ([`Input::OpenFiles`]); that the window opened; and a request to
-//! close.
+//! to open ([`Input::OpenFiles`]); that the window opened; a request to
+//! close; and that the system asked the program to quit
+//! ([`Input::QuitRequested`]), which the editor answers by closing or with
+//! [`Request::KeepRunning`].
 //!
 //! The command loop fixed this shape (its phase 1), so that it and the
 //! display pipeline build on one. The winit adapter produces all of it.
@@ -69,7 +71,9 @@
 //!
 //! The editor asks things of the running window with [`Platform::request`]:
 //! a [`Request`], one variant for each thing asked (enter or leave
-//! fullscreen, minimise, a title). A request asked with no window running
+//! fullscreen, minimise, a title, keep running). Keep running is the
+//! editor's answer to a quit the system asked when it does not quit: it
+//! changes nothing the window shows. A request asked with no window running
 //! does nothing and is not remembered. [`Platform::close`] stays a method
 //! of its own: it ends the run, which no request does. What a request does
 //! to the window is held to [`contract::requests`], against the pure model
@@ -179,6 +183,14 @@ pub enum Input {
     /// The user asked for the window to be closed. The window stays open
     /// until [`Platform::close`] is called.
     CloseRequested,
+    /// The system asked the program to quit. On macOS this is Command-Q
+    /// through the Quit menu item's `terminate:`, Quit from the Dock's menu,
+    /// or a logout, restart or shutdown. The program answers it with
+    /// [`Request::KeepRunning`], or by closing: nothing ends until
+    /// [`Platform::close`] is called. A platform reports it after
+    /// [`Input::Opened`], and does not report it again while it waits for
+    /// that answer.
+    QuitRequested,
 }
 
 /// A key event: which key, what happened to it, the modifiers held, and the
@@ -363,6 +375,10 @@ pub enum Request {
     Minimise,
     /// Show this as the window's title.
     Title(String),
+    /// The editor refused, or withdrew, the quit the system asked
+    /// ([`Input::QuitRequested`]). It changes nothing the window shows. A
+    /// platform with no quit pending does nothing with it.
+    KeepRunning,
 }
 
 /// A step of an input method's composition (IME).

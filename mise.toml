@@ -610,9 +610,13 @@ run = "tools/milestone-bench.sh lean"
 # desktop, one after the other, so it needs a display.
 #
 # First it runs the winit adapter's example (`crates/editor-platform-winit/
-# examples/contract.rs`): the real window held to the window port's contract
-# (`editor_platform::contract`). The window opens, is asked to close from
-# another thread, and the run must return. It prints one line, and its exit
+# examples/contract/main.rs`): the real window held to the window port's
+# contract (`editor_platform::contract`). The window opens, is asked to
+# close from another thread, and the run must return. On macOS it is also
+# asked to quit as the system asks (`terminate:` and the quit Apple Event,
+# examples/contract/terminate.rs), and must report each ask once, keep
+# handling requests while AppKit waits, and keep running when it is told
+# to. It needs no key or pointer input. It prints one line, and its exit
 # status is the result.
 #
 # Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/

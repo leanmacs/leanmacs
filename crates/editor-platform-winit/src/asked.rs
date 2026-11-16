@@ -21,6 +21,8 @@
 //! - **A title is set only when it is not the title the window shows**,
 //!   which starts as [`WinitPlatform::TITLE`], so the window is never told
 //!   what it already shows.
+//! - **Keeping running is nothing done to the window.** It answers the
+//!   system's quit, which is the module `terminate`'s.
 //!
 //! The adapter's run of `editor_platform::contract::requests` is this
 //! module's: the translation, over a window that records what it is told
@@ -73,6 +75,9 @@ impl Asked {
                 self.title.clone_from(&title);
                 Some(Act::Title(title))
             }
+            // Not the window's: it answers the system's quit, which
+            // `terminate.rs` decides. The handler never sends it here.
+            Request::KeepRunning => None,
         }
     }
 }
@@ -251,6 +256,7 @@ mod tests {
             Request::EnterFullscreen,
             Request::Title("notes.txt".into()),
             Request::Title("notes.txt".into()),
+            Request::KeepRunning,
             Request::LeaveFullscreen,
             Request::Minimise,
         ] {

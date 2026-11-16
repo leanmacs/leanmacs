@@ -1,5 +1,7 @@
 //! The application delegate: where macOS hands the files it asks the app to
-//! open. This is the only code in the workspace that names AppKit.
+//! open, and asks it to terminate. This is the only library code in the
+//! workspace that names AppKit; the crate's contract example names it too,
+//! to ask what the system asks.
 //!
 //! When Finder opens a file with the app ("Open With", a double-click on a
 //! document of a type the app claims, or a drop on its Dock icon), AppKit
@@ -15,9 +17,17 @@
 //! `-[NSApplication run]`'s `finishLaunching`, before winit makes the
 //! window, so a delegate installed later would miss it.
 //!
-//! Every decision is in `files.rs`. The delegate's one method is the one
-//! untested forward: it reads each URL's file path (a URL that is not a
-//! file's gives none) and hands the list to `Handing::hand`.
+//! It never decides. Every decision of the files is in `files.rs`, and
+//! every decision of the system's quit in `terminate.rs`. Three forwards
+//! are untested:
+//!
+//! - `application:openURLs:`, which reads each URL's file path (a URL that
+//!   is not a file's gives none) and hands the list to `Handing::hand`;
+//! - `applicationShouldTerminate:`, which hands the ask to
+//!   `Handing::terminate` and always answers `NSTerminateLater`, so that
+//!   AppKit waits for the editor's answer;
+//! - [`reply`], which makes the reply `terminate.rs` gives
+//!   (`replyToApplicationShouldTerminate:`).
 //!
 //! [`install`] also registers `NSTreatUnknownArgumentsAsOpen = NO` in the
 //! volatile registration domain, which writes nothing to disk. Otherwise
@@ -28,12 +38,13 @@
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSApplication, NSApplicationDelegate};
+use objc2_app_kit::{NSApplication, NSApplicationDelegate, NSApplicationTerminateReply};
 use objc2_foundation::{
     NSArray, NSDictionary, NSObject, NSObjectProtocol, NSString, NSURL, NSUserDefaults,
 };
 
 use crate::files::Handing;
+use crate::terminate::Reply;
 
 define_class!(
     /// The app's delegate: it hands the files it is asked to open on.
@@ -52,8 +63,29 @@ define_class!(
             self.ivars()
                 .hand(urls.iter().filter_map(|url| url.to_file_path()).collect());
         }
+
+        /// The system asks the app to terminate: Command-Q's `terminate:`,
+        /// the Dock's Quit, a logout, restart or shutdown. AppKit is told
+        /// to wait for a reply, and the ask is handed on.
+        #[unsafe(method(applicationShouldTerminate:))]
+        fn should_terminate(&self, _application: &NSApplication) -> NSApplicationTerminateReply {
+            self.ivars().terminate();
+            NSApplicationTerminateReply::TerminateLater
+        }
     }
 );
+
+/// Makes `reply` to a terminate AppKit waits on. It does nothing off the
+/// main thread, where AppKit cannot be asked.
+pub(crate) fn reply(reply: Reply) {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let should_terminate = match reply {
+        Reply::Cancel => false,
+    };
+    NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(should_terminate);
+}
 
 /// The installed delegate. The application does not retain its delegate,
 /// so this keeps it alive; dropping it clears the application's delegate.

@@ -23,6 +23,8 @@
 //! - **A title is the window's title**, and of two the last wins.
 //! - **A title changes neither fullscreen nor minimised, and fullscreen
 //!   changes no title.**
+//! - **Keeping running changes nothing the window shows**: it answers the
+//!   system's quit, and is not the window's.
 //!
 //! Whether a request asked with no window running is harmless is the run
 //! contract's ([`Check::run`](super::Check::run)): it needs a platform, and
@@ -79,6 +81,8 @@ pub const MINIMISES: &str = "minimising a window not in fullscreen minimises it"
 pub const TITLED: &str = "a title is the window's title, and the last wins";
 /// The rule that a title and fullscreen leave each other alone.
 pub const APART: &str = "a title changes neither fullscreen nor minimised, and fullscreen no title";
+/// The rule that keeping running changes nothing the window shows.
+pub const KEEPS_RUNNING: &str = "keeping running changes nothing the window shows";
 
 /// One rule as the check holds it: the requests carried out on a fresh
 /// carrier, what must then hold of what it shows, and the rule's words.
@@ -93,7 +97,7 @@ pub fn check<C: Carries>(mut make: impl FnMut() -> C) -> Result<(), RequestViola
     fn titled(text: &'static str) -> impl Fn(&Shown) -> bool {
         move |shown| shown.title.as_deref() == Some(text)
     }
-    let rules: [Rule<'_>; 13] = [
+    let rules: [Rule<'_>; 15] = [
         (vec![], &fresh, FRESH),
         (vec![Enter], &|shown| shown.fullscreen, ENTERS),
         (vec![Enter, Enter], &|shown| shown.fullscreen, ENTERS),
@@ -115,6 +119,12 @@ pub fn check<C: Carries>(mut make: impl FnMut() -> C) -> Result<(), RequestViola
             APART,
         ),
         (vec![title("a"), Enter], &titled("a"), APART),
+        (vec![Request::KeepRunning], &fresh, KEEPS_RUNNING),
+        (
+            vec![Enter, title("a"), Request::KeepRunning],
+            &|shown| shown.fullscreen && !shown.minimised && shown.title.as_deref() == Some("a"),
+            KEEPS_RUNNING,
+        ),
     ];
     for (asked, holds, rule) in rules {
         let mut carrier = make();
@@ -280,6 +290,31 @@ mod tests {
         let refused = check(NeverMinimises::default).expect_err("a minimise minimises");
         assert_eq!(refused.rule, MINIMISES);
         assert_eq!(refused.asked, [Request::Minimise]);
+    }
+
+    /// A window that minimises when it is asked to keep running.
+    #[derive(Default)]
+    struct KeepRunningMinimises(Shown);
+
+    impl Carries for KeepRunningMinimises {
+        fn carry_out(&mut self, request: Request) {
+            match request {
+                Request::KeepRunning => self.0.minimised = true,
+                other => self.0.carry_out(&other),
+            }
+        }
+
+        fn shown(&self) -> Shown {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn a_window_that_changes_what_it_shows_on_keep_running_is_refused() {
+        let refused =
+            check(KeepRunningMinimises::default).expect_err("keeping running changes nothing");
+        assert_eq!(refused.rule, KEEPS_RUNNING);
+        assert_eq!(refused.asked, [Request::KeepRunning]);
     }
 
     /// A window that opens in fullscreen.

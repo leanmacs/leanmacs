@@ -1526,6 +1526,7 @@ fn described(input: &Input) -> String {
         ),
         Input::OpenFiles(paths) => format!("open files: {}", paths.join(", ")),
         Input::CloseRequested => "close requested".to_owned(),
+        Input::QuitRequested => "quit requested by the system".to_owned(),
     }
 }
 
