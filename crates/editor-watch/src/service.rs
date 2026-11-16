@@ -1331,6 +1331,45 @@ mod tests {
     }
 
     #[test]
+    fn two_starts_of_one_directory_in_the_port_at_once_share_one_registration_and_drop_the_extra() {
+        let (fake, ground, clock) = fake();
+        let (service, completed) = service(&fake, &clock);
+        fake.hold_watches();
+
+        assert!(service.start(1, file("/w/f"), AT_ONCE));
+        assert!(service.start(2, file("/w/g"), AT_ONCE));
+        assert!(fake.until(DEADLINE, |record| record.parked == 2));
+        fake.release_watches();
+        let mut started = [
+            completed.recv_timeout(DEADLINE).ok(),
+            completed.recv_timeout(DEADLINE).ok(),
+        ];
+        started.sort();
+
+        assert_eq!(started, [Some(1), Some(2)]);
+        assert_eq!(service.take(1), Some(WatchReply::Started));
+        assert_eq!(service.take(2), Some(WatchReply::Started));
+        assert_eq!(fake.live(), [(PathBuf::from("/w"), Depth::Entries)]);
+        assert_eq!(fake.record().dropped.len(), 1, "the extra is dropped");
+        assert!(service.next(2, 3));
+        ground.write(Path::new("/w/g"), b"x");
+        assert_eq!(
+            delivered(&service, &completed, 3),
+            changes(&[("/w/g", &[Kind::Created, Kind::Written])])
+        );
+
+        assert!(service.cancel(1));
+        assert!(service.next(2, 4));
+        ground.write(Path::new("/w/g"), b"y");
+        assert_eq!(
+            delivered(&service, &completed, 4),
+            changes(&[("/w/g", &[Kind::Written])])
+        );
+        assert!(service.cancel(2));
+        assert_eq!(fake.live(), []);
+    }
+
+    #[test]
     fn a_cancel_while_the_watch_call_is_held_drops_the_registration() {
         let (fake, _ground, clock) = fake();
         let (service, completed) = service(&fake, &clock);
