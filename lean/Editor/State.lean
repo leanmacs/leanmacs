@@ -346,6 +346,14 @@ A prompt is a request for one string, with a text to show beside the input
   shown buffer cannot be removed (`Editor/Buffers.lean`, "Close").
 - `scratchName` is the editor's one name for its empty buffer with no file:
   the initial state's, and the one left after the last buffer is closed.
+- A buffer may be **read-only** (`Buffer.readOnly`, set by `setReadOnly`,
+  which refuses `noSuchBuffer`): an edit of its text by a command is
+  refused where commands are dispatched (`Editor/Command/Dispatch.lean`,
+  "Read-only buffers"), and a committed text into it is dropped
+  (`Editor/Loop.lean`). `readOnly?` finds the read-only buffer over a
+  text, with its name, and `readOnlyReason` is what is said. The command
+  that owns such a buffer writes it inside `BufferId.writing`
+  (`Editor/Api.lean`), as Emacs's `inhibit-read-only`.
 
 ### Most recently used
 
@@ -647,6 +655,9 @@ structure Buffer where
   ending, and a line feed for a buffer with no file or a file with no line
   break. Nothing else is decided by it. -/
   lineEnding : File.LineEnding := .lf
+  /-- Whether its text is read-only to editing commands ("Buffers", in the
+  module docs). -/
+  readOnly : Bool := false
   deriving BEq, Repr
 
 /-- Whether the buffer's text is in another state than the one last saved,
@@ -1666,6 +1677,26 @@ def untold? (state : EditorState) (text : TextId) :
         | some { path, changed := some { found, told := false }, .. } => some (⟨index⟩, path, found)
         | _ => none
     | none => none
+
+/-- Makes the buffer `id` read-only to editing commands, or not, as `on`
+says. Refused, with the state unchanged, with `noSuchBuffer` for a buffer
+there is none of. -/
+def setReadOnly (id : BufferId) (on : Bool) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with readOnly := on })) state
+
+/-- The buffer over the text `text` that is read-only, with its name: what
+refuses an edit of that text ("Buffers", in the module docs). -/
+def readOnly? (state : EditorState) (text : TextId) : Option (BufferId × String) :=
+  (List.range state.buffers.size).findSome? fun index =>
+    match state.buffer? ⟨index⟩ with
+    | some buffer => if buffer.text == text && buffer.readOnly then some (⟨index⟩, buffer.name) else none
+    | none => none
+
+/-- What is said of an edit refused because the buffer called `name` is
+read-only. -/
+def readOnlyReason (name : String) : String :=
+  s!"{name} is read-only"
 
 /-- The register kept under `name`, if one was set under it. -/
 def register? (state : EditorState) (name : String) : Option Register :=

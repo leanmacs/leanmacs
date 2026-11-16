@@ -576,7 +576,7 @@ is queued, and marks that event. What the loop does with the flag is here
 
 | Event | What it does to the state |
 |---|---|
-| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped, and so is the first commit into a buffer whose file changed on disk unbeknown to the user ("Files that changed on disk"). Either way it clears the preedit |
+| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped, and so is a commit into a read-only buffer (`Buffer.readOnly`), the echo area saying `<name> is read-only`, and the first commit into a buffer whose file changed on disk unbeknown to the user ("Files that changed on disk"). Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
 | `resize` | Sets the frame's size, whether the window is in fullscreen (`Frame.fullscreen`), its corner clearance in points (`Frame.corner`), which the bottom row is inset by (`EditorState.bottomInset`), and its top inset in points (`Frame.top`), which the views along the frame's top edge start their text below (`EditorState.topInset`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: Lean handles no scale, and the display lays out at its own |
@@ -1500,6 +1500,11 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
   | .commit text => do
     let some target := state.focusedTarget? | return { state with preedit := none }
     if report.takesText then
+      -- A commit into a read-only buffer is dropped and said, as a
+      -- command's edit gives up, with no command to name.
+      if let some (_, name) := state.readOnly? target.buffer.text then
+        return { state with
+            echo := EditorState.readOnlyReason name, preedit := none }
       -- The first edit after a change on disk the user was not told of is
       -- dropped and said, as a command's is refused ("Files that changed on
       -- disk", in the module docs).
@@ -1513,14 +1518,18 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
 
 /-- The text `handle` inserts for `event` from `state`, `report` being what
 the scheme says of the focused view: a committed text, where there is a
-focused window, the report says its view takes text, and its buffer's file
-did not change on disk unbeknown to the user. None for any other event, and
-for a commit that is dropped. -/
+focused window, the report says its view takes text, its buffer is not
+read-only, and its buffer's file did not change on disk unbeknown to the
+user. None for any other event, and for a commit that is dropped. -/
 def inserts (state : EditorState) (report : InputScheme.Report) : Event → Option String
   | .commit text =>
     match state.focusedTarget? with
     | some target =>
-      if report.takesText && (state.untold? target.buffer.text).isNone then some text else none
+      if
+          report.takesText && (state.readOnly? target.buffer.text).isNone &&
+            (state.untold? target.buffer.text).isNone then
+        some text
+      else none
     | none => none
   | _ => none
 

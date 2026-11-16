@@ -731,6 +731,26 @@ command. -/
 def runCommand (name : String) (call : Call) : EditorM Bool :=
   EditorState.ask (.runCommand name call)
 
+/-- Makes the buffer `id` read-only to editing commands, or not, as `on`
+says (`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a
+buffer there is none of. -/
+def BufferId.setReadOnly (id : BufferId) (on : Bool) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setReadOnly id on)
+
+/-- Runs `action` with the buffer `id` writable, as Emacs's
+`inhibit-read-only` does, for the command that owns a read-only buffer: a
+buffer that is read-only is made writable, `action` runs, and the buffer is
+made read-only again. A command that does not run to its end is rolled
+back to the state from before it, the flag included. -/
+def BufferId.writing {α : Type} (id : BufferId) (action : EditorM α) : EditorM α := do
+  let was := ((← editorState).buffer? id).any (·.readOnly)
+  if was then
+    discard <| id.setReadOnly false
+  let value ← action
+  if was then
+    discard <| id.setReadOnly true
+  return value
+
 /-- Runs `invocation`, which a job posted ("Jobs", in the module docs): the
 command registered under its name, with the focused window and the
 invocation's arguments, as part of this command (`runCommand`). A name no

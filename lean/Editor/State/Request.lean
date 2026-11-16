@@ -231,6 +231,8 @@ inductive StateRequest where
   | markChanged (id : BufferId) (stamp : File.Stamp) (found : Option File.Stamp) (told : Bool)
   /-- Mark the change on disk of the buffer `id`'s file as told. -/
   | tellChanged (id : BufferId)
+  /-- Make the buffer `id` read-only to editing commands, or not. -/
+  | setReadOnly (id : BufferId) (on : Bool)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
   /-- Whether auto-reload is in effect: a command's choice, or else config's
@@ -335,6 +337,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .endSave .. => Except BufferRefusal Unit
   | .markChanged .. => Except BufferRefusal Unit
   | .tellChanged _ => Except BufferRefusal Unit
+  | .setReadOnly .. => Except BufferRefusal Unit
   | .setAutoReload _ => Unit
   | .autoReloadMode => Bool
   | .unfollow _ => Unit
@@ -407,6 +410,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .endSave id snapshot stamp, state => state.endSave id snapshot stamp
   | .markChanged id stamp found told, state => state.markChanged id stamp found told
   | .tellChanged id, state => state.tellChanged id
+  | .setReadOnly id on, state => state.setReadOnly id on
   | .setAutoReload on, state => ((), { state with autoReload := some on })
   -- Config's setting is the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, a choice no command made is off.

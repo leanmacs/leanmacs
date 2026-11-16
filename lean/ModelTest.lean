@@ -27666,6 +27666,102 @@ def shellChecks : List Check :=
             Shell.keyOf none == "shell outside" &&
             Shell.keyOf (some (.local "/w")) != Shell.keyOf (some (.local "/r"))) }]
 
+/-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
+`abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts
+`x` at the window's cursors; `C-r d` (`delete-first`) deletes the first byte
+of its text; `C-r u` (`undo`) undoes in the window's buffer; `C-r w`
+(`write-w`) appends `w` to the buffer's text inside `writing`; and `C-r f`
+(`write-fails`) appends `f` inside `writing` and is then refused there. -/
+def readOnlyKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    [("C-r m", invoke "make-ro"), ("C-r i", invoke "insert-x"), ("C-r d", invoke "delete-first"),
+      ("C-r u", invoke "undo"), ("C-r w", invoke "write-w"), ("C-r f", invoke "write-fails")]
+    [("make-ro", fun call => do
+        if let .ok made← createBuffer "ro" "abc" then
+          discard <| made.setReadOnly true
+          discard <| call.target.window.id.show made
+        return none),
+      ("insert-x", fun call => do
+        call.target.insertAtSelections "x"
+        return none),
+      ("delete-first", fun call => do
+        call.target.buffer.text.delete 0 1
+        return none),
+      ("undo", fun call => do
+        discard <| call.target.window.buffer.undo
+        return none),
+      ("write-w", fun call => do
+        call.target.window.buffer.writing do
+          let text := call.target.buffer.text
+          text.insert (← text.byteLength) "w"
+        return none),
+      ("write-fails", fun call => do
+        call.target.window.buffer.writing do
+          let text := call.target.buffer.text
+          text.insert (← text.byteLength) "f"
+          text.delete 9 99
+        return none)]
+
+/-- A driver of the read-only checks, with their keys and no job; `none` if
+making the state was refused. -/
+def readOnlyDriver : Option TestDriver :=
+  (Loop.Driver.over readOnlyKeys (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+      editorModel).toOption
+
+/-- The checks of read-only buffers (`Editor/State.lean`, "Buffers";
+`Editor/Command/Dispatch.lean`, "Read-only buffers"), on the loop's driver
+over the editor's models. -/
+def readOnlyChecks : List Check :=
+  [{  name :=
+        "an insert, a delete and an undo in a read-only buffer each end the command as giving up: the text is as it was, the echo area says the buffer is read-only, and the buffer stays read-only"
+      run :=
+        pure <|
+          match readOnlyDriver with
+          | none => false
+          | some driver =>
+            let made := settledAfter driver "C-r m"
+            let inserted := settledAfter made "C-r i"
+            let deleted := settledAfter made "C-r d"
+            let written := settledAfter made "C-r w"
+            let undone := settledAfter written "C-r u"
+            (showing made).bind (·.text) == some "abc" &&
+              (showing made).map (·.buffer.readOnly) == some true &&
+              (showing inserted).bind (·.text) == some "abc" &&
+              echoOf inserted == some "insert-x: ro is read-only" &&
+              (showing deleted).bind (·.text) == some "abc" &&
+              echoOf deleted == some "delete-first: ro is read-only" &&
+              (showing undone).bind (·.text) == some "abcw" &&
+              echoOf undone == some "undo: ro is read-only" &&
+              (showing undone).map (·.buffer.readOnly) == some true },
+    { name :=
+        "writing lets the owning command's own edit through and leaves the buffer read-only; a command refused inside writing is rolled back, the flag with it"
+      run :=
+        pure <|
+          match readOnlyDriver with
+          | none => false
+          | some driver =>
+            let made := settledAfter driver "C-r m"
+            let written := settledAfter made "C-r w"
+            let failed := settledAfter made "C-r f"
+            (showing written).bind (·.text) == some "abcw" &&
+              (showing written).map (·.buffer.readOnly) == some true &&
+              (showing failed).bind (·.text) == some "abc" &&
+              (showing failed).map (·.buffer.readOnly) == some true &&
+              echoOf failed == some "write-fails: refused: bad range" },
+    { name :=
+        "a committed text into a read-only buffer is dropped, and the echo area says the buffer is read-only, with no command's name; into another buffer it is inserted"
+      run :=
+        pure <|
+          match readOnlyDriver with
+          | none => false
+          | some driver =>
+            let made := settledAfter driver "C-r m"
+            let committed := (fedTo made [.commit "z"]).1
+            let elsewhere := (fedTo driver [.commit "z"]).1
+            (showing committed).bind (·.text) == some "abc" &&
+              echoOf committed == some "ro is read-only" &&
+              (showing elsewhere).bind (·.text) == some "z" }]
+
 /-- The names of the workspace finder's contract properties
 (`Editor/Workspace/Contract.lean`) that do not hold of the pure model
 (`World.find`), or of the real finder run on the job model of the
@@ -27795,7 +27891,8 @@ def checks : List Check :=
     workspaceGitChecks ++
     workspaceStateChecks ++
     workspaceChecks ++
-    shellChecks
+    shellChecks ++
+    readOnlyChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
