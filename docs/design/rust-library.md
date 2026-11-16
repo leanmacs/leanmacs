@@ -803,8 +803,16 @@ built"):
   `replyToApplicationShouldTerminate:NO`, once, and is otherwise nothing;
   a close with one pending, one held or one still on the channel replies
   `YES`, once, after the drawer is told the window is closing, so nothing
-  is left unanswered; and a window that could not be opened replies `NO`
+  is left unanswered, unless a `KeepRunning` came with the close (found
+  among the requests the closing wake-up drops), when it replies `NO` and
+  the run returns; and a window that could not be opened replies `NO`
   to an ask held or waiting, so that the run returns with the failure.
+  That a close with a quit pending may end the process inside the run,
+  and that a keep running just before it refuses the quit, is the window
+  port's rule (`Platform::close`), which the fake models
+  (`ScriptedPlatform::quit_let_go`); the editor's window mode keeps it by
+  doing all it must before the close, and by asking keep running first
+  when its loop failed ([concurrency.md](concurrency.md), "Quit").
   The editor decides in Lean
   ([concurrency.md](concurrency.md), "Quit"). On the queue the input is the
   kind `QuitRequested` (11), code 0, no text and no words; the request is
@@ -823,8 +831,11 @@ built"):
   inside the run. So what must come before the end is done first: the
   editor's window mode shuts down before it asks for the close
   ([concurrency.md](concurrency.md), "Quit"), and the adapter tells the
-  drawer the window is closing before it replies. The example runs that
-  close in a process of its own (`examples/contract/pending.rs`), which
+  drawer the window is closing before it replies. The check's own close
+  comes with a keep running asked just before it, with the scenario's
+  third `terminate:` left pending: the close cancels it, `terminate:`
+  returns and the run returns. The example runs a close with no keep
+  running in a process of its own (`examples/contract/pending.rs`), which
   records its verdict before the close and must then be ended by AppKit,
   inside the run, with status 0; an exit handler fails any end before the
   verdict.

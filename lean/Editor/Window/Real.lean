@@ -23,16 +23,24 @@ There is one editor loop; this module only wires it to a window:
   window has closed. The host's thread is a dedicated task, as the keyboard
   check's loop is. When the loop ends, because `:q` let the editor leave or
   the window asked to close, or the system's quit was let go ahead, a task
-  that waits on the host's thread waits a little for the render loop to
+  that waits on the host's thread (`closeOnceEnded`) says on stderr why
+  when the loop ended with an error, waits a little for the render loop to
   draw what was published last, shuts down (`shutdown`: the library's
   children killed and reaped, its watches ended, the queues quit), and then
   asks the window to close (`Ffi.windowClose`). Then `main` exits.
-- **The system's quit, let go ahead.** The shutdown comes before the close
-  because on macOS a close with the system's quit pending lets AppKit end
-  the process (`exit(0)`) inside the run, which then never returns
-  (`editor-platform-winit`'s `terminate.rs`). What follows the run is then
-  not reached: the exit status is 0, and `--report` and the "nothing could
-  draw" line are not printed.
+- **The system's quit, let go ahead.** The window port's rule
+  (`Platform::close`, in `editor-platform`): a close with the system's quit
+  pending lets the quit go ahead and may end the process inside the run,
+  which then never returns, as AppKit's terminate does on macOS. So all
+  that must come before the end comes before the close: the loop's error
+  said, and the shutdown. What follows the run is then not reached: the
+  exit status is 0, and `--report` and the "nothing could draw" line are
+  not printed.
+- **The system's quit, refused over a failure.** A loop that ended with an
+  error has the closer ask the window to keep running just before the
+  close, which by the same rule refuses a quit pending, so the run returns
+  and `main` exits with status 1, and a logout is not carried out over a
+  crash.
 - **The command line** is read by the pure core (`Editor/Window.lean`).
   `main` reads at the edge what it needs of the world: the working
   directory, `XDG_CONFIG_HOME` and `HOME`, the executable's path, which
@@ -143,16 +151,51 @@ def hostDisplay (display : Ffi.Display) (platform : Ffi.Platform) (snapshots : S
   Headless.Host.Display.real
       (← RealDisplay.over display snapshots Theme.builtin (platform := some platform))
 
+/-- What the window mode does once its editor loop, `loop`, has ended, on
+the window of `platform`; whether the loop ended well. By the window port's
+rule a close with the system's quit pending may end the process inside the
+window's run (`Platform::close`, in `editor-platform`), so everything that
+must come before the end comes before the close, in this order:
+
+- a loop that ended with an error is said, with `say` (stderr in the
+  window mode): `editor: the editor loop ended with an error: <error>`;
+- it waits up to `drawPatience` for the render loop to draw what was
+  published last;
+- it runs `shutdown`, saying so if it fails;
+- after a loop that ended with an error, it asks the window to keep running
+  (`Ffi.WindowRequest.keepRunning`), which refuses a system quit pending as
+  the window closes, so that the run returns and a logout is not carried out
+  over a crash;
+- and it asks the window to close.
+
+Pinned on the scripted platform by `FfiTest.windowChecks`. -/
+def closeOnceEnded (platform : Ffi.Platform) (loop : Task (Except IO.Error Unit))
+    (shutdown : IO Unit) (say : String → IO Unit := IO.eprintln) : IO Bool := do
+  let ended ← IO.wait loop
+  if let .error error := ended then
+    say s!"editor: the editor loop ended with an error: {error}"
+  discard <|
+      Headless.within drawPatience do
+        return (← Ffi.renderResting) != some false
+  try
+    shutdown
+  catch error =>
+    say s!"editor: the shutdown failed: {error}"
+  if ended matches .error _ then
+    Ffi.windowRequest platform .keepRunning
+  Ffi.windowClose platform
+  return ended matches .ok _
+
 /-- Runs the editor in a window of `platform`, on `options.file` when one
 was given, drawn from `display` and with `clipboard` as its clipboard, and
 returns once the window has closed: the host is started, and what
 `options.starts` gives is posted before the first event (the file opened
 when one was given, each of `said` said in the echo area, and config
 reloaded when `plan` says so); the window is run; and when the host's loop
-ends, `shutdown` is run and then the window is closed. `shutdown` comes
-before the close because a close with the system's quit pending ends the
-process inside the run, by AppKit's terminate on macOS, so nothing after
-the run is reached then.
+ends, `closeOnceEnded` says why if it failed, runs `shutdown` and closes the
+window. That comes before the close by the window port's rule: a close with
+the system's quit pending may end the process inside the run, so nothing
+after the run is reached then.
 The exit status: 0 when the window ran with something drawing in it; 1 when
 it could not be opened, when nothing could draw in it (`nothingDrew`, said
 on stderr, and in the echo area while the loop still runs), or when the loop
@@ -171,20 +214,7 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
     host.send start.request
   -- The loop ends by itself, on `:q` or a close request: the window is then
   -- closed, once what was published last is drawn.
-  -- The shutdown comes before the close: a close with the system's quit
-  -- pending ends the process inside the run (AppKit's terminate, on macOS),
-  -- which then never returns.
-  let closer ←
-    IO.asTask (prio := .dedicated) do
-        discard <| IO.wait host.thread
-        discard <|
-            Headless.within drawPatience do
-              return (← Ffi.renderResting) != some false
-        try
-          shutdown
-        catch error =>
-          IO.eprintln s!"editor: the shutdown failed: {error}"
-        Ffi.windowClose platform
+  let closer ← IO.asTask (prio := .dedicated) (closeOnceEnded platform host.thread shutdown)
   let opened ← Ffi.inputClock
   let ran ←
     Ffi.windowRun platform options.composition (options.presentMode.map PresentMode.library)
@@ -200,11 +230,12 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
       catch _ =>
         pure ()
   -- The window has closed, or never opened: a loop still running is ended.
+  -- A loop that ended with an error was said by the closer, which reads the
+  -- same result.
   let ended ←
     try
       host.halt Headless.settlePatience
-    catch error =>
-      IO.eprintln s!"editor: the editor loop ended with an error: {error}"
+    catch _ =>
       pure false
   discard <| IO.wait closer
   match ran with
@@ -232,8 +263,9 @@ def shutdown : IO Unit := do
 the edge, opens the system's display and clipboard, and runs `host` on the
 real window, with `shutdown`. A command line it does not take is the reason
 and the usage on stderr, and status 2. It exits explicitly, with the status
-`host` gave. When the system's quit was let go ahead, AppKit has ended the
-process with status 0 inside the run instead, once `shutdown` had run. -/
+`host` gave. When the system's quit was let go ahead, the platform may have
+ended the process with status 0 inside the run instead (the window port's
+rule; AppKit's terminate on macOS), once `shutdown` had run. -/
 def main (arguments : List String) : IO UInt32 := do
   let environment : Environment :=
     { workingDirectory := (← IO.currentDir).toString, xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME"

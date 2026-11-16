@@ -32,7 +32,14 @@
 //!   close is asked: the step says stop, the host shuts down (its children
 //!   killed and reaped, its watches ended, its queues quit), and asks for
 //!   the close; the loop then tells the drawer the window is closing, and
-//!   only then replies. A logout the editor goes along with goes on.
+//!   only then replies. A logout the editor goes along with goes on. This
+//!   is the window port's rule (`Platform::close`): a close with a quit
+//!   pending may end the process inside the run.
+//! - **A close with a keep running asked before it cancels instead**
+//!   ([`Reply::Cancel`]): one pending, one held and those waiting, once,
+//!   so that the run returns. The editor's host asks it when its loop
+//!   ended with an error, so that the error is said and a logout is not
+//!   carried out over a crash.
 //! - **A window that could not be opened cancels an ask held or waiting**
 //!   ([`Reply::Cancel`]), so that the run returns and the host can say why.
 //!
@@ -91,9 +98,10 @@ impl Terminate {
         std::mem::take(&mut self.pending).then_some(Reply::Cancel)
     }
 
-    /// The window is closing, with `waiting` asks still on the channel: with
-    /// one pending, one held or one waiting, the reply that lets the system
-    /// terminate, once; with none, nothing.
+    /// The window is closing, with `waiting` asks still on the channel, and
+    /// `kept` whether a keep running came with the close: with one pending,
+    /// one held or one waiting, the reply once, which lets the system
+    /// terminate, or cancels it when `kept`; with none, nothing.
     ///
     /// The close is the editor quitting by its own path, and the host has
     /// shut down before it asked for the close. AppKit waits inside
@@ -103,8 +111,14 @@ impl Terminate {
     /// (`exit(0)`), and a logout the editor went along with goes on. An ask
     /// the editor never heard of, held or still waiting, is answered the
     /// same way: the editor was leaving anyway.
-    pub(crate) fn close(&mut self, waiting: usize) -> Option<Reply> {
-        self.take(waiting).then_some(Reply::Now)
+    ///
+    /// A keep running asked before the close, and found with it, is the
+    /// editor refusing the quit as it closes, as its host does when its loop
+    /// failed: then every ask is cancelled, the run returns, and the host
+    /// can say why. A logout is not carried out over a crash.
+    pub(crate) fn close(&mut self, waiting: usize, kept: bool) -> Option<Reply> {
+        let reply = if kept { Reply::Cancel } else { Reply::Now };
+        self.take(waiting).then_some(reply)
     }
 
     /// The window could not be opened, with `waiting` asks still on the
@@ -186,8 +200,8 @@ mod tests {
         let mut terminate = opened();
         assert_eq!(terminate.ask(), Some(Input::QuitRequested));
 
-        assert_eq!(terminate.close(0), Some(Reply::Now));
-        assert_eq!(terminate.close(0), None, "it is answered once");
+        assert_eq!(terminate.close(0, false), Some(Reply::Now));
+        assert_eq!(terminate.close(0, false), None, "it is answered once");
         assert_eq!(terminate.keep_running(), None, "and is no longer pending");
     }
 
@@ -196,18 +210,18 @@ mod tests {
         let mut held = Terminate::default();
         assert_eq!(held.ask(), None);
 
-        assert_eq!(held.close(0), Some(Reply::Now));
-        assert_eq!(held.close(0), None, "it is answered once");
+        assert_eq!(held.close(0, false), Some(Reply::Now));
+        assert_eq!(held.close(0, false), None, "it is answered once");
     }
 
     #[test]
     fn a_close_with_asks_still_waiting_on_the_channel_lets_the_system_terminate() {
-        assert_eq!(opened().close(2), Some(Reply::Now));
-        assert_eq!(Terminate::default().close(1), Some(Reply::Now));
+        assert_eq!(opened().close(2, false), Some(Reply::Now));
+        assert_eq!(Terminate::default().close(1, false), Some(Reply::Now));
         let mut terminate = opened();
         assert_eq!(terminate.ask(), Some(Input::QuitRequested));
         assert_eq!(
-            terminate.close(1),
+            terminate.close(1, false),
             Some(Reply::Now),
             "one pending and one waiting are one reply"
         );
@@ -215,12 +229,44 @@ mod tests {
 
     #[test]
     fn a_close_with_none_asked_makes_no_reply() {
-        assert_eq!(Terminate::default().close(0), None);
-        assert_eq!(opened().close(0), None);
+        assert_eq!(Terminate::default().close(0, false), None);
+        assert_eq!(opened().close(0, false), None);
         let mut answered = opened();
         assert_eq!(answered.ask(), Some(Input::QuitRequested));
         assert_eq!(answered.keep_running(), Some(Reply::Cancel));
-        assert_eq!(answered.close(0), None, "an ask answered is not pending");
+        assert_eq!(
+            answered.close(0, false),
+            None,
+            "an ask answered is not pending"
+        );
+    }
+
+    #[test]
+    fn a_close_with_keep_running_asked_with_it_cancels_one_pending_held_or_waiting_once() {
+        let mut pending = opened();
+        assert_eq!(pending.ask(), Some(Input::QuitRequested));
+        assert_eq!(pending.close(0, true), Some(Reply::Cancel));
+        assert_eq!(pending.close(0, true), None, "it is answered once");
+        assert_eq!(pending.close(0, false), None, "and is no longer pending");
+
+        let mut held = Terminate::default();
+        assert_eq!(held.ask(), None);
+        assert_eq!(held.close(0, true), Some(Reply::Cancel));
+
+        assert_eq!(opened().close(1, true), Some(Reply::Cancel));
+        let mut both = opened();
+        assert_eq!(both.ask(), Some(Input::QuitRequested));
+        assert_eq!(
+            both.close(2, true),
+            Some(Reply::Cancel),
+            "one pending and some waiting are one reply"
+        );
+    }
+
+    #[test]
+    fn a_close_with_keep_running_asked_with_it_and_none_asked_makes_no_reply() {
+        assert_eq!(Terminate::default().close(0, true), None);
+        assert_eq!(opened().close(0, true), None);
     }
 
     #[test]

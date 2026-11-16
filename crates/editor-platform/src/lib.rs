@@ -24,7 +24,8 @@
 //! to open ([`Input::OpenFiles`]); that the window opened; a request to
 //! close; and that the system asked the program to quit
 //! ([`Input::QuitRequested`]), which the editor answers by closing or with
-//! [`Request::KeepRunning`].
+//! [`Request::KeepRunning`]. A close with that quit pending lets it go
+//! ahead, and may end the process inside the run ([`Platform::close`]).
 //!
 //! The command loop fixed this shape (its phase 1), so that it and the
 //! display pipeline build on one. The winit adapter produces all of it.
@@ -75,7 +76,9 @@
 //! editor's answer to a quit the system asked when it does not quit: it
 //! changes nothing the window shows. A request asked with no window running
 //! does nothing and is not remembered. [`Platform::close`] stays a method
-//! of its own: it ends the run, which no request does. What a request does
+//! of its own: it ends the run, which no request does, and with the
+//! system's quit pending it may end the process too; keep running asked
+//! before it refuses that quit, so that the run returns. What a request does
 //! to the window is held to [`contract::requests`], against the pure model
 //! [`scripted::Shown`].
 //!
@@ -190,6 +193,12 @@ pub enum Input {
     /// [`Platform::close`] is called. A platform reports it after
     /// [`Input::Opened`], and does not report it again while it waits for
     /// that answer.
+    ///
+    /// Closing with it pending lets the quit go ahead, and the platform
+    /// may then end the process inside [`Platform::run`], which does not
+    /// return: so everything that must happen before the program ends
+    /// happens before the close. A keep running asked before the close
+    /// refuses it instead, and the run returns ([`Platform::close`]).
     QuitRequested,
 }
 
@@ -377,7 +386,9 @@ pub enum Request {
     Title(String),
     /// The editor refused, or withdrew, the quit the system asked
     /// ([`Input::QuitRequested`]). It changes nothing the window shows. A
-    /// platform with no quit pending does nothing with it.
+    /// platform with no quit pending does nothing with it. Asked just
+    /// before [`Platform::close`], it refuses a quit pending as the window
+    /// closes, so that the run returns.
     KeepRunning,
 }
 
@@ -529,16 +540,34 @@ pub trait Platform: Sync {
     /// until [`close`](Self::close) is called, handing each [`Input`] to
     /// `report` as it arrives, [`Input::Opened`] first, and each [`Canvas`]
     /// to `drawer`, [`Canvas::Opened`] first and before that report, and
-    /// [`Canvas::Closing`] last, before it returns.
+    /// [`Canvas::Closing`] last, before it returns, or before the process
+    /// ends.
+    ///
+    /// It may not return: when the close came with the system's quit
+    /// pending ([`Input::QuitRequested`]), the platform lets the quit go
+    /// ahead and may end the process inside the run, with status 0, as
+    /// AppKit's terminate does on macOS. Nothing the caller would do after
+    /// the run is then done; it is done before the close
+    /// ([`close`](Self::close)).
     ///
     /// Returns a failure, having reported nothing and told nothing, when no
     /// window can be opened.
     fn run(&self, options: WindowOptions, report: Report, drawer: Drawer)
     -> Result<(), CannotOpen>;
 
-    /// Asks the running window to close, so that [`run`](Self::run) returns.
+    /// Asks the running window to close, so that [`run`](Self::run) ends.
     /// It may be called from any thread, and does nothing when no window is
     /// running.
+    ///
+    /// With the system's quit pending ([`Input::QuitRequested`]) the close
+    /// lets the quit go ahead, and the platform may end the process inside
+    /// `run`, which then never returns: so everything that must happen
+    /// before the program ends (children reaped, queues quit, what is said
+    /// on the way out) happens before the close is asked. A
+    /// [`Request::KeepRunning`] asked before the close refuses the quit
+    /// instead, and `run` returns. With no quit pending, `run` returns.
+    /// [`ScriptedPlatform`] models this: it returns all the same, and says
+    /// whether its close let a quit go ([`ScriptedPlatform::quit_let_go`]).
     fn close(&self);
 
     /// Asks the running window to do what `request` says. It may be called

@@ -81,9 +81,12 @@
 //!   pending; [`Request::KeepRunning`] cancels a pending one
 //!   (`replyToApplicationShouldTerminate:NO`) and is otherwise nothing; a
 //!   close lets one pending, held or still waiting go ahead (`YES`), so that
-//!   none is left unanswered; and a window that could not be opened cancels
-//!   one held or waiting. Keep running is taken out of the requests the loop
-//!   finds, and never reaches the window. winit's loop handles its
+//!   none is left unanswered, unless a keep running came with it, when it
+//!   cancels them (`NO`) and the run returns; and a window that could not
+//!   be opened cancels one held or waiting. Keep running is taken out of
+//!   the requests the loop finds, and never reaches the window; on a close,
+//!   `wake` says whether one was among the requests it drops. winit's loop
+//!   handles its
 //!   wake-ups and requests while AppKit waits, since winit runs them in the
 //!   common modes, which include AppKit's modal-panel mode.
 //! - **It does what follows the loop's end before it lets the system
@@ -92,7 +95,8 @@
 //!   answered `YES` AppKit ends the process (`exit(0)`) there. So on such a
 //!   close the drawer is told the window is closing, and the window goes,
 //!   before the reply. Whatever the program must do before it ends, it
-//!   does before it asks for the close.
+//!   does before it asks for the close: the window port's rule
+//!   (`Platform::close`), which this adapter is why the port states.
 //!
 //! # Tests
 //!
@@ -106,7 +110,8 @@
 //! the window opened; and `Handing::hand`, which sends before it wakes),
 //! the system's quit (`terminate`'s rules, `Handing::terminate`, which
 //! sends before it wakes, and `wake`, which still counts the asks on a
-//! close, so that the close answers them),
+//! close, so that the close answers them, and says whether a keep running
+//! came with it),
 //! and the refusal off the main thread. The event
 //! loop itself needs a display, and so do the lines here that only a real
 //! window runs. They are few, and each is a reading of the window or a
@@ -155,8 +160,10 @@
 //!   could not be opened to `terminate`, and of its reply to the delegate;
 //!   and, on a close with a reply, telling the drawer the window is closing
 //!   before it. What comes of them is `terminate`'s, and tested. The
-//!   contract example asks them of a running window, and sees a close with
-//!   a terminate pending end the process by AppKit's terminate.
+//!   contract example asks them of a running window, sees a close with a
+//!   keep running before it cancel a terminate pending and return, and
+//!   sees a close with a terminate pending end the process by AppKit's
+//!   terminate.
 //!
 //! They are held to the port's contract by `examples/contract/main.rs`, which
 //! two opt-in tasks run: `mise run linux-window`, under Xvfb in a
@@ -389,6 +396,10 @@ struct Woken {
     files: Vec<Vec<PathBuf>>,
     /// How many asks to terminate arrived.
     terminations: usize,
+    /// Whether a keep running came with the close, when the loop ends:
+    /// the close then cancels the system's quit (`Terminate::close`).
+    /// A loop that goes on carries keep running with the other requests.
+    kept: bool,
     /// Whether the loop ends.
     ends: bool,
 }
@@ -398,21 +409,26 @@ struct Woken {
 /// that ends drops the requests and the files to open: the window is going.
 /// It still counts the asks to terminate, since each is a `terminate:`
 /// AppKit waits in until it is answered, and the close answers it
-/// (`Terminate::close`). One that does not end takes every request, every
-/// list of files and every ask, in order; with none it still goes on,
-/// since winit may wake a loop nobody woke.
+/// (`Terminate::close`), and it says whether a keep running was among the
+/// requests, which the close's answer turns on: a keep running asked
+/// before the close is found with it whenever the loop did not wake in
+/// between. One that does not end takes every request, every list of
+/// files and every ask, in order; with none it still goes on, since winit
+/// may wake a loop nobody woke.
 fn wake(
     closing: &Closing,
-    requests: impl Iterator<Item = Request>,
+    mut requests: impl Iterator<Item = Request>,
     files: impl Iterator<Item = Vec<PathBuf>>,
     terminations: impl Iterator<Item = ()>,
 ) -> Woken {
     let ends = closing.ends_on_wake();
     if ends {
+        let kept = requests.any(|request| request == Request::KeepRunning);
         return Woken {
             carry: Vec::new(),
             files: Vec::new(),
             terminations: terminations.count(),
+            kept,
             ends,
         };
     }
@@ -420,6 +436,7 @@ fn wake(
         carry: requests.collect(),
         files: files.collect(),
         terminations: terminations.count(),
+        kept: false,
         ends,
     }
 }
@@ -528,11 +545,12 @@ impl ApplicationHandler for App {
         );
         if woken.ends {
             // What a close says to an ask still pending, held or waiting is
-            // `terminate`'s to decide. A reply lets AppKit end the process
-            // inside the run, which then never returns, so what follows the
-            // loop's end is done first: the drawer is told the window is
-            // closing, while the window is still there, and then it goes.
-            if let Some(reply) = self.terminate.close(woken.terminations) {
+            // `terminate`'s to decide, with whether a keep running came with
+            // it. A reply that goes ahead lets AppKit end the process inside
+            // the run, which then never returns, so what follows the loop's
+            // end is done first: the drawer is told the window is closing,
+            // while the window is still there, and then it goes.
+            if let Some(reply) = self.terminate.close(woken.terminations, woken.kept) {
                 if let Some(window) = self.window.take() {
                     (self.drawer)(Canvas::Closing);
                     drop(window);
@@ -856,6 +874,7 @@ mod tests {
                 carry: asked.to_vec(),
                 files: Vec::new(),
                 terminations: 0,
+                kept: false,
                 ends: false,
             }
         );
@@ -878,6 +897,7 @@ mod tests {
                 carry: Vec::new(),
                 files: lists,
                 terminations: 0,
+                kept: false,
                 ends: false,
             }
         );
@@ -898,6 +918,7 @@ mod tests {
                 carry: Vec::new(),
                 files: Vec::new(),
                 terminations: 0,
+                kept: false,
                 ends: true,
             }
         );
@@ -918,6 +939,7 @@ mod tests {
                 carry: Vec::new(),
                 files: Vec::new(),
                 terminations: 0,
+                kept: false,
                 ends: true,
             }
         );
@@ -936,6 +958,7 @@ mod tests {
                 carry: Vec::new(),
                 files: Vec::new(),
                 terminations: 2,
+                kept: false,
                 ends: false,
             }
         );
@@ -956,7 +979,54 @@ mod tests {
                 carry: Vec::new(),
                 files: Vec::new(),
                 terminations: 2,
+                kept: false,
                 ends: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_a_close_asked_says_whether_keep_running_came_with_it_and_drops_the_rest() {
+        let closing = Closing::default();
+        closing.ask();
+        assert_eq!(
+            wake(
+                &closing,
+                [
+                    Request::Minimise,
+                    Request::KeepRunning,
+                    Request::Title("notes.txt".into())
+                ]
+                .into_iter(),
+                std::iter::empty(),
+                [()].into_iter()
+            ),
+            Woken {
+                carry: Vec::new(),
+                files: Vec::new(),
+                terminations: 1,
+                kept: true,
+                ends: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_keep_running_and_no_close_carries_it_with_the_other_requests() {
+        let asked = [Request::KeepRunning, Request::Minimise];
+        assert_eq!(
+            wake(
+                &Closing::default(),
+                asked.clone().into_iter(),
+                std::iter::empty(),
+                std::iter::empty()
+            ),
+            Woken {
+                carry: asked.to_vec(),
+                files: Vec::new(),
+                terminations: 0,
+                kept: false,
+                ends: false,
             }
         );
     }

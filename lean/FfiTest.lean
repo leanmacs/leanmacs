@@ -1436,6 +1436,40 @@ def requestsOf (asked : Array Editor.Ffi.WindowAsked) : Array Editor.Ffi.WindowR
     | .request request => some request
     | .title _ => none
 
+/-- What the window mode's closer (`Editor.Window.closeOnceEnded`) did once a
+loop that ended with `ended` had: whether it said the loop ended well, the
+lines it said, the requests the scripted window was asked, and how many
+times the shutdown ran. -/
+structure Closed where
+  /-- What the closer returned. -/
+  well : Bool
+  /-- The lines it said. -/
+  said : Array String
+  /-- What the scripted window was asked in its run, without titles. -/
+  asked : Array Editor.Ffi.WindowRequest
+  /-- How many times the shutdown ran. -/
+  shutdowns : Nat
+
+/-- Runs the scripted window on a dedicated task, pulls its sample, and runs
+the window mode's closer on a loop that ended with `ended`, with a shutdown
+that counts its runs; `none` if the window's run did not return once the
+closer had closed it, in which case it is closed again so that no run is
+left behind. -/
+def closedOnceEnded (ended : Except IO.Error Unit) : IO (Option Closed) := do
+  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun .scripted true)
+  for _ in [0:(windowSample true).length] do
+    discard <| pull .editor
+  let said ← IO.mkRef #[]
+  let shutdowns ← IO.mkRef 0
+  let well ←
+    Editor.Window.closeOnceEnded .scripted (Task.pure ended) (shutdowns.modify (· + 1)) (say :=
+        fun line => said.modify (·.push line))
+  unless ← eventually (IO.hasFinished run) do
+    Editor.Ffi.windowClose .scripted
+    return none
+  let asked := requestsOf ((← Editor.Ffi.windowAsked .scripted).getD #[])
+  return some { well, said := ← said.get, asked, shutdowns := ← shutdowns.get }
+
 /-- Whether `events` are those of `windowSample composition`, in order, each
 from the window source of the window number 1. -/
 def isWindowSample (composition : Bool) (events : List Editor.Ffi.Event) : Bool :=
@@ -1565,6 +1599,19 @@ def windowChecks (_ : Unit) : List Check :=
         return isWindowSample true ran.ran.events &&
             (ran.asked.map requestsOf) == some #[.keepRunning, .enterFullscreen] &&
             ran.ran.result matches some (.ok _) },
+    { name :=
+        "once the editor loop has ended with an error, the window mode's closer says so, runs the shutdown once and asks the window to keep running before it closes it, so that a system quit pending is refused and the run returns; once it has ended well, the closer says nothing and asks nothing"
+      run := do
+        let some failed ← closedOnceEnded (.error (IO.userError "the loop broke")) | return false
+        let some fine ← closedOnceEnded (.ok ()) | return false
+        return !failed.well &&
+            failed.said == #["editor: the editor loop ended with an error: the loop broke"] &&
+            failed.asked == #[.keepRunning] &&
+            failed.shutdowns == 1 &&
+            fine.well &&
+            fine.said == #[] &&
+            fine.asked == #[] &&
+            fine.shutdowns == 1 },
     { name :=
         "a frame request asked of the real display binding made over the scripted platform, directly and through the window mode's host display, is what the scripted window was asked, in order"
       run := do

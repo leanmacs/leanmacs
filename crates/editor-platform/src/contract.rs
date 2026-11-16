@@ -11,7 +11,11 @@
 //!   ([`Violation::FirstInputNotOpened`]).
 //! - **A close ends the run.** Once [`Platform::close`] has been called, from
 //!   a thread other than the one in [`Platform::run`], the run returns `Ok`
-//!   within a bound.
+//!   within a bound. The check asks the system for no quit, so its close
+//!   comes with none pending; a close with one pending may end the process
+//!   instead ([`Platform::close`]), which no check inside the process can
+//!   see. [`ScriptedPlatform`](crate::ScriptedPlatform) models it, and the
+//!   real adapter shows it in a process of its own.
 //! - **Nothing is reported once the run has returned.**
 //! - **A close with no run in progress is harmless**: before a run it does
 //!   not end the run that follows, and after one it reports nothing.

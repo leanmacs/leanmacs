@@ -55,6 +55,13 @@ impl Shown {
 /// It records the options of every run. It can be run again once a run has
 /// returned; it is not meant to be run from two threads at once.
 ///
+/// It models the system's quit as far as a close goes: a
+/// [`Input::QuitRequested`] it reports is pending until it is asked
+/// [`Request::KeepRunning`], and a close with one pending is a close that
+/// lets the quit go ahead ([`quit_let_go`](Self::quit_let_go)), which a real
+/// platform may carry out by ending the process inside its run. It returns
+/// all the same: a test cannot end its own process.
+///
 /// It records what each run is asked ([`asked`](Self::asked)), while the
 /// run is in progress only, and carries each request out on its model,
 /// [`Shown`]. A request that takes the window into fullscreen or out of it
@@ -91,6 +98,11 @@ struct State {
     size: Option<Resize>,
     /// What requests have given the run to report, oldest first.
     to_report: VecDeque<Resize>,
+    /// Whether the run has reported [`Input::QuitRequested`] and not been
+    /// asked [`Request::KeepRunning`] since.
+    quit_pending: bool,
+    /// Whether the latest run closed with a quit pending.
+    quit_let_go: bool,
 }
 
 impl ScriptedPlatform {
@@ -203,6 +215,16 @@ impl ScriptedPlatform {
         self.state().asked.clone()
     }
 
+    /// Whether the latest run's close came with the system's quit pending:
+    /// the run reported [`Input::QuitRequested`] and was not asked
+    /// [`Request::KeepRunning`] after it. A real platform may end the
+    /// process inside [`run`](Platform::run) then ([`Platform::close`]);
+    /// this one returns, and says so here. `false` before any run, and
+    /// while a run is in progress.
+    pub fn quit_let_go(&self) -> bool {
+        self.state().quit_let_go
+    }
+
     /// Locks the state. The lock is never held while other code runs, so a
     /// poisoned lock still guards a consistent state.
     fn state(&self) -> MutexGuard<'_, State> {
@@ -229,6 +251,8 @@ impl Platform for ScriptedPlatform {
             state.shown = Shown::default();
             state.size = None;
             state.to_report.clear();
+            state.quit_pending = false;
+            state.quit_let_go = false;
         }
 
         drawer(Canvas::Opened {
@@ -248,6 +272,11 @@ impl Platform for ScriptedPlatform {
                         state.shown.fullscreen = size.fullscreen;
                     }
                     drawer(Canvas::Resized(*size));
+                }
+                // Pending before it is reported, so that a keep running
+                // sent in answer to the report finds it.
+                if *input == Input::QuitRequested {
+                    self.state().quit_pending = true;
                 }
                 report(input.clone());
             }
@@ -271,6 +300,12 @@ impl Platform for ScriptedPlatform {
             drawer(Canvas::Resized(size));
             report(Input::Resized(size));
         }
+        // The close takes effect here: a quit still pending is let go, as a
+        // real platform may end the process with it.
+        {
+            let mut state = self.state();
+            state.quit_let_go = state.quit_pending;
+        }
         // The run is still in progress while the drawer lets go of what it
         // made: a drawer may take its time over that, and the lock is not
         // held across it.
@@ -291,6 +326,9 @@ impl Platform for ScriptedPlatform {
         let mut state = self.state();
         if !state.running {
             return;
+        }
+        if request == Request::KeepRunning {
+            state.quit_pending = false;
         }
         let was = state.shown.fullscreen;
         state.shown.carry_out(&request);
@@ -594,6 +632,59 @@ mod tests {
         assert!(run.is_waiting(), "a quit asked ends nothing by itself");
         platform.close();
         assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
+    fn a_close_with_a_quit_reported_and_not_answered_lets_the_quit_go() {
+        let platform = Arc::new(ScriptedPlatform::new(vec![Input::QuitRequested]));
+        assert!(!platform.quit_let_go(), "nothing before any run");
+
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(2), [opened(), Input::QuitRequested]);
+        platform.close();
+
+        assert_eq!(run.result(), Ok(()), "the fake returns all the same");
+        assert!(platform.quit_let_go());
+    }
+
+    #[test]
+    fn keep_running_asked_before_the_close_refuses_the_quit_so_it_is_not_let_go() {
+        let platform = Arc::new(ScriptedPlatform::new(vec![Input::QuitRequested]));
+
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(2), [opened(), Input::QuitRequested]);
+        platform.request(Request::KeepRunning);
+        platform.close();
+
+        assert_eq!(run.result(), Ok(()));
+        assert!(!platform.quit_let_go());
+    }
+
+    #[test]
+    fn a_close_with_no_quit_reported_lets_none_go_and_each_run_begins_with_none() {
+        let platform = Arc::new(ScriptedPlatform::new(vec![press("a")]));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(2), [opened(), press("a")]);
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+        assert!(!platform.quit_let_go());
+
+        let quitting = Arc::new(ScriptedPlatform::new(vec![Input::QuitRequested]));
+        let first = start(&quitting, COMPOSING);
+        assert_eq!(first.next(2), [opened(), Input::QuitRequested]);
+        quitting.close();
+        assert_eq!(first.result(), Ok(()));
+        assert!(quitting.quit_let_go());
+        let second = start(&quitting, COMPOSING);
+        assert_eq!(second.next(2), [opened(), Input::QuitRequested]);
+        assert!(
+            !quitting.quit_let_go(),
+            "a run in progress has let nothing go"
+        );
+        quitting.request(Request::KeepRunning);
+        quitting.close();
+        assert_eq!(second.result(), Ok(()));
+        assert!(!quitting.quit_let_go());
     }
 
     #[test]

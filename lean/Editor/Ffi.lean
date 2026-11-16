@@ -1813,8 +1813,16 @@ def windowRun (platform : Platform) (composition : Bool) (presentMode : Option P
     | _ => .error raw.reason
 
 /-- Asks the window `platform` is running to close, so that `windowRun`
-returns. Any thread may call it, and it does nothing when that platform runs
-no window. -/
+ends. Any thread may call it, and it does nothing when that platform runs
+no window.
+
+With the system's quit pending (`EventKind.quitRequested`) the close lets
+the quit go ahead, and the platform may end the process inside `windowRun`,
+which then never returns (the window port's rule, `Platform::close` in
+`editor-platform`; AppKit's terminate on macOS). So whatever must happen
+before the program ends happens before this is called. A
+`WindowRequest.keepRunning` asked just before it refuses the quit instead,
+and `windowRun` returns. -/
 @[extern "editor_glue_window_close"]
 opaque windowClose (platform : Platform) : IO Unit
 
@@ -1831,7 +1839,9 @@ inductive WindowRequest where
   | minimise
   /-- The editor refused, or withdrew, the quit the system asked
   (`EventKind.quitRequested`). It changes nothing the window shows, and a
-  platform with no quit pending does nothing with it. -/
+  platform with no quit pending does nothing with it. Asked just before
+  `windowClose`, it refuses a quit pending as the window closes, so that
+  `windowRun` returns. -/
   | keepRunning
   deriving DecidableEq, Repr
 

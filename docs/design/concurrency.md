@@ -575,21 +575,37 @@ command cannot end the process.
   that replies `NO` to AppKit's wait, which also cancels a logout, as
   TextEdit's unsaved document does. A quit typed in the editor asks the
   frame nothing.
+- **A close with the system's quit pending may end the process inside the
+  window's run.** This is the window port's rule (`Platform::run`,
+  `Platform::close` and `Input::QuitRequested`, in
+  `crates/editor-platform/src/lib.rs`), so everything that must happen
+  before the program ends happens before the close. A `KeepRunning` asked
+  just before the close refuses the quit instead, and the run returns. The
+  port's fake models it: it returns all the same and says whether its close
+  let a quit go (`ScriptedPlatform::quit_let_go`). On macOS it is AppKit's
+  terminate: AppKit waits inside `terminate:`, under winit's run, so the run
+  cannot return while one is pending, and once answered `YES` AppKit ends
+  the process with status 0.
 - **When the editor leaves, its own shutdown runs, and then the system's
-  quit goes ahead.** The step says stop; the window mode's host shuts down
-  (the library's children killed and reaped, its watches ended, the queues
-  quit: `Editor.Window.shutdown`) and only then closes the window
-  (`lean/Editor/Window/Real.lean`). With a terminate pending, the window
-  adapter tells the drawer the window is closing and then replies `YES`
-  (`terminate.rs`), and AppKit ends the process with status 0, so a logout
-  the editor goes along with goes on. AppKit waits inside `terminate:`,
-  under winit's run, so the run never returns once a terminate is pending,
-  and nothing that follows the run is reached: the exit status is 0, and
-  `--report` and the "nothing could draw" line are not printed. With none
-  pending the run returns and `main` exits with its status. An ask the
-  editor never heard of (held before the window opened, or still on its
-  channel at the close) is answered `YES` too, since the editor was
-  leaving anyway.
+  quit goes ahead.** The step says stop; the window mode's closer
+  (`Editor.Window.closeOnceEnded`, `lean/Editor/Window/Real.lean`) shuts
+  down (the library's children killed and reaped, its watches ended, the
+  queues quit: `Editor.Window.shutdown`) and only then closes the window.
+  With a terminate pending, the window adapter tells the drawer the window
+  is closing and then replies `YES` (`terminate.rs`), so a logout the
+  editor goes along with goes on, and nothing that follows the run is
+  reached: the exit status is 0, and `--report` and the "nothing could
+  draw" line are not printed. With none pending the run returns and `main`
+  exits with its status. An ask the editor never heard of (held before the
+  window opened, or still on its channel at the close) is answered `YES`
+  too, since the editor was leaving anyway.
+- **When the editor loop fails, the system's quit is refused.** The closer
+  reads the loop's result first, and on an error says `editor: the editor
+  loop ended with an error: <error>` on stderr, shuts down, and asks the
+  window to keep running just before the close. The adapter finds that
+  keep running with the close (`wake`) and replies `NO` to a terminate
+  pending, held or waiting (`terminate.rs`), so the run returns, `main`
+  exits with status 1, and a logout is not carried out over a crash.
 
 **`quit` refuses while a buffer that holds a file has unsaved changes, and
 waits for a save in flight.**

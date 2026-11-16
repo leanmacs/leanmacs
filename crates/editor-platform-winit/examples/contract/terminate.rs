@@ -23,10 +23,14 @@
 //!    `QuitRequested`, and a title read back.
 //! 4. `KeepRunning`, then the send returns; then a third `terminate:`,
 //!    which is reported again: a terminate still pending would not be.
-//! 5. `KeepRunning`, then that `terminate:` returns. The scenario ends with
-//!    nothing pending, and the check's close then ends the run, which
-//!    returns. A close with a terminate pending ends the process instead,
-//!    so it is the module `pending`'s, in a process of its own.
+//! 5. The scenario ends with that `terminate:` pending. The check's close
+//!    comes with a `KeepRunning` asked just before it (`Probed::close`), as
+//!    the editor's host asks one when its loop failed, so the close cancels
+//!    the terminate instead of letting it go: the run returns, and the
+//!    `terminate:` does too (`all_answered`, which the verdict waits on).
+//!    A close with a terminate pending and no keep running ends the
+//!    process instead, so it is the module `pending`'s, in a process of its
+//!    own.
 //!
 //! Each step asks again only once the last ask has come back. AppKit lets
 //! an answered `terminate:` go a few milliseconds after the reply, and an
@@ -279,6 +283,15 @@ pub fn scenario(platform: &impl Platform, record: &Record) -> Result<(), String>
     terminate();
     reported(record, 3, "after a third `terminate:`")?;
 
-    platform.request(Request::KeepRunning);
-    answered(3, "after keeping running a third time")
+    if RETURNED.load(Ordering::SeqCst) != 2 {
+        return Err("the third `terminate:` returned with no reply made".into());
+    }
+    Ok(())
+}
+
+/// Once the run has returned: the third `terminate:`, left pending for the
+/// check's close, has come back, so the close that came with a keep
+/// running answered it, and cancelled it, since the process is still here.
+pub fn all_answered() -> Result<(), String> {
+    answered(3, "after the close with a keep running before it")
 }

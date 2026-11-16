@@ -9,7 +9,9 @@
 //! On macOS it also asks the running window to quit as the system does,
 //! while the check runs it (the module `terminate`): the window is run
 //! under the check through [`Probed`], which records what it reports and
-//! holds the check's close until that scenario has finished. Once the check
+//! holds the check's close until that scenario has finished, then asks the
+//! window to keep running just before the close, so that the terminate the
+//! scenario leaves pending is cancelled and the run returns. Once the check
 //! holds, it starts itself again, to see a close with the system's quit
 //! pending end the process by AppKit's terminate (the module `pending`),
 //! which a run that must return cannot show.
@@ -209,10 +211,15 @@ impl Platform for Probed {
         self.platform.run(options, tee, drawer)
     }
 
+    /// Waits for the scenario, which leaves a terminate pending, then asks
+    /// the window to keep running and, straight after, to close: the
+    /// window port's way to refuse the system's quit as the window closes,
+    /// so that the run returns.
     fn close(&self) {
         if self.started.load(Ordering::SeqCst) {
             self.outcome.wait(SCENARIO);
         }
+        self.platform.request(Request::KeepRunning);
         self.platform.close();
     }
 
@@ -277,6 +284,10 @@ fn main() {
         if cfg!(target_os = "macos")
             && let Err(failure) = scenario.result()
         {
+            verdict(&format!("window-contract: FAILED: {failure}"), 1);
+        }
+        #[cfg(target_os = "macos")]
+        if let Err(failure) = terminate::all_answered() {
             verdict(&format!("window-contract: FAILED: {failure}"), 1);
         }
         if let Err(violation) = held {
