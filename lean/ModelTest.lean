@@ -10713,6 +10713,32 @@ def startled : InputScheme :=
     leader := TestScheme.leader
     report := fun state _ => { session := state.2 } }
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that a menu item's invocation of any name is made one of another
+name. -/
+def meddling : InputScheme :=
+  { TestScheme.scheme with
+    invoked := fun _ state invocation =>
+      (state, { invocation with command := invocation.command ++ "-not" }) }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that a menu item's invocation of any name reports the view as in an
+insert session from then on. Its state is the test scheme's, and whether a
+menu item named one. -/
+def menuStartled : InputScheme :=
+  { State := TestScheme.State × Bool
+    Binding := Invocation
+    init := ({}, false)
+    step := fun maps view state key =>
+      let (next, yielded) := TestScheme.step maps view state.1 key
+      ((next, state.2), yielded)
+    pending := (·.1.pending)
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader
+    report := fun state _ => { session := state.2 }
+    invoked := fun _ state invocation => ((state.1, true), invocation) }
+
 /-- The subject the scheme contract is run on: `scheme` over the scheme
 checks' keymaps for view 0, the sequences those bind, a key none of them
 goes on with, and that same key as the one that prints and that nothing
@@ -10849,7 +10875,13 @@ def schemeContractChecks : List Check :=
         pure
           (failsOnly subject [SchemeContract.quietKeyKeepsReport] &&
             !(subject.scheme.report (subject.feed (keys "C-x")).1 ⟨0⟩).session &&
-            (subject.scheme.report (subject.feed (keys "C-x z")).1 ⟨0⟩).session) }]
+            (subject.scheme.report (subject.feed (keys "C-x z")).1 ⟨0⟩).session) },
+    { name :=
+        "the scheme contract reports a scheme that changes a menu item's invocation of a name it does not know, and one that changes its report of the view for one, for that property alone"
+      run :=
+        pure
+          (failsOnly (subjectOf meddling schemeMaps) [SchemeContract.invokedKeepsUnknown] &&
+            failsOnly (subjectOf menuStartled schemeMaps) [SchemeContract.invokedKeepsUnknown]) }]
 
 /-- The delete operator of the Vim checks: it changes text and names no
 state. -/
@@ -11149,6 +11181,55 @@ def vimSubjectOver (states : Vim.States) : SchemeContract.Subject :=
 scheme over `vimStates`. -/
 def vimSubject : SchemeContract.Subject :=
   vimSubjectOver vimStates
+
+/-- What the run-table checks' visual states run `t-copy` as: the yank of
+the selection into the register `+`. -/
+def vimRunCopy : Vim.Edit :=
+  .operate vimYank .selection none (some "+")
+
+/-- What the run-table checks' visual states run `t-cut` as: the deletion of
+the selection into the register `+`. -/
+def vimRunCut : Vim.Edit :=
+  .operate vimDelete .selection none (some "+")
+
+/-- What the run-table checks' normal state runs `t-enter` as: a command of
+that name that enters `visual-line`. -/
+def vimRunEnter : Vim.Edit :=
+  .run { name := "t-enter", enters := some "visual-line" } none none
+
+/-- `vimStates` with run tables (`StateRecord.runs`): normal state runs
+`t-enter` as `vimRunEnter`, and `visual` and a `visual-line` state the
+checks register run `t-copy` and `t-cut` as `vimRunCopy` and
+`vimRunCut`. -/
+def vimRunStates : Vim.States :=
+  let visual := vimStates.get "visual"
+  let runs := [("t-copy", vimRunCopy), ("t-cut", vimRunCut)]
+  ((vimStates.register { vimStates.initial with runs := [("t-enter", vimRunEnter)] }).register
+        { visual with runs }).register
+    { name := "visual-line", keymaps := visual.keymaps, operatesOnSelection := true, shape := .line
+      runs }
+
+/-- Active keymaps, for every view, that bind keys to command names alone,
+as the scheme binds a command name (`InputScheme.command`): `C` to
+`t-copy`, `X` to `t-cut`, `S` to `t-enter` and `N` to `t-none`, which no
+run table has. -/
+def vimRunMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
+  [vimKeymap
+      [("C", .command { name := "t-copy" }), ("X", .command { name := "t-cut" }),
+        ("S", .command { name := "t-enter" }), ("N", .command { name := "t-none" })]]
+
+/-- The Vim scheme over `vimRunStates` fed `text` with `vimRunMaps`: the
+state it is left in, the name of the Vim state view 0 is then in, and what
+each key yielded. -/
+def vimRunFed (text : String) : Vim.State × String × List (Option Invocation) :=
+  let (state, yields) := vimFed text vimRunMaps ⟨0⟩ vimRunStates
+  (state, state.stateOf vimRunStates ⟨0⟩, yields)
+
+/-- What the Vim scheme over `vimRunStates` makes of `invocation`, named by
+a menu item for view 0 from `state` (`InputScheme.invoked`), at the
+state's own type. -/
+def vimInvoked (state : Vim.State) (invocation : Invocation) : Vim.State × Invocation :=
+  (Vim.scheme vimRunStates).invoked ⟨0⟩ state invocation
 
 /-- The checks of the Vim scheme's grammar (`Editor/InputScheme/Vim.lean`),
 on the registry written here: the keymaps a key is looked up in, and what a
@@ -11489,7 +11570,73 @@ def vimGrammarChecks : List Check :=
           (vimPending "g r" vimTwoKeyMaps == keys "g r" &&
             vimPending "g r a" vimTwoKeyMaps == keys "g r a" &&
             vimPending "g r a d" vimTwoKeyMaps == keys "g r a d" &&
-            vimPending "g r a d d" vimTwoKeyMaps == []) }]
+            vimPending "g r a d d" vimTwoKeyMaps == []) },
+    { name :=
+        "a key bound to a command name the view's state has a run-table entry for completes that entry's edit: over the selection in a visual state it ends the selection, leaving the view in the initial state, and a yank is not the last change where a deletion is"
+      run :=
+        let (copied, copiedIn, copiedYields) := vimRunFed "v C"
+        let (cut, cutIn, cutYields) := vimRunFed "v X"
+        pure
+          (copiedYields.getLast? == some (some (vimOperate "yank" "selection" "" 0 "+")) &&
+            copiedIn == "normal" &&
+            copied.lastChange == none &&
+            cutYields.getLast? == some (some (vimOperate "delete" "selection" "" 0 "+")) &&
+            cutIn == "normal" &&
+            cut.lastChange == some vimRunCut) },
+    { name :=
+        "a run-table entry that names a state enters it: S in normal state yields t-enter and leaves the view in visual-line"
+      run :=
+        pure
+          (vimRunFed "S" ==
+            ((vimFed "S" vimRunMaps ⟨0⟩ vimRunStates).1, "visual-line",
+              [some { command := "t-enter", arguments := [.nat 0, .str ""] }])) },
+    { name :=
+        "a command name the view's state has no run-table entry for runs the command of that name and enters nothing: N anywhere, and C in normal state"
+      run :=
+        pure
+          ((vimRunFed "N").2 ==
+              ("normal", [some { command := "t-none", arguments := [.nat 0, .str ""] }]) &&
+            (vimRunFed "C").2 ==
+              ("normal", [some { command := "t-copy", arguments := [.nat 0, .str ""] }]) &&
+            (vimRunFed "v N").2.1 == "visual" &&
+            (vimRunFed "v N").2.2.getLast? ==
+              some (some { command := "t-none", arguments := [.nat 0, .str ""] })) },
+    { name :=
+        "a run-table entry is used as written: a count and a register typed before its key are dropped"
+      run :=
+        pure
+          ((vimRunFed "v 2 C").2.2.getLast? ==
+              some (some (vimOperate "yank" "selection" "" 0 "+")) &&
+            (vimRunFed "v \" a C").2.2.getLast? ==
+              some (some (vimOperate "yank" "selection" "" 0 "+"))) },
+    { name :=
+        "a binding of the active keymaps to another command wins over the run table: with C bound to t-other in a keymap before, v C runs t-other and stays in visual"
+      run :=
+        let rebound (view : ViewId) : List (Keymap Vim.Bound) :=
+          vimKeymap [("C", .command { name := "t-other" })] :: vimRunMaps view
+        let (state, yields) := vimFed "v C" rebound ⟨0⟩ vimRunStates
+        pure
+          (yields.getLast? ==
+              some (some { command := "t-other", arguments := [.nat 0, .str ""] }) &&
+            state.stateOf vimRunStates ⟨0⟩ == "visual") },
+    { name :=
+        "a menu item's invocation of a name the view's state has a run-table entry for is that entry's edit, compiled, with the state the entry leaves; one of a name it has none for, or one with arguments, comes back as it was, with the state"
+      run :=
+        let visual := (vimRunFed "v").1
+        let (copied, copy) := vimInvoked visual { command := "t-copy" }
+        let (entered, enter) := vimInvoked vimInit { command := "t-enter" }
+        let unchanged (state : Vim.State) (invocation : Invocation) : Bool :=
+          let (after, yielded) := vimInvoked state invocation
+          decide (after = state) && yielded == invocation
+        pure
+          (copy == vimOperate "yank" "selection" "" 0 "+" &&
+            copied.stateOf vimRunStates ⟨0⟩ == "normal" &&
+            enter == { command := "t-enter", arguments := [.nat 0, .str ""] } &&
+            entered.stateOf vimRunStates ⟨0⟩ == "visual-line" &&
+            (vimInvoked visual { command := "t-cut" }).1.lastChange == some vimRunCut &&
+            unchanged visual { command := "t-none" } &&
+            unchanged vimInit { command := "t-copy" } &&
+            unchanged visual { command := "t-copy", arguments := [.nat 1] }) }]
 
 /-- `vimStates` with a state the checks register, `test`, whose keymap
 binds `m` to a motion and whose cursor is an underline, and with `q` bound

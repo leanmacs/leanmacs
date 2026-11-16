@@ -67,6 +67,17 @@ it. It defaults to the state as it was. Whoever runs the scheme tells it
 once for each commit it inserted, and not for one it dropped (the command
 loop).
 
+A scheme is told when a menu item names an invocation for a view
+(`invoked`): the state, and the invocation to run in its place. A menu
+item is chosen with no key, so `step` never sees it, and a scheme whose
+keys can make a command name run as something else in a state, as the Vim
+scheme's run tables do (`Editor/InputScheme/Vim.lean`, "Vim states"),
+does the same for the item. It defaults to both as they were. Whoever runs
+the scheme tells it once for each menu item chosen (the command loop), and
+runs what comes back with the report of the state that comes back. An
+invocation of a name the scheme does not know comes back as it was, with
+the view's report as it was, which the scheme contract asks.
+
 ## What a scheme reports of a view
 
 A scheme says what it knows of a view in a state (`report`, an
@@ -129,6 +140,7 @@ the test scheme, published for other modules' tests.
 |---|---|
 | A new scheme | A value of `InputScheme` in a module of its own, which runs the contract check |
 | Something every scheme must report to the core | A field of `InputScheme`, and a property of the contract |
+| What a scheme makes of an invocation no key yielded, such as a menu item's | `invoked`, which `invokedKeepsUnknown` in the contract holds to its default for a name the scheme does not know |
 | Something a scheme says of one view, for the scene, the loop or a command | A field of `InputScheme.Report`, with the default a scheme that says nothing reports |
 | Something one scheme remembers between keys | That scheme's `State`; nothing here |
 | A fact about a key that more than one scheme reads | A function of `Key` here, as `Key.printed?` is |
@@ -205,6 +217,11 @@ structure InputScheme where
   inserted in the view. A scheme that keeps nothing of what is typed leaves
   it as it was. -/
   committed : ViewId → String → State → State := fun _ _ state => state
+  /-- The state, and the invocation to run, once a menu item names this
+  invocation for the view: an invocation no key yielded. A scheme that
+  treats no such invocation apart leaves both as they were. -/
+  invoked : ViewId → State → Invocation → State × Invocation := fun _ state invocation =>
+    (state, invocation)
   /-- What the scheme says of a view in a state: how its cursor is drawn,
   its fields of the status line, the shape of its selection, and what the
   loop and a command act on. A scheme that says nothing of a view reports

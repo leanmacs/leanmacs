@@ -50,7 +50,8 @@ is `parse` with the edit compiled, and `scheme` packages it as an
 - **A motion alone is a move**, and **a command is run**. A key bound to a
   command name alone (`scheme.command`, as a binding from config is) is
   bound to `Bound.command` of that name, which changes no text and enters
-  no state.
+  no state, unless the run table of the view's Vim state has an entry for
+  the name ("Vim states" below).
 - **An operator waits for its target** (`State.operator`). There is no
   keymap for the wait: the motion that moves when typed alone is the
   operator's target when typed after it, so a motion bound once, in any
@@ -138,6 +139,24 @@ A Vim state (normal, insert, a visual state) is a record in a registry
 - **A state is entered by an edit that names it** (`Edit.enters`): a
   command bound in a keymap, or an operator. The view that enters is the
   one the completing key is for.
+- **A record's run table** (`StateRecord.runs`, a command name and an edit
+  for each entry) says that in the state a command of that name is
+  completed as that edit. It holds for a key bound to the command name
+  alone in any keymap (`Bound.command`, which the registry's bindings are,
+  so config's binding of the key to another name wins: the name reached is
+  looked up), with no operator waiting, and for a menu item that names the
+  command with no arguments (`State.invoked`, which the scheme reports as
+  `InputScheme.invoked`). So a command name can end a selection or enter
+  a state, which a command alone cannot: Copy in a visual state is `"+y`.
+  - The entry's edit is used as written: a count or a register typed
+    before the key is dropped. A register the entry names is in its own
+    arguments, last.
+  - It is completed as an operator key is (`State.complete`): over the
+    selection in a state where operators act on it, the view enters the
+    state the operator names, or the initial state; any other edit enters
+    the state it names. The last change and its typed text follow
+    `State.finish`'s rules, as for a key.
+  - A name with no entry runs the command of that name, as before.
 - **The minibuffer's view enters the state the registry names for it**
   (`States.minibuffer`, a name or none), when the scheme is told the view
   is the minibuffer's (`State.openMinibuffer`, which the scheme reports as
@@ -255,6 +274,7 @@ config's `bindKey`, holds in every state.
 | A new target of an operator | A variant of `Over`, and its row in `Edit.compile` |
 | A new fact about an operator or a command that the grammar needs | A field of `Operator` or of `Command` |
 | A new fact about a Vim state | A field of `StateRecord` |
+| A command name that runs as another edit in a state | An entry of that state's run table (`StateRecord.runs`) |
 | A new fact about a Vim state that the loop, the scene or a command reads | A field of `StateRecord`, and how `State.report` reads it into the report |
 | A new part of speech | A variant of `Bound`, and its case in `State.reached` |
 | Something the scheme remembers between keys | A field of `State`, with what a reset does to it (`State.reset`) |
@@ -422,6 +442,10 @@ structure StateRecord where
   operatesOnSelection : Bool := false
   /-- The shape the view's selection has in the state. -/
   shape : Shape := .inclusive
+  /-- The run table: in the state, a command of the first name, reached by
+  a key bound to that name alone in any keymap or named by a menu item, is
+  completed as the edit beside it ("Vim states", in the module docs). -/
+  runs : List (String × Edit) := []
   deriving Repr
 
 /-- The registry of Vim states the scheme is built over: an open set, with
@@ -632,6 +656,27 @@ private def State.finish (states : States) (view : ViewId) (state : State) (edit
   | some name => (next.enter states view name, .edit edit)
   | none => (next, .edit edit)
 
+/-- The edit begun, completed as `edit` for `view` (`State.finish`): an edit
+over the selection, in a state where operators act on it, ends the
+selection, so the view enters the state its operator names, or the initial
+state; any other edit enters the state it names. -/
+private def State.complete (states : States) (view : ViewId) (state : State) (edit : Edit) :
+    State × Parsed :=
+  match edit with
+  | .operate operator .selection .. =>
+    if (state.record states view).operatesOnSelection then
+      -- The edit ends the selection, so the view leaves the state: for the
+      -- one the operator names, or else the initial state.
+      state.finish states view edit (some (operator.enters.getD states.initial.name))
+    else state.finish states view edit
+  | _ => state.finish states view edit
+
+/-- The edit the run table of the Vim state `view` is in completes a command
+of the name `name` as, if it has an entry for the name. -/
+private def State.runOf (states : States) (state : State) (view : ViewId) (name : String) :
+    Option Edit :=
+  ((state.record states view).runs.find? (·.1 == name)).map (·.2)
+
 /-- What the grammar makes of a binding that a key for `view` reached, with
 `typed` the keys of the edit begun, that key included. -/
 private def State.reached (states : States) (view : ViewId) (state : State) (typed : List Key) :
@@ -655,10 +700,7 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
       else (state.reset, .nothing)
     | none =>
       if (state.record states view).operatesOnSelection then
-        -- The edit ends the selection, so the view leaves the state: for
-        -- the one the operator names, or else the initial state.
-        state.finish states view (.operate operator .selection state.count state.register)
-          (some (operator.enters.getD states.initial.name))
+        state.complete states view (.operate operator .selection state.count state.register)
       else
         ({ state with
             typed, multiplier := state.count, digits := none, operator := some operator,
@@ -667,7 +709,12 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
   | .command command =>
     match state.operator with
     | some _ => (state.reset, .nothing)
-    | none => state.finish states view (.run command state.count state.register)
+    | none =>
+      -- The state's run table: the entry's edit, as written, so a count or
+      -- a register typed before the key is dropped.
+      match state.runOf states view command.name with
+      | some edit => state.complete states view edit
+      | none => state.finish states view (.run command state.count state.register)
   | .register =>
     if state.operator.isSome || state.register.isSome then (state.reset, .nothing)
     else
@@ -742,6 +789,17 @@ def step (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewI
   | (next, .edit edit) => (next, some edit.compile)
   | (next, .text text) => (next, some (selfInsert text))
 
+/-- What a menu item's `invocation` for `view` is, from `state`: when it has
+no arguments and the run table of the view's Vim state has an entry for its
+command, that entry's edit, completed as a key bound to the name would
+complete it, and compiled; otherwise the state and the invocation as they
+were. -/
+def State.invoked (states : States) (view : ViewId) (state : State) (invocation : Invocation) :
+    State × Invocation :=
+  match invocation.arguments, state.runOf states view invocation.command with
+  | [], some edit => ((state.complete states view edit).1, edit.compile)
+  | _, _ => (state, invocation)
+
 /-- What the Vim scheme says of modes' keys: its role table and its leader,
 each as chords. The grammar reads none of it. -/
 structure ModeKeys where
@@ -764,7 +822,9 @@ view that is opened as the minibuffer's is put in the state the registry
 names for it. A text it is told was committed in a view is typed text
 there: it is added to what is kept for the last change when the view is
 the one being kept for (`State.typedText`). What it reports of a view is
-read off the record of the view's Vim state (`State.report`). -/
+read off the record of the view's Vim state (`State.report`). A menu
+item's invocation is run as the view's state's run table says
+(`State.invoked`). -/
 def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
   { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
     report := State.report states
@@ -776,6 +836,7 @@ def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
     tuned := modes.tuned.map fun (name, keys, bound) => (name, keys, .mode bound)
     closeView := State.closeView
     openMinibuffer := State.openMinibuffer states
-    committed := fun view text state => state.typedText view text }
+    committed := fun view text state => state.typedText view text
+    invoked := State.invoked states }
 
 end Editor.Vim
