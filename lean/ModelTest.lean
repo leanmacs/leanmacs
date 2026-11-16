@@ -756,6 +756,28 @@ def jobModelChecks : List Check :=
                   { setting := .inherited, host := .headless, resolved := none, limit := 3 }) &&
             after.now == 7 &&
             after.reported == #[Process.failureMessage "/p/d" failure]) },
+    { name := "in the job model, a post is recorded and answered at once, without moving the clock"
+      run :=
+        let job : JobM Nat := do
+          post (JobContract.posting "first")
+          sleep 5
+          post (JobContract.posting "second" [.nat 2])
+          return 9
+        let (outcome, after) := job.runModel { now := 3 }
+        pure
+          (outcome == .finished 9 && after.now == 8 &&
+            after.posted == #[JobContract.posting "first", JobContract.posting "second" [.nat 2]]) },
+    { name :=
+        "in the job model, a run that parks does not park at a post once a cancel is due: the job is cancelled at its wait"
+      run :=
+        let job : JobM Unit := do
+          post (JobContract.posting "first")
+          sleep 10
+          post (JobContract.posting "second")
+        pure
+          (match JobModel.runParking job.run { cancelAt := some 5 } with
+          | .ended none model => model.posted == #[JobContract.posting "first"] && model.now == 5
+          | _ => false) },
     { name :=
         "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
       run := do
@@ -982,6 +1004,35 @@ runner over the fake clock. -/
 def jobRunnerFailures : IO (List String) := do
   let failed ← JobContract.failures (runOnFake ·) JobContract.properties
   return failed.map (s!"the job runner over the fake clock: {·}")
+
+/-- Runs `job` on the runner over a fake clock of its own, spawned with a host
+that records each post it is handed, and answers the posts once the job has
+ended. The clock is advanced to each deadline, as `runOnFake` does. -/
+def postedOnFake (job : JobM Unit) : IO (Array Invocation) := do
+  let rig ← Rig.new
+  let posts ← IO.mkRef #[]
+  let handle ←
+    Job.spawn rig.services (Work.of (fun _ => job) fun _ => pure ()) (pure ()) fun invocation =>
+        posts.modify (·.push invocation)
+  let ended ←
+    eventually do
+        if ← handle.ended then
+          return true
+        if let some deadline← rig.clock.nextDeadline then
+          rig.clock.advance (deadline - (← rig.clock.now))
+        return false
+  unless ended do
+    handle.cancel
+  posts.get
+
+/-- The names of the job port's post properties that do not hold of the job
+model, and of those that do not hold of the runner over the fake clock. -/
+def postFailures : IO (List String) := do
+  let onModel ←
+    JobContract.postFailures (fun job => pure (job.runModel {}).2.posted) JobContract.postProperties
+  let onFake ← JobContract.postFailures postedOnFake JobContract.postProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake clock: {·}")
 
 /-- The made-up directory the files of a file property are in, for the model
 and for the fake of the file service: an absolute path that is never opened. -/
@@ -1895,7 +1946,29 @@ def runnerChecks : List Check :=
                 let policy : Process.Policy ← Process.askEnvironment .policy
                 return policy ==
                     { setting := .auto, host := .headless, resolved := none, limit := 5000 })
-        job.endedAs (.finished #["true"]) }]
+        job.endedAs (.finished #["true"]) },
+    { name :=
+        "a job cancelled in a wait after one post makes no second post: its host is handed the first alone, and it ends cancelled"
+      run := do
+        let rig ← Rig.new
+        let posts ← IO.mkRef #[]
+        let work :=
+          Work.of
+            (fun _ => do
+              post (JobContract.posting "first")
+              sleep 1000
+              post (JobContract.posting "second"))
+            fun _ => pure ()
+        let handle ← Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
+        unless ← eventually (return (← rig.clock.waiting) == 1) do
+          return false
+        let before ← posts.get
+        handle.cancel
+        let ended ← eventually handle.ended
+        rig.clock.advance 1000
+        return before == #[JobContract.posting "first"] && ended &&
+            (← posts.get) == #[JobContract.posting "first"] &&
+            (← handle.outcome?).map texts == some .cancelled }]
 
 /-- An owner of jobs. -/
 def anna : Config.Owner :=
@@ -27728,6 +27801,7 @@ def main : IO UInt32 := do
       (← ModelTest.adoptFailures) ++
       (← ModelTest.jobModelFailures) ++
       (← ModelTest.jobRunnerFailures) ++
+      (← ModelTest.postFailures) ++
       (← ModelTest.fileFailures) ++
       (← ModelTest.processFailures) ++
       (← ModelTest.fileWatchFailures) ++
@@ -27745,6 +27819,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model"
   (← IO.getStdout).flush
   IO.Process.exit 0

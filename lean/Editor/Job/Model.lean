@@ -50,6 +50,9 @@ here.
   share (`JobModel.environments`, `Editor/Process/Environment.lean`), at
   once, without moving the clock; a message one says for the echo area is
   appended to `JobModel.reported`, as the host would say it.
+- A post is answered at once, without moving the clock, and recorded in
+  `JobModel.posted`, oldest first: what a host would run on the editor
+  thread.
 
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities
@@ -77,6 +80,8 @@ structure JobModel where
   environments : Process.Environments := {}
   /-- What the environments said for the echo area, oldest first. -/
   reported : Array String := #[]
+  /-- What the job posted to the editor (`post`), oldest first. -/
+  posted : Array Invocation := #[]
   deriving DecidableEq
 
 namespace JobModel
@@ -110,6 +115,7 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     (reply,
       { model with
         environments, reported := model.reported ++ said.toArray })
+  | .post invocation, model => ((), { model with posted := model.posted.push invocation })
 
 /-- The model once the job has ended: every streaming child it started is
 ended (`ProcessModel.endAll`), as the runner cancels them, and every watch

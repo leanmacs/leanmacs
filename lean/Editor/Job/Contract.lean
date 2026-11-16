@@ -29,7 +29,9 @@ which is what shows those scripts true. And so do the watch requests,
 `fileWatchProperties`, last: against the model and the fake, which each
 property's scripts tell what each command changes on disk, and against the
 library's watch service on real files, each property in a temporary
-directory.
+directory. A job's posts have a list of their own, `postProperties`, last:
+against the model, and against the runner over the fake clock and over the
+library's timer service, each with a host that records what it is handed.
 
 Every property is an inequality. A real clock only promises "not before": a
 wait may return late, and time passes between two requests. So nothing here
@@ -1313,5 +1315,52 @@ def fileWatchFailures (run : FileWatchProperty → IO (Job.Outcome Bool))
       return some s!"{property.name} (the job failed with `{message}`)"
     | .cancelled =>
       return some s!"{property.name} (the job was cancelled)"
+
+/-! ## Posts
+
+A property of a job's posts (`JobRequest.post`) is a job and the posts its
+host must have been handed once it has ended, in order. The model records
+them (`JobModel.posted`); the runner hands each to what it was spawned with,
+which a check records. -/
+
+/-- One property of a job's posts. -/
+structure PostProperty where
+  /-- What must hold, as a sentence; printed when it does not. -/
+  name : String
+  /-- The job. -/
+  job : JobM Unit
+  /-- The posts its host has been handed once it has ended, oldest first. -/
+  posted : Array Invocation
+
+/-- The invocation a post property posts, called `name`. -/
+def posting (name : String) (arguments : List Argument := []) : Invocation :=
+  { command := name, arguments }
+
+/-- The properties every implementation of a job's posts has. -/
+def postProperties : List PostProperty :=
+  [{  name := "a job's posts reach its host in the order they were made, a wait between them"
+      job := do
+        post (posting "first" [.nat 1, .str "a"])
+        sleep 1
+        post (posting "second")
+        post (posting "third" [.bool true])
+      posted := #[posting "first" [.nat 1, .str "a"], posting "second", posting "third" [.bool true]] },
+    { name := "a job that posts and then fails has made its posts"
+      job := do
+        post (posting "made")
+        throw "no thanks"
+      posted := #[posting "made"] }]
+
+/-- Runs each of `properties` with `run`, which runs the job to its end and
+answers what its host was handed, and returns the names of those whose posts
+were not the property's. -/
+def postFailures (run : JobM Unit → IO (Array Invocation)) (properties : List PostProperty) :
+    IO (List String) :=
+  properties.filterMapM fun property => do
+    let posted ← run property.job
+    if posted == property.posted then
+      return none
+    else
+      return some s!"{property.name} (posted {repr posted})"
 
 end Editor.JobContract

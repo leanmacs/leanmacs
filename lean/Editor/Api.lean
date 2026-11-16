@@ -478,6 +478,14 @@ arrived before it (`Editor/Loop.lean`, "Jobs from commands").
   command, even one that has finished and not been delivered. A command
   that is refused or interrupted after asking cancels nothing. It is how
   `:!` keeps one run a workspace and `C-g` ends it (`Editor/Shell.lean`).
+- **A job may hand the editor a command while it runs** (`post`,
+  `Editor/Job.lean`): an invocation, which its host runs on the editor
+  thread with `runPosted`, as a delivery labelled `job <id> <name>`, before
+  the job's own command. `runPosted` runs the command registered under the
+  invocation's name inside itself, with the focused window and the
+  invocation's arguments (`runCommand`), and says `<name>: no such command`
+  for a name no command is registered under. It is how a compile streams
+  its output into its buffer (`Editor/Compile.lean`).
 
 Pinned by `ModelTest.driverChecks`.
 
@@ -722,6 +730,16 @@ name no command is registered under, and where no loop runs the
 command. -/
 def runCommand (name : String) (call : Call) : EditorM Bool :=
   EditorState.ask (.runCommand name call)
+
+/-- Runs `invocation`, which a job posted ("Jobs", in the module docs): the
+command registered under its name, with the focused window and the
+invocation's arguments, as part of this command (`runCommand`). A name no
+command is registered under says `<name>: no such command`; with no window
+focused nothing runs. -/
+def runPosted (invocation : Invocation) : EditorM Unit := do
+  let some target := (← editorState).focusedTarget? | return
+  unless ← runCommand invocation.command { target, arguments := invocation.arguments } do
+    message s!"{invocation.command}: no such command"
 
 /-- Asks for `invocation` to be run once this command has run to its end, as
 a step of its own, before the next event: the command is looked up then,

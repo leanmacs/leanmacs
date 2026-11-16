@@ -87,6 +87,22 @@ No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
 something a job names.
 
+## Posting a command
+
+A job hands the editor a command while it runs through one request, `post`,
+which carries an `Invocation`: a registered command's name and plain
+arguments, as a command starts a job by name (`StateRequest.startJob`). So
+the job port still never refers to the editor's. It is answered at once, as
+`environment` is: it waits for nothing and moves no clock, so a job that
+posts often batches by itself. Its host runs the invocation on the editor
+thread, between two events, as a delivery labelled `job <id> <name>`
+(`runPosted`, `Editor/Api.lean`), after the job's earlier posts and before
+its own command. A cancelled or removed job's posts are dropped: the runner
+hands a post over only while the job is not cancelled
+(`Editor/Job/Runner.lean`, "Posting a command"), and the host runs one only
+while the job is in its table (`Job.Jobs.has`). It is how a compile streams
+its output into its buffer (`Editor/Compile.lean`).
+
 ## Cancellation is not a reply
 
 A job is cancelled at a wait, and from outside: no request has a reply that
@@ -111,6 +127,12 @@ says what it needs). Its model is `Editor/Process/Model.lean`, its fake
 `FakeProcesses` and its real implementation `realProcesses`; withdrawing a
 wait also tells the process service (`Handle.withdraw`), which is how a
 cancelled job's child is killed.
+
+A post is the fifth kind of request, and answers at once too:
+`JobRequest.post`. Its model is `JobModel.posted`, and the runner's port is
+what it was spawned with (`Job.spawn`'s `posted`); its contract is a list
+of its own, `JobContract.postProperties`, run against the model and the
+runner with a host that records what it is handed.
 
 The environments are the fourth, and answer at once: `JobRequest.environment`,
 whose requests are `EnvironmentRequest`s, so a new question of the shared
@@ -187,6 +209,10 @@ inductive JobRequest where
   /-- Ask the environments the host's jobs share
   (`Editor/Process/Environment.lean`): answered at once. -/
   | environment (request : EnvironmentRequest)
+  /-- Hand the editor `invocation`, a command's registered name and plain
+  arguments, to run on the editor thread while the job goes on: answered
+  at once. -/
+  | post (invocation : Invocation)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -200,6 +226,7 @@ def JobRequest.Reply : JobRequest → Type
   | .fileWatch request => request.Reply
   | .diff request => request.Reply
   | .environment request => request.Reply
+  | .post _ => Unit
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -245,6 +272,13 @@ it. A tick whose instant has passed returns at once. -/
 def Timer.tick (timer : Timer) : JobM Timer := do
   waitUntil timer.next
   return { timer with next := timer.next + timer.period }
+
+/-- Hands the editor `invocation`, to run on the editor thread as a command
+while the job goes on ("Posting a command", in the module docs). It is
+answered at once and never waits; a cancelled or removed job's posts are
+dropped. -/
+def post (invocation : Invocation) : JobM Unit :=
+  ExceptT.lift (Program.request (port := jobPort) (.post invocation))
 
 /-- Loads the file at `path`, unless it is longer than `limit` bytes, and
 waits for it: the file's text as a snapshot this job holds, its stamp and
@@ -724,6 +758,23 @@ example : True := by
 example : True := by
   fail_if_success
     exact (fun (_ : TextM (Except ProcessError Unit)) => True.intro) (Process.closeInput ⟨1⟩)
+  trivial
+
+/-! A post is a job's, and it is not a command: a command runs another command
+inside itself (`runCommand`), and hands one to the editor for later with
+`invoke`, but it cannot post. Seen to bite once by hand: offered at
+`JobM Unit` inside the first `fail_if_success` check, the module stops
+building. -/
+
+example : True :=
+  (fun (_ : JobM Unit) => True.intro) (post { command := "x" })
+
+example : True := by
+  fail_if_success exact (fun (_ : EditorM Unit) => True.intro) (post { command := "x" })
+  trivial
+
+example : True := by
+  fail_if_success exact (fun (_ : TextM Unit) => True.intro) (post { command := "x" })
   trivial
 
 /-! A wait is not a command: alone, and after a text request in a `do` block.
