@@ -114,6 +114,29 @@ def Side.axis : Side → Axis
   | .left | .right => .columns
   | .top | .bottom => .rows
 
+/-- Whether `rect` lies wholly on `side` of `start` and overlaps it across:
+for `left`, its right edge is at or before the start's left edge and their
+vertical spans overlap; the other sides are the same, turned. Focus by
+direction reads it (`EditorState.toward?`). -/
+def Side.lies (side : Side) (start rect : Rect) : Bool :=
+  let acrossRows := rect.y < start.y + start.height && start.y < rect.y + rect.height
+  let acrossColumns := rect.x < start.x + start.width && start.x < rect.x + rect.width
+  match side with
+  | .left => rect.x + rect.width ≤ start.x && acrossRows
+  | .right => start.x + start.width ≤ rect.x && acrossRows
+  | .top => rect.y + rect.height ≤ start.y && acrossColumns
+  | .bottom => start.y + start.height ≤ rect.y && acrossColumns
+
+/-- How far `rect` is from `start` on `side`: the gap between the start's
+edge on that side and the rectangle's facing edge, for a rectangle that
+lies on that side (`Side.lies`). -/
+def Side.gap (side : Side) (start rect : Rect) : Nat :=
+  match side with
+  | .left => start.x - (rect.x + rect.width)
+  | .right => rect.x - (start.x + start.width)
+  | .top => start.y - (rect.y + rect.height)
+  | .bottom => rect.y - (start.y + start.height)
+
 /-- The other axis than `axis`. -/
 def Axis.across : Axis → Axis
   | .rows => .columns
@@ -465,6 +488,13 @@ def rotated (layout : Layout) (windows : Array ViewId) (forward : Bool) : Array 
   match layout with
   | .masterStack parameters => rotateTail windows (min parameters.count windows.size) forward
   | _ => rotateTail windows 0 forward
+
+/-- Whether the layout fits `count` windows: under manual splits whether its
+tree has `count` tiles, and always under the others. -/
+def fitted (layout : Layout) (count : Nat) : Bool :=
+  match layout with
+  | .splits tree => tree.size == count
+  | _ => true
 
 /-- The layout fitted to `count` windows: under manual splits its tree is
 fitted (`Splits.fit`); the others are unchanged. -/

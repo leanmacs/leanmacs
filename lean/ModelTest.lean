@@ -7189,7 +7189,15 @@ def spoilings : List (String × (EditorState → EditorState)) :=
     ("with an order of use that names a buffer there is none of", fun state =>
       { state with recent := state.recent.push ⟨5⟩ }),
     ("with an order of use that names one buffer twice", fun state =>
-      { state with recent := state.recent ++ state.recent })]
+      { state with recent := state.recent ++ state.recent }),
+    ("whose manual split tree has fewer tiles than the list has windows", fun state =>
+      { state with
+        frame := { state.frame with layout := .splits (.split .rows 1 1 .tile .tile) } }),
+    ("whose layout to return to from a zoom has fewer tiles than the list has windows", fun state =>
+      { state with
+        frame :=
+          { state.frame with
+            layout := .monocle, zoomedFrom := some (.splits .tile) } })]
 
 /-- `state` with a prompt asked for from its focused view, and the reply: the
 label `Name: `, the continuation `asked`, and a minibuffer over the text
@@ -7242,812 +7250,1229 @@ def quitStates : TextM QuitStates := do
   let (_, saved) := saving.endSave ⟨1⟩ ⟨5⟩ (some stamp)
   return { bare, held, saving, moved, saved }
 
-/-- The checks of the editor state and its layout invariants
-(`Editor/State.lean`), on the text model. -/
-def stateChecks : List Check :=
+/-- The initial state at 640 by 480 with `count` windows over its one
+buffer, views 0 up to `count - 1` in that order, each with markers of its
+own, under `layout` fitted to them. View 0 is focused. -/
+def windowsUnder (count : Nat) (layout : Layout) : TextM EditorState := do
+  let state ← EditorState.initial ⟨640, 480⟩
+  let some buffer := state.buffer? ⟨0⟩ | throw .noSuchText
+  let more ←
+    (Array.range (count - 1)).mapM fun index => do
+        let scroll ← buffer.text.mark (.anchor { offset := 0, bias := .before })
+        let selection ← buffer.text.mark (.selection { ranges := #[⟨0, 0⟩] })
+        return ({ id := ⟨index + 1⟩, buffer := ⟨0⟩, scroll, selection } : Window)
+  return { state with
+      windows := state.windows ++ more
+      frame :=
+        { state.frame with
+          windows := windowsUpTo count, layout := layout.fits count } }
+
+/-- The window list and the focus `state` is left with by a change that
+was not refused; none for a refused one. -/
+def arrangedTo (result : Except LayoutRefusal Unit × EditorState) : Option (List Nat × Nat) :=
+  match result with
+  | (.ok (), after) => some (after.frame.windows.toList.map (·.index), after.frame.focused.index)
+  | (.error _, _) => none
+
+/-- Whether `rect` lies wholly on `side` of `start` and overlaps it across:
+for `left`, its right edge is at or before the start's left edge, and the
+two vertical spans overlap. -/
+def lies (side : Side) (start rect : Rect) : Bool :=
+  let acrossRows := rect.y < start.y + start.height && start.y < rect.y + rect.height
+  let acrossColumns := rect.x < start.x + start.width && start.x < rect.x + rect.width
+  match side with
+  | .left => rect.x + rect.width ≤ start.x && acrossRows
+  | .right => start.x + start.width ≤ rect.x && acrossRows
+  | .top => rect.y + rect.height ≤ start.y && acrossColumns
+  | .bottom => start.y + start.height ≤ rect.y && acrossColumns
+
+/-- The sample states of the direction property: one to five windows under
+master-and-stack with main on the left and with two main windows on top,
+under monocle, and under every manual split tree reached by up to three
+splits and five even columns; each also with a prompt open. -/
+def directionStates : List EditorState :=
+  let layouts : List (Nat × Layout) :=
+    (List.range 5).flatMap
+        (fun index =>
+          [(index + 1, Layout.default), (index + 1, .masterStack { side := .top, count := 2 }),
+            (index + 1, .monocle)]) ++
+      (splitsReached 3).map (fun tree => (tree.size, .splits tree)) ++
+      [(5, .splits (Splits.even .columns 5))]
+  layouts.flatMap fun (count, layout) =>
+    match onTextModel (windowsUnder count layout) with
+    | none => []
+    | some state => [state, (prompted state).2]
+
+/-- The checks of the operations on the frame's windows that the window
+commands are made of (`Editor/State.lean`): a split's placement, a
+removal's inheritor under manual splits, zoom, the last window focused,
+the reorders and the parameter changes of `EditorState.arrange`, focus by
+direction (`EditorState.toward?`) and in list order (`cycled`), and what a
+refusal says. -/
+def windowOperationChecks : List Check :=
+  let rect (x y width height : Nat) : Rect := { x, y, width, height }
+  let marker (index : Nat) : MarkerId := ⟨⟨0⟩, index⟩
+  let ids (indices : List Nat) : Array ViewId := indices.toArray.map (⟨·⟩)
   [{  name :=
-        "the initial state is well formed: one scratch buffer, one window on it, the only one of the frame's list, the default layout, and the focus on view 0"
+        "under manual splits a split puts the new window before its source when the placement says before, and after it otherwise, splits the source's tile along the placement's axis and balances the tree along it; the focus stays; under master-and-stack the placement is ignored and the new window goes right after its source"
       run :=
         pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            state.wellFormed && state.buffers.map (·.map (·.name)) == #[some "scratch"] &&
-              state.windows.map (·.id) == #[⟨0⟩] &&
-              state.frame.windows == #[⟨0⟩] &&
-              state.frame.layout == Layout.default &&
-              state.frame.focused == ⟨0⟩ &&
-              state.frame.hasFocus &&
-              state.echo == "" &&
-              state.preedit == none },
-    { name :=
-        "the order buffers were used in: the initial state's is its one buffer; focusing a window puts its buffer first, adding a buffer puts it last, showing a buffer puts it first, removing one takes it out; opening a prompt, focusing the minibuffer and closing the prompt leave it as it was; each state is well formed"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (_, focused) := state.focusWindow ⟨1⟩
-            let (_, added) := focused.addBuffer "third" ⟨2⟩ (UndoTree.new ⟨2⟩ 0)
-            let (_, shown) := added.showBuffer ⟨0⟩ ⟨2⟩ ⟨⟨2⟩, 0⟩ ⟨⟨2⟩, 1⟩
-            let (_, removed) := shown.removeBuffer ⟨0⟩
-            let (_, asking) := prompted removed
-            let (_, back) := asking.focusWindow ⟨1⟩
-            let (_, again) := back.focusWindow (asking.minibufferView?.getD ⟨9⟩)
-            let (_, closed) := again.closePrompt none
-            state.recent == #[⟨0⟩] && focused.recent == #[⟨1⟩, ⟨0⟩] &&
-              added.recent == #[⟨1⟩, ⟨0⟩, ⟨2⟩] &&
-              shown.recent == #[⟨2⟩, ⟨1⟩, ⟨0⟩] &&
-              removed.recent == #[⟨2⟩, ⟨1⟩] &&
-              asking.recent == removed.recent &&
-              asking.minibufferView?.isSome &&
-              back.recent == #[⟨1⟩, ⟨2⟩] &&
-              again.recent == back.recent &&
-              again.frame.focused == asking.frame.focused &&
-              closed.recent == back.recent &&
-              [state, focused, added, shown, removed, asking, back, again, closed].all
-                (·.wellFormed) },
-    { name :=
-        "the most recently used buffer but one is the first of the order that is open and is neither it nor the minibuffer's, and with no order the first such buffer by slot; none when no other buffer is open; the open buffers are the order's, then the rest by slot, without the minibuffer's"
-      run :=
-        pure <|
-          match onTextModel twoBuffers, onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | some state, some alone =>
-            let (_, added) := state.addBuffer "third" ⟨2⟩ (UndoTree.new ⟨2⟩ 0)
-            let (_, asking) := prompted { added with recent := #[⟨2⟩, ⟨0⟩] }
-            let unordered := { asking with recent := #[] }
-            let (_, lonely) := prompted alone
-            asking.mostRecent ⟨2⟩ == some ⟨0⟩ && asking.mostRecent ⟨0⟩ == some ⟨2⟩ &&
-              unordered.mostRecent ⟨0⟩ == some ⟨1⟩ &&
-              unordered.mostRecent ⟨1⟩ == some ⟨0⟩ &&
-              alone.mostRecent ⟨0⟩ == none &&
-              lonely.minibufferBuffer? == some ⟨1⟩ &&
-              lonely.mostRecent ⟨0⟩ == none &&
-              { lonely with recent := #[] }.mostRecent ⟨0⟩ == none &&
-              asking.minibufferBuffer? == some ⟨3⟩ &&
-              asking.openBuffers == #[⟨2⟩, ⟨0⟩, ⟨1⟩] &&
-              unordered.openBuffers == #[⟨0⟩, ⟨1⟩, ⟨2⟩]
+          match onTextModel (windowsUnder 1 Layout.manual),
+            onTextModel (windowsUnder 2 Layout.default) with
+          | some one, some two =>
+            (match one.splitWindow ⟨0⟩ (marker 8) (marker 9) { before := true } with
+              | (.ok made, after) =>
+                made == ⟨1⟩ && after.frame.windows == ids [1, 0] &&
+                  after.frame.layout == .splits (.split .rows 1 1 .tile .tile) &&
+                  after.frame.focused == ⟨0⟩ &&
+                  after.rects == #[(⟨1⟩, rect 0 0 640 232), (⟨0⟩, rect 0 232 640 232)] &&
+                  after.wellFormed
+              | _ => false) &&
+              (match one.splitWindow ⟨0⟩ (marker 8) (marker 9) { axis := .columns } with
+              | (.ok _, after) =>
+                after.frame.windows == ids [0, 1] &&
+                  after.frame.layout == .splits (.split .columns 1 1 .tile .tile) &&
+                  after.rects == #[(⟨0⟩, rect 0 0 320 464), (⟨1⟩, rect 320 0 320 464)]
+              | _ => false) &&
+              match
+                two.splitWindow ⟨0⟩ (marker 8) (marker 9) { axis := .columns, before := true } with
+              | (.ok made, after) =>
+                made == ⟨2⟩ && after.frame.windows == ids [0, 2, 1] &&
+                  after.frame.layout == Layout.default &&
+                  after.wellFormed
+              | _ => false
           | _, _ => false },
     { name :=
-        "the initial state's buffer has no file, and its line ending is a line feed; no path finds a buffer"
+        "under manual splits removing a focused window moves the focus to the window that inherits its place, the first of the next part of its group or the last of the previous part, and balances the tree along the group's axis"
       run :=
         pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            ((state.buffer? ⟨0⟩).map fun buffer => (buffer.file, buffer.lineEnding)) ==
-                some (none, .lf) &&
-              state.findFile "/files/note.txt" == none },
-    { name := "why a job was not started names the job, as a sentence for the echo area"
-      run :=
-        pure
-          (((JobRefusal.noSuchJob "load-it").describe.splitOn "load-it").length == 2 &&
-            (JobRefusal.noSuchJob "a").describe != (JobRefusal.noSuchJob "b").describe) },
-    { name :=
-        "a free name is the name itself when no buffer has it, and otherwise the name followed by <2>, <3> and so on, the first no buffer has"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let named (names : List String) : EditorState :=
-              names.foldl (fun state name => (state.addBuffer name ⟨1⟩ (UndoTree.new ⟨1⟩ 0)).2)
-                state
-            state.freeName "new" == "new" && state.freeName "other" == "other<2>" &&
-              (named ["other<2>"]).freeName "other" == "other<3>" &&
-              (named ["other<3>"]).freeName "other" == "other<2>" &&
-              (named ["other<2>", "other<3>"]).freeName "other" == "other<4>" &&
-              (named ["other<2>"]).freeName "other<2>" == "other<2><2>" },
-    { name :=
-        "a state that breaks one layout invariant is not well formed: a focus outside the list, a window named twice, a list entry with no window, a window outside the list, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the list, a prompt whose choice is past its listing, an order of use that names a removed buffer or one buffer twice; and the same prompt with a choice in its listing is well formed"
-      run := do
-        let some state := onTextModel threeWindows | return false
-        -- A failure names the spoiled states that were taken for well formed.
-        let accepted := spoilings.filter fun (_, spoil) => (spoil state).wellFormed
-        unless accepted.isEmpty do
-          throw
-              (IO.userError
-                s!"well formed: a state {"; a state ".intercalate (accepted.map (·.1))}")
-        let (_, chosen) := (picking (prompted state).2).chooseCandidate .previous
-        return state.wellFormed && chosen.wellFormed &&
-            chosen.prompt.map (·.candidates.chosen) == some (some 2) },
-    { name :=
-        "the rectangles of a state's views: the windows laid out by the frame's layout in the tiled area, the frame above the minibuffer's strip, which is the bottom message height with no prompt open, a text row and that with one, and the whole height where the frame is shorter; the minibuffer's view in that strip while a prompt is open; under monocle only the selected window, the asker while a prompt is open"
-      run :=
-        pure <|
-          match onTextModel threeWindows with
-          | none => false
-          | some state =>
-            let rect (x y width height : Nat) : Rect := { x, y, width, height }
-            let sized (size : Size) (state : EditorState) : EditorState :=
-              { state with
-                heights := { text := 20, status := 18, message := 12 }
-                frame := { state.frame with size } }
-            let windows := #[⟨0⟩, ⟨1⟩, ⟨2⟩]
-            let plain := sized ⟨640, 480⟩ state
-            let asking := sized ⟨640, 480⟩ (prompted state).2
-            let short := sized ⟨640, 10⟩ (prompted state).2
-            let monocle (state : EditorState) : EditorState :=
-              { state with frame := { state.frame with layout := .monocle } }
-            let onOne := (state.focusWindow ⟨1⟩).2
-            let alone := sized ⟨640, 480⟩ (monocle onOne)
-            let aloneAsking := sized ⟨640, 480⟩ (prompted (monocle onOne)).2
-            plain.tiled == rect 0 0 640 468 &&
-              plain.rects == Layout.default.place windows ⟨0⟩ (rect 0 0 640 468) &&
-              asking.tiled == rect 0 0 640 448 &&
-              asking.rects ==
-                Layout.default.place windows ⟨0⟩ (rect 0 0 640 448) ++
-                  #[(⟨3⟩, rect 0 448 640 32)] &&
-              short.tiled == rect 0 0 640 0 &&
-              short.rects.back? == some (⟨3⟩, rect 0 0 640 10) &&
-              alone.rects == #[(⟨1⟩, rect 0 0 640 468)] &&
-              aloneAsking.frame.focused == ⟨3⟩ &&
-              aloneAsking.rects == #[(⟨1⟩, rect 0 0 640 448), (⟨3⟩, rect 0 448 640 32)] &&
-              [plain, asking, short, alone, aloneAsking].all (·.wellFormed) },
-    { name :=
-        "with a prompt open the views tile the frame, the windows in list order and the minibuffer's view last, and with none the windows tile the frame above the bottom row, at even, odd and zero sizes and under every layout"
-      run :=
-        pure <|
-          match onTextModel threeWindows with
-          | none => false
-          | some state =>
-            sampleSizes.all fun size =>
-              [Layout.default, .masterStack { share := 61, side := .bottom }, .monocle].all
-                fun layout =>
-                let shaped (state : EditorState) : EditorState :=
-                  { state with
-                    frame :=
-                      { state.frame with
-                        size, layout } }
-                let plain := shaped state
-                let asking := shaped (prompted state).2
-                tiles plain.tiled (plain.rects.map (·.2)) &&
-                  tiles (frameRect size) (asking.rects.map (·.2)) &&
-                  (asking.rects.map (·.1)).back? == asking.minibufferView? &&
-                  (layout == .monocle || plain.rects.map (·.1) == plain.frame.windows) },
-    { name := "removing the only window is refused with onlyWindow, and the state is as it was"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            match state.removeWindow ⟨0⟩ with
-            | (.error .onlyWindow, after) => after == state
-            | _ => false },
-    { name :=
-        "focusing a window that is not in the list is refused with noSuchWindow, and the state is as it was; so is removing one"
-      run :=
-        pure <|
-          match onTextModel threeWindows with
-          | none => false
-          | some state =>
-            (match state.focusWindow ⟨7⟩ with
-              | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
-              | _ => false) &&
-              match state.removeWindow ⟨7⟩ with
-              | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
-              | _ => false },
-    { name :=
-        "removing a window of three keeps the state well formed, takes it out of the list, whose layout gives its space to the rest, and hands back the window; the focus moves to the window that took its index, or to the new last window when it was last"
-      run :=
-        pure <|
-          match onTextModel threeWindows with
-          | none => false
-          | some state =>
-            let left := { x := 0, y := 0, width := 320, height := 464 }
-            let right := { x := 320, y := 0, width := 320, height := 464 }
-            let (_, onOne) := state.focusWindow ⟨1⟩
-            let (_, onTwo) := state.focusWindow ⟨2⟩
-            state.wellFormed &&
-              (match state.removeWindow ⟨0⟩ with
-              | (.ok removed, after) =>
-                removed.id == ⟨0⟩ && after.wellFormed && after.frame.focused == ⟨1⟩ &&
-                  after.windows.map (·.id) == #[⟨1⟩, ⟨2⟩] &&
-                  after.frame.windows == #[⟨1⟩, ⟨2⟩] &&
-                  laidOut after == #[(⟨1⟩, left), (⟨2⟩, right)]
-              | _ => false) &&
-              (match state.removeWindow ⟨1⟩ with
+          let removedFrom (tree : Splits) (focus gone : Nat) : Option (Nat × Layout) :=
+            match onTextModel (windowsUnder tree.size (.splits tree)) with
+            | none => none
+            | some state =>
+              match (state.focusWindow ⟨focus⟩).2.removeWindow ⟨gone⟩ with
               | (.ok _, after) =>
-                after.wellFormed && after.frame.focused == ⟨0⟩ &&
-                  laidOut after == #[(⟨0⟩, left), (⟨2⟩, right)]
-              | _ => false) &&
-              (match onOne.removeWindow ⟨1⟩ with
-              | (.ok _, after) => after.wellFormed && after.frame.focused == ⟨2⟩
-              | _ => false) &&
-              onTwo.frame.focused == ⟨2⟩ &&
-              match onTwo.removeWindow ⟨2⟩ with
-              | (.ok _, after) =>
-                after.wellFormed && after.frame.focused == ⟨1⟩ &&
-                  laidOut after == #[(⟨0⟩, left), (⟨1⟩, right)]
-              | _ => false },
-    { name := "focusing a window in the list sets the frame's focus and changes nothing else"
+                if after.wellFormed then some (after.frame.focused.index, after.frame.layout)
+                else none
+              | _ => none
+          let three := Splits.split .columns 1 1 (.split .rows 1 1 .tile .tile) .tile
+          let nested := Splits.split .rows 1 1 (.split .rows 1 1 .tile .tile) .tile
+          let weighted :=
+            Splits.split .columns 1 1 (.split .rows 1 1 .tile .tile) (.split .rows 5 1 .tile .tile)
+          removedFrom three 1 1 == some (0, .splits (.split .columns 1 1 .tile .tile)) &&
+            removedFrom three 2 2 == some (1, .splits (.split .rows 1 1 .tile .tile)) &&
+            removedFrom three 0 0 == some (1, .splits (.split .columns 1 1 .tile .tile)) &&
+            removedFrom nested 1 1 == some (2, .splits (.split .rows 1 1 .tile .tile)) &&
+            removedFrom weighted 0 0 ==
+              some (1, .splits (.split .columns 1 1 .tile (.split .rows 1 1 .tile .tile))) },
+    { name :=
+        "splitting a window and removing the new one gives back the frame from before the split, under master-and-stack, monocle and manual splits, with either placement"
       run :=
         pure <|
-          match onTextModel threeWindows with
+          [Layout.default, .monocle, Layout.manual].all fun layout =>
+            [({} : Placement), { axis := .columns, before := true }].all fun placement =>
+              match onTextModel (windowsUnder 2 layout) with
+              | none => false
+              | some state =>
+                match state.splitWindow ⟨1⟩ (marker 8) (marker 9) placement with
+                | (.ok made, split) =>
+                  split.wellFormed &&
+                    match split.removeWindow made with
+                    | (.ok _, back) => back.frame == state.frame
+                    | _ => false
+                | _ => false },
+    { name :=
+        "a window split while zoomed is in the tree zoom returns to, and so is a window removed while zoomed, whose inheritor is the one of the layout to return to"
+      run :=
+        pure <|
+          match onTextModel (windowsUnder 2 Layout.manual) with
           | none => false
           | some state =>
-            match state.focusWindow ⟨1⟩ with
-            | (.ok (), after) =>
-              after.frame.focused == ⟨1⟩ &&
-                after == { state with frame := { state.frame with focused := ⟨1⟩ } }
-            | _ => false },
-    { name := "the initial state's window keeps no wanted column"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state => (state.window? ⟨0⟩).map (·.wanted) == some none },
-    { name :=
-        "the initial state has no register: none is read under the empty name, under a letter or under the clipboard's name"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            state.registers.isEmpty && ["", "\"", "a", "+"].all (state.register? · == none) },
-    { name :=
-        "a register set under a name is read back under that name with its text and whether it is line-wise, and under no other; a second one set under the name replaces it, and a register under another name stays; nothing else of the state changes"
-      run :=
-        pure <|
-          match onTextModel threeWindows with
-          | none => false
-          | some state =>
-            let word : Register := { text := "word" }
-            let line : Register := { text := "a line\n", linewise := true }
-            let once := state.setRegister "a" word
-            let both := once.setRegister "b" line
-            let again := both.setRegister "a" line
-            once.register? "a" == some word && once.register? "b" == none &&
-              once.register? "" == none &&
-              !word.linewise &&
-              both.register? "a" == some word &&
-              both.register? "b" == some line &&
-              again.register? "a" == some line &&
-              again.register? "b" == some line &&
-              again.registers.size == 2 &&
-              { again with registers := #[] } == state &&
-              (state.setRegister "" word).register? "" == some word },
-    { name :=
-        "a new state's scroll margin is no rows; a margin set is the state's, a second one set replaces it, and nothing else of the state changes"
-      run :=
-        pure <|
-          match onTextModel threeWindows with
-          | none => false
-          | some state =>
-            let two := state.setScrollMargin 2
-            let five := two.setScrollMargin 5
-            state.scrollMargin == 0 && two.scrollMargin == 2 && five.scrollMargin == 5 &&
-              two != state &&
-              { five with scrollMargin := 0 } == state &&
-              five.setScrollMargin 0 == state &&
-              two.wellFormed },
-    { name :=
-        "the initial state's selection is one cursor at 0, of the shape the state is made with, and exclusive when it is made with none"
-      run :=
-        pure <|
-          let cursor (start : TextM EditorState) : Option Marker :=
-            onTextModel do
-              let some target := (← start).focusedTarget? | throw .noSuchText
-              target.buffer.text.marker target.window.selection
-          let one (shape : Shape) : Option Marker :=
-            some (.selection { ranges := #[⟨0, 0⟩], shape })
-          cursor (EditorState.initial ⟨640, 480⟩) == one .exclusive &&
-            cursor (EditorState.initial ⟨640, 480⟩ .inclusive) == one .inclusive &&
-            cursor (EditorState.initial ⟨640, 480⟩ .line) == one .line },
-    { name :=
-        "setting a window's wanted column keeps the column with the head it was kept at, and leaves the other windows and the rest of the state; setting none keeps none again"
-      run :=
-        pure <|
-          match onTextModel threeWindows with
-          | none => false
-          | some state =>
-            let kept : Window.Wanted := { column := .goal 3, head := 7 }
-            let wanted (state : EditorState) (index : Nat) : Option (Option Window.Wanted) :=
-              (state.window? ⟨index⟩).map (·.wanted)
-            match state.setWanted ⟨1⟩ (some kept) with
-            | (.ok (), after) =>
-              wanted after 1 == some (some kept) && wanted after 0 == some none &&
-                wanted after 2 == some none &&
-                after ==
-                  { state with
-                    windows :=
-                      state.windows.map fun window =>
-                        if window.id == ⟨1⟩ then { window with wanted := some kept }
-                        else window } &&
-                (match after.setWanted ⟨1⟩ (some { column := .lineEnd, head := 2 }) with
-                | (.ok (), ends) => wanted ends 1 == some (some { column := .lineEnd, head := 2 })
-                | _ => false) &&
-                match after.setWanted ⟨1⟩ none with
-                | (.ok (), cleared) => cleared == state
+            match state.arrange ⟨0⟩ .zoom with
+            | (.ok (), zoomed) =>
+              zoomed.frame.layout == .monocle &&
+                match zoomed.splitWindow ⟨0⟩ (marker 8) (marker 9) with
+                | (.ok made, split) =>
+                  split.wellFormed && split.frame.windows == ids [0, 2, 1] &&
+                    split.frame.zoomedFrom ==
+                      some (.splits (.split .rows 2 1 (.split .rows 1 1 .tile .tile) .tile)) &&
+                    (match (split.focusWindow made).2.removeWindow made with
+                    | (.ok _, removed) =>
+                      removed.wellFormed && removed.frame.focused == ⟨1⟩ &&
+                        removed.frame.zoomedFrom == some (.splits (.split .rows 1 1 .tile .tile))
+                    | _ => false) &&
+                    match split.arrange ⟨0⟩ .zoom with
+                    | (.ok (), back) =>
+                      back.frame.zoomedFrom == none &&
+                        back.frame.layout ==
+                          .splits (.split .rows 2 1 (.split .rows 1 1 .tile .tile) .tile)
+                    | _ => false
                 | _ => false
             | _ => false },
     { name :=
-        "setting the wanted column of a view with no window is refused with noSuchWindow, and the state is as it was"
+        "the frame keeps the window of the list focused before the current one: focusing another window sets it, focusing the same one changes nothing, and focusing the minibuffer's view or leaving it does not set it"
       run :=
         pure <|
           match onTextModel threeWindows with
           | none => false
           | some state =>
-            match state.setWanted ⟨7⟩ (some { column := .goal 3, head := 7 }) with
-            | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
-            | _ => false },
-    { name :=
-        "a window shown another buffer keeps no wanted column, and a window a split makes has none while its source keeps its own"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let kept : Window.Wanted := { column := .goal 3, head := 4 }
-            let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
-            let (_, keeping) := state.setWanted ⟨0⟩ (some kept)
-            let wanted (state : EditorState) (index : Nat) : Option (Option Window.Wanted) :=
-              (state.window? ⟨index⟩).map (·.wanted)
-            (match keeping.showBuffer ⟨0⟩ ⟨1⟩ (marker 1 8) (marker 1 9) with
-              | (.ok (), shown) =>
-                wanted keeping 0 == some (some kept) && wanted shown 0 == some none
-              | _ => false) &&
-              match keeping.splitWindow ⟨0⟩ (marker 0 8) (marker 0 9) with
-              | (.ok made, split) =>
-                wanted split made.index == some none && wanted split 0 == some (some kept)
-              | _ => false },
-    { name :=
-        "setting a buffer's major mode names it and says it became the major mode, leaving the other buffers; setting it again changes nothing and says not; another mode replaces it"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let major (state : EditorState) (index : Nat) : Option String :=
-              (state.buffer? ⟨index⟩).bind (·.major)
-            match state.setMajorMode ⟨1⟩ "listing" with
-            | (.ok true, listed) =>
-              major state 1 == none && major listed 1 == some "listing" && major listed 0 == none &&
-                listed ==
-                  { state with
-                    buffers :=
-                      state.buffers.modify 1 (·.map ({ · with major := some "listing" })) } &&
-                (match listed.setMajorMode ⟨1⟩ "listing" with
-                | (.ok false, again) => again == listed
-                | _ => false) &&
-                match listed.setMajorMode ⟨1⟩ "other" with
-                | (.ok true, other) => major other 1 == some "other"
-                | _ => false
-            | _ => false },
-    { name :=
-        "a minor mode added is first and added once, and removing one takes it away; removing one not there changes nothing"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let minors (state : EditorState) : Array String :=
-              ((state.buffer? ⟨0⟩).map (·.minors)).getD #[]
-            let (_, one) := state.addMinorMode ⟨0⟩ "one"
-            let (_, two) := one.addMinorMode ⟨0⟩ "two"
-            let (added, again) := two.addMinorMode ⟨0⟩ "one"
-            let (removed, without) := two.removeMinorMode ⟨0⟩ "one"
-            let (absent, unchanged) := two.removeMinorMode ⟨0⟩ "three"
-            minors state == #[] && minors one == #["one"] && minors two == #["two", "one"] &&
-              added matches .ok () &&
+            let (_, one) := state.focusWindow ⟨1⟩
+            let (_, two) := one.focusWindow ⟨2⟩
+            let (_, again) := two.focusWindow ⟨2⟩
+            let asking := (prompted two).2
+            let (_, away) := asking.focusWindow ⟨0⟩
+            let (_, back) := away.focusWindow (asking.minibufferView?.getD ⟨9⟩)
+            state.frame.lastFocused == none && one.frame.lastFocused == some ⟨0⟩ &&
+              two.frame.lastFocused == some ⟨1⟩ &&
               again == two &&
-              removed matches .ok () &&
-              minors without == #["two"] &&
-              absent matches .ok () &&
-              unchanged == two &&
-              ((two.buffer? ⟨1⟩).map (·.minors)) == some #[] },
+              asking.frame.lastFocused == some ⟨1⟩ &&
+              away.frame.lastFocused == some ⟨1⟩ &&
+              back.frame.lastFocused == some ⟨1⟩ },
     { name :=
-        "setting a major mode, adding a minor mode and removing one each refuse a buffer there is none of with noSuchBuffer, and the state is as it was"
+        "promote moves a window to main, and main itself swaps with the next; demote swaps a window with the next, and the last stays; the focus stays on its view"
       run :=
         pure <|
-          match onTextModel twoBuffers with
+          match onTextModel (windowsUnder 4 Layout.default) with
           | none => false
           | some state =>
-            let refused {α : Type} : Except BufferRefusal α × EditorState → Bool
-              | (.error (.noSuchBuffer id), after) => id == ⟨5⟩ && after == state
+            arrangedTo (state.arrange ⟨2⟩ .promote) == some ([2, 0, 1, 3], 0) &&
+              arrangedTo (state.arrange ⟨0⟩ .promote) == some ([1, 0, 2, 3], 0) &&
+              arrangedTo (state.arrange ⟨0⟩ .demote) == some ([1, 0, 2, 3], 0) &&
+              arrangedTo (state.arrange ⟨3⟩ .demote) == some ([0, 1, 2, 3], 0) &&
+              arrangedTo ((state.focusWindow ⟨2⟩).2.arrange ⟨2⟩ .promote) ==
+                some ([2, 0, 1, 3], 2) },
+    { name :=
+        "rotate under master-and-stack rotates the stack and keeps main, forward putting the last first and back the reverse, and the focus stays on its view; under manual splits the whole list rotates"
+      run :=
+        pure <|
+          match onTextModel (windowsUnder 4 Layout.default),
+            onTextModel (windowsUnder 3 Layout.manual) with
+          | some state, some manual =>
+            let onTwo := (state.focusWindow ⟨2⟩).2
+            arrangedTo (onTwo.arrange ⟨2⟩ (.rotate true)) == some ([0, 3, 1, 2], 2) &&
+              arrangedTo (onTwo.arrange ⟨2⟩ (.rotate false)) == some ([0, 2, 3, 1], 2) &&
+              arrangedTo (manual.arrange ⟨0⟩ (.rotate true)) == some ([2, 0, 1], 0) &&
+              (manual.arrange ⟨0⟩ (.rotate true)).2.frame.layout == manual.frame.layout
+          | _, _ => false },
+    { name :=
+        "exchange swaps a window with the next, with the previous when it is last, or with the Nth of the list, and the focus moves to the other view, which now stands where the window was; a window of one, or the Nth itself, changes nothing"
+      run :=
+        pure <|
+          match onTextModel (windowsUnder 4 Layout.default),
+            onTextModel (windowsUnder 1 Layout.default) with
+          | some state, some alone =>
+            let onOne := (state.focusWindow ⟨1⟩).2
+            let onThree := (state.focusWindow ⟨3⟩).2
+            let onTwo := (state.focusWindow ⟨2⟩).2
+            arrangedTo (onOne.arrange ⟨1⟩ (.exchange none)) == some ([0, 2, 1, 3], 2) &&
+              (onOne.arrange ⟨1⟩ (.exchange none)).2.frame.lastFocused == some ⟨1⟩ &&
+              arrangedTo (onThree.arrange ⟨3⟩ (.exchange none)) == some ([0, 1, 3, 2], 2) &&
+              arrangedTo (onTwo.arrange ⟨2⟩ (.exchange (some 1))) == some ([2, 1, 0, 3], 0) &&
+              arrangedTo (onTwo.arrange ⟨2⟩ (.exchange (some 3))) == some ([0, 1, 2, 3], 2) &&
+              arrangedTo (onTwo.arrange ⟨2⟩ (.exchange (some 9))) == some ([0, 1, 2, 3], 2) &&
+              arrangedTo (alone.arrange ⟨0⟩ (.exchange none)) == some ([0], 0)
+          | _, _ => false },
+    { name :=
+        "zoom keeps the layout it leaves and makes the layout monocle, and zoom again goes back to it; under monocle that is not a zoom it is refused with monocleChosen, and the state is as it was"
+      run :=
+        pure <|
+          match onTextModel (windowsUnder 3 Layout.default),
+            onTextModel (windowsUnder 2 .monocle) with
+          | some state, some monocle =>
+            (match state.arrange ⟨1⟩ .zoom with
+              | (.ok (), zoomed) =>
+                zoomed.frame.layout == .monocle && zoomed.frame.zoomedFrom == some Layout.default &&
+                  zoomed.frame.windows == state.frame.windows &&
+                  match zoomed.arrange ⟨0⟩ .zoom with
+                  | (.ok (), back) => back.frame == state.frame
+                  | _ => false
+              | _ => false) &&
+              match monocle.arrange ⟨0⟩ .zoom with
+              | (.error .monocleChosen, after) => after == monocle
               | _ => false
-            refused (state.setMajorMode ⟨5⟩ "listing") && refused (state.addMinorMode ⟨5⟩ "one") &&
-              refused (state.removeMinorMode ⟨5⟩ "one") },
-    { name := "the initial state has no prompt open"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state => state.prompt == none },
+          | _, _ => false },
     { name :=
-        "opening a prompt replies the minibuffer's view, a new one: the state has the prompt with its label, its continuation and the focused view as its asker, a buffer in the next slot over the text given, with the minibuffer's mode and a name no other buffer has, a window on it with the markers given, the focus on it, and the window list as it was; it is well formed"
+        "balance puts master-and-stack's share back to 50 and balances manual splits along both axes; under monocle it changes nothing"
       run :=
         pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            match prompted state with
-            | (.ok view, after) =>
-              view == ⟨1⟩ &&
-                after.prompt ==
-                  some { label := "Name: ", view := ⟨1⟩, asker := ⟨0⟩, continuation := asked } &&
-                after.buffers.size == 2 &&
-                after.buffer? ⟨0⟩ == state.buffer? ⟨0⟩ &&
-                after.buffer? ⟨1⟩ ==
-                  some
-                    { name := Prompt.bufferName, text := ⟨7⟩, history := UndoTree.new ⟨7⟩ 0
-                      major := some Prompt.mode } &&
-                state.findBuffer Prompt.bufferName == none &&
-                after.windows ==
-                  state.windows.push
-                    { id := ⟨1⟩, buffer := ⟨1⟩, scroll := ⟨⟨7⟩, 0⟩, selection := ⟨⟨7⟩, 1⟩ } &&
-                after.frame == { state.frame with focused := ⟨1⟩ } &&
-                after.nextView == 2 &&
-                after.wellFormed
-            | _ => false },
+          let tree := Splits.split .columns 9 1 .tile (.split .rows 1 7 .tile .tile)
+          match onTextModel (windowsUnder 2 (.masterStack { share := 70 })),
+            onTextModel (windowsUnder 3 (.splits tree)), onTextModel (windowsUnder 2 .monocle) with
+          | some stack, some manual, some monocle =>
+            (stack.arrange ⟨1⟩ .balance).2.frame.layout == .masterStack { share := 50 } &&
+              (manual.arrange ⟨1⟩ .balance).2.frame.layout ==
+                .splits (.split .columns 1 1 .tile (.split .rows 1 1 .tile .tile)) &&
+              (monocle.arrange ⟨1⟩ .balance).2 == monocle
+          | _, _, _ => false },
     { name :=
-        "the minibuffer's buffer gets the next free name when a buffer is already called by the minibuffer's name"
+        "resize under master-and-stack grows main's share by 5 percent a step for a main window that grows or a stack window that shrinks, and shrinks it otherwise, clamped to 0 and 100, a share above 100 read as 100; across its side's axis, with one window and under monocle it is refused with notResizable, and the state is as it was"
       run :=
         pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, named) := state.addBuffer Prompt.bufferName ⟨3⟩ (UndoTree.new ⟨3⟩ 0)
-            match prompted named with
-            | (.ok _, after) =>
-              (after.buffer? ⟨2⟩).map (·.name) == some s!"{Prompt.bufferName}<2>" &&
-                after.findBuffer Prompt.bufferName == some ⟨1⟩ &&
-                after.wellFormed
-            | _ => false },
-    { name :=
-        "a second prompt is refused with alreadyOpen and the open prompt's view, a history or a marker of another text than the minibuffer's with notItsText, and a prompt asked for with no window focused with noWindow, each with the state as it was"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            let refused (refusal : PromptRefusal) (was : EditorState) :
-              Except PromptRefusal ViewId × EditorState → Bool
-              | (.error why, after) => why == refusal && after == was
+          let share (layout : Layout) : Option Nat :=
+            match layout with
+            | .masterStack parameters => some parameters.share
+            | _ => none
+          let resized (start : Nat) (view : Nat) (grow : Bool) (steps : Nat) : Option Nat :=
+            match onTextModel (windowsUnder 3 (.masterStack { share := start })) with
+            | none => none
+            | some state =>
+              match state.arrange ⟨view⟩ (.resize .columns grow steps) with
+              | (.ok (), after) => share after.frame.layout
+              | _ => none
+          let refused (count : Nat) (layout : Layout) (axis : Axis) : Bool :=
+            match onTextModel (windowsUnder count layout) with
+            | none => false
+            | some state =>
+              match state.arrange ⟨0⟩ (.resize axis true 1) with
+              | (.error (.notResizable refusedAxis), after) => refusedAxis == axis && after == state
               | _ => false
-            let astray (history scroll selection : Nat) :=
-              state.openPrompt "Name: " asked ⟨7⟩ (UndoTree.new ⟨history⟩ 0) ⟨⟨scroll⟩, 0⟩
-                ⟨⟨selection⟩, 1⟩
-            asking.prompt.isSome && refused (.alreadyOpen ⟨1⟩) asking (prompted asking 8) &&
-              refused .notItsText state (astray 0 7 7) &&
-              refused .notItsText state (astray 7 0 7) &&
-              refused .notItsText state (astray 7 7 0) &&
-              refused .noWindow EditorState.none (prompted EditorState.none) },
+          resized 50 0 true 1 == some 55 && resized 50 1 true 1 == some 45 &&
+            resized 50 0 false 2 == some 40 &&
+            resized 50 2 false 1 == some 55 &&
+            resized 98 0 true 1 == some 100 &&
+            resized 150 1 false 1 == some 100 &&
+            resized 3 0 false 1 == some 0 &&
+            refused 3 Layout.default .rows &&
+            refused 1 Layout.default .columns &&
+            refused 2 .monocle .columns },
     { name :=
-        "the focus leaves the minibuffer's view for a window of the list and comes back to it, and nothing else changes"
+        "main's count goes up and down by the steps asked, not below 0; under any layout but master-and-stack it is refused with noMain, and the state is as it was"
       run :=
         pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            match asking.focusWindow ⟨0⟩ with
-            | (.ok (), away) =>
-              away == { asking with frame := { asking.frame with focused := ⟨0⟩ } } &&
-                away.wellFormed &&
-                match away.focusWindow ⟨1⟩ with
-                | (.ok (), back) => back == asking
-                | _ => false
-            | _ => false },
-    { name :=
-        "removing, splitting and showing another buffer in the minibuffer's view, and showing the minibuffer's buffer in another window, are each refused with ofMinibuffer and the minibuffer's view, with the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            let refused {α : Type} : Except LayoutRefusal α × EditorState → Bool
-              | (.error (.ofMinibuffer view), after) => view == ⟨2⟩ && after == asking
+          match onTextModel (windowsUnder 3 Layout.default),
+            onTextModel (windowsUnder 3 Layout.manual) with
+          | some state, some manual =>
+            let (_, more) := state.arrange ⟨0⟩ (.mainCount true 1)
+            let (_, fewer) := more.arrange ⟨0⟩ (.mainCount false 5)
+            more.frame.layout == .masterStack { count := 2 } &&
+              fewer.frame.layout == .masterStack { count := 0 } &&
+              match manual.arrange ⟨0⟩ (.mainCount true 1) with
+              | (.error .noMain, after) => after == manual
               | _ => false
-            asking.prompt.map (·.view) == some ⟨2⟩ && refused (asking.removeWindow ⟨2⟩) &&
-              refused (asking.splitWindow ⟨2⟩ ⟨⟨7⟩, 2⟩ ⟨⟨7⟩, 3⟩) &&
-              refused (asking.showBuffer ⟨2⟩ ⟨1⟩ ⟨⟨1⟩, 8⟩ ⟨⟨1⟩, 9⟩) &&
-              refused (asking.showBuffer ⟨0⟩ ⟨2⟩ ⟨⟨7⟩, 2⟩ ⟨⟨7⟩, 3⟩) },
+          | _, _ => false },
     { name :=
-        "with a prompt open over two windows, removing one window is done and leaves the prompt open, and removing the other is refused with onlyWindow: the minibuffer's window does not count"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            match asking.removeWindow ⟨1⟩ with
-            | (.ok removed, one) =>
-              removed.id == ⟨1⟩ && one.wellFormed && one.prompt == asking.prompt &&
-                one.frame.focused == ⟨2⟩ &&
-                one.windows.map (·.id) == #[⟨0⟩, ⟨2⟩] &&
-                match one.removeWindow ⟨0⟩ with
-                | (.error .onlyWindow, same) => same == one
-                | _ => false
-            | _ => false },
-    { name :=
-        "removing the minibuffer's buffer while its prompt is open is refused with shown and the minibuffer's view"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            match asking.removeBuffer ⟨1⟩ with
-            | (.error (.shown view), after) => view == ⟨1⟩ && after == asking
-            | _ => false },
-    { name := "why a prompt was refused is a sentence for the echo area, one for each refusal"
-      run :=
-        pure
-          (([PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow].map
-                  PromptRefusal.describe).eraseDups.length ==
-              4 &&
-            [PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow].all fun refusal =>
-              !refusal.describe.isEmpty) },
-    { name :=
-        "closing a prompt with no answer leaves no prompt: the minibuffer's window is gone, its buffer's slot is empty, the focus is on the asking view, the window list and the next view's id are as they were after the open, and nothing is answered; the state is well formed"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            match asking.closePrompt none with
-            | (.ok (), closed) =>
-              closed ==
-                  { state with
-                    buffers := state.buffers.push none, nextView := 2 } &&
-                closed.prompt == none &&
-                closed.window? ⟨1⟩ == none &&
-                closed.buffers[1]? == some none &&
-                closed.frame.focused == ⟨0⟩ &&
-                closed.frame.windows == asking.frame.windows &&
-                closed.nextView == asking.nextView &&
-                closed.answered == #[] &&
-                closed.wellFormed
-            | _ => false },
-    { name :=
-        "closing a prompt with an answer does the same, and records the continuation with the answer as its first argument, before its own"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            match asking.closePrompt none, asking.closePrompt (some "héllo") with
-            | (.ok (), cancelled), (.ok (), accepted) =>
-              accepted.answered == #[{ command := "greet", arguments := [.str "héllo", .nat 7] }] &&
-                { accepted with answered := #[] } == cancelled &&
-                accepted.wellFormed
-            | _, _ => false },
-    { name :=
-        "two prompts opened and accepted one after the other leave two answered invocations, in order, and the second prompt's view and buffer have ids the first's never had"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (first, one) := prompted state
-            let (_, one) := one.closePrompt (some "a")
-            let (second, two) := prompted one 8
-            let minibuffer := two.minibufferBuffer?
-            let (_, two) := two.closePrompt (some "b")
-            replied first == .inr ⟨1⟩ && replied second == .inr ⟨2⟩ && minibuffer == some ⟨2⟩ &&
-              two.answered ==
-                #[{ command := "greet", arguments := [.str "a", .nat 7] },
-                  { command := "greet", arguments := [.str "b", .nat 7] }] &&
-              two.buffers.size == 3 &&
-              two.nextView == 3 &&
-              two.wellFormed },
-    { name :=
-        "closing a prompt gives the focus back to the asking view, though the focus was moved to another window meanwhile"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            let (_, away) := asking.focusWindow ⟨1⟩
-            let (_, closed) := away.closePrompt (some "a")
-            asking.prompt.map (·.asker) == some ⟨0⟩ && away.frame.focused == ⟨1⟩ &&
-              closed.frame.focused == ⟨0⟩ &&
-              closed.wellFormed },
-    { name :=
-        "when the asking view was removed while the prompt was open, the prompt stays open, and closing it focuses the first window of the list"
-      run :=
-        pure <|
-          match onTextModel threeWindows with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            let (removed, without) := asking.removeWindow ⟨0⟩
-            let (_, closed) := without.closePrompt (some "a")
-            (replied removed).isRight && without.prompt == asking.prompt && without.wellFormed &&
-              without.frame.focused == ⟨3⟩ &&
-              closed.frame.focused == ⟨1⟩ &&
-              closed.frame.windows == #[⟨1⟩, ⟨2⟩] &&
-              closed.answered.size == 1 &&
-              closed.wellFormed },
-    { name :=
-        "closing a prompt when none is open is refused with notOpen, with or without an answer, and the state is as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            [none, some "a"].all fun answer =>
-              match state.closePrompt answer with
-              | (.error .notOpen, after) => after == state
-              | _ => false },
-    { name :=
-        "a prompt is opened with no candidates, no listing and no choice, and a prompt opened after one with candidates was closed has none either"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            let (_, chosen) := (picking asking).chooseCandidate .next
-            let (_, closed) := chosen.closePrompt (some "a")
-            let (_, again) := prompted closed 8
-            asking.prompt.map (·.candidates) == some {} &&
-              (chosen.prompt.map (·.candidates.chosen)) == some (some 0) &&
-              closed.prompt == none &&
-              again.prompt.map (·.candidates) == some {} },
-    { name :=
-        "setting an open prompt's candidates replaces them and forgets the listing and the choice, and changes nothing else of the state"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            let (_, chosen) := (picking asking).chooseCandidate .next
-            let (set, replaced) := chosen.setCandidates #["x", "y"]
-            replied set == .inr () &&
-              replaced.prompt.map (·.candidates) == some { all := #["x", "y"] } &&
-              withCandidates replaced {} == asking &&
-              replaced.wellFormed },
-    { name :=
-        "listing an open prompt's candidates keeps the candidates at the indices given, in that order, drops an index that is none of theirs, records the pattern the listing is for and forgets the choice; the candidates themselves stay"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            let (_, chosen) := (picking asking).chooseCandidate .next
-            let (listed, after) := chosen.listCandidates "w" #[2, 9, 0, 3]
-            let (emptied, unmatched) := after.listCandidates "z" #[]
-            replied listed == .inr () &&
-              after.prompt.map (·.candidates) ==
-                some
-                  { all := #["wq", "edit", "w"], listedFor := some "w", listed := #["w", "wq"] } &&
-              replied emptied == .inr () &&
-              unmatched.prompt.map (·.candidates) ==
-                some { all := #["wq", "edit", "w"], listedFor := some "z" } &&
-              withCandidates after {} == asking &&
-              after.wellFormed },
-    { name :=
-        "choosing among a listing: next from nothing chosen is the first and previous the last, next from the last and previous from the first are nothing chosen, and each other step moves by one; with nothing listed neither changes anything"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            let (_, asking) := prompted state
-            let listed := picking asking
-            let steps (steps : List Candidates.Step) (start : EditorState) : Option (Option Nat) :=
-              (steps.foldl (fun state step => (state.chooseCandidate step).2) start).prompt.map
-                (·.candidates.chosen)
-            let (stepped, after) := listed.chooseCandidate .next
-            let (_, bare) := asking.setCandidates #["a"]
-            replied stepped == .inr () && withCandidates after {} == asking && after.wellFormed &&
-              steps [.next] listed == some (some 0) &&
-              steps [.previous] listed == some (some 2) &&
-              steps [.next, .next] listed == some (some 1) &&
-              steps [.next, .next, .next] listed == some (some 2) &&
-              steps [.next, .next, .next, .next] listed == some none &&
-              steps [.next, .previous] listed == some none &&
-              steps [.previous, .previous] listed == some (some 1) &&
-              steps [.previous, .previous, .previous, .previous] listed == some none &&
-              steps [.previous, .next] listed == some none &&
-              (bare.chooseCandidate .next).2 == bare &&
-              (bare.chooseCandidate .previous).2 == bare &&
-              (asking.chooseCandidate .next).2 == asking },
-    { name :=
-        "what a prompt answers with: the chosen candidate when the listing is for the text, and the text when nothing is chosen, when the listing is for another text and when there are no candidates"
-      run :=
-        pure <|
-          let listed : Candidates :=
-            { all := #["wq", "edit", "w"], listedFor := some "w", listed := #["w", "wq"] }
-          ({ listed with chosen := some 1 } : Candidates).answer "w" == "wq" &&
-            ({ listed with chosen := some 0 } : Candidates).answer "w" == "w" &&
-            listed.answer "w" == "w" &&
-            ({ listed with chosen := some 1 } : Candidates).answer "wx" == "wx" &&
-            ({ listed with chosen := some 1 } : Candidates).answer "" == "" &&
-            ({} : Candidates).answer "typed" == "typed" &&
-            ({ all := #["a"], listedFor := some "z" } : Candidates).answer "z" == "z" },
-    { name :=
-        "with no prompt open, setting candidates, listing them and choosing one are each refused with notOpen, and the state is as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let refused : Except PromptRefusal Unit × EditorState → Bool
-              | (.error .notOpen, after) => after == state
-              | _ => false
-            refused (state.setCandidates #["a"]) && refused (state.listCandidates "a" #[0]) &&
-              refused (state.chooseCandidate .next) &&
-              refused (state.chooseCandidate .previous) },
-    { name :=
-        "the initial state is not asked to quit, does not leave, has no buffer with unsaved changes and no save in flight"
-      run :=
-        pure <|
-          match onTextModel (EditorState.initial ⟨640, 480⟩) with
-          | none => false
-          | some state =>
-            !state.quitting && !state.leaves && state.unsaved.isNone && !state.isSaving },
-    { name :=
-        "a modified buffer with no file has no unsaved changes; one that holds a file has; one whose save in flight is writing the state its text is in has not; one edited since that save began has; and one whose save was ended with a stamp has not"
-      run :=
-        pure <|
-          match onTextModel quitStates with
-          | none => false
-          | some states =>
-            let unsaved (state : EditorState) := state.unsaved.map (·.name)
-            ((states.bare.buffer? ⟨0⟩).map (·.isModified)) == some true &&
-              unsaved states.bare == none &&
-              unsaved states.held == some "other" &&
-              unsaved states.saving == none &&
-              unsaved states.moved == some "other" &&
-              unsaved states.saved == none &&
-              [states.bare, states.held, states.saved].all (!·.isSaving) &&
-              states.saving.isSaving &&
-              states.moved.isSaving },
-    { name :=
-        "a state asked to quit leaves when no buffer has unsaved changes and no save is in flight, and not while a save is in flight or a buffer has unsaved changes; a state that was not asked never leaves"
-      run :=
-        pure <|
-          match onTextModel quitStates with
-          | none => false
-          | some states =>
-            let asked (state : EditorState) : EditorState := { state with quitting := true }
-            (asked states.bare).leaves && (asked states.saved).leaves &&
-              !(asked states.saving).leaves &&
-              !(asked states.held).leaves &&
-              !(asked states.moved).leaves &&
-              !states.bare.leaves &&
-              !states.saved.leaves },
-    { name :=
-        "a quit that cannot go ahead is withdrawn: a state asked to quit while a buffer has unsaved changes is no longer asked, and is otherwise as it was; one asked with nothing unsaved, a save in flight among them, stays asked; one that was not asked is as it was"
-      run :=
-        pure <|
-          match onTextModel quitStates with
-          | none => false
-          | some states =>
-            let asked (state : EditorState) : EditorState := { state with quitting := true }
-            (asked states.held).settleQuit == states.held &&
-              (asked states.moved).settleQuit == states.moved &&
-              (asked states.saving).settleQuit == asked states.saving &&
-              (asked states.bare).settleQuit == asked states.bare &&
-              (asked states.saved).settleQuit == asked states.saved &&
-              states.held.settleQuit == states.held },
-    { name :=
-        "a view's rectangle is the one the state's rectangles give it: for each window, laid out by the frame's layout, and for the minibuffer's view while a prompt is open, in the strip its place then takes; a view with no window has none, and neither has the minibuffer's view of a prompt that is not open"
+        "every change of the window list refuses a view not in the list with noSuchWindow and the minibuffer's view with ofMinibuffer, and the state is as it was"
       run :=
         pure <|
           match onTextModel threeWindows with
           | none => false
           | some state =>
             let asking := (prompted state).2
-            -- Whether `rect?` answers, for every view, the rectangle the
-            -- layout gives it.
-            let agrees (state : EditorState) : Bool :=
-              let laid := state.rects
-              laid.map (·.1) == state.views &&
-                laid.all fun (id, rect) => state.rect? id == some rect
-            agrees state && agrees asking && asking.views.size == state.views.size + 1 &&
-              state.rect? ⟨9⟩ == none &&
-              asking.minibufferView?.map state.rect? == some none }]
+            let minibuffer := asking.minibufferView?.getD ⟨9⟩
+            let changes : List Arrange :=
+              [.promote, .demote, .rotate true, .exchange none, .zoom, .balance,
+                .resize .columns true 1, .mainCount true 1]
+            changes.all fun change =>
+              (match state.arrange ⟨9⟩ change with
+                | (.error (.noSuchWindow id), after) => id == ⟨9⟩ && after == state
+                | _ => false) &&
+                match asking.arrange minibuffer change with
+                | (.error (.ofMinibuffer id), after) => id == minibuffer && after == asking
+                | _ => false },
+    { name :=
+        "focus by direction under master-and-stack: from main to the right is the top of the stack, from any stack window to the left is main, down and up walk the stack, a count goes as far as it can, and at an edge there is none"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            state.toward? ⟨0⟩ .right 1 == some ⟨1⟩ && state.toward? ⟨1⟩ .left 1 == some ⟨0⟩ &&
+              state.toward? ⟨2⟩ .left 1 == some ⟨0⟩ &&
+              state.toward? ⟨1⟩ .bottom 1 == some ⟨2⟩ &&
+              state.toward? ⟨2⟩ .top 1 == some ⟨1⟩ &&
+              state.toward? ⟨0⟩ .right 2 == some ⟨1⟩ &&
+              state.toward? ⟨0⟩ .left 1 == none &&
+              state.toward? ⟨0⟩ .top 1 == none &&
+              state.toward? ⟨1⟩ .right 1 == none &&
+              state.toward? ⟨9⟩ .right 1 == none },
+    { name :=
+        "focus by direction under manual splits: in a 2 by 2 grid each direction reaches the neighbour and an edge has none; in a row of three a count of 2 goes two windows, and a count past the edge stops at the last"
+      run :=
+        pure <|
+          let grid :=
+            Splits.split .rows 1 1 (.split .columns 1 1 .tile .tile)
+              (.split .columns 1 1 .tile .tile)
+          let row := Splits.split .columns 1 1 .tile (.split .columns 1 1 .tile .tile)
+          match onTextModel (windowsUnder 4 (.splits grid)),
+            onTextModel (windowsUnder 3 (.splits row)) with
+          | some grid, some row =>
+            grid.toward? ⟨0⟩ .right 1 == some ⟨1⟩ && grid.toward? ⟨0⟩ .bottom 1 == some ⟨2⟩ &&
+              grid.toward? ⟨3⟩ .left 1 == some ⟨2⟩ &&
+              grid.toward? ⟨3⟩ .top 1 == some ⟨1⟩ &&
+              grid.toward? ⟨0⟩ .left 1 == none &&
+              grid.toward? ⟨3⟩ .bottom 1 == none &&
+              row.toward? ⟨0⟩ .right 2 == some ⟨2⟩ &&
+              row.toward? ⟨0⟩ .right 5 == some ⟨2⟩ &&
+              row.toward? ⟨2⟩ .left 1 == some ⟨1⟩
+          | _, _ => false },
+    { name :=
+        "focus by direction under monocle: only the shown window has a rectangle, so no window lies in any direction of any window"
+      run :=
+        pure <|
+          match onTextModel (windowsUnder 3 .monocle) with
+          | none => false
+          | some state =>
+            (List.range 3).all fun index =>
+              [Side.left, .right, .top, .bottom].all fun side =>
+                state.toward? ⟨index⟩ side 1 == none },
+    { name :=
+        "criterion 4: focus by direction reaches a window that lies wholly on that side and overlaps across, whenever one does, and never the minibuffer's view, for every window and side of one to five windows under master-and-stack, monocle and every manual split tree reached by up to three splits, with a prompt open and without"
+      run :=
+        pure <|
+          directionStates.all fun state =>
+            state.frame.windows.all fun window =>
+              [Side.left, .right, .top, .bottom].all fun side =>
+                match state.rect? window with
+                | none => state.toward? window side 1 == none
+                | some start =>
+                  let candidates :=
+                    state.rects.filter fun (id, rect) =>
+                      state.frame.windows.contains id && id != window && lies side start rect
+                  match state.toward? window side 1 with
+                  | some reached =>
+                    state.minibufferView? != some reached && candidates.any (·.1 == reached)
+                  | none => candidates.isEmpty },
+    { name :=
+        "focus in list order: the next and the previous window of the list, wrapping at either end, or with a count the Nth window, the last when the count is past the end"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            state.cycled ⟨0⟩ true 0 == some ⟨1⟩ && state.cycled ⟨2⟩ true 0 == some ⟨0⟩ &&
+              state.cycled ⟨0⟩ false 0 == some ⟨2⟩ &&
+              state.cycled ⟨1⟩ false 0 == some ⟨0⟩ &&
+              state.cycled ⟨0⟩ true 3 == some ⟨2⟩ &&
+              state.cycled ⟨2⟩ false 1 == some ⟨0⟩ &&
+              state.cycled ⟨0⟩ true 9 == some ⟨2⟩ &&
+              state.cycled ⟨9⟩ true 0 == none },
+    { name :=
+        "every refusal of the layout says why in a sentence, and the last window's is Vim's E444: it cannot be closed"
+      run :=
+        pure <|
+          let all : List LayoutRefusal :=
+            [.onlyWindow, .noSuchWindow ⟨1⟩, .noSuchBuffer ⟨1⟩, .markersOfAnotherText,
+              .ofMinibuffer ⟨1⟩, .noPreviousWindow, .notResizable .rows, .noMain, .monocleChosen]
+          all.all (!·.describe.isEmpty) &&
+            LayoutRefusal.onlyWindow.describe == "the last window cannot be closed" }]
+
+/-- The checks of the editor state and its layout invariants
+(`Editor/State.lean`), on the text model. -/
+def stateChecks : List Check :=
+  [{    name :=
+          "the initial state is well formed: one scratch buffer, one window on it, the only one of the frame's list, the default layout, and the focus on view 0"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              state.wellFormed && state.buffers.map (·.map (·.name)) == #[some "scratch"] &&
+                state.windows.map (·.id) == #[⟨0⟩] &&
+                state.frame.windows == #[⟨0⟩] &&
+                state.frame.layout == Layout.default &&
+                state.frame.focused == ⟨0⟩ &&
+                state.frame.hasFocus &&
+                state.echo == "" &&
+                state.preedit == none },
+      { name :=
+          "the order buffers were used in: the initial state's is its one buffer; focusing a window puts its buffer first, adding a buffer puts it last, showing a buffer puts it first, removing one takes it out; opening a prompt, focusing the minibuffer and closing the prompt leave it as it was; each state is well formed"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let (_, focused) := state.focusWindow ⟨1⟩
+              let (_, added) := focused.addBuffer "third" ⟨2⟩ (UndoTree.new ⟨2⟩ 0)
+              let (_, shown) := added.showBuffer ⟨0⟩ ⟨2⟩ ⟨⟨2⟩, 0⟩ ⟨⟨2⟩, 1⟩
+              let (_, removed) := shown.removeBuffer ⟨0⟩
+              let (_, asking) := prompted removed
+              let (_, back) := asking.focusWindow ⟨1⟩
+              let (_, again) := back.focusWindow (asking.minibufferView?.getD ⟨9⟩)
+              let (_, closed) := again.closePrompt none
+              state.recent == #[⟨0⟩] && focused.recent == #[⟨1⟩, ⟨0⟩] &&
+                added.recent == #[⟨1⟩, ⟨0⟩, ⟨2⟩] &&
+                shown.recent == #[⟨2⟩, ⟨1⟩, ⟨0⟩] &&
+                removed.recent == #[⟨2⟩, ⟨1⟩] &&
+                asking.recent == removed.recent &&
+                asking.minibufferView?.isSome &&
+                back.recent == #[⟨1⟩, ⟨2⟩] &&
+                again.recent == back.recent &&
+                again.frame.focused == asking.frame.focused &&
+                closed.recent == back.recent &&
+                [state, focused, added, shown, removed, asking, back, again, closed].all
+                  (·.wellFormed) },
+      { name :=
+          "the most recently used buffer but one is the first of the order that is open and is neither it nor the minibuffer's, and with no order the first such buffer by slot; none when no other buffer is open; the open buffers are the order's, then the rest by slot, without the minibuffer's"
+        run :=
+          pure <|
+            match onTextModel twoBuffers, onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | some state, some alone =>
+              let (_, added) := state.addBuffer "third" ⟨2⟩ (UndoTree.new ⟨2⟩ 0)
+              let (_, asking) := prompted { added with recent := #[⟨2⟩, ⟨0⟩] }
+              let unordered := { asking with recent := #[] }
+              let (_, lonely) := prompted alone
+              asking.mostRecent ⟨2⟩ == some ⟨0⟩ && asking.mostRecent ⟨0⟩ == some ⟨2⟩ &&
+                unordered.mostRecent ⟨0⟩ == some ⟨1⟩ &&
+                unordered.mostRecent ⟨1⟩ == some ⟨0⟩ &&
+                alone.mostRecent ⟨0⟩ == none &&
+                lonely.minibufferBuffer? == some ⟨1⟩ &&
+                lonely.mostRecent ⟨0⟩ == none &&
+                { lonely with recent := #[] }.mostRecent ⟨0⟩ == none &&
+                asking.minibufferBuffer? == some ⟨3⟩ &&
+                asking.openBuffers == #[⟨2⟩, ⟨0⟩, ⟨1⟩] &&
+                unordered.openBuffers == #[⟨0⟩, ⟨1⟩, ⟨2⟩]
+            | _, _ => false },
+      { name :=
+          "the initial state's buffer has no file, and its line ending is a line feed; no path finds a buffer"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              ((state.buffer? ⟨0⟩).map fun buffer => (buffer.file, buffer.lineEnding)) ==
+                  some (none, .lf) &&
+                state.findFile "/files/note.txt" == none },
+      { name := "why a job was not started names the job, as a sentence for the echo area"
+        run :=
+          pure
+            (((JobRefusal.noSuchJob "load-it").describe.splitOn "load-it").length == 2 &&
+              (JobRefusal.noSuchJob "a").describe != (JobRefusal.noSuchJob "b").describe) },
+      { name :=
+          "a free name is the name itself when no buffer has it, and otherwise the name followed by <2>, <3> and so on, the first no buffer has"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let named (names : List String) : EditorState :=
+                names.foldl (fun state name => (state.addBuffer name ⟨1⟩ (UndoTree.new ⟨1⟩ 0)).2)
+                  state
+              state.freeName "new" == "new" && state.freeName "other" == "other<2>" &&
+                (named ["other<2>"]).freeName "other" == "other<3>" &&
+                (named ["other<3>"]).freeName "other" == "other<2>" &&
+                (named ["other<2>", "other<3>"]).freeName "other" == "other<4>" &&
+                (named ["other<2>"]).freeName "other<2>" == "other<2><2>" },
+      { name :=
+          "a state that breaks one layout invariant is not well formed: a focus outside the list, a window named twice, a list entry with no window, a window outside the list, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the list, a prompt whose choice is past its listing, an order of use that names a removed buffer or one buffer twice; and the same prompt with a choice in its listing is well formed"
+        run := do
+          let some state := onTextModel threeWindows | return false
+          -- A failure names the spoiled states that were taken for well formed.
+          let accepted := spoilings.filter fun (_, spoil) => (spoil state).wellFormed
+          unless accepted.isEmpty do
+            throw
+                (IO.userError
+                  s!"well formed: a state {"; a state ".intercalate (accepted.map (·.1))}")
+          let (_, chosen) := (picking (prompted state).2).chooseCandidate .previous
+          return state.wellFormed && chosen.wellFormed &&
+              chosen.prompt.map (·.candidates.chosen) == some (some 2) },
+      { name :=
+          "the rectangles of a state's views: the windows laid out by the frame's layout in the tiled area, the frame above the minibuffer's strip, which is the bottom message height with no prompt open, a text row and that with one, and the whole height where the frame is shorter; the minibuffer's view in that strip while a prompt is open; under monocle only the selected window, the asker while a prompt is open"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              let rect (x y width height : Nat) : Rect := { x, y, width, height }
+              let sized (size : Size) (state : EditorState) : EditorState :=
+                { state with
+                  heights := { text := 20, status := 18, message := 12 }
+                  frame := { state.frame with size } }
+              let windows := #[⟨0⟩, ⟨1⟩, ⟨2⟩]
+              let plain := sized ⟨640, 480⟩ state
+              let asking := sized ⟨640, 480⟩ (prompted state).2
+              let short := sized ⟨640, 10⟩ (prompted state).2
+              let monocle (state : EditorState) : EditorState :=
+                { state with frame := { state.frame with layout := .monocle } }
+              let onOne := (state.focusWindow ⟨1⟩).2
+              let alone := sized ⟨640, 480⟩ (monocle onOne)
+              let aloneAsking := sized ⟨640, 480⟩ (prompted (monocle onOne)).2
+              plain.tiled == rect 0 0 640 468 &&
+                plain.rects == Layout.default.place windows ⟨0⟩ (rect 0 0 640 468) &&
+                asking.tiled == rect 0 0 640 448 &&
+                asking.rects ==
+                  Layout.default.place windows ⟨0⟩ (rect 0 0 640 448) ++
+                    #[(⟨3⟩, rect 0 448 640 32)] &&
+                short.tiled == rect 0 0 640 0 &&
+                short.rects.back? == some (⟨3⟩, rect 0 0 640 10) &&
+                alone.rects == #[(⟨1⟩, rect 0 0 640 468)] &&
+                aloneAsking.frame.focused == ⟨3⟩ &&
+                aloneAsking.rects == #[(⟨1⟩, rect 0 0 640 448), (⟨3⟩, rect 0 448 640 32)] &&
+                [plain, asking, short, alone, aloneAsking].all (·.wellFormed) },
+      { name :=
+          "with a prompt open the views tile the frame, the windows in list order and the minibuffer's view last, and with none the windows tile the frame above the bottom row, at even, odd and zero sizes and under every layout"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              sampleSizes.all fun size =>
+                [Layout.default, .masterStack { share := 61, side := .bottom }, .monocle].all
+                  fun layout =>
+                  let shaped (state : EditorState) : EditorState :=
+                    { state with
+                      frame :=
+                        { state.frame with
+                          size, layout } }
+                  let plain := shaped state
+                  let asking := shaped (prompted state).2
+                  tiles plain.tiled (plain.rects.map (·.2)) &&
+                    tiles (frameRect size) (asking.rects.map (·.2)) &&
+                    (asking.rects.map (·.1)).back? == asking.minibufferView? &&
+                    (layout == .monocle || plain.rects.map (·.1) == plain.frame.windows) },
+      { name := "removing the only window is refused with onlyWindow, and the state is as it was"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              match state.removeWindow ⟨0⟩ with
+              | (.error .onlyWindow, after) => after == state
+              | _ => false },
+      { name :=
+          "focusing a window that is not in the list is refused with noSuchWindow, and the state is as it was; so is removing one"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              (match state.focusWindow ⟨7⟩ with
+                | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
+                | _ => false) &&
+                match state.removeWindow ⟨7⟩ with
+                | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
+                | _ => false },
+      { name :=
+          "removing a window of three keeps the state well formed, takes it out of the list, whose layout gives its space to the rest, and hands back the window; the focus moves to the window that took its index, or to the new last window when it was last"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              let left := { x := 0, y := 0, width := 320, height := 464 }
+              let right := { x := 320, y := 0, width := 320, height := 464 }
+              let (_, onOne) := state.focusWindow ⟨1⟩
+              let (_, onTwo) := state.focusWindow ⟨2⟩
+              state.wellFormed &&
+                (match state.removeWindow ⟨0⟩ with
+                | (.ok removed, after) =>
+                  removed.id == ⟨0⟩ && after.wellFormed && after.frame.focused == ⟨1⟩ &&
+                    after.windows.map (·.id) == #[⟨1⟩, ⟨2⟩] &&
+                    after.frame.windows == #[⟨1⟩, ⟨2⟩] &&
+                    laidOut after == #[(⟨1⟩, left), (⟨2⟩, right)]
+                | _ => false) &&
+                (match state.removeWindow ⟨1⟩ with
+                | (.ok _, after) =>
+                  after.wellFormed && after.frame.focused == ⟨0⟩ &&
+                    laidOut after == #[(⟨0⟩, left), (⟨2⟩, right)]
+                | _ => false) &&
+                (match onOne.removeWindow ⟨1⟩ with
+                | (.ok _, after) => after.wellFormed && after.frame.focused == ⟨2⟩
+                | _ => false) &&
+                onTwo.frame.focused == ⟨2⟩ &&
+                match onTwo.removeWindow ⟨2⟩ with
+                | (.ok _, after) =>
+                  after.wellFormed && after.frame.focused == ⟨1⟩ &&
+                    laidOut after == #[(⟨0⟩, left), (⟨1⟩, right)]
+                | _ => false },
+      { name :=
+          "focusing a window in the list sets the frame's focus, and the window focused before it as the last focused, and changes nothing else"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              match state.focusWindow ⟨1⟩ with
+              | (.ok (), after) =>
+                after.frame.focused == ⟨1⟩ &&
+                  after ==
+                    { state with
+                      frame :=
+                        { state.frame with
+                          focused := ⟨1⟩, lastFocused := some ⟨0⟩ } }
+              | _ => false },
+      { name := "the initial state's window keeps no wanted column"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state => (state.window? ⟨0⟩).map (·.wanted) == some none },
+      { name :=
+          "the initial state has no register: none is read under the empty name, under a letter or under the clipboard's name"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              state.registers.isEmpty && ["", "\"", "a", "+"].all (state.register? · == none) },
+      { name :=
+          "a register set under a name is read back under that name with its text and whether it is line-wise, and under no other; a second one set under the name replaces it, and a register under another name stays; nothing else of the state changes"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              let word : Register := { text := "word" }
+              let line : Register := { text := "a line\n", linewise := true }
+              let once := state.setRegister "a" word
+              let both := once.setRegister "b" line
+              let again := both.setRegister "a" line
+              once.register? "a" == some word && once.register? "b" == none &&
+                once.register? "" == none &&
+                !word.linewise &&
+                both.register? "a" == some word &&
+                both.register? "b" == some line &&
+                again.register? "a" == some line &&
+                again.register? "b" == some line &&
+                again.registers.size == 2 &&
+                { again with registers := #[] } == state &&
+                (state.setRegister "" word).register? "" == some word },
+      { name :=
+          "a new state's scroll margin is no rows; a margin set is the state's, a second one set replaces it, and nothing else of the state changes"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              let two := state.setScrollMargin 2
+              let five := two.setScrollMargin 5
+              state.scrollMargin == 0 && two.scrollMargin == 2 && five.scrollMargin == 5 &&
+                two != state &&
+                { five with scrollMargin := 0 } == state &&
+                five.setScrollMargin 0 == state &&
+                two.wellFormed },
+      { name :=
+          "the initial state's selection is one cursor at 0, of the shape the state is made with, and exclusive when it is made with none"
+        run :=
+          pure <|
+            let cursor (start : TextM EditorState) : Option Marker :=
+              onTextModel do
+                let some target := (← start).focusedTarget? | throw .noSuchText
+                target.buffer.text.marker target.window.selection
+            let one (shape : Shape) : Option Marker :=
+              some (.selection { ranges := #[⟨0, 0⟩], shape })
+            cursor (EditorState.initial ⟨640, 480⟩) == one .exclusive &&
+              cursor (EditorState.initial ⟨640, 480⟩ .inclusive) == one .inclusive &&
+              cursor (EditorState.initial ⟨640, 480⟩ .line) == one .line },
+      { name :=
+          "setting a window's wanted column keeps the column with the head it was kept at, and leaves the other windows and the rest of the state; setting none keeps none again"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              let kept : Window.Wanted := { column := .goal 3, head := 7 }
+              let wanted (state : EditorState) (index : Nat) : Option (Option Window.Wanted) :=
+                (state.window? ⟨index⟩).map (·.wanted)
+              match state.setWanted ⟨1⟩ (some kept) with
+              | (.ok (), after) =>
+                wanted after 1 == some (some kept) && wanted after 0 == some none &&
+                  wanted after 2 == some none &&
+                  after ==
+                    { state with
+                      windows :=
+                        state.windows.map fun window =>
+                          if window.id == ⟨1⟩ then { window with wanted := some kept }
+                          else window } &&
+                  (match after.setWanted ⟨1⟩ (some { column := .lineEnd, head := 2 }) with
+                  | (.ok (), ends) => wanted ends 1 == some (some { column := .lineEnd, head := 2 })
+                  | _ => false) &&
+                  match after.setWanted ⟨1⟩ none with
+                  | (.ok (), cleared) => cleared == state
+                  | _ => false
+              | _ => false },
+      { name :=
+          "setting the wanted column of a view with no window is refused with noSuchWindow, and the state is as it was"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              match state.setWanted ⟨7⟩ (some { column := .goal 3, head := 7 }) with
+              | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
+              | _ => false },
+      { name :=
+          "a window shown another buffer keeps no wanted column, and a window a split makes has none while its source keeps its own"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let kept : Window.Wanted := { column := .goal 3, head := 4 }
+              let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
+              let (_, keeping) := state.setWanted ⟨0⟩ (some kept)
+              let wanted (state : EditorState) (index : Nat) : Option (Option Window.Wanted) :=
+                (state.window? ⟨index⟩).map (·.wanted)
+              (match keeping.showBuffer ⟨0⟩ ⟨1⟩ (marker 1 8) (marker 1 9) with
+                | (.ok (), shown) =>
+                  wanted keeping 0 == some (some kept) && wanted shown 0 == some none
+                | _ => false) &&
+                match keeping.splitWindow ⟨0⟩ (marker 0 8) (marker 0 9) with
+                | (.ok made, split) =>
+                  wanted split made.index == some none && wanted split 0 == some (some kept)
+                | _ => false },
+      { name :=
+          "setting a buffer's major mode names it and says it became the major mode, leaving the other buffers; setting it again changes nothing and says not; another mode replaces it"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let major (state : EditorState) (index : Nat) : Option String :=
+                (state.buffer? ⟨index⟩).bind (·.major)
+              match state.setMajorMode ⟨1⟩ "listing" with
+              | (.ok true, listed) =>
+                major state 1 == none && major listed 1 == some "listing" &&
+                  major listed 0 == none &&
+                  listed ==
+                    { state with
+                      buffers :=
+                        state.buffers.modify 1 (·.map ({ · with major := some "listing" })) } &&
+                  (match listed.setMajorMode ⟨1⟩ "listing" with
+                  | (.ok false, again) => again == listed
+                  | _ => false) &&
+                  match listed.setMajorMode ⟨1⟩ "other" with
+                  | (.ok true, other) => major other 1 == some "other"
+                  | _ => false
+              | _ => false },
+      { name :=
+          "a minor mode added is first and added once, and removing one takes it away; removing one not there changes nothing"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let minors (state : EditorState) : Array String :=
+                ((state.buffer? ⟨0⟩).map (·.minors)).getD #[]
+              let (_, one) := state.addMinorMode ⟨0⟩ "one"
+              let (_, two) := one.addMinorMode ⟨0⟩ "two"
+              let (added, again) := two.addMinorMode ⟨0⟩ "one"
+              let (removed, without) := two.removeMinorMode ⟨0⟩ "one"
+              let (absent, unchanged) := two.removeMinorMode ⟨0⟩ "three"
+              minors state == #[] && minors one == #["one"] && minors two == #["two", "one"] &&
+                added matches .ok () &&
+                again == two &&
+                removed matches .ok () &&
+                minors without == #["two"] &&
+                absent matches .ok () &&
+                unchanged == two &&
+                ((two.buffer? ⟨1⟩).map (·.minors)) == some #[] },
+      { name :=
+          "setting a major mode, adding a minor mode and removing one each refuse a buffer there is none of with noSuchBuffer, and the state is as it was"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let refused {α : Type} : Except BufferRefusal α × EditorState → Bool
+                | (.error (.noSuchBuffer id), after) => id == ⟨5⟩ && after == state
+                | _ => false
+              refused (state.setMajorMode ⟨5⟩ "listing") &&
+                refused (state.addMinorMode ⟨5⟩ "one") &&
+                refused (state.removeMinorMode ⟨5⟩ "one") },
+      { name := "the initial state has no prompt open"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state => state.prompt == none },
+      { name :=
+          "opening a prompt replies the minibuffer's view, a new one: the state has the prompt with its label, its continuation and the focused view as its asker, a buffer in the next slot over the text given, with the minibuffer's mode and a name no other buffer has, a window on it with the markers given, the focus on it, and the window list as it was; it is well formed"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              match prompted state with
+              | (.ok view, after) =>
+                view == ⟨1⟩ &&
+                  after.prompt ==
+                    some { label := "Name: ", view := ⟨1⟩, asker := ⟨0⟩, continuation := asked } &&
+                  after.buffers.size == 2 &&
+                  after.buffer? ⟨0⟩ == state.buffer? ⟨0⟩ &&
+                  after.buffer? ⟨1⟩ ==
+                    some
+                      { name := Prompt.bufferName, text := ⟨7⟩, history := UndoTree.new ⟨7⟩ 0
+                        major := some Prompt.mode } &&
+                  state.findBuffer Prompt.bufferName == none &&
+                  after.windows ==
+                    state.windows.push
+                      { id := ⟨1⟩, buffer := ⟨1⟩, scroll := ⟨⟨7⟩, 0⟩, selection := ⟨⟨7⟩, 1⟩ } &&
+                  after.frame == { state.frame with focused := ⟨1⟩ } &&
+                  after.nextView == 2 &&
+                  after.wellFormed
+              | _ => false },
+      { name :=
+          "the minibuffer's buffer gets the next free name when a buffer is already called by the minibuffer's name"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, named) := state.addBuffer Prompt.bufferName ⟨3⟩ (UndoTree.new ⟨3⟩ 0)
+              match prompted named with
+              | (.ok _, after) =>
+                (after.buffer? ⟨2⟩).map (·.name) == some s!"{Prompt.bufferName}<2>" &&
+                  after.findBuffer Prompt.bufferName == some ⟨1⟩ &&
+                  after.wellFormed
+              | _ => false },
+      { name :=
+          "a second prompt is refused with alreadyOpen and the open prompt's view, a history or a marker of another text than the minibuffer's with notItsText, and a prompt asked for with no window focused with noWindow, each with the state as it was"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              let refused (refusal : PromptRefusal) (was : EditorState) :
+                Except PromptRefusal ViewId × EditorState → Bool
+                | (.error why, after) => why == refusal && after == was
+                | _ => false
+              let astray (history scroll selection : Nat) :=
+                state.openPrompt "Name: " asked ⟨7⟩ (UndoTree.new ⟨history⟩ 0) ⟨⟨scroll⟩, 0⟩
+                  ⟨⟨selection⟩, 1⟩
+              asking.prompt.isSome && refused (.alreadyOpen ⟨1⟩) asking (prompted asking 8) &&
+                refused .notItsText state (astray 0 7 7) &&
+                refused .notItsText state (astray 7 0 7) &&
+                refused .notItsText state (astray 7 7 0) &&
+                refused .noWindow EditorState.none (prompted EditorState.none) },
+      { name :=
+          "the focus leaves the minibuffer's view for a window of the list and comes back to it, and nothing else changes"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              match asking.focusWindow ⟨0⟩ with
+              | (.ok (), away) =>
+                away == { asking with frame := { asking.frame with focused := ⟨0⟩ } } &&
+                  away.wellFormed &&
+                  match away.focusWindow ⟨1⟩ with
+                  | (.ok (), back) => back == asking
+                  | _ => false
+              | _ => false },
+      { name :=
+          "removing, splitting and showing another buffer in the minibuffer's view, and showing the minibuffer's buffer in another window, are each refused with ofMinibuffer and the minibuffer's view, with the state as it was"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              let refused {α : Type} : Except LayoutRefusal α × EditorState → Bool
+                | (.error (.ofMinibuffer view), after) => view == ⟨2⟩ && after == asking
+                | _ => false
+              asking.prompt.map (·.view) == some ⟨2⟩ && refused (asking.removeWindow ⟨2⟩) &&
+                refused (asking.splitWindow ⟨2⟩ ⟨⟨7⟩, 2⟩ ⟨⟨7⟩, 3⟩) &&
+                refused (asking.showBuffer ⟨2⟩ ⟨1⟩ ⟨⟨1⟩, 8⟩ ⟨⟨1⟩, 9⟩) &&
+                refused (asking.showBuffer ⟨0⟩ ⟨2⟩ ⟨⟨7⟩, 2⟩ ⟨⟨7⟩, 3⟩) },
+      { name :=
+          "with a prompt open over two windows, removing one window is done and leaves the prompt open, and removing the other is refused with onlyWindow: the minibuffer's window does not count"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              match asking.removeWindow ⟨1⟩ with
+              | (.ok removed, one) =>
+                removed.id == ⟨1⟩ && one.wellFormed && one.prompt == asking.prompt &&
+                  one.frame.focused == ⟨2⟩ &&
+                  one.windows.map (·.id) == #[⟨0⟩, ⟨2⟩] &&
+                  match one.removeWindow ⟨0⟩ with
+                  | (.error .onlyWindow, same) => same == one
+                  | _ => false
+              | _ => false },
+      { name :=
+          "removing the minibuffer's buffer while its prompt is open is refused with shown and the minibuffer's view"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              match asking.removeBuffer ⟨1⟩ with
+              | (.error (.shown view), after) => view == ⟨1⟩ && after == asking
+              | _ => false },
+      { name := "why a prompt was refused is a sentence for the echo area, one for each refusal"
+        run :=
+          pure
+            (([PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow].map
+                    PromptRefusal.describe).eraseDups.length ==
+                4 &&
+              [PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow].all fun refusal =>
+                !refusal.describe.isEmpty) },
+      { name :=
+          "closing a prompt with no answer leaves no prompt: the minibuffer's window is gone, its buffer's slot is empty, the focus is on the asking view, the window list and the next view's id are as they were after the open, and nothing is answered; the state is well formed"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              match asking.closePrompt none with
+              | (.ok (), closed) =>
+                closed ==
+                    { state with
+                      buffers := state.buffers.push none, nextView := 2 } &&
+                  closed.prompt == none &&
+                  closed.window? ⟨1⟩ == none &&
+                  closed.buffers[1]? == some none &&
+                  closed.frame.focused == ⟨0⟩ &&
+                  closed.frame.windows == asking.frame.windows &&
+                  closed.nextView == asking.nextView &&
+                  closed.answered == #[] &&
+                  closed.wellFormed
+              | _ => false },
+      { name :=
+          "closing a prompt with an answer does the same, and records the continuation with the answer as its first argument, before its own"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              match asking.closePrompt none, asking.closePrompt (some "héllo") with
+              | (.ok (), cancelled), (.ok (), accepted) =>
+                accepted.answered ==
+                    #[{ command := "greet", arguments := [.str "héllo", .nat 7] }] &&
+                  { accepted with answered := #[] } == cancelled &&
+                  accepted.wellFormed
+              | _, _ => false },
+      { name :=
+          "two prompts opened and accepted one after the other leave two answered invocations, in order, and the second prompt's view and buffer have ids the first's never had"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (first, one) := prompted state
+              let (_, one) := one.closePrompt (some "a")
+              let (second, two) := prompted one 8
+              let minibuffer := two.minibufferBuffer?
+              let (_, two) := two.closePrompt (some "b")
+              replied first == .inr ⟨1⟩ && replied second == .inr ⟨2⟩ && minibuffer == some ⟨2⟩ &&
+                two.answered ==
+                  #[{ command := "greet", arguments := [.str "a", .nat 7] },
+                    { command := "greet", arguments := [.str "b", .nat 7] }] &&
+                two.buffers.size == 3 &&
+                two.nextView == 3 &&
+                two.wellFormed },
+      { name :=
+          "closing a prompt gives the focus back to the asking view, though the focus was moved to another window meanwhile"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              let (_, away) := asking.focusWindow ⟨1⟩
+              let (_, closed) := away.closePrompt (some "a")
+              asking.prompt.map (·.asker) == some ⟨0⟩ && away.frame.focused == ⟨1⟩ &&
+                closed.frame.focused == ⟨0⟩ &&
+                closed.wellFormed },
+      { name :=
+          "when the asking view was removed while the prompt was open, the prompt stays open, and closing it focuses the first window of the list"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              let (removed, without) := asking.removeWindow ⟨0⟩
+              let (_, closed) := without.closePrompt (some "a")
+              (replied removed).isRight && without.prompt == asking.prompt && without.wellFormed &&
+                without.frame.focused == ⟨3⟩ &&
+                closed.frame.focused == ⟨1⟩ &&
+                closed.frame.windows == #[⟨1⟩, ⟨2⟩] &&
+                closed.answered.size == 1 &&
+                closed.wellFormed },
+      { name :=
+          "closing a prompt when none is open is refused with notOpen, with or without an answer, and the state is as it was"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              [none, some "a"].all fun answer =>
+                match state.closePrompt answer with
+                | (.error .notOpen, after) => after == state
+                | _ => false },
+      { name :=
+          "a prompt is opened with no candidates, no listing and no choice, and a prompt opened after one with candidates was closed has none either"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              let (_, chosen) := (picking asking).chooseCandidate .next
+              let (_, closed) := chosen.closePrompt (some "a")
+              let (_, again) := prompted closed 8
+              asking.prompt.map (·.candidates) == some {} &&
+                (chosen.prompt.map (·.candidates.chosen)) == some (some 0) &&
+                closed.prompt == none &&
+                again.prompt.map (·.candidates) == some {} },
+      { name :=
+          "setting an open prompt's candidates replaces them and forgets the listing and the choice, and changes nothing else of the state"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              let (_, chosen) := (picking asking).chooseCandidate .next
+              let (set, replaced) := chosen.setCandidates #["x", "y"]
+              replied set == .inr () &&
+                replaced.prompt.map (·.candidates) == some { all := #["x", "y"] } &&
+                withCandidates replaced {} == asking &&
+                replaced.wellFormed },
+      { name :=
+          "listing an open prompt's candidates keeps the candidates at the indices given, in that order, drops an index that is none of theirs, records the pattern the listing is for and forgets the choice; the candidates themselves stay"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              let (_, chosen) := (picking asking).chooseCandidate .next
+              let (listed, after) := chosen.listCandidates "w" #[2, 9, 0, 3]
+              let (emptied, unmatched) := after.listCandidates "z" #[]
+              replied listed == .inr () &&
+                after.prompt.map (·.candidates) ==
+                  some
+                    { all := #["wq", "edit", "w"], listedFor := some "w",
+                      listed := #["w", "wq"] } &&
+                replied emptied == .inr () &&
+                unmatched.prompt.map (·.candidates) ==
+                  some { all := #["wq", "edit", "w"], listedFor := some "z" } &&
+                withCandidates after {} == asking &&
+                after.wellFormed },
+      { name :=
+          "choosing among a listing: next from nothing chosen is the first and previous the last, next from the last and previous from the first are nothing chosen, and each other step moves by one; with nothing listed neither changes anything"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              let (_, asking) := prompted state
+              let listed := picking asking
+              let steps (steps : List Candidates.Step) (start : EditorState) :
+                Option (Option Nat) :=
+                (steps.foldl (fun state step => (state.chooseCandidate step).2) start).prompt.map
+                  (·.candidates.chosen)
+              let (stepped, after) := listed.chooseCandidate .next
+              let (_, bare) := asking.setCandidates #["a"]
+              replied stepped == .inr () && withCandidates after {} == asking && after.wellFormed &&
+                steps [.next] listed == some (some 0) &&
+                steps [.previous] listed == some (some 2) &&
+                steps [.next, .next] listed == some (some 1) &&
+                steps [.next, .next, .next] listed == some (some 2) &&
+                steps [.next, .next, .next, .next] listed == some none &&
+                steps [.next, .previous] listed == some none &&
+                steps [.previous, .previous] listed == some (some 1) &&
+                steps [.previous, .previous, .previous, .previous] listed == some none &&
+                steps [.previous, .next] listed == some none &&
+                (bare.chooseCandidate .next).2 == bare &&
+                (bare.chooseCandidate .previous).2 == bare &&
+                (asking.chooseCandidate .next).2 == asking },
+      { name :=
+          "what a prompt answers with: the chosen candidate when the listing is for the text, and the text when nothing is chosen, when the listing is for another text and when there are no candidates"
+        run :=
+          pure <|
+            let listed : Candidates :=
+              { all := #["wq", "edit", "w"], listedFor := some "w", listed := #["w", "wq"] }
+            ({ listed with chosen := some 1 } : Candidates).answer "w" == "wq" &&
+              ({ listed with chosen := some 0 } : Candidates).answer "w" == "w" &&
+              listed.answer "w" == "w" &&
+              ({ listed with chosen := some 1 } : Candidates).answer "wx" == "wx" &&
+              ({ listed with chosen := some 1 } : Candidates).answer "" == "" &&
+              ({} : Candidates).answer "typed" == "typed" &&
+              ({ all := #["a"], listedFor := some "z" } : Candidates).answer "z" == "z" },
+      { name :=
+          "with no prompt open, setting candidates, listing them and choosing one are each refused with notOpen, and the state is as it was"
+        run :=
+          pure <|
+            match onTextModel twoBuffers with
+            | none => false
+            | some state =>
+              let refused : Except PromptRefusal Unit × EditorState → Bool
+                | (.error .notOpen, after) => after == state
+                | _ => false
+              refused (state.setCandidates #["a"]) && refused (state.listCandidates "a" #[0]) &&
+                refused (state.chooseCandidate .next) &&
+                refused (state.chooseCandidate .previous) },
+      { name :=
+          "the initial state is not asked to quit, does not leave, has no buffer with unsaved changes and no save in flight"
+        run :=
+          pure <|
+            match onTextModel (EditorState.initial ⟨640, 480⟩) with
+            | none => false
+            | some state =>
+              !state.quitting && !state.leaves && state.unsaved.isNone && !state.isSaving },
+      { name :=
+          "a modified buffer with no file has no unsaved changes; one that holds a file has; one whose save in flight is writing the state its text is in has not; one edited since that save began has; and one whose save was ended with a stamp has not"
+        run :=
+          pure <|
+            match onTextModel quitStates with
+            | none => false
+            | some states =>
+              let unsaved (state : EditorState) := state.unsaved.map (·.name)
+              ((states.bare.buffer? ⟨0⟩).map (·.isModified)) == some true &&
+                unsaved states.bare == none &&
+                unsaved states.held == some "other" &&
+                unsaved states.saving == none &&
+                unsaved states.moved == some "other" &&
+                unsaved states.saved == none &&
+                [states.bare, states.held, states.saved].all (!·.isSaving) &&
+                states.saving.isSaving &&
+                states.moved.isSaving },
+      { name :=
+          "a state asked to quit leaves when no buffer has unsaved changes and no save is in flight, and not while a save is in flight or a buffer has unsaved changes; a state that was not asked never leaves"
+        run :=
+          pure <|
+            match onTextModel quitStates with
+            | none => false
+            | some states =>
+              let asked (state : EditorState) : EditorState := { state with quitting := true }
+              (asked states.bare).leaves && (asked states.saved).leaves &&
+                !(asked states.saving).leaves &&
+                !(asked states.held).leaves &&
+                !(asked states.moved).leaves &&
+                !states.bare.leaves &&
+                !states.saved.leaves },
+      { name :=
+          "a quit that cannot go ahead is withdrawn: a state asked to quit while a buffer has unsaved changes is no longer asked, and is otherwise as it was; one asked with nothing unsaved, a save in flight among them, stays asked; one that was not asked is as it was"
+        run :=
+          pure <|
+            match onTextModel quitStates with
+            | none => false
+            | some states =>
+              let asked (state : EditorState) : EditorState := { state with quitting := true }
+              (asked states.held).settleQuit == states.held &&
+                (asked states.moved).settleQuit == states.moved &&
+                (asked states.saving).settleQuit == asked states.saving &&
+                (asked states.bare).settleQuit == asked states.bare &&
+                (asked states.saved).settleQuit == asked states.saved &&
+                states.held.settleQuit == states.held },
+      { name :=
+          "a view's rectangle is the one the state's rectangles give it: for each window, laid out by the frame's layout, and for the minibuffer's view while a prompt is open, in the strip its place then takes; a view with no window has none, and neither has the minibuffer's view of a prompt that is not open"
+        run :=
+          pure <|
+            match onTextModel threeWindows with
+            | none => false
+            | some state =>
+              let asking := (prompted state).2
+              -- Whether `rect?` answers, for every view, the rectangle the
+              -- layout gives it.
+              let agrees (state : EditorState) : Bool :=
+                let laid := state.rects
+                laid.map (·.1) == state.views &&
+                  laid.all fun (id, rect) => state.rect? id == some rect
+              agrees state && agrees asking && asking.views.size == state.views.size + 1 &&
+                state.rect? ⟨9⟩ == none &&
+                asking.minibufferView?.map state.rect? == some none }] ++
+    windowOperationChecks
 
 /-- `twoBuffers` with a third buffer, `hidden`, over a text of its own that
 no window shows, and that text. -/
@@ -8091,7 +8516,10 @@ def stateRequests : List StateRequest :=
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
     .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
-    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2]
+    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
+    .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
+    .arrange ⟨0⟩ .promote, .arrange ⟨1⟩ (.exchange none), .arrange ⟨0⟩ .zoom, .arrange ⟨9⟩ .zoom,
+    .arrange ⟨0⟩ (.mainCount true 1)]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -8710,7 +9138,26 @@ def stateRequestChecks : List Check :=
             read.windows.isEmpty &&
             stateRequests.all fun request =>
               let (_, after) := EditorState.none.handle request
-              after.windows.isEmpty && after.frame == EditorState.none.frame }]
+              after.windows.isEmpty && after.frame == EditorState.none.frame },
+    { name :=
+        "the arrange request reaches the state's arrange, and a refused one leaves the state; the split request's placement reaches the split"
+      run :=
+        pure <|
+          match onTextModel threeWindows, onTextModel (windowsUnder 1 Layout.manual) with
+          | some state, some manual =>
+            let (promoted, after) := state.handle (.arrange ⟨2⟩ .promote)
+            let (absent, same) := state.handle (.arrange ⟨9⟩ .zoom)
+            let (made, split) :=
+              manual.handle
+                (.split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true })
+            replied promoted == .inr () && after == (state.arrange ⟨2⟩ .promote).2 &&
+              after.frame.windows == #[⟨2⟩, ⟨0⟩, ⟨1⟩] &&
+              replied absent == .inl (.noSuchWindow ⟨9⟩) &&
+              same == state &&
+              replied made == .inr ⟨1⟩ &&
+              split.frame.windows == #[⟨1⟩, ⟨0⟩] &&
+              split.frame.layout == .splits (.split .columns 1 1 .tile .tile)
+          | _, _ => false }]
 
 /-- The loop the model tests run: one over the test scheme. -/
 abbrev TestLoop :=
@@ -10895,6 +11342,49 @@ def dispatchStateChecks : List Check :=
                 fifth.views.map (·.id) == #[⟨0⟩, ⟨1⟩]
             | _, _ => false
           | (.error _, _) => false },
+    { name :=
+        "a layout change a command made lasts until config chooses another layout: a zoom survives three steps handed the default layout, and a resized share a step handed it; handing monocle and then the manual split layout rearranges the same windows and leaves the zoom"
+      run :=
+        pure <|
+          let arranging (change : Arrange) : Dispatched := fun call => do
+            discard <| call.target.window.id.arrange change
+            return none
+          let keyed :=
+            dispatchKeys
+              [("C-c s", invoke "split"), ("C-c z", invoke "zoom"), ("C-c g", invoke "grow")]
+              [("split", split), ("zoom", arranging .zoom),
+                ("grow", arranging (.resize .columns true 1))]
+          let chosen := { keyed with layout := some Layout.default }
+          let program : EditorM (Array EditorState) := do
+            let (split, _) ←
+              stepsWith chosen { state := ← EditorState.initial ⟨640, 480⟩ } (presses "C-c s")
+            let (zoomed, _) ← stepsWith chosen split (presses "C-c z")
+            let (kept, _) ← stepsWith chosen zoomed [pressF5, pressF5, pressF5]
+            let (back, _) ← stepsWith chosen kept (presses "C-c z")
+            let (grown, _) ← stepsWith chosen back (presses "C-c g")
+            let (still, _) ← stepsWith chosen grown [pressF5]
+            let (again, _) ← stepsWith chosen still (presses "C-c z")
+            let (monocle, _) ← stepsWith { keyed with layout := some .monocle } again [pressF5]
+            let (manual, _) ←
+              stepsWith { keyed with layout := some Layout.manual } monocle [pressF5]
+            return #[kept.state, back.state, grown.state, still.state, again.state, monocle.state,
+                manual.state]
+          match program.runModel editorModel with
+          | (.ok #[kept, back, grown, still, again, monocle, manual], _) =>
+            let grownLayout := Layout.masterStack { share := 55 }
+            #[kept, back, grown, still, again, monocle, manual].all
+                (fun state => state.wellFormed && state.frame.windows == #[⟨0⟩, ⟨1⟩]) &&
+              kept.frame.layout == .monocle &&
+              kept.frame.zoomedFrom == some Layout.default &&
+              back.frame.layout == Layout.default &&
+              grown.frame.layout == grownLayout &&
+              still.frame.layout == grownLayout &&
+              again.frame.zoomedFrom == some grownLayout &&
+              monocle.frame.layout == .monocle &&
+              monocle.frame.zoomedFrom == none &&
+              manual.frame.layout == .splits (.split .rows 1 1 .tile .tile) &&
+              manual.frame.zoomedFrom == none
+          | _ => false },
     { name :=
         "a key's command that splits its window by a state request: the loop keeps the new window after the step, well formed, and the scene shows both views"
       run :=

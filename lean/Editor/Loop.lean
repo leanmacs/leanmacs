@@ -617,8 +617,12 @@ changed the state or not (`Loop.publish`):
    gives it in the frame; a window the layout does not show (monocle's
    others) is not in the scene. The layout is the one the step's keys hand
    the publish (`Loop.Keys.layout`, config's `layout` or the default
-   through the host), which the publish sets on the frame before it lays
-   the views out; a loop handed none keeps the frame's own. While a prompt
+   through the host), which the publish has the frame choose before it
+   lays the views out when it is not the layout the frame last chose
+   (`Frame.choose`, `Frame.chosen`); so a zoom, a resized share, a main
+   count or a split tree a command made lasts every step until config
+   chooses another layout, and a config that does rearranges the same
+   windows. A loop handed none keeps the frame's own. While a prompt
    is open the minibuffer's
    window is a view too, in the strip the minibuffer's place then takes
    (`Editor/State.lean`, "The window list, the layout and their
@@ -1433,7 +1437,8 @@ def followed (margin : Nat) (bottomOf : ViewId → Nat) (views : Array View) : E
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
 (`EditorState.settleQuit`), brings an open prompt's listing up to date
-(`listed`), sets the frame's layout to `layout` when one is handed, has
+(`listed`), has the frame choose `layout` when one is handed that is not
+the one it last chose (`Frame.choose`), has
 each view follow its cursor (`followed`), publishes a scene
 of the state, and releases each
 snapshot the last scene named that this one does not. It is not refused
@@ -1455,10 +1460,16 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   -- views are laid out: they size the views and the minibuffer's place.
   -- The padding the views are laid out with is the one handed in, and so
   -- is the layout, when one is.
+  -- Config's layout is applied when it is not the one last applied, so a
+  -- command's change to the layout lasts until config chooses another.
+  let frame :=
+    match layout with
+    | some chosen =>
+      if state.frame.chosen == some chosen then state.frame else state.frame.choose chosen
+    | none => state.frame
   let state :=
     { state with
-      heights := ← Display.heights, padding
-      frame := { state.frame with layout := layout.getD state.frame.layout } }
+      heights := ← Display.heights, padding, frame }
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views modeLine
   -- Each view follows its cursor before the scene names its anchor: the
   -- snapshots the questions of layout need were taken just above. Each is

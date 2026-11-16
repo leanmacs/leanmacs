@@ -54,6 +54,12 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A marker is made by the caller.** `split` and `show` are handed the
   markers of the window they make or change, which the command marked on
   the buffer's text first: the handler asks the text store nothing.
+- **A window's place and its layout's parameters are changed by one
+  request**, `arrange`, with the change as data (`Arrange`: promote,
+  demote, rotate, exchange, zoom, balance, resize and main's count), so a
+  new change is a variant there and no request of its own. It is refused
+  with a `LayoutRefusal`, the state as it was. `split` takes a placement
+  (`Placement`), which only manual splits read.
 - **A prompt's minibuffer is made by the caller too.** `openPrompt` is
   handed the minibuffer's text, a history over it and the two markers of
   its window, and names the command that receives the answer as an
@@ -185,9 +191,13 @@ inductive StateRequest where
   | addMinorMode (id : BufferId) (name : String)
   /-- Remove the minor mode called `name` from the buffer `id`. -/
   | removeMinorMode (id : BufferId) (name : String)
-  /-- Split the window `view`: a new window on its buffer, right after it in
-  the frame's list, with `scroll` and `selection` as its markers. -/
-  | split (view : ViewId) (scroll selection : MarkerId)
+  /-- Split the window `view`: a new window on its buffer, with `scroll` and
+  `selection` as its markers, put in the frame's list as `placement` says
+  under manual splits and right after it under the other layouts. -/
+  | split (view : ViewId) (scroll selection : MarkerId) (placement : Placement := {})
+  /-- Make `change` on the window `view` (`Arrange`): a reorder of the list or
+  a change of the layout's parameters. -/
+  | arrange (view : ViewId) (change : Arrange)
   /-- Remove the window `view`. -/
   | removeWindow (view : ViewId)
   /-- Focus the window `view`. -/
@@ -303,6 +313,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .addMinorMode .. => Except BufferRefusal Unit
   | .removeMinorMode .. => Except BufferRefusal Unit
   | .split .. => Except LayoutRefusal ViewId
+  | .arrange .. => Except LayoutRefusal Unit
   | .removeWindow _ => Except LayoutRefusal Window
   | .focus _ => Except LayoutRefusal Unit
   | .show .. => Except LayoutRefusal Unit
@@ -370,7 +381,9 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setMajorMode view name, state => state.setMajorModeOf view name
   | .addMinorMode id name, state => state.addMinorMode id name
   | .removeMinorMode id name, state => state.removeMinorMode id name
-  | .split view scroll selection, state => state.splitWindow view scroll selection
+  | .split view scroll selection placement, state =>
+    state.splitWindow view scroll selection placement
+  | .arrange view change, state => state.arrange view change
   | .removeWindow view, state => state.removeWindow view
   | .focus view, state => state.focusWindow view
   | .show view buffer scroll selection, state => state.showBuffer view buffer scroll selection

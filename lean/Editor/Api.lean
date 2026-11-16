@@ -173,11 +173,18 @@ Each operation is a request over the layout operations of
 `Editor/State.lean`, which keep the layout invariants, and is refused, as
 a value, with their `LayoutRefusal`.
 
-- `ViewId.split view` makes a new window on the same buffer, right after
-  the view in the frame's list, and returns its view; the layout says
-  where it goes. The new window has markers of its own: copies, marked on
-  the buffer's text, of the source window's scroll anchor and selection as
-  they are. The focus stays.
+- `ViewId.split view placement` makes a new window on the same buffer and
+  returns its view. Under manual splits the placement says whether it goes
+  before the view or after it, and on which axis the view's tile is split;
+  under the other layouts it goes right after the view in the frame's
+  list, and the layout says where it goes. The new window has markers of
+  its own: copies, marked on the buffer's text, of the source window's
+  scroll anchor and selection as they are. The focus stays.
+- `ViewId.arrange view change` makes a change of the window list or the
+  layout's parameters on the view's window (`Arrange`): promote, demote,
+  rotate, exchange, zoom, balance, resize and main's count
+  (`Editor/State.lean`, "The window list, the layout and their
+  invariants").
 - `ViewId.close` removes a window: it leaves the list, and the layout gives
   its space to the rest. The last one is refused (`onlyWindow`). Closing
   the view a split made gives back the frame from before the split.
@@ -1208,13 +1215,15 @@ of `view`, with its buffer's line ending (`Target.insertLineBreak`). -/
 def insertLineBreak (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
   view.onTarget (·.insertLineBreak)
 
-/-- Splits the window of `view`: a new window on the same buffer, right
-after it in the frame's list, whose markers are copies of the window's
-scroll anchor and selection as they are, and returns the new view. The
-focus stays. Refused with `noSuchWindow` for a view with
+/-- Splits the window of `view`: a new window on the same buffer, whose
+markers are copies of the window's scroll anchor and selection as they
+are, and returns the new view. It goes in the frame's list as `placement`
+says under manual splits, and right after the window under the other
+layouts (`EditorState.splitWindow`). The focus stays. Refused with `noSuchWindow` for a view with
 no window, and with `ofMinibuffer` for the minibuffer's view, each with no
 marker made. -/
-def split (view : ViewId) : EditorM (Except LayoutRefusal ViewId) := do
+def split (view : ViewId) (placement : Placement := {}) : EditorM (Except LayoutRefusal ViewId) :=
+  do
   if (← editorState).minibufferView? == some view then
     return .error (.ofMinibuffer view)
   match ← view.target with
@@ -1224,7 +1233,15 @@ def split (view : ViewId) : EditorM (Except LayoutRefusal ViewId) := do
     let text := target.buffer.text
     let scroll ← text.mark (← text.marker target.window.scroll)
     let selection ← text.mark (← text.marker target.window.selection)
-    EditorState.ask (.split view scroll selection)
+    EditorState.ask (.split view scroll selection placement)
+
+/-- Makes `change` on the window of `view` (`Arrange`, `EditorState.arrange`):
+a reorder of the frame's list, a zoom, or a change of its layout's
+parameters. Refused with `noSuchWindow` for a view not in the list, with
+`ofMinibuffer` for the minibuffer's view, and with what the change itself
+refuses. -/
+def arrange (view : ViewId) (change : Arrange) : EditorM (Except LayoutRefusal Unit) :=
+  EditorState.ask (.arrange view change)
 
 /-- Closes the window of `view`: it leaves the list, and the layout gives
 its space to the rest. Refused with `noSuchWindow` for a view with no

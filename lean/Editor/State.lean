@@ -44,10 +44,24 @@ a scene of it after each.
 The frame's windows are an ordered list of `ViewId`s, the first being main,
 and the focus is held by `ViewId` (`Frame.focused`). A layout value turns
 the list into one rectangle per window shown (`Layout.place`):
-master-and-stack by default, and monocle, which shows only the selected
-window. The
+master-and-stack by default, monocle, which shows only the selected
+window, and manual splits, a tree of anonymous tiles the windows take in
+list order. The
 list says which windows exist and in what order; the layout says only
 where each goes.
+
+**The frame keeps three more things about its windows**, each changed only
+by the operations below:
+
+| Field | What it holds |
+|---|---|
+| `Frame.zoomedFrom` | The layout a zoom left, to go back to: `some` while zoomed, when the layout is monocle |
+| `Frame.lastFocused` | Vim's `prevwin`: the window of the list focused before the current one. Set when the focus moves from one window of the list to another (`Frame.focusedOn`), by `focusWindow` and by an exchange; focusing the minibuffer's view or leaving it does not set it. It is never cleared, and ids are never used again, so a reader checks that it is still in the list |
+| `Frame.chosen` | The layout config chose that the last publish applied. A publish handed the same layout again leaves the frame's (`Loop.publish`), so a zoom, a resized share, a main count or a split tree a command made lasts until config chooses another layout; `Frame.choose` then sets the layout, fitted to the windows, and clears the zoom, so the same windows are rearranged and none is lost |
+
+Every change of the list is applied to the layout and to the one zoom
+returns to (`Frame.inserted`, `Frame.removed`), so a window split or closed
+while zoomed is in the tree zoom returns to.
 
 **The minibuffer's place always takes the frame's bottom strip**, outside
 the area a layout tiles (`EditorState.tiled`). With no prompt open the
@@ -100,6 +114,8 @@ stated over the state's views (`EditorState.views`): the frame's windows,
 in list order, then the minibuffer's view while a prompt is open
 ("Prompts", below).
 
+- the frame's layout, and the one zoom returns to, fit the list: a manual
+  split tree has as many tiles as the list has windows (`Layout.fitted`);
 - the focused window is one of the views;
 - the views' ids are distinct, and they are exactly the windows' ids;
 - each window's buffer exists.
@@ -117,20 +133,66 @@ handler is these operations:
   `onlyWindow` for the last window, which would leave nothing to focus. The
   window leaves the list, the layout gives its space to the rest, and the
   window is handed back: its markers are the caller's to give up. When the
-  window was focused, the focus moves to the window that took its index,
+  window was focused, the focus moves to the window that inherits its
+  place when the layout says one: under manual splits the first window of
+  the next part of its group, or the last of the previous part
+  (`Splits.remove`, Vim's `win_altframe`), and the tree is balanced along
+  the group's axis. Otherwise it moves to the window that took its index,
   or, when it was last, to the new last window, as xmonad's delete does.
+  While zoomed, the inheritor is the one of the layout to return to.
 - `focusWindow` takes a window of the list, and the minibuffer's window
   while a prompt is open, so the focus can leave the minibuffer and come
-  back. It refuses `noSuchWindow` for any other.
-- `splitWindow` puts a new window right after the source window in the
+  back. It refuses `noSuchWindow` for any other. Moving the focus from one
+  window of the list to another sets `lastFocused`.
+- `splitWindow` takes a placement (`Placement`: an axis, and whether the
+  new window goes before its source), which only manual splits read.
+  Under them the new window takes the source's index when the placement
+  says before and the index after it otherwise, the source's tile is split
+  along the axis, and the tree is balanced along it (Vim's `equalalways`).
+  Under master-and-stack and monocle it goes right after the source in the
   list: splitting main makes the new window the first of the stack, and
-  splitting a stack window puts the new one below it. It takes no axis:
-  no layout reads one. The new window shows the source window's buffer,
+  splitting a stack window puts the new one below it. While zoomed, the
+  layout zoom returns to says which. The new window shows the source window's buffer,
   with the two markers the caller made for it, and the focus stays where
   it was. It refuses `noSuchWindow` for a source not in the list, and
   `markersOfAnotherText` for a marker that is not of that buffer's text.
   Splitting a window and removing the new one gives back the frame from
-  before the split.
+  before the split, under every layout.
+- `arrange` makes a change (`Arrange`) on a window of the list:
+  - `promote` moves it to main, index 0, and main itself swaps with the
+    next (dwm's zoom); `demote` swaps it with the next, and the last stays;
+    `rotate` rotates the stack under master-and-stack, main staying, and
+    the whole list under the other layouts, forward as Vim's `C-w r` (the
+    last becomes the first) and back as `C-w R`. Each keeps the focus on
+    its view, so the focus follows its window. Under manual splits they
+    move windows between tiles, and the shape stays.
+  - `exchange` swaps it with the `nth` of the list, or with the next, or
+    the previous when it is last, and focuses the other view, which now
+    stands where it was: Vim's `C-w x`.
+  - `zoom` keeps the layout in `zoomedFrom` and makes it monocle, or goes
+    back to it while zoomed. Under monocle with no zoom it is refused with
+    `monocleChosen`.
+  - `balance` makes the windows equal: master-and-stack's share back to
+    50, every split of a manual tree balanced along both axes, and nothing
+    under monocle.
+  - `resize` grows or shrinks the window by steps of 5 percent: main's
+    share under master-and-stack, along its side's axis only and with a
+    stack to share with, and the deepest split on the axis that holds the
+    window's tile under manual splits. Anything else is refused with
+    `notResizable` and the axis.
+  - `mainCount` moves master-and-stack's count of main's windows, not
+    below 0, and is refused with `noMain` under the other layouts.
+  Each refuses `noSuchWindow` for a window not in the list and
+  `ofMinibuffer` for the minibuffer's.
+- Two readers serve the window commands: `toward?`, the window that lies
+  in a direction, worked out from the rectangles the layout gave (so a
+  window monocle hides has nothing in any direction, and the minibuffer's
+  view is never one), and `cycled`, the next or previous window of the
+  list with wrap, or the Nth.
+
+`LayoutRefusal.describe` says each refusal in a sentence, which a window
+command gives up with, so the echo area says, for the last window,
+`window-close: the last window cannot be closed` (Vim's E444).
 - `showBuffer` has a window show another buffer, with the two markers the
   caller made on that buffer's text. It refuses `noSuchWindow`,
   `noSuchBuffer` for a buffer there is none of (a window over no buffer
@@ -733,7 +795,64 @@ structure Frame where
   what the views along the frame's top edge start their text below
   (`EditorState.topInset`). Nothing but a resize changes it. -/
   top : Nat := 0
+  /-- The layout a zoom left, to go back to: `some` while zoomed, when
+  `layout` is monocle. -/
+  zoomedFrom : Option Layout := none
+  /-- The window of the list focused before the current one, Vim's
+  `prevwin`: set when the focus moves from one window of the list to
+  another, and never cleared, so a reader checks that it is still in the
+  list. -/
+  lastFocused : Option ViewId := none
+  /-- The layout config chose that the last publish applied (`Frame.choose`,
+  `Loop.publish`): a publish handed the same one again leaves the frame's
+  layout, so a command's change to it lasts. -/
+  chosen : Option Layout := none
   deriving DecidableEq, Repr
+
+namespace Frame
+
+/-- The layout the windows are arranged by out of a zoom: the one zoom
+returns to while zoomed, and the frame's own otherwise. -/
+def underlying (frame : Frame) : Layout :=
+  frame.zoomedFrom.getD frame.layout
+
+/-- The frame once config chose `layout`: its layout, fitted to the windows
+(`Layout.fits`), recorded as the one chosen, and no zoom. -/
+def choose (frame : Frame) (layout : Layout) : Frame :=
+  { frame with
+    layout := layout.fits frame.windows.size, chosen := some layout, zoomedFrom := none }
+
+/-- The frame's layouts once its window at `index` was split by
+`placement`: the layout and the one zoom returns to (`Layout.inserted`).
+The list is the caller's. -/
+def inserted (frame : Frame) (index : Nat) (placement : Placement) : Frame :=
+  { frame with
+    layout := frame.layout.inserted index placement
+    zoomedFrom := frame.zoomedFrom.map (·.inserted index placement) }
+
+/-- The frame's layouts once its window at `index` was removed
+(`Layout.removed`), and the index, after the removal, of the window that
+inherits its place, if a layout says one: while zoomed, the layout zoom
+returns to says it. The list is the caller's. -/
+def removed (frame : Frame) (index : Nat) : Frame × Option Nat :=
+  let (layout, inheritor) := frame.layout.removed index
+  match frame.zoomedFrom with
+  | some back =>
+    let (back, inheritor) := back.removed index
+    ({ frame with
+        layout, zoomedFrom := some back },
+      inheritor)
+  | none => ({ frame with layout }, inheritor)
+
+/-- The frame with `id` focused, and, when the focus moves from one window
+of the list to another, the one it leaves as the last focused. -/
+def focusedOn (frame : Frame) (id : ViewId) : Frame :=
+  let moves :=
+    frame.focused != id && frame.windows.contains frame.focused && frame.windows.contains id
+  { frame with
+    focused := id, lastFocused := if moves then some frame.focused else frame.lastFocused }
+
+end Frame
 
 /-- A job a command asked to be started: the name it is registered under,
 and the arguments to start it with. It is plain data: the job itself is
@@ -973,6 +1092,31 @@ structure Target where
   buffer : Buffer
   deriving BEq, Repr
 
+/-- A change of the frame's window list or its layout's parameters, which
+`EditorState.arrange` makes on a window of the list. -/
+inductive Arrange where
+  /-- The window to main, index 0; main itself swaps with the next. -/
+  | promote
+  /-- The window swaps with the next of the list; the last stays. -/
+  | demote
+  /-- The windows the layout rotates (`Layout.rotated`), forward as Vim's
+  `C-w r` or back as its `C-w R`. -/
+  | rotate (forward : Bool)
+  /-- The window swaps with the `nth` of the list, 1-based, or with the
+  next, or the previous when it is last; the focus moves to the other. -/
+  | exchange (nth : Option Nat)
+  /-- Into monocle, keeping the layout to go back to, or back to it. -/
+  | zoom
+  /-- The windows made equal (`Layout.balanced`). -/
+  | balance
+  /-- The window grown or shrunk along `axis` by `steps` steps of 5 percent
+  (`Layout.resized`). -/
+  | resize (axis : Axis) (grow : Bool) (steps : Nat)
+  /-- Master-and-stack's count of main's windows up or down by `steps`, not
+  below 0. -/
+  | mainCount (more : Bool) (steps : Nat)
+  deriving DecidableEq, Repr
+
 /-- Why an operation on the layout was refused. -/
 inductive LayoutRefusal where
   /-- It would remove the last window, leaving nothing to focus. -/
@@ -988,7 +1132,30 @@ inductive LayoutRefusal where
   minibuffer's buffer in another window: that window is closed by answering
   or cancelling its prompt, and only it shows its buffer. -/
   | ofMinibuffer (view : ViewId)
+  /-- No other window of the list was focused before the current one. -/
+  | noPreviousWindow
+  /-- The layout cannot grow or shrink the window along `axis`. -/
+  | notResizable (axis : Axis)
+  /-- The layout has no main windows: only master-and-stack does. -/
+  | noMain
+  /-- The layout is monocle, which config chose, and no zoom is there to
+  leave. -/
+  | monocleChosen
   deriving DecidableEq, Repr
+
+/-- What a refusal of the layout says, as one sentence the echo area can
+show after a command's name. -/
+def LayoutRefusal.describe : LayoutRefusal → String
+  | .onlyWindow => "the last window cannot be closed"
+  | .noSuchWindow id => s!"there is no window {id.index}"
+  | .noSuchBuffer id => s!"there is no buffer {id.index}"
+  | .markersOfAnotherText => "a marker is not of the text of the window's buffer"
+  | .ofMinibuffer _ => "the minibuffer's window is closed by answering or cancelling its prompt"
+  | .noPreviousWindow => "no other window was focused before this one"
+  | .notResizable .rows => "the window cannot be made taller or shorter in this layout"
+  | .notResizable .columns => "the window cannot be made wider or narrower in this layout"
+  | .noMain => "only master-and-stack has main windows"
+  | .monocleChosen => "the layout is monocle, and there is no zoom to leave"
 
 /-- Why an operation on the prompt was refused. -/
 inductive PromptRefusal where
@@ -1186,14 +1353,18 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
     { across := state.padding, down := state.padding, top }
 
 /-- Whether the state keeps the layout invariants, over its views
-(`views`: the frame's windows, then the open prompt's view): the focused
-window is among them, the views' ids are distinct and are exactly the windows' ids, and each window's buffer
+(`views`: the frame's windows, then the open prompt's view): the frame's
+layout, and the one a zoom returns to, fit its list of windows
+(`Layout.fitted`), the focused window is among them, the views' ids are distinct and are exactly the windows' ids, and each window's buffer
 exists. And whether an open prompt's choice, if it has one, is an index of
 its listing, and whether every buffer of the order they were used in
 (`recent`) is open and is there once. -/
 def wellFormed (state : EditorState) : Bool :=
   let ids := state.views
-  ids.contains state.frame.focused && ids.toList.eraseDups.length == ids.size &&
+  let count := state.frame.windows.size
+  state.frame.layout.fitted count && state.frame.zoomedFrom.all (·.fitted count) &&
+    ids.contains state.frame.focused &&
+    ids.toList.eraseDups.length == ids.size &&
     ids.size == state.windows.size &&
     ids.all (fun id => (state.window? id).isSome) &&
     (state.windows.all fun window => (state.buffer? window.buffer).isSome) &&
@@ -1229,9 +1400,11 @@ def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := d
       recent := #[⟨0⟩] }
 
 /-- Removes the window `id` from the frame's list, and hands it back, its
-markers the caller's to give up; the layout gives its space to the rest.
-A focused window's focus moves to the window that took its index, or to
-the new last window when it was last. Refused, with the state unchanged,
+markers the caller's to give up; the layout gives its space to the rest
+(`Frame.removed`). A focused window's focus moves to the window that
+inherits its place when the layout says one, as manual splits do, and
+otherwise to the window that took its index, or to the new last window
+when it was last. Refused, with the state unchanged,
 with `ofMinibuffer` for the minibuffer's window, with `noSuchWindow` for a
 window not in the list and with `onlyWindow` for the last one of the list:
 the minibuffer's window does not count. -/
@@ -1243,20 +1416,25 @@ def removeWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Wind
     let rest := windows.filter (· != id)
     if rest.isEmpty then (.error .onlyWindow, state)
     else
+      let (frame, inheritor) := state.frame.removed index
       let focused :=
-        if state.frame.focused == id then rest[index]?.getD (rest.back?.getD state.frame.focused)
+        if state.frame.focused == id then
+          match inheritor.bind (rest[·]?) with
+          | some view => view
+          | none => rest[index]?.getD (rest.back?.getD state.frame.focused)
         else state.frame.focused
       (.ok window,
         { state with
           windows := state.windows.filter (·.id != id)
           frame :=
-            { state.frame with
+            { frame with
               windows := rest, focused } })
   | false, _, _ => (.error (.noSuchWindow id), state)
 
 /-- Focuses the window `id`: a window of the list, or the minibuffer's while
-a prompt is open. Its buffer is then the most recently used, unless it is
-the minibuffer's. Refused, with the state unchanged, with `noSuchWindow`
+a prompt is open (`Frame.focusedOn`, which keeps the window of the list
+focused before it). Its buffer is then the most recently used, unless it
+is the minibuffer's. Refused, with the state unchanged, with `noSuchWindow`
 for any other. -/
 def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
   if state.views.contains id then
@@ -1268,7 +1446,7 @@ def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit 
       | none => state.recent
     (.ok (),
       { state with
-        frame := { state.frame with focused := id }, recent })
+        frame := state.frame.focusedOn id, recent })
   else (.error (.noSuchWindow id), state)
 
 /-- Has the window `id` keep `wanted` as its wanted column, or none. Any
@@ -1703,13 +1881,17 @@ def freshView (state : EditorState) : ViewId :=
   ⟨state.windows.foldl (fun least window => max least (window.id.index + 1)) state.nextView⟩
 
 /-- Splits the window `id`: a new window on the same buffer, with `scroll`
-and `selection` as its markers, is put right after `id` in the frame's
-list, and its id is handed back. The focus stays. Refused, with the state
+and `selection` as its markers, is put in the frame's list, and its id is
+handed back. Under manual splits (while zoomed, when the layout zoom
+returns to is manual splits) it takes `id`'s index when `placement` says
+before and the index after it otherwise, and `id`'s tile is split along the
+placement's axis (`Frame.inserted`); under the other layouts the placement
+is ignored and it goes right after `id`. The focus stays. Refused, with the state
 unchanged, with `ofMinibuffer` for the minibuffer's window, with
 `noSuchWindow` for a window not in the list, and with
 `markersOfAnotherText` when a marker is not of that buffer's text. -/
-def splitWindow (id : ViewId) (scroll selection : MarkerId) (state : EditorState) :
-    Except LayoutRefusal ViewId × EditorState :=
+def splitWindow (id : ViewId) (scroll selection : MarkerId) (placement : Placement := {})
+    (state : EditorState) : Except LayoutRefusal ViewId × EditorState :=
   let windows := state.frame.windows
   match state.minibufferView? == some id, state.target? id, windows.findIdx? (· == id) with
   | true, _, _ => (.error (.ofMinibuffer id), state)
@@ -1718,15 +1900,156 @@ def splitWindow (id : ViewId) (scroll selection : MarkerId) (state : EditorState
       (.error .markersOfAnotherText, state)
     else
       let made := state.freshView
+      -- Only manual splits read a placement; the others put the new window
+      -- right after its source.
+      let place :=
+        match state.frame.underlying with
+        | .splits _ => if placement.before then index else index + 1
+        | _ => index + 1
       (.ok made,
         { state with
           windows :=
             state.windows.push { id := made, buffer := target.window.buffer, scroll, selection }
           frame :=
-            { state.frame with
-              windows := (windows.extract 0 (index + 1)).push made ++ windows.extract (index + 1) }
+            { state.frame.inserted index placement with
+              windows := (windows.extract 0 place).push made ++ windows.extract place }
           nextView := made.index + 1 })
   | false, _, _ => (.error (.noSuchWindow id), state)
+
+/-- `windows` with the entries at `first` and `second` swapped. -/
+private def swapped (windows : Array ViewId) (first second : Nat) : Array ViewId :=
+  match windows[first]?, windows[second]? with
+  | some one, some other => (windows.set! first other).set! second one
+  | _, _ => windows
+
+/-- Makes `change` on the window `id` (`Arrange`):
+
+- `promote` moves it to index 0, main, the others moving one on; main
+  itself swaps with index 1. `demote` swaps it with the next of the list,
+  and the last window stays. `rotate` rotates the windows its layout
+  rotates (`Layout.rotated`, read off the layout a zoom returns to while
+  zoomed). Each leaves the focus on the view it was on, so it follows its
+  window.
+- `exchange` swaps it with the `nth` window of the list (1-based), or with
+  the next, or with the previous when it is last, and focuses the other
+  view, which now stands where it was (`Frame.focusedOn`). One window, an
+  `nth` past the list or the window itself changes nothing.
+- `zoom` goes back to the layout a zoom left while zoomed; otherwise it
+  keeps the layout in `zoomedFrom` and makes the layout monocle, and under
+  monocle with no zoom it is refused with `monocleChosen`.
+- `balance` is `Layout.balanced`, and `resize` is `Layout.resized`, refused
+  with `notResizable` and its axis where it gives none.
+- `mainCount` moves master-and-stack's count by `steps`, not below 0, and
+  is refused with `noMain` under any other layout.
+
+Every change is refused, with the state unchanged, with `ofMinibuffer` for
+the minibuffer's window and with `noSuchWindow` for a window not in the
+list. -/
+def arrange (id : ViewId) (change : Arrange) (state : EditorState) :
+    Except LayoutRefusal Unit × EditorState :=
+  let frame := state.frame
+  let windows := frame.windows
+  let set (frame : Frame) : Except LayoutRefusal Unit × EditorState :=
+    (.ok (), { state with frame })
+  if state.minibufferView? == some id then (.error (.ofMinibuffer id), state)
+  else
+    match windows.findIdx? (· == id) with
+    | none => (.error (.noSuchWindow id), state)
+    | some index =>
+      match change with
+      | .promote =>
+        set
+          { frame with
+            windows :=
+              if index == 0 then swapped windows 0 1 else #[id] ++ windows.eraseIdx! index }
+      | .demote => set { frame with windows := swapped windows index (index + 1) }
+      | .rotate forward => set { frame with windows := frame.underlying.rotated windows forward }
+      | .exchange nth =>
+        let other :=
+          match nth with
+          | some nth => if 0 < nth && nth - 1 != index then nth - 1 else windows.size
+          | none => if index + 1 < windows.size then index + 1 else index - 1
+        match windows[other]? with
+        | some view =>
+          if other == index then set frame
+          else set { frame.focusedOn view with windows := swapped windows index other }
+        | none => set frame
+      | .zoom =>
+        match frame.zoomedFrom with
+        | some back =>
+          set
+            { frame with
+              layout := back, zoomedFrom := none }
+        | none =>
+          if frame.layout == .monocle then (.error .monocleChosen, state)
+          else
+            set
+              { frame with
+                layout := .monocle, zoomedFrom := some frame.layout }
+      | .balance => set { frame with layout := frame.layout.balanced }
+      | .resize axis grow steps =>
+        match frame.layout.resized index windows.size axis grow steps with
+        | some layout => set { frame with layout }
+        | none => (.error (.notResizable axis), state)
+      | .mainCount more steps =>
+        match frame.layout with
+        | .masterStack parameters =>
+          let count := if more then parameters.count + steps else parameters.count - steps
+          set { frame with layout := .masterStack { parameters with count } }
+        | _ => (.error .noMain, state)
+
+/-- The window `count` steps from the window `id` towards `side`, worked out
+from the rectangles the layout gave (`rects`), so it holds under every
+layout; none when no window lies that way, and for a window with no
+rectangle, which monocle hides.
+
+A step's candidates are the windows of the list whose rectangle lies
+wholly on `side` of the window reached so far and overlaps it across
+(`Side.lies`). The nearest edge wins; among windows equally near, the one
+whose span holds the reference coordinate, the top of `id`'s rectangle for
+left and right and its left for up and down, and failing that the first in
+list order. The step repeats `count` times, once for a count of 0, with the
+same reference, and stops at the last window reached: Vim's "Nth window",
+which goes as far as it can. The minibuffer's view is never a candidate. -/
+def toward? (state : EditorState) (id : ViewId) (side : Side) (count : Nat) : Option ViewId :=
+  Id.run do
+    let laid := state.rects.filter fun (view, _) => state.frame.windows.contains view
+    let some (_, start) := laid.find? (·.1 == id) | return none
+    let reference :=
+      match side with
+      | .left | .right => start.y
+      | .top | .bottom => start.x
+    let holds (rect : Rect) : Bool :=
+      match side with
+      | .left | .right => rect.y ≤ reference && reference < rect.y + rect.height
+      | .top | .bottom => rect.x ≤ reference && reference < rect.x + rect.width
+    let mut reached := (id, start)
+    for _ in [0:max 1 count] do
+      let from_ := reached
+      let candidates := laid.filter fun (view, rect) => view != from_.1 && side.lies from_.2 rect
+      let nearest :=
+        candidates.filter fun (_, rect) =>
+          candidates.all fun (_, other) => side.gap from_.2 rect ≤ side.gap from_.2 other
+      match nearest.find? (holds ·.2) <|> nearest[0]? with
+      | some next =>
+        reached := next
+      | none =>
+        break
+    return if reached.1 == id then none else some reached.1
+
+/-- The window of the list after the window `id` when `forward`, and before
+it otherwise, wrapping at either end; or, with `nth` above 0, the `nth`
+window of the list, the last when `nth` is past it. None for a window not
+in the list. -/
+def cycled (state : EditorState) (id : ViewId) (forward : Bool) (nth : Nat) : Option ViewId := do
+  let windows := state.frame.windows
+  let index ← windows.findIdx? (· == id)
+  if 0 < nth then
+    windows[min nth windows.size - 1]?
+  else if forward then
+    windows[(index + 1) % windows.size]?
+  else
+    windows[(index + windows.size - 1) % windows.size]?
 
 /-- Has the window `id` show the buffer `buffer`, with `scroll` and
 `selection` as its markers, and no wanted column: an offset of one text
