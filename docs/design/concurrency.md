@@ -23,7 +23,7 @@ process, its runtime is the only one that schedules editor code.
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
 | **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
 | **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
-| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. None is built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
+| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The diff is built: the diff service, `editor-diff-imara`'s line diff of two snapshots on a thread of its own (`editor-diffs`), answering a job's `diff` request through the completion queue, so a long diff holds up neither a load nor the editor thread, which only applies the script it answers. Tree-sitter and fuzzy matching over long lists are not built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
 
 Rust never calls Lean. The main thread and the services push events onto a
 queue, and the editor thread pulls them with a blocking call. Measured in
@@ -716,6 +716,14 @@ and changes on disk:
   from its first change has passed. A `next` of a watch the job does not
   hold is `noSuchWatch`, answered at once. A watch does not outlive its
   job.
+- **A line diff is a request a job awaits** (`lean/Editor/Diff.lean`):
+  `Diff.lines` diffs two snapshots, named as a save names its source, under
+  a line limit that is the editor's policy, a wait like a load's completed
+  by the library's diff service, and replies with an edit script, byte
+  counts and ranges and never text, or a refusal as a value. A command
+  applies the script (`TextId.applyScript`) in time linear in its steps and
+  the bytes it puts in, refused if the text has moved past the revision the
+  script was made for.
 - **No request carries a promise.** A request is plain data; how a wait is
   completed is the runner's business. A snapshot of editor state arrives as
   a further request of this port, each with a reply type, a

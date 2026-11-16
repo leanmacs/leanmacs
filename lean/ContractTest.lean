@@ -416,17 +416,21 @@ run: it is about the library's counts, so the port cannot say it. -/
 def fileLeakName : String :=
   "what the jobs of the file properties loaded is released when each job is settled, and no request is left in the file service"
 
-/-- The names of the job port's file properties that do not hold of the
-runner over the library's file service, on real files. `fileLeakName` is
-among them if the library then holds a snapshot more than before, `held`
-still holds one, or the file service has a request or a result left. -/
+/-- The names of the job port's file and diff properties that do not hold of
+the runner over the library's file and diff services, on real files.
+`fileLeakName` is among them if the library then holds a snapshot more than
+before, `held` still holds one, or the file service or the diff service has a
+request or a result left. -/
 def fileFailures (services : Job.Services) (held : Job.HeldSnapshots) : IO (List String) := do
-  let before := (← Ffi.Snapshot.live, ← Ffi.filesPending)
-  let failed ← JobContract.fileFailures (runFilesOnService services) JobContract.fileProperties
+  let pending : IO UInt64 := return (← Ffi.filesPending) + (← Ffi.diffsPending)
+  let before := (← Ffi.Snapshot.live, ← pending)
+  let failed ←
+    JobContract.fileFailures (runFilesOnService services)
+        (JobContract.fileProperties ++ JobContract.diffProperties)
   let freed ←
     eventually do
-        return (← Ffi.Snapshot.live, ← Ffi.filesPending) == before && (← held.size) == 0
-  let after := (← Ffi.Snapshot.live, ← Ffi.filesPending, ← held.size)
+        return (← Ffi.Snapshot.live, ← pending) == before && (← held.size) == 0
+  let after := (← Ffi.Snapshot.live, ← pending, ← held.size)
   return failed.map (s!"the job runner over the file service: {·}") ++
       if freed then []
       else
@@ -1512,7 +1516,9 @@ def main : IO UInt32 := do
     { completions, timers := Editor.Job.realTimers completions
       files := Editor.Job.realFiles completions published.reader held
       processes := Editor.Job.realProcesses completions (← Editor.Job.RefusedRuns.new)
-      fileWatches := Editor.Job.realFileWatches completions (← Editor.Job.RealWatches.new) }
+      fileWatches := Editor.Job.realFileWatches completions (← Editor.Job.RealWatches.new)
+      diffs :=
+        Editor.Job.realDiffs completions published.reader held (← Editor.Job.RefusedDiffs.new) }
   let pump ← IO.asTask (prio := .dedicated) (Editor.Job.pump completions)
   let properties := Editor.TextContract.properties
   -- The undo tree's cases run through the same binding, so the count of

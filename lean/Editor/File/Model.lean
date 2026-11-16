@@ -1,3 +1,5 @@
+import Editor.Diff
+import Editor.Diff.Model
 import Editor.File
 import Editor.Text.Model
 
@@ -251,6 +253,16 @@ def save (model : FileModel) (source : File.Source) (path : System.FilePath)
 def handle : (request : FileRequest) → FileModel → request.Reply × FileModel
   | .load path limit, model => model.load path limit
   | .save source path expect, model => model.save source path expect
+
+/-- The model's answer to a diff request (`Editor/Diff.lean`), over the
+snapshots it holds: the script of the model of a line diff
+(`DiffModel.script`), or `noSuchSnapshot` for a source that names nothing. It
+changes nothing, so it hands back no model. -/
+def diff (model : FileModel) : (request : DiffRequest) → request.Reply
+  | .lines old new limit =>
+    match model.source? old, model.source? new with
+    | some old, some new => .ok (DiffModel.script old.contents new.contents limit)
+    | _, _ => .error .noSuchSnapshot
 
 end FileModel
 

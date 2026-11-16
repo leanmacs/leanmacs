@@ -27,6 +27,9 @@ here.
   there, so whoever plays a command, a job and the job's command hands the
   snapshots across as values: the published ones in, and what the job held
   out.
+- A diff request is answered by the model of the files (`FileModel.diff`),
+  which holds the snapshots it names, with the model of a line diff
+  (`Editor/Diff/Model.lean`). It moves no clock and changes nothing.
 - A process request is answered by the model of the processes the job runs
   (`JobModel.processes`, `Editor/Process/Model.lean`), which is part of this
   model. A scripted run moves the clock on by the time it takes, as a wait
@@ -90,6 +93,7 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     (reply,
       { model with
         fileWatches, now })
+  | .diff request, model => (model.files.diff request, model)
 
 /-- The model once the job has ended: every streaming child it started is
 ended (`ProcessModel.endAll`), as the runner cancels them, and every watch

@@ -335,6 +335,74 @@ where
     held.refused.modify (·.insert id refusal)
     completions.finish id .completed
 
+/-- The refusals of the diffs that never reached the library, which the diff
+service's adapter completed itself, by the id of their wait, until their
+reply is fetched or their wait withdrawn. Every change is one atomic step. -/
+structure RefusedDiffs where private mk ::
+  /-- The refusals, by the id of their wait. -/
+  private refused : IO.Ref (Std.HashMap UInt64 DiffError)
+
+/-- A table that holds no refusal. -/
+def RefusedDiffs.new : BaseIO RefusedDiffs :=
+  return ⟨← IO.mkRef {}⟩
+
+/-- The port's form of a step of the library's script. -/
+def stepOf : Ffi.ScriptStep → Diff.Step
+  | .retain count => .retain count.toNat
+  | .delete count => .delete count.toNat
+  | .insert start count => .insert start.toNat count.toNat
+
+/-- The diff port answered by the library's diff service. A source is found as
+a save's is: in `held` for one the job loaded, and through the read half of
+the text store's table (`published`) for one a command took, as the table is
+when the diff is started; the library keeps its own hold on both texts. A
+diff whose source names no snapshot, and one the library's service does not
+take, never reaches the library: it is completed here, at once, with its
+refusal kept in `refused` until it is taken. A limit no word holds is sent as
+the largest. -/
+def realDiffs (completions : Completions) (published : SnapshotReader) (held : HeldSnapshots)
+    (refused : RefusedDiffs) : Diffs :=
+  { start := fun id request => do
+      match request with
+      | .lines old new limit =>
+        let find (source : File.Source) : BaseIO (Option Ffi.Snapshot) :=
+          match source with
+          | .snapshot taken => published.find? taken
+          | .held loaded => held.find? loaded
+        match ← find old, ← find new with
+        | some old, some new =>
+          let started ← (Ffi.diffsStart id old new (word limit)).catchExceptions fun _ => pure false
+          unless started do
+            refuse id (.failed "the diff service did not take the request")
+        | _, _ =>
+          refuse id .noSuchSnapshot
+    take := fun id request => do
+      match request with
+      | .lines .. =>
+        let refusal? ← refused.refused.modifyGet fun table => (table[id]?, table.erase id)
+        if let some refusal := refusal? then
+          return .error refusal
+        let script? ←
+          (return .ok (← Ffi.diffsTake id) :
+                  IO (Except String (Option (Array Ffi.ScriptStep)))).catchExceptions
+              fun error => pure (.error (toString error))
+        match script? with
+        | .ok (some script) =>
+          return .ok (script.map stepOf)
+        | .ok none =>
+          return .error (.failed "the diff service kept no script for the request")
+        | .error detail =>
+          return .error (.failed detail)
+    cancel := fun id => do
+      refused.refused.modify (·.erase id)
+      (discard <| Ffi.diffsCancel id : IO Unit).catchExceptions fun _ => pure () }
+where
+  /-- Completes the wait `id` at once, with `refusal` kept as what its take
+  answers. -/
+  refuse (id : UInt64) (refusal : DiffError) : BaseIO Unit := do
+    refused.refused.modify (·.insert id refusal)
+    completions.finish id .completed
+
 /-- The refusals of the process runs that never reached the library, which
 the process service's adapter completed itself, by the id of their wait,
 until their reply is fetched or their wait withdrawn. It is the runner's own

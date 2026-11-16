@@ -1,3 +1,4 @@
+import Editor.File.Model
 import Editor.Job
 import Editor.Process.Model
 
@@ -411,6 +412,155 @@ def fileFailures (run : FileProperty → IO (Job.Outcome Bool × Array (String �
       return some s!"{property.name} (the job failed with `{message}`)"
     | .cancelled =>
       return some s!"{property.name} (the job was cancelled)"
+
+/-! ## The diff request
+
+A property of the diff request (`Editor/Diff.lean`) is a file property: its
+texts are files the job loads, so both sources are snapshots the job holds,
+and the same three runs reach them (the model, the fake of the file service,
+whose model answers a diff, and the library's file and diff services on real
+files). A text is written as a string: a file holds its bytes as a save
+writes them (`FileModel.encode`), so an escape in a text is the one byte it
+stands for in the file, and loads back as the escape.
+
+The exact hunks an engine picks may differ between the model (an LCS) and
+the library (imara-diff's histogram), so the properties are relational,
+as the Rust contract's are (`crates/editor-diff/src/contract.rs`): what a
+script gives, what it must keep, and where its steps may start and stop. -/
+
+/-- Pairs of an old and a new text, among them a character that differs only
+in its trailing byte (`é` to `è`, `C3 A9` to `C3 A8`), two CJK characters
+that share their first two bytes, and an escape of a byte that is not UTF-8
+changed to another. -/
+def diffPairs : List (String × String) :=
+  [("", ""), ("", "a\n"), ("a\n", ""), ("a\nb\nc\n", "a\nX\nc\n"), ("a\nc\n", "a\nb\nc\n"),
+    ("a\nb", "a\nb\n"), ("one\ntwo\nthree\n", "one\ntwo and more\nthree\n"),
+    ("x\r\ny\r\n", "x\r\nz\r\n"), ("café\n", "cafè\n"), ("日日\n", "日时\n"),
+    (("a".push (Char.ofNat 0x10DC80)).push 'b', ("a".push (Char.ofNat 0x10DC81)).push 'b'),
+    ("p\nq\nr\ns\nt\n", "t\ns\nr\nq\np\n")]
+
+/-- Kept-block cases: an old text and a new one, and the bytes of the block
+`K` in the old text, as a start and a stop. `K` shares no line with the hunks,
+and the hunks share no line across it. -/
+def keptCases : List (String × String × Nat × Nat) :=
+  [("one\nkeep\nthis\ntwo\n", "uno\nkeep\nthis\ndos\n", 4, 14),
+    ("a\nb\nK1\nK2\nc\n", "x\nK1\nK2\ny\nz\n", 4, 10), ("é\nkept\nx\n", "è\nkept\ny\n", 3, 8)]
+
+/-- The files of `pairs`, the old text of the `i`th as `o{i}` and its new one
+as `n{i}`, each as a save writes it. -/
+def pairFiles (pairs : List (String × String)) : Array (String × ByteArray) :=
+  (pairs.zipIdx.map fun ((old, new), index) =>
+      #[(s!"o{index}", FileModel.encode old), (s!"n{index}", FileModel.encode new)]).toArray.flatten
+
+/-- The script of the diff of the files `o{index}` and `n{index}` in `root`,
+under `limit`; a refusal fails the job, saying which. -/
+def diffed (root : System.FilePath) (index : Nat) (limit : Nat := roomy) : JobM Diff.Script := do
+  let old ← loaded (root / s!"o{index}")
+  let new ← loaded (root / s!"n{index}")
+  match ← Diff.lines (.held old.snapshot) (.held new.snapshot) limit with
+  | .ok script =>
+    return script
+  | .error error =>
+    throw s!"the diff of pair {index} was refused: {error.describe}"
+
+/-- Whether every step of `script` starts and stops at a character boundary of
+both texts. -/
+def onBoundaries (old new : String) (script : Diff.Script) : Bool :=
+  let (oldBytes, newBytes) := (old.toUTF8, new.toUTF8)
+  (script.foldl
+        (fun (atOld, atNew, holds) step =>
+          let (atOld, atNew) :=
+            match step with
+            | .retain count => (atOld + count, atNew + count)
+            | .delete count => (atOld + count, atNew)
+            | .insert _ count => (atOld, atNew + count)
+          (atOld, atNew, holds && Diff.boundary oldBytes atOld && Diff.boundary newBytes atNew))
+        (0, 0, true)).2.2
+
+/-- Whether every byte of the old text from `start` up to `stop` is under one
+of the ranges `script` retains. -/
+def covered (script : Diff.Script) (start stop : Nat) : Bool :=
+  start == stop || script.retained.any fun (from_, to) => from_ ≤ start && stop ≤ to
+
+/-- The longest common prefix of `old` and `new` that ends on a character
+boundary of both, and then the longest common suffix of what it leaves that
+does: their lengths in bytes. -/
+def affixes (old new : String) : Nat × Nat :=
+  Id.run do
+    let (a, b) := (old.toUTF8, new.toUTF8)
+    let shorter := min a.size b.size
+    let mut lead := 0
+    while lead < shorter && a.get! lead == b.get! lead do
+      lead := lead + 1
+    while lead > 0 && !(Diff.boundary a lead && Diff.boundary b lead) do
+      lead := lead - 1
+    let mut trail := 0
+    while trail < shorter - lead && a.get! (a.size - 1 - trail) == b.get! (b.size - 1 - trail) do
+      trail := trail + 1
+    while trail > 0 && !(Diff.boundary a (a.size - trail) && Diff.boundary b (b.size - trail)) do
+      trail := trail - 1
+    return (lead, trail)
+
+/-- The diff property that `check` holds of the script of every pair of
+`pairs`. -/
+def everyPair (name : String) (pairs : List (String × String))
+    (check : String → String → Diff.Script → Bool) : FileProperty
+    where
+  name
+  files := pairFiles pairs
+  holds root := do
+    let mut every := true
+    for ((old, new), index) in pairs.zipIdx do
+      every := every && check old new (← diffed root index)
+    return every
+  after := pairFiles pairs
+
+/-- The properties every implementation of the job port's diff request has. -/
+def diffProperties : List FileProperty :=
+  [everyPair "a diff's script applied to the old text gives the new text" diffPairs
+      fun old new script => Diff.Script.run old new script == some new,
+    everyPair "a diff of equal texts is one retain of the whole"
+      [("", ""), ("a\n", "a\n"), ("a\nb\nc\n", "a\nb\nc\n"), ("é\n日\n", "é\n日\n")]
+      fun old _ script => script == #[.retain old.utf8ByteSize],
+    everyPair
+      "every step of a diff's script starts and stops at a character boundary of both texts: a character that differs only in its trailing byte, and an escape, are replaced whole"
+      diffPairs onBoundaries,
+    everyPair "a diff retains the longest common prefix and suffix that end on a character boundary"
+      diffPairs fun old new script =>
+      let (lead, trail) := affixes old new
+      covered script 0 lead && covered script (old.utf8ByteSize - trail) old.utf8ByteSize,
+    { name :=
+        "a block both texts keep, sharing no line with the hunks, is under a retain of the diff's script"
+      files := pairFiles (keptCases.map fun (old, new, _) => (old, new))
+      holds := fun root => do
+        let mut kept := true
+        for ((_, _, start, stop), index) in keptCases.zipIdx do
+          kept := kept && covered (← diffed root index) start stop
+        return kept
+      after := pairFiles (keptCases.map fun (old, new, _) => (old, new)) },
+    { name := "over the line limit a diff's middle is one hunk, and its script still applies"
+      files := pairFiles [("h\na\nk\nb\nt\n", "h\nA\nk\nB\nt\n")]
+      holds := fun root => do
+        let over ← diffed root 0 2
+        let within ← diffed root 0 3
+        return Diff.Script.run "h\na\nk\nb\nt\n" "h\nA\nk\nB\nt\n" over == some "h\nA\nk\nB\nt\n" &&
+            over.changedRuns == 1 &&
+            within.changedRuns == 2
+      after := pairFiles [("h\na\nk\nb\nt\n", "h\nA\nk\nB\nt\n")] },
+    { name :=
+        "a diff whose source names no snapshot, one the store never published or one the job does not hold, is refused with noSuchSnapshot"
+      files := pairFiles [("a\n", "b\n")]
+      holds := fun root => do
+        let old ← loaded (root / "o0")
+        let published ← Diff.lines (.snapshot ⟨1000⟩) (.held old.snapshot) roomy
+        let notHeld ← Diff.lines (.held old.snapshot) (.held ⟨1000000⟩) roomy
+        return noSnapshot published && noSnapshot notHeld
+      after := pairFiles [("a\n", "b\n")] }]
+where
+  /-- Whether `reply` is the refusal `noSuchSnapshot`. -/
+  noSnapshot : Except DiffError Diff.Script → Bool
+    | .error .noSuchSnapshot => true
+    | _ => false
 
 /-! ## The process requests
 

@@ -189,8 +189,9 @@
 //!
 //! A service is work the library does for a Lean job that takes time: a
 //! timer ([`timers`]), a load or a save of a file ([`files`]), a
-//! command run to its end ([`processes`]), and a watch on a file or a
-//! directory ([`watches`]). A job that waits must not hold a thread, so a request to
+//! command run to its end ([`processes`]), a watch on a file or a
+//! directory ([`watches`]), and a line diff of two snapshots ([`diffs`]).
+//! A job that waits must not hold a thread, so a request to
 //! a service is never a blocking call. Every service follows these rules:
 //!
 //! - **The caller names the request.** `start` takes an id the caller
@@ -327,6 +328,24 @@
 //! and by the contract on real files (`editor-watch-notify`'s
 //! `tests/contract.rs`). On the Lean side: the watch checks of `ffi-test`,
 //! and `contract-test`'s watch properties.
+//!
+//! Fifth example: the diff service ([`diffs`]). Its port is
+//! `editor-diff`'s [`editor_diff::LineDiff`], with
+//! [`editor_diff::fake::Lcs`] published for tests and the real adapter in a
+//! crate of its own (`editor-diff-imara`), which only the process's instance
+//! names. What a script is lives beside the port
+//! ([`editor_diff::script`]); the service decides only which request is
+//! worked when and what cancelling means, on a thread of its own so a long
+//! diff holds up no load. A start takes two snapshot handles
+//! ([`diffs::editor_ffi_diffs_start`]); the script is taken by its id once
+//! its completion has arrived ([`diffs::editor_ffi_diffs_take`]), as words.
+//! A document applies one ([`transaction::editor_ffi_document_apply_script`]).
+//!
+//! Tests: the unit tests of `diffs.rs`, on the port's fake (the order, a
+//! script taken once, cancelling, the limit reaching the script, and a
+//! script's words), and of `transaction.rs` for applying a script. On the
+//! Lean side: `contract-test`'s diff properties, which run the real engine
+//! through the service on real files.
 //!
 //! ## The window
 //!
@@ -497,6 +516,7 @@
 
 pub mod clipboard;
 pub mod counter;
+pub mod diffs;
 pub mod display;
 pub mod document;
 pub mod events;

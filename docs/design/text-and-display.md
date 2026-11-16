@@ -892,6 +892,15 @@ origin, and its edits.
   its own origin: `insert` and `delete` are still `unattributed`. One
   origin for the user is all the editor needs until something else edits a
   text; the rest of the table is open ("The table of origins", below).
+- A reload from disk is recorded with 2, `Origin.disk` (decided 2026-11-16,
+  by the daily-driver floor's phase 5). It is applied as an edit script
+  (`TextId.applyScript`, `lean/Editor/Text.lean`): the line diff of the
+  buffer's snapshot and the file's, made off the editor thread
+  (`rust-library.md`, "Diff, as built for reload"), applied as one
+  transaction with no selection, so anchors and the cursor move through its
+  changed ranges by bias, the log has one entry and the undo history one
+  step. It is refused when the text has moved past the revision the script
+  was made for.
 
 **Pulled patches.**
 
@@ -2594,10 +2603,10 @@ frame journal and the renderer's counters.
   beside the text or a record written when a commit is made, is for review
   to decide.
 - **The table of origins.** An origin is a number whose meaning is Lean's.
-  Two are fixed: 0, `unattributed`, and 1, `user`, the user's own edits
-  ("The edit log", as built). The rest of the table, from numbers to
-  commands, agent sessions and tool calls, formatters and a reload from
-  disk, arrives with the things that produce those edits.
+  Three are fixed: 0, `unattributed`; 1, `user`, the user's own edits; and
+  2, `disk`, a reload from disk ("The edit log", as built). The rest of the
+  table, from numbers to commands, agent sessions and tool calls and
+  formatters, arrives with the things that produce those edits.
 - **Rebasing a stale transaction.** A transaction built for an older
   revision is refused by its length. The log keeps no text, so it cannot
   supply the change sets to rebase through. The kept inverses do not settle

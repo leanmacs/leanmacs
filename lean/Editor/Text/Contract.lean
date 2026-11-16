@@ -2411,6 +2411,125 @@ def pairProperties : List Property :=
         let quotePast ← refusedWith .badPosition (discard <| text.quoted .double 5)
         return inside && past && quoteInside && quotePast }]
 
+/-- Applies `script` to `text` from `base`, taking its inserts from `source`,
+by `Origin.disk`, and returns whether it was refused with `error`. -/
+def scriptRefusedWith (error : TextError) (text : TextId) (base : Nat) (source : TextSource)
+    (script : Diff.Script) : TextM Bool :=
+  refusedWith error (discard <| text.applyScript base source script .disk)
+
+/-- "a", the escape of the byte `0x80` (U+10DC80, four bytes), and "b"; and the
+same with the escape of `0x81`. -/
+def escapedPair : String × String :=
+  (("a".push (Char.ofNat 0x10DC80)).push 'b', ("a".push (Char.ofNat 0x10DC81)).push 'b')
+
+/-- The properties of applying an edit script (`TextId.applyScript`), over
+scripts written out by hand. In `"one\ntwéx\nthree\n"` "é" is the bytes 6 and
+7, so the script puts in "éx", the bytes 6 to 8, for the "o" at 6. -/
+def scriptProperties : List Property :=
+  [{  name :=
+        "an edit script gives what Diff.Script.run gives, as one revision and one entry of the log, and what it put in is traced to that revision and its origin"
+      holds := do
+        let (old, new) := ("one\ntwo\nthree\n", "one\ntwéx\nthree\n")
+        let script : Diff.Script := #[.retain 6, .delete 1, .insert 6 3, .retain 7]
+        let text ← createText old
+        let source ← createText new
+        let revision ← text.applyScript 0 (.text source) script .disk
+        let read ← text.read
+        let patch ← text.changesSince 0
+        let trace ← text.trace 6 9
+        return Diff.Script.run old new script == some read && read == new && revision == 1 &&
+            (← text.revision) == 1 &&
+            patch.edits.size == 1 &&
+            trace == #[⟨6, 9, .entry 1 .disk⟩] },
+    { name := "the inverse of an edit script's revision brings the old text back"
+      holds := do
+        let text ← createText "one\ntwo\nthree\n"
+        let source ← createText "one\ntwéx\nthree\n"
+        discard <|
+            text.applyScript 0 (.text source) #[.retain 6, .delete 1, .insert 6 3, .retain 7] .disk
+        discard <| text.applyInverse 1 1
+        return (← text.read) == "one\ntwo\nthree\n" && (← text.revision) == 2 },
+    { name :=
+        "a marker inside a retain keeps its distance from that retain's start, and one in a replaced range goes by its bias"
+      holds := do
+        let text ← createText "abc\ndef\n"
+        let source ← createText "aXYc\ndef\n"
+        let inRetain ← text.mark (anchorAt 5 .after)
+        let first ← text.mark (anchorAt 0 .before)
+        let replaced ← text.mark (anchorAt 1 .after)
+        discard <|
+            text.applyScript 0 (.text source) #[.retain 1, .delete 1, .insert 1 2, .retain 6] .disk
+        return (← text.marker inRetain) == anchorAt 6 .after &&
+            (← text.marker first) == anchorAt 0 .before &&
+            (← text.marker replaced) == anchorAt 3 .after },
+    { name :=
+        "an edit script whose base is not the text's revision is refused with moved, before its source is looked at, and changes nothing"
+      holds := do
+        let text ← createText "ab"
+        let source ← createText "ab"
+        text.insert 0 "x"
+        let moved ← scriptRefusedWith .moved text 0 (.text source) #[.retain 2]
+        let snapshot ← text.snapshot
+        snapshot.release
+        let beforeSource ← scriptRefusedWith .moved text 0 (.snapshot snapshot) #[.retain 3]
+        let noText ← scriptRefusedWith .noSuchText ⟨99⟩ 0 (.text source) #[.retain 2]
+        return moved && beforeSource && noText && (← text.read) == "xab" &&
+            (← text.revision) == 1 },
+    { name :=
+        "an edit script too short or too long for the text or for its source is refused with badChange and changes nothing"
+      holds := do
+        let text ← createText "ab"
+        let same ← createText "ab"
+        let longer ← createText "abc"
+        let short ← scriptRefusedWith .badChange text 0 (.text same) #[.retain 1]
+        let long ← scriptRefusedWith .badChange text 0 (.text same) #[.retain 3]
+        let shortOfSource ← scriptRefusedWith .badChange text 0 (.text longer) #[.retain 2]
+        let insertElsewhere ←
+          scriptRefusedWith .badChange text 0 (.text longer) #[.insert 1 1, .retain 2]
+        return short && long && shortOfSource && insertElsewhere && (← text.read) == "ab" &&
+            (← text.revision) == 0 },
+    { name :=
+        "an edit script with a step inside a character of the text or of its source is refused with badChange, an escape as one character"
+      holds := do
+        let text ← createText "é\n"
+        let other ← createText "è\n"
+        -- "é" is C3 A9 and "è" C3 A8: a step after their first byte.
+        let lastByte ←
+          scriptRefusedWith .badChange text 0 (.text other)
+              #[.retain 1, .delete 1, .insert 1 1, .retain 1]
+        let plain ← createText "abc"
+        let accent ← createText "é"
+        let inSource ←
+          scriptRefusedWith .badChange plain 0 (.text accent) #[.retain 1, .delete 1, .retain 1]
+        let (escapedOld, escapedNew) := escapedPair
+        let escapes ← createText escapedOld
+        let changed ← createText escapedNew
+        let insideEscape ←
+          scriptRefusedWith .badChange escapes 0 (.text changed)
+              #[.retain 4, .delete 1, .insert 4 1, .retain 1]
+        let whole ←
+          escapes.applyScript 0 (.text changed) #[.retain 1, .delete 4, .insert 1 4, .retain 1]
+              .disk
+        return lastByte && inSource && insideEscape && whole == 1 && (← text.read) == "é\n" &&
+            (← plain.read) == "abc" &&
+            (← escapes.read) == escapedNew },
+    { name := "an edit script whose source is a released snapshot is refused and changes nothing"
+      holds := do
+        let text ← createText "ab"
+        let source ← createText "ab"
+        let snapshot ← source.snapshot
+        snapshot.release
+        let refused ← scriptRefusedWith .noSuchSnapshot text 0 (.snapshot snapshot) #[.retain 2]
+        let fromSnapshot ← source.snapshot
+        let applied ← text.applyScript 0 (.snapshot fromSnapshot) #[.retain 2] .disk
+        return refused && applied == 1 && (← text.read) == "ab" },
+    { name := "an edit script of one retain still makes a revision"
+      holds := do
+        let text ← createText "ab"
+        let source ← createText "ab"
+        let revision ← text.applyScript 0 (.text source) #[.retain 2] .disk
+        return revision == 1 && (← text.read) == "ab" }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
@@ -2425,7 +2544,8 @@ def properties : List Property :=
     readProperties ++
     motionProperties ++
     searchProperties ++
-    pairProperties
+    pairProperties ++
+    scriptProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property

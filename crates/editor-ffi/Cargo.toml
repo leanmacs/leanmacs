@@ -70,6 +70,16 @@ editor-search = { path = "../editor-search" }
 # its call. Through it the static library Lean links holds regex-cursor,
 # which has no system dependency.
 editor-search-regex = { path = "../editor-search-regex" }
+# A line diff of two texts as an edit script: the script a reload applies,
+# which the diff service of `src/diffs.rs` makes and
+# `editor_ffi_document_apply_script` applies, and the LineDiff port the
+# script is made over.
+editor-diff = { path = "../editor-diff" }
+# The real line diff engine. This is the crate that wires the library
+# together, so it is the one that links the adapter: the diff service makes
+# one for each request. Through it the static library Lean links holds
+# imara-diff, which has no system dependency.
+editor-diff-imara = { path = "../editor-diff-imara" }
 # The process service: the Processes port, its fake, and the service that
 # runs a command to its end, cancels it and shuts down, which the C
 # functions of `src/processes.rs` forward to.

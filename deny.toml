@@ -238,6 +238,17 @@
 # explicitly banned"); and in that commit `editor-ffi` joined the wrappers
 # of `editor-search`'s entry: with the wrapper not yet there, it fails on
 # that edge ("crate 'editor-search = 0.1.0' is explicitly banned").
+#
+# For the diff of a reload (2026-11-16, the daily-driver floor's phase 5),
+# whose entries came in the commit that added the line diff port's adapter,
+# `editor-diff-imara`, and the diff service of `editor-ffi`. `imara-diff`:
+# with it added to `editor-diff`'s dependencies, it fails ("crate
+# 'imara-diff = 0.2.0' is explicitly banned"). `editor-diff`: with
+# `editor-ffi` taken out of its wrappers, it fails on that edge.
+# `editor-diff-imara`: with its wrapper naming another crate, it fails.
+# `hashbrown` and `foldhash`, which imara-diff brings, have none: many
+# crates of the graph depend on hashbrown.
+#
 # `aho-corasick`,
 # `memchr` and `log`, which the libraries bring, have none: they are
 # reached only through them, or many crates of the graph depend on them.
@@ -294,4 +305,7 @@ deny = [
   { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "proptest"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, and proptest, for its generated strings" },
   { crate = "editor-search", wrappers = ["editor-search-regex", "editor-ffi"], reason = "the search engine port, the pattern syntax and the rule of which match have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose two C functions ask the rule over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-search-regex", wrappers = ["editor-ffi"], reason = "the search engine's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
+  { crate = "imara-diff", wrappers = ["editor-diff-imara"], reason = "the diff library stays behind the line diff port: only its adapter crate may name its types" },
+  { crate = "editor-diff", wrappers = ["editor-diff-imara", "editor-ffi"], reason = "the line diff port and the core that makes a script have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose diff service makes a script over the adapter and whose text binding applies one; a third is a decision, so it is made here" },
+  { crate = "editor-diff-imara", wrappers = ["editor-ffi"], reason = "the line diff's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
 ]

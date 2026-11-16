@@ -824,6 +824,60 @@ def Document.apply (document : Document) (transaction : Transaction) (origin : U
   | status =>
     throw (IO.userError s!"the library could not read a transaction's words (status {status})")
 
+/-- One step of an edit script, as the library takes it and a diff gives it
+back (`crates/editor-ffi/src/diffs.rs`). -/
+inductive ScriptStep where
+  /-- Keep the next `count` bytes. -/
+  | retain (count : UInt64)
+  /-- Remove the next `count` bytes. -/
+  | delete (count : UInt64)
+  /-- Put in the `count` bytes of the new text from `start`. -/
+  | insert (start count : UInt64)
+  deriving DecidableEq, Repr
+
+/-- Why the library refused an edit script. -/
+inductive ScriptRefusal where
+  /-- The text has moved past the revision the script was made for. -/
+  | moved
+  /-- The steps do not walk the whole of the text and of the source, or one
+  starts or stops inside a character of either. -/
+  | badChange
+  deriving DecidableEq, Repr
+
+/-- An edit script as it crosses: the count of steps, then a kind (0 a
+retain, 1 a delete, 2 an insert) and two numbers for each. -/
+private def scriptWords (script : Array ScriptStep) : ByteArray :=
+  script.foldl
+    (fun words step =>
+      match step with
+      | .retain count => pushWord (pushWord (pushWord words 0) count) 0
+      | .delete count => pushWord (pushWord (pushWord words 1) count) 0
+      | .insert start count => pushWord (pushWord (pushWord words 2) start) count)
+    (pushWord ByteArray.empty script.size.toUInt64)
+
+/-- `Document.applyScript` as it crosses: the script as words. -/
+@[extern "editor_glue_document_apply_script"]
+private opaque Document.applyScriptRaw (document : @& Document) (base : UInt64)
+    (source : @& Snapshot) (words : @& ByteArray) (origin : UInt64) : IO RawApplied
+
+/-- Applies the edit script `script` to the document as one transaction,
+taking what it puts in from `source` and recording `origin` as who made the
+edit, unless the document's revision is not `base`; and returns the revision
+it produced. A refused script changes nothing: the revision is looked at
+first, under the document's lock, then whether the steps fit. -/
+def Document.applyScript (document : Document) (base : UInt64) (source : Snapshot)
+    (script : Array ScriptStep) (origin : UInt64) : IO (Except ScriptRefusal UInt64) := do
+  let raw ← document.applyScriptRaw base source (scriptWords script) origin
+  match raw.status with
+  | 0 =>
+    return .ok raw.revision
+  | 1 =>
+    return .error .badChange
+  | 4 =>
+    return .error .moved
+  | status =>
+    throw (IO.userError s!"the library could not apply an edit script (status {status})")
+
 /-- A range of one text, as byte offsets and as points with their columns in
 bytes. -/
 structure Span where
@@ -1717,6 +1771,58 @@ have not been taken, together. A readout for tests, which use it to see that
 a cancel left nothing behind. -/
 @[extern "editor_glue_files_pending"]
 opaque filesPending : IO UInt64
+
+/-- Asks the library's diff service for the line diff of what `old` and
+`new` hold, with its engine asked about at most `limit` lines a side, as the
+request `id`, and returns whether it was accepted. It returns at once, and
+the library keeps its own hold on both texts. The completion is a
+`completion` event on the completion queue, from the library source 5, whose
+code is `id`; there is none if the request is cancelled first. The script is
+then taken with `diffsTake`. `false`, with nothing started, if `id` is in use
+or the service could not start its thread. -/
+@[extern "editor_glue_diffs_start"]
+opaque diffsStart (id : UInt64) (old new : @& Snapshot) (limit : UInt64) : IO Bool
+
+/-- `diffsTake` before its words are decoded. -/
+@[extern "editor_glue_diffs_take"]
+private opaque diffsTakeRaw (id : UInt64) : IO (Option ByteArray)
+
+/-- The edit script `bytes` spell: the count of steps, then a kind and two
+numbers for each (`crates/editor-ffi/src/diffs.rs`, "How a script
+crosses"). An error, with what was wrong, for words that spell none. It is
+public for `FfiTest`. -/
+def ScriptStep.decode (bytes : ByteArray) : Except String (Array ScriptStep) := do
+  let some words := wordsOf? bytes | throw "its words are not whole words"
+  let some count := words[0]? | throw "it has no count"
+  unless words.size == 1 + 3 * count.toNat do
+    throw s!"{count} steps are not {words.size - 1} words"
+  (Array.range count.toNat).mapM fun index =>
+      match words[1 + 3 * index]!, words[2 + 3 * index]!, words[3 + 3 * index]! with
+      | 0, count, 0 => pure (.retain count)
+      | 1, count, 0 => pure (.delete count)
+      | 2, start, count => pure (.insert start count)
+      | kind, _, _ => throw s!"the step kind {kind} is no step"
+
+/-- Hands over the script of the diff request `id`, once. `none` when the
+service keeps no script for `id`. It throws if the library sends words these
+bindings cannot read. -/
+def diffsTake (id : UInt64) : IO (Option (Array ScriptStep)) := do
+  let some bytes ← diffsTakeRaw id | return none
+  match ScriptStep.decode bytes with
+  | .ok script =>
+    return some script
+  | .error reason =>
+    throw (IO.userError s!"the library's edit script could not be read: {reason}")
+
+/-- Cancels the diff request `id`, and returns whether there was anything to
+cancel. Safe for an id that is unknown. -/
+@[extern "editor_glue_diffs_cancel"]
+opaque diffsCancel (id : UInt64) : IO Bool
+
+/-- How many diff requests are waiting or being worked, and how many scripts
+have not been taken, together. A readout for tests. -/
+@[extern "editor_glue_diffs_pending"]
+opaque diffsPending : IO UInt64
 
 /-- Which of the library's platforms runs the window. -/
 inductive Platform where

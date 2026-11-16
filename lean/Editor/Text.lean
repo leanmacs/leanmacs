@@ -1,3 +1,4 @@
+import Editor.Diff.Script
 import Editor.Program
 
 /-!
@@ -361,6 +362,23 @@ operations as they are: they are lifted into it.
   each holding what the edit removed, until `dropInverses`. That is
   unbounded, and when to drop is the editor's to decide: its history knows
   which it still needs.
+- **Applying an edit script** (`TextId.applyScript`) is how a reload takes in
+  what a line diff of the buffer and its file answered (`Editor/Diff.lean`):
+  the script (`Diff.Script`, `Editor/Diff/Script.lean`) walks the text and a
+  source, a text or a snapshot, and each insert names a range of the source.
+  It is applied as **one** transaction with no selection: one revision, one
+  entry of the log with the origin it is given, one kept inverse, every
+  marker moved through its changed ranges by the usual bias, and the bytes
+  it puts in traced to that revision and origin. A script of one retain
+  still makes a revision, as an empty transaction does. The text afterwards
+  is what `Diff.Script.run` gives. It is refused, changing nothing, in this
+  order: with `noSuchText`; with `moved` when the text's revision is not the
+  `base` the script was made for, so a script made of an older state is
+  never applied; with the source's own refusal; and with `badChange` when
+  the steps do not walk the whole of the text and of the source, or a step
+  starts or stops at an offset that is not a position of either. Its cost is
+  linear in its steps and in the bytes it puts in, which the library copies
+  from rope to rope: it searches nothing.
 - A refused request changes nothing.
 - A refusal is a `throw` in `TextM`. A command that fails leaves the store
   as it was at the failure: nothing here rolls back the requests it had
@@ -567,6 +585,8 @@ inductive TextError where
   | noInverse
   /-- The text is not in the state the run ended in. -/
   | notInState
+  /-- An edit script was made for a revision the text has moved past. -/
+  | moved
   deriving DecidableEq, Repr
 
 /-- A refusal in a few words, for the user: what the headless host prints
@@ -583,6 +603,7 @@ def TextError.describe : TextError → String
   | .noSuchMarker => "no such marker"
   | .noInverse => "no inverse"
   | .notInState => "not in state"
+  | .moved => "the text has moved"
 
 /-- The unit a point's column is counted in. -/
 inductive ColumnUnit where
@@ -851,6 +872,13 @@ origins is open (`docs/design/text-and-display.md`, "Origin"). -/
 def Origin.user : Origin :=
   ⟨1⟩
 
+/-- The origin of a reload from disk: the edit a reload of a buffer from its
+file makes, which takes in the text another program wrote
+(`Files.reloaded`, `Editor/Files.lean`). That 2 means this is the editor's
+convention, as 0 and 1 do. -/
+def Origin.disk : Origin :=
+  ⟨2⟩
+
 /-- One step of a transaction's walk over a text, with its length in bytes. -/
 inductive Change where
   /-- Keep the next `count` bytes. -/
@@ -1048,6 +1076,12 @@ inductive TextRequest where
   /-- Take the snapshot `snapshot`, which a job held and this run was
   handed, into the store. -/
   | adopt (snapshot : JobSnapshotId)
+  /-- Apply the edit script `script` to `text` as one transaction, taking what
+  it puts in from `source`, with `origin` as who made the edit, unless the
+  text has moved past the revision `base`. -/
+  |
+  applyScript (text : TextId) (base : Nat) (source : TextSource) (script : Diff.Script)
+    (origin : Origin)
 
 /-- The type of the reply to each request: the new text's id for `create`,
 and for the others a refusal or the result. -/
@@ -1070,6 +1104,7 @@ def TextRequest.Reply : TextRequest → Type
   | .dropInverses .. => Except TextError Unit
   | .copy _ => Except TextError TextId
   | .adopt _ => Except TextError SnapshotId
+  | .applyScript .. => Except TextError Nat
 
 /-- The text port: `TextRequest` and the reply to each request. -/
 abbrev textPort : Port :=
@@ -1243,6 +1278,20 @@ handed: one no job was given, another job's, or any id in a command that is
 not a job's. -/
 def JobSnapshotId.adopt (snapshot : JobSnapshotId) : TextM SnapshotId :=
   ExceptT.mk (Program.request (port := textPort) (.adopt snapshot))
+
+/-- Applies the edit script `script` to `text` as one transaction with no
+selection, taking what it puts in from `source`, with `origin` as who made
+the edit, and returns the revision it produced: what applying a transaction
+does, the markers moved through its changed ranges by bias and one entry of
+the log ("Applying an edit script", in the rules of the port).
+
+Refused, changing nothing, in this order: with `noSuchText`; with `moved`
+when the text's revision is not `base`; with the source's own refusal; and
+with `badChange` when the steps do not walk the whole of the text and of the
+source, at positions of both. -/
+def TextId.applyScript (text : TextId) (base : Nat) (source : TextSource) (script : Diff.Script)
+    (origin : Origin) : TextM Nat :=
+  ExceptT.mk (Program.request (port := textPort) (.applyScript text base source script origin))
 
 /-- A new text holding what the job's snapshot `snapshot` holds: how a file a
 job loaded becomes a text. It adopts the snapshot, copies it, and releases

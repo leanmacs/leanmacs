@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Diff
 import Editor.File
 import Editor.FileWatch
 import Editor.Process
@@ -64,6 +65,13 @@ its job: the runner ends every watch the job holds when the job ends,
 however it ends (`Editor/Job/Runner.lean`, "A watch does not outlive its
 job"). It is not the interrupt port `Editor/Watch.lean`.
 
+A job reaches a line diff through one request, `diff`, which carries a
+`DiffRequest` (`Editor/Diff.lean`): `Diff.lines` diffs two snapshots, named
+as a save names its source, and replies with an edit script or a refusal,
+an `Except DiffError`. It waits, as a load does: the library's diff service
+works it on a thread of its own, so a long diff holds neither the editor
+thread nor a load. A command applies the script (`TextId.applyScript`).
+
 No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
 something a job names.
@@ -102,6 +110,12 @@ its watches see; its fake is `FakeFileWatches` and its real implementation
 `realFileWatches`. Withdrawing a wait tells the watch service too, and
 ending a job ends its watches (`Handle.endWatches`).
 
+The diff service is the fourth: `JobRequest.diff`, whose requests are
+`DiffRequest`s. Its model is `Editor/Diff/Model.lean`, which the file model
+answers it with (`FileModel.diff`), since that holds the snapshots a diff
+names; its fake is `FakeFiles.diffs`, over the same model, and its real
+implementation `realDiffs`. Withdrawing a wait tells the diff service too.
+
 ## The pieces
 
 - the port, here: the requests, the reply to each, the operations a job is
@@ -112,6 +126,9 @@ ending a job ends its watches (`Handle.endWatches`).
   the processes a job runs, `Editor/Process/Model.lean`;
 - the file-watch requests as data, `Editor/FileWatch.lean`, and the pure
   model of what a job's watches see, `Editor/FileWatch/Model.lean`;
+- the diff request as data, `Editor/Diff.lean`, the edit script it answers,
+  `Editor/Diff/Script.lean`, and the pure model of a line diff,
+  `Editor/Diff/Model.lean`;
 - its pure model, `Editor/Job/Model.lean`, which tests run against;
 - its contract, `Editor/Job/Contract.lean`: three lists of properties, of
   the clock, of the file requests and of the process requests, run against
@@ -146,6 +163,8 @@ inductive JobRequest where
   /-- Watch a file or a directory, or wait for a watch's next delivery
   (`Editor/FileWatch.lean`). -/
   | fileWatch (request : FileWatchRequest)
+  /-- Diff two snapshots (`Editor/Diff.lean`), and wait for it. -/
+  | diff (request : DiffRequest)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -157,6 +176,7 @@ def JobRequest.Reply : JobRequest → Type
   | .file request => request.Reply
   | .process request => request.Reply
   | .fileWatch request => request.Reply
+  | .diff request => request.Reply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -264,6 +284,14 @@ taken, at most one a path, once the window from its first change has
 passed. -/
 def FileWatch.next (watch : FileWatch.Id) : JobM (Except FileWatchError (Array FileWatch.Change)) :=
   ExceptT.lift (Program.request (port := jobPort) (.fileWatch (.next watch)))
+
+/-- The line diff of what `old` and `new` hold, with the engine asked about at
+most `limit` lines a side, and waits for it: the edit script that turns the
+one into the other, or why it was refused. The diff is worked off the
+editor's thread, and only the script comes back. `Editor/Diff.lean` has the
+rules. -/
+def Diff.lines (old new : File.Source) (limit : Nat) : JobM (Except DiffError Diff.Script) :=
+  ExceptT.lift (Program.request (port := jobPort) (.diff (.lines old new limit)))
 
 namespace Job
 

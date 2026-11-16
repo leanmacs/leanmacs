@@ -1536,6 +1536,52 @@ def adopt (model : TextModel) (snapshot : JobSnapshotId) :
     (.ok ⟨model.snapshots.size⟩, { model with snapshots := model.snapshots.push (some content) })
   | none => (.error .noSuchSnapshot, model)
 
+/-- The changes that apply `script` to a text, taking what it puts in from
+`source`: `none` when the steps do not walk the whole of `source`, an insert
+does not start where the walk is, or a step starts or stops at an offset that
+is not a position of it. Whether the changes fit the text is `apply`'s to
+say. -/
+def scriptChanges (script : Diff.Script) (source : String) : Option (Array Change) := do
+  let mut offset := 0
+  let mut changes := #[]
+  for step in script do
+    match step with
+    | .retain count =>
+      offset := offset + count
+      changes := changes.push (.retain count)
+    | .delete count =>
+      changes := changes.push (.delete count)
+    | .insert start count =>
+      unless start == offset do
+        none
+      changes := changes.push (.insert (← slice source start (start + count)))
+      offset := start + count
+    unless isPosition source offset do
+      none
+  unless offset == source.utf8ByteSize do
+    none
+  return changes
+
+/-- The model's answer to applying `script` to the text `id`, taking what it
+puts in from `source`, with `origin` as who made the edit, unless its
+revision is not `base`; and the model after it. The refusals are looked for
+in the order the port gives. An accepted script is the transaction of its
+changes with no selection, so it goes through `apply` and is one edit like
+any other. -/
+def applyScript (model : TextModel) (id : TextId) (base : Nat) (source : TextSource)
+    (script : Diff.Script) (origin : Origin) : Except TextError Nat × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    if content.revision != base then (.error .moved, model)
+    else
+      match model.lookup source with
+      | .error refusal => (.error refusal, model)
+      | .ok taken =>
+        match scriptChanges script taken.contents with
+        | none => (.error .badChange, model)
+        | some changes => model.apply id { changes } origin
+
 /-- The model's answer to each request, and the model after it. -/
 def handle : (request : TextRequest) → TextModel → request.Reply × TextModel
   | .create initial, model => model.made initial
@@ -1572,6 +1618,8 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
   | .dropInverses id first last, model => model.dropInverses id first last
   | .copy source, model => model.copy source
   | .adopt snapshot, model => model.adopt snapshot
+  | .applyScript id base source script origin, model =>
+    model.applyScript id base source script origin
 
 end TextModel
 

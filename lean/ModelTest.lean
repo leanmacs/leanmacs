@@ -900,7 +900,11 @@ service. -/
 def Rig.withFiles (model : FileModel) : BaseIO (Rig × Job.FakeFiles) := do
   let rig ← Rig.new
   let files ← Job.FakeFiles.new rig.services.completions model
-  return ({ rig with services := { rig.services with files := files.files } }, files)
+  return ({ rig with
+        services :=
+          { rig.services with
+            files := files.files, diffs := files.diffs } },
+      files)
 
 /-- Runs a file property's job against the job port's model, over the model
 of its files: how the job ended, and the files afterwards. -/
@@ -918,12 +922,13 @@ def runFilesOnFake (property : JobContract.FileProperty) :
   let outcome ← runOnFake (property.holds fileRoot) (some rig)
   return (outcome, filesIn (← files.model))
 
-/-- The names of the job port's file properties that do not hold of the job
-model, and of those that do not hold of the runner over the fake of the file
-service. -/
+/-- The names of the job port's file and diff properties that do not hold of
+the job model, and of those that do not hold of the runner over the fake of
+the file service, whose model answers a diff. -/
 def fileFailures : IO (List String) := do
-  let onModel ← JobContract.fileFailures runFilesOnModel JobContract.fileProperties
-  let onFake ← JobContract.fileFailures runFilesOnFake JobContract.fileProperties
+  let properties := JobContract.fileProperties ++ JobContract.diffProperties
+  let onModel ← JobContract.fileFailures runFilesOnModel properties
+  let onFake ← JobContract.fileFailures runFilesOnFake properties
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake file service: {·}")
 

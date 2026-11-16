@@ -1956,11 +1956,13 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
   let held ← Job.HeldSnapshots.new
   let refused ← Job.RefusedRuns.new
   let watches ← Job.RealWatches.new
+  let refusedDiffs ← Job.RefusedDiffs.new
   return shippedOver sysroot oleanDir configDir emit
       { completions, timers := Job.realTimers completions,
         files := Job.realFiles completions published.reader held
         processes := Job.realProcesses completions refused
-        fileWatches := Job.realFileWatches completions watches } published held
+        fileWatches := Job.realFileWatches completions watches
+        diffs := Job.realDiffs completions published.reader held refusedDiffs } published held
 
 /-- The headless mode of the executable, handed the command line after
 `headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>

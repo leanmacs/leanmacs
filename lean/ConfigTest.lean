@@ -3056,13 +3056,16 @@ def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Com
   let completions ← context.fileWaits
   let stage ← Stage.new context context.elaborator source compiled (some completions)
   let collaborators := stage.collaborators
+  let refusedDiffs ← Job.RefusedDiffs.new
   return { stage with
       collaborators :=
         { collaborators with
           services :=
             { collaborators.services with
-              files :=
-                Job.realFiles completions collaborators.published.reader collaborators.held } } }
+              files := Job.realFiles completions collaborators.published.reader collaborators.held
+              diffs :=
+                Job.realDiffs completions collaborators.published.reader collaborators.held
+                  refusedDiffs } } }
 
 /-- A compiled command called `name`, written for the file checks, that runs
 the compiled open command with `path` as its argument: the driver's `run`

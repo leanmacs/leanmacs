@@ -912,9 +912,45 @@ interface in Lean:
 
 | Service | Notes |
 |---|---|
-| **Diff** | Line and word diff between two texts or snapshots, producing hunks; apply or revert a hunk. Used for gutter marks, for turning an agent's whole-file "old text / new text" into reviewable hunks, and for external reloads. |
+| **Diff** | Line and word diff between two texts or snapshots, producing hunks; apply or revert a hunk. Used for gutter marks, for turning an agent's whole-file "old text / new text" into reviewable hunks, and for external reloads. Built of it: the line diff a reload applies, "Diff, as built for reload", below. |
 | **Search** | Regex and literal search over a rope without copying it; project-wide search on worker threads with streamed results. Built of it: search within a text, "Search, as built", below. |
 | **Fuzzy matching** | Which candidates a pattern matches, and in what order, for a prompt's candidates and for pickers. Built: "Fuzzy matching, as built", below. |
+
+### Diff, as built for reload
+
+Built by the daily-driver floor's phase 5, for reloading a buffer from its
+file as one edit that keeps the cursor and the markers.
+
+**The port matches lines, and the script is core logic** (`crates/editor-diff`,
+no dependencies).
+
+- `LineDiff` is the port: the hunks that turn one list of lines into
+  another. Its fake is `Lcs`, the textbook LCS; its contract holds what a
+  script made over any engine keeps.
+- `script(engine, old, new, limit)` is the core. It strips the lines the two
+  texts share at their start and end in linear time, asks the engine about
+  the middle only when each side is at most `limit` lines (the editor passes
+  100 000), checks the engine's hunks and takes a list that is not one as a
+  single hunk, and trims each hunk to the longest common prefix and suffix
+  that end on a character boundary of both texts, so an escape and a
+  character that differs only in its trailing bytes are replaced whole.
+- The script is steps that walk both texts: retain a count, delete a count,
+  insert a range of the new text. It names no text.
+- **The adapter** is `editor-diff-imara`, over imara-diff 0.2.0's histogram
+  diff, pinned exactly; no imara type is public, and `deny.toml` lets only
+  it name the library and only `editor-ffi` name it.
+- **The service** is `editor-ffi`'s fifth behind the completion queue
+  (`src/diffs.rs`): one thread of its own works the oldest request with no
+  lock held, so a long diff holds up neither a load nor the editor thread.
+  It is given two snapshot handles, cloned, and nothing it could write
+  editor state with. The script crosses back as words.
+- **Applying a script** is `editor_ffi_document_apply_script`: one
+  transaction, its inserts copied rope to rope from a snapshot a piece at a
+  time, refused (`Moved`) when the document's revision is not the one the
+  script was made for, and refused (`BadChange`) unless every step starts
+  and stops on a character boundary of both. It searches nothing, so its
+  cost on the editor thread is linear in the steps and the inserted bytes.
+- Not built: a word diff, applying or reverting one hunk, gutter marks.
 
 ### Fuzzy matching, as built
 

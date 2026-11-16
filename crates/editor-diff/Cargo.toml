@@ -1,0 +1,14 @@
+[package]
+name = "editor-diff"
+version = "0.1.0"
+description = "A line diff of two texts as an edit script: the LineDiff port, its fake and its contract, and the core that strips, bounds and trims"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency and no dev-dependency: the port names no diff library, and
+# the core (the common head and tail, the line limit, the trim of each
+# hunk to a character boundary) is tested on the port's fake, a plain LCS
+# over lines. The library that matches lines is behind the port, in
+# `editor-diff-imara`.
+[dependencies]

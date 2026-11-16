@@ -963,6 +963,72 @@ lean_obj_res editor_glue_files_pending(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_files_pending()));
 }
 
+// ---- The diff service, and applying its script ----
+//
+// A start takes two snapshot handles, which the library clones; a script
+// comes back as words in a `RawWords`, and goes to a document as words with
+// the snapshot its inserts are taken from.
+
+bool editor_ffi_diffs_start(uint64_t id, const editor_ffi_snapshot *old,
+                            const editor_ffi_snapshot *new_, uint64_t limit);
+bool editor_ffi_diffs_take(uint64_t id, editor_ffi_raw_words *out);
+bool editor_ffi_diffs_cancel(uint64_t id);
+uint64_t editor_ffi_diffs_pending(void);
+void editor_ffi_document_apply_script(const editor_ffi_document *document,
+                                      uint64_t base,
+                                      const editor_ffi_snapshot *source,
+                                      const uint8_t *words, size_t words_len,
+                                      uint64_t origin,
+                                      editor_ffi_raw_applied *out);
+
+// `Editor.Ffi.diffsStart : UInt64 → @& Snapshot → @& Snapshot → UInt64 → IO
+// Bool`
+lean_obj_res editor_glue_diffs_start(uint64_t id, b_lean_obj_arg old,
+                                     b_lean_obj_arg new_, uint64_t limit) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_diffs_start(
+      id, lean_get_external_data(old), lean_get_external_data(new_), limit)));
+}
+
+// `Editor.Ffi.diffsTakeRaw : UInt64 → IO (Option ByteArray)`. `none` when the
+// service keeps no script for the id.
+lean_obj_res editor_glue_diffs_take(uint64_t id) {
+  editor_ffi_raw_words raw;
+  if (!editor_ffi_diffs_take(id, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *words = byte_array_copy(raw.words, raw.len);
+  editor_ffi_text_free(raw.words, raw.len);
+  return lean_io_result_mk_ok(option_some(words));
+}
+
+// `Editor.Ffi.diffsCancel : UInt64 → IO Bool`
+lean_obj_res editor_glue_diffs_cancel(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_diffs_cancel(id)));
+}
+
+// `Editor.Ffi.diffsPending : IO UInt64`
+lean_obj_res editor_glue_diffs_pending(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_diffs_pending()));
+}
+
+// `Editor.Ffi.Document.applyScriptRaw : @& Document → UInt64 → @& Snapshot →
+// @& ByteArray → UInt64 → IO RawApplied`
+lean_obj_res editor_glue_document_apply_script(b_lean_obj_arg document,
+                                               uint64_t base,
+                                               b_lean_obj_arg source,
+                                               b_lean_obj_arg words,
+                                               uint64_t origin) {
+  editor_ffi_raw_applied raw;
+  editor_ffi_document_apply_script(
+      lean_get_external_data(document), base, lean_get_external_data(source),
+      byte_array_bytes(words), byte_array_len(words), origin, &raw);
+  // `RawApplied`: no object fields, then `status` and `revision`.
+  lean_object *applied = lean_alloc_ctor(0, 0, 2 * sizeof(uint64_t));
+  lean_ctor_set_uint64(applied, uint64_field(0, 0), raw.status);
+  lean_ctor_set_uint64(applied, uint64_field(0, 1), raw.revision);
+  return lean_io_result_mk_ok(applied);
+}
+
 // ---- The process service ----
 //
 // The third service behind the completion queue. A run goes in with an id,
