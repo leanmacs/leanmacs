@@ -230,15 +230,25 @@ release needs a build number of its own. `NSHumanReadableCopyright` names
 the licence, as `Cargo.toml` gives it, and `LSApplicationCategoryType` files
 the app under developer tools.
 
-Its document types (`CFBundleDocumentTypes`) are plain text
-(`public.plain-text`, which covers `.txt` and Markdown among others) and
-source code (`public.source-code`, C, scripts and the system's other source
-types). For each the app's role is `Editor`, since it reads and writes them,
-and its rank `Alternate`: Finder offers it under "Open With" and it accepts a
-drop on its Dock icon, but it never becomes the default app for the type,
-which `Owner` or `Default` would claim. `.lean` files have no system type and
-get a dynamic one that conforms to neither, so Finder does not offer the app
-for them until a type is declared for them (the rdm task `lean-source-uti`). -/
+The rule for its document types (`CFBundleDocumentTypes`): registered for
+text, default for nothing. The app's role is `Editor` for each, since it
+reads and writes them, and no `LSHandlerRank` is `Owner` or `Default`, the
+ranks that let LaunchServices make an app the default for a type.
+
+- "Text" is `public.text`, the type plain text, source code, JSON, XML and
+  YAML conform to, at rank `Alternate`: Finder lists the app under "Open
+  With" for all of them, and never chooses it over an `Owner` or `Default`
+  app.
+- "Any file" is `public.data` at rank `None`, which Apple defines as never
+  selected to open files of the type but accepting drops of them. So a file
+  of a type the system does not know (`.lean`, a file with no extension,
+  which get a dynamic type conforming only to `public.data`) can be dropped
+  on the Dock icon or opened through "Open With > Other…", and the app is
+  not listed in every file's "Open With" menu. If it ever is, this entry is
+  dropped.
+
+The app declares no type of its own and none on another's behalf (no
+`UTExportedTypeDeclarations` or `UTImportedTypeDeclarations`). -/
 def appInfoPlist (version : String) : String :=
   s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
@@ -248,26 +258,26 @@ def appInfoPlist (version : String) : String :=
 \t<array>
 \t\t<dict>
 \t\t\t<key>CFBundleTypeName</key>
-\t\t\t<string>Plain text</string>
+\t\t\t<string>Text</string>
 \t\t\t<key>CFBundleTypeRole</key>
 \t\t\t<string>Editor</string>
 \t\t\t<key>LSHandlerRank</key>
 \t\t\t<string>Alternate</string>
 \t\t\t<key>LSItemContentTypes</key>
 \t\t\t<array>
-\t\t\t\t<string>public.plain-text</string>
+\t\t\t\t<string>public.text</string>
 \t\t\t</array>
 \t\t</dict>
 \t\t<dict>
 \t\t\t<key>CFBundleTypeName</key>
-\t\t\t<string>Source code</string>
+\t\t\t<string>Any file</string>
 \t\t\t<key>CFBundleTypeRole</key>
 \t\t\t<string>Editor</string>
 \t\t\t<key>LSHandlerRank</key>
-\t\t\t<string>Alternate</string>
+\t\t\t<string>None</string>
 \t\t\t<key>LSItemContentTypes</key>
 \t\t\t<array>
-\t\t\t\t<string>public.source-code</string>
+\t\t\t\t<string>public.data</string>
 \t\t\t</array>
 \t\t</dict>
 \t</array>

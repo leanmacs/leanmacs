@@ -97,11 +97,13 @@ the same `tools/stage-bundle.sh`. On 2026-11-15 that was 2,006 files,
 bundle identifier `io.github.leanmacs.Leanmacs`, the executable `editor`,
 the icon, `NSHighResolutionCapable`, `LSArchitecturePriority` arm64 and
 `LSMinimumSystemVersion`, the lowest macOS the bundle has been run on
-(27.2). Its two document types (`CFBundleDocumentTypes`) are plain text
-(`public.plain-text`) and source code (`public.source-code`), each with the
-app as an `Editor` at the rank `Alternate`: Finder offers it under "Open
-With" and it takes a drop on its Dock icon, but it is never the default app
-for either. `LSApplicationCategoryType` is
+(27.2). Its two document types (`CFBundleDocumentTypes`) are "Text"
+(`public.text`, which every text type conforms to) at the rank `Alternate`,
+offered under Finder's "Open With" but never chosen over another app, and
+"Any file" (`public.data`) at the rank `None`, accepted on the Dock icon and
+through "Open With > Other…" but never offered or chosen; the app is an
+`Editor` of both. No rank is `Default` or `Owner`, and the plist declares
+no types (no `UTImportedTypeDeclarations` or `UTExportedTypeDeclarations`). `LSApplicationCategoryType` is
 `public.app-category.developer-tools`, and `NSHumanReadableCopyright` names
 the licence, GPL-3.0-or-later.
 

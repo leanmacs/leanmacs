@@ -87,9 +87,15 @@ copy; verifies the copy's signature with `codesign --verify --strict
 `CFBundleExecutable` is an executable file under `Contents/MacOS`,
 `LSArchitecturePriority` starts with arm64, `LSMinimumSystemVersion` is no
 later than this machine's macOS, and `CFBundleDocumentTypes` is exactly two
-types, `public.plain-text` then `public.source-code`, each with
-`CFBundleTypeRole` `Editor` and `LSHandlerRank` `Alternate`, read key by key
-with `plutil -extract`; `CFBundleShortVersionString` and `CFBundleVersion`
+entries, each with `CFBundleTypeRole` `Editor` and one content type,
+`public.text` at `LSHandlerRank` `Alternate` then `public.data` at `None`,
+read key by key with `plutil -extract`; a walk over the whole plist finds no
+`LSHandlerRank` of `Default` or `Owner` and no `UTImportedTypeDeclarations`
+or `UTExportedTypeDeclarations`; and both checks are run on mutated copies
+that must each fail naming the key: a rank of `Default` on the first entry,
+a role of `Viewer` on the second, a second content type, a third entry, and
+for the walk a `Default`, an `Owner` and an inserted
+`UTExportedTypeDeclarations`; `CFBundleShortVersionString` and `CFBundleVersion`
 are each the line of `lean/app/version`, read from the file the build
 reads; `LSApplicationCategoryType` is `public.app-category.developer-tools`
 and `NSHumanReadableCopyright` is not empty) and the executable with `lipo`
