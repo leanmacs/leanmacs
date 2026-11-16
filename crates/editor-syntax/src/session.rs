@@ -36,9 +36,12 @@
 //!    each change ([`Session::set_injections`], [`Session::set_language`]).
 //!    A text still at the base's revision whose base's layers were found
 //!    with another generation is not parsed again: the base tree is kept,
-//!    its layers are found again, and the result is delivered at the same
-//!    revision. So the injections a mode sets are drawn without a key
-//!    pressed.
+//!    its layers are found again, and, when they are not the base's (by
+//!    language, grammar, depth and ranges, which fix a layer's tree), the
+//!    result is delivered at the same revision. So the injections a mode
+//!    sets are drawn without a key pressed. Layers alike are what was
+//!    delivered, and the round is [`Outcome::UpToDate`]: a language's new
+//!    faces are read when highlights are asked, and need no delivery.
 //! 5. The result is the new base, delivered or not.
 //! 6. **The delivery rule.** The result is delivered only if its revision is
 //!    at least the newest the session has been told of
@@ -48,7 +51,8 @@
 //!    [`Outcome::Stale`]: nobody sees it, and it serves only as the base of
 //!    the next parse. So a result is delivered at least at every revision
 //!    told and every one delivered before: the revisions delivered never go
-//!    back, and they repeat only for a round of step 4's, and a result
+//!    back, and they repeat only for a round of step 4's that found new
+//!    layers, and a result
 //!    tagged with a revision older than the current one is never handed
 //!    out.
 //!
@@ -310,6 +314,29 @@ struct Base<T> {
     tree: T,
     /// The generation of the injections its layers were found with.
     generation: u64,
+    /// Its layers, each as its language, grammar, depth and ranges: what
+    /// tells whether layers found again are new.
+    layers: Vec<LayerKey>,
+}
+
+/// A layer as what tells it from another of the same text: its language,
+/// grammar, depth and ranges. Two layers alike in these have equal trees,
+/// each parsed whole in its ranges.
+type LayerKey = (String, GrammarName, u32, Vec<Range<usize>>);
+
+/// The keys of `layers`, in order.
+fn keys<T>(layers: &[Layer<T>]) -> Vec<LayerKey> {
+    layers
+        .iter()
+        .map(|layer| {
+            (
+                layer.language.clone(),
+                layer.grammar.clone(),
+                layer.depth,
+                layer.ranges.clone(),
+            )
+        })
+        .collect()
 }
 
 /// What a round delivers into and a touch tells.
@@ -579,12 +606,44 @@ impl<S: Syntax> Session<S> {
             parsers,
             base,
         } = &mut *work;
-        let tree = match base.as_ref() {
+        let tree = match base.as_mut() {
             Some(base) if base.revision == revision && base.generation == generation => {
                 return Outcome::UpToDate;
             }
-            // The text as it was; only the injections are new.
-            Some(base) if base.revision == revision => base.tree.clone(),
+            // The text as it was; only the injections are new. Layers alike
+            // in their keys are what was delivered: nothing to deliver.
+            Some(base) if base.revision == revision => {
+                let layers = layers(syntax, &injections, &base.tree, &latest.snapshot, parsers);
+                if keys(&layers) == base.layers {
+                    base.generation = generation;
+                    drop(work);
+                    let mut state = lock(&self.state);
+                    if state
+                        .delivered
+                        .as_ref()
+                        .is_some_and(|parsed| parsed.revision == revision)
+                    {
+                        state.delivered_generation = generation;
+                        self.delivered.notify_all();
+                    }
+                    return Outcome::UpToDate;
+                }
+                let tree = base.tree.clone();
+                *base = Base {
+                    revision,
+                    tree: tree.clone(),
+                    generation,
+                    layers: keys(&layers),
+                };
+                drop(work);
+                return self.deliver(
+                    Parsed {
+                        layers,
+                        ..Parsed::new(revision, latest.snapshot, tree)
+                    },
+                    generation,
+                );
+            }
             _ => {
                 let edited = match (base.as_ref(), &latest.patch) {
                     (Some(base), Some(patch))
@@ -606,6 +665,7 @@ impl<S: Syntax> Session<S> {
             revision,
             tree: tree.clone(),
             generation,
+            layers: keys(&layers),
         });
         drop(work);
         self.deliver(
@@ -1465,6 +1525,37 @@ pub(crate) mod tests {
             Outcome::UpToDate
         );
         assert_eq!(fixture.delivered(), [Revision::new(0), Revision::new(0)]);
+    }
+
+    #[test]
+    fn injections_that_find_the_layers_delivered_deliver_nothing_new() {
+        let fixture = Fixture::new("a b");
+        fixture.session.parse_once(&fixture.syntax);
+        // No list: the injections find no layer, as before them.
+        inject(&fixture.session);
+
+        assert_eq!(
+            fixture.session.parse_once(&fixture.syntax),
+            Outcome::UpToDate
+        );
+        assert_eq!(fixture.delivered(), [Revision::new(0)]);
+        // And a wait for the revision is not held up by the injections.
+        assert!(
+            fixture
+                .session
+                .wait_for(Revision::new(0), Duration::ZERO)
+                .is_some()
+        );
+
+        // A language set again with the same layers: nothing new either.
+        let text = Fixture::new("(a) b");
+        inject(&text.session);
+        text.session.parse_once(&text.syntax);
+        assert!(!delivered_layers(&text).is_empty());
+        text.session
+            .set_language("inner".to_owned(), inner_language());
+        assert_eq!(text.session.parse_once(&text.syntax), Outcome::UpToDate);
+        assert_eq!(text.delivered(), [Revision::new(0)]);
     }
 
     #[test]
