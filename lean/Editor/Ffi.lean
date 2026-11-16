@@ -267,7 +267,8 @@ arrives on the editor queue.
   `closeRequested` and stays open until `windowClose`, which any thread may
   call.
 - Lean asks things of the window with `windowRequest`: enter or leave
-  fullscreen, or minimise (`WindowRequest`, tags 0, 1 and 2). It never
+  fullscreen, minimise, or the light or the dark appearance of its title
+  and buttons (`WindowRequest`, tags 0 to 4). It never
   blocks, and it goes through the window's own loop, not the main-thread
   service, which still answers nothing else while the window runs. Whether
   the window is in fullscreen comes back on every resize, bit 0 of its
@@ -1819,8 +1820,8 @@ no window. -/
 @[extern "editor_glue_window_close"]
 opaque windowClose (platform : Platform) : IO Unit
 
-/-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0, 1
-and 2, in this order). The title is not one: it is a field of the scene. -/
+/-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0 to
+4, in this order). The title is not one: it is a field of the scene. -/
 inductive WindowRequest where
   /-- Put the window in the system's fullscreen; one in it stays there. -/
   | enterFullscreen
@@ -1829,6 +1830,12 @@ inductive WindowRequest where
   | leaveFullscreen
   /-- Minimise the window. -/
   | minimise
+  /-- Draw the window's title and buttons in the system's light
+  appearance, for a light paper. -/
+  | lightAppearance
+  /-- Draw the window's title and buttons in the system's dark appearance,
+  for a dark paper. -/
+  | darkAppearance
   deriving DecidableEq, Repr
 
 /-- Asks the window `platform` is running to do what `request` says. Any
@@ -1853,7 +1860,7 @@ inductive WindowAsked where
 private opaque windowAskedRaw (platform : Platform) : IO RawWords
 
 /-- What the words of `windowAsked` spell from the index `at_` on, each
-thing asked in order: a request's tag, or the tag 3, a count and the
+thing asked in order: a request's tag, or the tag 5, a count and the
 scalar values of a title's characters. `none` when they spell nothing. -/
 private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     (asked : Array WindowAsked := #[]) : Option (Array WindowAsked) :=
@@ -1863,7 +1870,9 @@ private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     | 0 => askedOf words (at_ + 1) (asked.push (.request .enterFullscreen))
     | 1 => askedOf words (at_ + 1) (asked.push (.request .leaveFullscreen))
     | 2 => askedOf words (at_ + 1) (asked.push (.request .minimise))
-    | 3 => do
+    | 3 => askedOf words (at_ + 1) (asked.push (.request .lightAppearance))
+    | 4 => askedOf words (at_ + 1) (asked.push (.request .darkAppearance))
+    | 5 => do
       let count := (← words[at_ + 1]?).toNat
       let scalars ← (List.range count).mapM fun index => words[at_ + 2 + index]?
       let chars ←

@@ -478,6 +478,7 @@ impl Seen {
             scale: self.scale,
             fullscreen: self.fullscreen,
             corner_clearance: self.corner,
+            top_inset: 0,
         }
     }
 
@@ -1253,6 +1254,7 @@ mod tests {
             scale,
             fullscreen,
             corner_clearance: if fullscreen { 0 } else { ROUNDED },
+            top_inset: 0,
         }
     }
 

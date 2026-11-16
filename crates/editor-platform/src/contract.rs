@@ -31,6 +31,9 @@
 //! - **A window in fullscreen has no corners to keep clear of.** A
 //!   [`Input::Resized`] that says fullscreen says a corner clearance of 0
 //!   ([`Violation::CornerInFullscreen`]).
+//! - **A window in fullscreen has no title bar over its content.** A
+//!   [`Input::Resized`] that says fullscreen says a top inset of 0
+//!   ([`Violation::TopInsetInFullscreen`]).
 //!
 //! What a window does with a request while it runs is the contract of
 //! [`requests`], which needs no platform.
@@ -60,7 +63,7 @@
 //! The check keeps every resize the run reported, in order
 //! ([`Check::resizes`]), for whoever ran it to say what the window said of
 //! itself: `editor-platform-winit`'s example prints them, which is how a
-//! real window's corner clearance is seen.
+//! real window's corner clearance and top inset are seen.
 //!
 //! The crate docs say where the real adapter is held to this.
 
@@ -110,6 +113,9 @@ pub enum Violation {
     /// This resize said the window is in fullscreen and has a corner
     /// clearance other than 0.
     CornerInFullscreen(Resize),
+    /// This resize said the window is in fullscreen and has a top inset
+    /// other than 0.
+    TopInsetInFullscreen(Resize),
 }
 
 impl fmt::Display for Violation {
@@ -153,6 +159,13 @@ impl fmt::Display for Violation {
                     f,
                     "a resize in fullscreen said a corner clearance of {}",
                     size.corner_clearance
+                )
+            }
+            Self::TopInsetInFullscreen(size) => {
+                write!(
+                    f,
+                    "a resize in fullscreen said a top inset of {}",
+                    size.top_inset
                 )
             }
         }
@@ -485,6 +498,13 @@ impl Check {
             .find(|size| size.fullscreen && size.corner_clearance != 0)
         {
             return Err(Violation::CornerInFullscreen(*size));
+        }
+        if let Some(size) = progress
+            .resizes
+            .iter()
+            .find(|size| size.fullscreen && size.top_inset != 0)
+        {
+            return Err(Violation::TopInsetInFullscreen(*size));
         }
         Ok(())
     }
@@ -1051,12 +1071,21 @@ mod tests {
 
             let verdict = check(
                 Arc::clone(&platform),
-                WindowOptions { composition },
+                WindowOptions {
+                    composition,
+                    ..WindowOptions::default()
+                },
                 GENEROUS,
             );
 
             assert_eq!(verdict, Ok(()));
-            assert_eq!(platform.runs(), [WindowOptions { composition }]);
+            assert_eq!(
+                platform.runs(),
+                [WindowOptions {
+                    composition,
+                    ..WindowOptions::default()
+                }]
+            );
         }
     }
 
@@ -1130,6 +1159,41 @@ mod tests {
             opened("cornered"),
             Input::Resized(windowed),
             Input::Resized(square),
+        ]);
+
+        assert_eq!(check(platform, WindowOptions::default(), GENEROUS), Ok(()));
+    }
+
+    #[test]
+    fn a_platform_whose_resize_in_fullscreen_says_a_top_inset_is_refused() {
+        // A window in fullscreen has no title bar over its content.
+        let covered = Resize {
+            fullscreen: true,
+            top_inset: 28,
+            ..ScriptedPlatform::SIZE
+        };
+        let platform = Reports::new(vec![opened("covered"), Input::Resized(covered)]);
+
+        assert_eq!(
+            check(platform, WindowOptions::default(), GENEROUS),
+            Err(Violation::TopInsetInFullscreen(covered))
+        );
+    }
+
+    #[test]
+    fn a_platform_whose_windowed_resize_says_a_top_inset_keeps_the_contract() {
+        let windowed = Resize {
+            top_inset: 28,
+            ..ScriptedPlatform::SIZE
+        };
+        let fullscreen = Resize {
+            fullscreen: true,
+            ..ScriptedPlatform::SIZE
+        };
+        let platform = Reports::new(vec![
+            opened("covered"),
+            Input::Resized(windowed),
+            Input::Resized(fullscreen),
         ]);
 
         assert_eq!(check(platform, WindowOptions::default(), GENEROUS), Ok(()));

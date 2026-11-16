@@ -7,8 +7,10 @@
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
+#[cfg(test)]
+use crate::TitleBar;
 use crate::{
-    Button, CannotOpen, Canvas, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
+    Appearance, Button, CannotOpen, Canvas, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
     PhysicalKey, Platform, Pointer, PointerAction, Report, Request, Resize, WindowOptions,
 };
 
@@ -22,19 +24,23 @@ pub struct Shown {
     pub minimised: bool,
     /// The title asked last; `None` until one is.
     pub title: Option<String>,
+    /// The appearance asked last; `None` until one is.
+    pub appearance: Option<Appearance>,
 }
 
 impl Shown {
     /// Carries out `request` on the window.
     ///
     /// Entering and leaving fullscreen set it, and are not toggles; a
-    /// minimise minimises; a title replaces the title.
+    /// minimise minimises; a title replaces the title, and an appearance
+    /// the appearance.
     pub fn carry_out(&mut self, request: &Request) {
         match request {
             Request::EnterFullscreen => self.fullscreen = true,
             Request::LeaveFullscreen => self.fullscreen = false,
             Request::Minimise => self.minimised = true,
             Request::Title(title) => self.title = Some(title.clone()),
+            Request::Appearance(appearance) => self.appearance = Some(*appearance),
         }
     }
 }
@@ -58,7 +64,9 @@ impl Shown {
 /// resize) carrying the new state, on the run's thread and before the
 /// window closes. Its corner clearance is 0 in fullscreen, where the window
 /// has square corners, and out of it the one the script last said outside
-/// fullscreen (0 if none). Any other request reports nothing.
+/// fullscreen (0 if none); its top inset is the same, 0 in fullscreen,
+/// where no title bar covers the window. Any other request reports
+/// nothing.
 pub struct ScriptedPlatform {
     /// What a run reports after [`Input::Opened`], or the reason no window
     /// can be opened.
@@ -90,6 +98,9 @@ struct State {
     /// fullscreen: what a request that takes the window out of fullscreen
     /// says again. 0 until the script says one.
     corner: u32,
+    /// The top inset the run's script last said outside fullscreen, kept
+    /// as [`corner`](Self::corner) is.
+    top: u32,
     /// What requests have given the run to report, oldest first.
     to_report: VecDeque<Resize>,
 }
@@ -106,6 +117,7 @@ impl ScriptedPlatform {
         scale: 1.0,
         fullscreen: false,
         corner_clearance: 0,
+        top_inset: 0,
     };
 
     /// A platform whose window reports `script` after [`Input::Opened`].
@@ -188,6 +200,7 @@ impl ScriptedPlatform {
                 scale: 2.0,
                 fullscreen: false,
                 corner_clearance: 0,
+                top_inset: 0,
             }),
             Input::CloseRequested,
         ]
@@ -230,6 +243,7 @@ impl Platform for ScriptedPlatform {
             state.shown = Shown::default();
             state.size = None;
             state.corner = 0;
+            state.top = 0;
             state.to_report.clear();
         }
 
@@ -250,6 +264,7 @@ impl Platform for ScriptedPlatform {
                         state.shown.fullscreen = size.fullscreen;
                         if !size.fullscreen {
                             state.corner = size.corner_clearance;
+                            state.top = size.top_inset;
                         }
                     }
                     drawer(Canvas::Resized(*size));
@@ -302,10 +317,12 @@ impl Platform for ScriptedPlatform {
         state.asked.push(request);
         let fullscreen = state.shown.fullscreen;
         if fullscreen != was {
-            // In fullscreen the window has square corners.
+            // In fullscreen the window has square corners, and no title
+            // bar over its content.
             let size = Resize {
                 fullscreen,
                 corner_clearance: if fullscreen { 0 } else { state.corner },
+                top_inset: if fullscreen { 0 } else { state.top },
                 ..state.size.unwrap_or(Self::SIZE)
             };
             state.size = Some(size);
@@ -489,6 +506,7 @@ mod tests {
                 scale: 1.0,
                 fullscreen: false,
                 corner_clearance: 0,
+                top_inset: 0,
             }
         );
     }
@@ -501,6 +519,7 @@ mod tests {
             scale: 1.0,
             fullscreen: false,
             corner_clearance: 0,
+            top_inset: 0,
         };
         let large = Resize {
             width: 800,
@@ -508,6 +527,7 @@ mod tests {
             scale: 2.0,
             fullscreen: false,
             corner_clearance: 0,
+            top_inset: 0,
         };
         let script = vec![Input::Resized(small), press("a"), Input::Resized(large)];
         let platform = Arc::new(ScriptedPlatform::new(script));
@@ -558,9 +578,15 @@ mod tests {
         }
     }
 
-    /// Composition allowed, and not.
-    const COMPOSING: WindowOptions = WindowOptions { composition: true };
-    const NOT_COMPOSING: WindowOptions = WindowOptions { composition: false };
+    /// Composition allowed, and not, with the themed title bar.
+    const COMPOSING: WindowOptions = WindowOptions {
+        composition: true,
+        title_bar: TitleBar::Themed,
+    };
+    const NOT_COMPOSING: WindowOptions = WindowOptions {
+        composition: false,
+        title_bar: TitleBar::Themed,
+    };
 
     #[test]
     fn it_reports_opened_with_its_name_then_its_script_and_returns_only_once_it_is_closed() {
@@ -665,6 +691,25 @@ mod tests {
     }
 
     #[test]
+    fn it_records_the_title_bar_of_every_run() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let standard = WindowOptions {
+            title_bar: TitleBar::Standard,
+            ..COMPOSING
+        };
+
+        for options in [standard, COMPOSING] {
+            let run = start(&platform, options);
+            assert_eq!(run.next(1), [opened()]);
+            platform.close();
+            assert_eq!(run.result(), Ok(()));
+        }
+
+        let title_bars: Vec<_> = platform.runs().iter().map(|run| run.title_bar).collect();
+        assert_eq!(title_bars, [TitleBar::Standard, TitleBar::Themed]);
+    }
+
+    #[test]
     fn a_failed_run_is_recorded_with_its_options_too() {
         let platform = Arc::new(ScriptedPlatform::failing("no display"));
 
@@ -750,6 +795,7 @@ mod tests {
                     scale: 2.0,
                     fullscreen: false,
                     corner_clearance: 0,
+                    top_inset: 0,
                 }),
                 Input::CloseRequested,
             ]
@@ -857,6 +903,7 @@ mod tests {
             scale: 2.0,
             fullscreen: false,
             corner_clearance: 0,
+            top_inset: 0,
         };
         let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(large)]));
         let run = start(&platform, COMPOSING);
@@ -897,6 +944,7 @@ mod tests {
             scale: 2.0,
             fullscreen: false,
             corner_clearance: 14,
+            top_inset: 0,
         };
         let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(cornered)]));
         let run = start(&platform, COMPOSING);
@@ -915,6 +963,60 @@ mod tests {
         );
         platform.request(Request::LeaveFullscreen);
         assert_eq!(run.next(1), [Input::Resized(cornered)]);
+
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
+    fn it_reports_its_scripts_top_inset_and_none_in_the_fullscreen_a_request_makes() {
+        let covered = Resize {
+            width: 800,
+            height: 600,
+            scale: 2.0,
+            fullscreen: false,
+            corner_clearance: 14,
+            top_inset: 28,
+        };
+        let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(covered)]));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(2), [opened(), Input::Resized(covered)]);
+
+        // A window in fullscreen has no title bar over its content; out of
+        // it, the title bar covers what the script said again.
+        platform.request(Request::EnterFullscreen);
+        assert_eq!(
+            run.next(1),
+            [Input::Resized(Resize {
+                fullscreen: true,
+                corner_clearance: 0,
+                top_inset: 0,
+                ..covered
+            })]
+        );
+        platform.request(Request::LeaveFullscreen);
+        assert_eq!(run.next(1), [Input::Resized(covered)]);
+
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+    }
+
+    #[test]
+    fn an_appearance_request_is_recorded_and_reports_nothing() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(1), [opened()]);
+
+        platform.request(Request::Appearance(Appearance::Dark));
+        platform.request(Request::Appearance(Appearance::Light));
+        assert!(run.is_waiting(), "an appearance reports nothing");
+        assert_eq!(
+            platform.asked(),
+            [
+                Request::Appearance(Appearance::Dark),
+                Request::Appearance(Appearance::Light),
+            ]
+        );
 
         platform.close();
         assert_eq!(run.result(), Ok(()));
@@ -949,6 +1051,7 @@ mod tests {
                 fullscreen: false,
                 minimised: false,
                 title: None,
+                appearance: None,
             }
         );
 
@@ -961,12 +1064,15 @@ mod tests {
         shown.carry_out(&Request::LeaveFullscreen);
         shown.carry_out(&Request::LeaveFullscreen);
         shown.carry_out(&Request::Minimise);
+        shown.carry_out(&Request::Appearance(Appearance::Dark));
+        shown.carry_out(&Request::Appearance(Appearance::Light));
         assert_eq!(
             shown,
             Shown {
                 fullscreen: false,
                 minimised: true,
                 title: Some("b".into()),
+                appearance: Some(Appearance::Light),
             }
         );
     }

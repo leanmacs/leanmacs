@@ -66,8 +66,9 @@
 //! [`editor_ffi_window_close`].
 //!
 //! **Lean asks things of the window** with [`editor_ffi_window_request`]:
-//! a platform's tag and a request's, 0 enter fullscreen, 1 leave fullscreen
-//! and 2 minimise ([`request_of`]). It never blocks, and it goes through
+//! a platform's tag and a request's, 0 enter fullscreen, 1 leave
+//! fullscreen, 2 minimise, and 3 and 4 the light and the dark appearance
+//! ([`request_of`]). It never blocks, and it goes through
 //! the window's own loop ([`Platform::request`]), not the main-thread
 //! service, which still answers nothing else while the window runs. No tag
 //! names a title: the title is a field of the scene Lean publishes, and
@@ -102,9 +103,9 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Instant;
 
 use editor_platform::{
-    Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers, NativeWindow,
-    PhysicalKey, Platform, Pointer, PointerAction, Report, Request as WindowRequest, Resize,
-    ScriptedPlatform, WheelDelta, WindowOptions,
+    Appearance, Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
+    NativeWindow, PhysicalKey, Platform, Pointer, PointerAction, Report, Request as WindowRequest,
+    Resize, ScriptedPlatform, WheelDelta, WindowOptions,
 };
 use editor_platform_winit::WinitPlatform;
 use editor_render::fake::RecordingRenderer;
@@ -150,9 +151,11 @@ pub const RESIZE_FULLSCREEN: u64 = 1;
 const REQUEST_ENTER_FULLSCREEN: u8 = 0;
 const REQUEST_LEAVE_FULLSCREEN: u8 = 1;
 const REQUEST_MINIMISE: u8 = 2;
+const REQUEST_APPEARANCE_LIGHT: u8 = 3;
+const REQUEST_APPEARANCE_DARK: u8 = 4;
 /// The tag of a title in what a scripted window was asked. No request
 /// from Lean has it: the title is a field of the scene.
-const REQUEST_TITLE: u64 = 3;
+const REQUEST_TITLE: u64 = 5;
 
 /// The bit of a modifier word that is set when shift is held.
 pub const MODIFIER_SHIFT: u64 = 1;
@@ -474,6 +477,7 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
                 scale: f64::from_bits(reader.word()?),
                 fullscreen,
                 corner_clearance: u32::try_from(reader.word()?).ok()?,
+                top_inset: 0,
             })
         }
         EventKind::CloseRequested => {
@@ -1076,7 +1080,10 @@ pub unsafe extern "C" fn editor_ffi_window_run(
             "the Rust library knows no such platform".to_owned(),
         ),
         Some(platform) => {
-            let options = WindowOptions { composition };
+            let options = WindowOptions {
+                composition,
+                ..WindowOptions::default()
+            };
             let presentation = asked_presentation(present_mode, frame_latency);
             let request = Request::RunWindow {
                 platform,
@@ -1115,12 +1122,15 @@ pub extern "C" fn editor_ffi_window_close(platform: u8) -> bool {
 }
 
 /// The request Lean's tag `tag` names: 0 enter fullscreen, 1 leave
-/// fullscreen, 2 minimise. No tag names a title.
+/// fullscreen, 2 minimise, 3 the light appearance and 4 the dark one. No
+/// tag names a title.
 pub fn request_of(tag: u8) -> Option<WindowRequest> {
     match tag {
         REQUEST_ENTER_FULLSCREEN => Some(WindowRequest::EnterFullscreen),
         REQUEST_LEAVE_FULLSCREEN => Some(WindowRequest::LeaveFullscreen),
         REQUEST_MINIMISE => Some(WindowRequest::Minimise),
+        REQUEST_APPEARANCE_LIGHT => Some(WindowRequest::Appearance(Appearance::Light)),
+        REQUEST_APPEARANCE_DARK => Some(WindowRequest::Appearance(Appearance::Dark)),
         _ => None,
     }
 }
@@ -1141,7 +1151,7 @@ pub extern "C" fn editor_ffi_window_request(platform: u8, request: u8) -> bool {
 }
 
 /// The words of what a window was asked, oldest first: for each request its
-/// tag, and for a title the tag 3 followed by the count and the scalar
+/// tag, and for a title the tag 5 followed by the count and the scalar
 /// values of its characters.
 ///
 /// The match on [`WindowRequest`] is exhaustive on purpose: this crate must
@@ -1153,6 +1163,12 @@ pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
             WindowRequest::EnterFullscreen => words.push(u64::from(REQUEST_ENTER_FULLSCREEN)),
             WindowRequest::LeaveFullscreen => words.push(u64::from(REQUEST_LEAVE_FULLSCREEN)),
             WindowRequest::Minimise => words.push(u64::from(REQUEST_MINIMISE)),
+            WindowRequest::Appearance(Appearance::Light) => {
+                words.push(u64::from(REQUEST_APPEARANCE_LIGHT));
+            }
+            WindowRequest::Appearance(Appearance::Dark) => {
+                words.push(u64::from(REQUEST_APPEARANCE_DARK));
+            }
             WindowRequest::Title(title) => {
                 words.push(REQUEST_TITLE);
                 push_scalars(&mut words, title);
@@ -1377,6 +1393,7 @@ mod tests {
                 scale: 2.0,
                 fullscreen: false,
                 corner_clearance: 0,
+                top_inset: 0,
             }),
             Input::CloseRequested,
         ];
@@ -1646,6 +1663,7 @@ mod tests {
                 scale: 2.0,
                 fullscreen: false,
                 corner_clearance: 16,
+                top_inset: 0,
             })),
             (
                 EventKind::Resize,
@@ -1680,6 +1698,7 @@ mod tests {
                 scale: 2.0,
                 fullscreen: true,
                 corner_clearance: 0,
+                top_inset: 0,
             })),
             (
                 EventKind::Resize,
@@ -1728,8 +1747,16 @@ mod tests {
         assert_eq!(request_of(0), Some(WindowRequest::EnterFullscreen));
         assert_eq!(request_of(1), Some(WindowRequest::LeaveFullscreen));
         assert_eq!(request_of(2), Some(WindowRequest::Minimise));
+        assert_eq!(
+            request_of(3),
+            Some(WindowRequest::Appearance(Appearance::Light))
+        );
+        assert_eq!(
+            request_of(4),
+            Some(WindowRequest::Appearance(Appearance::Dark))
+        );
         // No tag names a title: Lean never asks for one.
-        assert_eq!(request_of(3), None);
+        assert_eq!(request_of(5), None);
         assert_eq!(request_of(u8::MAX), None);
     }
 
@@ -1740,7 +1767,7 @@ mod tests {
         // A platform that names one, with a request that names none.
         assert!(!editor_ffi_window_request(
             PlatformId::ScriptedFailing.tag(),
-            3
+            5
         ));
         // Both name something: asked of a platform that runs no window, it
         // does nothing.
@@ -1778,9 +1805,11 @@ mod tests {
                 WindowRequest::Minimise,
                 WindowRequest::Title("é😀".into()),
                 WindowRequest::LeaveFullscreen,
+                WindowRequest::Appearance(Appearance::Light),
                 WindowRequest::Title(String::new()),
+                WindowRequest::Appearance(Appearance::Dark),
             ]),
-            [0, 2, 3, 2, 0xe9, 0x1_f600, 1, 3, 0]
+            [0, 2, 5, 2, 0xe9, 0x1_f600, 1, 3, 5, 0, 4]
         );
         // A scripted platform answers what its latest run was asked: this
         // one has never run.
@@ -1873,6 +1902,7 @@ mod tests {
                 scale: 2.0,
                 fullscreen: false,
                 corner_clearance: 16,
+                top_inset: 0,
             }),
             Input::Resized(Resize {
                 width: 1440,
@@ -1880,6 +1910,7 @@ mod tests {
                 scale: 1.0,
                 fullscreen: true,
                 corner_clearance: 0,
+                top_inset: 0,
             }),
             Input::OpenFiles(vec!["/Users/me/notes.txt".into(), "/tmp/é ü.lean".into()]),
             Input::OpenFiles(vec![]),
@@ -2034,6 +2065,7 @@ mod tests {
             scale: 1.5,
             fullscreen: false,
             corner_clearance: 0,
+            top_inset: 0,
         });
         let posted = event(input, 0);
         let bytes = crate::words::tests::buffer(&posted.words);
@@ -2212,7 +2244,10 @@ mod tests {
     fn the_platform_is_run_with_the_options_it_was_given_and_a_close_ends_the_run() {
         let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
         let queue = Arc::new(Queue::new());
-        let options = WindowOptions { composition: false };
+        let options = WindowOptions {
+            composition: false,
+            ..WindowOptions::default()
+        };
 
         let done = start(&platform, options, &queue);
         assert_eq!(pull(&queue, 1).len(), 1);
@@ -2234,6 +2269,7 @@ mod tests {
             scale: 2.0,
             fullscreen: false,
             corner_clearance: 0,
+            top_inset: 0,
         })]));
         let queue = Arc::new(Queue::new());
         // Which kind of thing the drawer was told, in order: the thing
@@ -2564,6 +2600,7 @@ mod tests {
             scale: 2.0,
             fullscreen: false,
             corner_clearance: 0,
+            top_inset: 0,
         };
         let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(resized)]));
         let queue = Arc::new(Queue::new());

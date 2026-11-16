@@ -1565,6 +1565,19 @@ def windowChecks (_ : Unit) : List Check :=
             resized &&
             ran.ran.result matches some (.ok _) },
     { name :=
+        "the light and the dark appearance asked while the scripted window runs are what the window was asked, in order among the other requests, and report nothing of their own"
+      run := do
+        let ran ← runScriptedAsking [.lightAppearance, .enterFullscreen, .darkAppearance]
+        let resized :=
+          match ran.after.map Editor.Event.ofFfi with
+          | some (.ok { event := .resize size, .. }) => size.fullscreen
+          | _ => false
+        return isWindowSample true ran.ran.events &&
+            (ran.asked.map requestsOf) ==
+              some #[.lightAppearance, .enterFullscreen, .darkAppearance] &&
+            resized &&
+            ran.ran.result matches some (.ok _) },
+    { name :=
         "a frame request asked of the real display binding made over the scripted platform, directly and through the window mode's host display, is what the scripted window was asked, in order"
       run := do
         let table ← Editor.Snapshots.new

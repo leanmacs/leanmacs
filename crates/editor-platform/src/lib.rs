@@ -19,8 +19,9 @@
 //! physical keys are W3C UI Events names, as strings, so a new one needs no
 //! number on either side of the Lean boundary. A pointer ([`Pointer`]) with
 //! its action, position, button and modifiers; a resize ([`Resize`]) with
-//! the size, the scale factor, whether the window is in fullscreen and how
-//! far in its rounded corners reach; the
+//! the size, the scale factor, whether the window is in fullscreen, how
+//! far in its rounded corners reach and how far down its title bar covers
+//! it; the
 //! focus; an input method's composition; files the system asks the program
 //! to open ([`Input::OpenFiles`]); that the window opened; and a request to
 //! close.
@@ -67,6 +68,15 @@
 //!   fullscreen. A window with square corners says 0, and so does one in
 //!   fullscreen. The fake reports what its script says, and 0 in the
 //!   fullscreen a request takes it into.
+//! - **A resize says how far its title bar covers the drawable area**
+//!   ([`Resize::top_inset`]), in whole logical points, so that whatever
+//!   lays out the top rows can start them below it. A window opened with
+//!   a [`TitleBar::Themed`] title bar extends its drawable area under the
+//!   title bar; one with a standard title bar, or none, says 0, and so
+//!   does one in fullscreen. It is reported in a `Resized` whenever it
+//!   changes, by the same rule as fullscreen and the corner clearance.
+//!   The fake reports what its script says, and 0 in the fullscreen a
+//!   request takes it into.
 //! - **Files to open come after `Opened`.** The system may ask a program
 //!   to open files before its window exists, as macOS does when a document
 //!   starts the app. A platform holds them until it has reported `Opened`
@@ -78,7 +88,8 @@
 //!
 //! The editor asks things of the running window with [`Platform::request`]:
 //! a [`Request`], one variant for each thing asked (enter or leave
-//! fullscreen, minimise, a title). A request asked with no window running
+//! fullscreen, minimise, a title, the [`Appearance`] the window's title
+//! and buttons are drawn in). A request asked with no window running
 //! does nothing and is not remembered. [`Platform::close`] stays a method
 //! of its own: it ends the run, which no request does. What a request does
 //! to the window is held to [`contract::requests`], against the pure model
@@ -121,7 +132,7 @@
 //! | Something more a window tells what draws in it | A variant of [`Canvas`], or a field of one | The fake's tests in [`scripted`], the adapter's translation tests, and `editor-ffi`'s tests of what each becomes |
 //! | A new key attribute | A field of [`Key`] or of [`Modifiers`] | The same |
 //! | A new named key or physical key | Nothing here: the adapter produces its W3C name in [`LogicalKey::Named`] or [`PhysicalKey::Code`] | The adapter's translation tests |
-//! | Another way to open the window | A field of [`WindowOptions`] | The fake's tests: it records the options it was run with |
+//! | Another way to open the window | A field of [`WindowOptions`] (as [`WindowOptions::title_bar`] was) | The fake's tests: it records the options it was run with |
 //! | A rule every platform keeps | [`contract`] | Its own tests, on the fake and on platforms written to break it |
 //!
 //! # Where the real adapter is held to the contract
@@ -342,7 +353,8 @@ pub enum Button {
 }
 
 /// The window's new size and scale factor, whether it is in the system's
-/// fullscreen, and how far in its rounded bottom corners reach.
+/// fullscreen, how far in its rounded bottom corners reach, and how far
+/// down its title bar covers it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Resize {
     /// The drawable width, in physical pixels.
@@ -359,6 +371,12 @@ pub struct Resize {
     /// off by the curve. It is 0 for a window with square corners, and
     /// in fullscreen ([`contract`] holds a platform to that).
     pub corner_clearance: u32,
+    /// How far down from the window's top edge its title bar covers the
+    /// drawable area, in whole logical points, rounded up: what is drawn
+    /// above it may be under the title bar. It is 0 when the title bar does
+    /// not cover the drawable area (a standard title bar, or no title bar),
+    /// and in fullscreen ([`contract`] holds a platform to that).
+    pub top_inset: u32,
 }
 
 /// One thing the editor asks of the running window.
@@ -378,6 +396,20 @@ pub enum Request {
     Minimise,
     /// Show this as the window's title.
     Title(String),
+    /// Draw the window's own parts (its title and its buttons) in this
+    /// appearance. One asked already is asked again harmlessly.
+    Appearance(Appearance),
+}
+
+/// Which of the system's appearances the window's own drawing (its title
+/// and its buttons) takes, so that they contrast with what is drawn under
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Appearance {
+    /// Dark title and buttons, for a light paper.
+    Light,
+    /// Light title and buttons, for a dark paper.
+    Dark,
 }
 
 /// A step of an input method's composition (IME).
@@ -400,13 +432,34 @@ pub struct WindowOptions {
     /// not, the platform reports no [`Input::Composition`], and a dead key
     /// arrives as a key.
     pub composition: bool,
+    /// The title bar the window opens with.
+    pub title_bar: TitleBar,
 }
 
 impl Default for WindowOptions {
-    /// Composition is allowed.
+    /// Composition is allowed, and the title bar is themed.
     fn default() -> Self {
-        Self { composition: true }
+        Self {
+            composition: true,
+            title_bar: TitleBar::default(),
+        }
     }
+}
+
+/// The title bar a window opens with.
+///
+/// It is chosen when the window opens and kept for the run: a platform may
+/// have no way to change it under an open window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TitleBar {
+    /// The drawable area extends under a title bar that draws no background
+    /// of its own, so what is drawn there shows through. The window says
+    /// how far down the title bar covers it ([`Resize::top_inset`]). A
+    /// platform whose windows have no such title bar opens a standard one.
+    #[default]
+    Themed,
+    /// The system's own title bar, above the drawable area.
+    Standard,
 }
 
 /// Where a platform hands what its window reports.

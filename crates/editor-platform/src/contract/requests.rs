@@ -9,7 +9,7 @@
 //! two cannot drift.
 //!
 //! Each rule starts from a fresh carrier, which shows a window that is not
-//! in fullscreen and not minimised:
+//! in fullscreen and not minimised, and has been asked no appearance:
 //!
 //! - **Entering puts the window in fullscreen**, and entering again leaves
 //!   it there: it is not a toggle.
@@ -21,8 +21,11 @@
 //!   does with a minimise of a window in fullscreen is its own (macOS does
 //!   not minimise one), and the contract says nothing of it.
 //! - **A title is the window's title**, and of two the last wins.
+//! - **An appearance is the window's appearance**, and of two the last
+//!   wins.
 //! - **A title changes neither fullscreen nor minimised, and fullscreen
-//!   changes no title.**
+//!   changes no title.** An appearance changes neither fullscreen,
+//!   minimised nor the title, and they change no appearance.
 //!
 //! Whether a request asked with no window running is harmless is the run
 //! contract's ([`Check::run`](super::Check::run)): it needs a platform, and
@@ -30,8 +33,8 @@
 
 use std::fmt;
 
-use crate::Request;
 use crate::scripted::Shown;
+use crate::{Appearance, Request};
 
 /// A window as far as requests go: what carries a request out, and what it
 /// then shows.
@@ -65,8 +68,10 @@ impl fmt::Display for RequestViolation {
     }
 }
 
-/// The rule that a fresh window is neither in fullscreen nor minimised.
-pub const FRESH: &str = "a fresh window is neither in fullscreen nor minimised";
+/// The rule that a fresh window is neither in fullscreen nor minimised,
+/// and has been asked no appearance.
+pub const FRESH: &str =
+    "a fresh window is neither in fullscreen nor minimised, and has no appearance asked";
 /// The rule that entering puts the window in fullscreen, and is no toggle.
 pub const ENTERS: &str = "entering puts the window in fullscreen and keeps it there";
 /// The rule that leaving takes the window out of fullscreen.
@@ -77,8 +82,11 @@ pub const IN_ORDER: &str = "requests are carried out in the order asked";
 pub const MINIMISES: &str = "minimising a window not in fullscreen minimises it";
 /// The rule that a title is the window's, the last of two winning.
 pub const TITLED: &str = "a title is the window's title, and the last wins";
-/// The rule that a title and fullscreen leave each other alone.
-pub const APART: &str = "a title changes neither fullscreen nor minimised, and fullscreen no title";
+/// The rule that an appearance is the window's, the last of two winning.
+pub const APPEARS: &str = "an appearance is the window's appearance, and the last wins";
+/// The rule that a title, an appearance and fullscreen leave each other
+/// alone.
+pub const APART: &str = "a title changes neither fullscreen nor minimised, and fullscreen no title; an appearance changes none of them, and they change no appearance";
 
 /// One rule as the check holds it: the requests carried out on a fresh
 /// carrier, what must then hold of what it shows, and the rule's words.
@@ -89,11 +97,16 @@ type Rule<'a> = (Vec<Request>, &'a dyn Fn(&Shown) -> bool, &'static str);
 pub fn check<C: Carries>(mut make: impl FnMut() -> C) -> Result<(), RequestViolation> {
     use Request::{EnterFullscreen as Enter, LeaveFullscreen as Leave, Minimise};
     let title = |text: &str| Request::Title(text.into());
-    let fresh = |shown: &Shown| !shown.fullscreen && !shown.minimised;
+    let light = Request::Appearance(Appearance::Light);
+    let dark = Request::Appearance(Appearance::Dark);
+    let fresh = |shown: &Shown| !shown.fullscreen && !shown.minimised && shown.appearance.is_none();
     fn titled(text: &'static str) -> impl Fn(&Shown) -> bool {
         move |shown| shown.title.as_deref() == Some(text)
     }
-    let rules: [Rule<'_>; 13] = [
+    fn appears(appearance: Appearance) -> impl Fn(&Shown) -> bool {
+        move |shown| shown.appearance == Some(appearance)
+    }
+    let rules: [Rule<'_>; 19] = [
         (vec![], &fresh, FRESH),
         (vec![Enter], &|shown| shown.fullscreen, ENTERS),
         (vec![Enter, Enter], &|shown| shown.fullscreen, ENTERS),
@@ -115,6 +128,28 @@ pub fn check<C: Carries>(mut make: impl FnMut() -> C) -> Result<(), RequestViola
             APART,
         ),
         (vec![title("a"), Enter], &titled("a"), APART),
+        (vec![dark.clone()], &appears(Appearance::Dark), APPEARS),
+        (
+            vec![dark.clone(), light.clone()],
+            &appears(Appearance::Light),
+            APPEARS,
+        ),
+        (
+            vec![dark.clone()],
+            &|shown| !shown.fullscreen && !shown.minimised && shown.title.is_none(),
+            APART,
+        ),
+        (
+            vec![Enter, title("a"), dark.clone()],
+            &|shown| shown.fullscreen && shown.title.as_deref() == Some("a"),
+            APART,
+        ),
+        (
+            vec![dark.clone(), Enter, title("a"), Leave],
+            &appears(Appearance::Dark),
+            APART,
+        ),
+        (vec![dark, Minimise], &appears(Appearance::Dark), APART),
     ];
     for (asked, holds, rule) in rules {
         let mut carrier = make();
@@ -293,6 +328,53 @@ mod tests {
         fn shown(&self) -> Shown {
             self.0.clone()
         }
+    }
+
+    /// A window that ignores every appearance it is asked.
+    #[derive(Default)]
+    struct IgnoresAppearance(Shown);
+
+    impl Carries for IgnoresAppearance {
+        fn carry_out(&mut self, request: Request) {
+            if !matches!(request, Request::Appearance(_)) {
+                self.0.carry_out(&request);
+            }
+        }
+
+        fn shown(&self) -> Shown {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn a_window_that_ignores_an_appearance_is_refused() {
+        let refused = check(IgnoresAppearance::default).expect_err("an appearance is shown");
+        assert_eq!(refused.rule, APPEARS);
+        assert_eq!(refused.asked, [Request::Appearance(Appearance::Dark)]);
+    }
+
+    /// A window whose appearance takes it out of fullscreen.
+    #[derive(Default)]
+    struct AppearanceLeaves(Shown);
+
+    impl Carries for AppearanceLeaves {
+        fn carry_out(&mut self, request: Request) {
+            if matches!(request, Request::Appearance(_)) {
+                self.0.fullscreen = false;
+            }
+            self.0.carry_out(&request);
+        }
+
+        fn shown(&self) -> Shown {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn a_window_whose_appearance_changes_fullscreen_is_refused() {
+        let refused =
+            check(AppearanceLeaves::default).expect_err("an appearance leaves fullscreen be");
+        assert_eq!(refused.rule, APART);
     }
 
     #[test]
