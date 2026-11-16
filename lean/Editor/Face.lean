@@ -289,10 +289,15 @@ structure Palette where
   deriving DecidableEq, Repr
 
 /-- The theme `palette` gives: `default`, which sets every attribute, with
-the ink on the paper; then `cursor` and a cursor face for each of
-`Theme.cursorStates`, the paper on the cursor colour; then one definition
-for each other face of the vocabulary (`Editor/Face/Vocabulary.lean`), each
-setting only what it changes. -/
+the ink on the paper and no vertical padding; then `cursor` and a cursor
+face for each of `Theme.cursorStates`, the paper on the cursor colour; then
+one definition for each other face of the vocabulary
+(`Editor/Face/Vocabulary.lean`), each setting only what it changes. The
+mode line and the echo area are padded 3 points above and below, the owner's
+picked look, so the bottom row is the same height whether it holds a
+window's mode line, a prompt or the echo. Each Vim state's badge
+(`mode-line.state.<state>`) is the paper on an accent, bold: normal blue,
+insert green, visual and visual-line magenta, the minibuffer's cyan. -/
 def Palette.theme (palette : Palette) : Theme :=
   let on (name : String) (foreground background : Color) : FaceDefinition :=
     { name := ⟨name⟩, face := { foreground := some foreground, background := some background } }
@@ -300,6 +305,12 @@ def Palette.theme (palette : Palette) : Theme :=
     { name := ⟨name⟩, face := { foreground := some foreground } }
   let defined (name : String) (face : Face) : FaceDefinition := { name := ⟨name⟩, face }
   let cursors := #["cursor"] ++ Theme.cursorStates.map (s!"cursor.{·}")
+  let badge (state : String) (accent : Color) : FaceDefinition :=
+    { name := ⟨s!"mode-line.state.{state}"⟩
+      face := { foreground := some palette.paper, background := some accent, weight := some 700 } }
+  let badges :=
+    #[("normal", palette.blue), ("insert", palette.green), ("visual", palette.magenta),
+      ("visual-line", palette.magenta), ("minibuffer", palette.cyan)]
   #[defined "default"
         { family := some "monospace", size := some 16, weight := some 400, slant := some .upright
           foreground := some palette.ink, background := some palette.paper
@@ -307,9 +318,13 @@ def Palette.theme (palette : Palette) : Theme :=
           lineHeight := some (.multiple 64), verticalPadding := some 0 }] ++
     cursors.map (on · palette.paper palette.cursor) ++
     #[defined "selection" { background := some palette.selected },
-      on "mode-line" palette.strong palette.raised, ink "echo-area" palette.strong,
-      defined "status.state" { foreground := some palette.blue, weight := some 700 },
-      ink "status.name" palette.strong, ink "status.modified" palette.orange,
+      defined "mode-line"
+        { foreground := some palette.strong, background := some palette.raised
+          verticalPadding := some 3 },
+      defined "echo-area" { foreground := some palette.strong, verticalPadding := some 3 }] ++
+    badges.map (fun (state, accent) => badge state accent) ++
+    #[defined "mode-line.buffer" { foreground := some palette.strong, weight := some 700 },
+      ink "mode-line.modified" palette.orange, ink "mode-line.secondary" palette.faint,
       on "mode-line.inactive" palette.faint palette.raised,
       defined "minibuffer.prompt" { foreground := some palette.cyan, weight := some 700 },
       ink "minibuffer.candidate" palette.faint, on "minibuffer.chosen" palette.paper palette.cyan,

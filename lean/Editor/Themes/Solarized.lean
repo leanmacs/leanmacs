@@ -56,12 +56,16 @@ dark names, and `+` marks a definition appended after the shared ones
 |---|---|---|---|
 | `selection` | bg base02 | bg base02 | Emacs `region` bg base02, and the specification's background highlight. Vim's `Visual` (base01 reversed) needs a selection foreground, which the shared mapping does not set: not followed |
 | `cursor`, `cursor.normal/insert/visual/visual-line/minibuffer` | base03 on base0 | base03 on base0 | Vim `Cursor` fg base03 bg base0; Emacs `cursor-color` base0. Vim and Emacs colour the cursor the same in every state |
-| `mode-line` | base1 on base02 | base1 on base02 | Emacs `mode-line` fg base1 bg base02. Vim's `StatusLine` is the same pair reversed: not followed, because `echo-area` and `status.name` share `strong` |
+| `mode-line` | base1 on base02, padded 3 | base1 on base02, padded 3 | Emacs `mode-line` fg base1 bg base02. Vim's `StatusLine` is the same pair reversed: not followed, because `echo-area` and `mode-line.buffer` share `strong`. The padding is the owner's picked look, shared |
 | `mode-line.inactive` | base01 on base02 | + base0 on base02 | Emacs `mode-line-inactive` fg base0 bg base02 |
-| `echo-area` | fg base1 | + fg base0 | Emacs and Vim draw messages in the default face (Vim `Normal` base0) |
-| `status.state` | blue, bold | blue, bold | Vim `ModeMsg` blue |
-| `status.name` | fg base1 | fg base1 | Emacs `mode-line-buffer-id` base1 |
-| `status.modified` | fg orange | fg orange | Neither theme has one. The shared mapping is kept |
+| `echo-area` | fg base1, padded 3 | + fg base0 (padding kept) | Emacs and Vim draw messages in the default face (Vim `Normal` base0) |
+| `mode-line.state.normal` | base03 on blue, bold | base03 on blue, bold | lualine.nvim `solarized_dark` section `a` of `normal` (below) |
+| `mode-line.state.insert` | base03 on green, bold | base03 on green, bold | lualine.nvim `solarized_dark` `insert` |
+| `mode-line.state.visual`, `mode-line.state.visual-line` | base03 on magenta, bold | base03 on magenta, bold | lualine.nvim `solarized_dark` `visual`, which Vim's visual-line state shares |
+| `mode-line.state.minibuffer` | base03 on cyan, bold | base03 on cyan, bold | lualine.nvim has no such mode; the shared mapping is kept, and the minibuffer's view draws no badge |
+| `mode-line.buffer` | base1, bold | base1, bold | Emacs `mode-line-buffer-id` base1, bold |
+| `mode-line.modified` | fg orange | fg orange | Neither theme has one. The shared mapping is kept |
+| `mode-line.secondary` | fg base01 | fg base01 | The specification's "base01 secondary content" |
 | `minibuffer.prompt` | cyan, bold | + fg blue (bold kept) | Emacs `minibuffer-prompt` blue |
 | `minibuffer.candidate` | fg base01 | + fg base1 | Vim's wildmenu draws the other candidates in `StatusLine`, the status-line text (base1) |
 | `minibuffer.chosen` | base03 on cyan | + base02 on base2 | Vim `WildMenu` (fg base2 bg base02 reversed) |
@@ -86,6 +90,25 @@ dark names, and `+` marks a definition appended after the shared ones
 | `search-match` | base03 on yellow | base03 on yellow | Vim `Search` and Emacs `isearch`: yellow reversed |
 | `review-unexamined` | orange single underline | orange single underline | Neither theme has one. The shared mapping is kept |
 | `block-header` | base1 on base02, bold | base1 on base02, bold | The specification's highlighted pair `base02:base1`, its own example being Vim's folded text |
+
+**The badges follow lualine.nvim**, since neither of Schoonover's themes
+colours a mode line by state. Its `lua/lualine/themes/solarized_dark.lua`
+(by shadmansaleh, MIT, crediting itchyny's lightline) gives section `a`
+`base03` on `blue` in normal, on `green` in insert and on `magenta` in
+visual, all bold, and section `c` `base1` on `base02`, which is
+`mode-line` here. The shared mapping already gives exactly these (the
+paper, base03, on the accents), so no `+` row is needed, and the light
+variant's swap gives base3 on them. `solarized_light.lua` agrees with the
+swap: its colour table names `#fdf6e3`, Schoonover's base3, as its
+`base03`, so its badges are base3 on the same accents. Both files are read
+at lualine.nvim's commit `221ce6b2d999187044529f49da6554a92f740a96` (its
+`master` on 2026-05-31; neither file has changed since
+`db448f41e66b1a58941c231fbb47198f2b7f2f6a`): `solarized_dark.lua`, 1151
+bytes, sha256
+`08618fc3bef548387c84ee7b9aefd192e7313581c188b15319d11c5631589479`, and
+`solarized_light.lua`, 1151 bytes, sha256
+`3c4e5130c78457354266c0661a00e5086884f4c49c8dc08858d73e8ab72bad65`. Only
+the choice of colours is taken from it; no code and no text.
 
 The appended definitions rely on the rule that a later definition's set
 attributes are over an earlier one's (`Editor/Face.lean`): each sets only

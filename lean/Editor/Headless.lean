@@ -335,12 +335,16 @@ drawn in (`Host.Display.drawnIn`), then each view in drawing order,
 its snapshot's text read from the library, and the offsets of its scroll
 anchor and of each range of its selection, as the markers are when it is
 asked. After each view's line comes its status line (`statusLine`), one
-entry a field: the fields the input scheme reports of the view, which
-under the Vim scheme is one, the name of the view's Vim state in the face
-`status.state`, then the buffer's name, and the modified field while the
-buffer is modified (`Loop.statusOf`). It is a line of its own, so the
-view's line keeps its form. It is how a script sees a view's state, its
-buffer's name and whether the buffer is modified.
+entry a field, the left fields and then, after ` | `, the right ones, each
+with its padding: the mode line's (`Loop.statusOf`, `Editor/ModeLine.lean`),
+which under the Vim scheme and the default order is the badge of the
+view's Vim state (`NORMAL` in `mode-line.state.normal`), the buffer's name,
+the modified mark while the buffer is modified and the directory its file
+was opened in, then its major mode, line:col and position; a window that
+is not selected prints `in mode-line.inactive` after its id, and has no
+badge. It is a line of its own, so the view's line keeps its form. It is
+how a script sees a view's state, its buffer's name, whether the buffer is
+modified and where the cursor is.
 
 A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>`,
@@ -843,11 +847,24 @@ def firstLine (message : String) : String :=
   (message.splitOn "\n").headD ""
 
 /-- The status line of the view `view` as `scene` prints it, a line of its
-own after the view's: the view's id, then each field's face and its quoted
-text, in order, or `-` for a status line with no field. -/
-def statusLine (view : ViewId) (status : Array StatusField) : String :=
-  let fields := status.map fun field => s!"{field.face.name} {field.text.quote}"
-  s!"status {view.index}: {if fields.isEmpty then "-" else ", ".intercalate fields.toList}"
+own after the view's: `status`, the view's id, ` in ` and its status face
+when it has one (`View.statusFace`), then its left fields, and, when it
+has right ones, ` | ` and the right fields; or `-` for a status line with
+no field. Each field is its face, its quoted text, and ` +` and its padding
+when that is not 0, in the scene's order within its side. -/
+def statusLine (view : ViewId) (status : Array StatusField) (statusFace : Option FaceName := none) :
+    String :=
+  let printed (side : StatusSide) : List String :=
+    (status.filter (·.side == side)).toList.map fun field =>
+      let padding := if field.padding == 0 then "" else s!" +{field.padding}"
+      s!"{field.face.name} {field.text.quote}{padding}"
+  let (left, right) := (", ".intercalate (printed .left), ", ".intercalate (printed .right))
+  let fields :=
+    if status.isEmpty then "-"
+    else
+      if right.isEmpty then left else if left.isEmpty then s!"| {right}" else s!"{left} | {right}"
+  let face := (statusFace.map (s!" in {·.name}")).getD ""
+  s!"status {view.index}{face}: {fields}"
 
 /-- The loop's state: everything the editor thread owns, for a host that
 runs the input scheme `scheme`. -/
@@ -1009,15 +1026,6 @@ def attempt {α : Type} (collaborators : Collaborators σ scheme) (running : Run
     collaborators.emit s!"loop: refused: {refusal.describe}"
     return (none, { running with texts })
 
-/-- Publishes a scene of the frame's state, if there is a frame: what the
-loop does after every event that is not the window's. A publish that is
-refused is printed (`attempt`), and the frame stays as it was. -/
-def publish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
-    IO (Running σ scheme) := do
-  let some frame := running.frame | return running
-  let (published, running) ← running.attempt collaborators frame.publish
-  return { running with frame := some (published.getD frame) }
-
 /-- What a step of the loop is handed, from the registry as it is now: the
 active keymaps of each view (`Config.Registry.activeMaps`: the modes of the
 view's buffer, then every owner's key bindings), which the loop applies to
@@ -1030,6 +1038,17 @@ event, so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
     slowAfter := collaborators.slowAfter, registered := running.config.registry.registered }
+
+/-- Publishes a scene of the frame's state, if there is a frame, its status
+lines drawn by the mode line the registry and config make (`keys`): what
+the loop does after every event that is not the window's. A publish that is
+refused is printed (`attempt`), and the frame stays as it was. -/
+def publish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
+    IO (Running σ scheme) := do
+  let some frame := running.frame | return running
+  let (published, running) ←
+    running.attempt collaborators (frame.publish (running.keys collaborators).modeLine)
+  return { running with frame := some (published.getD frame) }
 
 /-- The loop's frame, made if there is none (`Collaborators.start`): the
 frame is made when the loop is first needed, for a window event, a command
@@ -1237,7 +1256,7 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
     lines :=
       (lines.push
             s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}").push
-        (statusLine view.id view.status)
+        (statusLine view.id view.status view.statusFace)
   return lines
 
 /-- Prints the last scene published, or that there is none. -/

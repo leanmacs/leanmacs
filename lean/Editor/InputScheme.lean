@@ -77,7 +77,7 @@ type, which the core does not know
 | Field | Default | Who reads it |
 |---|---|---|
 | `cursor` | A bar in the face `cursor` | The scene: how the view's cursors are drawn |
-| `status` | None | The scene: the view's status line begins with these fields |
+| `status` | None | The mode line's `state` segment, which draws these fields as its badge (`Editor/ModeLine.lean`) |
 | `shape` | `exclusive` | Whoever places the view's selection: the shape it has |
 | `selecting` | `false` | A command: a motion moves the head and keeps the anchor |
 | `session` | `false` | Whoever sets the boundaries of the history: the view is in an insert session |
@@ -144,8 +144,8 @@ nothing of a view reports. -/
 structure InputScheme.Report where
   /-- How the view's cursors are drawn. -/
   cursor : Cursor := { shape := .bar, face := ⟨"cursor"⟩ }
-  /-- The scheme's fields of the view's status line, which come before the
-  buffer's. -/
+  /-- The scheme's fields of the view's status line, which the mode line's
+  `state` segment draws as its badge (`Editor/ModeLine.lean`). -/
   status : Array StatusField := #[]
   /-- The shape the view's selection has. -/
   shape : Shape := .exclusive

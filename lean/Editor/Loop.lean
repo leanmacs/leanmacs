@@ -7,6 +7,7 @@ import Editor.Event
 import Editor.Files
 import Editor.InputScheme
 import Editor.Key.Notation
+import Editor.ModeLine
 import Editor.State
 
 /-!
@@ -589,17 +590,25 @@ changed the state or not (`Loop.publish`):
    cursor is the one the scheme reports of the view
    (`InputScheme.report`, in the scheme's state after the last key): a bar
    in the face `cursor` under a scheme that says nothing. Its status line
-   (`Loop.statusOf`) is the fields the scheme reports of the view, then
-   its buffer's (`Loop.status`): the buffer's name, in the face
-   `Loop.nameFace`, and, while the buffer is modified
-   (`Buffer.isModified`), the text `Loop.modifiedMark` in the face
-   `Loop.modifiedFace`. "Modified" is the presence of the field in that
-   face: a buffer that is not has no such field.
-   The answer is right because the histories were told their texts'
-   revisions in step 1. The minibuffer's view has another status line
+   (`Loop.statusOf`) is the mode line's (`ModeLine.fields`,
+   `Editor/ModeLine.lean`): the segments the step's keys name
+   (`Loop.Keys.modeLine`, config's listing or the default order), each
+   given what the window shows (`Loop.contextOf`): its buffer, the fields
+   the scheme reports of the view, which the `state` segment draws as a
+   badge, its cursor's row and column in cells, read from the head of the
+   primary range of its selection in the view's snapshot, the snapshot's
+   rows, and whether it is the selected window
+   (`EditorState.selectedView`). A window that is not selected has no
+   badge, every field in `mode-line.inactive`, and that face as its row's
+   (`View.statusFace`); the selected one has none. "Modified" is the
+   `modified` segment's mark (`Buffer.isModified`): a buffer that is not
+   has no such field. The answer is right because the histories were told
+   their texts' revisions in step 1. A selection marker the text does not
+   answer for gives a context with no cursor, and so no line:col and no
+   position. The minibuffer's view has another status line
    (`Loop.promptStatus`): the prompt's label, in the face
-   `Loop.promptFace`, with no name, no modified field and none of the
-   scheme's fields; its cursor is the scheme's report's. That is how the
+   `Loop.promptFace`, with no segment and none of the scheme's fields,
+   and no status face; its cursor is the scheme's report's. That is how the
    scene shows the prompt text: the scene's shape is the display
    contract, and it has no field for a prompt. **After the label comes one
    field for each candidate the prompt has listed**, every one, in the
@@ -843,6 +852,10 @@ structure Loop.Keys (scheme : InputScheme) where
   (`Editor/Command/Dispatch.lean`). Its `command` is not read: the loop
   tells a command run inside another what `command?` says of the name. -/
   registered : Loop.Registered := {}
+  /-- The mode line the scene's status lines are drawn by: the registry's
+  segments in the order config listed, or the default one
+  (`Editor/ModeLine.lean`). -/
+  modeLine : ModeLine := ModeLine.standard
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -953,18 +966,6 @@ the shape the scheme reports of the first view before any key
 def start (scheme : InputScheme) (size : Size) : TextM (Loop scheme) :=
   return { state := ← EditorState.initial size (scheme.report scheme.init ⟨0⟩).shape }
 
-/-- The face of the buffer's name in a status line. -/
-def nameFace : FaceName :=
-  ⟨"status.name"⟩
-
-/-- The face of the status line's modified field. -/
-def modifiedFace : FaceName :=
-  ⟨"status.modified"⟩
-
-/-- What the status line's modified field says. -/
-def modifiedMark : String :=
-  "[+]"
-
 /-- The face of the minibuffer's status line, which is the prompt's label. -/
 def promptFace : FaceName :=
   ⟨"minibuffer.prompt"⟩
@@ -979,13 +980,6 @@ line. -/
 def chosenFace : FaceName :=
   ⟨"minibuffer.chosen"⟩
 
-/-- A buffer's fields of the status line of a view of it: the buffer's name,
-and, while the buffer is modified, the modified field after it. A buffer
-that is not modified has no such field, not an empty one. -/
-def status (buffer : Buffer) : Array StatusField :=
-  #[{ text := buffer.name, face := nameFace }] ++
-    if buffer.isModified then #[{ text := modifiedMark, face := modifiedFace }] else #[]
-
 /-- The fields of the minibuffer's status line for the prompt `asked`: its
 label, in `promptFace`, then one field for each candidate it has listed, in
 the listing's order, in `candidateFace`, but for the chosen one, which is
@@ -996,27 +990,55 @@ def promptStatus (asked : Prompt) : Array StatusField :=
       { text := candidate
         face := if asked.candidates.chosen == some index then chosenFace else candidateFace }
 
-/-- The status line of the view `id` of `state`, which shows `buffer` and of
-which the scheme reports the fields `reported`: for the minibuffer's view
-the prompt's label and the candidates it has listed (`promptStatus`), and
-for any other the scheme's fields and then the buffer's (`status`). -/
-def statusOf (state : EditorState) (id : ViewId) (buffer : Buffer)
-    (reported : Array StatusField := #[]) : Array StatusField :=
+/-- The status line of the view `id` of `state`, whose window `context`
+describes, and the face of its row: for the minibuffer's view the prompt's
+label and the candidates it has listed (`promptStatus`) and no face; for
+any other the fields of `modeLine` (`ModeLine.fields`), and no face for the
+selected window or `mode-line.inactive` for one that is not. -/
+def statusOf (modeLine : ModeLine) (state : EditorState) (id : ViewId)
+    (context : ModeLine.Context) : Array StatusField × Option FaceName :=
+  let lined :=
+    (modeLine.fields context, if context.selected then none else some ModeLine.inactiveFace)
   match state.prompt with
-  | some asked => if asked.view == id then promptStatus asked else reported ++ status buffer
-  | none => reported ++ status buffer
+  | some asked => if asked.view == id then (promptStatus asked, none) else lined
+  | none => lined
+
+/-- What the mode line's segments read of the window `target`, the view `id`
+of `state`, whose text is shown at `snapshot` and of which the scheme
+reports the fields `reported` (`ModeLine.Context`): its buffer; its cursor,
+the head of the primary range of its selection, as a row and a column in
+cells of the snapshot; the snapshot's rows, less an empty last row after a
+final line break; and whether it is the selected view
+(`EditorState.selectedView`). It is not refused: when the selection marker
+or the snapshot does not answer, there is no cursor and no row. -/
+def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : SnapshotId)
+    (reported : Array StatusField) : TextM ModeLine.Context := do
+  let marker := target.window.selection
+  let read : TextM (Point × Nat) := do
+    let .selection selection ← marker.text.marker marker | throw .noSuchMarker
+    let some range := selection.ranges[selection.primary]? | throw .noSuchMarker
+    let point ← snapshot.pointOf range.head .cells
+    let rows ← snapshot.rowCount
+    let last ← snapshot.rowContent (rows - 1)
+    return (point, if rows > 1 && last.isEmpty then rows - 1 else rows)
+  let (cursor, lines) :=
+    match ← (observing read : TextM (Except TextError (Point × Nat))) with
+    | .ok (point, lines) => (some point, lines)
+    | .error _ => (none, 0)
+  return { buffer := target.buffer, reported, cursor, lines, selected := id == state.selectedView }
 
 /-- The views of the loop's state, in drawing order, and the snapshots they
 name: its windows, and the minibuffer's view in the minibuffer's place
 while a prompt is open. A text at the revision it was last shown at keeps
 its snapshot; any other is given a new one. A view's cursor is the one the
 scheme reports of it, in the scheme's state after the last key
-(`InputScheme.report`). Its status line is the fields the scheme reports
-and then its buffer's, and the prompt's label alone for the minibuffer's
-view (`statusOf`). It is not refused: a view whose buffer's text refuses,
-because it was released, is left out, with nothing taken for it, and the
-first such refusal is handed back. -/
-def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option TextError) := do
+(`InputScheme.report`). Its status line is the fields of `modeLine` for its
+window, read as `contextOf` reads it, and the prompt's label for the
+minibuffer's view (`statusOf`). It is not refused: a view whose buffer's
+text refuses, because it was released, is left out, with nothing taken for
+it, and the first such refusal is handed back. -/
+def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
+    TextM (Array View × Array Shown × Option TextError) := do
   let state := loop.state
   let mut shown : Array Shown := #[]
   let mut views : Array View := #[]
@@ -1040,12 +1062,13 @@ def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option Text
       unless shown.any (·.text == text) do
         shown := shown.push { text, revision, snapshot }
       let report := scheme.report loop.input id
+      let context ← contextOf state id target snapshot report.status
+      let (status, statusFace) := statusOf modeLine state id context
       views :=
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
-            cursor := report.cursor, decorations := #[]
-            status := statusOf state id target.buffer report.status }
+            cursor := report.cursor, decorations := #[], status, statusFace }
   return (views, shown, refusal)
 
 /-- The scene of `state` over `views`: what the state says of the frame, the
@@ -1141,7 +1164,8 @@ snapshot the last scene named that this one does not. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
-def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
+def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
+    EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
@@ -1149,7 +1173,7 @@ def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
   let state := { state with heights := ← Display.heights }
-  let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views
+  let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views modeLine
   -- Each view follows its cursor before the scene names its anchor: the
   -- snapshots the questions of layout need were taken just above. Each is
   -- asked with its height less its bottom row.
@@ -1570,11 +1594,13 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
     return ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
 
 /-- `stepped`, a step whose scene is not yet published, once it is
-(`publish`): its loop is the one the publish left, and it says stop when
-the editor then leaves (`nextOf`) and to go on otherwise. The scene comes
-first, so the scene of the step that says stop is the last one. -/
-def Stepped.published (stepped : Stepped scheme) : EditorM (Stepped scheme) := do
-  let loop ← stepped.loop.publish
+(`publish`), its views' status lines drawn by `modeLine`: its loop is the
+one the publish left, and it says stop when the editor then leaves
+(`nextOf`) and to go on otherwise. The scene comes first, so the scene of
+the step that says stop is the last one. -/
+def Stepped.published (stepped : Stepped scheme) (modeLine : ModeLine := ModeLine.standard) :
+    EditorM (Stepped scheme) := do
+  let loop ← stepped.loop.publish modeLine
   return { stepped with
       loop, next := nextOf loop }
 
@@ -1586,7 +1612,7 @@ scheme's states are left as they are, but for a view the command closed. -/
 def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     EditorM (Stepped scheme) := do
   let report := scheme.report loop.input loop.state.frame.focused
-  (loop.ranInto (← run keys loop.state invocation [] report)).published
+  (loop.ranInto (← run keys loop.state invocation [] report)).published keys.modeLine
 
 /-- Runs the command registered under `name` as an invocation with no
 arguments that no key yielded (`invoke`), and publishes a scene of the
@@ -1607,7 +1633,7 @@ def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command 
     dispatch keys loop.state label do
         command
         return none
-  (loop.ranInto ran).published
+  (loop.ranInto ran).published keys.modeLine
 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on: stop, once the editor leaves ("Quit", in the module
@@ -1618,7 +1644,7 @@ refused: the publish puts a refusal of its own in the echo area too ("When
 publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   if let some pressed := stepped? event then
-    return ← (← loop.key keys pressed).published
+    return ← (← loop.key keys pressed).published keys.modeLine
   match event with
   | .closeRequested | .quit =>
     return { loop, next := .stop }
@@ -1641,10 +1667,10 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
       match typed with
       | some text => scheme.committed focused text input
       | none => input
-    ({      loop :=
-              { loop with
-                state, input := told loop.input, atRest := told loop.atRest }
-            next := .continue } : Stepped scheme).published
+    ({        loop :=
+                { loop with
+                  state, input := told loop.input, atRest := told loop.atRest }
+              next := .continue } : Stepped scheme).published keys.modeLine
 
 /-- Lowers the interrupt flag for an event taken off the queue when the
 library marked it as a press of the interrupt key (`interrupt`), and for no

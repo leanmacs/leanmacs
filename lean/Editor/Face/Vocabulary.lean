@@ -15,14 +15,15 @@ check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
 - **What is drawn now.** The four names layout reads by itself (`default`,
   `selection`, `mode-line`, `echo-area`; `crates/editor-layout/src/face.rs`),
   the cursor face a scheme that names none draws in (`cursor`,
-  `InputScheme.Report`), the shipped Vim scheme's cursor face of each of its
-  states and the face of its state's field (`Vim.cursorFace`,
-  `Vim.stateFace`), and the loop's status and minibuffer fields
-  (`Loop.nameFace`, `Loop.modifiedFace`, `Loop.promptFace`,
-  `Loop.candidateFace`, `Loop.chosenFace`).
+  `InputScheme.Report`), the shipped Vim scheme's cursor face and mode-line
+  badge face of each of its states (`Vim.cursorFace`, `Vim.stateFace`),
+  the mode line's faces (`ModeLine.bufferFace`, `ModeLine.modifiedFace`,
+  `ModeLine.secondaryFace`, `ModeLine.inactiveFace`,
+  `Editor/ModeLine.lean`), and the loop's minibuffer fields
+  (`Loop.promptFace`, `Loop.candidateFace`, `Loop.chosenFace`).
 - **What is declared ahead.** The faces of features not built yet, so a
-  shipped theme colours them before the feature lands: an inactive view's
-  mode line; one `syntax.` face for each top-level name of tree-sitter's
+  shipped theme colours them before the feature lands: one `syntax.` face
+  for each top-level name of tree-sitter's
   common highlight captures; diff, gutter, search and review faces; and a
   block header. A dotted capture such as `keyword.control` or
   `function.builtin` is not a vocabulary face: the rule that draws it in the
@@ -86,17 +87,33 @@ def vocabulary : Array Entry :=
       { name := ⟨"cursor.minibuffer"⟩
         meaning :=
           "The cursor in the minibuffer's view, in the shipped Vim scheme's minibuffer state (`Vim.cursorFace`)." },
-      { name := ⟨"status.state"⟩
-        meaning := "The Vim scheme's status field naming the view's state (`Vim.stateFace`)." },
-      { name := ⟨"status.name"⟩
+      { name := ⟨"mode-line.state.normal"⟩
         meaning :=
-          "The buffer's name in a view's status line, drawn by the loop (`Loop.nameFace`)." },
-      { name := ⟨"status.modified"⟩
+          "The mode line's badge of a view in the shipped Vim scheme's normal state (`Vim.stateFace`, the `state` segment)." },
+      { name := ⟨"mode-line.state.insert"⟩
         meaning :=
-          "The status field the loop shows while the buffer is modified (`Loop.modifiedFace`)." },
+          "The mode line's badge of a view in the shipped Vim scheme's insert state (`Vim.stateFace`, the `state` segment)." },
+      { name := ⟨"mode-line.state.visual"⟩
+        meaning :=
+          "The mode line's badge of a view in the shipped Vim scheme's visual state (`Vim.stateFace`, the `state` segment)." },
+      { name := ⟨"mode-line.state.visual-line"⟩
+        meaning :=
+          "The mode line's badge of a view in the shipped Vim scheme's visual-line state (`Vim.stateFace`, the `state` segment)." },
+      { name := ⟨"mode-line.state.minibuffer"⟩
+        meaning :=
+          "The badge of the shipped Vim scheme's minibuffer state, which the minibuffer's view does not draw: kept so every state has one (`Vim.stateFace`)." },
+      { name := ⟨"mode-line.buffer"⟩
+        meaning :=
+          "The buffer's name in a view's mode line, drawn by the `buffer` segment (`ModeLine.bufferFace`)." },
+      { name := ⟨"mode-line.modified"⟩
+        meaning :=
+          "The mark the `modified` segment shows while the buffer is modified (`ModeLine.modifiedFace`)." },
+      { name := ⟨"mode-line.secondary"⟩
+        meaning :=
+          "What recedes in a mode line: the directory, the major mode, line:col and the position (`ModeLine.secondaryFace`)." },
       { name := ⟨"mode-line.inactive"⟩
         meaning :=
-          "The status line of a view without the focus: drawn by the theming roadmap's segmented mode line, declared ahead." },
+          "Every field and the row of the mode line of a window that is not selected (`ModeLine.inactiveFace`)." },
       { name := ⟨"minibuffer.prompt"⟩
         meaning :=
           "The prompt's label in the minibuffer's status line, drawn by the loop (`Loop.promptFace`)." },

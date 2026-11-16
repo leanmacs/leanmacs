@@ -91,12 +91,16 @@ a later definition's set attributes are over an earlier one's
 | `default` | foreground on background | the same | tmTheme global colours; base.less l.3–6 |
 | `selection` | bg selection | the same | tmTheme `selection`; base.less l.47–49 |
 | `cursor`, `cursor.*` | background on caret | the same | tmTheme `caret`, the same in every state |
-| `mode-line` | foreground on lineHighlight | the same | Not in a syntax theme: shared mapping kept |
+| `mode-line` | foreground on lineHighlight, padded 3 | the same | Not in a syntax theme: shared mapping kept |
 | `mode-line.inactive` | lavender on lineHighlight | the same | Not covered: shared mapping kept |
-| `echo-area` | fg foreground | the same | The default face's foreground |
-| `status.state` | renamed, bold | + fg pink (bold kept) | Not covered; pink is the lead accent. A choice |
-| `status.name` | fg foreground | the same | Not covered: shared mapping kept |
-| `status.modified` | fg peach | the same | Not covered: shared mapping kept |
+| `echo-area` | fg foreground, padded 3 | the same | The default face's foreground |
+| `mode-line.state.normal` | background on renamed, bold | + background on pink (bold kept) | Not covered; pink is the lead accent. A choice |
+| `mode-line.state.insert` | background on added, bold | the same | Not covered: shared mapping kept |
+| `mode-line.state.visual`, `mode-line.state.visual-line` | background on pink, bold | + background on lavender (bold kept) | Not covered. The shared magenta is pink, normal's badge here, so visual takes lavender to differ from it. A choice |
+| `mode-line.state.minibuffer` | background on mint, bold | the same | Not covered: shared mapping kept |
+| `mode-line.buffer` | foreground, bold | the same | Not covered: shared mapping kept |
+| `mode-line.modified` | fg peach | the same | Not covered: shared mapping kept |
+| `mode-line.secondary` | fg lavender | the same | Not covered: shared mapping kept |
 | `minibuffer.prompt` | mint, bold | the same | Not covered: shared mapping kept |
 | `minibuffer.candidate` | fg lavender | the same | Not covered: shared mapping kept |
 | `minibuffer.chosen` | background on mint | the same | Not covered: shared mapping kept |
@@ -221,7 +225,10 @@ def Colours.sailorhg (c : Colours) : Theme :=
   let ink (name : String) (foreground : Color) : FaceDefinition :=
     { name := ⟨name⟩, face := { foreground := some foreground } }
   let defined (name : String) (face : Face) : FaceDefinition := { name := ⟨name⟩, face }
-  #[ink "status.state" c.pink,
+  let badge (state : String) (accent : Color) : FaceDefinition :=
+    { name := ⟨s!"mode-line.state.{state}"⟩
+      face := { foreground := some c.background, background := some accent } }
+  #[badge "normal" c.pink, badge "visual" c.lavender, badge "visual-line" c.lavender,
     defined "syntax.comment" { foreground := some c.gold, slant := some .upright },
     ink "syntax.function" c.lemon, ink "syntax.keyword" c.pink, ink "syntax.operator" c.pink,
     ink "syntax.punctuation" c.foreground, ink "syntax.string" c.yellow, ink "syntax.tag" c.pink,

@@ -1367,16 +1367,26 @@ def setup : SetupM Unit := do
   command \"forget\" forget
 ")]
 
-/-- The status line the host prints for the view `view` of a buffer called
-`name`, modified or not: what the host prints (`Headless.statusLine`) of the
-fields the loop gives such a buffer's views (`Loop.status`). So a check that
-compares a host's whole output repeats neither the loop's faces and texts
-nor the host's form. The scratch buffer is the default: the loop's frame is
-made with it, and its name is the editor state's to choose. -/
-def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := false) : String :=
+/-- The status line the host prints for the view `view`, selected, of a
+buffer called `name`, modified or not, opened from `file` or from none, of
+which the test scheme reports nothing, with its cursor at `cursor` (a row
+and a column in cells) in a text of `lines` rows: what the host prints
+(`Headless.statusLine`) of the fields the shipped mode line gives such a
+view (`ModeLine.standard`). So a check that compares a host's whole output
+repeats neither the mode line's faces and texts nor the host's form. Each
+call site passes the cursor its printed `selections` imply and the rows its
+text has, since the line:col and the position segments read them. The
+scratch buffer is the default: the loop's frame is made with it, and its
+name is the editor state's to choose. -/
+def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := false)
+    (cursor : Point := ⟨0, 0⟩) (lines : Nat := 1) (file : Option System.FilePath := none) :
+    String :=
   let saved := UndoTree.new ⟨0⟩ 0
-  Headless.statusLine ⟨view⟩
-    (Loop.status { name, text := ⟨0⟩, history := if modified then saved.record 1 else saved })
+  let buffer : Buffer :=
+    { name, text := ⟨0⟩, history := if modified then saved.record 1 else saved
+      file :=
+        file.map fun path => { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 } } }
+  Headless.statusLine ⟨view⟩ (ModeLine.standard.fields { buffer, cursor := some cursor, lines })
 
 /-- A scene of one focused view, number 2, of the snapshot 5, 64 pixels
 across and 48 down in a frame 64 down: what `Headless.Running.agreement` is asked
@@ -1675,18 +1685,27 @@ def scriptChecks (context : Context) : List Check :=
                 #["scene: none",
                   "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
                   "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6",
-                  statusOf (modified := true),
+                  statusOf (modified := true) (cursor := ⟨0, 5⟩),
                   "scene 0x0, focused 0, echo \"\", preedit -, published 3, theme \"default\"",
                   "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12",
-                  statusOf (modified := true)] },
+                  statusOf (modified := true) (cursor := ⟨0, 11⟩)] },
     { name :=
-        "a view's status line is printed as the view's id and each field's face and quoted text, and as - for a status line with no field"
+        "a view's status line is printed as the view's id, its status face if it has one, and each field's face, quoted text and padding when it has one, the left fields and then, after a bar, the right ones; and as - for a status line with no field"
       run :=
         pure
           (Headless.statusLine ⟨3⟩
                 #[{ text := "a \"b\"", face := ⟨"one"⟩ }, { text := "é", face := ⟨"two.three"⟩ }] ==
               "status 3: one \"a \\\"b\\\"\", two.three \"é\"" &&
-            Headless.statusLine ⟨0⟩ #[] == "status 0: -") },
+            Headless.statusLine ⟨0⟩ #[] == "status 0: -" &&
+            Headless.statusLine ⟨0⟩
+                #[{ text := "INSERT", face := ⟨"badge"⟩, padding := 8 },
+                  { text := "1:6", face := ⟨"pos"⟩, side := .right, padding := 4 },
+                  { text := "●", face := ⟨"mark"⟩, padding := 4 },
+                  { text := "All", face := ⟨"pos"⟩, side := .right }] ==
+              "status 0: badge \"INSERT\" +8, mark \"●\" +4 | pos \"1:6\" +4, pos \"All\"" &&
+            Headless.statusLine ⟨2⟩ #[{ text := "x", face := ⟨"r"⟩, side := .right }]
+                (some ⟨"mode-line.inactive"⟩) ==
+              "status 2 in mode-line.inactive: | r \"x\"") },
     { name :=
         "the scene prints each view's status line after the view's line, with the fields the loop gives the view: the buffer's name alone before anything is typed, and the modified field after it once text is committed"
       run :=
@@ -1705,7 +1724,7 @@ def scriptChecks (context : Context) : List Check :=
                   "view 0 0,0 0x0: \"\", scroll 0, selections 0..0", statusOf,
                   "scene 0x0, focused 0, echo \"\", preedit -, published 3, theme \"default\"",
                   "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1",
-                  statusOf (modified := true)] },
+                  statusOf (modified := true) (cursor := ⟨0, 1⟩)] },
     { name :=
         "the scene is published again after a reload installs and after a job's command runs, once a frame exists"
       run :=
@@ -1730,12 +1749,12 @@ def scriptChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 2 chunks, 1 commands",
                 "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
-                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4", statusOf (modified := true),
-                "spawn count: job 1", "job 1 count: ok",
-                "reload 2: installed, 2 chunks, 1 commands",
+                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4",
+                statusOf (modified := true) (cursor := ⟨0, 4⟩), "spawn count: job 1",
+                "job 1 count: ok", "reload 2: installed, 2 chunks, 1 commands",
                 "scene 0x0, focused 0, echo \"\", preedit -, published 10, theme \"default\"",
                 "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4",
-                statusOf (modified := true)] },
+                statusOf (modified := true) (cursor := ⟨0, 4⟩)] },
     { name :=
         "once a command has released the focused buffer's text, a commit is still followed by a scene: its echo is the refusal, and it has no view of that buffer"
       run :=
@@ -1754,8 +1773,8 @@ def scriptChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 1 commands",
                 "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
-                "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1", statusOf (modified := true),
-                "run forget: ok",
+                "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1",
+                statusOf (modified := true) (cursor := ⟨0, 1⟩), "run forget: ok",
                 "scene 0x0, focused 0, echo \"refused: no such text\", preedit -, published 5, theme \"default\""] },
     { name :=
         "a program of the editor loop that is refused is printed as refused and hands back nothing, and what it made before the refusal is kept; one that is not refused prints nothing and hands back its result"
@@ -2647,7 +2666,8 @@ def promptChecks (context : Context) : List Check :=
                     focuses line 0 &&
                       (line.splitOn s!", echo {"hello Ada!".quote}, ").length == 2) ==
                   some true &&
-                accepted.extract 1 == #[viewLine "Ada!" 4, statusOf (modified := true)] &&
+                accepted.extract 1 ==
+                  #[viewLine "Ada!" 4, statusOf (modified := true) (cursor := ⟨0, 4⟩)] &&
                 !after.any (·.startsWith "text 1: ") &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           promptCompiled },
@@ -2696,8 +2716,8 @@ def promptChecks (context : Context) : List Check :=
                 delivered == #["job 1 nap: ok"] &&
                 (waiting[0]?.map (focuses · 1)) == some true &&
                 waiting.extract 1 ==
-                  #[viewLine "napped" 6, statusOf (modified := true), minibufferLine "Ada" 3,
-                    promptStatus] &&
+                  #[viewLine "napped" 6, statusOf (modified := true) (cursor := ⟨0, 6⟩),
+                    minibufferLine "Ada" 3, promptStatus] &&
                 echo == "hello Ada".quote &&
                 views == #[viewLine "nappedAda" 9])
           promptCompiled },
@@ -3140,6 +3160,13 @@ two-byte characters. -/
 def noteText : String :=
   "héllo\nwörld\n"
 
+/-- The status line of view 0 on `noteText` opened from `path`, called
+`note.txt`, its cursor on the first row at `column`: two rows, the empty one
+after the final line break not counted (`statusOf`). -/
+def noteStatus (path : System.FilePath) (modified : Bool := false) (column : Nat := 0) : String :=
+  statusOf (name := "note.txt") (modified := modified) (cursor := ⟨0, column⟩) (lines := 2) (file :=
+    some path)
+
 /-- The checks of files through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue, the real text binding and the
 library's file service: the checks of this executable whose hosts are over a
@@ -3205,7 +3232,7 @@ def fileChecks (context : Context) : List Check :=
                     #["run open-note: ok", s!"job 1 {Files.loadJob}: started",
                       s!"job 1 {Files.loadJob}: ok"] &&
                   echo == "".quote &&
-                  lines == #[viewLine noteText 0, statusOf (name := "note.txt")] },
+                  lines == #[viewLine noteText 0, noteStatus path] },
     { name :=
         "the save command on a modified buffer: after a commit the view's status line has the modified field, and once the save job has ended the file's bytes are the buffer's text, the echo area says the file was written, and the status line has the name alone"
       run :=
@@ -3223,11 +3250,11 @@ def fileChecks (context : Context) : List Check :=
               return saved &&
                   edited ==
                     #[viewLine ("x" ++ noteText) 1,
-                      statusOf (name := "note.txt") (modified := true)] &&
+                      noteStatus path (modified := true) (column := 1)] &&
                   (← session.output.get).contains s!"job 2 {Files.saveJob}: ok" &&
                   (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
                   echo == (Files.wrote path).quote &&
-                  lines == #[viewLine ("x" ++ noteText) 1, statusOf (name := "note.txt")] },
+                  lines == #[viewLine ("x" ++ noteText) 1, noteStatus path (column := 1)] },
     { name :=
         "opening a path that is open starts no second load and makes no second text: the open command a second time prints its own line alone, and show lists the texts it listed before"
       run :=
@@ -3244,7 +3271,7 @@ def fileChecks (context : Context) : List Check :=
               let (_, lines) ← session.viewsAndStatus
               return again && printed == #["run open-note: ok"] && (← session.shown) == shown &&
                   (shown.filter (·.startsWith "text ")).size == 2 &&
-                  lines == #[viewLine noteText 0, statusOf (name := "note.txt")] },
+                  lines == #[viewLine noteText 0, noteStatus path] },
     { name :=
         "open then save with no edit writes the file and leaves its bytes as they were, for a file whose lines end in line feeds and one whose lines end in CRLF: each save job ends ok, the echo area says the file was written, and the bytes read back are the bytes the check wrote"
       run :=
@@ -3286,7 +3313,7 @@ def fileChecks (context : Context) : List Check :=
               return saved && (← IO.FS.readBinFile path) == other &&
                   lines ==
                     #[viewLine ("x" ++ noteText) 1,
-                      statusOf (name := "note.txt") (modified := true)] &&
+                      noteStatus path (modified := true) (column := 1)] &&
                   echo == (Files.notSaved path (.changed (some found))).quote },
     { name :=
         "the open command on a path with no file: the echo area says the refusal, and the focused view still shows the buffer it showed, with its text, its cursor and its name"
@@ -3300,7 +3327,7 @@ def fileChecks (context : Context) : List Check :=
               let (echo, lines) ← session.viewsAndStatus
               return joined && (← session.output.get).contains s!"job 1 {Files.loadJob}: ok" &&
                   echo == (Files.notOpened path .notFound).quote &&
-                  lines == #[viewLine "kept" 4, statusOf (modified := true)] },
+                  lines == #[viewLine "kept" 4, statusOf (modified := true) (cursor := ⟨0, 4⟩)] },
     { name :=
         "the open command with no path asks for one and opens the answer: run by its name, with the path of a file in a temporary directory committed into the minibuffer and the accept key pressed, the host says the load job started and ended, the prompt is closed, and the view the command was asked from shows the file's text in a buffer called by its base name"
       run :=
@@ -3325,7 +3352,7 @@ def fileChecks (context : Context) : List Check :=
                   output.filter (·.startsWith "job ") ==
                     #[s!"job 1 {Files.loadJob}: started", s!"job 1 {Files.loadJob}: ok"] &&
                   echo == "".quote &&
-                  lines == #[viewLine noteText 0, statusOf (name := "note.txt")] }]
+                  lines == #[viewLine noteText 0, noteStatus path] }]
 
 /-- The directives of one ex line of a script: the ex command run by its
 name, which asks, `line` committed into the minibuffer, and the accept

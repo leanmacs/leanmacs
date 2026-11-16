@@ -4589,7 +4589,7 @@ def loopLean (modified : Bool := true) (path : String := "lean/Editor/Loop.lean"
 /-- The context of a window on `buffer` in normal state, its cursor on row
 958 at column 4 of 2338 rows, selected when `selected` says. -/
 def loopContext (buffer : Buffer := loopLean) (selected : Bool := true) : ModeLine.Context :=
-  { buffer, reported := #[{ text := "NORMAL", face := ⟨"mode-line.state.normal"⟩ }]
+  { buffer, reported := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
     cursor := some ⟨958, 4⟩, lines := 2338, selected }
 
 /-- The texts of `fields`, each with its face's name. -/
@@ -4785,8 +4785,9 @@ def drawnFaces : Array FaceName :=
   let told : Vim.State := scheme.openMinibuffer ⟨0⟩ scheme.init
   let reports := #[scheme.init, fed "i", fed "v", fed "V", told].map (scheme.report · ⟨0⟩)
   let states := Vim.Default.states.initial :: Vim.Default.states.others
-  let modified : Buffer :=
-    { name := "notes.txt", text := ⟨0⟩, history := (UndoTree.new ⟨0⟩ 0).record 1 }
+  let context : ModeLine.Context :=
+    { loopContext with
+      reported := (reports[0]?.map (·.status)).getD #[], cursor := some ⟨4, 2⟩, lines := 10 }
   let asked : Prompt :=
     { label := "Theme: ", view := ⟨1⟩, asker := ⟨0⟩, continuation := { command := "load-theme" }
       candidates :=
@@ -4794,7 +4795,8 @@ def drawnFaces : Array FaceName :=
   reports.map (·.cursor.face) ++ reports.flatMap (·.status.map (·.face)) ++
     states.toArray.map (Vim.cursorFace ·.name) ++
     #[({} : InputScheme.Report).cursor.face] ++
-    (Loop.status modified).map (·.face) ++
+    (ModeLine.standard.fields context).map (·.face) ++
+    (ModeLine.standard.fields { context with selected := false }).map (·.face) ++
     (Loop.promptStatus asked).map (·.face)
 
 /-- The checks of the face vocabulary (`Editor/Face/Vocabulary.lean`), of a
@@ -4812,12 +4814,30 @@ def faceVocabularyChecks : List Check :=
                 (List.range later).all fun earlier => names[later]? != names[earlier]?) &&
             Face.vocabulary.all (!·.meaning.isEmpty)) },
     { name :=
-        "the vocabulary lists every face the shipped Vim scheme, the loop and a scheme that names no cursor face draw, and status.modified and the three minibuffer faces among them"
+        "the vocabulary lists every face the shipped Vim scheme, the mode line, the loop and a scheme that names no cursor face draw, and the mode line's and the three minibuffer faces among them"
       run :=
         pure
           (drawnFaces.all Face.vocabularyNames.contains &&
-            [Loop.modifiedFace, Loop.promptFace, Loop.candidateFace, Loop.chosenFace].all
+            [ModeLine.bufferFace, ModeLine.modifiedFace, ModeLine.secondaryFace,
+                  ModeLine.inactiveFace, Loop.promptFace, Loop.candidateFace, Loop.chosenFace].all
               drawnFaces.contains) },
+    { name :=
+        "the vocabulary holds the badge face of every state of the shipped Vim scheme, read from the scheme, and no status. face"
+      run :=
+        let states := Vim.Default.states.initial :: Vim.Default.states.others
+        pure
+          (states.all (fun state => Face.vocabularyNames.contains (Vim.stateFace state.name)) &&
+            states.length == Theme.cursorStates.size &&
+            ["status.state", "status.name", "status.modified"].all fun name =>
+              !Face.vocabularyNames.contains ⟨name⟩) },
+    { name :=
+        "every shipped theme pads the mode line and the echo area 3 points above and below, and its default face sets no padding"
+      run :=
+        let padded (theme : Theme) :=
+          (theme.merged ⟨"mode-line"⟩).verticalPadding == some 3 &&
+            (theme.merged ⟨"echo-area"⟩).verticalPadding == some 3 &&
+            (theme.merged ⟨"default"⟩).verticalPadding == some 0
+        pure (padded Theme.builtin && Themes.shipped.all (padded ·.theme)) },
     { name := "the vocabulary lists the four names layout reads by itself"
       run :=
         pure
@@ -4933,6 +4953,11 @@ def faceVocabularyChecks : List Check :=
       run :=
         pure (!Themes.shipped.isEmpty && Themes.shipped.all (Themes.problems ·.theme == #[])) }]
 
+/-- The badge faces of the shipped Vim scheme's states, each bold in every
+shipped theme. -/
+def badgeFaces : List String :=
+  Theme.cursorStates.toList.map (s!"mode-line.state.{·}")
+
 /-- The faces whose colours the Solarized module's table of choices records
 (`Editor/Themes/Solarized.lean`), in dark names: each face's foreground and
 background as the table gives them, read from `c`, so that the same list
@@ -4945,8 +4970,13 @@ def solarizedChoices (c : Themes.Solarized.Colours) : List (String × Option Col
     cursors.map (·, some c.base03, some c.base0) ++
     [("mode-line", some c.base1, some c.base02),
       ("mode-line.inactive", some c.base0, some c.base02), ("echo-area", some c.base0, none),
-      ("status.state", some c.blue, none), ("status.name", some c.base1, none),
-      ("status.modified", some c.orange, none), ("minibuffer.prompt", some c.blue, none),
+      ("mode-line.state.normal", some c.base03, some c.blue),
+      ("mode-line.state.insert", some c.base03, some c.green),
+      ("mode-line.state.visual", some c.base03, some c.magenta),
+      ("mode-line.state.visual-line", some c.base03, some c.magenta),
+      ("mode-line.state.minibuffer", some c.base03, some c.cyan),
+      ("mode-line.buffer", some c.base1, none), ("mode-line.modified", some c.orange, none),
+      ("mode-line.secondary", some c.base01, none), ("minibuffer.prompt", some c.blue, none),
       ("minibuffer.candidate", some c.base1, none),
       ("minibuffer.chosen", some c.base02, some c.base2), ("syntax.attribute", some c.orange, none),
       ("syntax.comment", some c.base01, none), ("syntax.constant", some c.cyan, none),
@@ -4968,7 +4998,7 @@ def solarizedChosen (theme : Theme) (c : Themes.Solarized.Colours) : Bool :=
   (solarizedChoices c).all
       (fun (name, foreground, background) =>
         (face name).foreground == foreground && (face name).background == background) &&
-    ["status.state", "minibuffer.prompt", "block-header"].all
+    (badgeFaces ++ ["mode-line.buffer", "minibuffer.prompt", "block-header"]).all
       (fun name => (face name).weight == some 700) &&
     (face "syntax.comment").slant == some .italic &&
     (face "review-unexamined").underline == some { style := .single, color := some c.orange }
@@ -5041,9 +5071,15 @@ def fairyFlossChoices (c : Themes.FairyFloss.Colours) :
     cursors.map (·, some c.background, some c.caret) ++
     [("mode-line", some c.foreground, some c.lineHighlight),
       ("mode-line.inactive", some c.lavender, some c.lineHighlight),
-      ("echo-area", some c.foreground, none), ("status.state", some c.pink, none),
-      ("status.name", some c.foreground, none), ("status.modified", some c.peach, none),
-      ("minibuffer.prompt", some c.mint, none), ("minibuffer.candidate", some c.lavender, none),
+      ("echo-area", some c.foreground, none),
+      ("mode-line.state.normal", some c.background, some c.pink),
+      ("mode-line.state.insert", some c.background, some c.added),
+      ("mode-line.state.visual", some c.background, some c.lavender),
+      ("mode-line.state.visual-line", some c.background, some c.lavender),
+      ("mode-line.state.minibuffer", some c.background, some c.mint),
+      ("mode-line.buffer", some c.foreground, none), ("mode-line.modified", some c.peach, none),
+      ("mode-line.secondary", some c.lavender, none), ("minibuffer.prompt", some c.mint, none),
+      ("minibuffer.candidate", some c.lavender, none),
       ("minibuffer.chosen", some c.background, some c.mint),
       ("syntax.attribute", some c.lemon, none), ("syntax.comment", some c.gold, none),
       ("syntax.constant", some c.lavender, none), ("syntax.constructor", some c.lemon, none),
@@ -5065,7 +5101,7 @@ def fairyFlossChosen (theme : Theme) (c : Themes.FairyFloss.Colours) : Bool :=
   (fairyFlossChoices c).all
       (fun (name, foreground, background) =>
         (face name).foreground == foreground && (face name).background == background) &&
-    ["status.state", "minibuffer.prompt", "block-header"].all
+    (badgeFaces ++ ["mode-line.buffer", "minibuffer.prompt", "block-header"]).all
       (fun name => (face name).weight == some 700) &&
     (face "syntax.comment").slant == some .upright &&
     (face "syntax.type").slant == some .italic &&
@@ -8023,6 +8059,24 @@ def stepsFrom (start : TextM EditorState) (events : List Event) :
     nexts := nexts.push said
   return (loop, nexts)
 
+/-- The shipped mode line (`ModeLine.standard`) of a view of a buffer called
+`name`, with no file and no major mode, modified when `modified` says, of
+which the scheme reports `reported`, its cursor at `cursor` in a text of
+`lines` rows, selected when `selected` says: what the loop draws of a view
+of the scratch buffer. -/
+def modeLineOf (name : String := "scratch") (modified : Bool := false)
+    (cursor : Option Point := some ⟨0, 0⟩) (lines : Nat := 1) (reported : Array StatusField := #[])
+    (selected : Bool := true) : Array StatusField :=
+  let history := UndoTree.new ⟨0⟩ 0
+  ModeLine.standard.fields
+    { buffer := { name, text := ⟨0⟩, history := if modified then history.record 1 else history }
+      reported, cursor, lines, selected }
+
+/-- The left side of a status line: the fields of the buffer's name and its
+modified mark, and a badge. -/
+def leftOf (status : Array StatusField) : Array StatusField :=
+  status.filter (·.side == .left)
+
 /-- What a run of the loop on the editor's models came to: the loop and what
 each step said, the scenes the display recorded, and the models. `none` when
 it was refused. -/
@@ -8227,22 +8281,75 @@ def loopChecks : List Check :=
               second.views.all fun view => shownText model view == some ""
           | _ => false },
     { name :=
-        "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, no decorations, and a status line of one field, its buffer's name in the name's face"
+        "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, no decorations, and the shipped mode line of its window: the focused one's with no status face, and each other one's in mode-line.inactive, its row too"
       run :=
         pure <|
           match looped threeWindows [pressF5] with
           | some ((loop, _), #[scene], _) =>
-            let named :=
-              (loop.state.buffer? ⟨0⟩).map fun buffer =>
-                #[({ text := buffer.name, face := Loop.nameFace } : StatusField)]
             scene.views.map (·.scroll) == loop.state.windows.map (·.scroll) &&
               scene.views.map (·.selections) == loop.state.windows.map (#[·.selection]) &&
-              scene.views.all fun view =>
-                view.cursor == { shape := .bar, face := ⟨"cursor"⟩ } && view.decorations.isEmpty &&
-                  some view.status == named
+              (scene.views.all fun view =>
+                view.cursor == { shape := .bar, face := ⟨"cursor"⟩ } && view.decorations.isEmpty) &&
+              scene.views.map (·.status) ==
+                #[modeLineOf, modeLineOf (selected := false), modeLineOf (selected := false)] &&
+              scene.views.map (·.statusFace) ==
+                #[none, some ModeLine.inactiveFace, some ModeLine.inactiveFace]
           | _ => false },
     { name :=
-        "a view's status line carries the modified field while its buffer is modified, and not otherwise: the first scene's views have the name alone, after a commit each view of the buffer has the name and then the modified mark in the modified face, and after a key whose command undoes the commit each has the name alone again"
+        "two windows on one buffer under the Vim scheme: the focused one's mode line has the NORMAL badge and no status face, and the other's has no badge, every field and its row in mode-line.inactive"
+      run :=
+        pure <|
+          let program : EditorM (Loop Vim.Default.scheme) := do
+            let loop : Loop Vim.Default.scheme := { state := ← threeWindows }
+            return (← loop.step {} pressF5).loop
+          match program.runModel editorModel with
+          | (.ok _, model) =>
+            let badge := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
+            match model.display.scenes with
+            | #[scene] =>
+              scene.views.map (·.status) ==
+                  #[modeLineOf (reported := badge), modeLineOf (selected := false),
+                    modeLineOf (selected := false)] &&
+                scene.views.map (·.statusFace) ==
+                  #[none, some ModeLine.inactiveFace, some ModeLine.inactiveFace] &&
+                (modeLineOf (reported := badge))[0]? ==
+                  some { text := "NORMAL", face := ⟨"mode-line.state.normal"⟩, padding := 8 }
+            | _ => false
+          | (.error _, _) => false },
+    { name :=
+        "the scene's status lines are drawn by the mode line the step's keys carry, in its order and on its sides"
+      run :=
+        pure <|
+          let handed : Loop.Keys TestScheme.scheme :=
+            { modeLine := { left := #[ModeLine.position], right := #[ModeLine.buffer] } }
+          let program : EditorM TestLoop := do
+            let loop : TestLoop := { state := ← EditorState.initial ⟨640, 480⟩ }
+            return (← loop.step handed (.commit "ab\ncd")).loop
+          match program.runModel editorModel with
+          | (.ok _, model) =>
+            model.display.scenes.map (·.views.map (·.status)) ==
+              #[#[#[{ text := "Bot", face := ModeLine.secondaryFace, padding := 4 },
+                    { text := "scratch", face := ModeLine.bufferFace, side := .right,
+                      padding := 4 }]]]
+          | (.error _, _) => false },
+    { name :=
+        "a view's mode line reads its cursor from its selection in the view's snapshot, as a row and a column in the text port's cells, and its rows less an empty last row after a final line break"
+      run :=
+        pure <|
+          let program : EditorM TestLoop := do
+            let loop : TestLoop := { state := ← EditorState.initial ⟨640, 480⟩ }
+            let loop := (← loop.step {} (.commit "ab\ncd")).loop
+            return (← loop.step {} (.commit "\n")).loop
+          match program.runModel editorModel with
+          | (.ok _, model) =>
+            model.display.scenes.map (·.views.map (·.status)) ==
+                #[#[modeLineOf (modified := true) (cursor := some ⟨1, 2⟩) (lines := 2)],
+                  #[modeLineOf (modified := true) (cursor := some ⟨2, 0⟩) (lines := 2)]] &&
+              (modeLineOf (cursor := some ⟨1, 2⟩) (lines := 2)).map (·.text) ==
+                #["scratch", "2:3", "Bot"]
+          | (.error _, _) => false },
+    { name :=
+        "a view's status line carries the modified mark while its buffer is modified, and not otherwise: the first scene's views have the name alone on the left, after a commit each view of the buffer has the name and then the modified mark, in the modified face in the focused view, and after a key whose command undoes the commit each has the name alone again"
       run :=
         pure <|
           let undoKeys : Loop.Keys TestScheme.scheme :=
@@ -8263,11 +8370,15 @@ def loopChecks : List Check :=
             match loop.state.buffer? ⟨0⟩ with
             | none => false
             | some buffer =>
-              let name : StatusField := { text := buffer.name, face := Loop.nameFace }
-              let modified : StatusField := { text := Loop.modifiedMark, face := Loop.modifiedFace }
+              let texts (status : Array StatusField) := (leftOf status).map (·.text)
               model.texts.contents == #[""] &&
-                model.display.scenes.map (fun scene => scene.views.map (·.status)) ==
-                  #[.replicate 3 #[name], .replicate 3 #[name, modified], .replicate 3 #[name]]
+                model.display.scenes.map (fun scene => scene.views.map (texts ·.status)) ==
+                  #[.replicate 3 #[buffer.name], .replicate 3 #[buffer.name, ModeLine.modifiedMark],
+                    .replicate 3 #[buffer.name]] &&
+                (model.display.scenes[1]?.bind (·.views[0]?)).map (leftOf ·.status) ==
+                  some
+                    #[ModeLine.field buffer.name ModeLine.bufferFace,
+                      ModeLine.field ModeLine.modifiedMark ModeLine.modifiedFace]
           | (.error _, _) => false },
     { name :=
         "a commit once the focused buffer's text was released is not refused: it publishes a scene with the refusal in its echo and no view of that buffer, and the loop keeps the state as it was, well formed, with that echo"
@@ -8422,8 +8533,10 @@ def loopChecks : List Check :=
                 minibuffer.scroll == held.scroll &&
                 minibuffer.selections == #[held.selection] &&
                 minibuffer.status == #[{ text := "Name: ", face := Loop.promptFace }] &&
-                window.status == #[{ text := "scratch", face := Loop.nameFace }] &&
-                Loop.promptFace != Loop.nameFace &&
+                window.status == modeLineOf &&
+                window.statusFace == none &&
+                minibuffer.statusFace == none &&
+                Loop.promptFace != ModeLine.bufferFace &&
                 scene.focused == some ⟨1⟩ &&
                 scene.views.map (fun view => (view.id, view.rect)) ==
                   state.frame.tree.rects (frameRect state.frame.size) (some ⟨1⟩)
@@ -8469,16 +8582,20 @@ def loopChecks : List Check :=
               markedReport.cursor != plainCursor
           | _ => false },
     { name :=
-        "a view's status line is the fields the scheme reports of it and then its buffer's: the name, and the modified field while the buffer is modified; a view the scheme reports no field of has its buffer's alone"
+        "the focused view's status line is the shipped mode line with the fields the scheme reports of it as its badge, and the modified mark while the buffer is modified; the other views have no badge, whatever the scheme reports of them"
       run :=
         pure <|
           match switched threeWindows "C-m" [.commit "x"] with
           | some (_, #[marked, modified], _) =>
-            let name : StatusField := { text := "scratch", face := Loop.nameFace }
-            let mark : StatusField := { text := Loop.modifiedMark, face := Loop.modifiedFace }
-            marked.views.map (·.status) == #[markedReport.status ++ #[name], #[name], #[name]] &&
-              modified.views.map (·.status) ==
-                #[markedReport.status ++ #[name, mark], #[name, mark], #[name, mark]] &&
+            let other := modeLineOf (selected := false)
+            marked.views.map (·.status) ==
+                #[modeLineOf (reported := markedReport.status), other, other] &&
+              (modified.views[0]?.map (·.status)) ==
+                some
+                  (modeLineOf (modified := true) (cursor := some ⟨0, 1⟩) (reported :=
+                    markedReport.status)) &&
+              (modified.views.extract 1).map (leftOf ·.status) ==
+                .replicate 2 (leftOf (modeLineOf (modified := true) (selected := false))) &&
               markedReport.status.size == 1
           | _ => false },
     { name :=
@@ -8494,8 +8611,9 @@ def loopChecks : List Check :=
           | some (_, #[_, scene], _) =>
             scene.views.map (·.cursor) == #[markedReport.cursor, askedReport.cursor] &&
               scene.views.map (·.status) ==
-                #[markedReport.status ++ #[{ text := "scratch", face := Loop.nameFace }],
+                #[modeLineOf (reported := markedReport.status),
                   #[{ text := "Name: ", face := Loop.promptFace }]] &&
+              scene.views.map (·.statusFace) == #[none, none] &&
               !askedReport.status.isEmpty
           | _ => false },
     { name :=
@@ -10872,7 +10990,8 @@ def dispatchUndoChecks : List Check :=
             before == inside &&
               -- One scene a key: the key that begins the session, the
               -- prefix of the stamping sequence, and the key that stamps.
-              model.display.scenes.map (·.views.map (·.status.any (·.face == Loop.modifiedFace))) ==
+              model.display.scenes.map
+                  (·.views.map (·.status.any (·.face == ModeLine.modifiedFace))) ==
                 #[#[false], #[false], #[true]]
           | (.error _, _) => false },
     { name :=
@@ -12239,16 +12358,17 @@ which Vim state a view is in, how one is entered, and what the grammar
 reads of a state's record. -/
 def vimStateChecks : List Check :=
   [{  name :=
-        "the Vim scheme reports a view with no entry by the initial record: its cursor shape in the face cursor. and its name, one status field with its name in the state's face, its shape, no selecting, no insert session, and a view that takes no text"
+        "the Vim scheme reports a view with no entry by the initial record: its cursor shape in the face cursor. and its name, one status field, its name in capitals in the badge face mode-line.state. and its name, its shape, no selecting, no insert session, and a view that takes no text"
       run :=
         let scheme := Vim.scheme vimStates
         pure
           (scheme.report vimInit ⟨0⟩ ==
               { cursor := { shape := .block, face := ⟨"cursor.normal"⟩ }
-                status := #[{ text := "normal", face := Vim.stateFace }], shape := .inclusive
-                selecting := false, session := false, takesText := false } &&
+                status := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
+                shape := .inclusive, selecting := false, session := false, takesText := false } &&
             scheme.report vimInit ⟨5⟩ == scheme.report vimInit ⟨0⟩ &&
-            Vim.stateFace == ⟨"status.state"⟩) },
+            Vim.stateFace "normal" == ⟨"mode-line.state.normal"⟩ &&
+            Vim.stateFace "visual-line" == ⟨"mode-line.state.visual-line"⟩) },
     { name :=
         "after a key that enters a state where typing is text, the Vim scheme reports that record's cursor, name and shape, an insert session, and a view that takes text"
       run :=
@@ -12256,7 +12376,7 @@ def vimStateChecks : List Check :=
         pure
           (scheme.report (vimFed "i").1 ⟨0⟩ ==
             { cursor := { shape := .bar, face := ⟨"cursor.insert"⟩ }
-              status := #[{ text := "insert", face := Vim.stateFace }], shape := .exclusive
+              status := #[{ text := "INSERT", face := Vim.stateFace "insert" }], shape := .exclusive
               selecting := false, session := true, takesText := true }) },
     { name :=
         "the Vim scheme reports selecting for a view in a state whose operators act on the selection, and the record a check registers by its own cursor, name and shape"
@@ -12265,10 +12385,10 @@ def vimStateChecks : List Check :=
         let visual := (Vim.scheme vimStates).report (vimFed "v").1 ⟨0⟩
         pure
           (visual.selecting && !visual.session && !visual.takesText && visual.shape == .inclusive &&
-            visual.status == #[{ text := "visual", face := Vim.stateFace }] &&
+            visual.status == #[{ text := "VISUAL", face := Vim.stateFace "visual" }] &&
             (Vim.scheme states).report (vimFed "q" (states := states)).1 ⟨0⟩ ==
               { cursor := { shape := .underline, face := ⟨"cursor.test"⟩ }
-                status := #[{ text := "test", face := Vim.stateFace }], shape := .line
+                status := #[{ text := "TEST", face := Vim.stateFace "test" }], shape := .line
                 selecting := false, session := false, takesText := false }) },
     { name :=
         "the Vim scheme's report is one view's: a key for one view leaves another view's report as it was, a view told closed is reported by the initial record again, and a view told to be the minibuffer's by the record the registry names for it"
@@ -14666,7 +14786,7 @@ def promptModeChecks : List Check :=
             let showing (text : String) :=
               some
                 (some text, #[({ text := "Name: ", face := Loop.promptFace } : StatusField)], true,
-                  #[({ text := "scratch", face := Loop.nameFace } : StatusField)])
+                  modeLineOf)
             promptScene driver == none && promptScene asking == showing "" &&
               promptScene one == showing "h" &&
               promptScene two == showing "hi" },
@@ -15385,21 +15505,25 @@ def showing (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option Showing :=
 def echoOf (driver : TestDriver) : Option String :=
   driver.model.display.scenes.back?.map (·.echo)
 
-/-- The status line of the view `view` in the last scene `driver`'s display
-recorded. -/
+/-- The buffer's fields of the status line of the view `view` in the last
+scene `driver`'s display recorded: those in the faces of the buffer's name
+and of the modified mark (`ModeLine.buffer`, `ModeLine.modified`), which is
+what the file checks read. The other segments are `modeLineChecks`'s. -/
 def statusOf (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array StatusField) :=
   driver.model.display.scenes.back?.bind fun scene =>
-    (scene.views.find? (·.id == view)).map (·.status)
+    (scene.views.find? (·.id == view)).map fun view =>
+      view.status.filter fun field =>
+        field.face == ModeLine.bufferFace || field.face == ModeLine.modifiedFace
 
-/-- The status line of a view of a buffer called `name` that is not
-modified: the name alone, in the name's face. -/
+/-- The buffer's fields of the status line of a selected view of a buffer
+called `name` that is not modified: the name alone, in its face. -/
 def named (name : String) : Array StatusField :=
-  #[{ text := name, face := Loop.nameFace }]
+  #[ModeLine.field name ModeLine.bufferFace]
 
-/-- The status line of a view of a buffer called `name` that is modified:
-the name, then the modified field. -/
+/-- The buffer's fields of the status line of a selected view of a buffer
+called `name` that is modified: the name, then the modified mark. -/
 def namedModified (name : String) : Array StatusField :=
-  named name ++ #[{ text := Loop.modifiedMark, face := Loop.modifiedFace }]
+  named name ++ #[ModeLine.field ModeLine.modifiedMark ModeLine.modifiedFace]
 
 /-- The stamp the files `driver`'s jobs reach have for `path`. -/
 def stampOf (driver : TestDriver) (path : System.FilePath) : Option File.Stamp :=
@@ -18067,7 +18191,8 @@ structure EvilSeen where
   covered : Array String
   /-- How the view's cursors are drawn. -/
   cursor : Cursor
-  /-- The view's status line. -/
+  /-- The left side of the view's mode line: its badge, its buffer's name
+  and its modified mark. -/
   status : Array StatusField
   deriving DecidableEq, Repr
 
@@ -18084,7 +18209,7 @@ def evilSeen (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option EvilSeen 
     let extents ← marker.text.extents selection
     return (selection, ← extents.mapM fun extent => marker.text.slice extent.start extent.stop)
   let (selection, covered) ← (program.runModel driver.model.texts).1.toOption
-  return { selection, covered, cursor := shown.cursor, status := shown.status }
+  return { selection, covered, cursor := shown.cursor, status := leftOf shown.status }
 
 /-- What the scene after the keys `typed`, pressed from the fixture
 `fixture`, shows of view 0 (`evilSeen`). -/
@@ -18099,13 +18224,19 @@ def evilSelected (fixture typed : String) : Option (List (Nat × Nat) × Shape �
     ((seen.selection.ranges.map fun range => (range.anchor, range.head)).toList,
       seen.selection.shape, seen.covered.toList)
 
-/-- The cursor and the status line a scene shows of a view of the buffer
-`scratch`, not modified, in the Vim state view 0 is in after the keys
-`typed` under the grammar alone: what the default scheme reports of that
-state, and then the buffer's name. -/
+/-- The cursor and the left side of the mode line a scene shows of a view of
+the buffer `scratch`, not modified, in the Vim state view 0 is in after the
+keys `typed` under the grammar alone: what the default scheme reports of
+that state, as the badge, and then the buffer's name. -/
 def evilLooks (typed : String) : Cursor × Array StatusField :=
   let report := vimDefaultReport typed
-  (report.cursor, report.status ++ #[{ text := "scratch", face := Loop.nameFace }])
+  (report.cursor,
+    report.status.map ({ · with padding := ModeLine.badgePadding }) ++
+      #[ModeLine.field "scratch" ModeLine.bufferFace])
+
+/-- The modified mark, as the mode line of a selected view draws it. -/
+def evilMark : StatusField :=
+  ModeLine.field ModeLine.modifiedMark ModeLine.modifiedFace
 
 /-- What the scheme reports of a view in a state that keeps both ends of
 the selection, of the shape `shape`, written by hand: what a visual state
@@ -18347,7 +18478,7 @@ def evilInsertChecks : List Check :=
       run :=
         pure <|
           let seen (typed : String) : Option EvilSeen := evilScene "foo |bar" typed
-          let modified : StatusField := { text := Loop.modifiedMark, face := Loop.modifiedFace }
+          let modified : StatusField := evilMark
           let insert := vimDefaultReport "i"
           let normal := vimDefaultReport ""
           seen "<F5>" ==
@@ -18476,7 +18607,8 @@ structure EvilEdited where
   /-- The unnamed register; `none` when it is as it was before the keys. -/
   register : Option Register
   /-- Whether the scene's status line says the view is in insert state: its
-  first field is the one the scheme reports of that state. -/
+  first field, the mode line's badge, is the one the scheme reports of that
+  state. -/
   insert : Bool
   /-- What the echo area says. -/
   echo : String
@@ -18497,7 +18629,9 @@ def evilLeft (driver : EvilDriver) : EvilEdited :=
   { shown := evilShown driver
     register := if register == some evilSentinel then none else register
     insert :=
-      ((evilSeen driver).bind (·.status[0]?)) == (vimDefaultReport "i").status[0]? &&
+      let badge (field : StatusField) := (field.text, field.face)
+      ((evilSeen driver).bind (·.status[0]?)).map badge ==
+          (vimDefaultReport "i").status[0]?.map badge &&
         (vimDefaultReport "i").status[0]? != (vimDefaultReport "").status[0]?
     echo := driver.loop.state.echo }
 
@@ -19591,9 +19725,7 @@ def evilOpenChecks : List Check :=
         return held &&
             (evilScene "ab\nc|d\nef" "o").map (fun seen => (seen.selection, seen.status)) ==
               some
-                ({ ranges := #[⟨6, 6⟩], shape := .exclusive },
-                  (evilLooks "i").2.push
-                    { text := Loop.modifiedMark, face := Loop.modifiedFace }) },
+                ({ ranges := #[⟨6, 6⟩], shape := .exclusive }, (evilLooks "i").2.push evilMark) },
     { name :=
         "o and the text typed after it are one step of the history: o leaves its group open, <Escape> closes it as one node, and one undo request gives the text from before the o"
       run :=
@@ -19799,10 +19931,7 @@ def evilRepeatChecks : List Check :=
             let replayed := evilFed changed "."
             evilHistory changed == some (2, false) && evilHistory replayed == some (3, false) &&
               evilShown replayed == "XY X|Y baz" &&
-              (evilSeen replayed).map (·.status) ==
-                some
-                  ((evilLooks "").2.push
-                    { text := Loop.modifiedMark, face := Loop.modifiedFace }) &&
+              (evilSeen replayed).map (·.status) == some ((evilLooks "").2.push evilMark) &&
               evilShown (evilFed replayed "u") == "XY |bar baz" },
     { name :=
         ". with no change to repeat says nothing and changes nothing, and the repeat command run by its name, which is handed no change, gives up with the sentence its function makes"

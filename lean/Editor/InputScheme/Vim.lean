@@ -162,7 +162,7 @@ A Vim state (normal, insert, a visual state) is a record in a registry
   | Field of the report | From the record |
   |---|---|
   | `cursor` | Its cursor shape, in the face `cursor.` followed by its name (`cursorFace`) |
-  | `status` | One field: its name, in the face `stateFace` |
+  | `status` | One field: its name in capitals (`NORMAL`), in the face `mode-line.state.` followed by its name (`stateFace`), which the mode line's `state` segment draws as its badge (`Editor/ModeLine.lean`) |
   | `shape` | Its `shape` |
   | `selecting` | `operatesOnSelection`: where operators act on the selection, a motion extends it |
   | `session`, `takesText` | `insertsText`: where typing is text, the view is in an insert session and a committed text is inserted |
@@ -497,9 +497,11 @@ def State.record (states : States) (state : State) (view : ViewId) : StateRecord
 def State.stateOf (states : States) (state : State) (view : ViewId) : String :=
   (state.record states view).name
 
-/-- The face of the status field that names a view's Vim state. -/
-def stateFace : FaceName :=
-  ⟨"status.state"⟩
+/-- The face of the status field that names a view in the Vim state called
+`name`, which the mode line draws as its badge: `mode-line.state.` and the
+name. -/
+def stateFace (name : String) : FaceName :=
+  ⟨s!"mode-line.state.{name}"⟩
 
 /-- The face a view's cursors take in the Vim state called `name`:
 `cursor.` and the name. -/
@@ -508,13 +510,14 @@ def cursorFace (name : String) : FaceName :=
 
 /-- What the scheme says of `view`, read off the record of the Vim state it
 is in: the record's cursor shape in the face of its name, one status field,
-the state's name in `stateFace`, and the record's shape. A motion extends
+the state's name in capitals in the badge face of its name (`stateFace`),
+and the record's shape. A motion extends
 the selection where operators act on it, and the view is in an insert
 session and takes committed text where typing is text. -/
 def State.report (states : States) (state : State) (view : ViewId) : InputScheme.Report :=
   let record := state.record states view
   { cursor := { shape := record.cursor, face := cursorFace record.name }
-    status := #[{ text := record.name, face := stateFace }]
+    status := #[{ text := record.name.toUpper, face := stateFace record.name }]
     shape := record.shape
     selecting := record.operatesOnSelection
     session := record.insertsText
