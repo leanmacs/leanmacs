@@ -271,7 +271,7 @@ arrives on the editor queue.
   blocks, and it goes through the window's own loop, not the main-thread
   service, which still answers nothing else while the window runs. Whether
   the window is in fullscreen comes back on every resize, bit 0 of its
-  code. The title is no request: it is the scene's (`Scene.title`), and the
+  code, and how far in its rounded corners reach as its fourth word. The title is no request: it is the scene's (`Scene.title`), and the
   library sends it to the window when it changes. `windowAsked` reads what
   a scripted window was asked, for tests.
 - The platform is an enumeration (`Platform`). The scripted ones are the

@@ -1503,6 +1503,7 @@ The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
 | `views` | The views, in drawing order |
 | `focused` | The view with the keyboard focus, if any |
 | `echo` | The echo area's text |
+| `echoPadding` | How far the echo is inset from the frame's left and right edges, in whole points, when layout draws it in the bottom row: the bottom row's inset (`EditorState.bottomInset`), the frame padding and at least the window's corner clearance outside fullscreen. 0 by default |
 | `pending` | The pending key prefix, rendered by Lean into a string |
 | `preedit` | The input method's preedit text in the focused view, if it is composing |
 | `title` | The window's title: the selected buffer's name (`EditorState.title`), the focused window's, or the asking window's while a prompt is open, so it does not become the minibuffer's while a prompt is typed into |
@@ -1520,13 +1521,16 @@ Each view (`View`):
 | `decorations` | Byte ranges of its snapshot, each naming a face |
 | `status` | Its status line: text fields, each naming a face, with a side (left, the default, or right) and a horizontal padding in whole points, which its face's background fills |
 | `statusFace` | The face of its status row, over `mode-line` and under every field's, which gives the row its background: `mode-line.inactive` for a window that is not selected, none for the selected one and the minibuffer's view. It neither makes the row taller nor moves its line |
+| `padding` | How far its content is inset from its edges, in whole points, across and down (`EditorState.paddingOf`): the frame padding both ways for a window, and for the minibuffer's view the bottom row's inset across and none down. 0 by default, which lays out as before there was one |
 
 A field's side and padding and a view's status face cross the wire as
 data (a field is four words: its text's and face's lengths, its side and
 its padding; a view ends with its status face's presence and length), and
 a face definition is 24 words with its vertical padding last
-(`crates/editor-ffi/src/display/wire.rs`). Their defaults keep every scene
-that names none as it was.
+(`crates/editor-ffi/src/display/wire.rs`). A view's padding ends its words
+(across, then down) and the echo's follows the echo's length, in whole
+points like a field's padding: no scale crosses with any of them. Their
+defaults keep every scene that names none as it was.
 
 Content is named only by handles, never by copied text, so an unchanged
 view is sent as the same handles. Faces are names; what they look like is
@@ -2103,6 +2107,36 @@ part are in the module docs; these are the decisions.
   shaped again only when its text or its font change. The
   alternatives were to draw it over the last text row, which hides rows,
   or outside the view's rectangle, for which the scene has no rectangle.
+- **The padding** (theming phase 6, the owner's choice of a uniform inset
+  with a corner-aware bottom row, after Ghostty's `window-padding-x`/`y`,
+  Neovide's padding and Emacs's spacious-padding). A view carries a
+  padding across and down, and the scene the echo's, in whole points, and
+  layout turns each into pixels at its own scale with one function
+  (`Layout::padding_pixels`: points times the scale, unrounded, as a
+  status field's padding is). The text wraps at the view's width less the
+  padding across twice and fills its height less its status row less the
+  padding down twice, which may be a fractional number of pixels: the
+  walk keeps the whole rows that fit. Each row carries its `x`, and the
+  cursors and the selection areas move in by it; a row's hash leaves out
+  its `x` and `y`, so a change of padding rebuilds no row, and the painter
+  places a row's `x`, as its `y`, on a whole pixel. A status row keeps its
+  background across the whole view, so the padding beside its fields is
+  the mode line's colour, while its first field starts at the padding and
+  its last ends at the width less it; the echo is inset by the scene's
+  echo padding. The view's background is the default face's, so the text's
+  padding is paper, not a border. The rows query and the move query carry
+  the view's padding as words of their own, since a padding is a view's
+  and the scale the display's, and layout takes them off by the frame's
+  rule, so the queries answer the rows the frame shows. A padding of 0
+  lays out as before. Lean puts the padding in the scene
+  (`EditorState.paddingOf`, `EditorState.bottomInset`) and never a scale:
+  the frame padding from config (default 8 points) for each window, each
+  window of a split its own with no gap between them; the bottom row (the
+  echo, and the minibuffer's view across, not down) at least the
+  window's corner clearance outside fullscreen and the padding alone in
+  it. Whether layout should round a padding to whole pixels inside itself
+  is the owner's open question of the Layout row in
+  [README.md](README.md), which this leaves open.
 - **Counters** count segments shaped, broken and reused, each once per call;
   every cost claim above is pinned by one.
 - **The binding.** A document has a key and a snapshot carries its
@@ -2482,6 +2516,21 @@ window is still run with nothing drawing in it. The threads are in
   window's scale, as seen"). Changing the first is a call on the layer,
   and the second is who lays out on a resize
   ([concurrency.md](concurrency.md)); neither is built.
+- **A resize says the window's corner clearance** (theming phase 6): how
+  far in from the left and right edges its rounded bottom corners reach,
+  in whole logical points (`Resize::corner_clearance`), as data beside
+  fullscreen, reported whenever it changes by the same rule, and 0 in
+  fullscreen, which the contract holds every platform to. The winit
+  adapter reads it from the system, on macOS 26 and later, as the
+  content view's safe-area layout region adapted to the corners
+  horizontally (`-[NSView edgeInsetsForLayoutRegion:]`), rounded up, so no
+  radius is written down; when the system gives no reading above 0 it
+  reports a fallback measured on a real window (16 points on macOS 27.2,
+  `crates/editor-platform-winit/src/corner.rs`), and off macOS 0. NSWindow
+  has no public corner radius, and its private `_cornerRadius` is not
+  used. Lean keeps it in the frame (`Frame.corner`) and insets the bottom
+  row by at least it. The fullscreen case is pinned by the adapter's tests
+  alone: the window's contract run never enters fullscreen.
 - **Fullscreen and minimise are commands too.** `toggle-fullscreen` and
   `minimise-window` (`lean/Editor/FrameCommands.lean`), bound by default
   to `C-s-f` (Ctrl-Cmd-F) and `s-m` (Cmd-M), ask the window through the
@@ -2677,6 +2726,12 @@ frame journal and the renderer's counters.
   not built.
 
 ## Open questions
+
+- **The top corners.** Only the bottom row keeps clear of the window's
+  rounded corners. The top corners are under the title bar today; once
+  the themed title bar (theming phase 7) puts content under them, whether
+  the first text row, or the title bar's own content, keeps clear of them
+  too, and by the same reading, is open.
 
 - **A field of the scene for the prompt.** The prompt text is the
   minibuffer view's status line ("Publishing"), which keeps the scene's

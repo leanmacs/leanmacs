@@ -449,7 +449,15 @@ elaborator.
   (`segment: no segment is registered as `<name>``). The host resolves the
   listing over the registry for each step (`Headless.keys`,
   `Loop.Keys.modeLine`). Defining a segment name twice, or listing the
-  mode line twice, rejects the reload. A rejected reload's first error
+  mode line twice, rejects the reload.
+- **The frame padding is config's**: `framePadding 12` sets, in whole
+  points, how far every window's text and its mode line's first and last
+  fields are inset from its edges, and the bottom row at least (theming
+  phase 6). It is the reducer's state (`State.framePadding`), set at every
+  install, so a config that sets none has the editor's 8
+  (`Loop.padding`), and the host hands it to the loop for each step
+  (`Headless.keys`, `Loop.Keys.padding`): a reload changes it with no
+  restart. Setting it twice rejects the reload. A rejected reload's first error
   is said in the echo area (`Config.Report.echo`), and its whole report is
   printed: on stdout in the headless mode, on stderr in the window mode.
 - **The session runs no `IO` action from config.** A chunk is elaborated,
