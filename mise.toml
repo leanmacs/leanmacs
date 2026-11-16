@@ -141,8 +141,10 @@ run = [
   # The same properties `lean-test` runs against the pure models, here against
   # the Rust library: the text port's, and the job port's over the timer
   # service. Its check of Lean's task pool pins no size, so LEAN_NUM_THREADS
-  # in the developer's shell does it no harm.
-  ".lake/build/bin/contract-test",
+  # in the developer's shell does it no harm. Its one argument is the
+  # directory of the fixtures that stand in for mise in the checks of a
+  # child's environment (tests/process-environment).
+  ".lake/build/bin/contract-test ../tests/process-environment",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment.
