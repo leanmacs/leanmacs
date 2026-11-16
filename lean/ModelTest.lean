@@ -203,7 +203,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   bound to the commands and jobs registered as the test says: opening a
   file into a buffer, a path that is open, a file that is not there, what
   is typed while a load is in flight, and a file that would be shown in
-  the minibuffer's view; saving a buffer, a file that
+  the minibuffer's view; several paths opened one after another, with a
+  refused start, an asking view closed while a load runs and an interrupted
+  delivery among them; saving a buffer, a file that
   changed on disk, a save that reports late, a forced save, and what each
   command says when it starts nothing; and the commands and jobs as
   compiled code registers them (`Editor/Files/Compiled.lean`). They touch
@@ -14851,6 +14853,132 @@ def fileCommandChecks : List Check :=
               Files.notOpening path (.noSuchJob Files.loadJob) != Files.notOpened path .notFound &&
               (showing asked).map (·.id) == some ⟨0⟩ &&
               asked.loop.state.buffers.size == 1 },
+    { name :=
+        "a refused start in an open of several paths is said once, for its own path, and opens nothing after it: refused for the first path, a path after it that a buffer holds is not shown; refused for the second path, when the first one's load is delivered, the third is not said"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let note := inFiles "note.txt"
+            let lf := inFiles "lf.txt"
+            let crlf := inFiles "crlf.txt"
+            let unregistered (driver : TestDriver) : TestDriver :=
+              { driver with registered := fun _ => none }
+            -- `lf.txt` is open in buffer 1, and view 0 shows the scratch
+            -- buffer again; then no load job is registered.
+            let (held, _) := fedTo ((fedTo driver (presses "C-o l")).1.finish 1).1 (presses "C-o 0")
+            let (first, steps) :=
+              fedTo (unregistered held) [.openFiles [note.toString, lf.toString, crlf.toString]]
+            -- The first load is started; the load job is then unregistered,
+            -- so the start its delivery asks for is refused.
+            let (asked, _) := fedTo driver [.openFiles [note.toString, crlf.toString, lf.toString]]
+            let (second, delivered) := (unregistered asked).finish 1
+            held.loop.state.findFile lf == some ⟨1⟩ && (showing held).map (·.id) == some ⟨0⟩ &&
+              started steps == #[] &&
+              first.pending.isEmpty &&
+              echoOf first == some (Files.notOpening note (.noSuchJob Files.loadJob)) &&
+              (showing first).map (·.id) == some ⟨0⟩ &&
+              first.loop.state.buffers.size == 2 &&
+              asked.pending.size == 1 &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              (delivered.map (·.starts)) == some #[] &&
+              second.pending.isEmpty &&
+              echoOf second == some (Files.notOpening crlf (.noSuchJob Files.loadJob)) &&
+              (showing second).map (·.id) == second.loop.state.findFile note &&
+              (second.loop.state.findFile note).isSome &&
+              second.loop.state.findFile lf == none &&
+              second.loop.state.buffers.size == 2 },
+    { name :=
+        "an open of several paths whose asking view is closed while the first one loads opens every path, in order, in the focused view: the first file's buffer is shown there, a path after it that a buffer holds is shown there at once, the load after that is started for that view, and its buffer is shown there last"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let note := inFiles "note.txt"
+            let lf := inFiles "lf.txt"
+            let crlf := inFiles "crlf.txt"
+            -- `lf.txt` is open in buffer 1; view 0 is split, and the open is
+            -- asked in view 1, which is then closed.
+            let (split, _) :=
+              fedTo ((fedTo driver (presses "C-o l")).1.finish 1).1 (presses "C-o s")
+            let (asked, steps) :=
+              fedTo split [.openFiles [note.toString, lf.toString, crlf.toString]]
+            let (closed, _) := fedTo asked (presses "C-o k")
+            let (first, delivered) := closed.finish 2
+            let (last, _) := first.finish 3
+            let state := last.loop.state
+            split.loop.state.frame.focused == ⟨1⟩ &&
+              started steps ==
+                #[{ name := Files.loadJob
+                    arguments :=
+                      Files.LoadOrder.arguments
+                        { path := note, view := ⟨1⟩, next := [lf, crlf] } }] &&
+              closed.loop.state.frame.focused == ⟨0⟩ &&
+              (showing closed ⟨1⟩).isNone &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              (first.loop.state.findFile note).isSome &&
+              (showing first).map (·.id) == some ⟨1⟩ &&
+              echoOf first == some "" &&
+              (delivered.map (·.starts)) ==
+                some
+                  #[{ name := Files.loadJob
+                      arguments := Files.LoadOrder.arguments { path := crlf, view := ⟨0⟩ } }] &&
+              state.buffers.size == 4 &&
+              (state.findFile crlf).isSome &&
+              (showing last).map (·.id) == state.findFile crlf &&
+              (heldFile last).map (·.path) == some crlf &&
+              last.pending.isEmpty &&
+              state.wellFormed },
+    { name :=
+        "an interrupted delivery of a load in an open of several paths is rolled back with the rest of the open: wherever the interrupt key arrives in it, no buffer is made, the path after it that a buffer holds is not shown, and no later load is started; run to its end it starts the last load; and once the flag is down the same open opens every path"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let note := inFiles "note.txt"
+            let lf := inFiles "lf.txt"
+            let crlf := inFiles "crlf.txt"
+            let paths := [note.toString, lf.toString, crlf.toString]
+            -- `lf.txt` is open in buffer 1, view 0 shows the scratch buffer
+            -- again, and the open's first load is job 2.
+            let (held, _) := fedTo ((fedTo driver (presses "C-o l")).1.finish 1).1 (presses "C-o 0")
+            let (asked, _) := fedTo held [.openFiles paths]
+            -- The interrupt key arrives once the delivery has made `asks`
+            -- requests of the models.
+            let arriving (asks : Nat) : TestDriver :=
+              let watch := { asked.model.watch with arrivesAfter := some asks }
+              { asked with model := { asked.model with watch } }
+            let delivered (asks : Nat) := (arriving asks).finish 2
+            let rolledBack (asks : Nat) : Bool :=
+              let (after, stepped) := delivered asks
+              match stepped.map (·.ended) with
+              | some (some Loop.Ending.interrupted) =>
+                stepped.map (·.starts) == some #[] && after.pending.isEmpty &&
+                  after.loop.state.buffers.size == 2 &&
+                  after.loop.state.findFile note == none &&
+                  (showing after).map (·.id) == some ⟨0⟩
+              | some (some Loop.Ending.finished) =>
+                stepped.map (·.starts) ==
+                  some
+                    #[{ name := Files.loadJob
+                        arguments := Files.LoadOrder.arguments { path := crlf, view := ⟨0⟩ } }]
+              | _ => false
+            let (stopped, _) := delivered 0
+            let (lowered, _) := stopped.feed interruptArrives
+            let (again, _) := fedTo lowered [.openFiles paths]
+            let (opened, _) := (again.finish 3).1.finish 4
+            asked.pending.size == 1 &&
+              ((delivered 0).2.map (·.ended)) == some (some .interrupted) &&
+              ((delivered 40).2.map (·.ended)) == some (some .finished) &&
+              (List.range 41).all rolledBack &&
+              opened.loop.state.buffers.size == 4 &&
+              (opened.loop.state.findFile note).isSome &&
+              (showing opened).map (·.id) == opened.loop.state.findFile crlf &&
+              (opened.loop.state.findFile crlf).isSome &&
+              opened.loop.state.wellFormed },
     { name :=
         "the open command with no path among its arguments, with none and with the count and the register an input scheme hands a command, starts no job and asks for the path: a prompt is open, labelled as the open command's, whose continuation is the open command with no argument of its own, asked from the view the command was called in"
       run :=
