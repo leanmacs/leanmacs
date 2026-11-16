@@ -1,0 +1,132 @@
+import Editor.Scene
+
+/-!
+# The face vocabulary
+
+The names of the faces a shipped theme defines (`vocabulary`), each with a
+sentence: what is drawn in it, and by whom. A theme is a list of
+definitions (`Editor/Face.lean`) and a scene names faces by name
+(`Editor/Scene.lean`); a name nothing defines sets nothing, so a face drawn
+and not defined is drawn in the faces under it, the default face's look. The
+vocabulary is the list that keeps that from happening to a face the editor
+draws: every shipped theme defines every name in it, and the completeness
+check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
+
+- **What is drawn now.** The four names layout reads by itself (`default`,
+  `selection`, `mode-line`, `echo-area`; `crates/editor-layout/src/face.rs`),
+  the cursor face a scheme that names none draws in (`cursor`,
+  `InputScheme.Report`), the shipped Vim scheme's cursor face of each of its
+  states and the face of its state's field (`Vim.cursorFace`,
+  `Vim.stateFace`), and the loop's status and minibuffer fields
+  (`Loop.nameFace`, `Loop.modifiedFace`, `Loop.promptFace`,
+  `Loop.candidateFace`, `Loop.chosenFace`).
+- **What is declared ahead.** The faces of features not built yet, so a
+  shipped theme colours them before the feature lands: an inactive view's
+  mode line; one `syntax.` face for each top-level name of tree-sitter's
+  common highlight captures; diff, gutter, search and review faces; and a
+  block header. A dotted capture such as `keyword.control` or
+  `function.builtin` is not a vocabulary face: the rule that draws it in the
+  face of its first component is the syntax roadmap's.
+- **A feature that draws a face not listed adds it here**, gives it a
+  definition in the palette mapping (`Palette.theme`, `Editor/Face.lean`),
+  and so in every shipped theme; the check fails until it has.
+- Config may still name and define any other face. Nothing checks those.
+
+Pinned by `ModelTest.faceVocabularyChecks`.
+-/
+
+namespace Editor.Face
+
+/-- A face of the vocabulary. -/
+structure Entry where
+  /-- The face's name. -/
+  name : FaceName
+  /-- One sentence: what is drawn in it, and by whom. -/
+  meaning : String
+  deriving DecidableEq, Repr
+
+/-- The syntax faces declared ahead: `syntax.` and each top-level name of
+tree-sitter's common highlight captures, with what it is used for. -/
+def syntaxEntries : Array Entry :=
+  #[("attribute", "an attribute or annotation"), ("comment", "a comment"),
+        ("constant", "a constant, builtin or not"), ("constructor", "a constructor"),
+        ("embedded", "code embedded in another language"),
+        ("function", "a function or method, where it is defined or called"),
+        ("keyword", "a keyword"), ("module", "a module or namespace's name"),
+        ("number", "a numeric literal"), ("operator", "an operator"),
+        ("property", "a field or property"), ("punctuation", "a bracket, delimiter or separator"),
+        ("string", "a string or character literal"), ("tag", "a markup tag"),
+        ("type", "a type's name"), ("variable", "a variable or parameter")].map
+    fun (capture, what) =>
+    { name := ⟨s!"syntax.{capture}"⟩
+      meaning :=
+        s!"Text tree-sitter captures as `{capture}`, {what}: drawn by the syntax-tree-sitter roadmap, declared ahead." }
+
+/-- The vocabulary: every face a shipped theme defines, in order. -/
+def vocabulary : Array Entry :=
+  #[{   name := ⟨"default"⟩
+        meaning :=
+          "Under every other face, read by layout itself; its background is the paper and its foreground the ink." },
+      { name := ⟨"selection"⟩, meaning := "The selections, drawn in it by layout itself." },
+      { name := ⟨"mode-line"⟩
+        meaning := "Under each field of a view's status line, read by layout itself." },
+      { name := ⟨"echo-area"⟩
+        meaning := "The echo area in the bottom row of the frame, read by layout itself." },
+      { name := ⟨"cursor"⟩
+        meaning :=
+          "The cursor of a scheme that names no cursor face of its own, such as the test scheme (`InputScheme.Report`)." },
+      { name := ⟨"cursor.normal"⟩
+        meaning := "The cursor in the shipped Vim scheme's normal state (`Vim.cursorFace`)." },
+      { name := ⟨"cursor.insert"⟩
+        meaning := "The cursor in the shipped Vim scheme's insert state (`Vim.cursorFace`)." },
+      { name := ⟨"cursor.visual"⟩
+        meaning := "The cursor in the shipped Vim scheme's visual state (`Vim.cursorFace`)." },
+      { name := ⟨"cursor.visual-line"⟩
+        meaning := "The cursor in the shipped Vim scheme's visual-line state (`Vim.cursorFace`)." },
+      { name := ⟨"cursor.minibuffer"⟩
+        meaning :=
+          "The cursor in the minibuffer's view, in the shipped Vim scheme's minibuffer state (`Vim.cursorFace`)." },
+      { name := ⟨"status.state"⟩
+        meaning := "The Vim scheme's status field naming the view's state (`Vim.stateFace`)." },
+      { name := ⟨"status.name"⟩
+        meaning :=
+          "The buffer's name in a view's status line, drawn by the loop (`Loop.nameFace`)." },
+      { name := ⟨"status.modified"⟩
+        meaning :=
+          "The status field the loop shows while the buffer is modified (`Loop.modifiedFace`)." },
+      { name := ⟨"mode-line.inactive"⟩
+        meaning :=
+          "The status line of a view without the focus: drawn by the theming roadmap's segmented mode line, declared ahead." },
+      { name := ⟨"minibuffer.prompt"⟩
+        meaning :=
+          "The prompt's label in the minibuffer's status line, drawn by the loop (`Loop.promptFace`)." },
+      { name := ⟨"minibuffer.candidate"⟩
+        meaning :=
+          "A listed candidate in the minibuffer's status line, unless it is the chosen one (`Loop.candidateFace`)." },
+      { name := ⟨"minibuffer.chosen"⟩
+        meaning :=
+          "The chosen candidate in the minibuffer's status line, drawn by the loop (`Loop.chosenFace`)." }] ++
+    syntaxEntries ++
+    #[{ name := ⟨"diff.added"⟩
+        meaning := "Text a diff adds: drawn by a diff view, declared ahead." },
+      { name := ⟨"diff.removed"⟩
+        meaning := "Text a diff removes: drawn by a diff view, declared ahead." },
+      { name := ⟨"diff.changed"⟩
+        meaning := "Text a diff changes: drawn by a diff view, declared ahead." },
+      { name := ⟨"gutter"⟩
+        meaning :=
+          "The gutter beside a view's text, and its line numbers and marks: declared ahead." },
+      { name := ⟨"search-match"⟩
+        meaning := "A match of the search in force: drawn by search, declared ahead." },
+      { name := ⟨"review-unexamined"⟩
+        meaning :=
+          "Text a review has not examined yet: drawn by the excerpts-and-review roadmap, declared ahead." },
+      { name := ⟨"block-header"⟩
+        meaning :=
+          "The header line of a block decoration: drawn by the excerpts-and-review roadmap, declared ahead." }]
+
+/-- The vocabulary's names, in its order. -/
+def vocabularyNames : Array FaceName :=
+  vocabulary.map (·.name)
+
+end Editor.Face

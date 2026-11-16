@@ -111,6 +111,10 @@ fakes. The checks here pin what only real collaborators can show:
   display's frame of the same scene in a theme written here; and a reload
   that makes `mode-line` taller sizes the next scene by the new heights,
   which `agree`, asked with no event between, shows;
+- `cursorResolutionChecks`: the completeness check's model of a cursor's
+  colours (`Themes.effective`) is the real layout's: for every shipped
+  theme, and two whose cursor sets one colour alone, each cursor face's
+  frame is the frame of a mirror theme that sets the modelled colours;
 - `themeChecks`: named themes through a host over the display's real
   binding: `load-theme` switches the frame to the chosen theme with config's
   face over it, with no reload, and the scene line names the theme; and a
@@ -3677,6 +3681,79 @@ def faceChecks (context : Context) : List Check :=
                 throw (IO.userError s!"before the reload: {before}; after it: {after}")
               return lines.any (·.startsWith "reload 1: installed") }]
 
+/-- The themes whose cursors `cursorResolutionChecks` lay out, each with
+what it is called in a failure: every shipped theme, and two built-in themes
+whose `cursor.normal` is redefined to set one colour alone, a background or
+a foreground, so the other falls through to the default face's. -/
+def resolutionThemes : Array (String × Theme) :=
+  let alone (face : Face) : Theme :=
+    (Theme.builtin.filter (·.name != ⟨"cursor.normal"⟩)).push { name := ⟨"cursor.normal"⟩, face }
+  Themes.shipped.map (fun named => (named.name, named.theme)) ++
+    #[("a background alone", alone { background := some (Color.rgb 200 0 0) }),
+      ("a foreground alone", alone { foreground := some (Color.rgb 0 200 0) })]
+
+/-- The contract check of the completeness check's model of a cursor's
+colours (`Themes.effective`, `Editor/Themes/Check.lean`) against the real
+layout. For each theme of `resolutionThemes` and each cursor face the check
+holds (`Themes.cursorFaces`), a scene of one view whose block cursor is in
+that face is laid out through the display's real binding twice: in the theme
+as written, and in a mirror of it whose last definition sets that face's
+foreground and background to the colours the model says it has. The two
+frames must be equal, and a mirror with the two colours the other way round
+must give another frame, so the cursor's paint is in the frame compared. No
+frame text is read: what a frame says is layout's. -/
+def cursorResolutionChecks (_ : Unit) : List Check :=
+  [{
+      name :=
+        "the completeness check's colours of each cursor face, in every shipped theme and in themes whose cursor sets one colour alone, are the ones the real layout paints it in",
+      run := do
+        let document ← Ffi.Document.new "ab\ncd"
+        let .ok selection ←
+          document.mark
+              (.selection
+                {
+                  ranges :=
+                    #[{ anchor := 0,
+                        head := 0 }] }) | throw (IO.userError "the cursor's marker was refused")
+        let .ok top ←
+          document.mark
+              (.anchor
+                { offset := 0,
+                  bias := .before }) | throw (IO.userError "the scroll marker was refused")
+        let table ← Snapshots.new
+        let snapshot ← table.add (← document.snapshot)
+        let scene (face : FaceName) : Scene :=
+          { size := { width := 64, height := 64 }
+            views :=
+              #[{ id := ⟨1⟩, rect := { x := 0, y := 0, width := 64, height := 48 }, snapshot
+                  scroll := { text := ⟨0⟩, index := top.toNat }
+                  selections := #[{ text := ⟨0⟩, index := selection.toNat }]
+                  cursor := { shape := .block, face }, decorations := #[], status := #[] }]
+            focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
+        -- The frame text of `scene face` laid out in `theme`, by a display
+        -- of its own.
+        let frame (theme : Theme) (face : FaceName) : IO String := do
+          let real ← RealDisplay.over (← Ffi.Display.newCells 8 16) table.reader theme
+          real.publish (scene face)
+          real.display.frameText
+        let mut failed : Array String := #[]
+        for (called, theme) in resolutionThemes do
+          for face in Themes.cursorFaces do
+            let (foreground, background) := Themes.effective theme face
+            let mirror (foreground background : Option Color) : Theme :=
+              theme.push { name := face, face := { foreground, background } }
+            let written ← frame theme face
+            let modelled ← frame (mirror foreground background) face
+            let swapped ← frame (mirror background foreground) face
+            unless
+              foreground.isSome && background.isSome && written == modelled && written != swapped do
+              failed := failed.push s!"{called}: {face.name}"
+        -- The document is held until here, past the last publish.
+        discard document.read
+        if !failed.isEmpty then
+          throw (IO.userError s!"the model is not layout's for {failed}")
+        return true }]
+
 /-- What compiled code hands the hosts of the theme checks: the command that
 loads a theme and the themes that ship (`Editor/Themes/Compiled.lean`), and
 the minibuffer's commands and its mode, which its prompt is answered with. -/
@@ -3922,6 +3999,7 @@ def checks (context : Context) : List Check :=
     evilChecks context ++
     reloadEchoChecks context ++
     faceChecks context ++
+    cursorResolutionChecks () ++
     themeChecks context ++
     fileChecks context ++
     exScriptChecks context

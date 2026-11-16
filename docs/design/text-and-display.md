@@ -984,11 +984,22 @@ style and a colour), strike-through and a line height. It is the same nine
 in Lean (`lean/Editor/Face.lean`) and in Rust
 (`crates/editor-layout/src/face.rs`).
 
-**Lean defines, Rust merges.** Lean holds faces as data and merges nothing:
-a theme is an ordered list of definitions, each a name and the attributes
-it sets. Layout holds the list last sent and applies one rule to all of it.
-Doing the merge in Lean instead would put layout policy in two halves and
-make every publish cost the spans.
+**Lean defines, Rust merges.** Lean holds faces as data and merges nothing
+it sends: a theme is an ordered list of definitions, each a name and the
+attributes it sets. Layout holds the list last sent and applies one rule to
+all of it. Doing the merge in Lean instead would put layout policy in two
+halves and make every publish cost the spans.
+
+There is one exception, for checking a theme only. The completeness check
+(below) runs in the model tests, where there is no layout, and must know the
+colours a cursor is painted in; so Lean models layout's colour resolution
+(`Face.over`, `Theme.merged`, `lean/Editor/Face.lean`). What they give is
+never sent across the FFI or drawn: Lean still sends every definition
+unmerged. The objection to two halves is answered by a contract check:
+`ConfigTest.cursorResolutionChecks` lays out each shipped theme's every
+cursor through the real binding and holds that layout paints it in the
+colours the model gives, so a change to layout's precedence that the model
+does not follow fails it.
 
 **The precedence.** Attributes merge one by one. The value of an attribute
 of a run is that of the highest layer over the run that sets it:
@@ -1049,20 +1060,50 @@ pt" font in another app is 14 × 96/72 pixels at scale 1.
   `LineHeight::Pixels`, keep the names they had when a theme stated
   physical pixels. Their documentation says which unit each is in.
 
-**Themes and config.** `Theme.builtin` defines `default`, which sets every
-attribute, and `cursor`, a cursor face for each state of the shipped Vim
-scheme (`cursor.normal`, `cursor.insert`, `cursor.visual`,
-`cursor.visual-line`, `cursor.minibuffer`), `selection`, `echo-area`,
-`minibuffer-prompt` and `mode-line`; its colours are placeholders. Layout
-reads three names by itself: `default`, `selection` and `mode-line`.
-`echo-area` and `minibuffer-prompt` are defined and nothing draws them. Any
-other name is one a scene names and a theme or config defines, with no
-change to layout. A cursor face nothing defines has the default face's
-paint, the paper's colour on the paper, and is not seen: so each state the
-shipped scheme has gets its cursor face in the built-in theme (the default
-face's colours the other way round), and a state config registers needs
-config to define its own. Config sets a face in `setup`, `face "name" { … }`; a name is set
-once in a `setup`.
+**Themes and config.** `Theme.builtin` defines every face of the face
+vocabulary (below), `default` first, which sets every attribute; its
+colours are placeholders. Layout reads four names by itself: `default`,
+`selection`, `mode-line`, and `echo-area`, the echo in the frame's bottom
+row. Any other name is one a scene names and a theme or config defines,
+with no change to layout. A cursor face nothing defines has the default
+face's paint, the paper's colour on the paper, and is not seen: so each
+state the shipped scheme has gets its cursor face in every shipped theme,
+and a state config registers needs config to define its own. Config sets a
+face in `setup`, `face "name" { … }`; a name is set once in a `setup`.
+
+**The face vocabulary** (`lean/Editor/Face/Vocabulary.lean`) is the list of
+face names a shipped theme defines, each with a sentence of what is drawn
+in it and by whom: layout's four; `cursor`, and `cursor.<state>` for each
+state of the shipped Vim scheme; the status fields (`status.state`,
+`status.name`, `status.modified`) and the minibuffer's (`minibuffer.prompt`,
+`minibuffer.candidate`, `minibuffer.chosen`). Faces are declared there ahead
+of the features that draw them, so the shipped themes colour them before
+those land: `mode-line.inactive`; `syntax.` and each top-level name of
+tree-sitter's common highlight captures (`syntax.keyword`,
+`syntax.comment`, …; a dotted capture's mapping to its first component is
+the syntax roadmap's); `diff.added`, `diff.removed`, `diff.changed`,
+`gutter`, `search-match`, `review-unexamined` and `block-header`. A feature
+that draws a face not listed adds it to the vocabulary and to the palette
+mapping, and so to every shipped theme.
+
+**A theme from a palette.** A shipped theme is written from a `Palette`, a
+small record of named colours (paper, ink, raised, selected, faint, strong,
+the cursor's, and eight accents), by one function from palette to
+definitions (`Palette.theme`, `lean/Editor/Face.lean`), so one mapping
+serves a light and a dark variant. `Theme.builtin` is
+`Palette.placeholder.theme`. A face naming another as its base is not
+built: the palette already shares colours across faces and variants.
+
+**The completeness check** (`Themes.problems`,
+`lean/Editor/Themes/Check.lean`) holds that a theme defines every
+vocabulary face, that its `default` states a paper and an ink (its merged
+background and foreground; the check takes none of layout's base colours),
+and that `cursor` and each shipped Vim state's cursor face are defined,
+have a background that is not the paper and a foreground that is not that
+background. A cursor's colours are its face over `default`, as layout paints
+it, so one that sets no background has the paper's. It runs on every
+shipped theme in the model tests (`ModelTest.faceVocabularyChecks`); a
+theme config defines is not checked.
 
 Themes are registered by name, by owner, as commands and modes are
 (`lean/Editor/Config/Registry.lean`, "Themes"): compiled code registers
@@ -1081,7 +1122,8 @@ theme in force is state of the reload reducer (`Config.State.themeName`,
   over `Theme.builtin`: a theme config defines must define every face it
   needs, or that face is not drawn, and a cursor face nothing defines is
   not seen. A config theme keeps the built-in faces by being built as
-  `Theme.builtin ++ #[…]`. Nothing yet checks a theme for completeness.
+  `Theme.builtin ++ #[…]`. The completeness check is run on the shipped
+  themes only, not on config's.
 - **A reload whose config names a registered theme puts it in force.** One
   whose config names none keeps the theme in force, so a theme picked with
   the command survives a reload that does not name one. One whose config

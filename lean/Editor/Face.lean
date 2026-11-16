@@ -8,10 +8,14 @@ look (`Editor/Scene.lean`); this is the other half: a face as a set of
 optional attributes, a definition that gives a name its attributes, and a
 theme, which is a list of definitions.
 
-Lean only describes. It merges nothing: which face wins where two cover the
-same text, and what an attribute no face sets falls back to, are layout's
-rules in the Rust library (`crates/editor-layout/src/face.rs`, "The
-precedence"). What matters here is the one rule that orders a list of
+Lean only describes. It merges nothing it sends: which face wins where two
+cover the same text, and what an attribute no face sets falls back to, are
+layout's rules in the Rust library (`crates/editor-layout/src/face.rs`, "The
+precedence"). The one exception is for checking a theme: `Face.over` and
+`Theme.merged` model layout's merge so that the completeness check
+(`Editor/Themes/Check.lean`) can know a cursor's colours with no layout.
+What they give is never sent or drawn, and `ConfigTest.cursorResolutionChecks`
+holds the model to the real layout. What matters here is the one rule that orders a list of
 definitions: **where a list defines a name more than once, a later
 definition's set attributes are over an earlier one's.** So a theme is
 overridden by appending to it, and config's definitions are appended to the
@@ -53,32 +57,31 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
 
 ## The built-in faces
 
-`Theme.builtin`, the theme `default`, defines `default` (every attribute set), `cursor`, a
-cursor face for each editing state of the shipped Vim scheme
-(`cursor.normal`, `cursor.insert`, `cursor.visual`, `cursor.visual-line`
-and `cursor.minibuffer`, `Theme.cursorStates`), `selection`, `echo-area`,
-`minibuffer-prompt` and `mode-line`. Layout reads three names by itself:
+`Theme.builtin`, the theme `default`, is the placeholder palette's theme
+(`Palette.placeholder`, `Palette.theme`): it defines every face of the
+vocabulary (`Face.vocabulary`, `Editor/Face/Vocabulary.lean`), `default`
+first, which sets every attribute. Layout reads four names by itself:
 `default`, under every other face; `selection`, which the selections are
-drawn in; and `mode-line`, under each field of a view's status line.
-`echo-area` and `minibuffer-prompt` are defined and nothing draws them yet.
-Any other name is whatever a scene names and a theme or config defines: a
-name nothing defines sets nothing. So a cursor in a face nothing defines
-has the default face's paint, and is drawn in the paper's colour on the
-paper: it cannot be seen. That is why each state the shipped scheme has
-gets its cursor face here, each the default face's colours the other way
-round (`Face.cursor`), and why a state added to the shipped scheme is added
-to `Theme.cursorStates`; a state config registers needs config to define
-its face. Its colours are placeholders.
+drawn in; `mode-line`, under each field of a view's status line; and
+`echo-area`, the echo in the frame's bottom row. Any other name is whatever
+a scene names and a theme or config defines: a name nothing defines sets
+nothing. So a cursor in a face nothing defines has the default face's
+paint, and is drawn in the paper's colour on the paper: it cannot be seen.
+That is why the palette mapping gives each state of the shipped scheme its
+cursor face (`Theme.cursorStates`), the paper on the palette's cursor
+colour; a state config registers needs config to define its face. Its
+colours are placeholders.
 
 ## Where an addition goes
 
 A new attribute is a field of `Face` here, a field of `Face` in
 `crates/editor-layout/src/face.rs`, and two words of a definition as it
 crosses (`crates/editor-ffi/src/display/wire.rs`, written by
-`RealDisplay.encodeFace`). A new built-in face is a definition in
-`Theme.builtin`, and a name in `ModelTest.faceChecks`. A new shipped theme
-is a `NamedTheme` in `Themes.shipped` (`Editor/Themes/Compiled.lean`). A
-face naming another as its base is not built.
+`RealDisplay.encodeFace`), and a line of `Face.over`. A new face a feature
+draws is an entry of the vocabulary and a definition in `Palette.theme`.
+A new shipped theme is a `Palette` and a `NamedTheme` of its theme in
+`Themes.shipped` (`Editor/Themes/Compiled.lean`), which the completeness
+check holds. A face naming another as its base is not built.
 -/
 
 namespace Editor
@@ -198,38 +201,144 @@ one's. -/
 abbrev Theme :=
   Array FaceDefinition
 
-/-- What the built-in cursor faces set: the default face's colours the other
-way round, so that a block is the text's colour with the glyph under it in
-the paper's, and a bar, an underline or a hollow box is the text's colour. -/
-def Face.cursor : Face :=
-  { foreground := some (Color.rgb 46 52 64), background := some (Color.rgb 216 222 233) }
+/-- `upper` over `lower`: each attribute `upper` sets, and `lower`'s where
+`upper` sets none. Layout's merge, modelled for the completeness check
+alone ("Lean only describes", in the module docs). -/
+def Face.over (upper lower : Face) : Face where
+  family := upper.family <|> lower.family
+  size := upper.size <|> lower.size
+  weight := upper.weight <|> lower.weight
+  slant := upper.slant <|> lower.slant
+  foreground := upper.foreground <|> lower.foreground
+  background := upper.background <|> lower.background
+  underline := upper.underline <|> lower.underline
+  strikeThrough := upper.strikeThrough <|> lower.strikeThrough
+  lineHeight := upper.lineHeight <|> lower.lineHeight
+
+/-- The face `theme` gives `name`: its definitions of `name` in order, each
+later one over the ones before; the empty face for a name it does not
+define. For the completeness check alone: what is sent is the definitions,
+unmerged. -/
+def Theme.merged (theme : Theme) (name : FaceName) : Face :=
+  theme.foldl
+    (fun merged definition =>
+      if definition.name == name then definition.face.over merged else merged)
+    {}
+
+/-- Whether `theme` defines `name`: gives it a definition, if only an empty
+one, which draws the name in the faces under it. -/
+def Theme.defines (theme : Theme) (name : FaceName) : Bool :=
+  theme.any (·.name == name)
 
 /-- The editing states of the shipped Vim scheme
 (`Editor/InputScheme/Vim/Default.lean`), whose cursors are drawn in the face
-`cursor.` followed by the state's name (`Vim.cursorFace`). -/
+`cursor.` followed by the state's name (`Vim.cursorFace`). The palette
+mapping gives each a cursor face; the completeness check reads the states
+from the scheme itself, so a state added there and not here fails it. -/
 def Theme.cursorStates : Array String :=
   #["normal", "insert", "visual", "visual-line", "minibuffer"]
 
-/-- The built-in theme: `default`, which sets every attribute, then
-`cursor` and a cursor face for each of `Theme.cursorStates`, `selection`,
-`echo-area`, `minibuffer-prompt` and `mode-line`, each of which sets only
-what it changes. Its colours are placeholders. -/
+/-- The named colours a theme is written from (`Palette.theme`), so that one
+mapping serves a light and a dark variant. -/
+structure Palette where
+  /-- The default face's background. -/
+  paper : Color
+  /-- The default face's foreground. -/
+  ink : Color
+  /-- The background of a mode line, a block header and the gutter. -/
+  raised : Color
+  /-- The selection's background. -/
+  selected : Color
+  /-- Text that recedes: comments, the gutter's numbers, an inactive mode
+  line's text. -/
+  faint : Color
+  /-- Text that stands out: the mode line's and the echo area's. -/
+  strong : Color
+  /-- Every cursor's background; by default the ink. -/
+  cursor : Color := ink
+  /-- An accent: red. -/
+  red : Color
+  /-- An accent: orange. -/
+  orange : Color
+  /-- An accent: yellow. -/
+  yellow : Color
+  /-- An accent: green. -/
+  green : Color
+  /-- An accent: cyan. -/
+  cyan : Color
+  /-- An accent: blue. -/
+  blue : Color
+  /-- An accent: violet. -/
+  violet : Color
+  /-- An accent: magenta. -/
+  magenta : Color
+  deriving DecidableEq, Repr
+
+/-- The theme `palette` gives: `default`, which sets every attribute, with
+the ink on the paper; then `cursor` and a cursor face for each of
+`Theme.cursorStates`, the paper on the cursor colour; then one definition
+for each other face of the vocabulary (`Editor/Face/Vocabulary.lean`), each
+setting only what it changes. -/
+def Palette.theme (palette : Palette) : Theme :=
+  let on (name : String) (foreground background : Color) : FaceDefinition :=
+    { name := ⟨name⟩, face := { foreground := some foreground, background := some background } }
+  let ink (name : String) (foreground : Color) : FaceDefinition :=
+    { name := ⟨name⟩, face := { foreground := some foreground } }
+  let defined (name : String) (face : Face) : FaceDefinition := { name := ⟨name⟩, face }
+  let cursors := #["cursor"] ++ Theme.cursorStates.map (s!"cursor.{·}")
+  #[defined "default"
+        { family := some "monospace", size := some 16, weight := some 400, slant := some .upright
+          foreground := some palette.ink, background := some palette.paper
+          underline := some { style := .none }, strikeThrough := some false
+          lineHeight := some (.multiple 64) }] ++
+    cursors.map (on · palette.paper palette.cursor) ++
+    #[defined "selection" { background := some palette.selected },
+      on "mode-line" palette.strong palette.raised, ink "echo-area" palette.strong,
+      defined "status.state" { foreground := some palette.blue, weight := some 700 },
+      ink "status.name" palette.strong, ink "status.modified" palette.orange,
+      on "mode-line.inactive" palette.faint palette.raised,
+      defined "minibuffer.prompt" { foreground := some palette.cyan, weight := some 700 },
+      ink "minibuffer.candidate" palette.faint, on "minibuffer.chosen" palette.paper palette.cyan,
+      ink "syntax.attribute" palette.yellow,
+      defined "syntax.comment" { foreground := some palette.faint, slant := some .italic },
+      ink "syntax.constant" palette.violet, ink "syntax.constructor" palette.yellow,
+      ink "syntax.embedded" palette.ink, ink "syntax.function" palette.cyan,
+      ink "syntax.keyword" palette.blue, ink "syntax.module" palette.yellow,
+      ink "syntax.number" palette.violet, ink "syntax.operator" palette.blue,
+      ink "syntax.property" palette.ink, ink "syntax.punctuation" palette.faint,
+      ink "syntax.string" palette.green, ink "syntax.tag" palette.blue,
+      ink "syntax.type" palette.yellow, ink "syntax.variable" palette.ink,
+      ink "diff.added" palette.green, ink "diff.removed" palette.red,
+      ink "diff.changed" palette.yellow, on "gutter" palette.faint palette.raised,
+      on "search-match" palette.paper palette.yellow,
+      defined "review-unexamined"
+        { underline := some { style := .single, color := some palette.orange } },
+      defined "block-header"
+        { foreground := some palette.strong, background := some palette.raised,
+          weight := some 700 }]
+
+/-- The palette of the built-in theme: Nord's colours. They are
+placeholders. -/
+def Palette.placeholder : Palette where
+  paper := Color.rgb 46 52 64
+  ink := Color.rgb 216 222 233
+  raised := Color.rgb 59 66 82
+  selected := Color.rgb 67 76 94
+  faint := Color.rgb 97 110 136
+  strong := Color.rgb 236 239 244
+  red := Color.rgb 191 97 106
+  orange := Color.rgb 208 135 112
+  yellow := Color.rgb 235 203 139
+  green := Color.rgb 163 190 140
+  cyan := Color.rgb 136 192 208
+  blue := Color.rgb 129 161 193
+  violet := Color.rgb 180 142 173
+  magenta := Color.rgb 191 97 106
+
+/-- The built-in theme, the theme `default`: the placeholder palette's
+(`Palette.theme`). -/
 def Theme.builtin : Theme :=
-  #[{   name := ⟨"default"⟩
-        face :=
-          { family := some "monospace", size := some 16, weight := some 400, slant := some .upright
-            foreground := some (Color.rgb 216 222 233), background := some (Color.rgb 46 52 64)
-            underline := some { style := .none }, strikeThrough := some false
-            lineHeight := some (.multiple 64) } },
-      { name := ⟨"cursor"⟩, face := Face.cursor }] ++
-    Theme.cursorStates.map (fun state => { name := ⟨s!"cursor.{state}"⟩, face := Face.cursor }) ++
-    #[{ name := ⟨"selection"⟩, face := { background := some (Color.rgb 67 76 94) } },
-      { name := ⟨"echo-area"⟩, face := { foreground := some (Color.rgb 229 233 240) } },
-      { name := ⟨"minibuffer-prompt"⟩
-        face := { foreground := some (Color.rgb 136 192 208), weight := some 700 } },
-      { name := ⟨"mode-line"⟩
-        face :=
-          { foreground := some (Color.rgb 236 239 244), background := some (Color.rgb 59 66 82) } }]
+  Palette.placeholder.theme
 
 /-- A theme with the name it is registered and chosen by
 (`Editor/Config/Registry.lean`, "Themes"). In force, it stands in for
