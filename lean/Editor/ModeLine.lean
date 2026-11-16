@@ -28,7 +28,7 @@ In the default order (`ModeLine.Order.standard`):
 | Left | `modified` | `●` while the buffer is modified | `mode-line.modified` |
 | Left | `directory` | The opened path's parent, as written | `mode-line.secondary` |
 | Right | `major-mode` | The buffer's major mode | `mode-line.secondary` |
-| Right | `line-column` | `row:column` of the cursor, each from 1, the column in cells (Vim's `%l:%v`) | `mode-line.secondary` |
+| Right | `line-column` | `row:column` of the cursor, each from 1, the column in the text's cells (`ColumnUnit.cells`) | `mode-line.secondary` |
 | Right | `position` | `All`, `Top`, `Bot` or a whole percentage | `mode-line.secondary` |
 
 A segment that has nothing to say gives no field: `directory` for a buffer
@@ -39,6 +39,13 @@ and `position` for a window whose cursor could not be read; `modified` for
 a buffer that is not modified. Buffers have no read-only state yet, so
 there is no read-only mark; the feature that adds read-only buffers adds a
 segment for it.
+
+**The column is the text's cells**, as the cursor's other readers count
+it: a wide character is two and a tab one. So it is Vim's `%l:%v` on a line
+with no tab, and after a tab it is less than Vim's screen column, which
+counts the tab's spaces: the text port knows no tab stops, which are
+layout's (`crates/editor-layout/src/tabs.rs`). The `tests/headless/column`
+fixture shows `1:3` after `a<Tab>`, where Vim shows `1:9`.
 
 **The position is counted from the cursor's row** (lualine's `progress`),
 not from the rows the window shows as Vim's ruler and Emacs's `%p` are: a
