@@ -6,13 +6,14 @@
 //! port's [`Input`] and [`Canvas`], and ends its loop when it is asked to
 //! close. No winit or objc2 type is public, no other crate depends on
 //! winit or on the objc2 crates it names (`deny.toml`), and AppKit is named
-//! only in the module `delegate`, on macOS.
+//! only in the modules `delegate` and `corner`, on macOS.
 //!
 //! The translation is the module `translate`'s, with a key's names in
 //! `names` and the window's native handles in `native`: every key with its
 //! logical key, physical key and modifiers; the pointer's press, drag,
-//! release and wheel; a resize with the size, the scale and whether the
-//! window is in fullscreen; the focus; a
+//! release and wheel; a resize with the size, the scale, whether the
+//! window is in fullscreen and its corner clearance (the module `corner`
+//! decides it); the focus; a
 //! composition; a request to close; and, for whatever draws in the window,
 //! its native window, its size, its display's refresh rate, damage, and
 //! whether it is hidden. Their docs say what is decided where winit and the
@@ -56,8 +57,8 @@
 //!   request on the channel (`wake`): when a close has been asked they are
 //!   dropped, since the window is going; otherwise each is carried out on
 //!   the window, in order, by the module `asked`'s translation, and then
-//!   the window's fullscreen is read and a change of it reported as a
-//!   resize. A request asked with no window running does nothing, and one
+//!   the window's fullscreen and corners are read and a change of either
+//!   reported as a resize. A request asked with no window running does nothing, and one
 //!   that arrives before the window is made is dropped.
 //! - **It receives the files the system asks the app to open (macOS)**,
 //!   through an application delegate of its own (the module `delegate`),
@@ -111,10 +112,16 @@
 //!   `set_fullscreen` with `Fullscreen::Borderless(None)` or `None`,
 //!   `set_minimized(true)` and `set_title`. Which is called, and when, is
 //!   `asked`'s, and tested;
-//! - the reading of fullscreen as the window opens and when the
-//!   translation asks for it, after a resize, a change of scale, a move or
-//!   an occlusion, and after requests are carried out. When it is read and
-//!   what is reported of it are the translation's, and tested;
+//! - the reading of the window's shape (`shape`) as the window opens and
+//!   when the translation asks for it, after a resize, a change of scale, a
+//!   move or an occlusion, and after requests are carried out: whether it
+//!   is in fullscreen, and on macOS the system's reading of its corners
+//!   (`corner_reading`, over the view of `native_window`, and
+//!   `corner::system`, one call into AppKit). When it is read and what is
+//!   reported of it are the translation's, and what the reading comes to
+//!   is `corner::clearance`'s, and both are tested. `mise run
+//!   window-contract` runs the reading and prints the clearance each
+//!   resize said;
 //! - telling the drawer the window is closing once the loop has ended;
 //! - on macOS, the application delegate's one method, which reads each
 //!   URL's file path and hands the list to `Handing::hand`, and
@@ -142,6 +149,7 @@
 //! not been seen.
 
 mod asked;
+mod corner;
 #[cfg(target_os = "macos")]
 mod delegate;
 mod files;
@@ -169,6 +177,7 @@ use winit::window::{
 };
 
 use crate::asked::{Asked, Control};
+use crate::corner::Shape;
 use crate::files::Arrivals;
 #[cfg(any(target_os = "macos", test))]
 use crate::files::Handing;
@@ -423,7 +432,7 @@ impl ApplicationHandler for App {
                     window.scale_factor(),
                     native_window(window.as_ref()),
                     refresh_rate(window.as_ref()),
-                    window.in_fullscreen(),
+                    shape(window.as_ref()),
                 );
                 self.window = Some(window);
                 // The drawer hears of the window before anyone else does.
@@ -468,9 +477,9 @@ impl ApplicationHandler for App {
         for request in woken.carry {
             asked::carry_out(&mut self.asked, window, request);
         }
-        // What carrying them out did to fullscreen, as the drawer and the
-        // report hear of a window event's.
-        let told = self.seen.fullscreen(window.in_fullscreen());
+        // What carrying them out did to fullscreen and the corners, as the
+        // drawer and the report hear of a window event's.
+        let told = self.seen.reread(shape(window));
         for canvas in told.canvas {
             (self.drawer)(canvas);
         }
@@ -484,8 +493,9 @@ impl ApplicationHandler for App {
         // translation asks: it decides after which events to.
         let window = self.window.as_deref();
         let display = || window.and_then(refresh_rate);
-        // Whether it is in fullscreen, read when the translation asks.
-        let fullscreen = || window.is_some_and(Control::in_fullscreen);
+        // Whether it is in fullscreen, and how its corners read, when the
+        // translation asks.
+        let shape = || window.map_or(Shape::default(), shape);
         // A change of scale cannot be built in a test, and a key is
         // translated from its parts, so each is taken apart here. These two
         // arms are all this handler decides.
@@ -501,9 +511,9 @@ impl ApplicationHandler for App {
                 canvas: Vec::new(),
             },
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.seen.scale(*scale_factor, &display, &fullscreen)
+                self.seen.scale(*scale_factor, &display, &shape)
             }
-            other => self.seen.window_event(other, &display, &fullscreen),
+            other => self.seen.window_event(other, &display, &shape),
         };
         // The drawer first, as when the window opened: a size is known to
         // what draws before anyone is told to lay out for it.
@@ -523,6 +533,30 @@ fn native_window(window: &dyn Window) -> Option<NativeWindow> {
     let handle = window.window_handle().ok()?.as_raw();
     let display = window.display_handle().ok()?.as_raw();
     native::native(handle, display)
+}
+
+/// What `window` reads as, for its fullscreen state and its corner
+/// clearance: whether it is in fullscreen, and on macOS the system's
+/// reading of its corners over its AppKit view. Each is a reading with no
+/// decision in it; what they come to is the module `corner`'s.
+fn shape(window: &dyn Window) -> Shape {
+    Shape {
+        fullscreen: window.in_fullscreen(),
+        corner: corner_reading(window),
+    }
+}
+
+/// The system's reading of how far in `window`'s corners reach, in logical
+/// points: on macOS, over the AppKit view its raw handle gives; nothing
+/// elsewhere, or for a window with no such view.
+fn corner_reading(window: &dyn Window) -> Option<f64> {
+    #[cfg(target_os = "macos")]
+    if let Some(NativeWindow::AppKit { view }) = native_window(window) {
+        return corner::system(view);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+    None
 }
 
 /// How often the display the window is on refreshes, in thousandths of a

@@ -1,5 +1,6 @@
 //! The application delegate: where macOS hands the files it asks the app to
-//! open. This is the only code in the workspace that names AppKit.
+//! open. This and the module `corner` are the only code in the workspace
+//! that names AppKit.
 //!
 //! When Finder opens a file with the app ("Open With", a double-click on a
 //! document of a type the app claims, or a drop on its Dock icon), AppKit

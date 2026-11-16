@@ -220,9 +220,12 @@ run in the container, under Xvfb, as parts 1 and 4 of `linux-window`.
 in it that it opened before it reports so to anyone, it reports that it
 opened before anything else, it returns when it is asked to close from
 another thread and not before, even if it was asked to close before it
-opened, and it tells the drawer it is closing, once, last. The window opens
-for about a second. It is the example of `crates/editor-platform-winit`,
-and it prints one line.
+opened, it tells the drawer it is closing, once, last, and no resize it
+reports in fullscreen says a corner clearance. The window opens for about
+a second. It is the example of `crates/editor-platform-winit`, and it
+prints the verdict on one line and then each resize the window reported,
+one line apiece: `window-contract: resized <w>x<h> scale <s> fullscreen
+<bool> corner <n>`.
 
 **The second** is the window that draws: the example `window` of
 `crates/editor-ffi` (`examples/window.rs`). The real window is run onto a
@@ -237,7 +240,12 @@ is closed; `cargo run --locked --package editor-ffi --example window --
 --seconds <n>` runs it for another time.
 
 The first prints `window-contract: the winit platform keeps the window
-port's contract`. The second fails, with a line beginning `window:
+port's contract`, then its resizes. On macOS each of them must say
+`fullscreen false` and a corner above 0: the run never asks for
+fullscreen, so it shows nothing of the fullscreen case, which rests on the
+adapter's own tests (`corner.rs`, `translate.rs`). How the corner's
+fallback was measured is below ("The corner clearance, measured"). The
+second fails, with a line beginning `window:
 FAILED:` and exit status 1, unless all of these hold:
 
 - each frame it publishes is laid out at the window's scale: it prints
@@ -336,6 +344,24 @@ On the tree with the three changes, the second program, started so that
 its window was not on the screen at once, exited 0: two draws refused as
 `Occluded`, one presented after `Hidden(false)`, nothing drawn over the
 idle second, and a click arriving as a press and a release.
+
+### The corner clearance, measured
+
+The adapter reports the system's own reading of how far in a window's
+rounded bottom corners reach (`crates/editor-platform-winit/src/corner.rs`:
+the content view's safe-area layout region adapted to the corners
+horizontally, macOS 26 and later), rounded up to a whole point, and a
+fallback, `FALLBACK_POINTS`, when the system gives no reading above 0. The
+fallback was measured on 2026-11-16 on a Mac17,7 (arm64) running macOS
+27.2 (26B123): with the constant set to 0 for the run, and a line printing
+the insets the system gave added for the run, `mise run window-contract`
+read the insets left 16, right 16, top 0 and bottom 0, printed two
+resizes, both `resized 1600x1200 scale 2 fullscreen false corner 16`, and
+passed. The constant is 16. With it restored the run printed the same.
+That is winit's window, which has a title bar and no toolbar; the system
+gives a window with a toolbar larger corners. To measure it again, set
+the constant to 0, run the task, read the `corner` of the resizes, and
+set it back to what they say.
 
 ### The window at the macOS weight
 
