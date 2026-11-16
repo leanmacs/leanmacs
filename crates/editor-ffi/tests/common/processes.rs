@@ -14,7 +14,8 @@ use std::{slice, thread};
 
 use editor_ffi::events::{EventKind, QueueId, RawEvent, SourceKind, editor_ffi_events_next};
 use editor_ffi::processes::{
-    RawProcessResult, SERVICE, editor_ffi_processes_run, editor_ffi_processes_take,
+    RawProcessResult, SERVICE, editor_ffi_processes_run, editor_ffi_processes_run_input,
+    editor_ffi_processes_take,
 };
 use editor_ffi::text::editor_ffi_text_free;
 
@@ -68,20 +69,25 @@ pub fn completion_of(id: u64) -> Seen {
     )
 }
 
-/// Starts `/bin/sh -c script` in `directory` as the run `id`, through the
-/// C function, laying the command out as Lean does.
-pub fn run(id: u64, script: &str, directory: &Path, limit: u64) -> bool {
+/// The words and the string of `program` with `arguments` in `directory`,
+/// with `limit`, laid out as Lean lays a command out.
+fn laid_out(program: &str, arguments: &[&str], directory: &Path, limit: u64) -> (Vec<u8>, String) {
     let directory = directory
         .to_str()
         .expect("the temporary directory's path is UTF-8");
-    let texts = ["-c", script];
-    let program = "/bin/sh";
-    let mut words = vec![limit, 0, texts.len() as u64];
-    words.extend(texts.iter().map(|text| text.len() as u64));
+    let mut words = vec![limit, 0, arguments.len() as u64];
+    words.extend(arguments.iter().map(|text| text.len() as u64));
     // No variable set and none unset.
     words.extend([0, 0, program.len() as u64, directory.len() as u64]);
     let words: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
-    let strings = format!("{}{program}{directory}", texts.concat());
+    let strings = format!("{}{program}{directory}", arguments.concat());
+    (words, strings)
+}
+
+/// Starts `/bin/sh -c script` in `directory` as the run `id`, through the
+/// C function, laying the command out as Lean does.
+pub fn run(id: u64, script: &str, directory: &Path, limit: u64) -> bool {
+    let (words, strings) = laid_out("/bin/sh", &["-c", script], directory, limit);
     // SAFETY: the pointers and lengths are those of `words` and `strings`,
     // alive for the call.
     unsafe {
@@ -91,6 +97,25 @@ pub fn run(id: u64, script: &str, directory: &Path, limit: u64) -> bool {
             words.len(),
             strings.as_ptr(),
             strings.len(),
+        )
+    }
+}
+
+/// Starts `program`, with no arguments, in `directory` as the run `id`, fed
+/// `input`, through the C function, laying the command out as Lean does.
+pub fn run_input(id: u64, program: &str, directory: &Path, input: &[u8], limit: u64) -> bool {
+    let (words, strings) = laid_out(program, &[], directory, limit);
+    // SAFETY: the pointers and lengths are those of `words`, `strings` and
+    // `input`, alive for the call.
+    unsafe {
+        editor_ffi_processes_run_input(
+            id,
+            words.as_ptr(),
+            words.len(),
+            strings.as_ptr(),
+            strings.len(),
+            input.as_ptr(),
+            input.len(),
         )
     }
 }

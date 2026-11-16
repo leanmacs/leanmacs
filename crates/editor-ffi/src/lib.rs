@@ -267,6 +267,8 @@
 //! arrived ([`processes::editor_ffi_processes_take`]): a record of a status,
 //! words, a detail string and the two streams' bytes. Its other C functions
 //! are [`processes::editor_ffi_processes_run`],
+//! [`processes::editor_ffi_processes_run_input`], a run whose child is fed
+//! the bytes it is lent as its standard input,
 //! [`processes::editor_ffi_processes_cancel`], which kills the run's
 //! process group, [`processes::editor_ffi_processes_shutdown`], and, as a
 //! readout for tests, [`processes::editor_ffi_processes_pending`]. A

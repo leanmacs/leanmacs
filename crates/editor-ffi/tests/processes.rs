@@ -5,8 +5,9 @@
 //! This is the wiring test: the C functions, the process's service, the
 //! service of `editor-process` and the real adapter, `editor-process-std`.
 //! It asserts wiring only: a command that went in ran, and its status and
-//! its bytes came out, once, after its completion; and a cancelled run is
-//! never completed and its child is reaped. What a run does is
+//! its bytes came out, once, after its completion; a run fed its standard
+//! input hands it to its child; and a cancelled run is never completed and
+//! its child is reaped. What a run does is
 //! `editor-process`'s rule, pinned there on the fake and by the contract on
 //! real processes.
 //!
@@ -26,7 +27,7 @@ mod common;
 use std::thread;
 use std::time::Instant;
 
-use common::{DEADLINE, ROOMY, Taken, completion_of, next_completion, run, take};
+use common::{DEADLINE, ROOMY, Taken, completion_of, next_completion, run, run_input, take};
 use editor_ffi::processes::{editor_ffi_processes_cancel, editor_ffi_processes_pending};
 
 /// Whether `pending` comes to `count` within the deadline.
@@ -78,6 +79,21 @@ fn a_command_is_run_through_c_completed_on_the_completion_queue_and_taken_once_u
     assert_eq!(next_completion(), completion_of(3));
     assert_eq!(take(2), None);
     assert_eq!(take(3).map(|taken| taken.words), Some(vec![0, 0]));
+
+    // A run fed its standard input hands it to the child whole: `cat`
+    // gives back a NUL and a byte that is not UTF-8.
+    assert!(run_input(
+        5,
+        "/bin/cat",
+        directory.path(),
+        b"fed\0\xff\n",
+        ROOMY
+    ));
+    assert_eq!(next_completion(), completion_of(5));
+    assert_eq!(
+        take(5).map(|taken| (taken.status, taken.words, taken.stdout)),
+        Some((0, vec![0, 0], b"fed\0\xff\n".to_vec()))
+    );
 
     // Words that spell no command start nothing.
     // SAFETY: no bytes are lent.
