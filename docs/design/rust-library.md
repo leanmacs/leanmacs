@@ -758,10 +758,46 @@ built"):
   Lean knows the state whether a request or the green button made it.
   The window's title follows the scene Lean publishes: the presenter
   sends it as a `Request::Title` when it changes. The event loop is built
-  without winit's default menu, so there is no menu item for any of this
-  and Lean's own bindings (`C-s-f`, `s-m`) reach the window. Nobody has
-  seen a window of ours in fullscreen ([concurrency.md](concurrency.md),
-  "Still to verify").
+  without winit's default menu: the menu bar is the editor's ("The menu
+  bar", below), whose Window menu runs `toggle-fullscreen` and
+  `minimise-window` with Lean's own chords (`C-s-f`, `s-m`) as its key
+  equivalents. Nobody has seen a window of ours in fullscreen
+  ([concurrency.md](concurrency.md), "Still to verify").
+- **The menu bar** (`Request::Menu`, `Input::Menu`). The port carries it
+  as plain data (`editor_platform::menu`): menus with a title, a role
+  (the application's menu, the windows menu, or none) and items, each a
+  separator or a title, an optional key equivalent (a character and the
+  port's `Modifiers`) and an action, an editor command by name or a thing
+  the system does itself (About, Services, Hide, Hide Others, Show All,
+  Quit). It is a field of the scene, as the title is: Lean publishes it,
+  the presenter sends it as a `Request::Menu` only when it changed, and a
+  scene that names none leaves it. The winit adapter takes it out of the
+  requests once the window has opened, since the menu bar is the
+  application's, and a pure module (`menu.rs`) plans what to build: each
+  system action's standard selector, sent to the first responder; a
+  command item's action the one method of a target object of the crate's,
+  with its index among the command items as its tag; the key string and
+  the modifier mask; the application's menu first; and which submenus
+  become `servicesMenu` and `windowsMenu`. `menu_bar.rs` builds the plan
+  in AppKit and decides nothing. The target is kept alive for the run,
+  since an item holds its target weakly, and the main menu is cleared
+  before it goes. Each item built is marked with an identifier, so a
+  reading tells it from the items AppKit adds of its own (Emoji &
+  Symbols, the window list); the plan's model of what AppKit holds is
+  read back in the crate's tests, and the contract example reads the real
+  one back through a `#[doc(hidden)]` probe, performs each command item
+  and Quit, and sees `Input::Menu` and `QuitRequested`. The delegate
+  registers `NSFullScreenMenuItemEverywhere = NO`, so AppKit adds no
+  fullscreen item that would bypass `toggle-fullscreen`. A command item's
+  key equivalent comes from the keymap (`Config.Registry.keyEquivalent?`,
+  in Lean): AppKit runs a key equivalent before the window's view sees
+  the key, so a chord the menu shows never reaches Lean as a key, and the
+  menu and the keymap must agree. On the queue the input is the kind 12,
+  code 0, the command's name as the text and no words; Lean runs it as an
+  invocation no key yielded, so config's command of the name runs in its
+  place. Elsewhere than macOS winit has no menu bar, and a menu changes
+  nothing shown, as the port's request contract lets a platform with
+  none.
 - **Files the system asks the app to open** (`Input::OpenFiles`). When
   Finder opens a file with the app ("Open With", a double-click on a
   document of a type it claims, a drop on its Dock icon), macOS calls the

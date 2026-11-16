@@ -2293,8 +2293,10 @@ window is still run with nothing drawing in it. The threads are in
   is made with winit's default attributes, which are resizable and
   titled, and on macOS such a window has the green button, which puts it
   into the system's fullscreen on a Space of its own. The event loop is
-  built without winit's default menu, so a fullscreen shortcut that is a
-  menu item's is not there: the button is the way in. To the editor it
+  built without winit's default menu; the menu bar is the editor's, whose
+  Window menu's Enter Full Screen runs `toggle-fullscreen`, and AppKit
+  adds no fullscreen item of its own (`NSFullScreenMenuItemEverywhere`).
+  So the button, `C-s-f` and that item are the ways in. To the editor it
   is a burst of sizes: winit reports each change of the content view's
   frame as a resize, the adapter reports it and tells the drawer, the
   render loop draws the frame shown on the newest size at most once a
