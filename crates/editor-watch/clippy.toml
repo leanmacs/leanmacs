@@ -1,0 +1,76 @@
+# What no line of `editor-watch` may name, its tests included: a real file,
+# a real clock, or the port's real adapter. The crate reaches a file system
+# only through the `Watch` port it defines (`src/lib.rs`), and time only
+# through its `Clock` (`src/clock.rs`). Its tests, the service's and the
+# contract's, run on the published fake, `fake::FakeWatch`, and on
+# `clock::ManualClock`.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none. So this file governs
+# every target of this crate and no other: the port's adapter,
+# `editor-watch-notify`, watches and writes files freely, and its contract
+# test reads the real clock. `disallowed_methods` and `disallowed_types` are
+# on by default at `warn`, and `mise run lint` denies warnings, so a line
+# that names one of these fails the gate.
+#
+# The last method entry names the port's real adapter, a crate this one does
+# not depend on. Clippy takes a path into a crate that is not in the build
+# without a warning, and the entry is then idle; it is here so that a
+# dev-dependency on the adapter, which Cargo allows though it is a cycle,
+# cannot hand a test of this crate a real watch. `deny.toml` closes that
+# route too.
+#
+# Seen to bite once by hand, on 2026-11-15: with a test added to
+# `src/lib.rs` that calls `std::time::Instant::now()`,
+# `std::fs::write("/nonexistent/x", b"")` and
+# `Path::new("/").exists()`, `cargo clippy -p editor-watch --all-targets --
+# -D warnings` (what `mise run lint` runs, for this crate) fails with "use
+# of a disallowed method `std::time::Instant::now`", "`std::fs::write`" and
+# "`std::path::Path::exists`". With the test taken out it passes.
+#
+# What this does not hold is what `crates/editor-text/clippy.toml` says of
+# its own list: it is a list of names. A call through `libc`, which this
+# crate does not depend on, is a reviewer's to look for.
+
+disallowed-methods = [
+  # The clocks of the machine.
+  { path = "std::time::Instant::now", reason = "time reaches the crate through its `Clock`; a test sets a `ManualClock`, and waits with a deadline through `recv_timeout` or a condvar's timeout" },
+  { path = "std::time::SystemTime::now", reason = "time reaches the crate through its `Clock`; a test sets a `ManualClock`" },
+  # The port's real adapter.
+  { path = "editor_watch_notify::NotifyWatch::system", reason = "the crate's tests run on the fake, `fake::FakeWatch`; a real watch is the adapter's own tests' and `editor-ffi`'s wiring tests'" },
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::copy", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::create_dir", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::create_dir_all", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::exists", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::hard_link", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::metadata", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::read", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::read_dir", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::read_link", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::read_to_string", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::remove_dir", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::remove_dir_all", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::remove_file", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::rename", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::set_permissions", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::symlink_metadata", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::write", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "the disk is the port's to ask; the service compares paths as they are spelled" },
+  { path = "std::path::Path::exists", reason = "the disk is the port's to ask" },
+  { path = "std::path::Path::is_dir", reason = "the disk is the port's to ask" },
+  { path = "std::path::Path::is_file", reason = "the disk is the port's to ask" },
+  { path = "std::path::Path::is_symlink", reason = "the disk is the port's to ask" },
+  { path = "std::path::Path::metadata", reason = "the disk is the port's to ask" },
+  { path = "std::path::Path::read_dir", reason = "the disk is the port's to ask" },
+  { path = "std::path::Path::read_link", reason = "the disk is the port's to ask" },
+  { path = "std::path::Path::symlink_metadata", reason = "the disk is the port's to ask" },
+  { path = "std::path::Path::try_exists", reason = "the disk is the port's to ask" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+  { path = "std::fs::OpenOptions", reason = "the crate reaches files through the `Watch` port; a test drives the fake's ground" },
+]
