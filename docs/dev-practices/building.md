@@ -109,11 +109,15 @@ The version is the one line of `lean/app/version`: 0.1.0, as every crate's
 `version` is. It is written as both `CFBundleShortVersionString` and
 `CFBundleVersion`; the release that first needs a build number of its own
 decides how the two part. The line must be one to three dot-separated runs
-of digits, and `editorApp` refuses anything else, a second line or
-whitespace among it, with an error naming the file.
+of digits, with or without a newline after it, and `editorApp` refuses
+anything else, a second line or whitespace among it, with an error naming
+the file.
 
-The icon is made from `lean/app/Leanmacs.png`, a 1024×1024 PNG: `sips`
-scales it to the ten standard sizes (16, 32, 128, 256 and 512 points, at 1×
+The icon is made from `lean/app/Leanmacs.png`, a 1024×1024 PNG. Before
+anything is built, `editorApp` reads its width, height and format with
+`sips -g` and refuses any other size or format with an error naming the
+file, since `sips -z` would stretch it into a blurred icon without a word.
+`sips` scales it to the ten standard sizes (16, 32, 128, 256 and 512 points, at 1×
 and 2×) in an iconset in the staging directory, and `iconutil` makes
 `Leanmacs.icns` of them. The owner may replace the PNG with any 1024×1024
 image that does not look the same turned a quarter (`mise run app-check`

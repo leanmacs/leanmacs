@@ -206,6 +206,23 @@ def parseAppVersion (contents : String) : Except String String :=
     .error
       s!"{appVersionFile} must be one line of one to three dot-separated runs of digits, such as 0.1.0, but holds {repr contents}"
 
+/-- Whether the artwork (`appIconFile`) is a 1024×1024 PNG, from what
+`/usr/bin/sips -g pixelWidth -g pixelHeight -g format` prints for it: a
+line `  <key>: <value>` for each. Anything else is an error naming the file
+and what `sips` read, so artwork of another size or format fails the build
+instead of being stretched into a blurred icon (`mise run app-check`,
+step 12). -/
+def checkAppArtwork (sipsOutput : String) : Except String Unit :=
+  let field (key : String) : String :=
+    let pre := s!"  {key}: "
+    match (sipsOutput.splitOn "\n").find? (·.startsWith pre) with
+    | some line => (line.drop pre.length).toString
+    | none => "nothing"
+  let (width, height, format) := (field "pixelWidth", field "pixelHeight", field "format")
+  if width == "1024" && height == "1024" && format == "png" then .ok ()
+  else
+    .error s!"{appIconFile} must be a 1024x1024 PNG, but sips reads it as {width}x{height} {format}"
+
 /-- The bundle's `Contents/Info.plist`, for the app at `version`, the line
 of the version file (`appVersionFile`). The version is both
 `CFBundleShortVersionString` and `CFBundleVersion`, the same string until a
@@ -311,7 +328,8 @@ is the pinned one, and from this package, laid out by
 (`appInfoPlist`), with the version from `app/version` (`appVersionFile`,
 `parseAppVersion`, which fails the build on a malformed line); and
 `Contents/Resources/Leanmacs.icns`, made from the artwork `app/Leanmacs.png`
-(`appIconFile`) by `sips` into the ten images of `appIconSizes` and then
+(`appIconFile`, which `checkAppArtwork` requires to be a 1024×1024 PNG) by
+`sips` into the ten images of `appIconSizes` and then
 `iconutil`.
 
 The bundle is signed again as a whole, ad-hoc, and last: the linker's
@@ -355,6 +373,17 @@ target editorApp pkg : FilePath := do
           pure version
         | .error message =>
           error message
+      -- Checked before anything is built, as the version is: `sips -z`
+      -- below would stretch artwork of any other size without a word.
+      let artInfo ←
+        captureProc
+            { cmd := "/usr/bin/sips"
+              args := #["-g", "pixelWidth", "-g", "pixelHeight", "-g", "format", art.toString] }
+      match checkAppArtwork artInfo with
+      | .ok () =>
+        pure ()
+      | .error message =>
+        error message
       addTrace (.ofHash (pureHash (appInfoPlist version)) "Info.plist")
       let bundle := pkg.buildDir / s!"{appName}.app"
       let traceFile := pkg.buildDir / s!"{appName}.app.trace"

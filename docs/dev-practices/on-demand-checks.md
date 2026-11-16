@@ -114,10 +114,16 @@ builds: the bundle must be rebuilt, verify, and name 9.8.7 as both version
 keys. It turns the artwork, `lean/app/Leanmacs.png`, a quarter
 (`sips -r 90`) and builds: the bundle must be rebuilt and verify, and its
 icon must hold the ten images with a 1024-pixel one that differs from
-before, so the artwork must not look the same turned a quarter. Last, it
+before, so the artwork must not look the same turned a quarter. It
 writes malformed versions (a trailing space, an empty file, `1.x`, a second
 line, four parts) and builds each: each build must fail on the version file
-and leave the old bundle. It ends `app-check: ok` with the bundle's size,
+and leave the old bundle. It writes `0.1.0` with no newline after it and
+builds: the build must succeed and the bundle name 0.1.0, and the check
+must read 0.1.0 from that file as it reads `lean/app/version`, so the two
+take the same files. Last, it replaces the artwork with a 512×300 PNG, a
+256×256 PNG and a 1024×1024 JPEG and builds each: each build must fail
+with an error that `app/Leanmacs.png` must be a 1024x1024 PNG and leave
+the old bundle; then it puts the artwork back. It ends `app-check: ok` with the bundle's size,
 and takes under a minute.
 
 It writes nothing outside its temporary directory but that second build,

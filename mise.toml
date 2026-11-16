@@ -422,7 +422,9 @@ run = "lake build --wfail editorApp"
 # print exactly `expected`, and builds `editorApp` again to show that copies
 # and signs nothing. In a clone of lean/ it shows that a failed rebuild
 # leaves the old bundle, that changing the version or the artwork rebuilds
-# it, and that a malformed version fails the build. It ends `app-check: ok`.
+# it, that a malformed version or artwork other than a 1024x1024 PNG fails
+# the build, and that the build and the check both take a version file
+# with no final newline. It ends `app-check: ok`.
 # It opens no window and needs no person.
 [tasks.app-check]
 description = "Opt-in, never part of ci; macOS on arm64 only: verify the built Leanmacs.app's signature and run its headless mode from a copy in a temporary directory, with no directory argument, an empty environment and / as the working directory (tools/app-check.sh, tests/headless/bundle)"

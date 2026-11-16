@@ -56,7 +56,14 @@
 # 10. writes malformed versions into the clone's `lean/app/version` (a
 #    trailing space, an empty file, `1.x`, a second line, four parts) and
 #    builds each: each build must fail on the version file and leave the
-#    old bundle, which must still verify.
+#    old bundle, which must still verify;
+# 11. writes `0.1.0` with no newline after it and builds: the build must
+#    succeed with 0.1.0 as both version keys, and this check must read 0.1.0
+#    from the file, so the build and the check take the same version files;
+# 12. replaces the clone's artwork with a 512x300 PNG, a 256x256 PNG and a
+#    1024x1024 JPEG and builds each: each build must fail on the artwork,
+#    which must be a 1024x1024 PNG, and leave the old bundle, which must
+#    still verify. The artwork is then put back.
 #
 # It writes nothing outside the temporary directory but that second build,
 # which is shown to write nothing. It opens no window and needs no person.
@@ -84,9 +91,18 @@ fail() {
 }
 
 # The version, read from the file the build reads, so the two cannot drift.
+# Into `version_read`, the first line of the file at $1, with or without a
+# newline after it, as the build takes it (step 11).
+read_version() {
+  version_read=
+  # `read` fails at an end of file with no newline before it, but has read
+  # the line.
+  IFS= read -r version_read <"$1" || [ -n "$version_read" ] || fail "cannot read a line from $1"
+  [ -n "$version_read" ] || fail "$1 is empty"
+}
 version_file="$lean_dir/app/version"
-IFS= read -r version <"$version_file" || fail "cannot read a line from $version_file"
-[ -n "$version" ] || fail "$version_file is empty"
+read_version "$version_file"
+version=$version_read
 
 started=$SECONDS
 step() {
@@ -295,5 +311,44 @@ done
 codesign --verify --strict --deep "$cloned" || fail "after a malformed version, the bundle does not verify"
 printf '9.8.7\n' >"$clone/lean/app/version"
 step "a malformed version failed the build on the version file and left the old bundle"
+
+# 11. A version file whose one line has no newline after it: the build takes
+# it, and this check reads the same version from it.
+printf '0.1.0' >"$clone/lean/app/version"
+build_clone || fail "building editorApp in the clone with a version file of 0.1.0 and no newline failed"
+read_version "$clone/lean/app/version"
+[ "$version_read" = 0.1.0 ] ||
+  fail "this check read $version_read, not 0.1.0, from a version file of 0.1.0 and no newline"
+for key in CFBundleShortVersionString CFBundleVersion; do
+  value=$(plutil -extract "$key" raw -o - "$cloned/Contents/Info.plist" 2>/dev/null) ||
+    fail "with a version file of 0.1.0 and no newline, Info.plist has no $key"
+  [ "$value" = 0.1.0 ] || fail "with a version file of 0.1.0 and no newline, Info.plist's $key is $value"
+done
+codesign --verify --strict --deep "$cloned" || fail "with a version file with no newline, the bundle does not verify"
+step "a version file with no newline built the bundle with that version, and this check read the same version"
+
+# 12. Artwork that is not a 1024x1024 PNG fails the build, naming the
+# artwork, and leaves the old bundle: sips would stretch it into a blurred
+# icon.
+cp -pc "$clone/lean/app/Leanmacs.png" "$dir/artwork.png"
+before=$(clone_marks)
+for wrong in 512x300.png 256x256.png 1024x1024.jpeg; do
+  size=${wrong%.*} format=${wrong##*.}
+  sips -s format "$format" -z "${size#*x}" "${size%x*}" "$dir/artwork.png" --out "$dir/wrong.$format" >/dev/null ||
+    fail "sips cannot make the $wrong artwork"
+  mv "$dir/wrong.$format" "$clone/lean/app/Leanmacs.png"
+  if build_clone >"$dir/artwork.log" 2>&1; then
+    cat "$dir/artwork.log"
+    fail "building editorApp with $wrong artwork succeeded"
+  fi
+  grep -q "app/Leanmacs.png must be a 1024x1024 PNG" "$dir/artwork.log" || {
+    cat "$dir/artwork.log"
+    fail "building editorApp with $wrong artwork failed, but not on the artwork"
+  }
+  [ "$before" = "$(clone_marks)" ] || fail "a build with $wrong artwork changed the bundle"
+done
+codesign --verify --strict --deep "$cloned" || fail "after wrong artwork, the bundle does not verify"
+mv "$dir/artwork.png" "$clone/lean/app/Leanmacs.png"
+step "artwork that is not a 1024x1024 PNG failed the build on the artwork and left the old bundle"
 
 echo "app-check: ok, $(du -sh "$built" | awk '{ print $1 }') bundle"
