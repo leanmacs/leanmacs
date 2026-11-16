@@ -10,7 +10,8 @@
 //! The translation is the module `translate`'s, with a key's names in
 //! `names` and the window's native handles in `native`: every key with its
 //! logical key, physical key and modifiers; the pointer's press, drag,
-//! release and wheel; a resize with the size and the scale; the focus; a
+//! release and wheel; a resize with the size, the scale and whether the
+//! window is in fullscreen; the focus; a
 //! composition; a request to close; and, for whatever draws in the window,
 //! its native window, its size, its display's refresh rate, damage, and
 //! whether it is hidden. Their docs say what is decided where winit and the
@@ -47,14 +48,26 @@
 //!   to end (`Closing`) and then wakes it. winit may wake a loop nobody
 //!   woke, and merges wake-ups, so a loop that wakes ends only once a close
 //!   has been asked.
+//! - **It carries out requests on the main thread, through a channel of
+//!   its own.** [`Platform::request`] sends the request on a
+//!   `std::sync::mpsc` channel and then wakes the loop, as a close asks
+//!   before it wakes, so the loop that wakes finds it. The loop takes every
+//!   request on the channel (`wake`): when a close has been asked they are
+//!   dropped, since the window is going; otherwise each is carried out on
+//!   the window, in order, by the module `asked`'s translation, and then
+//!   the window's fullscreen is read and a change of it reported as a
+//!   resize. A request asked with no window running does nothing, and one
+//!   that arrives before the window is made is dropped.
 //!
 //! # Tests
 //!
 //! The gate (`mise run ci`) opens no window, so what it covers here is the
 //! translation from winit's values to [`Input`] and [`Canvas`], what the
 //! window asks of its input method (`ime_request`), that a close is asked
-//! before the loop is woken, whether a loop that wakes ends
-//! (`Closing::ends_on_wake`), and the refusal off the main thread. The event
+//! and a request sent before the loop is woken, what a wake-up comes to
+//! (`wake`, over `Closing::ends_on_wake`), what each request does to the
+//! window (`asked`, which runs the port's request contract), and the
+//! refusal off the main thread. The event
 //! loop itself needs a display, and so do the lines here that only a real
 //! window runs. They are few, and each is a reading of the window or a
 //! call with no decision in it:
@@ -73,8 +86,18 @@
 //!   and what is told of the answer, are the translation's, and tested;
 //! - handing what an event comes to on: each `Canvas` to the drawer, then
 //!   the `Input` to the report;
-//! - ending the loop when it is woken and `Closing` says a wake-up ends it.
-//!   Whether it does is `Closing`'s, and tested;
+//! - ending the loop when it is woken and `wake` says it ends, and taking
+//!   the requests off the channel then. What a wake-up comes to is
+//!   `wake`'s, and tested;
+//! - the four lines of `Control` for winit's window, which carry out a
+//!   request: reading `fullscreen().is_some()`, and calling
+//!   `set_fullscreen` with `Fullscreen::Borderless(None)` or `None`,
+//!   `set_minimized(true)` and `set_title`. Which is called, and when, is
+//!   `asked`'s, and tested;
+//! - the reading of fullscreen as the window opens and when the
+//!   translation asks for it, after a resize, a change of scale, a move or
+//!   an occlusion, and after requests are carried out. When it is read and
+//!   what is reported of it are the translation's, and tested;
 //! - telling the drawer the window is closing once the loop has ended.
 //!
 //! They are held to the port's contract by `examples/contract.rs`, which
@@ -94,6 +117,7 @@
 //! macOS back end sends when a window is moved between two displays has
 //! not been seen.
 
+mod asked;
 mod names;
 mod native;
 mod translate;
@@ -116,6 +140,7 @@ use winit::window::{
     WindowAttributes, WindowId,
 };
 
+use crate::asked::{Asked, Control};
 use crate::translate::{KeyParts, Seen, Told};
 
 /// The window port over winit. It opens one window, on the process's main
@@ -142,8 +167,10 @@ impl WinitPlatform {
     /// The name this platform gives itself in [`Input::Opened`].
     pub const NAME: &'static str = "winit";
 
-    /// The title of the window. The only window today is the keyboard
-    /// check's (`editor window-check`).
+    /// The title the window opens with, until it is asked for another
+    /// (`Request::Title`). The editor asks for its scene's title as soon as
+    /// the window opens; the keyboard check (`editor window-check`) asks
+    /// for none.
     const TITLE: &'static str = "editor: window check";
 
     /// A platform that runs no window yet. `on_main_thread` says whether the
@@ -179,7 +206,7 @@ impl Platform for WinitPlatform {
 
         let mut event_loop = event_loop().map_err(cannot_open)?;
         let closing = Closing::default();
-        let (requests, _asked) = mpsc::channel();
+        let (requests, asked) = mpsc::channel();
         *self.running() = Some(Running {
             proxy: event_loop.create_proxy(),
             closing: closing.clone(),
@@ -193,6 +220,8 @@ impl Platform for WinitPlatform {
             window: None,
             failure: None,
             closing,
+            requests: asked,
+            asked: Asked::default(),
         };
         // What winit's `run_app` does on macOS and on Linux, with the
         // handler borrowed so that it is still here once the loop has ended.
@@ -259,6 +288,29 @@ impl Closing {
     }
 }
 
+/// What a wake-up of the loop comes to: the requests to carry out on the
+/// window, in the order asked, and whether the loop ends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Woken {
+    /// The requests to carry out, oldest first.
+    carry: Vec<Request>,
+    /// Whether the loop ends.
+    ends: bool,
+}
+
+/// What a wake-up of the loop comes to, with `closing` as it is and
+/// `requests` taken off the channel. A loop that ends drops what is
+/// pending: the window is going. One that does not carries every request
+/// out, in order; with none it still goes on, since winit may wake a loop
+/// nobody woke.
+fn wake(closing: &Closing, requests: impl Iterator<Item = Request>) -> Woken {
+    let ends = closing.ends_on_wake();
+    Woken {
+        carry: if ends { Vec::new() } else { requests.collect() },
+        ends,
+    }
+}
+
 /// The window and its loop's handler: what [`WinitPlatform::run`] hands to
 /// winit.
 struct App {
@@ -276,6 +328,10 @@ struct App {
     failure: Option<String>,
     /// Whether a close has been asked of the window.
     closing: Closing,
+    /// The requests sent to the window, taken when the loop is woken.
+    requests: mpsc::Receiver<Request>,
+    /// What the translation of requests remembers of the window.
+    asked: Asked,
 }
 
 impl ApplicationHandler for App {
@@ -298,6 +354,7 @@ impl ApplicationHandler for App {
                     window.scale_factor(),
                     native_window(window.as_ref()),
                     refresh_rate(window.as_ref()),
+                    window.in_fullscreen(),
                 );
                 self.window = Some(window);
                 // The drawer hears of the window before anyone else does.
@@ -315,8 +372,26 @@ impl ApplicationHandler for App {
     }
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
-        if self.closing.ends_on_wake() {
+        let woken = wake(&self.closing, self.requests.try_iter());
+        if woken.ends {
             event_loop.exit();
+            return;
+        }
+        // A request asked before the window was made is dropped.
+        let Some(window) = self.window.as_deref() else {
+            return;
+        };
+        for request in woken.carry {
+            asked::carry_out(&mut self.asked, window, request);
+        }
+        // What carrying them out did to fullscreen, as the drawer and the
+        // report hear of a window event's.
+        let told = self.seen.fullscreen(window.in_fullscreen());
+        for canvas in told.canvas {
+            (self.drawer)(canvas);
+        }
+        if let Some(input) = told.input {
+            (self.report)(input);
         }
     }
 
@@ -325,6 +400,8 @@ impl ApplicationHandler for App {
         // translation asks: it decides after which events to.
         let window = self.window.as_deref();
         let display = || window.and_then(refresh_rate);
+        // Whether it is in fullscreen, read when the translation asks.
+        let fullscreen = || window.is_some_and(Control::in_fullscreen);
         // A change of scale cannot be built in a test, and a key is
         // translated from its parts, so each is taken apart here. These two
         // arms are all this handler decides.
@@ -340,9 +417,9 @@ impl ApplicationHandler for App {
                 canvas: Vec::new(),
             },
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.seen.scale(*scale_factor, &display)
+                self.seen.scale(*scale_factor, &display, &fullscreen)
             }
-            other => self.seen.window_event(other, &display),
+            other => self.seen.window_event(other, &display, &fullscreen),
         };
         // The drawer first, as when the window opened: a size is known to
         // what draws before anyone is told to lay out for it.
@@ -533,6 +610,35 @@ mod tests {
     #[test]
     fn a_request_with_no_window_running_does_nothing() {
         WinitPlatform::new(|| false).request(Request::Minimise);
+    }
+
+    #[test]
+    fn a_wake_up_with_requests_and_no_close_carries_them_out_in_order_and_goes_on() {
+        let asked = [
+            Request::EnterFullscreen,
+            Request::Title("notes.txt".into()),
+            Request::Minimise,
+        ];
+        assert_eq!(
+            wake(&Closing::default(), asked.clone().into_iter()),
+            Woken {
+                carry: asked.to_vec(),
+                ends: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_wake_up_with_a_close_asked_ends_and_carries_out_nothing() {
+        let closing = Closing::default();
+        closing.ask();
+        assert_eq!(
+            wake(&closing, [Request::EnterFullscreen].into_iter()),
+            Woken {
+                carry: Vec::new(),
+                ends: true,
+            }
+        );
     }
 
     #[test]
