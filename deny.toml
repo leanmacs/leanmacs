@@ -225,6 +225,14 @@
 # fails on each ("crate 'objc2-app-kit = 0.3.2' is explicitly banned",
 # and the same for `objc2-foundation = 0.3.2` and `objc2 = 0.6.5`).
 #
+# For syntax trees (2026-11-16, the syntax-tree-sitter roadmap's phase 1).
+# The Syntax port's crate, `editor-syntax`, parses snapshots and reparses
+# from the edit log's patches, so it joined the wrappers of `editor-text`'s
+# entry in the commit that added it: with the wrapper not yet there, it
+# fails on the new crate's edge ("crate 'editor-text = 0.1.0' is explicitly
+# banned"). `editor-syntax` itself had no entry while nothing depended on
+# it.
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -249,7 +257,7 @@ deny = [
   { crate = "arboard", wrappers = ["editor-platform-arboard"], reason = "arboard stays behind the clipboard port: only its adapter crate may name its types" },
   { crate = "editor-platform-arboard", wrappers = ["editor-ffi"], reason = "the clipboard adapter is linked only by the crate that wires the library together, for the clipboard Lean's window mode opens; everything else reaches a clipboard through the port, and every test through its memory clipboard" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
-  { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
+  { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout", "editor-syntax"], reason = "text storage has three users, the crate that puts a text behind a handle for Lean, layout, which reads its snapshots, patches and selections as plain values, and the syntax core, which parses snapshots and reparses from the edit log's patches; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
   { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley", "editor-render", "editor-render-wgpu"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the Shaper port it defines has one real adapter, which implements it; and the Renderer port's crate and the crate of its real adapters take its frames as plain data; another user is a decision, so it is made here" },
   { crate = "editor-render", wrappers = ["editor-render-wgpu", "editor-ffi"], reason = "the Renderer port and the render loop have two users: the crate of the port's real adapters, which implements it and runs its contract, and the crate that wires the library together, which starts the render thread and turns what a window tells into words left with the loop; a third is a decision, so it is made here" },
   { crate = "etagere", wrappers = ["editor-render-wgpu"], reason = "the atlas packer stays behind the Renderer port: only the crate of the port's real adapters may name its types" },

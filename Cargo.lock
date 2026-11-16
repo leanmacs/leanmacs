@@ -504,6 +504,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-syntax"
+version = "0.1.0"
+dependencies = [
+ "editor-text",
+]
+
+[[package]]
 name = "editor-text"
 version = "0.1.0"
 dependencies = [
