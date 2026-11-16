@@ -17,6 +17,13 @@ pkl = "0.32.1"
 [env]
 RDM_ROOT = "{{env.HOME | default(value=env.USERPROFILE | default(value=''))}}/Projects/rdm-atlas-repo"
 RDM_PROJECT = "editor-project"
+# The lowest macOS every Lake link targets, the executable's `minos`. With
+# this unset Lake links for 99.0, and Finder refuses to start the app ("you
+# can't use this version"). It must equal `appMinimumSystemVersion` in
+# lean/lakefile.lean, the bundle's LSMinimumSystemVersion; `mise run
+# app-check` fails when the executable's `minos` is later. Other platforms
+# ignore it.
+MACOSX_DEPLOYMENT_TARGET = "27.2"
 
 [tasks.fmt]
 description = "Check Rust formatting"

@@ -13,7 +13,9 @@
 #    `CFBundleExecutable` is an executable file under `Contents/MacOS`, its
 #    `LSArchitecturePriority` starts with arm64, its
 #    `LSMinimumSystemVersion` is no later than this machine's macOS, the
-#    executable is arm64 alone (`lipo`), and its `CFBundleDocumentTypes`
+#    executable's own minimum macOS (`vtool -show-build`, its `minos`) is
+#    no later than `LSMinimumSystemVersion`, the executable is arm64 alone
+#    (`lipo`), and its `CFBundleDocumentTypes`
 #    are exactly two, `public.plain-text` then `public.source-code`, each
 #    with the role `Editor` and the rank `Alternate`;
 # 4. reads the icon with ImageIO (`sips`): 16 pixels wide;
@@ -107,6 +109,13 @@ not_later() {
 }
 not_later "$minimum" "$running" ||
   fail "LSMinimumSystemVersion is $minimum, later than this machine's macOS $running"
+# The executable's own minimum macOS (its LC_BUILD_VERSION `minos`), which
+# LaunchServices checks before it starts the app from Finder: no later than
+# LSMinimumSystemVersion.
+minos=$(vtool -show-build "$app/Contents/MacOS/$executable" | awk '$1 == "minos" { print $2; exit }')
+[ -n "$minos" ] || fail "the executable records no minimum macOS"
+not_later "$minos" "$minimum" ||
+  fail "the executable needs macOS $minos, later than LSMinimumSystemVersion $minimum: Finder refuses to start it"
 archs=$(lipo -archs "$app/Contents/MacOS/$executable")
 [ "$archs" = arm64 ] || fail "the executable is for $archs, not arm64 alone"
 # The document types: plain text and source code, each with the app as an
