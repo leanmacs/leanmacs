@@ -26957,7 +26957,19 @@ def shellScripts : Array Process.Script :=
     { command := shellCommand "/r" "warn", reply := shellReply "one\n" "careful\n" },
     { command := shellCommand "/w" "build", reply := shellReply "w1\nw2\n" },
     { command := shellCommand "/x" "ls -l", reply := shellReply "a.txt\nb.txt\n" },
-    { command := shellCommand "/r" "sleep 40", reply := shellReply "", takes := 40000 }]
+    { command := shellCommand "/r" "sleep 40", reply := shellReply "", takes := 40000 },
+    { command := shellCommand "/r" "sort", reply := shellReply "a\nb\nc\n" },
+    { command := shellCommand "/r" "tac", reply := shellReply "a\nc\n" },
+    { command := shellCommand "/r" "sort -u", reply := shellReply "a\nb\nc\nd\n" }]
+
+/-- `driver` with `script` ahead of the scripts it has, so its command does
+what it says. -/
+def withScript (driver : TestDriver) (script : Process.Script) : TestDriver :=
+  { driver with
+    jobs :=
+      { driver.jobs with
+        processes :=
+          { driver.jobs.processes with scripts := #[script] ++ driver.jobs.processes.scripts } } }
 
 /-- The keys of the shell checks: the workspace driver checks', and `C-e e`
 and `C-e y`, the ex line and its accept key (`exLine`); `C-e k` gives the
@@ -27162,6 +27174,73 @@ def shellChecks : List Check :=
               Shell.scopedValue ran.loop.state Shell.runningStore main == none &&
               echoOf short == some "!sleep 40: the run did not end within 5000 ms and was killed" },
     { name :=
+        "criterion 2 on the loop: `:1,7!sort` on a buffer of three lines says that line 7 is past its end, and starts nothing"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o s"
+            let ran := shellRan opened "1,7!sort"
+            echoOf ran == some s!"1,7!sort: {Ex.pastEnd 7 3}" && ran.next == opened.next &&
+              ran.jobs.processes.started == opened.jobs.processes.started &&
+              (showing ran).bind (·.text) == some "b\nc\na\n" },
+    { name :=
+        "criterion 11: `:%!sort` over three unsorted lines feeds the child those lines and leaves them sorted, as one change that one undo takes back"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let sorted := shellRan (settledAfter driver "C-o s") "%!sort"
+            let undone := settledAfter sorted "C-e u"
+            sorted.jobs.processes.fed == #[(shellCommand "/r" "sort", "b\nc\na\n".toUTF8)] &&
+              (showing sorted).bind (·.text) == some "a\nb\nc\n" &&
+              echoOf sorted == some "3 lines filtered" &&
+              (showing undone).bind (·.text) == some "b\nc\na\n" },
+    { name :=
+        "criterion 12: a filter that exits 1, writing to standard error, leaves the buffer unchanged and says the status and the first line of standard error"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let failing :=
+              withScript driver
+                { command := shellCommand "/r" "sort",
+                  reply := shellReply "" "sort: bad\nmore\n" (.code 1) }
+            let ran := shellRan (settledAfter failing "C-o s") "%!sort"
+            (showing ran).bind (·.text) == some "b\nc\na\n" &&
+              echoOf ran == some "%!sort: exit 1: sort: bad" },
+    { name :=
+        "criterion 13: a filter whose buffer is edited before its child ends leaves the edit alone, does not sort, and says it was dropped"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o s"
+            let (asked, _) := fedTo opened (exLine "%!sort")
+            let (edited, _) := fedTo asked [.commit "z"]
+            let finished := asked.pending.foldl (fun driver job => (driver.finish job.id).1) edited
+            asked.pending.size == 1 && (showing edited).bind (·.text) == some "zb\nc\na\n" &&
+              (showing finished).bind (·.text) == some "zb\nc\na\n" &&
+              echoOf finished == some "%!sort: dropped: the buffer changed while it ran" },
+    { name :=
+        "a filter of a range replaces only those lines; a last line with no line feed is fed with one, and the output's last line feed is dropped for it"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let middle := shellRan (settledAfter driver "C-o s") "2,3!tac"
+            let open' := shellRan (settledAfter driver "C-o t") "%!sort -u"
+            middle.jobs.processes.fed == #[(shellCommand "/r" "tac", "c\na\n".toUTF8)] &&
+              (showing middle).bind (·.text) == some "b\na\nc\n" &&
+              echoOf middle == some "2 lines filtered" &&
+              open'.jobs.processes.fed == #[(shellCommand "/r" "sort -u", "d\nb\nc\na\n".toUTF8)] &&
+              (showing open').bind (·.text) == some "a\nb\nc\nd" },
+    { name :=
         "`:!` with nothing after it says so and starts nothing; a `:!` whose job no one registered says the refusal and records nothing"
       run :=
         pure <|
@@ -27195,7 +27274,7 @@ def shellChecks : List Check :=
               ("a".push (File.escape 0xFF)) ++ "\n[exit 1]\n" &&
             Shell.outputText (ran .empty .empty) == "[exit 0]\n") },
     { name :=
-        "a shell order crosses as arguments and back, with a scope's location of each kind and with none, and arguments that are no order read as none; the run job started with them fails; each scope has its own job key"
+        "a shell order crosses as arguments and back, with a scope's location of each kind and with none, with a filter's part and without, and arguments that are no order read as none; the run job started with them fails; each scope has its own job key"
       run :=
         let order : Shell.Order :=
           { line := "!make", text := "make", directory := "/r", time := 30000, buffer := ⟨2⟩
@@ -27203,11 +27282,21 @@ def shellChecks : List Check :=
         let scopes : List (Option Location) :=
           [none, some (.local "/a b"), some (.reachable "kube" "pod" "/app"),
             some (.branchOnly "git@h:o/r" "x")]
+        let filters : List (Option Shell.Filter) :=
+          [none,
+            some
+              { start := 2, stop := 9, revision := 4, input := "a b\n", ended := false,
+                lines := 2 }]
         pure
           (scopes.all
               (fun scope =>
-                Shell.Order.ofArguments? { order with scope }.arguments ==
-                  some { order with scope }) &&
+                filters.all fun filter =>
+                  Shell.Order.ofArguments?
+                      { order with
+                          scope, filter }.arguments ==
+                    some
+                      { order with
+                        scope, filter }) &&
             [[], [.str "!make"], order.arguments ++ [.nat 1]].all
               (Shell.Order.ofArguments? · == none) &&
             ((Shell.runWork [.nat 1] ()).runModel {}).1 matches .failed _ &&

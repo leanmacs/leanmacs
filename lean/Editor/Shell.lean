@@ -87,6 +87,32 @@ The job's command (`finished`) clears what the scope is running, then:
 - Bytes become text by the store's escape rule (`File.decodeBytes`), so a
   byte that is not UTF-8 keeps its byte.
 
+## A filter
+
+`:{range}!cmd` filters the range's lines through the command: the ex line
+resolves the range against the view it was asked from (`Range.resolve`,
+`Editor/Ex/Line.lean`) and hands `shell-filter` (`filterName`,
+`filterCommand`) the first and the last line, the text and the line.
+
+- **What the child is fed**: the range's bytes, from its first line's start
+  through its last line's line feed, or the text's end, with one line feed
+  added when the last line has none (`Filter`). The child is run as a
+  `:!`'s is, in the same directory, under the same key and time limit,
+  with that as its standard input, then end of file
+  (`Process.runWithInput`). The line is recorded in the history as a
+  `:!`'s is.
+- **Its output replaces the range** as one edit made by the user
+  (`TextId.replaceRange`), so one `u` takes it back, and the echo area says
+  `<n> lines filtered`. When the range had no line feed at its end, one
+  line feed at the end of the output is dropped (`replacement`).
+- **A status other than 0, or anything on standard error**, leaves the
+  buffer as it was and says `<line>: exit <n>: <first line of standard
+  error>` (`filterFailed`).
+- **A buffer edited, or closed, while the child ran** is left as it is:
+  the text's revision is recorded when the run starts, and a reply for
+  another revision is dropped, `<line>: dropped: the buffer changed while
+  it ran`.
+
 Pinned by `ModelTest.shellChecks`, on the loop's driver over the editor's
 models, the job model and the process model, and over the real process
 service by `ContractTest.shellChecks`.
@@ -219,9 +245,28 @@ def record (scope : Scope) (line : String) : EditorM Unit := do
 
 /-! ## The order -/
 
+/-- What a filter's run carries beside a `:!`'s ("A filter", in the module
+docs): where the range is in the buffer's text, the revision the text was
+at, what the child is fed, and how many lines that is. -/
+structure Filter where
+  /-- The byte offset where the range starts: its first line's start. -/
+  start : Nat
+  /-- The byte offset where it stops: after its last line's line feed, or
+  the text's end. -/
+  stop : Nat
+  /-- The text's revision when the run started. -/
+  revision : Nat
+  /-- What the child is fed: the range, ended with a line feed. -/
+  input : String
+  /-- Whether the range ended with a line feed of its own. -/
+  ended : Bool
+  /-- How many lines the range is. -/
+  lines : Nat
+  deriving DecidableEq, Repr
+
 /-- What the run job is started with: the ex line, the shell text, the
 directory and the time limit, the buffer and the view it was asked from,
-and the location of its scope's workspace. -/
+the location of its scope's workspace, and, for a filter, its part. -/
 structure Order where
   /-- The ex line, as run: `!make`. -/
   line : String
@@ -237,6 +282,8 @@ structure Order where
   view : ViewId
   /-- The location of the scope's workspace; `none` outside any. -/
   scope : Option Location := none
+  /-- A filter's part; `none` for a `:!`. -/
+  filter : Option Filter := none
   deriving DecidableEq, Repr
 
 /-- A location as arguments: its kind, then its parts. -/
@@ -254,26 +301,49 @@ def locationOf? : List Argument → Option (Location × List Argument)
     some (.branchOnly remote branch, rest)
   | _ => none
 
+/-- A filter's part as arguments: `true` and its fields, or `false` for
+none. -/
+def filterArguments : Option Filter → List Argument
+  | some filter =>
+    [.bool true, .nat filter.start, .nat filter.stop, .nat filter.revision, .str filter.input,
+      .bool filter.ended, .nat filter.lines]
+  | none => [.bool false]
+
+/-- The filter's part `arguments` start with (`filterArguments`), and the
+rest. -/
+def filterOf? : List Argument → Option (Option Filter × List Argument)
+  | .bool false :: rest => some (none, rest)
+  |
+  .bool true ::
+      .nat start :: .nat stop :: .nat revision :: .str input :: .bool ended :: .nat lines :: rest =>
+    some (some { start, stop, revision, input, ended, lines }, rest)
+  | _ => none
+
 /-- The order as the arguments a job is started with: the line, the text,
-the directory, the time, the buffer's and the view's numbers, then the
-scope's location, or `false` for none. -/
+the directory, the time, the buffer's and the view's numbers, the filter's
+part, then the scope's location, or `false` for none. -/
 def Order.arguments (order : Order) : List Argument :=
   [.str order.line, .str order.text, .str order.directory.toString, .nat order.time,
       .nat order.buffer.index, .nat order.view.index] ++
+    filterArguments order.filter ++
     match order.scope with
     | some location => locationArguments location
     | none => [.bool false]
 
 /-- The order `arguments` are, if they are one (`Order.arguments`). -/
 def Order.ofArguments? : List Argument → Option Order
-  | .str line :: .str text :: .str directory :: .nat time :: .nat buffer :: .nat view :: rest =>
-    let order : Order := { line, text, directory, time, buffer := ⟨buffer⟩, view := ⟨view⟩ }
+  | .str line :: .str text :: .str directory :: .nat time :: .nat buffer :: .nat view :: rest => do
+    let (filter, rest) ← filterOf? rest
+    let order : Order := { line, text, directory, time, buffer := ⟨buffer⟩, view := ⟨view⟩, filter }
     match rest with
-    | [.bool false] => some order
+    | [.bool false] =>
+      some order
     | rest =>
       match locationOf? rest with
-      | some (location, []) => some { order with scope := some location }
-      | _ => none
+      | some (location, []) =>
+        some { order with scope := some location }
+      | _ =>
+        none
   | _ => none
 
 /-- The child an order runs: `/bin/sh -c <text>` in its directory. -/
@@ -335,6 +405,31 @@ def outputText (ran : Process.Ran) : String :=
   ended (File.decodeBytes ran.stdout) ++ ended (File.decodeBytes ran.stderr) ++
     s!"[{exitText ran.exit}]\n"
 
+/-- What the echo area says of a filter of `line` whose child ended as
+`ran`, with a status that is not 0 or something on standard error: the
+status, and the first line of standard error. -/
+def filterFailed (line : String) (ran : Process.Ran) : String :=
+  let first := ((File.decodeBytes ran.stderr).splitOn "\n").headD ""
+  let first := if first.endsWith "\r" then String.ofList first.toList.dropLast else first
+  if first.isEmpty then s!"{line}: {exitText ran.exit}"
+  else s!"{line}: {exitText ran.exit}: {first}"
+
+/-- What the echo area says of a filter of `line` whose buffer was edited,
+or closed, while its child ran. -/
+def dropped (line : String) : String :=
+  s!"{line}: dropped: the buffer changed while it ran"
+
+/-- What the echo area says of a filter of `lines` lines that replaced
+them. -/
+def filteredText (lines : Nat) : String :=
+  if lines == 1 then "1 line filtered" else s!"{lines} lines filtered"
+
+/-- What replaces a filter's range: the child's output, as text, without its
+last line feed when the range had none of its own. -/
+def replacement (filter : Filter) (stdout : ByteArray) : String :=
+  let out := File.decodeBytes stdout
+  if filter.ended then out else if out.endsWith "\n" then String.ofList out.toList.dropLast else out
+
 /-- The name of the output buffer of a scope whose workspace is labelled
 `label`, or of the one outside any. -/
 def outputName : Option String → String
@@ -344,8 +439,9 @@ def outputName : Option String → String
 /-! ## The command, the job and its command -/
 
 /-- Starts the run of `text`, the ex line `line`, for `target`'s buffer
-("The command", in the module docs). -/
-def start (target : Target) (line text : String) : EditorM Unit := do
+("The command", in the module docs), a filter's when `filter` is given. -/
+def start (target : Target) (line text : String) (filter : Option Filter := none) : EditorM Unit :=
+  do
   let buffer := target.window.buffer
   let state ← editorState
   let scope := Scope.of state buffer
@@ -360,7 +456,8 @@ def start (target : Target) (line text : String) : EditorM Unit := do
     | .elsewhere _ | .none => state.workingDirectory
   let time := (← EditorState.ask .shellTimeLimit).getD defaultTimeLimit
   let order : Order :=
-    { line, text, directory, time, buffer, view := target.window.id, scope := scope.location? }
+    { line, text, directory, time, buffer, view := target.window.id, scope := scope.location?
+      filter }
   match ← startJob runJob order.arguments (key := some scope.jobKey) with
   | .error refusal =>
     message (notStarted line refusal)
@@ -375,6 +472,36 @@ def command (call : Call) : EditorM Unit := do
   match call.arguments with
   | .str text :: .str line :: _ =>
     start call.target line text
+  | _ =>
+    message noCommand
+
+/-- The name the command that filters lines through a shell command is
+registered under. -/
+def filterName : String :=
+  "shell-filter"
+
+/-- `shell-filter`: filters the lines from the first of its arguments to the
+second, numbers from 1 the ex line resolved, through the shell text that is
+its third, the ex line that is its fourth ("A filter", in the module docs),
+in the buffer of the window it was called with. -/
+def filterCommand (call : Call) : EditorM Unit := do
+  match call.arguments with
+  | .nat first :: .nat last :: .str text :: .str line :: _ =>
+    let content := call.target.buffer.text
+    let rows ← content.rowCount
+    let start ← content.offsetOf { row := first - 1, column := 0 }
+    let stop ←
+      if last < rows then
+        content.offsetOf { row := last, column := 0 }
+      else
+        content.byteLength
+    let range ← content.slice start stop
+    let ended := range.endsWith "\n"
+    let revision ← content.revision
+    Shell.start call.target line text
+        (some
+          { start, stop, revision, input := if ended then range else range ++ "\n", ended
+            lines := last + 1 - first })
   | _ =>
     message noCommand
 
@@ -410,15 +537,25 @@ module docs): what the scope runs is cleared, and the reply is said, or its
 output shown. -/
 def finished (order : Order) (reply : Except ProcessError Process.Ran) : EditorM Unit := do
   setScoped runningStore none order.scope
-  match reply with
-  | .error error =>
+  match reply, order.filter with
+  | .error error, _ =>
     message (refused order.line error)
-  | .ok ran =>
+  | .ok ran, none =>
     match echoText order.line ran with
     | some text =>
       message text
     | none =>
       showOutput order (outputText ran)
+  | .ok ran, some filter =>
+    if ran.exit != .code 0 || !ran.stderr.isEmpty then
+      message (filterFailed order.line ran)
+      return
+    let some buffer := (← editorState).buffer? order.buffer | message (dropped order.line)
+    if (← buffer.text.revision) != filter.revision then
+      message (dropped order.line)
+      return
+    buffer.text.replaceRange filter.start filter.stop (replacement filter ran.stdout)
+    message (filteredText filter.lines)
 
 /-- The run job ("The run", in the module docs): runs its order's child and
 finishes with what came of it (`finished`). It fails only for arguments that
@@ -426,6 +563,11 @@ are not an order. -/
 def runWork (arguments : List Argument) : Work := fun _ => do
   let some order :=
     Order.ofArguments? arguments | throw s!"{runJob}: its arguments are not a shell order"
-  return finished order (← Process.runWithin order.command outputLimit order.time)
+  match order.filter with
+  | none =>
+    return finished order (← Process.runWithin order.command outputLimit order.time)
+  | some filter =>
+    return finished order
+        (← Process.runWithInput order.command (File.encodeText filter.input) outputLimit order.time)
 
 end Editor.Shell

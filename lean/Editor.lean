@@ -58,7 +58,7 @@ config's asks which candidates a pattern matches with `Fuzzy.rank`
 (`Editor/Fuzzy.lean`), as it asks a text. The ex
 command line is here too (`Editor/Ex.lean`, with an ex line as data in
 `Editor/Ex/Line.lean`): a command of config's runs a line with `Ex.run`,
-and `setup` binds an ex name to a command with `exCommand`
+handed the target it was called with, and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
 ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The file
 commands come with `Editor/Ex.lean`, whose save-and-quit command calls

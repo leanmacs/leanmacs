@@ -2941,6 +2941,22 @@ command** (`:!` built by the shell-and-compile roadmap's phase 2,
   The ex prompt's candidates are the history, then the bound ex names, so
   typing `!` lists the earlier lines and the minibuffer's keys choose one.
 
+**`:{range}!cmd` filters the range's lines through the command**, in the
+same directory, under the same time limit and job key as `:!`:
+
+- **The child is fed the range's lines**, through the last one's line
+  feed, with one line feed added when the buffer's last line has none, and
+  then end of file.
+- **Its output replaces them as one edit** that one `u` takes back, and
+  the echo area says `<n> lines filtered`. When the range had no last line
+  feed, one at the end of the output is dropped.
+- **A status other than 0, or anything on standard error, changes
+  nothing** and says `<line>: exit <n>: <first line of standard error>`.
+- **A buffer edited while the child ran is left as it is**: the result is
+  dropped, `<line>: dropped: the buffer changed while it ran`. The text's
+  revision is the test: Vim, which blocks while the child runs, cannot be
+  edited meanwhile.
+
 Where `:!` differs from Vim: `:!!` and `%` in the command are not
 expanded; output does not take over the screen, it goes to the echo area or
 a buffer; and the time limit is the editor's.
