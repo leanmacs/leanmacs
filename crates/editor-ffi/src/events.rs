@@ -330,6 +330,11 @@ impl Queue {
         self.state().waiting
     }
 
+    /// How many events the queue holds that have not been pulled.
+    pub fn queued(&self) -> usize {
+        self.state().events.len()
+    }
+
     /// Locks the state. The lock is never held while other code runs, so a
     /// poisoned lock still guards a consistent state.
     fn state(&self) -> MutexGuard<'_, State> {
@@ -591,6 +596,14 @@ pub extern "C" fn editor_ffi_events_waiting(queue: u8) -> u64 {
     self::queue(queue).map_or(0, |queue| queue.waiting() as u64)
 }
 
+/// How many events the queue `queue` holds that have not been pulled; 0 if
+/// it names no queue. A readout for tests, which drain a queue with it
+/// without parking a pull on an empty one.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_events_queued(queue: u8) -> u64 {
+    self::queue(queue).map_or(0, |queue| queue.queued() as u64)
+}
+
 /// Feeds the queue `queue` the script [`ScriptedSource::numbered`] makes of
 /// `source_id` and `count`, from a new Rust thread.
 ///
@@ -684,6 +697,22 @@ mod tests {
     /// The script of the source `id`: `len` messages numbered from 0.
     fn script(id: u64, len: u64) -> Vec<Event> {
         (0..len).map(|code| message(id, code)).collect()
+    }
+
+    #[test]
+    fn a_queue_counts_the_events_it_holds_until_they_are_pulled() {
+        let queue = Arc::new(Queue::new());
+        assert_eq!(queue.queued(), 0);
+        for event in script(1, 2) {
+            queue.push(event);
+        }
+        assert_eq!(queue.queued(), 2);
+        pull(&queue);
+        assert_eq!(queue.queued(), 1);
+        queue.quit();
+        pull(&queue);
+        // A quit queue holds nothing more: every pull is the quit.
+        assert_eq!(queue.queued(), 0);
     }
 
     #[test]
