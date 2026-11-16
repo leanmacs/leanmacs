@@ -336,7 +336,10 @@ published, with how many scenes have been and the name of the theme it was
 drawn in (`Host.Display.drawnIn`), then each view in drawing order,
 its snapshot's text read from the library, the offsets of its scroll
 anchor and of each range of its selection, as the markers are when it is
-asked, and its padding across and down in points (`EditorState.paddingOf`);
+asked, and its padding across and down in points (`EditorState.paddingOf`),
+with ` top <n>` after them when the view is padded at the top by the
+window's top inset (`EditorState.topInset`), which the headless driver's
+`resize` leaves at 0;
 the scene's line says the echo's padding (`EditorState.bottomInset`). After
 each view's line comes its status line (`statusLine`), one
 entry a field, the left fields and then, after ` | `, the right ones, each
@@ -1272,7 +1275,7 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
     let rect := view.rect
     lines :=
       (lines.push
-            s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}, padding {view.padding.across} {view.padding.down}").push
+            s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}, padding {view.padding.across} {view.padding.down}{if view.padding.top == 0 then "" else s!" top {view.padding.top}"}").push
         (statusLine view.id view.status view.statusFace)
   return lines
 

@@ -537,7 +537,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped. Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
-| `resize` | Sets the frame's size, whether the window is in fullscreen (`Frame.fullscreen`) and its corner clearance in points (`Frame.corner`), which the bottom row is inset by (`EditorState.bottomInset`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: Lean handles no scale, and the display lays out at its own |
+| `resize` | Sets the frame's size, whether the window is in fullscreen (`Frame.fullscreen`), its corner clearance in points (`Frame.corner`), which the bottom row is inset by (`EditorState.bottomInset`), and its top inset in points (`Frame.top`), which the views along the frame's top edge start their text below (`EditorState.topInset`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: Lean handles no scale, and the display lays out at its own |
 | `focus gained` | Sets whether the frame has the keyboard focus |
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
 | `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
@@ -1234,7 +1234,7 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
         frame :=
           { state.frame with
             size := ⟨resize.width, resize.height⟩, fullscreen := resize.fullscreen
-            corner := resize.corner } }
+            corner := resize.corner, top := resize.top } }
   | .focus gained => return { state with frame := { state.frame with hasFocus := gained } }
   | .commit text => do
     let some target := state.focusedTarget? | return { state with preedit := none }

@@ -20479,9 +20479,18 @@ def paddedScene (padding : Nat) (events : List Event)
   | none => none
 
 /-- A resize to 640 by 480 at scale 1, in fullscreen when `fullscreen` says,
-whose window's corners reach `corner` points in. -/
-def resizedWith (corner : Nat) (fullscreen : Bool := false) : Event :=
-  .resize { width := 640, height := 480, scale := 1.0, fullscreen, corner }
+whose window's corners reach `corner` points in and whose title bar covers
+`top` points of it. -/
+def resizedWith (corner : Nat) (fullscreen : Bool := false) (top : Nat := 0) : Event :=
+  .resize { width := 640, height := 480, scale := 1.0, fullscreen, corner, top }
+
+/-- `twoBuffers` with its two windows one above the other. -/
+def twoRows : TextM EditorState := do
+  let state ← twoBuffers
+  return { state with
+      frame :=
+        { state.frame with
+          tree := .split .rows (.split .rows (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer } }
 
 /-- The padding of the view `id` in `scene`, if it has the view. -/
 def paddingIn (scene : Scene) (id : ViewId) : Option Padding :=
@@ -20549,6 +20558,55 @@ def paddingChecks : List Check :=
             (shaped 8 14 false).paddingOf minibuffer == { across := 14, down := 0 } &&
             (shaped 8 14 false).paddingOf ⟨0⟩ == { across := 8, down := 8 } &&
             (shaped 0 14 false).paddingOf ⟨0⟩ == {} },
+    { name :=
+        "a resize keeps its top inset in the frame, and a resize in fullscreen that says none leaves none"
+      run := do
+        let some ((loop, _), _, _) :=
+          looped (EditorState.initial ⟨0, 0⟩) [resizedWith 14 (top := 28)]
+          | return false
+        let some ((later, _), _, _) :=
+          looped (EditorState.initial ⟨0, 0⟩) [resizedWith 14 (top := 28), resizedWith 0 true]
+          | return false
+        return loop.state.frame.top == 28 && later.state.frame.top == 0 &&
+            later.state.frame.fullscreen },
+    { name :=
+        "criterion 4, on the model: with a top inset of 28 a window along the frame's top edge is padded 8 across, 8 down and 28 at the top, the lower window of a rows split 8, 8 and none, and both windows of a columns split 8, 8 and 28; after a fullscreen resize that says none, every window is padded 8, 8 and none"
+      run :=
+        let under (top : Nat) : Padding := { across := 8, down := 8, top }
+        pure <|
+          match paddedScene 8 [resizedWith 0 (top := 28)] twoRows,
+            paddedScene 8 [resizedWith 0 (top := 28)] twoBuffers,
+            paddedScene 8 [resizedWith 0 (top := 28), resizedWith 0 true] twoRows,
+            paddedScene 8 [resizedWith 0 (top := 28), resizedWith 0 true] twoBuffers with
+          | some rows, some columns, some fullRows, some fullColumns =>
+            (rows.views.map (·.rect.y != 0)) == #[false, true] &&
+              paddingIn rows ⟨0⟩ == some (under 28) &&
+              paddingIn rows ⟨1⟩ == some (under 0) &&
+              paddingIn columns ⟨0⟩ == some (under 28) &&
+              paddingIn columns ⟨1⟩ == some (under 28) &&
+              paddingIn fullRows ⟨0⟩ == some (under 0) &&
+              paddingIn fullRows ⟨1⟩ == some (under 0) &&
+              paddingIn fullColumns ⟨0⟩ == some (under 0) &&
+              paddingIn fullColumns ⟨1⟩ == some (under 0)
+          | _, _, _, _ => false },
+    { name :=
+        "the state's top inset is the frame's outside fullscreen and none in fullscreen, whatever the window last said; the minibuffer's view takes none, and the area a command asks about its top window carries it"
+      run := do
+        let some state := onTextModel (promptedOver "x") | return false
+        let shaped (top : Nat) (fullscreen : Bool) : EditorState :=
+          { state with
+            padding := 8,
+            frame :=
+              { state.frame with
+                top, fullscreen } }
+        let some minibuffer := state.minibufferView? | return false
+        let some rect := (shaped 28 false).rect? ⟨0⟩ | return false
+        let area := Scroll.Area.ofRect ⟨3⟩ rect 16 ((shaped 28 false).paddingOf ⟨0⟩)
+        return (shaped 28 false).topInset == 28 && (shaped 28 true).topInset == 0 &&
+            (shaped 28 false).paddingOf ⟨0⟩ == { across := 8, down := 8, top := 28 } &&
+            (shaped 28 true).paddingOf ⟨0⟩ == { across := 8, down := 8 } &&
+            ((shaped 28 false).paddingOf minibuffer).top == 0 &&
+            area.padding == { across := 8, down := 8, top := 28 } },
     { name :=
         "a loop handed no padding gives every view no padding and the echo none: it draws and scrolls as before there was one"
       run :=

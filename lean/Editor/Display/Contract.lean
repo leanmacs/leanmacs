@@ -28,7 +28,8 @@ size it is given. Widths and heights are in pixels, as whole cells and whole
 rows of `cells`. A query's padding is in points, which every runner lays out
 at scale 1, where a point is a pixel: the property of the padding holds the
 model, the recorder and the real binding to one rule, that a padded
-question is the unpadded question of the area less the padding. At another
+question is the unpadded question of the area less the padding: twice
+`across` off the width, and twice `down` and once `top` off the height. At another
 scale the real binding takes the points off as that many times the scale,
 which `editor-layout`'s and `editor-ffi`'s tests pin.
 
@@ -207,7 +208,7 @@ def properties (cells : Display.Cells) : List Property :=
         return (← move 2 1) == 12 && (← move 8 (-1)) == 1 && (← move 11 (-1)) == 1 &&
             (← move 12 (-1)) == 2 },
     { name :=
-        "a padded question is the unpadded question of the smaller area: at the scale 1 a runner lays out at, a view padded a cell across and a row down shows the rows of a view two cells narrower and two rows shorter, and a move padded a cell across goes as in a view two cells narrower"
+        "a padded question is the unpadded question of the smaller area: at the scale 1 a runner lays out at, a view padded a cell across and a row down shows the rows of a view two cells narrower and two rows shorter, one also padded a row at the top the rows of one three rows shorter, and a move padded a cell across goes as in a view two cells narrower"
       texts := #["abcdefghijkl\nmn\nop\nqr"]
       holds := fun snapshots => do
         let snapshot := nth snapshots 0
@@ -223,7 +224,14 @@ def properties (cells : Display.Cells) : List Property :=
             { snapshot, width := columns * cells.advance, across, position := 1, lines := 1
               goal := none }
         let paddedMove ← move 6 cells.advance
+        -- A top inset of a row takes it off the height once more: a view six
+        -- rows tall padded a row down and a row at the top shows three.
+        let under ←
+          Display.rowsShown
+              { snapshot, width := 6 * cells.advance, height := 6 * cells.lineHeight, anchor := 0
+                padding := { padding with top := cells.lineHeight } }
         return padded == smaller && padded != whole && padded == #[⟨0, 4⟩, ⟨4, 8⟩, ⟨8, 12⟩] &&
+            under == smaller &&
             paddedMove == (← move 4 0) &&
             paddedMove != (← move 6 0) },
     { name := "each height of a row the display answers is at least one pixel"

@@ -953,7 +953,7 @@ commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
 scene <w>x<h>, focused <id or ->, echo <quoted>, echo padding <n>, preedit <quoted or ->, published <n>, theme <quoted name>
-view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …, padding <across> <down>
+view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …, padding <across> <down>[ top <n>]
 status <view id>[ in <status face>]: <face> <quoted text>[ +<padding>], … | <face> <quoted text>[ +<padding>], …   (or "-" for no field)
 scene: none
 loop: refused: <error>
@@ -972,6 +972,10 @@ from the library, the offsets of its scroll anchor and of each range of
 its selection, and its padding across and down in points: the frame
 padding both ways for a window (config's `framePadding`, or the editor's 8),
 and for the minibuffer's view the bottom row's inset across and none down.
+A window along the frame's top edge is padded further at the top by what a
+window's title bar covers of it, printed as ` top <n>` after the padding
+when it is not 0; the driver's `resize` says no title bar, so no line of
+the headless mode prints one.
 After each view's line comes its status line, one entry a
 field, each the field's face, its text and, when it has one, its padding
 in points after `+`: the left fields, then ` | ` and the right fields when

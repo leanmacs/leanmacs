@@ -3249,12 +3249,13 @@ def firstStatusBox (frame : String) (id : Nat) : Option Nat := do
 
 /-- The frame the real display, in cells 8 pixels across and 16 down at scale
 1, lays out of the scene the loop publishes after a resize of a frame 640 by
-480 to `corner` points of corner clearance, in fullscreen when `fullscreen`
+480 to `corner` points of corner clearance and a top inset of `top`, in
+fullscreen when `fullscreen`
 says, each step handed a frame padding of 8: with a `:` prompt open over the
 scratch window when `prompt` says, and otherwise with `echo` in the echo
 area. And the id of the minibuffer's view, when a prompt is open. At scale 1
 a point is a pixel, so the glyph positions are the scene's points. -/
-def paddedFrame (corner : Nat) (fullscreen prompt : Bool) (echo : String := "") :
+def paddedFrame (corner : Nat) (fullscreen prompt : Bool) (echo : String := "") (top : Nat := 0) :
     IO (String × Option Nat) := do
   let table ← Editor.Snapshots.new
   let display ← Editor.Ffi.Display.newCells 8 16
@@ -3274,7 +3275,8 @@ def paddedFrame (corner : Nat) (fullscreen prompt : Bool) (echo : String := "") 
     let loop : Editor.Loop Editor.TestScheme.scheme := { state }
     let keys : Editor.Loop.Keys Editor.TestScheme.scheme := { padding := 8 }
     let resized ←
-      loop.step keys (.resize { width := 640, height := 480, scale := 1.0, fullscreen, corner })
+      loop.step keys
+          (.resize { width := 640, height := 480, scale := 1.0, fullscreen, corner, top })
     return resized.loop.state.minibufferView?.map (·.index)
   let (result, _) ← program.runReal (Editor.RealTexts.over table) real.handle
   let .ok minibuffer := result | throw (IO.userError "the loop's program was refused")
@@ -3306,7 +3308,15 @@ def paddingChecks (_ : Unit) : List Check :=
         let (windowed, none) ← paddedFrame 14 false false "hello" | return false
         let (full, none) ← paddedFrame 14 true false "hello" | return false
         let echo := firstStatusGlyph windowed echoView
-        return echo.any (· ≥ 14) && echo == some 14 && firstStatusGlyph full echoView == some 8 }]
+        return echo.any (· ≥ 14) && echo == some 14 && firstStatusGlyph full echoView == some 8 },
+    { name :=
+        "criterion 4, over real layout: with padding 8 and a top inset of 28, the window's first text row is at y 36, below the inset and the padding; after a fullscreen resize that says none, at 8"
+      run := do
+        let (covered, _) ← paddedFrame 0 false false "hello" 28
+        let (full, _) ← paddedFrame 0 true false "hello" 0
+        return (covered.splitOn "  row x 8 y 36 ").length > 1 &&
+            (covered.splitOn "  row x 8 y 8 ").length == 1 &&
+            (full.splitOn "  row x 8 y 8 ").length > 1 }]
 
 /-- Every check, in the order they run. -/
 def checks (_ : Unit) : List Check :=

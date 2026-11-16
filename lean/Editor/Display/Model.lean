@@ -36,7 +36,8 @@ command loop fills from the text model when it runs both ports together.
 - A query's padding is in points, and the model lays out at scale 1, where
   a point is a pixel: a view `width` wide with the padding `across` lays out
   as one `width - 2 * across` wide, and one `height` tall with the padding
-  `down` as one `height - 2 * down` tall, each at 0 at least.
+  `down` and `top` as one `height - 2 * down - top` tall, each at 0 at
+  least.
 - A position at a wrap is the start of the later row. Only a line's last row
   holds the position at the line's end, before its break.
 - The x of a position is its character's first cell in its row times
@@ -216,7 +217,7 @@ padding, as points at scale 1. -/
 def rows (model : DisplayModel) (query : Display.RowsQuery) :
     Except DisplayError (Array Display.Row) := do
   let width := query.width - 2 * query.padding.across
-  let height := query.height - 2 * query.padding.down
+  let height := query.height - 2 * query.padding.down - query.padding.top
   let laid ← model.laidOut query.snapshot width query.anchor
   let first := rowOf laid query.anchor
   return (laid.extract first (first + height / model.cells.lineHeight)).map (·.row)

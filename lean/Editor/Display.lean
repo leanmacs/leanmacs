@@ -137,8 +137,8 @@ structure RowsQuery where
   it. -/
   anchor : Nat
   /-- The view's padding, in points: the display takes twice `across` off the
-  width and twice `down` off the height, at the scale it lays out at, as its
-  frame does. Lean subtracts nothing. -/
+  width, and twice `down` and once `top` off the height, at the scale it
+  lays out at, as its frame does. Lean subtracts nothing. -/
   padding : Padding := {}
   deriving DecidableEq, Repr
 

@@ -83,7 +83,10 @@ window of a split its own; the minibuffer's view is padded across by the
 bottom row's inset (`EditorState.bottomInset`: the padding, and at least
 the window's corner clearance, `Frame.corner`, outside fullscreen) and not
 down, since its place must stay exactly a text row and the bottom row
-tall. The echo is inset by the same bottom inset (`Scene.echoPadding`). A
+tall. A window along the frame's top edge (its rectangle at `y` 0) is
+padded further at the top by the top inset (`EditorState.topInset`: what
+the window's title bar covers of the frame, `Frame.top`, and none in
+fullscreen), so its text starts below the title bar; any other is not. The echo is inset by the same bottom inset (`Scene.echoPadding`). A
 command's question about its view carries the view's padding
 (`Scroll.Area.ofRect`), so it is answered with the rows the frame shows.
 
@@ -619,6 +622,11 @@ structure Frame where
   (`Event.Resize.corner`): what the bottom row keeps clear of
   (`EditorState.bottomInset`). Nothing but a resize changes it. -/
   corner : Nat := 0
+  /-- How far down from the window's top edge its title bar covers it, in
+  whole points, as the window last said on a resize (`Event.Resize.top`):
+  what the views along the frame's top edge start their text below
+  (`EditorState.topInset`). Nothing but a resize changes it. -/
+  top : Nat := 0
   deriving DecidableEq, Repr
 
 /-- A job a command asked to be started: the name it is registered under,
@@ -1056,16 +1064,11 @@ last said of its corners. -/
 def bottomInset (state : EditorState) : Nat :=
   if state.frame.fullscreen then state.padding else max state.padding state.frame.corner
 
-/-- The padding of the view `id`, in points ("The padding of the views", in
-the module docs): the frame padding across and down for a window, and for
-the minibuffer's view the bottom row's inset across (`bottomInset`) and
-none down, since its place is exactly a text row and the bottom row
-(`minibufferPlace`) and must stay that tall. Each window has its own: two
-windows of a split are each padded, with no gap of their own between
-them. -/
-def paddingOf (state : EditorState) (id : ViewId) : Padding :=
-  if state.minibufferView? == some id then { across := state.bottomInset, down := 0 }
-  else { across := state.padding, down := state.padding }
+/-- How far down the window's title bar covers the frame, in points: what
+the window last said outside fullscreen, and none in fullscreen, where no
+title bar covers the content, whatever the window last said. -/
+def topInset (state : EditorState) : Nat :=
+  if state.frame.fullscreen then 0 else state.frame.top
 
 /-- How tall the bottom row of the view `id` is: the frame's bottom row for
 the minibuffer's view, which holds the prompt, and a window's status row
@@ -1079,6 +1082,20 @@ that is not laid out: one with no window in the tree, and the minibuffer's
 when no prompt is open. -/
 def rect? (state : EditorState) (id : ViewId) : Option Rect :=
   (state.rects.find? (·.1 == id)).map (·.2)
+
+/-- The padding of the view `id`, in points ("The padding of the views", in
+the module docs): the frame padding across and down for a window, with the
+top inset (`topInset`) at the top of a window along the frame's top edge;
+and for the minibuffer's view the bottom row's inset across
+(`bottomInset`) and none down, since its place is exactly a text row and
+the bottom row (`minibufferPlace`) and must stay that tall. Each window has
+its own: two windows of a split are each padded, with no gap of their own
+between them. -/
+def paddingOf (state : EditorState) (id : ViewId) : Padding :=
+  if state.minibufferView? == some id then { across := state.bottomInset, down := 0 }
+  else
+    let top := if (state.rect? id).any (·.y == 0) then state.topInset else 0
+    { across := state.padding, down := state.padding, top }
 
 /-- Whether the state keeps the layout invariants, over its views
 (`views`: the tree's windows, then the open prompt's view): the focused
