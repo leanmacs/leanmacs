@@ -9,7 +9,10 @@
 //! On macOS it also asks the running window to quit as the system does,
 //! while the check runs it (the module `terminate`): the window is run
 //! under the check through [`Probed`], which records what it reports and
-//! holds the check's close until that scenario has finished.
+//! holds the check's close until that scenario has finished. Once the check
+//! holds, it starts itself again, to see a close with the system's quit
+//! pending end the process by AppKit's terminate (the module `pending`),
+//! which a run that must return cannot show.
 //!
 //! It prints one line, and its exit status is the result: 0 when the
 //! platform keeps the contract, 1 when it does not, which includes a window
@@ -17,6 +20,8 @@
 //! and, on macOS, the process ending by any way but the verdict, as AppKit
 //! ends it when a terminate goes ahead.
 
+#[cfg(target_os = "macos")]
+mod pending;
 #[cfg(target_os = "macos")]
 mod terminate;
 
@@ -36,7 +41,7 @@ use editor_platform_winit::WinitPlatform;
 
 /// How long the platform has to open its window, and then to return once it
 /// is asked to close.
-const BOUND: Duration = Duration::from_secs(20);
+pub const BOUND: Duration = Duration::from_secs(20);
 
 /// How long the open window is left alone before it is asked to close. A
 /// loop that an earlier close would end has turned many times by then.
@@ -54,7 +59,7 @@ fn on_main_thread() -> bool {
 }
 
 /// The platform under the check: one in a process, as winit allows.
-static PLATFORM: WinitPlatform = WinitPlatform::new(on_main_thread);
+pub static PLATFORM: WinitPlatform = WinitPlatform::new(on_main_thread);
 
 /// Whether the verdict is ending the process. Any other end is a failure.
 static JUDGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -85,7 +90,7 @@ impl Record {
 
     /// Takes one input.
     #[cfg_attr(not(target_os = "macos"), expect(dead_code, reason = "macOS only"))]
-    fn push(&self, input: Input) {
+    pub fn push(&self, input: Input) {
         self.locked().push(input);
         self.changed.notify_all();
     }
@@ -234,15 +239,16 @@ extern "C" fn unjudged_exit() {
     }
 }
 
-/// Registers [`unjudged_exit`] to run when the process exits.
+/// Registers `handler` to run when the process exits: [`unjudged_exit`]
+/// here, and `pending`'s own in the process it runs in.
 #[cfg(target_os = "macos")]
-fn guard_exit() {
+pub fn guard_exit(handler: extern "C" fn()) {
     unsafe extern "C" {
         fn atexit(handler: extern "C" fn()) -> std::ffi::c_int;
     }
     // SAFETY: the handler is a plain function that lives as long as the
     // process.
-    if unsafe { atexit(unjudged_exit) } != 0 {
+    if unsafe { atexit(handler) } != 0 {
         verdict(
             "window-contract: FAILED: the exit guard could not be registered",
             1,
@@ -251,11 +257,16 @@ fn guard_exit() {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if std::env::args().nth(1).as_deref() == Some(pending::ARGUMENT) {
+        pending::main();
+    }
+
     let check = Check::new(WindowOptions::default(), BOUND).settling_for(SETTLE);
     let outcome = Arc::new(Outcome::default());
 
     #[cfg(target_os = "macos")]
-    guard_exit();
+    guard_exit(unjudged_exit);
 
     // The verdict is taken on a second thread, which ends the process with
     // it: a window that ignored the close would keep this thread for good.
@@ -268,13 +279,17 @@ fn main() {
         {
             verdict(&format!("window-contract: FAILED: {failure}"), 1);
         }
-        match held {
-            Ok(()) => verdict(
-                "window-contract: the winit platform keeps the window port's contract",
-                0,
-            ),
-            Err(violation) => verdict(&format!("window-contract: FAILED: {violation}"), 1),
+        if let Err(violation) = held {
+            verdict(&format!("window-contract: FAILED: {violation}"), 1);
         }
+        #[cfg(target_os = "macos")]
+        if let Err(failure) = pending::judge() {
+            verdict(&format!("window-contract: FAILED: {failure}"), 1);
+        }
+        verdict(
+            "window-contract: the winit platform keeps the window port's contract",
+            0,
+        );
     });
 
     #[cfg(target_os = "macos")]

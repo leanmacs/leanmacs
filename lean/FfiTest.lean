@@ -2900,8 +2900,9 @@ scripted platform, on the absolute path `file`, or with no file, on the
 editor's one empty buffer, when it is `none`: a cells display bound to the
 presenter, a clipboard of its own, no config, and the report asked for. The
 sample window opens, reports its fixed input and asks to close, which ends
-the host's loop and closes the window, and the report is printed to stderr.
-0 when the window ran, the latest render session's counters, read once
+the host's loop, runs the window mode's shutdown and closes the window, and
+the report is printed to stderr. 0 when the window ran, the shutdown ran
+once and while the window still ran, the latest render session's counters, read once
 `windowRun` has returned (the presenter's last handle), show a frame drawn,
 and no surface said what it offered, and, with no file, the last title the
 scripted window was asked to show is `scratch`; 1 otherwise, saying why on
@@ -2911,11 +2912,27 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   let options : Editor.Window.Options :=
     { file, config := none, configGiven := false, sysroot := none, oleans := ""
       composition := true, report := true }
+  -- The window mode's shutdown, which first asks the window to minimise: a
+  -- scripted window records that only while it runs, and runs until it is
+  -- closed, so the record shows the shutdown ran before the close. It asks
+  -- a moment later, by which a window closed first has ended its run.
+  let shutdowns ← IO.mkRef 0
+  let shutdown := do
+    shutdowns.modify (· + 1)
+    IO.sleep 100
+    Editor.Ffi.windowRequest .scripted .minimise
+    Editor.Window.shutdown
   let status ←
     Editor.Window.host .scripted options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[]
+        (← Editor.Clipboard.InProcess.new).handle #[] shutdown
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host: the window mode ended with status {status}"
+    return 1
+  unless (← shutdowns.get) == 1 do
+    IO.eprintln s!"ffi-test window-host: the shutdown ran {← shutdowns.get} times, not once"
+    return 1
+  unless ((← Editor.Ffi.windowAsked .scripted).getD #[]).contains (.request .minimise) do
+    IO.eprintln "ffi-test window-host: the shutdown did not run before the window was closed"
     return 1
   let some counters ← Editor.Ffi.renderCounters |
     IO.eprintln "ffi-test window-host: no render session was started"
@@ -2956,7 +2973,7 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
       composition := true }
   let status ←
     Editor.Window.host .scriptedUndrawn options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[]
+        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown
   unless status == 1 do
     IO.eprintln s!"ffi-test window-host-undrawn: the window mode ended with status {status}, not 1"
     return 1

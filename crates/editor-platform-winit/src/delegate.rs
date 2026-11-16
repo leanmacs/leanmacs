@@ -75,14 +75,17 @@ define_class!(
     }
 );
 
-/// Makes `reply` to a terminate AppKit waits on. It does nothing off the
-/// main thread, where AppKit cannot be asked.
+/// Makes `reply` to a terminate AppKit waits on. After [`Reply::Now`]
+/// AppKit ends the process, so nothing the caller does after it is
+/// counted on. It does nothing off the main thread, where AppKit cannot be
+/// asked.
 pub(crate) fn reply(reply: Reply) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
     let should_terminate = match reply {
         Reply::Cancel => false,
+        Reply::Now => true,
     };
     NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(should_terminate);
 }

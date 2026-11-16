@@ -23,9 +23,10 @@
 //!    `QuitRequested`, and a title read back.
 //! 4. `KeepRunning`, then the send returns; then a third `terminate:`,
 //!    which is reported again: a terminate still pending would not be.
-//! 5. The scenario ends with that terminate pending, and the check's close
-//!    then ends the run: the adapter cancels the pending terminate as the
-//!    window closes, without which the run would never return.
+//! 5. `KeepRunning`, then that `terminate:` returns. The scenario ends with
+//!    nothing pending, and the check's close then ends the run, which
+//!    returns. A close with a terminate pending ends the process instead,
+//!    so it is the module `pending`'s, in a process of its own.
 //!
 //! Each step asks again only once the last ask has come back. AppKit lets
 //! an answered `terminate:` go a few milliseconds after the reply, and an
@@ -147,7 +148,7 @@ fn ask(selector: Sel) {
 }
 
 /// `terminate:`, from the run loop.
-fn terminate() {
+pub fn terminate() {
     ask(sel!(terminate:));
 }
 
@@ -194,7 +195,7 @@ fn quits(inputs: &[Input]) -> usize {
 
 /// Waits until exactly `count` quits have been reported, and no more a
 /// moment later.
-fn reported(record: &Record, count: usize, after: &str) -> Result<(), String> {
+pub fn reported(record: &Record, count: usize, after: &str) -> Result<(), String> {
     let seen = record.wait(STEP, |inputs| quits(inputs) >= count);
     if quits(&seen) < count {
         return Err(format!(
@@ -231,17 +232,24 @@ fn titled(platform: &impl Platform, text: &str, after: &str) -> Result<(), Strin
     }
 }
 
-/// Runs the scenario on `platform`, whose report is `record`.
-pub fn scenario(platform: &impl Platform, record: &Record) -> Result<(), String> {
+/// Waits until the window has said it opened and how large it is.
+pub fn opened(record: &Record) -> Result<(), String> {
     let ready = |inputs: &[Input]| {
         matches!(inputs.first(), Some(Input::Opened { .. }))
             && inputs
                 .iter()
                 .any(|input| matches!(input, Input::Resized(_)))
     };
-    if !ready(&record.wait(STEP, ready)) {
-        return Err("the window did not say it opened and how large it is".into());
+    if ready(&record.wait(STEP, ready)) {
+        Ok(())
+    } else {
+        Err("the window did not say it opened and how large it is".into())
     }
+}
+
+/// Runs the scenario on `platform`, whose report is `record`.
+pub fn scenario(platform: &impl Platform, record: &Record) -> Result<(), String> {
+    opened(record)?;
 
     terminate();
     reported(record, 1, "after `terminate:`")?;
@@ -270,5 +278,7 @@ pub fn scenario(platform: &impl Platform, record: &Record) -> Result<(), String>
     answered(2, "after keeping running again")?;
     terminate();
     reported(record, 3, "after a third `terminate:`")?;
-    Ok(())
+
+    platform.request(Request::KeepRunning);
+    answered(3, "after keeping running a third time")
 }

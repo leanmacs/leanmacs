@@ -801,7 +801,11 @@ built"):
   reported after `Opened`, the `Resized` and the files); an ask while one
   is pending is not reported again; `KeepRunning` with one pending replies
   `replyToApplicationShouldTerminate:NO`, once, and is otherwise nothing;
-  a close with one pending replies `NO` too. The editor decides in Lean
+  a close with one pending, one held or one still on the channel replies
+  `YES`, once, after the drawer is told the window is closing, so nothing
+  is left unanswered; and a window that could not be opened replies `NO`
+  to an ask held or waiting, so that the run returns with the failure.
+  The editor decides in Lean
   ([concurrency.md](concurrency.md), "Quit"). On the queue the input is the
   kind `QuitRequested` (11), code 0, no text and no words; the request is
   tag 4 of `editor_ffi_window_request`.
@@ -813,13 +817,17 @@ built"):
   from the loop lets `terminate:` return within a few milliseconds; and an
   ask made in those milliseconds is folded into the terminate AppKit is
   finishing (a quit Apple Event is answered and dropped, and a nested
-  `terminate:` ends the process). With a terminate pending and no reply, a
-  close leaves winit's run unable to return, since AppKit's wait is
-  under it. So a close cancels a pending terminate: the editor still
-  quits by its own path, but a logout it went along with is cancelled,
-  and macOS says the app cancelled it. That is a known limit, the rdm
-  task `macos-terminate-close-cancels-logout`. Answering `YES` instead
-  would have AppKit call `exit` itself, before the editor's own path ran.
+  `terminate:` ends the process). With a terminate pending, a close
+  leaves winit's run unable to return, since AppKit's wait is under it,
+  and once the close replies `YES`, AppKit ends the process (`exit(0)`)
+  inside the run. So what must come before the end is done first: the
+  editor's window mode shuts down before it asks for the close
+  ([concurrency.md](concurrency.md), "Quit"), and the adapter tells the
+  drawer the window is closing before it replies. The example runs that
+  close in a process of its own (`examples/contract/pending.rs`), which
+  records its verdict before the close and must then be ended by AppKit,
+  inside the run, with status 0; an exit handler fails any end before the
+  verdict.
 - **What a window tells whatever draws in it** (`Canvas`): that it
   opened, with its native window (`NativeWindow`: an AppKit view, an Xlib
   window or a Wayland surface, as plain data that names no library), its

@@ -575,12 +575,21 @@ command cannot end the process.
   that replies `NO` to AppKit's wait, which also cancels a logout, as
   TextEdit's unsaved document does. A quit typed in the editor asks the
   frame nothing.
-- **When the editor leaves, the process ends by its own path**: the step
-  says stop, the host closes the window, the run returns and `main`
-  returns. The window adapter cancels a terminate still pending as the
-  window closes, since otherwise its run cannot return through AppKit's
-  wait; so a logout the editor went along with is cancelled all the same
-  (rdm task `macos-terminate-close-cancels-logout`).
+- **When the editor leaves, its own shutdown runs, and then the system's
+  quit goes ahead.** The step says stop; the window mode's host shuts down
+  (the library's children killed and reaped, its watches ended, the queues
+  quit: `Editor.Window.shutdown`) and only then closes the window
+  (`lean/Editor/Window/Real.lean`). With a terminate pending, the window
+  adapter tells the drawer the window is closing and then replies `YES`
+  (`terminate.rs`), and AppKit ends the process with status 0, so a logout
+  the editor goes along with goes on. AppKit waits inside `terminate:`,
+  under winit's run, so the run never returns once a terminate is pending,
+  and nothing that follows the run is reached: the exit status is 0, and
+  `--report` and the "nothing could draw" line are not printed. With none
+  pending the run returns and `main` exits with its status. An ask the
+  editor never heard of (held before the window opened, or still on its
+  channel at the close) is answered `YES` too, since the editor was
+  leaving anyway.
 
 **`quit` refuses while a buffer that holds a file has unsaved changes, and
 waits for a save in flight.**

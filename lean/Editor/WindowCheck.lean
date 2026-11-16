@@ -38,7 +38,9 @@ one does when the limit is shorter than the window takes to start.
 The check does not answer the system's quit (`quitRequested`, as Quit from
 the Dock asks it): it is nothing to the check, so on macOS that quit stays
 pending until the window is closed, by the user or at the limit, and the
-platform then cancels it. That is enough for a check tool.
+platform then lets it go ahead: AppKit ends the process inside the run,
+with status 0, and the check prints no report. That is enough for a check
+tool.
 
 When the window has closed, `check` posts a stop to the loop, which ends at
 it with every input before it counted, those that arrived after the close was

@@ -616,8 +616,11 @@ run = "tools/milestone-bench.sh lean"
 # asked to quit as the system asks (`terminate:` and the quit Apple Event,
 # examples/contract/terminate.rs), and must report each ask once, keep
 # handling requests while AppKit waits, and keep running when it is told
-# to. It needs no key or pointer input. It prints one line, and its exit
-# status is the result.
+# to; then, in a second process and a second window
+# (examples/contract/pending.rs), a close with a terminate pending must let
+# AppKit end the process, with status 0, only after the verdict. It needs
+# no key or pointer input. It prints one line, and its exit status is the
+# result.
 #
 # Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/
 # window.rs`): the window that draws. The wgpu renderer draws a fixture
@@ -641,7 +644,7 @@ run = "tools/milestone-bench.sh lean"
 # under Xvfb, with no desktop, gives the second its input with xdotool,
 # and requires its picture.
 [tasks.window-contract]
-description = "Opt-in, never part of ci: hold the winit window to the window port's contract, then draw a fixture frame in a window and check the picture, that nothing is drawn while idle, and that input arrives. Opens two windows on this desktop; the second fails without a key or pointer input"
+description = "Opt-in, never part of ci: hold the winit window to the window port's contract, then draw a fixture frame in a window and check the picture, that nothing is drawn while idle, and that input arrives. Opens two windows on this desktop (three on macOS); the last fails without a key or pointer input"
 run = [
   "cargo run --locked --package editor-platform-winit --example contract",
   "cargo run --locked --package editor-ffi --example window",

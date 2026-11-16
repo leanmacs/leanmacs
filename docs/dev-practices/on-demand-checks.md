@@ -249,7 +249,10 @@ opened before anything else, it returns when it is asked to close from
 another thread and not before, even if it was asked to close before it
 opened, and it tells the drawer it is closing, once, last. The window opens
 for about a second. It is the example of `crates/editor-platform-winit`,
-and it prints one line.
+and it prints one line. On macOS it is also asked to quit as the system
+asks while it runs, and then starts itself again in a second process and
+window, where a close with the system's quit pending must let AppKit end
+the process with status 0, only after that process recorded its verdict.
 
 **The second** is the window that draws: the example `window` of
 `crates/editor-ffi` (`examples/window.rs`). The real window is run onto a

@@ -22,10 +22,17 @@ There is one editor loop; this module only wires it to a window:
 - **The main thread.** `main` calls `Ffi.windowRun`, which blocks until the
   window has closed. The host's thread is a dedicated task, as the keyboard
   check's loop is. When the loop ends, because `:q` let the editor leave or
-  the window asked to close, a task that waits on the host's thread waits a
-  little for the render loop to draw what was published last, and then asks
-  the window to close (`Ffi.windowClose`). Then `main` quits the queues and
-  exits.
+  the window asked to close, or the system's quit was let go ahead, a task
+  that waits on the host's thread waits a little for the render loop to
+  draw what was published last, shuts down (`shutdown`: the library's
+  children killed and reaped, its watches ended, the queues quit), and then
+  asks the window to close (`Ffi.windowClose`). Then `main` exits.
+- **The system's quit, let go ahead.** The shutdown comes before the close
+  because on macOS a close with the system's quit pending lets AppKit end
+  the process (`exit(0)`) inside the run, which then never returns
+  (`editor-platform-winit`'s `terminate.rs`). What follows the run is then
+  not reached: the exit status is 0, and `--report` and the "nothing could
+  draw" line are not printed.
 - **The command line** is read by the pure core (`Editor/Window.lean`).
   `main` reads at the edge what it needs of the world: the working
   directory, `XDG_CONFIG_HOME` and `HOME`, the executable's path, which
@@ -141,14 +148,17 @@ was given, drawn from `display` and with `clipboard` as its clipboard, and
 returns once the window has closed: the host is started, and what
 `options.starts` gives is posted before the first event (the file opened
 when one was given, each of `said` said in the echo area, and config
-reloaded when `plan` says so); the window is run; and it is closed when the
-host's loop ends.
+reloaded when `plan` says so); the window is run; and when the host's loop
+ends, `shutdown` is run and then the window is closed. `shutdown` comes
+before the close because a close with the system's quit pending ends the
+process inside the run, by AppKit's terminate on macOS, so nothing after
+the run is reached then.
 The exit status: 0 when the window ran with something drawing in it; 1 when
 it could not be opened, when nothing could draw in it (`nothingDrew`, said
 on stderr, and in the echo area while the loop still runs), or when the loop
 ended with an error. -/
 def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (display : Ffi.Display)
-    (clipboard : ClipboardHandler) (said : Array String) : IO UInt32 := do
+    (clipboard : ClipboardHandler) (said : Array String) (shutdown : IO Unit) : IO UInt32 := do
   let shipped ←
     Headless.shipped (options.sysroot.getD "") options.oleans (options.config.getD "") IO.eprintln
   let collaborators :=
@@ -161,12 +171,19 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
     host.send start.request
   -- The loop ends by itself, on `:q` or a close request: the window is then
   -- closed, once what was published last is drawn.
+  -- The shutdown comes before the close: a close with the system's quit
+  -- pending ends the process inside the run (AppKit's terminate, on macOS),
+  -- which then never returns.
   let closer ←
     IO.asTask (prio := .dedicated) do
         discard <| IO.wait host.thread
         discard <|
             Headless.within drawPatience do
               return (← Ffi.renderResting) != some false
+        try
+          shutdown
+        catch error =>
+          IO.eprintln s!"editor: the shutdown failed: {error}"
         Ffi.windowClose platform
   let opened ← Ffi.inputClock
   let ran ←
@@ -177,7 +194,11 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
   -- area before it ends.
   if let .ok { nothingDrew := some reason } := ran then
     unless ← IO.hasFinished host.thread do
-      host.send (.say (nothingDrew reason))
+      -- The loop may end, and the shutdown quit the queues, in between.
+      try
+        host.send (.say (nothingDrew reason))
+      catch _ =>
+        pure ()
   -- The window has closed, or never opened: a loop still running is ended.
   let ended ←
     try
@@ -198,12 +219,21 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
     IO.eprintln s!"editor: the window could not be opened: {reason}"
     return 1
 
+/-- The window mode's shutdown, which `host` runs once the loop has ended
+and before it closes the window: every child the library started is killed
+and reaped, every watch is ended, and then the queues are quit, as the
+headless mode does. -/
+def shutdown : IO Unit := do
+  Ffi.processesShutdown
+  Ffi.watchesShutdown
+  Ffi.quit
+
 /-- `editor [<file>]`, with the command line's `arguments`: reads the world at
 the edge, opens the system's display and clipboard, and runs `host` on the
-real window. A command line it does not take is the reason and the usage on
-stderr, and status 2. It shuts the library's process service down, which
-kills and reaps every child it started, quits the queues and exits
-explicitly, as the headless mode does. -/
+real window, with `shutdown`. A command line it does not take is the reason
+and the usage on stderr, and status 2. It exits explicitly, with the status
+`host` gave. When the system's quit was let go ahead, AppKit has ended the
+process with status 0 inside the run instead, once `shutdown` had run. -/
 def main (arguments : List String) : IO UInt32 := do
   let environment : Environment :=
     { workingDirectory := (← IO.currentDir).toString, xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME"
@@ -236,12 +266,7 @@ def main (arguments : List String) : IO UInt32 := do
       | .skip (some text) => #[text]
       | _ => #[]) ++
       unavailable
-  let status ← host .winit options plan (← Ffi.Display.newSystem) clipboard said
-  -- Every child the library started is killed and reaped before the queues
-  -- are quit, and every watch is ended.
-  Ffi.processesShutdown
-  Ffi.watchesShutdown
-  Ffi.quit
+  let status ← host .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
   IO.Process.exit status.toUInt8
 
 end Editor.Window

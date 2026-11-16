@@ -21,17 +21,20 @@
 //!   `replyToApplicationShouldTerminate:NO`), which also cancels a logout,
 //!   as TextEdit's unsaved document does. A later ask is reported again.
 //! - **Keeping running with none pending does nothing.**
-//! - **A close with one pending cancels it, once**, and a close with none
-//!   makes no reply. The process then ends by the editor's own path: the
-//!   step says stop, the window is closed, the run returns and `main`
-//!   returns. This is the phase's fallback, not its first design, which
-//!   made no reply: with a terminate pending AppKit waits inside
-//!   `terminate:`, under winit's run, and the contract example showed the
-//!   run then never returns. Replying `YES` instead would have AppKit end
-//!   the process itself (`exit`), before the editor's own path ran. So a
-//!   logout the editor goes along with is cancelled all the same, and the
-//!   user is told the app cancelled it: a known limit, tracked as the rdm
-//!   task `macos-terminate-close-cancels-logout`.
+//! - **A close with one pending lets the system terminate, once**
+//!   ([`Reply::Now`], `replyToApplicationShouldTerminate:YES`), and so does
+//!   a close with an ask held before the window opened or still waiting on
+//!   the channel: nothing is left unanswered. A close with none makes no
+//!   reply. With a terminate pending, AppKit waits inside `terminate:`,
+//!   under winit's run, and the contract example showed the run then never
+//!   returns; once answered `YES`, AppKit ends the process (`exit(0)`)
+//!   without returning either. So the editor's own path runs before the
+//!   close is asked: the step says stop, the host shuts down (its children
+//!   killed and reaped, its watches ended, its queues quit), and asks for
+//!   the close; the loop then tells the drawer the window is closing, and
+//!   only then replies. A logout the editor goes along with goes on.
+//! - **A window that could not be opened cancels an ask held or waiting**
+//!   ([`Reply::Cancel`]), so that the run returns and the host can say why.
 //!
 //! A further fact of AppKit's, seen in the contract example: it lets an
 //! answered `terminate:` go a few milliseconds after the reply, and a
@@ -40,11 +43,14 @@
 
 use editor_platform::Input;
 
-/// What the system is answered: the one reply this adapter makes.
+/// What the system is answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reply {
     /// The quit is cancelled: `replyToApplicationShouldTerminate:NO`.
     Cancel,
+    /// The quit goes ahead: `replyToApplicationShouldTerminate:YES`, after
+    /// which AppKit ends the process.
+    Now,
 }
 
 /// What is known of the system's asks to terminate.
@@ -85,18 +91,36 @@ impl Terminate {
         std::mem::take(&mut self.pending).then_some(Reply::Cancel)
     }
 
-    /// The window is closing: with one pending, the reply that cancels it,
-    /// once; with none, nothing.
+    /// The window is closing, with `waiting` asks still on the channel: with
+    /// one pending, one held or one waiting, the reply that lets the system
+    /// terminate, once; with none, nothing.
     ///
-    /// The close is the editor quitting by its own path, so the process
-    /// ends whatever the reply. But AppKit waits inside `terminate:` until
-    /// it is answered, and the loop's run cannot return through that wait:
-    /// with no reply the run never returns (seen in the contract example).
-    /// Going ahead (`YES`) would have AppKit end the process itself, before
-    /// the editor's own path ran. So the one reply left is to cancel, which
-    /// also cancels a logout the editor went along with: a known limit.
-    pub(crate) fn close(&mut self) -> Option<Reply> {
-        self.keep_running()
+    /// The close is the editor quitting by its own path, and the host has
+    /// shut down before it asked for the close. AppKit waits inside
+    /// `terminate:` until it is answered, and the loop's run cannot return
+    /// through that wait (seen in the contract example), so an ask is never
+    /// left unanswered here: going ahead lets AppKit end the process
+    /// (`exit(0)`), and a logout the editor went along with goes on. An ask
+    /// the editor never heard of, held or still waiting, is answered the
+    /// same way: the editor was leaving anyway.
+    pub(crate) fn close(&mut self, waiting: usize) -> Option<Reply> {
+        self.take(waiting).then_some(Reply::Now)
+    }
+
+    /// The window could not be opened, with `waiting` asks still on the
+    /// channel: with one held or waiting, the reply that cancels it, once;
+    /// with none, nothing. The failure is the host's to report, which it
+    /// can only do once the run has returned, and the run cannot return
+    /// through AppKit's wait.
+    pub(crate) fn fail(&mut self, waiting: usize) -> Option<Reply> {
+        self.take(waiting).then_some(Reply::Cancel)
+    }
+
+    /// Whether an ask is pending, held or waiting, which is then answered.
+    fn take(&mut self, waiting: usize) -> bool {
+        let pending = std::mem::take(&mut self.pending);
+        let held = std::mem::take(&mut self.held);
+        pending || held || waiting > 0
     }
 
     /// An ask to report now, once the window has opened: reported unless
@@ -158,22 +182,56 @@ mod tests {
     }
 
     #[test]
-    fn a_close_with_one_pending_cancels_it_once() {
+    fn a_close_with_one_pending_lets_the_system_terminate_once() {
         let mut terminate = opened();
         assert_eq!(terminate.ask(), Some(Input::QuitRequested));
 
-        assert_eq!(terminate.close(), Some(Reply::Cancel));
-        assert_eq!(terminate.close(), None, "it is answered once");
+        assert_eq!(terminate.close(0), Some(Reply::Now));
+        assert_eq!(terminate.close(0), None, "it is answered once");
         assert_eq!(terminate.keep_running(), None, "and is no longer pending");
     }
 
     #[test]
-    fn a_close_with_none_pending_makes_no_reply() {
-        assert_eq!(Terminate::default().close(), None);
-        assert_eq!(opened().close(), None);
+    fn a_close_with_an_ask_held_before_the_window_opened_lets_the_system_terminate() {
         let mut held = Terminate::default();
         assert_eq!(held.ask(), None);
-        assert_eq!(held.close(), None, "an ask never reported is not pending");
+
+        assert_eq!(held.close(0), Some(Reply::Now));
+        assert_eq!(held.close(0), None, "it is answered once");
+    }
+
+    #[test]
+    fn a_close_with_asks_still_waiting_on_the_channel_lets_the_system_terminate() {
+        assert_eq!(opened().close(2), Some(Reply::Now));
+        assert_eq!(Terminate::default().close(1), Some(Reply::Now));
+        let mut terminate = opened();
+        assert_eq!(terminate.ask(), Some(Input::QuitRequested));
+        assert_eq!(
+            terminate.close(1),
+            Some(Reply::Now),
+            "one pending and one waiting are one reply"
+        );
+    }
+
+    #[test]
+    fn a_close_with_none_asked_makes_no_reply() {
+        assert_eq!(Terminate::default().close(0), None);
+        assert_eq!(opened().close(0), None);
+        let mut answered = opened();
+        assert_eq!(answered.ask(), Some(Input::QuitRequested));
+        assert_eq!(answered.keep_running(), Some(Reply::Cancel));
+        assert_eq!(answered.close(0), None, "an ask answered is not pending");
+    }
+
+    #[test]
+    fn a_window_that_could_not_open_cancels_an_ask_held_or_waiting() {
+        let mut held = Terminate::default();
+        assert_eq!(held.ask(), None);
+        assert_eq!(held.fail(0), Some(Reply::Cancel));
+        assert_eq!(held.fail(0), None, "it is answered once");
+
+        assert_eq!(Terminate::default().fail(1), Some(Reply::Cancel));
+        assert_eq!(Terminate::default().fail(0), None);
     }
 
     #[test]

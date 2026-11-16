@@ -79,12 +79,20 @@
 //!   decides what comes of it: the first ask is reported once as
 //!   [`Input::QuitRequested`], after `Opened`, and not again while it is
 //!   pending; [`Request::KeepRunning`] cancels a pending one
-//!   (`replyToApplicationShouldTerminate:NO`) and is otherwise nothing; and
-//!   a close cancels one still pending, since the run cannot return through
-//!   AppKit's wait. Keep running is taken out of the requests the loop
+//!   (`replyToApplicationShouldTerminate:NO`) and is otherwise nothing; a
+//!   close lets one pending, held or still waiting go ahead (`YES`), so that
+//!   none is left unanswered; and a window that could not be opened cancels
+//!   one held or waiting. Keep running is taken out of the requests the loop
 //!   finds, and never reaches the window. winit's loop handles its
 //!   wake-ups and requests while AppKit waits, since winit runs them in the
 //!   common modes, which include AppKit's modal-panel mode.
+//! - **It does what follows the loop's end before it lets the system
+//!   terminate (macOS).** AppKit waits inside `terminate:`, under winit's
+//!   run, so with a terminate pending the run never returns, and once
+//!   answered `YES` AppKit ends the process (`exit(0)`) there. So on such a
+//!   close the drawer is told the window is closing, and the window goes,
+//!   before the reply. Whatever the program must do before it ends, it
+//!   does before it asks for the close.
 //!
 //! # Tests
 //!
@@ -97,7 +105,8 @@
 //! open (`files`: the translation of paths and the holding of them until
 //! the window opened; and `Handing::hand`, which sends before it wakes),
 //! the system's quit (`terminate`'s rules, `Handing::terminate`, which
-//! sends before it wakes, and `wake`, which drops the asks on a close),
+//! sends before it wakes, and `wake`, which still counts the asks on a
+//! close, so that the close answers them),
 //! and the refusal off the main thread. The event
 //! loop itself needs a display, and so do the lines here that only a real
 //! window runs. They are few, and each is a reading of the window or a
@@ -141,10 +150,13 @@
 //!   reached by any run on macOS, so `mise run window-contract` runs it;
 //! - on macOS, the delegate's `applicationShouldTerminate:`, which hands
 //!   the ask to `Handing::terminate` and answers `NSTerminateLater`, and
-//!   `delegate::reply`, which makes the reply `terminate` gave; and the
-//!   loop's forwarding of each ask and each keep running to `terminate`,
-//!   and of its reply to the delegate. What comes of them is `terminate`'s,
-//!   and tested. The contract example asks them of a running window.
+//!   `delegate::reply`, which makes the reply `terminate` gave; the loop's
+//!   forwarding of each ask, each keep running, a close and a window that
+//!   could not be opened to `terminate`, and of its reply to the delegate;
+//!   and, on a close with a reply, telling the drawer the window is closing
+//!   before it. What comes of them is `terminate`'s, and tested. The
+//!   contract example asks them of a running window, and sees a close with
+//!   a terminate pending end the process by AppKit's terminate.
 //!
 //! They are held to the port's contract by `examples/contract/main.rs`, which
 //! two opt-in tasks run: `mise run linux-window`, under Xvfb in a
@@ -383,10 +395,12 @@ struct Woken {
 
 /// What a wake-up of the loop comes to, with `closing` as it is and
 /// `requests`, `files` and `terminations` taken off their channels. A loop
-/// that ends drops what is pending, files to open and asks to terminate
-/// with the requests: the window is going. One that does not takes every
-/// request, every list of files and every ask, in order; with none it
-/// still goes on, since winit may wake a loop nobody woke.
+/// that ends drops the requests and the files to open: the window is going.
+/// It still counts the asks to terminate, since each is a `terminate:`
+/// AppKit waits in until it is answered, and the close answers it
+/// (`Terminate::close`). One that does not end takes every request, every
+/// list of files and every ask, in order; with none it still goes on,
+/// since winit may wake a loop nobody woke.
 fn wake(
     closing: &Closing,
     requests: impl Iterator<Item = Request>,
@@ -398,7 +412,7 @@ fn wake(
         return Woken {
             carry: Vec::new(),
             files: Vec::new(),
-            terminations: 0,
+            terminations: terminations.count(),
             ends,
         };
     }
@@ -494,6 +508,12 @@ impl ApplicationHandler for App {
             }
             Err(error) => {
                 self.failure = Some(error.to_string());
+                // An ask held, or waiting, keeps AppKit waiting inside
+                // `terminate:`, and the run could not return with the
+                // failure: what it is answered is `terminate`'s.
+                if let Some(reply) = self.terminate.fail(self.terminations.try_iter().count()) {
+                    answer(reply);
+                }
                 event_loop.exit();
             }
         }
@@ -507,9 +527,16 @@ impl ApplicationHandler for App {
             self.terminations.try_iter(),
         );
         if woken.ends {
-            // What a close says to a terminate still pending is
-            // `terminate`'s to decide.
-            if let Some(reply) = self.terminate.close() {
+            // What a close says to an ask still pending, held or waiting is
+            // `terminate`'s to decide. A reply lets AppKit end the process
+            // inside the run, which then never returns, so what follows the
+            // loop's end is done first: the drawer is told the window is
+            // closing, while the window is still there, and then it goes.
+            if let Some(reply) = self.terminate.close(woken.terminations) {
+                if let Some(window) = self.window.take() {
+                    (self.drawer)(Canvas::Closing);
+                    drop(window);
+                }
                 answer(reply);
             }
             event_loop.exit();
@@ -915,20 +942,20 @@ mod tests {
     }
 
     #[test]
-    fn a_wake_up_with_a_close_asked_drops_the_terminations_too() {
+    fn a_wake_up_with_a_close_asked_still_takes_the_terminations_so_they_are_answered() {
         let closing = Closing::default();
         closing.ask();
         assert_eq!(
             wake(
                 &closing,
-                std::iter::empty(),
-                std::iter::empty(),
-                [()].into_iter()
+                [Request::Minimise].into_iter(),
+                [vec![PathBuf::from("/tmp/a")]].into_iter(),
+                [(), ()].into_iter()
             ),
             Woken {
                 carry: Vec::new(),
                 files: Vec::new(),
-                terminations: 0,
+                terminations: 2,
                 ends: true,
             }
         );
