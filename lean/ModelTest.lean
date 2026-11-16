@@ -13453,6 +13453,10 @@ def driverJobs (name : String) : Option (List Argument → Work) :=
           discard <| JobContract.loaded (fileRoot / "note.txt")
           throw "lost")
         fun (_ : Unit) => pure ()
+  | "build" =>
+    some fun _ =>
+      Work.of (fun _ => Process.run { program := "/bin/true", directory := "/p/d" } 10) fun _ =>
+        pure ()
   | _ => none
 
 /-- The commands of the driver checks, bound under `C-c`: `ask` (`a`)
@@ -13462,7 +13466,8 @@ and is then refused; `none` (`n`) starts `double` with no argument; `bad`
 (`b`) and `chain` (`c`) start the jobs of those names; `load` (`l`) starts
 `load` with `note.txt`, `adopt` (`s`) starts `adopt` with 0, `save` (`w`)
 takes a snapshot of its buffer's text and starts `save` with its index, and
-`lose` (`t`) starts `lose`. -/
+`lose` (`t`) starts `lose`, and `build` (`e`) starts `build`, which runs
+`/bin/true` in `/p/d`. -/
 def driverKeys : Loop.Keys TestScheme.scheme :=
   let starts (name : String) (arguments : List Argument := []) : Dispatched := fun _ => do
     discard <| startJob name arguments
@@ -13471,7 +13476,7 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
     [("C-c a", invoke "ask"), ("C-c m", invoke "missing"), ("C-c f", invoke "fail"),
       ("C-c n", invoke "none"), ("C-c b", invoke "bad"), ("C-c c", invoke "chain"),
       ("C-c l", invoke "load"), ("C-c s", invoke "adopt"), ("C-c w", invoke "save"),
-      ("C-c t", invoke "lose")]
+      ("C-c t", invoke "lose"), ("C-c e", invoke "build")]
     [("ask", fun _ => do
         message "asked"
         discard <| startJob "double" [.nat 21]
@@ -13487,7 +13492,7 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
         let taken ← call.target.buffer.text.snapshot
         discard <| startJob "save" [.nat taken.index]
         return none),
-      ("lose", starts "lose")]
+      ("lose", starts "lose"), ("build", starts "build")]
 
 /-- A driver over the initial state, with the commands and the jobs of the
 driver checks; `none` if making the state was refused. -/
@@ -13523,6 +13528,28 @@ def driverChecks : List Check :=
     steps.flatMap fun step => (step.map (·.starts)).getD #[]
   let echoOf (driver : TestDriver) : Option String := driver.model.display.scenes.back?.map (·.echo)
   [{  name :=
+        "a job whose directory's lookup fails leaves the loop's echo area saying why, as the host says it"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let child : Process.Command := { program := "/bin/true", directory := "/p/d" }
+            let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+            let driver :=
+              { driver with
+                jobs :=
+                  { environments := { setting := .mise (some "/opt/mise") }
+                    processes :=
+                      { scripts :=
+                          #[{ command := lookup
+                              reply := .ok { exit := .code 1, stdout := .empty, stderr := .empty } },
+                            { command := child
+                              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }] } } }
+            let (built, _) := fedTo driver (presses "C-c e")
+            built.loop.state.echo == Process.failureMessage "/p/d" (.exited 1 "") &&
+              built.jobs.processes.started == #[lookup, child] },
+    { name :=
         "a command that starts a job with an argument: the step hands the start back, the job is run with that argument, and once it is finished a command has run that received the value the job computed from it; the delivery publishes a scene and leaves the echo the command left"
       run :=
         pure <|
@@ -21552,6 +21579,241 @@ def processEnvironmentChecks : List Check :=
             Process.foundOf (.error .noSuchProcess) == .failed (.refused .noSuchProcess) &&
             Process.foundOf (.error (.timedOut 5000)) == .failed (.timedOut 5000)) }]
 
+/-- The requests `job` makes when it runs against the job port's model from
+`model`, in order. -/
+def requestsOf {α : Type} (job : JobM α) (model : JobModel) : Array JobRequest :=
+  go 10000 job.run model #[]
+where
+  /-- The requests of `program` from `model`, with `fuel` steps at most. -/
+  go : Nat → Program jobPort (Except String α) → JobModel → Array JobRequest → Array JobRequest
+    | 0, _, _, seen => seen
+    | _, .done _, _, seen => seen
+    | fuel + 1, .step request next, model, seen =>
+      let (reply, after) := JobModel.handle request model
+      go fuel (next reply) after (seen.push request)
+
+/-- A run that ends with the status 0 and prints `stdout`. -/
+def printed (stdout : String) : Except ProcessError Process.Ran :=
+  .ok { exit := .code 0, stdout := stdout.toUTF8, stderr := .empty }
+
+/-- The command the lookup checks start in `/p/d`: a bare `lake`, with a
+variable of its own set and one unset. -/
+def lakeBuild : Process.Command :=
+  { program := "lake", arguments := #["build"]
+    environment := { set := #[("A", "own")], unset := #["DROP"] }, directory := "/p/d" }
+
+/-- What the lookup prints for `/p/d`: a `PATH`, a variable the command sets
+too, one it unsets, and one of its own. -/
+def lookupJson : String :=
+  "{\"PATH\":\"/m/bin:/usr/bin\",\"A\":\"mise\",\"DROP\":\"x\",\"B\":\"b\"}"
+
+/-- `command` with the lookup's variables of `lookupJson` set under its own. -/
+def mergedOf (command : Process.Command) : Process.Command :=
+  { command with
+    environment := { set := #[("PATH", "/m/bin:/usr/bin"), ("B", "b"), ("A", "own")], unset := #["DROP"] } }
+
+/-- `command` in `directory`. -/
+def movedTo (command : Process.Command) (directory : System.FilePath) : Process.Command :=
+  { command with directory }
+
+/-- A file model holding each of `paths`, written in that order. -/
+def filesAt (paths : List System.FilePath) : FileModel :=
+  paths.foldl (fun model path => model.withFile path "x".toUTF8) {}
+
+/-- The job model the lookup checks start from: the files `files`, the
+scripts of `mise` at `executable` printing `lookupJson` in each of
+`directories` and of each command merged there, and the environments with
+`setting` and `host`. -/
+def lookupModel (setting : Process.Setting) (host : Process.Host) (files : FileModel)
+    (executable : System.FilePath := "/opt/mise") (directories : List System.FilePath := ["/p/d"])
+    (reply : Except ProcessError Process.Ran := printed lookupJson) (takes : Nat := 0) : JobModel :=
+  let scripts : Array Process.Script :=
+    directories.toArray.flatMap fun directory =>
+      #[{ command := Process.lookupCommand executable directory, reply, takes },
+        { command := mergedOf (movedTo lakeBuild directory), reply := printed "built" },
+        { command := movedTo lakeBuild directory, reply := printed "built inherited" }]
+  { files, processes := { scripts }, environments := { setting, host } }
+
+/-- A run of `command` that the model answers. -/
+def runsOn (command : Process.Command) : JobM Bool := do
+  return (← Process.run command 1000) matches .ok _
+
+/-- Runs `job` on the model, and gives the model after it. -/
+def after {α : Type} (job : JobM α) (model : JobModel) : JobModel :=
+  (job.runModel model).2
+
+/-- The checks of a child's environment on the models (AC 1 to 5 of
+`docs/design/concurrency.md`, "A child's environment, as built"): each runs
+jobs with `JobM.runModel` on one `JobModel`, carried from job to job. -/
+def environmentLookupChecks : List Check :=
+  let candidates := ["/opt/homebrew/bin/mise", "/usr/local/bin/mise"].map System.FilePath.mk
+  [{  name :=
+        "auto in the window mode runs the first candidate that exists: Homebrew's, with nothing under the home directory, and the home directory's once it is there"
+      run :=
+        let homebrew :=
+          lookupModel .auto (.window (some "/u")) (filesAt candidates) "/opt/homebrew/bin/mise"
+        let home :=
+          lookupModel .auto (.window (some "/u")) (filesAt ("/u/.local/bin/mise" :: candidates))
+            "/u/.local/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) homebrew).processes.started ==
+              #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            (after (runsOn lakeBuild) home).processes.started ==
+              #[Process.lookupCommand "/u/.local/bin/mise" "/p/d", mergedOf lakeBuild]) },
+    { name := "auto in the window mode with none of the candidates starts the child as it would have"
+      run :=
+        pure
+          ((after (runsOn lakeBuild) (lookupModel .auto (.window (some "/u")) {})).processes.started ==
+            #[lakeBuild]) },
+    { name := "auto in the headless mode starts the child as it would have and reads no stamp"
+      run :=
+        let model :=
+          lookupModel .auto .headless (filesAt ("/u/.local/bin/mise" :: candidates)) "/opt/homebrew/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) model).processes.started == #[lakeBuild] &&
+            !(requestsOf (runsOn lakeBuild) model).any fun request =>
+              request matches .file (.stamp _)) },
+    { name :=
+        "with mise at a path, a run first runs mise env --json in its directory, then the command with the lookup's variables under its own: the bare name keeps its name and gets the lookup's PATH"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {}
+        pure
+          ((after (runsOn lakeBuild) model).processes.started ==
+            #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
+    { name := "with mise at a path, a streaming start gets the lookup's variables the same way"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {}
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                streams := #[{ command := mergedOf lakeBuild, steps := #[.write .out "built\n".toUTF8] }] } }
+        let starts : JobM Bool := do
+          return (← Process.start lakeBuild { bound := 64 }) matches .ok _
+        pure
+          ((starts.runModel model).1 == .finished true &&
+            (after starts model).processes.started ==
+              #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "a second start in the directory runs no lookup; after mise.toml there or a parent's .tool-versions is rewritten, or a config file appears, the next one looks up again"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless (filesAt ["/p/d/mise.toml", "/p/.tool-versions"])
+        let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        let rewritten :=
+          after (runsOn lakeBuild) { twice with files := twice.files.withFile "/p/d/mise.toml" "y".toUTF8 }
+        let parent :=
+          after (runsOn lakeBuild)
+            { rewritten with files := rewritten.files.withFile "/p/.tool-versions" "y".toUTF8 }
+        let appeared :=
+          after (runsOn lakeBuild) { parent with files := parent.files.withFile "/.mise.toml" "y".toUTF8 }
+        let merged := mergedOf lakeBuild
+        pure
+          (once.processes.started == #[lookup, merged] &&
+            twice.processes.started == #[lookup, merged, merged] &&
+            rewritten.processes.started == #[lookup, merged, merged, lookup, merged] &&
+            parent.processes.started == #[lookup, merged, merged, lookup, merged, lookup, merged] &&
+            appeared.processes.started ==
+              #[lookup, merged, merged, lookup, merged, lookup, merged, lookup, merged]) },
+    { name := "a start in another directory runs its own lookup, and a reload's install drops every entry"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {} (directories := ["/p/d", "/p/e"])
+        let inD := after (runsOn lakeBuild) model
+        let inE := after (runsOn (movedTo lakeBuild "/p/e")) inD
+        let installed := { inE with environments := inE.environments.install (.mise (some "/opt/mise")) }
+        let again := after (runsOn lakeBuild) installed
+        pure
+          (inE.processes.started ==
+              #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild,
+                Process.lookupCommand "/opt/mise" "/p/e", mergedOf (movedTo lakeBuild "/p/e")] &&
+            again.processes.started ==
+              inE.processes.started ++ #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "a lookup that exits non-zero starts the child inherited and reports once for the directory; a second start looks up nothing and says nothing"
+      run :=
+        let model :=
+          lookupModel (.mise (some "/opt/mise")) .headless {}
+            (reply := .ok { exit := .code 1, stdout := .empty, stderr := "not trusted\n".toUTF8 })
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        pure
+          (once.processes.started.back? == some lakeBuild &&
+            once.reported == #[Process.failureMessage "/p/d" (.exited 1 "not trusted")] &&
+            twice.processes.started == once.processes.started.push lakeBuild &&
+            twice.reported == once.reported) },
+    { name :=
+        "a lookup whose output is not a JSON object of strings starts the child inherited and reports once for the directory"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {} (reply := printed "[1]")
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        pure
+          (once.processes.started.back? == some lakeBuild &&
+            once.reported == #[Process.failureMessage "/p/d" (.unparsable "it is not an object")] &&
+            twice.processes.started == once.processes.started.push lakeBuild &&
+            twice.reported == once.reported) },
+    { name :=
+        "a lookup that outlives the default limit of 5000 ms is killed at its start plus the limit, the child starts inherited, and the directory is reported once"
+      run :=
+        let model := { lookupModel (.mise (some "/opt/mise")) .headless {} (takes := 6000) with now := 100 }
+        let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        pure
+          (once.processes.started == #[lookup, lakeBuild] &&
+            once.processes.killed == #[lookup] &&
+            once.now == 5100 &&
+            once.reported == #[Process.failureMessage "/p/d" (.timedOut 5000)] &&
+            twice.processes.started == #[lookup, lakeBuild, lakeBuild] &&
+            twice.reported == once.reported) },
+    { name :=
+        "with the inherited setting, a run and a start start their command exactly, read no stamp, and make only the policy request beyond the process request"
+      run :=
+        let model :=
+          lookupModel .inherited (.window (some "/u")) (filesAt ("/u/.local/bin/mise" :: candidates))
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                streams := #[{ command := lakeBuild, steps := #[.write .out "built\n".toUTF8] }] } }
+        let starts : JobM Bool := do
+          return (← Process.start lakeBuild { bound := 64 }) matches .ok _
+        pure
+          ((after (runsOn lakeBuild) model).processes.started == #[lakeBuild] &&
+            (after starts model).processes.started == #[lakeBuild] &&
+            (after (runsOn lakeBuild) model).files == model.files &&
+            requestsOf (runsOn lakeBuild) model ==
+              #[.environment .policy, .process (.run lakeBuild 1000)]) },
+    { name :=
+        "a command that clears its environment runs no lookup, and a relative directory or program is refused as before, with no lookup"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {}
+        let cleared := { lakeBuild with environment := { clear := true } }
+        let model := { model with processes := { model.processes with scripts := model.processes.scripts.push { command := cleared, reply := printed "" } } }
+        let relative := movedTo lakeBuild "p/d"
+        let program := { lakeBuild with program := "bin/lake" }
+        let refused (command : Process.Command) (error : ProcessError) : Bool :=
+          match (Process.run command 1000).runModel model with
+          | (.finished (.error refusal), after) => refusal == error && after.processes.started.isEmpty
+          | _ => false
+        pure
+          ((after (runsOn cleared) model).processes.started == #[cleared] &&
+            refused relative .relativeDirectory &&
+            refused program .relativeProgram) },
+    { name :=
+        "mise with no path and none of the candidates reports mise is not at them once for each directory, and runs no lookup"
+      run :=
+        let model := lookupModel (.mise none) (.window (some "/u")) {} (directories := ["/p/d", "/p/e"])
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        let other := after (runsOn (movedTo lakeBuild "/p/e")) twice
+        let missing := Process.Failure.missing (Process.miseCandidates (some "/u"))
+        pure
+          (other.processes.started == #[lakeBuild, lakeBuild, movedTo lakeBuild "/p/e"] &&
+            other.reported ==
+              #[Process.failureMessage "/p/d" missing, Process.failureMessage "/p/e" missing]) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -21565,6 +21827,7 @@ def checks : List Check :=
     fileRunnerChecks ++
     processChecks ++
     processEnvironmentChecks ++
+    environmentLookupChecks ++
     fileWatchModelChecks ++
     fileWatchRunnerChecks ++
     setupChecks ++

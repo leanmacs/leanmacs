@@ -78,6 +78,11 @@ two ports are played (`Editor/File/Cases.lean`):
 - **A job that failed or was cancelled holds nothing.** No command will
   run for it, so what it loaded is released when it ends, which here is
   when it is started.
+- **What a job's environments say is said in the echo area.** Each message
+  a job's run appended to `jobs.reported`, a lookup that failed in a
+  directory among them (`Editor/Process/Environment.lean`), is put in the
+  loop's echo area when the job is started, in order, as the host's
+  `Running.said` does, so the next scene shows the last of them.
 - **The files are the driver's `jobs.files`.** A test sets them before it
   feeds an event, and changes them between two events to stand for another
   program writing a file.
@@ -165,7 +170,8 @@ def handing (driver : Loop.Driver scheme) (arrived : Array (JobSnapshotId × Tex
 
 /-- The driver once each of `starts` is started: the job registered under
 its name, applied to its arguments, is run on the job model, and what it
-ended with is kept as not delivered, under the next id. A start whose name
+ended with is kept as not delivered, under the next id, and what its
+environments said is said in the echo area. A start whose name
 no job is registered under is passed over: the loop refused it when the
 command asked.
 
@@ -183,7 +189,14 @@ def started (driver : Loop.Driver scheme) (starts : Array JobStart) : Loop.Drive
         let loaded : Array JobSnapshotId :=
           (Array.range (jobs.files.held.size - files.held.size)).map (⟨files.held.size + ·⟩)
         let finished := outcome matches .finished _
+        -- What the job's environments said is said in the echo area, in
+        -- order, as the host says it (`Running.said`).
+        let said := jobs.reported.extract driver.jobs.reported.size jobs.reported.size
+        let loop :=
+          said.foldl (fun loop text => { loop with state := { loop.state with echo := text } })
+            driver.loop
         { driver with
+          loop
           jobs := if finished then jobs else releasing jobs loaded
           pending :=
             driver.pending.push
