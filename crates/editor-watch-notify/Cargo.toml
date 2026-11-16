@@ -1,0 +1,47 @@
+[package]
+name = "editor-watch-notify"
+version = "0.1.0"
+description = "The watch port's real adapter, over notify"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The watch port, its fake and its contract. This crate implements the
+# port, and its test `tests/contract.rs` runs the contract, the service's
+# properties among them, on real files.
+editor-watch = { path = "../editor-watch" }
+# The platform's change notification: inotify on Linux, FSEvents on macOS.
+# Pinned exactly. No notify type is public here, and no port type names
+# one; `deny.toml` lets no other crate depend on it. Only `macos_fsevent`,
+# its default, is on: `crossbeam-channel` and `serde` are off, and so is the
+# kqueue back end.
+#
+# What it brings in, as `Cargo.lock` resolves it on 2026-11-15:
+# `notify-types` 2.3.1 (notify asks for `^2.0.0`), its own crate of event
+# types; `walkdir` 2.5.0, `libc` and `log`, already in the lock; on Linux
+# `inotify` 0.11.5 and `mio` 1.2.5; on macOS `objc2-core-services` 0.3.2
+# and `bitflags`, beside `objc2-core-foundation`, already in the lock. The
+# lock also lists `kqueue`, for the BSDs, which no build here compiles.
+#
+# Looked at on 2026-11-15 and set aside:
+#
+# - `notify` 9.0.0-rc.9, released 2026-11-15: a release candidate that was
+#   still changing week to week. Moving to 9 is its own commit, later.
+# - `notify-debouncer-full` and `notify-debouncer-mini`: their window runs
+#   on their own thread on the real clock, so the coalescing rule could not
+#   be pinned on a fake (the rule is `editor_watch::batch`'s, pure); and
+#   `-full`'s rename stitching relies on inotify's cookies, which FSEvents
+#   does not have.
+# - notify's `macos_kqueue` back end: no native recursion, and a file
+#   descriptor for every file.
+# - `inotify` or `fsevent-sys` directly: two adapters to write, and nothing
+#   gained over notify.
+notify = { version = "=8.2.2", default-features = false, features = ["macos_fsevent"] }
+
+[dev-dependencies]
+# The temporary directory the contract is checked in: one the test makes
+# and owns, removed when the test ends. Pinned exactly, as in
+# `editor-fs-std`, whose manifest says why this library and no other;
+# `deny.toml` lists the crates that may depend on it.
+tempfile = { version = "=3.27.0", default-features = false }

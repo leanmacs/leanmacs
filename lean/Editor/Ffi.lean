@@ -168,18 +168,47 @@ decode. What a save expects on disk (`FileExpect`) crosses as a tag and a
 stamp's three numbers. A stamp's seconds are an `Int`, and cross as a 64-bit
 two's complement word in both directions.
 
+The process service is the third: `processesRun` starts a run of a command
+to its end, `processesTake` hands its result over once its completion has
+arrived, `processesCancel` cancels it, which kills the child's process
+group, `processesShutdown` kills every group and blocks until every child is
+reaped, and `processesPending` is a readout for tests. A command crosses as
+a list of strings does: words, and one string of every text end to end. A
+result is a status, words, a detail and the two streams' bytes
+(`ProcessResult`). A streaming child is opened (`processesOpen`, three words
+before a run's), read (`processesRead`), written to (`processesWrite`) and
+closed (`processesCloseInput`), each with a wait's id; its replies come back
+in a run's record (`processesTakeStream`), a delivery's lines as lengths in
+its words, decoded by `StreamReply.decode`. `processesHeld` says, for tests,
+whether a child is held at its bound.
+
+The watch service is the fourth: `watchesStart` starts a watch of a file, a
+directory's entries or its tree, as three words and the path's bytes;
+`watchesNext` asks for a watch's next delivery, under a wait id of its own;
+`watchesTake` hands a reply over once its completion has arrived, as a
+status, words, a detail and the paths end to end (`WatchReply`, decoded by
+`WatchReply.decode`); `watchesCancel` cancels a watch or a wait,
+`watchesShutdown` ends every watch, and `watchesPending` is a readout for
+tests. A path in a delivery is its bytes as the platform gave them, which
+on Linux need not be UTF-8: the job runner's real service decides what such
+a change is (`realFileWatches`, `Editor/Job/Real.lean`).
+
 The editor does not call these bindings. The job runner reaches the services
 through the ports it defines (`Job.Timers`, `Editor/Job/Runner.lean`), whose
 real implementations (`Editor/Job/Real.lean`) are the callers, with the
 completion pump that pulls the queue on a dedicated task.
 
 Tests: the three timer checks of `ffi-test` (`FfiTest.timerChecks`), its
-file checks (`FfiTest.fileChecks`), in directories they make and remove, and
-its check that the completion tag is known (`FfiTest.dataChecks`);
+file checks (`FfiTest.fileChecks`), in directories they make and remove, its
+process checks (`FfiTest.processChecks`), whose children run in directories
+they make and remove, and
+its watch checks (`FfiTest.watchChecks`), in directories they make and
+remove, its check that the completion tag is known (`FfiTest.dataChecks`);
 `contract-test`, which runs the job port's contract and the checks of the
 real service through the runner (`ContractTest.jobChecks`); the unit tests
-of `timers.rs` and `files.rs`, and `tests/timers.rs` and `tests/files.rs`,
-in `editor-ffi`, which need no Lean.
+of `timers.rs`, `files.rs` and `processes.rs`, and `tests/timers.rs`,
+`tests/files.rs`, `tests/processes.rs`, `tests/processes_stream.rs` and
+`tests/processes_shutdown.rs`, in `editor-ffi`, which need no Lean.
 
 ### The window
 
@@ -2410,5 +2439,473 @@ def fuzzyRank (pattern : String) (candidates : Array String) : IO (Array Nat) :=
     return ranking
   | none =>
     throw (IO.userError "the library's words do not spell a fuzzy ranking")
+
+/-- How a child the process service ran ended. -/
+inductive ProcessExit where
+  /-- It exited with this status. -/
+  | code (n : UInt64)
+  /-- It was ended by this signal. -/
+  | signal (n : UInt64)
+  deriving DecidableEq, Repr
+
+/-- One of a child's output streams. -/
+inductive ProcessStream where
+  /-- Its standard output. -/
+  | out
+  /-- Its standard error. -/
+  | err
+  deriving DecidableEq, Repr
+
+/-- What a run of the process service came to. Every refusal carries the
+platform's words, naming the program and the directory. -/
+inductive ProcessResult where
+  /-- The child ran to its end, with both its streams. -/
+  | ran (exit : ProcessExit) (stdout stderr : ByteArray)
+  /-- The directory is not absolute. -/
+  | relativeDirectory (detail : String)
+  /-- The program names a directory and is not absolute. -/
+  | relativeProgram (detail : String)
+  /-- The program, or the directory, is not there. -/
+  | notFound (detail : String)
+  /-- The platform does not allow it. -/
+  | denied (detail : String)
+  /-- `stream` had more than `limit` bytes, and the child's group was
+  killed. -/
+  | outputTooLarge (stream : ProcessStream) (limit : UInt64)
+  /-- The service has shut down. -/
+  | shutDown (detail : String)
+  /-- Anything else. -/
+  | failed (detail : String)
+  deriving DecidableEq
+
+/-- The result a status, words, a detail and the two streams spell, by the
+table in the module docs of `crates/editor-ffi/src/processes.rs`. An error,
+with what was wrong, for a status the table does not have and for words that
+are not the status's.
+
+It is public for `FfiTest`, which decodes literal words with it; the bindings
+call it from `processesTake` and nowhere else. -/
+def ProcessResult.decode (status : UInt64) (words : ByteArray) (detail : String)
+    (stdout stderr : ByteArray) : Except String ProcessResult := do
+  let some words := wordsOf? words | throw "its words are not whole words"
+  match status, words.toList with
+  | 0, [0, code] =>
+    return .ran (.code code) stdout stderr
+  | 0, [1, signal] =>
+    return .ran (.signal signal) stdout stderr
+  | 1, [] =>
+    return .relativeDirectory detail
+  | 2, [] =>
+    return .relativeProgram detail
+  | 3, [] =>
+    return .notFound detail
+  | 4, [] =>
+    return .denied detail
+  | 5, [0, limit] =>
+    return .outputTooLarge .out limit
+  | 5, [1, limit] =>
+    return .outputTooLarge .err limit
+  | 6, [] =>
+    return .shutDown detail
+  | 7, [] =>
+    return .failed detail
+  | status, words =>
+    throw s!"the status {status} with the words {words} is no process result"
+
+/-- `processesRun` as it crosses: the command as words and one string. -/
+@[extern "editor_glue_processes_run"]
+private opaque processesRunRaw (id : UInt64) (words : @& ByteArray) (strings : @& String) : IO Bool
+
+/-- A run's command and limit as they cross: the words, the limit, whether to
+clear, and the count and byte lengths of each list of texts, and one string
+of every text end to end. -/
+private def runLayout (program : String) (arguments : Array String) (clear : Bool)
+    (set : Array (String × String)) (unset : Array String) (directory : String) (limit : UInt64) :
+    ByteArray × String :=
+  let size (text : String) := text.utf8ByteSize.toUInt64
+  let words := pushWord (pushWord ByteArray.empty limit) (if clear then 1 else 0)
+  let words :=
+    arguments.foldl (fun words argument => pushWord words (size argument))
+      (pushWord words arguments.size.toUInt64)
+  let words :=
+    set.foldl (fun words (name, value) => pushWord (pushWord words (size name)) (size value))
+      (pushWord words set.size.toUInt64)
+  let words :=
+    unset.foldl (fun words name => pushWord words (size name)) (pushWord words unset.size.toUInt64)
+  let words := pushWord (pushWord words (size program)) (size directory)
+  let strings :=
+    arguments.foldl (· ++ ·) "" ++ set.foldl (fun all (name, value) => all ++ name ++ value) "" ++
+      unset.foldl (· ++ ·) "" ++
+      program ++
+      directory
+  (words, strings)
+
+/-- Asks the library's process service to run `program` with `arguments` in
+`directory`, with the editor's environment emptied first if `clear` is set,
+then with `unset` removed and `set` applied, collecting each output stream
+unless it is longer than `limit` bytes, as the run `id`, and returns whether
+it was accepted. It returns at once. The completion is a `completion` event
+on the completion queue, from the library source 3, whose code is `id`;
+there is none if the run is cancelled first. The result is then taken with
+`processesTake`.
+
+The command crosses as words, the limit, whether to clear, and the count and
+byte lengths of each list of texts, and as one string of every text end to
+end, in the layout of the module docs of `crates/editor-ffi/src/processes.rs`.
+`false`, with nothing started, if `id` is in use or the service could not
+start the run's thread; the words this builds are always readable. -/
+def processesRun (id : UInt64) (program : String) (arguments : Array String) (clear : Bool)
+    (set : Array (String × String)) (unset : Array String) (directory : String) (limit : UInt64) :
+    IO Bool :=
+  let (words, strings) := runLayout program arguments clear set unset directory limit
+  processesRunRaw id words strings
+
+/-- `processesOpen` as it crosses: the open's three words and a run's words,
+and one string. -/
+@[extern "editor_glue_processes_open"]
+private opaque processesOpenRaw (id : UInt64) (words : @& ByteArray) (strings : @& String) : IO Bool
+
+/-- Asks the library's process service to start `program` as a streaming
+child named `id`, its standard input piped if `input`, and each output
+stream framed as bytes if `stdoutBytes` or `stderrBytes` says so and as
+lines otherwise, holding up to `bound` bytes of each stream read and not
+taken; the rest is as `processesRun`'s. It returns at once, and whether the
+open was accepted. Its reply is taken with `processesTakeStream id` once `id`
+is completed.
+
+The words are the input and the two framings, then a run's words with the
+bound for the limit, in the layout of the module docs of
+`crates/editor-ffi/src/processes.rs`. -/
+def processesOpen (id : UInt64) (input stdoutBytes stderrBytes : Bool) (program : String)
+    (arguments : Array String) (clear : Bool) (set : Array (String × String)) (unset : Array String)
+    (directory : String) (bound : UInt64) : IO Bool :=
+  let flag (value : Bool) : UInt64 := if value then 1 else 0
+  let lead :=
+    pushWord (pushWord (pushWord .empty (flag input)) (flag stdoutBytes)) (flag stderrBytes)
+  let (words, strings) := runLayout program arguments clear set unset directory bound
+  processesOpenRaw id (lead ++ words) strings
+
+/-- Asks for the next delivery of the streaming child `child`, as the wait
+`wait`. It returns at once: false for a child the service does not hold, a
+wait id in use, or a read already pending. The delivery is taken with
+`processesTakeStream wait` once `wait` is completed, which is once however
+much the child writes. -/
+@[extern "editor_glue_processes_read"]
+opaque processesRead (child wait : UInt64) : IO Bool
+
+/-- Asks for `bytes` to be written to the standard input of the child
+`child`, as the wait `wait`, and returns at once; false as for
+`processesRead`. The bytes are copied. -/
+@[extern "editor_glue_processes_write"]
+opaque processesWrite (child wait : UInt64) (bytes : @& ByteArray) : IO Bool
+
+/-- Closes the standard input of the child `child`, as the wait `wait`,
+completed at once. -/
+@[extern "editor_glue_processes_close_input"]
+opaque processesCloseInput (child wait : UInt64) : IO Bool
+
+/-- Whether the readers of the child `child` are held at its bound: 0 no, 1
+yes, 2 no such child. A readout for tests. -/
+@[extern "editor_glue_processes_held"]
+opaque processesHeld (child : UInt64) : IO UInt64
+
+/-- A process result as the glue builds it, in one call: the object fields
+first and the `UInt64` field after them, so the order here is the layout the
+glue writes. -/
+private structure RawProcessResult where
+  /-- The words, copied from the library's buffer. -/
+  words : ByteArray
+  /-- The detail, copied from the library's buffer. -/
+  detail : String
+  /-- The standard output, copied from the library's buffer. -/
+  stdout : ByteArray
+  /-- The standard error, copied from the library's buffer. -/
+  stderr : ByteArray
+  /-- How the run ended: the library's status. -/
+  status : UInt64
+
+/-- `processesTake` before its result is decoded. -/
+@[extern "editor_glue_processes_take"]
+private opaque processesTakeRaw (id : UInt64) : IO (Option RawProcessResult)
+
+/-- Hands over the result of the run `id`, once. `none` when the service
+keeps no result for `id`: it has not ended, it was cancelled, its result was
+taken already, or it was another service's id. It throws if the library
+sends a result these bindings cannot read. -/
+def processesTake (id : UInt64) : IO (Option ProcessResult) := do
+  let some raw ← processesTakeRaw id | return none
+  match ProcessResult.decode raw.status raw.words raw.detail raw.stdout raw.stderr with
+  | .ok result =>
+    return some result
+  | .error reason =>
+    throw (IO.userError s!"the library's process result could not be read: {reason}")
+
+/-- How a streaming child's stream crosses in a delivery. -/
+inductive StreamFrames where
+  /-- Whole lines. -/
+  | lines (lines : Array ByteArray)
+  /-- Bytes. -/
+  | bytes (bytes : ByteArray)
+  deriving DecidableEq
+
+/-- How a streaming child ended, as its last delivery crosses. -/
+inductive StreamEnd where
+  /-- It exited so, every frame delivered. -/
+  | exited (exit : ProcessExit)
+  /-- A line of `stream` was longer than `bound`. -/
+  | lineTooLong (stream : ProcessStream) (bound : UInt64)
+  /-- A read failed; `detail` says how. -/
+  | failed (detail : String)
+  deriving DecidableEq
+
+/-- What a request about a streaming child came to. -/
+inductive StreamReply where
+  /-- The child was started. -/
+  | opened
+  /-- A read's delivery: each stream's frames, and in the last one how the
+  child ended. -/
+  | delivered (stdout stderr : StreamFrames) (ended : Option StreamEnd)
+  /-- The bytes are in the child's input, or it was closed. -/
+  | written
+  /-- The child's input is closed. -/
+  | inputClosed (detail : String)
+  /-- Refused as a run is refused: a run's result that is a refusal. -/
+  | refused (refusal : ProcessResult)
+  deriving DecidableEq
+
+/-- A stream's frames read off the front of `values`, with `bytes` its
+buffer: for lines, their count and each one's length, which must add up to
+the buffer; and the words after them. -/
+private def streamFramesOf? : List UInt64 → ByteArray → Option (StreamFrames × List UInt64)
+  | 1 :: rest, bytes => some (.bytes bytes, rest)
+  | 0 :: count :: rest, bytes =>
+    let lengths := rest.take count.toNat
+    if lengths.length != count.toNat || lengths.foldl (· + ·.toNat) 0 != bytes.size then none
+    else
+      let (lines, _) :=
+        lengths.foldl (init := ((#[] : Array ByteArray), 0)) fun (lines, start) length =>
+          (lines.push (bytes.extract start (start + length.toNat)), start + length.toNat)
+      some (.lines lines, rest.drop count.toNat)
+  | _, _ => none
+
+/-- The reply a status, words, a detail and the two buffers spell, by the
+table in the module docs of `crates/editor-ffi/src/processes.rs`. An error,
+with what was wrong, for a status the table does not have and for words that
+are not the status's.
+
+It is public for `FfiTest`, which decodes literal words with it; the bindings
+call it from `processesTakeStream` and nowhere else. -/
+def StreamReply.decode (status : UInt64) (words : ByteArray) (detail : String)
+    (stdout stderr : ByteArray) : Except String StreamReply := do
+  let some values := wordsOf? words | throw "its words are not whole words"
+  match status, values.toList with
+  | 10, [] =>
+    return .opened
+  | 12, [] =>
+    return .written
+  | 8, [] =>
+    return .inputClosed detail
+  | 11, values =>
+    let some (out, values) := streamFramesOf? values stdout
+      | throw s!"its standard output's words do not spell frames of its {stdout.size} bytes"
+    let some (err, values) := streamFramesOf? values stderr
+      | throw s!"its standard error's words do not spell frames of its {stderr.size} bytes"
+    match values with
+    | [0] =>
+      return .delivered out err none
+    | [1, 0, code] =>
+      return .delivered out err (some (.exited (.code code)))
+    | [1, 1, signal] =>
+      return .delivered out err (some (.exited (.signal signal)))
+    | [2, 0, bound] =>
+      return .delivered out err (some (.lineTooLong .out bound))
+    | [2, 1, bound] =>
+      return .delivered out err (some (.lineTooLong .err bound))
+    | [3] =>
+      return .delivered out err (some (.failed detail))
+    | values =>
+      throw s!"the words {values} spell no end of a delivery"
+  | status, [] =>
+    if [1, 2, 3, 4, 6, 7].contains status then
+      return .refused (← ProcessResult.decode status .empty detail .empty .empty)
+    else
+      throw s!"the status {status} is no stream reply"
+  | status, values =>
+    throw s!"the status {status} with the words {values} is no stream reply"
+
+/-- `processesTakeStream` before its reply is decoded: the record of a run's
+result. -/
+@[extern "editor_glue_processes_take_stream"]
+private opaque processesTakeStreamRaw (wait : UInt64) : IO (Option RawProcessResult)
+
+/-- Hands over the reply of the wait `wait` on a streaming child, once.
+`none` when the service keeps no reply for it. It throws if the library sends
+a reply these bindings cannot read: an unknown status, or line lengths that
+do not add up. -/
+def processesTakeStream (wait : UInt64) : IO (Option StreamReply) := do
+  let some raw ← processesTakeStreamRaw wait | return none
+  match StreamReply.decode raw.status raw.words raw.detail raw.stdout raw.stderr with
+  | .ok reply =>
+    return some reply
+  | .error reason =>
+    throw (IO.userError s!"the library's stream reply could not be read: {reason}")
+
+/-- Cancels the run `id`, killing its child's process group if the child is
+running, and returns whether there was anything to cancel: a run not over or
+a result not taken. It is safe for an id that is unknown. A cancelled run is
+never completed; a completion that was already queued still arrives, and
+its result is gone. -/
+@[extern "editor_glue_processes_cancel"]
+opaque processesCancel (id : UInt64) : IO Bool
+
+/-- How many runs have a child not yet reaped, and how many results have not
+been taken, together. A readout for tests, which use it to see that a
+cancelled run's child was reaped. -/
+@[extern "editor_glue_processes_pending"]
+opaque processesPending : IO UInt64
+
+/-- Shuts the library's process service down: kills every child's process
+group and returns once every child it started has been reaped. A run asked
+for later is refused as shut down. The editor's mains call it before they
+quit the queues; it is safe to call again. -/
+@[extern "editor_glue_processes_shutdown"]
+opaque processesShutdown : IO Unit
+
+/-- Why the watch service refused a start. -/
+inductive WatchRefusal where
+  /-- The path is not absolute, or has a `..` component. -/
+  | notAbsolute
+  /-- The directory is not there. -/
+  | notFound
+  /-- The path is not a directory. -/
+  | notADirectory
+  /-- The platform does not allow it. -/
+  | denied
+  /-- The system's limit on watches is reached. -/
+  | limit
+  /-- The service has shut down. -/
+  | shutDown
+  /-- Anything else. -/
+  | failed
+  deriving DecidableEq, Repr
+
+/-- What a wait of the watch service came to. -/
+inductive WatchReply where
+  /-- A start's: the watch is live, and its id names it. -/
+  | started
+  /-- A start's: it was refused, with the platform's words. -/
+  | refused (refusal : WatchRefusal) (detail : String)
+  /-- A read's: each change's path, as its bytes, and its kinds' bits
+  (created 1, written 2, renamed 4, removed 8, missed 16). -/
+  | changes (changes : Array (ByteArray × UInt64))
+  deriving DecidableEq
+
+/-- The reply a status, words, a detail and the paths spell, by the table in
+the module docs of `crates/editor-ffi/src/watches.rs`. An error, with what
+was wrong, for a status the table does not have and for words that are not
+the status's.
+
+It is public for `FfiTest`, which decodes literal words with it; the bindings
+call it from `watchesTake` and nowhere else. -/
+def WatchReply.decode (status : UInt64) (words : ByteArray) (detail : String) (paths : ByteArray) :
+    Except String WatchReply := do
+  let some values := wordsOf? words | throw "its words are not whole words"
+  match status, values.toList with
+  | 0, [] =>
+    return .started
+  | 8, count :: rest =>
+    unless rest.length == 2 * count.toNat do
+      throw s!"its words do not spell {count} changes"
+    let pairs := (List.range count.toNat).map fun index => (rest[2 * index]!, rest[2 * index + 1]!)
+    let (found, used) :=
+      pairs.foldl (init := ((#[] : Array (ByteArray × UInt64)), 0))
+        fun (found, start) (length, bits) =>
+        (found.push (paths.extract start (start + length.toNat), bits), start + length.toNat)
+    unless used == paths.size do
+      throw s!"its lengths do not add up to its {paths.size} bytes of paths"
+    return .changes found
+  | status, [] =>
+    let refusal? : Option WatchRefusal :=
+      match status with
+      | 1 => some .notAbsolute
+      | 2 => some .notFound
+      | 3 => some .notADirectory
+      | 4 => some .denied
+      | 5 => some .limit
+      | 6 => some .shutDown
+      | 7 => some .failed
+      | _ => none
+    let some refusal := refusal? | throw s!"the status {status} is no watch reply"
+    return .refused refusal detail
+  | status, values =>
+    throw s!"the status {status} with the words {values} is no watch reply"
+
+/-- `watchesStart` as it crosses: three words and the path. -/
+@[extern "editor_glue_watches_start"]
+private opaque watchesStartRaw (id : UInt64) (words : @& ByteArray) (path : @& String) : IO Bool
+
+/-- Asks the library's watch service to start the watch `id` of `path`: a
+file (`target` 0), a directory's entries (1) or its tree (2), its changes
+coalesced over `window` milliseconds and at most `bound` paths a delivery;
+and returns whether it was accepted. It returns at once. The completion is a
+`completion` event on the completion queue, from the library source 4, whose
+code is `id`; its reply is then taken with `watchesTake`. `false`, with
+nothing started, for a target that is none of these, an id in use, or when
+the service could not start the start's thread. -/
+def watchesStart (id target window bound : UInt64) (path : String) : IO Bool :=
+  watchesStartRaw id (pushWord (pushWord (pushWord ByteArray.empty target) window) bound) path
+
+/-- Asks for the next delivery of the watch `watch`, under the wait id `wait`,
+and returns whether it was accepted: not for a watch that is not live, one
+with a read pending, or a wait id in use. The completion is `wait`'s, and its
+delivery is taken with `watchesTake wait`: every change up to the take. -/
+@[extern "editor_glue_watches_next"]
+opaque watchesNext (watch wait : UInt64) : IO Bool
+
+/-- A watch reply as the glue builds it, in one call: the object fields
+first and the `UInt64` field after them, so the order here is the layout the
+glue writes. -/
+private structure RawWatchReply where
+  /-- The words, copied from the library's buffer. -/
+  words : ByteArray
+  /-- The detail, copied from the library's buffer. -/
+  detail : String
+  /-- The paths, copied from the library's buffer. -/
+  paths : ByteArray
+  /-- What the reply is: the library's status. -/
+  status : UInt64
+
+/-- `watchesTake` before its reply is decoded. -/
+@[extern "editor_glue_watches_take"]
+private opaque watchesTakeRaw (wait : UInt64) : IO (Option RawWatchReply)
+
+/-- Hands over the reply of the wait `wait`, once. `none` when the service
+keeps nothing for it. It throws if the library sends a reply these bindings
+cannot read. -/
+def watchesTake (wait : UInt64) : IO (Option WatchReply) := do
+  let some raw ← watchesTakeRaw wait | return none
+  match WatchReply.decode raw.status raw.words raw.detail raw.paths with
+  | .ok reply =>
+    return some reply
+  | .error reason =>
+    throw (IO.userError s!"the library's watch reply could not be read: {reason}")
+
+/-- Cancels the watch or the wait `id`, and returns whether there was
+anything to cancel. Cancelling a watch drops its registration once no other
+watch shares it; nothing cancelled is completed. Safe for an id that is
+unknown. -/
+@[extern "editor_glue_watches_cancel"]
+opaque watchesCancel (id : UInt64) : IO Bool
+
+/-- How many watches are starting or live, and how many waits are not
+answered or not taken, together. A readout for tests. -/
+@[extern "editor_glue_watches_pending"]
+opaque watchesPending : IO UInt64
+
+/-- Shuts the library's watch service down: ends every watch. A start asked
+for later is refused as shut down. The editor's mains call it before they
+quit the queues; it is safe to call again. -/
+@[extern "editor_glue_watches_shutdown"]
+opaque watchesShutdown : IO Unit
 
 end Editor.Ffi

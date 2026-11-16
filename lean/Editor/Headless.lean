@@ -1920,8 +1920,8 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln }
 
 /-- The collaborators the executable's hosts are made of, the headless
-mode's and the window mode's: `shippedOver` the library's timer service and
-file service for the jobs.
+mode's and the window mode's: `shippedOver` the library's timer service,
+file service, process service and watch service for the jobs.
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
@@ -1935,17 +1935,21 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
   -- the file service reads the one and keeps its loads in the other.
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
+  let refused ← Job.RefusedRuns.new
+  let watches ← Job.RealWatches.new
   return shippedOver sysroot oleanDir configDir emit
       { completions, timers := Job.realTimers completions,
-        files := Job.realFiles completions published.reader held }
-      published held
+        files := Job.realFiles completions published.reader held
+        processes := Job.realProcesses completions refused
+        fileWatches := Job.realFileWatches completions watches } published held
 
 /-- The headless mode of the executable, handed the command line after
 `headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>
 <script file>`, read by `Headless.read` (`Editor/Headless/CommandLine.lean`).
 Loads the config in `configDir` with the real elaborator,
-runs the script as `run` does, with the output on stdout, then quits the
-queues and exits explicitly: with status 0 when the script ran to its end or
+runs the script as `run` does, with the output on stdout, then shuts the
+library's process service down, which kills and reaps every child it
+started, quits the queues and exits explicitly: with status 0 when the script ran to its end or
 a command quit the editor before it, and with 1 when it could not, after
 saying why on stderr (the script cannot be read, a wait ran out with a
 reload or a job still running, or the editor thread did not answer). Any
@@ -2005,6 +2009,11 @@ def main (arguments : List String) : IO UInt32 := do
     IO.eprintln s!"editor: {failure.describe settlePatience}"
   if drawn then
     discard Ffi.renderStop
+  -- Every child the library started is killed and reaped before the queues
+  -- are quit: `run` has returned, so the loop has cancelled every job.
+  Ffi.processesShutdown
+  -- And every watch is ended.
+  Ffi.watchesShutdown
   -- Shutdown: quit lets every task parked in a pull return, the pump among
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.

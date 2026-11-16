@@ -649,10 +649,12 @@ real implementation is not one call a request:
 
 | Piece | Where |
 |---|---|
-| The job port: a clock and a wait; `sleep`; `Timer`; the file requests, `File.load` and `File.save`, whose replies are a result or a refusal, a value; `Work` | `lean/Editor/Job.lean` |
+| The job port: a clock and a wait; `sleep`; `Timer`; the file requests, `File.load` and `File.save`, whose replies are a result or a refusal, a value; the file-watch requests, `FileWatch.start`, which watches a file, a directory's entries or a directory's tree and replies with the watch, named for the job, or a refusal, and `FileWatch.next`, which waits for the watch's next delivery; `Work` | `lean/Editor/Job.lean` |
 | The file requests as data: a stamp, line endings and the dominant one, what a save expects, a save's source (a snapshot a command took or one the job loaded), what a load answers, and the refusals with what each says | `lean/Editor/File.lean` |
 | The pure model of the files a job reaches: directories, files with their bytes and stamps, a count of writes for a clock, the snapshots the editor published and those the job's loads made. It answers by the library's rules and its own route: a file's text is decoded a character at a time, each byte that starts no valid character becoming its escape | `lean/Editor/File/Model.lean` |
-| Its pure model: a clock, the instant the job is cancelled at, and the model of files | `lean/Editor/Job/Model.lean` |
+| The file-watch requests as data: a target (a file, or a directory, recursive or not), the coalescing (a window and a bound, the job's policy, with no default), the watch's id, a change (an absolute path and its kinds: created, written, renamed, removed, missed) and the refusals with what each says. The module docs carry the rules and where an addition goes; a `stop` request is listed there as not built. It imports nothing. It is not the interrupt flag's port, `lean/Editor/Watch.lean`, which is `Watch`: this one is `FileWatch` | `lean/Editor/FileWatch.lean` |
+| The pure model of what a job's watches see: the directories there are, the watches with their changes recorded, what each command a test expects changes on disk, and the watches ended. It routes a change as the library's service does, records it by the library's coalescing rule, bound and collapse included, and answers a `next` at the window from the first change, moving the clock there | `lean/Editor/FileWatch/Model.lean` |
+| Its pure model: a clock, the instant the job is cancelled at, the model of files, the model of processes, and the model of watches, which a command a job runs touches when the run ends | `lean/Editor/Job/Model.lean` |
 | Its contract: the clock's properties, run against the model and against the runner over the fake clock by `lake test`, and against the runner over the timer service by `contract-test`; and the file properties, each the files to start with, a job, and every file that must be there afterwards, run against the model and the runner over the fake file service by `lake test`, and against the runner over the library's file service, on real files in a temporary directory, by `contract-test` | `lean/Editor/Job/Contract.lean` |
 | The runner, on plain tasks and promises: the table of waits, the clock port and the file port (`Files`), `spawn`, cancellation, and what a job holds: the snapshots its loads made, which a job's handle lists, which no other job can save, and which `settle` releases | `lean/Editor/Job/Runner.lean` |
 | The clock port's fake, which a test moves by hand, and the file port's (`FakeFiles`): the model of files behind a reference, whose completions and takes a test can hold | `lean/Editor/Job/Fake.lean` |
@@ -774,7 +776,9 @@ editor state's buffers and windows through one port, whose shape is:
   no refusal, and a host that ran a step in pieces would be a second
   driver for the models that could drift. The clock is here and not in a
   sub-port of its own because each sub-port costs a constructor, an
-  embedding and a case in each runner. Nothing on it is refused.
+  embedding and a case in each runner. Nothing on it is refused. It has
+  nothing to do with watching files, which is the job port's `FileWatch`
+  (`lean/Editor/FileWatch.lean`), named so that this port keeps its name.
 - **A command is `EditorM := ExceptT TextError (Program editorPort)`.** A
   program over the text port alone is `TextM`, and every text operation and
   all logic over text alone (the undo tree, the text contract, `append`)

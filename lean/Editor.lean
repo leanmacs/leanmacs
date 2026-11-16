@@ -32,7 +32,9 @@ through (`Editor/Display.lean`), and what config registers
 with (`setup` and stores, `Editor/Setup.lean`). The job port
 (`Editor/Job.lean`) comes with `Editor/Setup.lean`, which registers jobs,
 and with the job port the file requests a job makes (`Editor/File.lean`):
-config loads and saves files with `File.load` and `File.save`. Faces come
+config loads and saves files with `File.load` and `File.save`, and the
+process requests (`Editor/Process.lean`): a job of config's runs a program
+with `Process.run`. Faces come
 with `Editor/Setup.lean` too (`Editor/Face.lean`): config sets one with
 `face`. The file
 commands are here too (`Editor/Files.lean`): a command of config's opens a

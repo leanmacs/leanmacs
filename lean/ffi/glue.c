@@ -867,6 +867,229 @@ lean_obj_res editor_glue_files_pending(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_files_pending()));
 }
 
+// ---- The process service ----
+//
+// The third service behind the completion queue. A run goes in with an id,
+// the command as words and one string of every text it holds (borrowed for
+// the call), as a list of strings does. Its completion comes back as an event
+// on the completion queue, and its result is then taken by the id, as one
+// record: a status, words, a detail string and the two streams' bytes, each
+// a buffer the library lends and the glue hands back once copied.
+
+// The library's `RawProcessResult`. `stdout` and `stderr` are names the C
+// library takes, so the two streams' fields are named `out` and `err` here;
+// only the layout has to match.
+typedef struct {
+  uint64_t status;
+  uint8_t *words;
+  size_t words_len;
+  uint8_t *detail;
+  size_t detail_len;
+  uint8_t *out;
+  size_t out_len;
+  uint8_t *err;
+  size_t err_len;
+} editor_ffi_raw_process_result;
+bool editor_ffi_processes_run(uint64_t id, const uint8_t *words,
+                              size_t words_len, const uint8_t *strings,
+                              size_t strings_len);
+bool editor_ffi_processes_take(uint64_t id, editor_ffi_raw_process_result *out);
+bool editor_ffi_processes_cancel(uint64_t id);
+uint64_t editor_ffi_processes_pending(void);
+void editor_ffi_processes_shutdown(void);
+bool editor_ffi_processes_open(uint64_t id, const uint8_t *words,
+                               size_t words_len, const uint8_t *strings,
+                               size_t strings_len);
+bool editor_ffi_processes_read(uint64_t child, uint64_t wait);
+bool editor_ffi_processes_write(uint64_t child, uint64_t wait,
+                                const uint8_t *bytes, size_t len);
+bool editor_ffi_processes_close_input(uint64_t child, uint64_t wait);
+bool editor_ffi_processes_take_stream(uint64_t wait,
+                                      editor_ffi_raw_process_result *out);
+uint64_t editor_ffi_processes_held(uint64_t child);
+
+// `Editor.Ffi.processesRunRaw : UInt64 → @& ByteArray → @& String → IO Bool`
+lean_obj_res editor_glue_processes_run(uint64_t id, b_lean_obj_arg words,
+                                       b_lean_obj_arg strings) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_run(
+      id, byte_array_bytes(words), byte_array_len(words), string_bytes(strings),
+      string_len(strings))));
+}
+
+// The Lean `RawProcessResult` of a record the library filled, as
+// `option_some`'s argument, with the library's buffers handed back.
+static lean_object *process_result_of(editor_ffi_raw_process_result raw) {
+  lean_object *detail =
+      lean_mk_string_from_bytes((const char *)raw.detail, raw.detail_len);
+  // `RawProcessResult`: the object fields `words`, `detail`, `stdout` and
+  // `stderr`, then `status`.
+  lean_object *result = lean_alloc_ctor(0, 4, sizeof(uint64_t));
+  lean_ctor_set(result, 0, byte_array_copy(raw.words, raw.words_len));
+  lean_ctor_set(result, 1, detail);
+  lean_ctor_set(result, 2, byte_array_copy(raw.out, raw.out_len));
+  lean_ctor_set(result, 3, byte_array_copy(raw.err, raw.err_len));
+  lean_ctor_set_uint64(result, uint64_field(4, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.words_len);
+  editor_ffi_text_free(raw.detail, raw.detail_len);
+  editor_ffi_text_free(raw.out, raw.out_len);
+  editor_ffi_text_free(raw.err, raw.err_len);
+  return result;
+}
+
+// `Editor.Ffi.processesTakeRaw : UInt64 → IO (Option RawProcessResult)`.
+// `none` when the service keeps no result for the id.
+lean_obj_res editor_glue_processes_take(uint64_t id) {
+  editor_ffi_raw_process_result raw;
+  if (!editor_ffi_processes_take(id, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  return lean_io_result_mk_ok(option_some(process_result_of(raw)));
+}
+
+// `Editor.Ffi.processesOpenRaw : UInt64 → @& ByteArray → @& String → IO
+// Bool`: a streaming child's open, laid out as a run is with three words
+// before.
+lean_obj_res editor_glue_processes_open(uint64_t id, b_lean_obj_arg words,
+                                        b_lean_obj_arg strings) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_open(
+      id, byte_array_bytes(words), byte_array_len(words), string_bytes(strings),
+      string_len(strings))));
+}
+
+// `Editor.Ffi.processesRead : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_processes_read(uint64_t child, uint64_t wait) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_read(child, wait)));
+}
+
+// `Editor.Ffi.processesWrite : UInt64 → UInt64 → @& ByteArray → IO Bool`.
+// The library copies the bytes, which are borrowed for the call.
+lean_obj_res editor_glue_processes_write(uint64_t child, uint64_t wait,
+                                         b_lean_obj_arg bytes) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_write(
+      child, wait, byte_array_bytes(bytes), byte_array_len(bytes))));
+}
+
+// `Editor.Ffi.processesCloseInput : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_processes_close_input(uint64_t child, uint64_t wait) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_processes_close_input(child, wait)));
+}
+
+// `Editor.Ffi.processesTakeStreamRaw : UInt64 → IO (Option
+// RawProcessResult)`. A reply about a streaming child crosses in a run's
+// record; Lean reads its lines off the lengths in its words.
+lean_obj_res editor_glue_processes_take_stream(uint64_t wait) {
+  editor_ffi_raw_process_result raw;
+  if (!editor_ffi_processes_take_stream(wait, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  return lean_io_result_mk_ok(option_some(process_result_of(raw)));
+}
+
+// `Editor.Ffi.processesHeld : UInt64 → IO UInt64`
+lean_obj_res editor_glue_processes_held(uint64_t child) {
+  return lean_io_result_mk_ok(
+      lean_box_uint64(editor_ffi_processes_held(child)));
+}
+
+// `Editor.Ffi.processesCancel : UInt64 → IO Bool`. It kills the run's
+// process group in the library.
+lean_obj_res editor_glue_processes_cancel(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_cancel(id)));
+}
+
+// `Editor.Ffi.processesPending : IO UInt64`
+lean_obj_res editor_glue_processes_pending(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_processes_pending()));
+}
+
+// `Editor.Ffi.processesShutdown : IO Unit`. Blocks in Rust until every child
+// the service started has been reaped.
+lean_obj_res editor_glue_processes_shutdown(void) {
+  editor_ffi_processes_shutdown();
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
+// ---- The watch service ----
+//
+// The fourth service behind the completion queue. A start goes in with an
+// id, three words and the path's bytes (both borrowed for the call). Its
+// completion comes back on the completion queue, and its reply is then
+// taken by the id; a read is a wait of its own, its delivery taken the same
+// way, as one record: a status, words, a detail and the paths end to end,
+// each a buffer the library lends and the glue hands back once copied.
+
+// The library's `RawWatchReply`.
+typedef struct {
+  uint64_t status;
+  uint8_t *words;
+  size_t words_len;
+  uint8_t *detail;
+  size_t detail_len;
+  uint8_t *paths;
+  size_t paths_len;
+} editor_ffi_raw_watch_reply;
+bool editor_ffi_watches_start(uint64_t id, const uint8_t *words,
+                              size_t words_len, const uint8_t *path,
+                              size_t path_len);
+bool editor_ffi_watches_next(uint64_t watch, uint64_t wait);
+bool editor_ffi_watches_take(uint64_t wait, editor_ffi_raw_watch_reply *out);
+bool editor_ffi_watches_cancel(uint64_t id);
+uint64_t editor_ffi_watches_pending(void);
+void editor_ffi_watches_shutdown(void);
+
+// `Editor.Ffi.watchesStartRaw : UInt64 → @& ByteArray → @& String → IO Bool`
+lean_obj_res editor_glue_watches_start(uint64_t id, b_lean_obj_arg words,
+                                       b_lean_obj_arg path) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_watches_start(
+      id, byte_array_bytes(words), byte_array_len(words), string_bytes(path),
+      string_len(path))));
+}
+
+// `Editor.Ffi.watchesNext : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_watches_next(uint64_t watch, uint64_t wait) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_watches_next(watch, wait)));
+}
+
+// `Editor.Ffi.watchesTakeRaw : UInt64 → IO (Option RawWatchReply)`. `none`
+// when the service keeps nothing for the wait.
+lean_obj_res editor_glue_watches_take(uint64_t wait) {
+  editor_ffi_raw_watch_reply raw;
+  if (!editor_ffi_watches_take(wait, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *detail =
+      lean_mk_string_from_bytes((const char *)raw.detail, raw.detail_len);
+  // `RawWatchReply`: the object fields `words`, `detail` and `paths`, then
+  // `status`.
+  lean_object *reply = lean_alloc_ctor(0, 3, sizeof(uint64_t));
+  lean_ctor_set(reply, 0, byte_array_copy(raw.words, raw.words_len));
+  lean_ctor_set(reply, 1, detail);
+  lean_ctor_set(reply, 2, byte_array_copy(raw.paths, raw.paths_len));
+  lean_ctor_set_uint64(reply, uint64_field(3, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.words_len);
+  editor_ffi_text_free(raw.detail, raw.detail_len);
+  editor_ffi_text_free(raw.paths, raw.paths_len);
+  return lean_io_result_mk_ok(option_some(reply));
+}
+
+// `Editor.Ffi.watchesCancel : UInt64 → IO Bool`
+lean_obj_res editor_glue_watches_cancel(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_watches_cancel(id)));
+}
+
+// `Editor.Ffi.watchesPending : IO UInt64`
+lean_obj_res editor_glue_watches_pending(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_watches_pending()));
+}
+
+// `Editor.Ffi.watchesShutdown : IO Unit`. Returns once every watch is ended
+// and every start in flight has returned.
+lean_obj_res editor_glue_watches_shutdown(void) {
+  editor_ffi_watches_shutdown();
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
 // ---- The window ----
 //
 // Running the window is one blocking call: the library's main-thread service

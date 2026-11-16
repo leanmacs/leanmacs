@@ -1,5 +1,7 @@
 import Editor.Command
 import Editor.File
+import Editor.FileWatch
+import Editor.Process
 
 /-!
 # Jobs
@@ -39,6 +41,29 @@ the job can save it, and the job's command can take it into the text store
 the editor's port. Whatever runs the job releases what it holds once its
 command has run, or when it fails or is cancelled.
 
+A job reaches processes through one request, `process`, which carries a
+`ProcessRequest` (`Editor/Process.lean`): `Process.run` runs a command to
+its end and replies with how it ended and both its output streams, or a
+refusal: an `Except ProcessError`, a value, which the job matches on.
+`Process.start` starts a streaming child, which the job then reads
+(`Process.read`, a delivery of lines or bytes at a time), writes to
+(`Process.write`, `Process.writeLine`) and closes the input of
+(`Process.closeInput`). A cancelled job's child is killed, with its process
+group, by the library: the runner withdraws the wait, and withdrawing a
+process wait cancels the run (`Editor/Job/Runner.lean`, "Cancellation"). A
+streaming child does not outlive its job: the runner cancels it when the job
+ends, however it ends.
+
+A job reaches changes on disk through one request, `fileWatch`, which
+carries a `FileWatchRequest` (`Editor/FileWatch.lean`): `FileWatch.start`
+watches a file, a directory's entries or a directory's tree and replies with
+the watch, named for the job, or a refusal, an `Except FileWatchError`;
+`FileWatch.next` waits for the watch's next delivery, every change recorded
+and not yet taken, coalesced over the job's window. A watch does not outlive
+its job: the runner ends every watch the job holds when the job ends,
+however it ends (`Editor/Job/Runner.lean`, "A watch does not outlive its
+job"). It is not the interrupt port `Editor/Watch.lean`.
+
 No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
 something a job names.
@@ -53,14 +78,29 @@ resume it, and it runs no cleanup of its own. What it ended as is an
 
 ## Adding to the port
 
-A new service a job can wait on (a process) is a constructor of
-`JobRequest` with its case in `JobRequest.Reply`, and an operation here that
-makes the request. It then needs a clause in the model (`JobModel.handle`,
+A new service a job can wait on is a constructor of `JobRequest` with its
+case in `JobRequest.Reply`, and an operation here that makes the request.
+It then needs a clause in the model (`JobModel.handle`,
 `Editor/Job/Model.lean`), an answer in the runner, and a property in the
 contract, which is what pins it for both. The file service is the example:
 `JobRequest.file`, whose requests are their own type so that a new file
 request is a constructor of `FileRequest` and not of this port
-(`Editor/File.lean` says what it needs).
+(`Editor/File.lean` says what it needs). The process service is the second:
+`JobRequest.process`, whose requests are `ProcessRequest`s, so a stream read
+as it comes is a constructor there and not here (`Editor/Process.lean`
+says what it needs). Its model is `Editor/Process/Model.lean`, its fake
+`FakeProcesses` and its real implementation `realProcesses`; withdrawing a
+wait also tells the process service (`Handle.withdraw`), which is how a
+cancelled job's child is killed.
+
+The file-watch service is the third, beside it: `JobRequest.fileWatch`,
+whose requests are `FileWatchRequest`s, so a `stop` that ends a watch early
+is a constructor there and not here (`Editor/FileWatch.lean` says what it
+needs). Its model is `Editor/FileWatch/Model.lean`, which the job model
+composes with the process model so that a command a job runs changes what
+its watches see; its fake is `FakeFileWatches` and its real implementation
+`realFileWatches`. Withdrawing a wait tells the watch service too, and
+ending a job ends its watches (`Handle.endWatches`).
 
 ## The pieces
 
@@ -68,13 +108,19 @@ request is a constructor of `FileRequest` and not of this port
   written with, `Timer`, and `Work`, a job as it is spawned;
 - the file requests as data, `Editor/File.lean`, and the pure model of the
   files a job reaches, `Editor/File/Model.lean`;
+- the process requests as data, `Editor/Process.lean`, and the pure model of
+  the processes a job runs, `Editor/Process/Model.lean`;
+- the file-watch requests as data, `Editor/FileWatch.lean`, and the pure
+  model of what a job's watches see, `Editor/FileWatch/Model.lean`;
 - its pure model, `Editor/Job/Model.lean`, which tests run against;
-- its contract, `Editor/Job/Contract.lean`: two lists of properties, of the
-  clock and of the file requests, run against the model and against the
-  runner over a fake clock and a fake file service by `model-test`, and
-  against the runner over the Rust library's services by `contract-test`;
+- its contract, `Editor/Job/Contract.lean`: three lists of properties, of
+  the clock, of the file requests and of the process requests, run against
+  the model and against the runner over a fake clock, a fake file service
+  and a fake process service by `model-test`, and against the runner over
+  the Rust library's services by `contract-test`;
 - the runner, `Editor/Job/Runner.lean`, which runs a job on the pool, with
-  the fakes of the clock port and of the file port (`Editor/Job/Fake.lean`)
+  the fakes of the clock port, of the file port and of the process port
+  (`Editor/Job/Fake.lean`)
   and their real implementations (`Editor/Job/Real.lean`, the only job
   module that imports `Editor.Ffi`);
 - the job table and the shell the editor thread calls,
@@ -95,15 +141,22 @@ inductive JobRequest where
   | waitUntil (deadline : Nat)
   /-- Load a file or save one (`Editor/File.lean`), and wait for it. -/
   | file (request : FileRequest)
+  /-- Run a process (`Editor/Process.lean`), and wait for it. -/
+  | process (request : ProcessRequest)
+  /-- Watch a file or a directory, or wait for a watch's next delivery
+  (`Editor/FileWatch.lean`). -/
+  | fileWatch (request : FileWatchRequest)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
-nothing for a wait, and for a file request its own reply, a refusal or a
-result. No reply says a job was cancelled. -/
+nothing for a wait, and for a file or a process request its own reply, a
+refusal or a result. No reply says a job was cancelled. -/
 def JobRequest.Reply : JobRequest → Type
   | .now => Nat
   | .waitUntil _ => Unit
   | .file request => request.Reply
+  | .process request => request.Reply
+  | .fileWatch request => request.Reply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -164,6 +217,53 @@ has the rules. -/
 def File.save (source : File.Source) (path : System.FilePath) (expect : File.Expect) :
     JobM (Except FileError File.Stamp) :=
   ExceptT.lift (Program.request (port := jobPort) (.file (.save source path expect)))
+
+/-- Runs `command` to its end and waits for it, collecting each output stream
+unless it is longer than `limit` bytes: how the child ended and both its
+streams, or why it was refused. The refusal is a value: the job goes on. A
+cancelled job's child is killed, with its process group.
+`Editor/Process.lean` has the rules. -/
+def Process.run (command : Process.Command) (limit : Nat) :
+    JobM (Except ProcessError Process.Ran) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.run command limit)))
+
+/-- Starts `command` as a streaming child, as `streaming` says, and waits for
+it to start: the child, named for this job, or why it was refused. The child
+does not outlive the job. `Editor/Process.lean` has the rules. -/
+def Process.start (command : Process.Command) (streaming : Process.Streaming) :
+    JobM (Except ProcessError Process.Id) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.start command streaming)))
+
+/-- Waits for the next delivery of `process`'s output: every frame read and
+not yet taken, and in the last one how the child ended. -/
+def Process.read (process : Process.Id) : JobM (Except ProcessError Process.Delivery) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.read process)))
+
+/-- Writes `bytes` to `process`'s standard input, and waits until they are in
+its pipe. -/
+def Process.write (process : Process.Id) (bytes : ByteArray) : JobM (Except ProcessError Unit) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.write process bytes)))
+
+/-- Writes `line` and a line feed to `process`'s standard input. -/
+def Process.writeLine (process : Process.Id) (line : String) : JobM (Except ProcessError Unit) :=
+  Process.write process (line.toUTF8.push 10)
+
+/-- Closes `process`'s standard input: the child reads its end. -/
+def Process.closeInput (process : Process.Id) : JobM (Except ProcessError Unit) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.closeInput process)))
+
+/-- Watches `target`, coalesced as `coalescing` says: the watch, named for
+the job, which does not outlive it. `Editor/FileWatch.lean` has the
+rules. -/
+def FileWatch.start (target : FileWatch.Target) (coalescing : FileWatch.Coalescing) :
+    JobM (Except FileWatchError FileWatch.Id) :=
+  ExceptT.lift (Program.request (port := jobPort) (.fileWatch (.start target coalescing)))
+
+/-- Waits for the next delivery of `watch`: every change recorded and not yet
+taken, at most one a path, once the window from its first change has
+passed. -/
+def FileWatch.next (watch : FileWatch.Id) : JobM (Except FileWatchError (Array FileWatch.Change)) :=
+  ExceptT.lift (Program.request (port := jobPort) (.fileWatch (.next watch)))
 
 namespace Job
 
@@ -365,6 +465,86 @@ example : True := by
         (do
           (⟨0⟩ : TextId).insert 0 "x"
           discard <| File.save (.snapshot ⟨0⟩) "/a" .whatever)
+  trivial
+
+/-! A process request is a job, and it is not a command: alone, and after a
+text request in a `do` block. So a command cannot run a program. Seen to
+bite once by hand: offered at `JobM (Except ProcessError Process.Ran)`
+inside the first `fail_if_success` check, the module stops building. -/
+
+example : True :=
+  (fun (_ : JobM (Except ProcessError Process.Ran)) => True.intro)
+    (Process.run { program := "/bin/sh", directory := "/" } 1)
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : TextM (Except ProcessError Process.Ran)) => True.intro)
+        (Process.run { program := "/bin/sh", directory := "/" } 1)
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM (Except ProcessError Process.Ran)) => True.intro)
+        (Process.run { program := "/bin/sh", directory := "/" } 1)
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : TextM Unit) => True.intro)
+        (do
+          (⟨0⟩ : TextId).insert 0 "x"
+          discard <| Process.run { program := "/bin/sh", directory := "/" } 1)
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM Unit) => True.intro)
+        (do
+          (⟨0⟩ : TextId).insert 0 "x"
+          discard <| Process.run { program := "/bin/sh", directory := "/" } 1)
+  trivial
+
+/-! A streaming child's requests are a job's, and none is a command: a command
+cannot start a child, read it or write to it. Seen to bite once by hand:
+offered at `JobM (Except ProcessError Process.Id)` inside the first
+`fail_if_success` check, the module stops building. -/
+
+example : True :=
+  (fun (_ : JobM (Except ProcessError Process.Id)) => True.intro)
+    (Process.start { program := "/bin/sh", directory := "/" } { bound := 1 })
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : TextM (Except ProcessError Process.Id)) => True.intro)
+        (Process.start { program := "/bin/sh", directory := "/" } { bound := 1 })
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM (Except ProcessError Process.Id)) => True.intro)
+        (Process.start { program := "/bin/sh", directory := "/" } { bound := 1 })
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM (Except ProcessError Process.Delivery)) => True.intro) (Process.read ⟨1⟩)
+  trivial
+
+example : True := by
+  fail_if_success
+    exact (fun (_ : EditorM (Except ProcessError Unit)) => True.intro) (Process.writeLine ⟨1⟩ "x")
+  trivial
+
+example : True := by
+  fail_if_success
+    exact (fun (_ : TextM (Except ProcessError Unit)) => True.intro) (Process.closeInput ⟨1⟩)
   trivial
 
 /-! A wait is not a command: alone, and after a text request in a `do` block.

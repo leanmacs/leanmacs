@@ -183,8 +183,9 @@
 //! ## Services and completions
 //!
 //! A service is work the library does for a Lean job that takes time: a
-//! timer ([`timers`]) and a load or a save of a file ([`files`]) today, a
-//! process later. A job that waits must not hold a thread, so a request to
+//! timer ([`timers`]), a load or a save of a file ([`files`]), a
+//! command run to its end ([`processes`]), and a watch on a file or a
+//! directory ([`watches`]). A job that waits must not hold a thread, so a request to
 //! a service is never a blocking call. Every service follows these rules:
 //!
 //! - **The caller names the request.** `start` takes an id the caller
@@ -246,6 +247,81 @@
 //! crate but the process's instance and that test. On the Lean side: the
 //! file checks of `ffi-test` (`fileChecks`), which pin that the requests,
 //! their arguments and every kind of result cross.
+//!
+//! Third example: the process service. Its port is `editor-process`'s
+//! [`editor_process::Processes`], with
+//! [`editor_process::fake::FakeProcesses`] published for tests and the
+//! real adapter in a crate of its own (`editor-process-std`), which only
+//! the process's instance names. Unlike the other two, the service's rules
+//! live beside the port, in [`editor_process::service::Service`], so that
+//! the port's contract can drive cancelling and shutdown on the real
+//! adapter. A command crosses as words and one string, as a list of strings
+//! does, and a result is taken by the request's id once its completion has
+//! arrived ([`processes::editor_ffi_processes_take`]): a record of a status,
+//! words, a detail string and the two streams' bytes. Its other C functions
+//! are [`processes::editor_ffi_processes_run`],
+//! [`processes::editor_ffi_processes_cancel`], which kills the run's
+//! process group, [`processes::editor_ffi_processes_shutdown`], and, as a
+//! readout for tests, [`processes::editor_ffi_processes_pending`]. A
+//! streaming child is opened ([`processes::editor_ffi_processes_open`]),
+//! then read ([`processes::editor_ffi_processes_read`]), written to
+//! ([`processes::editor_ffi_processes_write`]) and closed
+//! ([`processes::editor_ffi_processes_close_input`]) a request at a time,
+//! each a wait completed once, whose reply is taken in the same record
+//! ([`processes::editor_ffi_processes_take_stream`]); a read is a pull, so
+//! however fast the child writes, it is one completion on the queue.
+//! [`processes::editor_ffi_processes_held`] says, for tests, whether a
+//! child is held at its bound.
+//!
+//! Tests: the unit tests of `processes.rs`, on the port's fake (a command's
+//! words and string read back, the refusals of words that spell none, and
+//! each result's layout, an open's words and each stream reply's layout);
+//! `tests/processes.rs`, the wiring test, which runs
+//! a real command in a temporary directory it owns through the C functions,
+//! sees its completion and takes its result once, and sees that a
+//! cancelled run is never completed and its child is reaped;
+//! `tests/processes_stream.rs`, the streaming wiring test, which reads a
+//! real child's lines as it writes them, writes and closes its input, sees
+//! one completion on the real queue for a read while 10,000 lines are
+//! written, and cancels a held child; and `tests/processes_shutdown.rs`, a
+//! binary of its own because shutdown is for good, which shows that after
+//! shutdown the child and a streaming child held at its bound are reaped,
+//! the grandchild ends, a later run is refused as shut down and nothing is
+//! pending. The rules of a run are `editor-process`'s, pinned there on the
+//! fake and by the contract on real processes (`editor-process-std`'s
+//! `tests/contract.rs`). On the Lean side: the process checks of `ffi-test`
+//! (`processChecks`), and `contract-test`'s process properties.
+//!
+//! Fourth example: the watch service. Its port is `editor-watch`'s
+//! [`editor_watch::Watch`], with [`editor_watch::fake::FakeWatch`]
+//! published for tests and the real adapter in a crate of its own
+//! (`editor-watch-notify`, over notify), which only the process's instance
+//! names. As with processes, the service's rules live beside the port, in
+//! [`editor_watch::service::Service`]: a file watched through its
+//! directory, the changes coalesced over a window the caller gives, and a
+//! bound on a delivery's paths. Its clock is the job clock
+//! ([`timers::Monotonic`]). A start crosses as three words and a path
+//! ([`watches::editor_ffi_watches_start`]); its reply is taken by its id
+//! once its completion has arrived ([`watches::editor_ffi_watches_take`]),
+//! and from then on the id names the watch. A read
+//! ([`watches::editor_ffi_watches_next`]) is a pull, a wait with an id of
+//! its own completed once, however many changes come; its delivery is
+//! taken in the same record: a status, words, a detail and the paths end to
+//! end. Its other C functions are [`watches::editor_ffi_watches_cancel`],
+//! [`watches::editor_ffi_watches_shutdown`] and, as a readout for tests,
+//! [`watches::editor_ffi_watches_pending`].
+//!
+//! Tests: the unit tests of `watches.rs`, on the port's fake and its manual
+//! clock (a start's words read back, the refusals of words that spell
+//! none, and each reply's layout); `tests/watches.rs`, the wiring test,
+//! which watches a real file in a temporary directory it owns through the
+//! C functions, sees a write delivered on the real queue, and sees that a
+//! cancelled watch's read is never completed; and
+//! `tests/watches_shutdown.rs`, a binary of its own because shutdown is for
+//! good. The rules of a watch are `editor-watch`'s, pinned there on the fake
+//! and by the contract on real files (`editor-watch-notify`'s
+//! `tests/contract.rs`). On the Lean side: the watch checks of `ffi-test`,
+//! and `contract-test`'s watch properties.
 //!
 //! ## The window
 //!
@@ -381,6 +457,13 @@
 //! service's thread runs until the process ends, and what it queues after
 //! the quit is dropped.
 //!
+//! The one exception is the process service, because a child outlives the
+//! editor unless it is ended:
+//! [`processes::editor_ffi_processes_shutdown`] kills every child's process
+//! group and blocks until every child has been reaped. Lean's mains call it
+//! before they quit the queues, and it is not folded into the quit, so the
+//! event queues stay free of process concerns.
+//!
 //! Tests: the quit tests in `events.rs`; `ffi-test shutdown` and
 //! `ffi-test exit-while-blocked`.
 //!
@@ -420,11 +503,13 @@ pub mod log;
 pub mod main_thread;
 pub mod marker;
 pub mod motion;
+pub mod processes;
 pub mod render;
 pub mod snapshot;
 pub mod text;
 pub mod timers;
 pub mod transaction;
+pub mod watches;
 pub mod window;
 mod words;
 

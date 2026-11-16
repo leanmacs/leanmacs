@@ -1,12 +1,15 @@
 import Editor.File.Model
+import Editor.FileWatch.Model
 import Editor.Job.Runner
+import Editor.Process.Model
 
 /-!
 # The fakes of the job runner's services
 
-Two fakes, published for `model-test` and `config-test`: the fake clock,
-below, and the fake file service (`FakeFiles`, at the end of this module,
-whose doc comment has its rules).
+Four fakes, published for `model-test` and `config-test`: the fake clock,
+below, the fake file service (`FakeFiles`, after it), the fake process
+service (`FakeProcesses`) and the fake watch service (`FakeFileWatches`, at
+the end of this module), each of whose doc comment has its rules.
 
 ## The fake clock
 
@@ -388,5 +391,331 @@ def released (files : FakeFiles) : BaseIO (Array JobSnapshotId) :=
   return (← files.state.get).released
 
 end FakeFiles
+
+/-- What a fake process service holds. -/
+structure FakeProcesses.State where
+  /-- What each command does, and what was started and killed. -/
+  model : ProcessModel := {}
+  /-- The requests that were started and have been neither taken nor
+  withdrawn, each with its wait's id, oldest first. -/
+  pending : Array (UInt64 × ProcessRequest) := #[]
+  /-- Every request ever started, each with its wait's id, oldest first. -/
+  started : Array (UInt64 × ProcessRequest) := #[]
+  /-- The waits that were withdrawn while their requests were pending,
+  oldest first. -/
+  withdrawn : Array UInt64 := #[]
+  /-- The waits whose replies were taken, oldest first. -/
+  taken : Array UInt64 := #[]
+  /-- Whether completions are held: a request started while they are is not
+  completed until the test lets go. -/
+  holding : Bool := false
+  /-- The waits whose completion is held, oldest first. -/
+  parked : Array UInt64 := #[]
+
+/-- The fake of the process port (`Job.Processes`, `Editor/Job/Runner.lean`):
+the pure model of processes (`Editor/Process/Model.lean`) behind a
+reference. It is published for `model-test`, so the job port's process
+requests run on the runner with no library and no process.
+
+- `start` records the request and completes its wait: at once, or, while
+  the test holds completions (`holdCompletions`), when the test lets go
+  (`letGo`).
+- `take` answers from the model, and that is when a run happens: the model
+  records it as started then. So a request withdrawn before it was taken
+  never ran, and `take` of it is refused as failed.
+- `cancel` withdraws a request that was started and not taken, as the
+  library's service kills a run's child, and is safe for any id. Of the id
+  of a streaming child, it ends the child in the model, as the library's
+  service kills one, and records the id as withdrawn.
+- A streaming child is named by the id of its start's wait, as the
+  library's is: `take` of a start has the model give it that id.
+- `ran` is told the command of every run it takes, after the run: a test
+  connects it to what the run changes, so that the fake watch service sees
+  a job's command change the disk (`FakeFileWatches.ran`). By default it
+  does nothing.
+
+It records what was started, withdrawn and taken. -/
+structure FakeProcesses where
+  /-- The table the service completes its waits through. -/
+  completions : Completions
+  /-- What is told the command of each run, once it has run. -/
+  ran : Process.Command → BaseIO Unit
+  /-- What the service holds. Every change to it is one atomic step. -/
+  state : IO.Ref FakeProcesses.State
+
+namespace FakeProcesses
+
+/-- A process service over `model`, through the table `completions`, with no
+request started, which tells `ran` the command of each run once it has
+run. -/
+def new (completions : Completions) (model : ProcessModel := {})
+    (ran : Process.Command → BaseIO Unit := fun _ => pure ()) : BaseIO FakeProcesses :=
+  return { completions, ran, state := ← IO.mkRef { model } }
+
+/-- Holds every completion from now on: a request started from now is not
+completed until `letGo`. So a test can act while a job is in a process
+wait. -/
+def holdCompletions (processes : FakeProcesses) : BaseIO Unit :=
+  processes.state.modify fun state => { state with holding := true }
+
+/-- Completes every wait whose completion is held, oldest first, and holds
+none from now on. -/
+def letGo (processes : FakeProcesses) : BaseIO Unit := do
+  let parked ←
+    processes.state.modifyGet fun state =>
+        (state.parked,
+          { state with
+            holding := false, parked := #[] })
+  for id in parked do
+    processes.completions.finish id .completed
+
+/-- Starts `request` as the wait `id`, and completes the wait unless
+completions are held. -/
+def start (processes : FakeProcesses) (id : UInt64) (request : ProcessRequest) : BaseIO Unit := do
+  let held ←
+    processes.state.modifyGet fun state =>
+        let state :=
+          { state with
+            pending := state.pending.push (id, request)
+            started := state.started.push (id, request) }
+        if state.holding then (true, { state with parked := state.parked.push id })
+        else (false, state)
+  unless held do
+    processes.completions.finish id .completed
+
+/-- The model's answer to `request`, which was started as the wait `id`, and
+the request is pending no longer. A request that is not pending, because it
+was withdrawn or never started, is refused as failed and changes nothing. -/
+def take (processes : FakeProcesses) (id : UInt64) (request : ProcessRequest) :
+    BaseIO request.Reply := do
+  let (reply, ran) ←
+    processes.state.modifyGet fun state =>
+        if state.pending.any (·.1 == id) then
+          -- A child is named by the wait of its start, as the library's is.
+          let model :=
+            if let .start .. := request then { state.model with next := id.toNat } else state.model
+          let (reply, model, _) := model.handle 0 none request
+          ((reply, true),
+            { state with
+              model, pending := state.pending.filter (·.1 != id), taken := state.taken.push id })
+        else ((request.refused (.failed "the request is not pending"), false), state)
+  if ran then
+    if let .run command _ := request then
+      processes.ran command
+  return reply
+
+/-- Withdraws the wait `id`, if its request is pending: it is never
+completed here and never runs. Or, if `id` names a streaming child of the
+model's, ends it as the library kills one: the model records it as killed
+and forgets it. -/
+def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit :=
+  processes.state.modify fun state =>
+    if state.pending.any (·.1 == id) then
+      { state with
+        pending := state.pending.filter (·.1 != id)
+        parked := state.parked.filter (· != id)
+        withdrawn := state.withdrawn.push id }
+    else
+      if state.model.children.any (·.id == id.toNat) then
+        { state with
+          model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id }
+      else state
+
+/-- The service as the port the runner is given. -/
+def processes (processes : FakeProcesses) : Processes :=
+  { start := processes.start, take := processes.take, cancel := processes.cancel }
+
+/-- The model as it is now. -/
+def model (processes : FakeProcesses) : BaseIO ProcessModel :=
+  return (← processes.state.get).model
+
+/-- How many requests are pending: started, and neither taken nor
+withdrawn. -/
+def waiting (processes : FakeProcesses) : BaseIO Nat :=
+  return (← processes.state.get).pending.size
+
+/-- Every request ever started, each with its wait's id, oldest first. -/
+def started (processes : FakeProcesses) : BaseIO (Array (UInt64 × ProcessRequest)) :=
+  return (← processes.state.get).started
+
+/-- The waits that were withdrawn while their requests were pending, oldest
+first. -/
+def withdrawn (processes : FakeProcesses) : BaseIO (Array UInt64) :=
+  return (← processes.state.get).withdrawn
+
+/-- The waits whose replies were taken, oldest first. -/
+def taken (processes : FakeProcesses) : BaseIO (Array UInt64) :=
+  return (← processes.state.get).taken
+
+end FakeProcesses
+
+/-- What a fake watch service holds. -/
+structure FakeFileWatches.State where
+  /-- What the watches see. -/
+  model : FileWatchModel := {}
+  /-- The requests that were started and have been neither taken nor
+  withdrawn, each with its wait's id, oldest first. -/
+  pending : Array (UInt64 × FileWatchRequest) := #[]
+  /-- The `next` waits that are pending and not yet completed: their watch
+  had nothing recorded. -/
+  parked : Array (UInt64 × Nat) := #[]
+  /-- Every request ever started, each with its wait's id, oldest first. -/
+  started : Array (UInt64 × FileWatchRequest) := #[]
+  /-- The waits withdrawn while pending, and the watches ended, oldest
+  first. -/
+  withdrawn : Array UInt64 := #[]
+  /-- The waits whose replies were taken, oldest first. -/
+  taken : Array UInt64 := #[]
+
+/-- The fake of the file-watch port (`Job.FileWatches`,
+`Editor/Job/Runner.lean`): the pure model of watches
+(`Editor/FileWatch/Model.lean`) behind a reference. It is published for
+`model-test` and `config-test`, so the job port's watch requests run on the
+runner with no library and no file.
+
+- `start` of a start records it and completes its wait at once; `take`
+  answers from the model, which names the watch by the wait's id, as the
+  library does.
+- `start` of a `next` completes its wait as soon as the watch has a change
+  recorded: at once if it has one, or when `change`, `touch` or `ran`
+  records one. It does not apply the window: the window is pinned by the
+  model's checks (`ModelTest.fileWatchModelChecks`) and by the library's
+  tests in Rust, and a test of the fake waits on no clock for it. A `next`
+  of a watch the model does not have completes at once, and its take is
+  `noSuchWatch`.
+- `cancel` withdraws a request that was started and not taken, and is safe
+  for any id. Of the id of a watch, it ends the watch in the model, as the
+  library's service drops a registration, and records the id as
+  withdrawn.
+- `ran` records what a command changes on disk (`FileWatchModel.effects`),
+  for `FakeProcesses.ran`.
+
+It records what was started, withdrawn, taken and ended, and how many
+watches are up. -/
+structure FakeFileWatches where
+  /-- The table the service completes its waits through. -/
+  completions : Completions
+  /-- What the service holds. Every change to it is one atomic step. -/
+  state : IO.Ref FakeFileWatches.State
+
+namespace FakeFileWatches
+
+/-- A watch service over `model`, through the table `completions`, with no
+request started. -/
+def new (completions : Completions) (model : FileWatchModel := {}) : BaseIO FakeFileWatches :=
+  return { completions, state := ← IO.mkRef { model } }
+
+/-- Whether the model's watch `watch` has a change recorded, or is not
+there: a `next` of it can be answered. -/
+def answerable (model : FileWatchModel) (watch : Nat) : Bool :=
+  match model.watches.find? (·.id == watch) with
+  | some found => !found.changes.isEmpty
+  | none => true
+
+/-- Starts `request` as the wait `id`, and completes the wait when it can be
+taken. -/
+def start (watches : FakeFileWatches) (id : UInt64) (request : FileWatchRequest) : BaseIO Unit := do
+  let now ←
+    watches.state.modifyGet fun state =>
+        let state :=
+          { state with
+            pending := state.pending.push (id, request)
+            started := state.started.push (id, request) }
+        match request with
+        | .start .. => (true, state)
+        | .next watch =>
+          if answerable state.model watch.number then (true, state)
+          else (false, { state with parked := state.parked.push (id, watch.number) })
+  if now then
+    watches.completions.finish id .completed
+
+/-- Completes every parked `next` whose watch can now be answered. -/
+def wake (watches : FakeFileWatches) : BaseIO Unit := do
+  let due ←
+    watches.state.modifyGet fun state =>
+        let (due, parked) := state.parked.partition fun (_, watch) => answerable state.model watch
+        (due, { state with parked })
+  for (id, _) in due do
+    watches.completions.finish id .completed
+
+/-- Records `changes` in the model, and completes each `next` that can now be
+answered. -/
+def touch (watches : FakeFileWatches) (changes : Array (System.FilePath × FileWatch.Kind)) :
+    BaseIO Unit := do
+  watches.state.modify fun state => { state with model := state.model.touch changes 0 }
+  watches.wake
+
+/-- Records the change of `path` with each of `kinds`: for a test. -/
+def change (watches : FakeFileWatches) (path : System.FilePath) (kinds : Array FileWatch.Kind) :
+    BaseIO Unit :=
+  watches.touch (kinds.map (path, ·))
+
+/-- Records what a run of `command` changes on disk, as the model's effects
+say. -/
+def ran (watches : FakeFileWatches) (command : Process.Command) : BaseIO Unit := do
+  let changes := (← watches.state.get).model.effectsOf command
+  watches.touch changes
+
+/-- The model's answer to `request`, which was started as the wait `id`, and
+the request is pending no longer. A request that is not pending is refused
+as failed and changes nothing. -/
+def take (watches : FakeFileWatches) (id : UInt64) (request : FileWatchRequest) :
+    BaseIO request.Reply :=
+  watches.state.modifyGet fun state =>
+    if state.pending.any (·.1 == id) then
+      -- A watch is named by the wait of its start, as the library's is.
+      let model :=
+        if let .start .. := request then { state.model with next := id.toNat } else state.model
+      let (reply, model, _) := model.handle 0 none request
+      (reply,
+        { state with
+          model, pending := state.pending.filter (·.1 != id), taken := state.taken.push id })
+    else (request.refused (.failed "the request is not pending"), state)
+
+/-- Withdraws the wait `id`, if its request is pending; or, if `id` names a
+watch of the model's, ends it as the library drops one. -/
+def cancel (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit :=
+  watches.state.modify fun state =>
+    if state.pending.any (·.1 == id) then
+      { state with
+        pending := state.pending.filter (·.1 != id)
+        parked := state.parked.filter (·.1 != id)
+        withdrawn := state.withdrawn.push id }
+    else
+      if state.model.watches.any (·.id == id.toNat) then
+        { state with
+          model := state.model.endWatch id.toNat, withdrawn := state.withdrawn.push id }
+      else state
+
+/-- The service as the port the runner is given. -/
+def fileWatches (watches : FakeFileWatches) : FileWatches :=
+  { start := watches.start, take := watches.take, cancel := watches.cancel }
+
+/-- The model as it is now. -/
+def model (watches : FakeFileWatches) : BaseIO FileWatchModel :=
+  return (← watches.state.get).model
+
+/-- How many watches are up: started and not ended. -/
+def watching (watches : FakeFileWatches) : BaseIO Nat :=
+  return (← watches.state.get).model.watches.size
+
+/-- Every watch ended, by its id, oldest first. -/
+def ended (watches : FakeFileWatches) : BaseIO (Array Nat) :=
+  return (← watches.state.get).model.ended
+
+/-- How many requests are pending: started, and neither taken nor
+withdrawn. -/
+def waiting (watches : FakeFileWatches) : BaseIO Nat :=
+  return (← watches.state.get).pending.size
+
+/-- Every request ever started, each with its wait's id, oldest first. -/
+def started (watches : FakeFileWatches) : BaseIO (Array (UInt64 × FileWatchRequest)) :=
+  return (← watches.state.get).started
+
+/-- The waits withdrawn while pending, and the watches ended, oldest first. -/
+def withdrawn (watches : FakeFileWatches) : BaseIO (Array UInt64) :=
+  return (← watches.state.get).withdrawn
+
+end FakeFileWatches
 
 end Editor.Job

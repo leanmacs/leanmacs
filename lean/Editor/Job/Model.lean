@@ -1,5 +1,7 @@
 import Editor.File.Model
+import Editor.FileWatch.Model
 import Editor.Job
+import Editor.Process.Model
 
 /-!
 # The pure model of the job port
@@ -25,6 +27,21 @@ here.
   there, so whoever plays a command, a job and the job's command hands the
   snapshots across as values: the published ones in, and what the job held
   out.
+- A process request is answered by the model of the processes the job runs
+  (`JobModel.processes`, `Editor/Process/Model.lean`), which is part of this
+  model. A scripted run moves the clock on by the time it takes, as a wait
+  does, so a cancellation that falls inside it ends the run as `cancelled`
+  at that instant, and the process model records the command as killed.
+- A watch request is answered by the model of what the job's watches see
+  (`JobModel.fileWatches`, `Editor/FileWatch/Model.lean`). A run of a
+  command touches those watches with what the command changes on disk,
+  when the run ends; a `next` moves the clock to when its delivery is due.
+- **A watch does not outlive its job.** When the run ends, however it ends,
+  every watch is recorded as ended and forgotten (`FileWatchModel.endAll`).
+- **A streaming child does not outlive its job.** When the run ends, finished,
+  failed or cancelled, every streaming child the job started that is still
+  running is recorded as killed, and every one is forgotten
+  (`ProcessModel.endAll`): the model of the runner's cancelling them.
 
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities
@@ -43,6 +60,10 @@ structure JobModel where
   /-- The files the job reaches, and the snapshots its file requests may
   name (`Editor/File/Model.lean`). -/
   files : FileModel := {}
+  /-- The processes the job runs (`Editor/Process/Model.lean`). -/
+  processes : ProcessModel := {}
+  /-- What the job's watches see (`Editor/FileWatch/Model.lean`). -/
+  fileWatches : FileWatchModel := {}
   deriving DecidableEq
 
 namespace JobModel
@@ -54,6 +75,28 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
   | .file request, model =>
     let (reply, files) := model.files.handle request
     (reply, { model with files })
+  | .process request, model =>
+    let (reply, processes, now) := model.processes.handle model.now model.cancelAt request
+    -- A run changes the disk as its command does, when it ends.
+    let fileWatches :=
+      match request with
+      | .run command _ => model.fileWatches.touch (model.fileWatches.effectsOf command) now
+      | _ => model.fileWatches
+    (reply,
+      { model with
+        processes, fileWatches, now })
+  | .fileWatch request, model =>
+    let (reply, fileWatches, now) := model.fileWatches.handle model.now model.cancelAt request
+    (reply,
+      { model with
+        fileWatches, now })
+
+/-- The model once the job has ended: every streaming child it started is
+ended (`ProcessModel.endAll`), as the runner cancels them, and every watch
+(`FileWatchModel.endAll`), however the job ended. -/
+def ended (model : JobModel) : JobModel :=
+  { model with
+    processes := model.processes.endAll, fileWatches := model.fileWatches.endAll }
 
 /-- Whether the job is cancelled by now. -/
 def cancelled (model : JobModel) : Bool :=
@@ -67,14 +110,14 @@ Cancellation is looked for before each request and when each reply arrives,
 and never told to the program: the run stops there. A wait that would reach
 `cancelAt` leaves the clock at that instant. -/
 def run {α : Type} : Program jobPort α → JobModel → Option α × JobModel
-  | .done value, model => (if model.cancelled then none else some value, model)
+  | .done value, model => (if model.cancelled then none else some value, model.ended)
   | .step request next, model =>
-    if model.cancelled then (none, model)
+    if model.cancelled then (none, model.ended)
     else
       let (reply, after) := handle request model
       match model.cancelAt with
       | some instant =>
-        if instant ≤ after.now then (none, { after with now := instant })
+        if instant ≤ after.now then (none, { after with now := instant }.ended)
         else run (next reply) after
       | none => run (next reply) after
 

@@ -189,6 +189,56 @@ adapter depends on the library. It checks no licence: the library's is
 MPL-2.0, and whether that is acceptable in this workspace is the owner's
 to confirm.
 
+Child processes are tested there too. The service that runs a command
+to its end, cancels it and shuts down (`crates/editor-process`) reaches
+processes only through the `Processes` port it defines, and its tests run
+on the port's published fake, which `mise run lint` holds them to
+(`crates/editor-process/clippy.toml`). The port's contract is tested
+there on the fake and on fakes written to break each rule. The port's
+real adapter (`crates/editor-process-std`) is held to the same contract
+on real processes, every one `/bin/sh` or another absolute path, in a
+temporary directory its test makes and removes: among them a child that
+starts a grandchild, which a kill, a cancel and shutdown must each end,
+and whose child must be reaped; and streaming children, read as they
+write, written to, held at their bound and cancelled, every wait on a
+marker file a child makes or on the service's readout of a held child,
+never a fixed sleep. `crates/editor-process-std/tests/sigpipe.rs`, a test
+binary of its own, sets `SIGPIPE` to its default, as a Lean executable has
+it, and writes to an input its child closed; `tests/large_write.rs` writes
+256 KiB, four times a pipe, to `/bin/cat` through the service and reads it
+all back. `crates/editor-ffi/tests/processes.rs`
+runs a command through the C functions, `tests/processes_stream.rs`
+streams a child through them and pulls one completion for a read from the
+real completion queue, and `crates/editor-ffi/tests/processes_shutdown.rs`,
+a test binary of its own, shuts the process-wide service down. No test
+changes the test process's environment or working directory; the
+environment a property sets goes to the child alone.
+
+Watching is tested there too. The coalescing rule and the service that
+owns each watch (`crates/editor-watch`) reach a file system only through
+the `Watch` port the crate defines, and time only through its `Clock`, and
+their tests run on the port's published fake, a file system in memory, and
+on the manual clock, which `mise run lint` holds them to
+(`crates/editor-watch/clippy.toml`: no `std::fs`, no `Path` method that
+asks the disk, no clock of the machine's, and not the adapter's
+constructor). The port's contract, the service's properties among them, is
+tested there on the fake and on fakes written to break each rule of the
+port. The port's real adapter, over `notify`
+(`crates/editor-watch-notify`), is held to the same contract on real files
+in a temporary directory its test makes and removes, with a monotonic clock
+of the test's own. Every wait is on a notice or a delivery that matches, up
+to a deadline of 10 s, never a fixed sleep, and a negative claim is shown
+by a sentinel noticed after it; on the fake the window passes on the manual
+clock, so the coalescing property is deterministic there. On real files a
+property checks that a kind is present, never an exact set: the platform
+decides how its flags come. `mise run linux-ci` runs the same contract on
+inotify, in the container's own `/tmp`. `crates/editor-ffi/tests/watches.rs`
+watches a real file through the C functions and pulls the completion from
+the real completion queue, and `crates/editor-ffi/tests/watches_shutdown.rs`,
+a test binary of its own, shuts the process-wide service down.
+`mise run deny` holds that only the adapter depends on `notify`, and that
+only `editor-ffi` depends on the adapter.
+
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:
 

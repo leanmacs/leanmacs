@@ -32,7 +32,13 @@ for permission, for file reads and writes, and to run commands.
 
 **The ACP client (a compiled Lean package over the process service):**
 - Spawning the agent process through the Rust process service, which
-  frames its output; JSON-RPC on top.
+  frames its output; JSON-RPC on top. As built, the service frames a
+  streaming child's output by line, delivers it to the job that started
+  the child a read at a time, one completion a read however fast the agent
+  writes, holds the agent at a bound by not reading, and takes a write to
+  its standard input as a request (`Process.start`, `Process.read`,
+  `Process.writeLine`, `lean/Editor/Process.lean`). A JSON-RPC message is a
+  line; the client parses the lines in Lean.
 - Serving the agent's requests while the editor's own prompt request is
   pending.
 - Tracking outstanding requests, and answering every pending permission

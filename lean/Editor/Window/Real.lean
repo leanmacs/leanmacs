@@ -201,8 +201,9 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
 /-- `editor [<file>]`, with the command line's `arguments`: reads the world at
 the edge, opens the system's display and clipboard, and runs `host` on the
 real window. A command line it does not take is the reason and the usage on
-stderr, and status 2. It quits the queues and exits explicitly, as the
-headless mode does. -/
+stderr, and status 2. It shuts the library's process service down, which
+kills and reaps every child it started, quits the queues and exits
+explicitly, as the headless mode does. -/
 def main (arguments : List String) : IO UInt32 := do
   let environment : Environment :=
     { workingDirectory := (← IO.currentDir).toString, xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME"
@@ -236,6 +237,10 @@ def main (arguments : List String) : IO UInt32 := do
       | _ => #[]) ++
       unavailable
   let status ← host .winit options plan (← Ffi.Display.newSystem) clipboard said
+  -- Every child the library started is killed and reaped before the queues
+  -- are quit, and every watch is ended.
+  Ffi.processesShutdown
+  Ffi.watchesShutdown
   Ffi.quit
   IO.Process.exit status.toUInt8
 

@@ -1,0 +1,56 @@
+[package]
+name = "editor-process-std"
+version = "0.1.0"
+description = "The process port's real adapter, over std::process"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The process port, its fake and its contract. This crate implements the
+# port, and its test `tests/contract.rs` runs the contract, the service's
+# properties among them, on real processes.
+editor-process = { path = "../editor-process" }
+# The two calls std has no form of: `waitid` with `WNOWAIT`, which waits
+# for a child's exit without reaping it, so its pid, and with it its group
+# id, cannot be given to another process before the group is killed; and
+# `kill` of a whole process group (`killpg`). `waitpid` and `kill(pid, 0)`
+# come with them. Pinned exactly: 1.1.6 was already in `Cargo.lock`, by
+# `tempfile`, on 2026-11-15. Its `process` feature has `waitid` with
+# `WaitIdOptions::NOWAIT` and `kill_process_group` on both macOS and Linux.
+# No rustix type is public here, and no port type names it. `deny.toml` has
+# no entry for it, as for `libc`: many third-party crates in the graph
+# depend on it, and an entry would list their internals.
+#
+# Looked at on 2026-11-15 and set aside:
+#
+# - `libc` 0.2.191, also in `Cargo.lock`: it has both calls, but each is
+#   an `unsafe` call and a raw `siginfo_t` here, which rustix wraps.
+# - `nix` 0.30: the same calls, and a second wrapper of libc in the graph
+#   for no call rustix lacks.
+# - `command-group` 5.0.1: it spawns into a group and kills it, but it
+#   reaps through std's `Child::wait`, which reaps before the group can be
+#   killed, so the group id could be reused; and it would decide for us
+#   when a group is killed.
+# - `std::process` alone: `Child::wait` reaps before anything can be done
+#   with the group, and it has no group kill.
+rustix = { version = "=1.1.6", default-features = false, features = ["std", "process"] }
+# Two calls for writing to a child's standard input without `SIGPIPE`
+# ending the editor, which runs inside Lean's executable, where std's
+# start-up never sets `SIGPIPE` to be ignored: `fcntl(F_SETNOSIGPIPE)` on
+# the pipe's write end on macOS, and on Linux `pthread_sigmask` with
+# `sigtimedwait`, to block the signal in the writing thread around the
+# write and take a pending one. rustix 1.1.6 has neither: `SO_NOSIGPIPE`
+# for sockets only, and a signal mask only under its unstable `runtime`
+# feature. Pinned exactly: 0.2.191 was already in `Cargo.lock`, as a
+# dependency of rustix and others, on 2026-11-15. No port type names it,
+# and `deny.toml` has no entry for it, as the rustix entry above says.
+# `tests/sigpipe.rs` uses it too, to set `SIGPIPE` to its default.
+libc = "=0.2.191"
+
+[dev-dependencies]
+# The temporary directory the contract is checked in: one the test makes
+# and owns, removed when the test ends. Pinned exactly, as in
+# `editor-fs-std`, whose manifest says why this library and no other;
+# `deny.toml` lists the crates that may depend on it.
+tempfile = { version = "=3.27.0", default-features = false }

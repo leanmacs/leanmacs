@@ -14,6 +14,7 @@ import Editor.Executable
 import Editor.Face
 import Editor.File.Cases
 import Editor.File.Model
+import Editor.FileWatch.Model
 import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Fuzzy.Contract
@@ -32,6 +33,7 @@ import Editor.Loop.Driver
 import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModuleLookup
+import Editor.Process.Model
 import Editor.Role
 import Editor.Scene
 import Editor.Scroll
@@ -264,6 +266,13 @@ The job system is tested here with no Rust library:
   escapes against texts written out by hand, what a load and a save answer
   and in what order they are refused, and the file data's own functions.
   They touch no file;
+- `processChecks`: the pure model of the processes a job runs
+  (`Editor/Process/Model.lean`), its order of refusals and its record of
+  what a cancelled job had killed, and the runner's process waits on the
+  fake of the process service (`Job.FakeProcesses`): cancelling a job in a
+  process wait withdraws it, which is how the library comes to kill the
+  child, and a runner with no process service refuses as a value. They
+  start no process;
 - `fileRunnerChecks`, and one check among `runnerChecks`: the runner's file
   waits, on the fake of the file service (`Job.FakeFiles`,
   `Editor/Job/Fake.lean`): a file wait holds no thread, cancelling
@@ -911,6 +920,370 @@ def fileFailures : IO (List String) := do
   let onFake ← JobContract.fileFailures runFilesOnFake JobContract.fileProperties
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake file service: {·}")
+
+/-- The made-up directory the commands of a process property run in, for the
+model and for the fake of the process service: an absolute path that is
+never opened. -/
+def processRoot : System.FilePath :=
+  "/processes"
+
+/-- The model of the processes a process property's commands are scripted
+as. -/
+def processModelOf (property : JobContract.ProcessProperty) : ProcessModel :=
+  { scripts := property.scripts processRoot, streams := property.streams processRoot }
+
+/-- Runs a process property's job against the job port's model, over the
+model of its processes: how the job ended. -/
+def runProcessesOnModel (property : JobContract.ProcessProperty) : IO (Job.Outcome Bool) :=
+  pure ((property.holds processRoot).runModel { processes := processModelOf property }).1
+
+/-- A rig whose services have a fake process service over `model`, and that
+service. -/
+def Rig.withProcesses (model : ProcessModel) : BaseIO (Rig × Job.FakeProcesses) := do
+  let rig ← Rig.new
+  let processes ← Job.FakeProcesses.new rig.services.completions model
+  return ({ rig with services := { rig.services with processes := processes.processes } },
+      processes)
+
+/-- Runs a process property's job on the runner over a fake clock and the
+fake of the process service, over the model of its processes: how the job
+ended. -/
+def runProcessesOnFake (property : JobContract.ProcessProperty) : IO (Job.Outcome Bool) := do
+  let (rig, _) ← Rig.withProcesses (processModelOf property)
+  runOnFake (property.holds processRoot) (some rig)
+
+/-- The names of the job port's process properties that do not hold of the
+job model, and of those that do not hold of the runner over the fake of the
+process service. -/
+def processFailures : IO (List String) := do
+  let onModel ← JobContract.processFailures runProcessesOnModel JobContract.processProperties
+  let onFake ← JobContract.processFailures runProcessesOnFake JobContract.processProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake process service: {·}")
+
+/-- The made-up directory the watch checks and the watch properties watch,
+for the model and the fake: an absolute path that is never opened. -/
+def watchRoot : System.FilePath :=
+  "/watched"
+
+/-- The models a watch property's directories, files and scripts are, for
+the job model and the fake, in `watchRoot`: the directory and its
+subdirectories, and each script as a run that ends with the status 0 and
+changes what it touches. -/
+def watchModelsOf (property : JobContract.FileWatchProperty) : ProcessModel × FileWatchModel :=
+  let commandOf (script : JobContract.FileWatchScript) := JobContract.sh watchRoot script.script
+  let processes : ProcessModel :=
+    {
+      scripts :=
+        property.scripts.map fun script =>
+          { command := commandOf script
+            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } } }
+  let watches : FileWatchModel :=
+    { directories :=
+        #[watchRoot] ++ property.directories.map fun (name : String) => watchRoot / name
+      effects :=
+        property.scripts.map fun script =>
+          (commandOf script, script.touches.map fun (name, kind) => (watchRoot / name, kind)) }
+  (processes, watches)
+
+/-- Runs a watch property's job against the job port's model: how the job
+ended. -/
+def runWatchesOnModel (property : JobContract.FileWatchProperty) : IO (Job.Outcome Bool) :=
+  let (processes, fileWatches) := watchModelsOf property
+  pure ((property.holds watchRoot).runModel { processes, fileWatches }).1
+
+/-- A rig whose services have a fake watch service over `watches` and a fake
+process service over `processes`, whose runs touch the watches with what
+their commands change; and the two services. -/
+def Rig.withWatches (processes : ProcessModel) (watches : FileWatchModel) :
+    BaseIO (Rig × Job.FakeProcesses × Job.FakeFileWatches) := do
+  let rig ← Rig.new
+  let fileWatches ← Job.FakeFileWatches.new rig.services.completions watches
+  let fakeProcesses ← Job.FakeProcesses.new rig.services.completions processes fileWatches.ran
+  return ({ rig with
+        services :=
+          { rig.services with
+            processes := fakeProcesses.processes, fileWatches := fileWatches.fileWatches } },
+      fakeProcesses, fileWatches)
+
+/-- Runs a watch property's job on the runner over a fake clock, the fake of
+the process service and the fake of the watch service: how the job ended. -/
+def runWatchesOnFake (property : JobContract.FileWatchProperty) : IO (Job.Outcome Bool) := do
+  let (processes, fileWatches) := watchModelsOf property
+  let (rig, _, _) ← Rig.withWatches processes fileWatches
+  runOnFake (property.holds watchRoot) (some rig)
+
+/-- The names of the job port's watch properties that do not hold of the job
+model, and of those that do not hold of the runner over the fakes. -/
+def fileWatchFailures : IO (List String) := do
+  let onModel ← JobContract.fileWatchFailures runWatchesOnModel JobContract.fileWatchProperties
+  let onFake ← JobContract.fileWatchFailures runWatchesOnFake JobContract.fileWatchProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake watch service: {·}")
+
+/-- A command that sleeps for ten minutes in `processRoot`, as the process
+checks script it. -/
+def sleeper : Process.Command :=
+  JobContract.sh processRoot "/bin/sleep 600"
+
+/-- The script of `sleeper`, which takes `takes` milliseconds. -/
+def sleeperScript (takes : Nat) : Process.Script :=
+  { command := sleeper, reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty },
+    takes }
+
+/-- What the process model answers a run of `command` under `limit` made at
+`now` by a job cancelled at `cancelAt`, with the reply's type spelled out. -/
+def modelRun (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) (command : Process.Command)
+    (limit : Nat) : Except ProcessError Process.Ran × ProcessModel × Nat :=
+  model.handle now cancelAt (.run command limit)
+
+/-- The checks of processes a job runs: the model's order of refusals and its
+record of what was killed, and the runner's process waits on the fake of the
+process service, where cancelling a job withdraws its wait, which is how the
+library comes to kill the job's child. -/
+def processChecks : List Check :=
+  [{  name :=
+        "the process model refuses a relative directory, then a relative program, then an unscripted command as not found, and starts none of them"
+      run := do
+        let model : ProcessModel := { scripts := #[sleeperScript 0] }
+        let ask (command : Process.Command) := modelRun model 0 none command 10
+        let (directory, afterDirectory, _) := ask { program := "bin/sh", directory := "relative" }
+        let (program, afterProgram, _) := ask { program := "bin/sh", directory := processRoot }
+        let (unscripted, afterUnscripted, _) :=
+          ask { program := "/bin/sh", directory := processRoot }
+        let isNotFound :=
+          match unscripted with
+          | .error (.notFound _) => true
+          | _ => false
+        return directory == .error .relativeDirectory && program == .error .relativeProgram &&
+            isNotFound &&
+            [afterDirectory, afterProgram, afterUnscripted].all (·.started.isEmpty) },
+    { name :=
+        "the process model records a scripted run as started, moves the clock by its time, and answers too large past the limit, standard output first"
+      run := do
+        let ran : Process.Ran :=
+          { exit := .code 0, stdout := "123456".toUTF8, stderr := "123456".toUTF8 }
+        let model : ProcessModel :=
+          { scripts := #[{ command := sleeper, reply := .ok ran, takes := 7 }] }
+        let (within, after, now) := modelRun model 3 none sleeper 6
+        let (over, _, _) := modelRun model 3 none sleeper 5
+        let quiet : ProcessModel :=
+          {
+            scripts :=
+              #[{ command := sleeper, reply := .ok { ran with stdout := .empty }, takes := 7 }] }
+        let (err, _, _) := modelRun quiet 3 none sleeper 5
+        return within == .ok ran && after.started == #[sleeper] && now == 10 &&
+            over == .error (.outputTooLarge .out 5) &&
+            err == .error (.outputTooLarge .err 5) &&
+            after.killed.isEmpty },
+    { name :=
+        "a job model cancelled inside a scripted run is cancelled at that instant, and the process model records the command as killed"
+      run := do
+        let job : JobM Bool := do
+          discard <| Process.run sleeper 10
+          return true
+        let (outcome, model) :=
+          job.runModel { cancelAt := some 50, processes := { scripts := #[sleeperScript 100] } }
+        let (finished, untouched) :=
+          job.runModel { cancelAt := some 500, processes := { scripts := #[sleeperScript 100] } }
+        return outcome == .cancelled && model.now == 50 && model.processes.killed == #[sleeper] &&
+            finished == .finished true &&
+            untouched.processes.killed.isEmpty },
+    { name :=
+        "cancelling a job in a process wait withdraws the wait from the process service with the wait's id, the job ends cancelled, and it makes no further request"
+      run := do
+        let (rig, processes) ← Rig.withProcesses { scripts := #[sleeperScript 0] }
+        processes.holdCompletions
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                discard <| Process.run sleeper 10
+                discard <| Process.run sleeper 10
+                return true)
+        try
+          unless ← eventually (return (← processes.waiting) == 1) do
+            return false
+          let id := ((← processes.started)[0]?.map (·.1)).getD 0
+          spawned.handle.cancel
+          let cancelled ← spawned.endedAs .cancelled
+          processes.letGo
+          return cancelled && (← processes.withdrawn) == #[id] && (← processes.started).size == 1 &&
+              (← processes.taken).isEmpty &&
+              (← processes.waiting) == 0
+        finally
+          processes.letGo },
+    { name :=
+        "a runner given no process service refuses a run as failed, as a value, and the job goes on"
+      run := do
+        let rig ← Rig.new
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let .error (.failed _) ← Process.run sleeper 10 | return false
+                return true)
+        spawned.endedAs (.finished #["true"]) },
+    { name :=
+        "one read delivers every line a child wrote before it waits on its input, on the model and on the fake, where the read is one start and one take: one completion"
+      run := do
+        let script : Process.StreamScript :=
+          { command := sleeper, steps := #[.write .out (JobContract.counted 1000), .awaitClosed] }
+        let expected := (List.range 1000).toArray.map fun n => s!"{n}".toUTF8
+        let job : JobM Bool := do
+          let child ← JobContract.started sleeper (JobContract.lines 1000000 true)
+          let delivery ← JobContract.delivered child
+          return JobContract.linesOf #[delivery] .out == expected && delivery.ended.isNone
+        let (onModel, _) := job.runModel { processes := { streams := #[script] } }
+        let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+        let onFake ← runOnFake job (some rig)
+        let reads :=
+          (← processes.started).filterMap fun (id, request) =>
+            match request with
+            | .read _ => some id
+            | _ => none
+        return onModel == .finished true && onFake == .finished true && reads.size == 1 &&
+            ((← processes.taken).filter reads.contains).size == 1 },
+    { name :=
+        "the process model holds a child at the bound in the middle of its write, with exactly the bound undelivered, and a read lets it go on"
+      run := do
+        let script : Process.StreamScript :=
+          { command := sleeper, steps := #[.write .out (ByteArray.mk (Array.replicate 25 120))] }
+        let model : ProcessModel := { streams := #[script] }
+        let streaming : Process.Streaming := { stdout := .bytes, stderr := .bytes, bound := 10 }
+        let heldAt (model : ProcessModel) :=
+          model.children[0]?.map fun child => (child.stdout.size, child.writing.map (·.2.2))
+        let (_, started, _) := model.handle 0 none (.start sleeper streaming)
+        let (_, afterRead, _) := started.handle 0 none (.read ⟨1⟩)
+        let (_, afterSecond, _) := afterRead.handle 0 none (.read ⟨1⟩)
+        return heldAt started == some (10, some 10) && heldAt afterRead == some (10, some 20) &&
+            heldAt afterSecond == some (5, none) },
+    -- Seen to bite once by hand, on 2026-11-15: over the model as it was,
+    -- which judged a partial line that fills the bound too long whatever
+    -- the child did next, the first read ends the child and the check fails.
+    { name :=
+        "the process model ends a child as lineTooLong only when it has more of the line to write: a partial line exactly the bound long, the child waiting on its input, is not too long, and is delivered whole once the input ends"
+      run := do
+        let script : Process.StreamScript :=
+          { command := sleeper, steps := #[.write .out "abcd".toUTF8, .awaitClosed] }
+        let model : ProcessModel := { streams := #[script] }
+        let (_, started, _) := model.handle 0 none (.start sleeper (JobContract.lines 4 true))
+        let (waiting, afterWaiting, _) := started.handle 0 none (.read ⟨1⟩)
+        let (_, closed, _) := afterWaiting.handle 0 none (.closeInput ⟨1⟩)
+        let (last, afterLast, _) := closed.handle 0 none (.read ⟨1⟩)
+        let notTooLong :=
+          match waiting with
+          | .ok delivery => delivery.ended.isNone
+          | .error _ => true
+        let whole :=
+          match last with
+          | .ok delivery =>
+            delivery.stdout == .lines #["abcd".toUTF8] && delivery.ended == some (.exited (.code 0))
+          | .error _ => false
+        return notTooLong && afterWaiting.killed.isEmpty && whole && afterLast.killed.isEmpty &&
+            afterLast.children.isEmpty },
+    -- Seen to bite once by hand, on 2026-11-15: with the filter of
+    -- `Handle.children` after a last delivery taken out of `answer`, the
+    -- later read, write and close reach the fake, and the check fails.
+    { name :=
+        "after a child's last delivery the runner forgets it: a later read, write or close is noSuchProcess, answered without a request to the process service"
+      run := do
+        let script : Process.StreamScript :=
+          { command := sleeper, steps := #[.write .out "a\n".toUTF8] }
+        let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+        let noSuchProcess {α : Type} : Except ProcessError α → Bool
+          | .error .noSuchProcess => true
+          | _ => false
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let child ← JobContract.started sleeper (JobContract.lines 64)
+                let all ← JobContract.toTheEnd child
+                let read ← Process.read child
+                let write ← Process.write child "late".toUTF8
+                let close ← Process.closeInput child
+                return JobContract.linesOf all .out == JobContract.linesFrom ["a"] &&
+                    JobContract.endOf all == some (.exited (.code 0)) &&
+                    noSuchProcess read &&
+                    noSuchProcess write &&
+                    noSuchProcess close)
+        let finished ← spawned.endedAs (.finished #["true"])
+        let kinds :=
+          (← processes.started).map fun (_, request) =>
+            match request with
+            | .start _ _ => "start"
+            | .read _ => "read"
+            | .write _ _ => "write"
+            | .closeInput _ => "closeInput"
+            | .run _ _ => "run"
+        return finished && kinds == #["start", "read"] && (← processes.withdrawn).isEmpty },
+    -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
+    -- taken out of `Handle.conclude`, this check and the next fail.
+    { name :=
+        "a job that ends with a streaming child running, finished, failed or cancelled, cancels the child: the fake withdraws its id, and the model, the fake's and the job model's, records it killed"
+      run := do
+        let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
+        let starts : JobM Unit := discard <| JobContract.started sleeper (JobContract.lines 64 true)
+        let jobs : List (JobM Bool × Bool) :=
+          [((do
+                starts;
+                return true),
+              false),
+            ((do
+                starts;
+                throw "it fails"),
+              false),
+            ((do
+                starts;
+                sleep 1000;
+                return true),
+              true)]
+        let results ←
+          jobs.mapM fun (job, cancel) => do
+              let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+              let spawned ← rig.spawn (reporting fun _ => job)
+              if cancel then
+                unless ← eventually (return (← rig.clock.waiting) == 1) do
+                  return false
+                spawned.handle.cancel
+              unless ← eventually spawned.handle.ended do
+                return false
+              let child := ((← processes.started)[0]?.map (·.1)).getD 0
+              let model ← processes.model
+              return (← processes.withdrawn) == #[child] && model.killed == #[sleeper] &&
+                  model.children.isEmpty
+        let (_, model) :=
+          (do
+                starts;
+                return true : JobM Bool).runModel
+            { processes := { streams := #[script] } }
+        return results.all id && model.processes.killed == #[sleeper] &&
+            model.processes.children.isEmpty },
+    { name := "cancelling a job in a pending read withdraws the read's wait and then its child"
+      run := do
+        let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
+        let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let child ← JobContract.started sleeper (JobContract.lines 64 true)
+                sleep 10
+                discard <| Process.read child
+                return true)
+        unless ← eventually (return (← rig.clock.waiting) == 1) do
+          return false
+        processes.holdCompletions
+        rig.clock.advance 10
+        try
+          unless ← eventually (return (← processes.waiting) == 1) do
+            return false
+          let started ← processes.started
+          let child := (started[0]?.map (·.1)).getD 0
+          let read := (started[1]?.map (·.1)).getD 0
+          spawned.handle.cancel
+          let cancelled ← spawned.endedAs .cancelled
+          return cancelled && (← processes.withdrawn) == #[read, child] &&
+              (← processes.model).killed == #[sleeper]
+        finally
+          processes.letGo }]
 
 /-- What a job's model holds, as what a run of the job's command is handed:
 each snapshot the job's loads made that was not released, under the job's
@@ -19786,6 +20159,259 @@ def titleChecks : List Check :=
               EditorState.title EditorState.none == ""
           | _, _, _ => false }]
 
+/-- What the watch model answers a start of `target` coalesced as
+`coalescing`, made at `now`. -/
+def watchStart (model : FileWatchModel) (target : FileWatch.Target)
+    (coalescing : FileWatch.Coalescing) (now : Nat := 0) :
+    Except FileWatchError FileWatch.Id × FileWatchModel × Nat :=
+  model.handle now none (.start target coalescing)
+
+/-- What the watch model answers a `next` of `watch` made at `now` by a job
+cancelled at `cancelAt`. -/
+def watchNext (model : FileWatchModel) (watch : Nat) (now : Nat := 0)
+    (cancelAt : Option Nat := none) :
+    Except FileWatchError (Array FileWatch.Change) × FileWatchModel × Nat :=
+  model.handle now cancelAt (.next ⟨watch⟩)
+
+/-- The change of `path` with `kinds`. -/
+def changeOf (path : System.FilePath) (kinds : List FileWatch.Kind) : FileWatch.Change :=
+  { path, kinds := kinds.foldl FileWatch.Kinds.add {} }
+
+/-- A model with `watchRoot` and its subdirectory `sub` there. -/
+def watchModel : FileWatchModel :=
+  { directories := #[watchRoot, watchRoot / "sub"] }
+
+/-- No window, and room for every check's paths. -/
+def atOnce : FileWatch.Coalescing :=
+  { window := 0, bound := 100 }
+
+/-- The checks of the watch model (`Editor/FileWatch/Model.lean`), exactly:
+the kinds of a change as an exact set, the window moving the clock, the
+bound, the routing of each kind of target, the order of the refusals, and a
+watch ended with its job. -/
+def fileWatchModelChecks : List Check :=
+  [{  name :=
+        "the watch model delivers one change a path with exactly the kinds recorded there, in the order of each path's first change"
+      run := do
+        let (_, model, _) := watchStart watchModel (.directory watchRoot false) atOnce
+        let model :=
+          model.touch
+            #[(watchRoot / "b", .written), (watchRoot / "a", .created), (watchRoot / "b", .removed),
+              (watchRoot / "a", .written)]
+            0
+        let (reply, _, _) := watchNext model 1
+        return reply ==
+            .ok
+              #[changeOf (watchRoot / "b") [.written, .removed],
+                changeOf (watchRoot / "a") [.created, .written]] },
+    { name :=
+        "the watch model answers a next at the window from the first change, moving the clock there, or now if that is later"
+      run := do
+        let window : FileWatch.Coalescing := { window := 300, bound := 10 }
+        let (_, model, _) := watchStart watchModel (.file (watchRoot / "f")) window
+        let model :=
+          (model.touch #[(watchRoot / "f", .written)] 100).touch #[(watchRoot / "f", .written)] 350
+        let (early, _, earlyNow) := watchNext model 1 150
+        let (late, _, lateNow) := watchNext model 1 500
+        let written := Except.ok #[changeOf (watchRoot / "f") [.written]]
+        return early == written && earlyNow == 400 && late == written && lateNow == 500 },
+    { name :=
+        "the watch model collapses a delivery past its bound to missed of the watch's own path, keeps it collapsed until it is taken, then records anew"
+      run := do
+        let bound : FileWatch.Coalescing := { window := 0, bound := 2 }
+        let (_, model, _) := watchStart watchModel (.directory watchRoot false) bound
+        let model :=
+          model.touch
+            #[(watchRoot / "a", .written), (watchRoot / "b", .written), (watchRoot / "c", .written),
+              (watchRoot / "a", .removed)]
+            0
+        let (collapsed, model, _) := watchNext model 1
+        let (after, _, _) := watchNext (model.touch #[(watchRoot / "d", .created)] 0) 1
+        return collapsed == .ok #[changeOf watchRoot [.missed]] &&
+            after == .ok #[changeOf (watchRoot / "d") [.created]] },
+    { name :=
+        "the watch model's file watch keeps its file and drops its siblings; an entries watch keeps what is directly inside, and a recursive one what is deeper too"
+      run := do
+        let (_, model, _) := watchStart watchModel (.file (watchRoot / "f")) atOnce
+        let (_, model, _) := watchStart model (.directory watchRoot false) atOnce
+        let (_, model, _) := watchStart model (.directory watchRoot true) atOnce
+        let model :=
+          model.touch
+            #[(watchRoot / "g", .written), (watchRoot / "sub" / "x", .written),
+              (watchRoot / "f", .written), ("/elsewhere/f", .written)]
+            0
+        let (file, model, _) := watchNext model 1
+        let (entries, model, _) := watchNext model 2
+        let (tree, _, _) := watchNext model 3
+        return file == .ok #[changeOf (watchRoot / "f") [.written]] &&
+            entries ==
+              .ok #[changeOf (watchRoot / "g") [.written], changeOf (watchRoot / "f") [.written]] &&
+            tree ==
+              .ok
+                #[changeOf (watchRoot / "g") [.written],
+                  changeOf (watchRoot / "sub" / "x") [.written],
+                  changeOf (watchRoot / "f") [.written]] },
+    { name :=
+        "the watch model refuses a relative path or a parent component as not absolute, then a bound of 0 as failed, then a missing directory as not found, and starts none of them"
+      run := do
+        let zero : FileWatch.Coalescing := { window := 0, bound := 0 }
+        let isNotAbsolute : Except FileWatchError FileWatch.Id → Bool
+          | .error (.notAbsolute _) => true
+          | _ => false
+        let isFailed : Except FileWatchError FileWatch.Id → Bool
+          | .error (.failed _) => true
+          | _ => false
+        let isNotFound : Except FileWatchError FileWatch.Id → Bool
+          | .error (.notFound _) => true
+          | _ => false
+        let (relative, a, _) := watchStart watchModel (.file "watched/f") zero
+        let (parent, b, _) := watchStart watchModel (.directory "/watched/../watched" false) atOnce
+        let (bound, c, _) := watchStart watchModel (.file "/nowhere/f") zero
+        let (missing, d, _) := watchStart watchModel (.directory "/nowhere" true) atOnce
+        let (fileMissing, e, _) := watchStart watchModel (.file "/nowhere/f") atOnce
+        -- The library refuses a file with no directory as not found too.
+        let (noDirectory, f, _) := watchStart watchModel (.file "/") atOnce
+        return isNotAbsolute relative && isNotAbsolute parent && isFailed bound &&
+            isNotFound missing &&
+            isNotFound fileMissing &&
+            isNotFound noDirectory &&
+            [a, b, c, d, e, f].all (·.watches.isEmpty) },
+    { name :=
+        "the watch model's next with nothing recorded fails, or is the cancel at its instant, and a next of a watch it does not have is noSuchWatch"
+      run := do
+        let (_, model, _) := watchStart watchModel (.file (watchRoot / "f")) atOnce
+        let (nothing, _, nothingNow) := watchNext model 1 5
+        let (atCancel, _, cancelledNow) := watchNext model 1 5 (some 40)
+        let (unknown, _, _) := watchNext model 9
+        let isFailed : Except FileWatchError (Array FileWatch.Change) → Bool
+          | .error (.failed _) => true
+          | _ => false
+        return isFailed nothing && nothingNow == 5 && isFailed atCancel && cancelledNow == 40 &&
+            unknown == .error .noSuchWatch },
+    { name :=
+        "in the job model a command a job runs changes what its watch sees, the delivery comes at the window, and the watch ends with its job, finished, failed or cancelled"
+      run := do
+        let command := JobContract.sh watchRoot "printf x >> f"
+        let model : JobModel :=
+          { processes :=
+              {
+                scripts :=
+                  #[{ command
+                      reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 2 }] }
+            fileWatches :=
+              { watchModel with effects := #[(command, #[(watchRoot / "f", .written)])] } }
+        let job (ending : Nat) : JobM Bool := do
+          let .ok watch ←
+            FileWatch.start (.file (watchRoot / "f")) { window := 10, bound := 4 } | return false
+          discard <| Process.run command 100
+          let .ok changes ← FileWatch.next watch | return false
+          let reached ← now
+          match ending with
+          | 0 =>
+            return changes == #[changeOf (watchRoot / "f") [.written]] && reached == 12
+          | 1 =>
+            throw "failed"
+          | _ =>
+            discard <| FileWatch.next watch
+            return true
+        let (finished, afterFinished) := (job 0).runModel model
+        let (failed, afterFailed) := (job 1).runModel model
+        let (whenCancelled, afterCancelled) := (job 2).runModel { model with cancelAt := some 50 }
+        let endedOne (after : JobModel) :=
+          after.fileWatches.ended == #[1] && after.fileWatches.watches.isEmpty
+        return finished == .finished true && failed == .failed "failed" &&
+            whenCancelled == .cancelled &&
+            [afterFinished, afterFailed, afterCancelled].all endedOne }]
+
+/-- A watch model with `watchRoot` there, for the runner's watch checks. -/
+def rootWatches : FileWatchModel :=
+  { directories := #[watchRoot] }
+
+/-- A job that watches `watchRoot / "f"` and then sleeps for `ms`. -/
+def watchesThenSleeps (ms : Nat) : JobM Bool := do
+  let .ok _ ← FileWatch.start (.file (watchRoot / "f")) atOnce | return false
+  sleep ms
+  return true
+
+/-- The checks of the runner's watch waits, on the fake of the watch
+service: a watch is named for its job, it ends with its job however the job
+ends, a cancelled job's pending read is withdrawn, and removing an owner
+ends its jobs' watches. -/
+def fileWatchRunnerChecks : List Check :=
+  [{  name := "a watch is named for its job: another job's next of it is noSuchWatch, asked of no service"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let holder ← rig.spawn (reporting fun _ => watchesThenSleeps 1000)
+        unless ← eventually (return (← watches.watching) == 1) do
+          return false
+        let id := ((← watches.started)[0]?.map (·.1)).getD 0
+        let other ←
+          rig.spawn
+              (reporting fun _ => do
+                let .error .noSuchWatch ← FileWatch.next ⟨id.toNat⟩ | return false
+                return true)
+        let refused ← other.endedAs (.finished #["true"])
+        holder.handle.cancel
+        let asked :=
+          (← watches.started).any fun (_, request) =>
+            match request with
+            | .next _ => true
+            | _ => false
+        return refused && !asked },
+    { name := "a watch ends with its job, finished, failed or cancelled, through the watch service's cancel"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let finished ← rig.spawn (reporting fun _ => watchesThenSleeps 0)
+        let failed ←
+          rig.spawn
+              (reporting fun _ => (do
+                discard <| watchesThenSleeps 0
+                throw "failed" : JobM Bool))
+        let cancelled ← rig.spawn (reporting fun _ => watchesThenSleeps 1000000)
+        let ended ←
+          (return (← finished.endedAs (.finished #["true"])) && (← failed.endedAs (.failed "failed")))
+        unless ← eventually (return (← watches.watching) == 1) do
+          return false
+        cancelled.handle.cancel
+        let cancelledEnded ← cancelled.endedAs .cancelled
+        let ids := (← watches.started).map (·.1)
+        return ended && cancelledEnded && (← watches.watching) == 0 &&
+            (← watches.ended).qsort (· < ·) == (ids.map (·.toNat)).qsort (· < ·) &&
+            ids.all (← watches.withdrawn).contains },
+    { name := "a cancelled job's pending next is withdrawn from the watch service, and its watch ended"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let .ok watch ← FileWatch.start (.file (watchRoot / "f")) atOnce | return false
+                discard <| FileWatch.next watch
+                return true)
+        unless ← eventually (return (← watches.started).size == 2) do
+          return false
+        let started ← watches.started
+        spawned.handle.cancel
+        let ended ← spawned.endedAs .cancelled
+        let withdrawn ← watches.withdrawn
+        return ended && started.all (withdrawn.contains ·.1) && (← watches.watching) == 0 &&
+            (← watches.waiting) == 0 },
+    { name := "Jobs.removeOwner ends the watches of the owner's jobs, and leaves another owner's"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let sleeps : Work := reporting fun _ => watchesThenSleeps 1000000
+        let jobs : Job.Jobs := { services := rig.services }
+        let (_, jobs) ← jobs.start anna "watches" sleeps fun _ => pure ()
+        let (_, jobs) ← jobs.start ben "watches" sleeps fun _ => pure ()
+        unless ← eventually (return (← watches.watching) == 2) do
+          return false
+        let (_, jobs) ← jobs.removeOwner anna
+        let annasEnded ← eventually (return (← watches.watching) == 1)
+        let one := (← watches.ended).size == 1
+        jobs.cancelAll
+        let allEnded ← eventually (return (← watches.watching) == 0)
+        return annasEnded && one && allEnded }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -19797,6 +20423,9 @@ def checks : List Check :=
   poolChecks ++ programChecks ++ jobModelChecks ++ waitChecks ++ runnerChecks ++ tableChecks ++
     ownerChecks ++
     fileRunnerChecks ++
+    processChecks ++
+    fileWatchModelChecks ++
+    fileWatchRunnerChecks ++
     setupChecks ++
     registryChecks ++
     storeChecks ++
@@ -19993,6 +20622,8 @@ def main : IO UInt32 := do
       (← ModelTest.jobModelFailures) ++
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.fileFailures) ++
+      (← ModelTest.processFailures) ++
+      (← ModelTest.fileWatchFailures) ++
       (← ModelTest.caseFailures) ++
       (← ModelTest.displayFailures) ++
       (← ModelTest.watchFailures) ++
@@ -20006,6 +20637,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0
