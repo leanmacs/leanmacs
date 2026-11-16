@@ -166,7 +166,11 @@ missing glyph, on any machine. `mise run lint` holds the adapter's tests
 to that (`crates/editor-shape-parley/clippy.toml`: no file, no
 environment variable, and no call that asks for the system's fonts). One
 file runs layout over the real adapter, for the wiring alone
-(`crates/editor-shape-parley/tests/layout.rs`). The fixture fonts are
+(`crates/editor-shape-parley/tests/layout.rs`). A text's own spans (a
+syntax's highlights) reach layout through a port of its own, `TextSpans`;
+layout's tests run on its published fake, `FixedSpans`, and its contract
+(`scene::spans_contract`) is seen to bite on spans not cut, of a face it has
+not, and ending inside a character. The fixture fonts are
 made by `tools/fonts/subset.sh`, by hand and never by the gate. The
 system's fonts have a check of their own, outside the gate
 ([`on-demand-checks.md`](on-demand-checks.md)).
@@ -199,13 +203,24 @@ incremental one has an error, on a recording mock, single-threaded; and the
 worker stepped by hand and, in `tests/worker.rs`, on a real thread while
 another edits and touches, with every wait bounded. The port's contract is
 tested on the fake and on implementations written to break each of its
-nine properties. The real adapter, over tree-sitter with the Rust and
+eleven properties. The real adapter, over tree-sitter with the Rust and
 JSON grammars compiled in (`crates/editor-syntax-treesitter`), is held to
 that contract for each grammar, over fixtures under `tests/syntax/`: among
 it, that a tree told the edit log's patches and reparsed as the core
-reparses equals a fresh parse, texts with errors among them, on named cases and on a sweep of random edits from a fixed seed.
-`crates/editor-ffi/tests/syntax.rs` runs the syntax service on real
-documents through their edit paths and the C functions. `mise run deny`
+reparses equals a fresh parse, texts with errors among them, on named cases and on a sweep of random edits from a fixed seed;
+that the grammar's shipped highlights query compiles (`SHIPPED`); and that
+its spans on the reparsed tree equal a fresh parse's over the same edits
+(`HIGHLIGHTS_AFTER_EDITS`). Highlighting is tested on the fake: the rule
+that turns captures into spans and the carrying of spans through a patch
+(`highlight.rs`), which tree draws a snapshot (`session.rs`), and, in
+`tests/highlight.rs`, a parse held on a real worker thread while an edit,
+its touch and a read of the highlights on other threads each complete
+within a bound. `crates/editor-ffi/tests/syntax.rs` runs the syntax service on real
+documents through their edit paths and the C functions, and
+`crates/editor-ffi/tests/highlight.rs` highlights a Rust fixture through
+the C functions, edits it, and holds its spans once reparsed to a fresh
+highlight of its text; it runs layout's spans contract on the service, and
+checks that a published scene paints a keyword in its face. `mise run deny`
 holds that only the adapter depends on tree-sitter and its grammars, and
 bans `wasmtime` and `tree-sitter-loader`.
 
@@ -518,7 +533,11 @@ checks:
   (`lean/Editor/SyntaxTree/Contract.lean`) runs on its model here
   (`syntaxTreeFailures`), and `contract-test` runs it on its real binding:
   the grammars, refusals, capture names, a table of exact cases that are
-  the library's answers, and the range rule. `syntaxTreeChecks` are what
+  the library's answers, the range rule, a grammar's shipped query, and a
+  highlight answered or refused. `highlightFaceChecks` and
+  `highlightEnterChecks` pin the capture-to-face rule and what setting a
+  major mode with a syntax tree asks of the port, through the loop's
+  dispatch on the models. `syntaxTreeChecks` are what
   only the model shows: its JSON tree node by node, its `ERROR` answer
   outside the subset, what its query subset refuses as unsupported, and
   the contract seen to report a model that answers a range with the whole
@@ -948,12 +967,18 @@ of strings and the ranking cross the boundary. It runs the syntax tree
 interface's contract against its real binding
 (`lean/Editor/SyntaxTree/Real.lean`), over the library's syntax service,
 waiting with a bound for each snapshot's tree before a question of its
-captures, and checks what only the library shows: its Rust grammar, a Rust
-function's name captured, a query of one grammar asked of a text parsed
-with another, and a text edited through its document reparsed.
+captures and after an attach, and checks what only the library shows: its
+Rust grammar, a Rust function's name captured, a query of one grammar asked
+of a text parsed with another or highlighted with it, a text edited through
+its document reparsed, a Rust text highlighted and edited drawn by the real
+display with its keywords in the keyword face's colour once the edit's
+delivery is reported on the editor queue, and a job's command run by
+`Job.finishWith` reaching the syntax tree it is handed.
 `ffi-test`'s own `syntaxChecks` pin that a list of strings out, a query
-handle with its refusals, and captures with each of their refusals cross
-the boundary, and that a file's loaded text is of no document.
+handle with its refusals, captures with each of their refusals, a shipped
+query and a highlight with each refusal cross the boundary, and that a
+file's loaded text is of no document; its event checks decode a parse
+delivered.
 
 `config-test` (`lean/ConfigTest.lean`) is linked like the editor, with
 Lean's elaborator, and is given the toolchain's directory and the package's
@@ -965,8 +990,10 @@ that declares `initialize` each keep the old config; a reload does not
 register a command twice; a store's value survives a reload and is migrated
 when its type changes; a command the library refuses is reported as refused
 and leaves its store as it was; the editor answers events while a chunk
-elaborates; reloads are serialised; and a script that cannot run to its end
-says why. Its config directories are temporary directories of its own.
+elaborates; reloads are serialised; a script that cannot run to its end
+says why; a job's command that sets a mode with a syntax tree reaches the
+host's syntax tree; and a parse of a highlighted text the library delivers
+makes the host publish a scene, with no key pressed. Its config directories are temporary directories of its own.
 
 With no arguments `ffi-test` runs its checks of handles, plain data, the
 event queues, the timer service, the document, the snapshot of a document,

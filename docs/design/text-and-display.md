@@ -982,8 +982,26 @@ order. Faces are named and defined in Lean.
 
 ### As built
 
-Of the kinds above, span faces are built, from two sources: the selections
-and the decorations a scene carries. The rest are not.
+Of the kinds above, span faces are built, from three sources: the
+selections, the decorations a scene carries, and a text's own spans, a
+syntax's highlights, which the text carries through a port of layout's
+(`TextSpans`, on a `TextRef`; "The scene", as built). The rest are not.
+
+**A text's own spans** are asked through `TextSpans::at`, which resolves
+what a text draws over one snapshot, fixed for one frame or one query
+(`SpansAt`: its face names and its spans of a range, cut to it). Layout
+interns the face names up front and stacks the spans lowest, under the
+scene's decorations and the selection, in a frame and in the rows and move
+queries alike: a query resolves them for the snapshot it is asked about,
+as the frame of that snapshot does, not from the last frame, which an edit
+has made older. So a face that sets a font attribute (an italic comment)
+wraps a row alike in the frame and in the queries. They are asked only for
+the rows laid out. `editor-layout` publishes `FixedSpans`, spans as data,
+and `scene::spans_contract::check` (within the bytes asked and not empty, a
+face it has, ends on positions), which the syntax service's adapter in
+`editor-ffi` runs. The syntax service fills the port from the tree it last
+delivered, carried through the edits since (`docs/design/rust-library.md`,
+"Highlights, as built").
 
 **A face** sets any of nine attributes and leaves the rest unset: a family,
 a size, a weight, a slant, a foreground, a background, an underline (a
@@ -1014,7 +1032,9 @@ of a run is that of the highest layer over the run that sets it:
 1. (highest) the selection, drawn in the face `selection`;
 2. the scene's decorations of the view, a later one in the view's list over
    an earlier one;
-3. (lowest) the face `default`; and where `default` leaves an attribute
+3. the text's own spans, a syntax's highlights, a later one in the text's
+   order over an earlier one, so an inner node is over the node around it;
+4. (lowest) the face `default`; and where `default` leaves an attribute
    unset, layout's base value: no family, 16 points, weight 400, upright,
    black on white, no underline, no strike-through, and a line height of
    one times the font's own.
@@ -1027,8 +1047,9 @@ selected), over `mode-line`, over `default`, and a cursor's face is over
 `default`. A face's vertical padding is neither font nor paint: layout
 reads it only from `mode-line` and `echo-area`, to size the status rows,
 and it is a length in points like a size. A name
-nothing defines sets nothing. A decoration source added later (syntax
-highlighting) states its place in this order when it is added.
+nothing defines sets nothing. A decoration source added later states its
+place in this order when it is added. The order holds in a frame and in
+layout's queries alike.
 
 **Units.** A colour is one word, `0xRRGGBBAA`. A weight is 1 to 1000, with
 400 normal and 700 bold. A line height is a multiple of the font's own, in
@@ -1098,8 +1119,10 @@ nothing draws. Faces are declared there ahead of the features that draw
 them, so the shipped themes colour them before those land: `syntax.` and
 each top-level name of
 tree-sitter's common highlight captures (`syntax.keyword`,
-`syntax.comment`, …; a dotted capture's mapping to its first component is
-the syntax roadmap's); `diff.added`, `diff.removed`, `diff.changed`,
+`syntax.comment`, …; a dotted capture with no mapping of its own is drawn
+in its first component's face by `Highlight.faceOf`,
+`lean/Editor/Highlight.lean`, whose shipped default is computed from the
+vocabulary's syntax captures); `diff.added`, `diff.removed`, `diff.changed`,
 `gutter`, `search-match`, `review-unexamined` and `block-header`. A feature
 that draws a face not listed adds it to the vocabulary and to the palette
 mapping, and so to every shipped theme.
@@ -1526,6 +1549,7 @@ Each view (`View`):
 | `selections` | Its selections, as selection markers of that text; each carries its ranges and its shape |
 | `cursor` | Its cursor shape (block, bar, underline, hollow) and the name of the face its cursors take |
 | `decorations` | Byte ranges of its snapshot, each naming a face |
+| (its text's own spans) | Not a field of Lean's scene: the binding hands layout the highlights of the snapshot's document as the text's own spans (`TextRef::spans`), which never pass through Lean |
 | `status` | Its status line: text fields, each naming a face, with a side (left, the default, or right) and a horizontal padding in whole points, which its face's background fills |
 | `statusFace` | The face of its status row, over `mode-line` and under every field's, which gives the row its background: `mode-line.inactive` for a window that is not selected, none for the selected one and the minibuffer's view. It neither makes the row taller nor moves its line |
 | `padding` | How far its content is inset from its edges, in whole points, across and down, and how far further its text rows start from its top (`top`) (`EditorState.paddingOf`): the frame padding both ways for a window, with the window's top inset (`EditorState.topInset`: what the title bar covers, none in fullscreen) at the top of a window along the frame's top edge; and for the minibuffer's view the bottom row's inset across and none down. 0 by default, which lays out as before there was one |
@@ -1993,7 +2017,8 @@ part are in the module docs; these are the decisions.
     from Lean at its window's scale").
 - **Decorations.** A source gives the spans of a range of a snapshot and is
   asked only for the rows laid out. Selections and the scene's decorations
-  are the first two; a range with equal ends of an exclusive, an inclusive
+  are the first two, and a text's own spans (a syntax's highlights) the
+  third and lowest; a range with equal ends of an exclusive, an inclusive
   or a block selection is a cursor and gives no span, so a cursor move
   changes no row, while a line-wise range covers its rows whatever its
   ends, so one with equal ends highlights its row. A span names its face

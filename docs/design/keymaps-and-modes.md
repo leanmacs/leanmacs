@@ -2125,12 +2125,26 @@ add modes.
 
 ```lean
 structure Mode where
-  name    : String
-  parent  : Option String := none                -- derived modes
-  roles   : List (Role × String) := []           -- role, command name
-  locals  : List (String × String) := []         -- suffix as a key string, command name
-  onEnter : ViewId → EditorM Unit := fun _ => pure ()
+  name       : String
+  parent     : Option String := none                -- derived modes
+  roles      : List (Role × String) := []           -- role, command name
+  locals     : List (String × String) := []         -- suffix as a key string, command name
+  syntaxTree : Option Mode.SyntaxTree := none       -- how its text is parsed and drawn
+  onEnter    : ViewId → EditorM Unit := fun _ => pure ()
+
+structure Mode.SyntaxTree where
+  grammar    : String                               -- the library's grammar: rust, json
+  highlights : Option String := none                -- query source; none: the grammar's shipped one
+  captures   : List (String × Option FaceName) := [] -- config's capture faces, over the shipped default
 ```
+
+- **`syntaxTree` says how the mode's text is parsed and drawn**: a grammar
+  of the library's syntax service, the highlights query's source (none for
+  the one the grammar ships), and config's mapping of capture names to
+  faces over the shipped default (`lean/Editor/Highlight.lean`). It is not
+  called `syntax`, which is a keyword of Lean's. A derived mode with none
+  takes the nearest of its lineage (`Mode.syntaxTreeOf`). Config writes it
+  in `defineMode`; there is no other registry API.
 
 No `Key` for a top-level binding and no scheme's `Binding` type appears in
 `Mode`. A mode cannot name the binding type of a scheme it has never heard
@@ -2290,10 +2304,30 @@ contributes nothing.
   state and handed it back; that operation is gone, because an action's
   own state requests would have been answered from a state it could not
   see.
+- **A major mode with a syntax tree is highlighted.** When the mode that
+  became the major mode, or the nearest of its lineage, has a syntax tree,
+  the loop runs `Highlight.enter` before the on-enter actions, inside the
+  command: with a snapshot of the buffer's text it attaches the text with
+  the grammar, compiles the query (the mode's own or the grammar's shipped
+  highlights), and has the library draw the text with each capture in the
+  face `Highlight.faceOf` gives (the capture's own entry, else its first
+  component's, else none; config's mapping over the shipped
+  `syntax.<capture>` default), then releases the query, which the library's
+  highlighter keeps. A refusal of the syntax tree port is said in the echo
+  area, ``highlights: `<mode>`: <refusal>``, and stops those steps: the
+  mode is set and the command is not refused, so a query of config's that
+  does not compile keeps no buffer out of its mode. When a mode with no
+  syntax tree replaces one with a syntax tree, the text is detached, which
+  drops its highlights; when neither has one, the port is asked nothing.
+  What the port did is not undone on rollback, as the clipboard is not.
+  Choosing a major mode when a file is opened is not built.
 - **Adding a minor mode runs no action** yet (left open).
 
-Pinned by `ModelTest.modeEnterChecks`, through the loop, and
-`ModelTest.apiStateChecks`.
+Pinned by `ModelTest.modeEnterChecks`, through the loop,
+`ModelTest.apiStateChecks`, and, for a syntax tree,
+`ModelTest.highlightFaceChecks` and `ModelTest.highlightEnterChecks`, and
+`ConfigTest`'s check that a job's command setting such a mode reaches the
+host's syntax tree.
 
 ### Why this shape
 
@@ -2860,6 +2894,7 @@ names a scheme's key:
 | `modeRegistryChecks` | A mode's lineage, a cycle and a missing parent; the order of the active keymaps; a mode name no mode is registered under; a view with no window |
 | `modeDispatchChecks` | On the editor's models, through the loop: a major mode's role runs its command in a view of its buffer and the global binding elsewhere; a minor mode's wins; a derived mode falls to its parent; the leader then a suffix |
 | `modeEnterChecks` | On the editor's models: the on-enter action runs once, with the view, when the mode becomes the major mode; a derived mode's lineage root first; a refusal runs nothing |
+| `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set, a parent's syntax tree, and the text detached when a mode with none replaces it |
 | `ConfigTest.modeChecks` | Through the headless host and the real elaborator: a config mode's role runs its store command, and once a reload drops the mode the role's key runs the global binding; a compiled mode's role runs its command before any reload and after a reload of a config that defines no mode |
 
 Beside them, `stateChecks` pin the three state operations, `registryChecks`

@@ -23,7 +23,7 @@ process, its runtime is the only one that schedules editor code.
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
 | **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
 | **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
-| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The syntax worker is built: one thread named `syntax`, started by `editor-ffi` at the first attach and blocked with no deadline while it has nothing to parse, which reparses each attached document from snapshots and the edit log's patches and holds no editor state. A result is tagged with the revision it parsed and handed out only if no newer revision has been told by then; a stale one is never delivered, and is only the base of the next reparse (`rust-library.md`, "Syntax, as built"). Diff is not built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
+| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The syntax worker is built: one thread named `syntax`, started by `editor-ffi` at the first attach and blocked with no deadline while it has nothing to parse, which reparses each attached document from snapshots and the edit log's patches and holds no editor state. A result is tagged with the revision it parsed and handed out only if no newer revision has been told by then; a stale one is never delivered, and is only the base of the next reparse (`rust-library.md`, "Syntax, as built"). Highlight queries do not run on the worker: they run at frame time, on the thread that lays the frame out (the editor thread, in Lean's publish), over the rows shown only, from the tree delivered last, carried through the edits since; no lock is nested on that path, and none of it waits for a parse (`rust-library.md`, "Highlights, as built"). Diff is not built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
 
 Rust never calls Lean. The main thread and the services push events onto a
 queue, and the editor thread pulls them with a blocking call. Measured in
@@ -1589,6 +1589,13 @@ same editor queue.
   a window; [rust-library.md](rust-library.md), "Watching, as built").
 - A handler runs as a foreground command, or starts a job if it has real
   work to do.
+- **A parse delivered is an event.** The syntax worker pushes one `parsed`
+  event onto the editor queue for each delivery of a highlighted
+  document's parse; the loop changes nothing for it and publishes a scene,
+  which lays the text out with the new tree. The worker's consumer takes
+  only the queue's lock, under the session's state lock, which nothing
+  takes the other way round. Coalescing a burst of them is an open question
+  ([rust-library.md](rust-library.md), "Highlights, as built").
 - High-rate streams never reach the editor thread per item: terminal output
   goes to the grid inside Rust, and process output is framed and batched in
   Rust and reaches the job that reads it by pull, one completion a read on

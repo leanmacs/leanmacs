@@ -772,8 +772,9 @@ editor state's buffers and windows through one port, whose shape is:
   `EditorRequest.text` carries a request of the text port,
   `EditorRequest.display` one of the display port, `EditorRequest.watch`
   one of the watch port, `EditorRequest.clipboard` one of the clipboard
-  port, `EditorRequest.fuzzy` one of the fuzzy port
-  and `EditorRequest.state` a request about the editor state: six
+  port, `EditorRequest.fuzzy` one of the fuzzy port,
+  `EditorRequest.syntaxTree` one of the syntax tree port
+  and `EditorRequest.state` a request about the editor state: seven
   sub-ports. The reply to each is its sub-port's reply. `editorPort` is
   an `abbrev`, as every port is.
 - **The fuzzy port** (`lean/Editor/Fuzzy.lean`, added by the command
@@ -814,6 +815,29 @@ editor state's buffers and windows through one port, whose shape is:
   - Set aside: a function handed to the loop. The loop's publish and a
     command would then reach the matcher two ways, and config not at
     all.
+- **The syntax tree port** (`lean/Editor/SyntaxTree.lean`, made a sub-port
+  by the syntax roadmap's phase 2) is what a command and a major mode ask
+  of the library's syntax service: grammars, attaching and detaching a
+  text, queries, a grammar's shipped query, and drawing a text with a
+  query's captures in faces. **Its refusal is a value**: `SyntaxTree.lift`
+  runs a syntax tree program in a command and hands back its `Except
+  SyntaxTreeError`, which the command matches on, as the clipboard's is, so
+  the editor's error type is not widened. Its result type is not the
+  program's, so it is no `MonadLift` instance and a command calls it by
+  name. On the models it is answered by the syntax tree model, whose texts
+  are filled from the text model's snapshots and which tells two snapshots
+  of one text from two texts by the text each was taken of, and each
+  request moves the clock by a pace. For real it is answered by the
+  handler a runner is handed (`SyntaxTree.none`, with no grammars, by
+  default): a host makes one over the table of snapshots its text binding
+  publishes, once as its loop starts (`Collaborators.syntaxTree`,
+  `Running.syntaxTree`), and hands it to every command it runs, a finished
+  job's through `Job.finishWith` too. A syntax tree request is guarded like
+  any request that is not the state's, and what it did is not undone on
+  rollback: the library parses and draws outside the editor state. What
+  setting a major mode with a syntax tree asks of it is
+  `lean/Editor/Highlight.lean`'s ([keymaps-and-modes.md](keymaps-and-modes.md),
+  "A buffer's modes").
 - **The clipboard port** (`lean/Editor/Clipboard.lean`, added by the
   command loop's phase 13) is what a command asks of the system
   clipboard: the text it holds, and to hold another. The clipboard is
@@ -924,23 +948,24 @@ editor state's buffers and windows through one port, whose shape is:
 
 | Piece | Where |
 |---|---|
-| The composite port, `EditorM`, the five embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
+| The composite port, `EditorM`, the six embeddings and lifts (the syntax tree's handing its refusal back as a value), and the mapping of the display's refusals | `lean/Editor/Command.lean` |
 | The fuzzy port: its one request, which refuses nothing; `FuzzyHandler` | `lean/Editor/Fuzzy.lean` |
 | Its pure model, with no state: a subsequence test, and the candidates that are the pattern first | `lean/Editor/Fuzzy/Model.lean` |
 | Its contract, imported from the port alone, run against the model by `lake test` and against the real binding by `contract-test` | `lean/Editor/Fuzzy/Contract.lean` |
 | Its real binding: one call into the library | `lean/Editor/Fuzzy/Real.lean` |
-| The syntax tree port, standalone for now and not yet a sub-port of the editor's (the syntax roadmap's next phase makes it one, by the recipe above, when a major mode chooses its grammar): the grammars, attaching a text to a grammar, a query compiled, its capture names and its captures in a range, each refusal a value; `SyntaxTreeHandler`. Named `SyntaxTree`, since `Syntax` is `Lean.Syntax` wherever `Lean` is open and `Grammar` an input scheme's | `lean/Editor/SyntaxTree.lean` |
+| The syntax tree port, a sub-port of the editor's: the grammars, attaching a text to a grammar, a query compiled, its capture names and its captures in a range, a grammar's shipped query, and a text highlighted with a query in faces, each refusal a value; `SyntaxTreeHandler`; `SyntaxTree.none`. Named `SyntaxTree`, since `Syntax` is `Lean.Syntax` wherever `Lean` is open and `Grammar` an input scheme's | `lean/Editor/SyntaxTree.lean` |
+| The capture-to-face rule and what setting a major mode with a syntax tree asks of the port | `lean/Editor/Highlight.lean` |
 | Its pure model: one grammar, a parser of a subset of JSON that builds the tree `tree-sitter-json` builds, a subset of the query language, and the Rust core's rule for a range; it parses at once, so it never answers `notParsed` | `lean/Editor/SyntaxTree/Model.lean`, `Model/Json.lean`, `Model/Query.lean` |
 | Its contract, imported from the port alone, run against the model by `lake test` and against the real binding by `contract-test`, whose runner waits for a snapshot's tree to be delivered before each question of captures | `lean/Editor/SyntaxTree/Contract.lean` |
-| Its real binding: one call into the library a request, over the read half of the text binding's table of snapshots and a table of its own of the queries it compiled | `lean/Editor/SyntaxTree/Real.lean` |
+| Its real binding: one call into the library a request, over the read half of the text binding's table of snapshots and a table of its own of the queries it compiled; a face crosses as its name, none as the empty string | `lean/Editor/SyntaxTree/Real.lean` |
 | The clipboard port: its two requests, each refused as a value; `ClipboardHandler`; `Clipboard.unavailable` | `lean/Editor/Clipboard.lean` |
 | Its pure model: the text held, and a clipboard a test takes away | `lean/Editor/Clipboard/Model.lean` |
 | Its contract, imported from the port alone, run against the model by `lake test` and against the in-process clipboard by `contract-test` | `lean/Editor/Clipboard/Contract.lean` |
 | The clipboard where there is no window (the headless host): a cell of the process that answers with the model's rule | `lean/Editor/Clipboard/InProcess.lean` |
 | The state requests and their pure handler: one read of the whole state, and a request a write (a buffer, its history, values and modes; a window; the echo; a job to start), each refused with a value | `lean/Editor/State/Request.lean`, over the operations of `lean/Editor/State.lean` |
 | A dispatched command: its state requests answered from the loop's state, every other request guarded, so that it stops at its next one once the flag is up, a major mode's on-enter actions run inside it; `Guarded`, how it ended; and `Loop.Registered`, what the loop is told of the registry. The guard has this one definition | `lean/Editor/Command/Dispatch.lean` |
-| The composite's model runner, over the four models side by side, and the fuzzy model, which has no state | `lean/Editor/Command/Model.lean` |
-| The composite's real runner, over the text binding, a display handler, a watch handler, a clipboard handler and the fuzzy port's real binding | `lean/Editor/Command/Real.lean` |
+| The composite's model runner, over the five models side by side, and the fuzzy model, which has no state | `lean/Editor/Command/Model.lean` |
+| The composite's real runner, over the text binding, a display handler, a watch handler, a clipboard handler, a syntax tree handler and the fuzzy port's real binding | `lean/Editor/Command/Real.lean` |
 | `DisplayHandler`, and running a display program against one | `lean/Editor/Display.lean` |
 | The watch port: the interrupt flag, lowering it, and the clock; `WatchHandler`; `Watch.idle`; the interrupt key, `C-g` | `lean/Editor/Watch.lean` |
 | Its pure model: the interrupt keys that arrived, one that arrives at a command's n-th request, and a clock with a pace | `lean/Editor/Watch/Model.lean` |

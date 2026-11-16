@@ -1170,8 +1170,9 @@ state the editor can draw itself.
 ### Syntax, as built
 
 Built by the syntax roadmap's phase 1 (2026-11-16): the port, the
-reparse off the editor thread, and the Lean interface with its model.
-Highlights, a mode's grammar and capture faces are the next phase's.
+reparse off the editor thread, and the Lean interface with its model; and
+by its phase 2 (2026-11-16): highlights, a mode's grammar and capture
+faces ("Highlights, as built", below).
 
 **How grammars are loaded: compiled in.** Each grammar is a crates.io
 grammar crate, pinned exactly (`tree-sitter-rust` 0.24.2,
@@ -1211,7 +1212,7 @@ grammar of parens and atoms that reparses whole.
 
 **The contract** (`editor_syntax::contract::check`, over a `Corpus` of a
 grammar: texts, pieces random edits insert, a query and its names, bad
-queries with their kinds) holds every implementation to nine properties:
+queries with their kinds) holds every implementation to eleven properties:
 the grammar listed and opening a parser; a whole tree (the root reaches
 the text's end, each node within its parent on positions with their points,
 siblings in order; the root may start after the blanks that lead the text,
@@ -1221,8 +1222,12 @@ texts of both; the incremental reparse, as the core makes it, equal to a
 fresh parse; queries refused by kind; capture names in order; a
 range answering the whole text's captures that overlap it; and every
 capture naming one of the query's and being a node's range, in the core's
-order. Each property is seen to bite on an implementation written to break
-it. The fake passes it, and the adapter passes it for Rust and for JSON.
+order; the grammar's shipped highlights query compiling, and an unlisted
+grammar shipping none (`SHIPPED`); and, over the same edits as the
+incremental property, the shipped highlights of the reparsed tree equal to
+a fresh parse's (`HIGHLIGHTS_AFTER_EDITS`). Each property is seen to bite on
+an implementation written to break it. The fake passes it, and the adapter
+passes it for Rust and for JSON.
 
 - **Incremental equals fresh** is checked on named cases (an insert inside
   a token, a delete across lines, everything deleted, an edit at offset 0
@@ -1320,7 +1325,94 @@ tree `tree-sitter-json` builds, and a subset of the query language that
 refuses quantifiers, alternations, anchors, negated fields, predicates and
 groupings as unsupported. One contract, whose exact cases are the
 library's answers, holds the model and the real binding to the same
-properties. Making it a sub-port of the editor's port is the next phase's.
+properties. It is the seventh sub-port of the editor's port
+(`docs/design/lean-runtime.md`, "The editor's port is a composite").
+
+### Highlights, as built
+
+Built by the syntax roadmap's phase 2 (2026-11-16).
+
+**The queries ship with the grammar crates.** The port answers
+`Syntax::shipped_query(grammar, QueryKind::Highlights)`: the adapter's
+table holds each grammar crate's `HIGHLIGHTS_QUERY` (its
+`queries/highlights.scm`), so a query is pinned with the grammar it was
+written for by the same exact version, under the crate's licence, and an
+update is one version bump. A vendored copy could drift from the grammar's
+node types. A mode's config may give a query source of its own in place of
+the shipped one. Richer third-party query sets (nvim-treesitter's,
+Helix's) are set aside: their captures and predicates are written for
+those editors. The fake ships `PARENS_HIGHLIGHTS`; the Lean model ships a
+JSON query of its own in its query subset, since the library's uses an
+alternation the model refuses.
+
+**The highlighter and the highlight rule** (`editor_syntax::highlight`). A
+`Highlighter` is a compiled query and a face, or none, for each of its
+captures, which Lean's config chose; it is refused (`BadFaces`) unless
+there is one entry for each capture name. The rule turns a query's
+captures, in the core's order, into spans: a capture whose face is none is
+dropped, so it never hides a mapped one; an empty node is dropped; of the
+captures of one node the first, the earliest pattern, is kept, as
+tree-sitter-highlight does; and the core's order is kept, by start and the
+outer node first, so layout, which stacks spans in the order given, draws
+an inner node over its outer one. `highlight::fresh` (a whole parse, the
+whole text's captures and the rule) is the reference the tests compare
+with.
+
+**Which tree draws a snapshot** (`Session::highlights`), resolved once a
+frame and fixed for it, with the tree delivered last of revision M and a
+snapshot of revision N: nothing with no highlighter or no delivery; the
+tree itself when M is N; when M is older, the tree carried through the
+log's patch from M to N, asked of the session's `Source` (one
+`Source::latest`, under the document's lock); and nothing when the text
+has moved past N, the log has forgotten M, or M is newer. It takes the
+session's state lock, lets it go, and then the source's: never the work
+lock a parse holds, so it never waits for a parse.
+
+**Carried through the patch, not interpolated.** A range of N is mapped
+back to M (an end inside an edit's new span goes to its old start or old
+end), the captures there are drawn by the rule, and each span's parts
+outside every edit's old span are moved forward to N; a part inside an
+edited range is dropped, so text typed since M is plain until the reparse
+is delivered. Every end lands on a position of N. Set aside: editing a
+clone of the delivered tree with the patch and querying it against N (Zed's
+`SyntaxSnapshot::interpolate`), which draws an insertion inside a token in
+the token's face, but rests on where tree-sitter's `Tree::edit` moves
+nodes, a rule tree-sitter owns that the contract does not pin and the fake
+does not model. Carrying is ours, exact and tested on the fake; the cost is
+that typed characters are plain for one reparse.
+
+**Asked only for what is shown.** The highlights are the text's own spans
+in layout (`editor_layout::scene::TextSpans`, carried on a `TextRef`), and
+layout asks a source only for the bytes of the rows it lays out, in a frame
+and in the rows and move queries alike. `editor-ffi` hands layout a
+document's session as those spans (`Syntaxes::spans`), from the one
+function that makes a `TextRef` of a snapshot (`display::text_ref`), so a
+frame and a query of one snapshot see the same spans. There is no
+whole-text highlight pass on any thread.
+
+**A delivery is reported.** The first highlighter set on a session
+subscribes a consumer (`ParsedNotice`) that pushes one `EventKind::Parsed`
+(tag 13) from the library's source, the syntax service's id 5, onto the
+editor queue for each delivery. Lean's host hands it to its loop, which
+changes no state and publishes a scene, laid out with the new tree: the
+old highlights stay until then, and a file is highlighted on open with no
+key pressed. The consumer takes only the queue's lock, under the session's
+state lock, which nothing takes the other way round.
+
+**An attach with the grammar a document has keeps its session**, its tree
+and its highlighter, so a switch between two modes of one grammar does not
+draw the text plain again; another grammar replaces the session and drops
+the highlighter, and a detach drops both.
+
+**The C functions** are `editor_ffi_syntax_shipped_query` (a grammar and a
+kind's tag in, the source in a `RawText` with a status out) and
+`editor_ffi_syntax_highlight` (a snapshot, a query and the faces in, as a
+list of strings in the borrowed layout, the empty string none; a status
+out: highlighted, not attached, wrong grammar, bad faces). `SyntaxQuery`
+holds its query in an `Arc`, so a highlighter outlives the query's handle.
+In Lean, a major mode's `syntaxTree` says the grammar, the query's source
+and config's capture faces, and setting the mode attaches and highlights
+its buffer's text (`lean/Editor/Highlight.lean`).
 
 **Open questions:**
 
@@ -1329,6 +1421,16 @@ properties. Making it a sub-port of the editor's port is the next phase's.
   delivery is withheld.
 - A pool of workers, where one thread parses every document in turn.
 - A job's wait for a parse, in place of the test-only settle.
+- Coalescing the `Parsed` events of a burst of deliveries: one event for
+  each delivery today, bounded by the edits, each of which already
+  published.
+- A fallback of a capture dotted more than once to its longest mapped
+  prefix (`a.b.c` to `a.b`): today it falls to its first component only.
+- Highlighting again the buffers whose major mode a reload changed.
+- Keeping a compiled highlights query per grammar and source across
+  buffers, in place of one compiled each time a mode is set.
+- Drawing typed text in its token's face before the reparse, by
+  interpolating the tree (set aside above).
 
 ## Built in Lean on these services
 
