@@ -1521,14 +1521,14 @@ Each view (`View`):
 | `decorations` | Byte ranges of its snapshot, each naming a face |
 | `status` | Its status line: text fields, each naming a face, with a side (left, the default, or right) and a horizontal padding in whole points, which its face's background fills |
 | `statusFace` | The face of its status row, over `mode-line` and under every field's, which gives the row its background: `mode-line.inactive` for a window that is not selected, none for the selected one and the minibuffer's view. It neither makes the row taller nor moves its line |
-| `padding` | How far its content is inset from its edges, in whole points, across and down (`EditorState.paddingOf`): the frame padding both ways for a window, and for the minibuffer's view the bottom row's inset across and none down. 0 by default, which lays out as before there was one |
+| `padding` | How far its content is inset from its edges, in whole points, across and down, and how far further its text rows start from its top (`top`) (`EditorState.paddingOf`): the frame padding both ways for a window, with the window's top inset (`EditorState.topInset`: what the title bar covers, none in fullscreen) at the top of a window along the frame's top edge; and for the minibuffer's view the bottom row's inset across and none down. 0 by default, which lays out as before there was one |
 
 A field's side and padding and a view's status face cross the wire as
 data (a field is four words: its text's and face's lengths, its side and
 its padding; a view ends with its status face's presence and length), and
 a face definition is 24 words with its vertical padding last
 (`crates/editor-ffi/src/display/wire.rs`). A view's padding ends its words
-(across, then down) and the echo's follows the echo's length, in whole
+(across, down, then top) and the echo's follows the echo's length, in whole
 points like a field's padding: no scale crosses with any of them. Their
 defaults keep every scene that names none as it was.
 
@@ -2115,8 +2115,13 @@ part are in the module docs; these are the decisions.
   (`Layout::padding_pixels`: points times the scale, unrounded, as a
   status field's padding is). The text wraps at the view's width less the
   padding across twice and fills its height less its status row less the
-  padding down twice, which may be a fractional number of pixels: the
-  walk keeps the whole rows that fit. Each row carries its `x`, and the
+  padding down twice and the top once, which may be a fractional number of
+  pixels: the walk keeps the whole rows that fit. The first row starts the
+  top and the padding down from the view's top, so a view along the
+  frame's top edge, which Lean pads further at the top by what the
+  window's title bar covers (theming phase 7), starts its text below the
+  title bar; the top is 0 for every other view, and one helper takes it
+  off for the frame and the rows query alike. Each row carries its `x`, and the
   cursors and the selection areas move in by it; a row's hash leaves out
   its `x` and `y`, so a change of padding rebuilds no row, and the painter
   places a row's `x`, as its `y`, on a whole pixel. A status row keeps its
@@ -2134,7 +2139,10 @@ part are in the module docs; these are the decisions.
   window of a split its own with no gap between them; the bottom row (the
   echo, and the minibuffer's view across, not down) at least the
   window's corner clearance outside fullscreen and the padding alone in
-  it. Whether layout should round a padding to whole pixels inside itself
+  it; and the views along the frame's top edge (the upper window of a rows
+  split, both windows of a columns split) the window's top inset beside
+  the padding, none in fullscreen. Whether layout should round a padding
+  to whole pixels inside itself
   is the owner's open question of the Layout row in
   [README.md](README.md), which this leaves open.
 - **Counters** count segments shaped, broken and reused, each once per call;
@@ -2530,7 +2538,52 @@ window is still run with nothing drawing in it. The threads are in
   has no public corner radius, and its private `_cornerRadius` is not
   used. Lean keeps it in the frame (`Frame.corner`) and insets the bottom
   row by at least it. The fullscreen case is pinned by the adapter's tests
-  alone: the window's contract run never enters fullscreen.
+  alone: the window's contract run never enters fullscreen. With the
+  themed title bar the content view's left inset takes in the window's
+  buttons (measured left 78, right 16), so the adapter takes the nearer
+  side (`corner::reach`), which reads 16 again.
+- **The title bar takes the theme's paper** (theming phase 7, the owner's
+  choice, after emacs-plus's `ns-transparent-titlebar` and Ghostty's
+  `macos-titlebar-style = transparent`). On macOS the winit adapter opens
+  the window with a transparent title bar over a full-size content view
+  (winit's `WindowAttributesMacOS::with_titlebar_transparent` and
+  `with_fullsize_content_view`), so the paper is drawn under the title,
+  which stays shown, and the buttons. The window port says it as data:
+  `WindowOptions::title_bar` (`TitleBar::Themed` by default, or
+  `Standard`), chosen when the window opens since winit has no setter for
+  it under an open window; `Resize::top_inset`, how far down the title bar
+  covers the drawable area in whole logical points, reported whenever it
+  changes, 0 in fullscreen (which the contract holds every platform to),
+  with the standard title bar and off macOS; and
+  `Request::Appearance`, light or dark, which the adapter carries out with
+  winit's `set_theme` (`NSWindow.appearance`, `aqua` or `darkAqua`), only
+  when it is not the one asked last. The adapter reads the top inset from
+  winit's public `Window::safe_area`, whose top is the content view's
+  `safeAreaInsets` (32 points on macOS 27.2), rounded up, with a fallback
+  measured on a real window (32 points,
+  `crates/editor-platform-winit/src/title_bar.rs`). Lean keeps it in the
+  frame (`Frame.top`) and pads the top of every view along the frame's
+  top edge by it, in points, so their text starts below the title bar;
+  layout multiplies it at its scale, unrounded, as the rest of the
+  padding. Lean asks for the appearance whose title and buttons contrast
+  with the effective paper, the `default` face's background in the theme
+  in force with config's definitions after it, classified by its WCAG 2
+  relative luminance (`Editor/Appearance.lean`: dark exactly when white
+  text contrasts with it more than black), when the window opens and then
+  only when the classification changes: a switch of theme, or a reload
+  that changes the theme or overrides the paper. Config keeps the standard
+  title bar with `titleBar .standard`, read when the window opens once the
+  start-up config has loaded ([lean-runtime.md](lean-runtime.md),
+  "Start-up and shutdown"), so a reload changes it at the next start.
+  The top corners, the open question phase 6 left, are answered by the
+  same inset: they are under the title bar, and the first text row of a
+  view along the top edge starts the top inset and the padding down (40
+  points by default), further than the corners reach (16), while the
+  title bar's own title and buttons are the system's to place.
+  In native fullscreen the system shows the title bar over the content
+  when the pointer reaches the top, over the first row while it shows;
+  that is the system's. Following the system's own appearance is not
+  built: the roadmap leaves it out.
 - **Fullscreen and minimise are commands too.** `toggle-fullscreen` and
   `minimise-window` (`lean/Editor/FrameCommands.lean`), bound by default
   to `C-s-f` (Ctrl-Cmd-F) and `s-m` (Cmd-M), ask the window through the
@@ -2726,12 +2779,6 @@ frame journal and the renderer's counters.
   not built.
 
 ## Open questions
-
-- **The top corners.** Only the bottom row keeps clear of the window's
-  rounded corners. The top corners are under the title bar today; once
-  the themed title bar (theming phase 7) puts content under them, whether
-  the first text row, or the title bar's own content, keeps clear of them
-  too, and by the same reading, is open.
 
 - **A field of the scene for the prompt.** The prompt text is the
   minibuffer view's status line ("Publishing"), which keeps the scene's

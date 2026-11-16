@@ -95,7 +95,20 @@ and the compiler and entry-point workarounds above.
 3. The editor is usable before config has loaded: the compiled standard
    library provides the default keymap. Without config the spike reached
    its first event in 0.06 ms; importing the API and elaborating a small
-   config took 150 to 200 ms in the background.
+   config took 150 to 200 ms in the background. The window mode is the
+   exception since theming phase 7: when it loads config at start it opens
+   its window only once that reload has finished, installed or refused, or
+   after `Window.configPatience` (3 s), whichever is first. Config chooses
+   the window's title bar (`titleBar .standard`, `Editor/Setup.lean`), and
+   the platform cannot change a title bar under an open window (winit has
+   no setter for it, and restores its own style on fullscreen
+   transitions), so the choice must be known before the window exists.
+   The cost is the start-up config's load before the window shows (0.17 s
+   for the bundle, "What config may import, measured"); its gain is that
+   the first frame is drawn in config's theme. The editor loop still runs
+   from the start: the reload, an open and anything the echo area has to
+   say are handled while the window mode waits. With no config, or when
+   the wait runs out, the window opens with the themed title bar.
 
 Shutdown posts a quit event, unblocks every dedicated task, and calls exit.
 Returning from `main` while a task is blocked in Rust hangs.
@@ -108,9 +121,12 @@ process's presenter, and the system clipboard, or `Clipboard.unavailable`
 when it cannot be opened, which the echo area says once. Before the first
 event `main` posts the open command with the file, when one was given
 (with none the editor shows its one empty buffer), what the echo area has
-to say, and a reload when config is loaded at start; the editor is usable
-before the reload installs, as above. Then it runs the window on its own
-thread (`Ffi.windowRun`) with the editor loop on a dedicated task; when the
+to say, and a reload when config is loaded at start; the editor loop runs
+from then on. When config is loaded at start, `main` waits for that reload
+to finish, or for 3 s, and opens the window with the title bar the
+installed config chose (`Window.titleBarAtOpen`), as above. Then it runs
+the window on its own thread (`Ffi.windowRun`) with the editor loop on a
+dedicated task; when the
 loop ends, on `:q` or a close request, a task waits briefly for the last
 frame to be drawn and asks the window to close. Then `main` quits the
 queues and exits.
@@ -457,7 +473,19 @@ elaborator.
   install, so a config that sets none has the editor's 8
   (`Loop.padding`), and the host hands it to the loop for each step
   (`Headless.keys`, `Loop.Keys.padding`): a reload changes it with no
-  restart. Setting it twice rejects the reload. A rejected reload's first error
+  restart. Setting it twice rejects the reload.
+- **The title bar is config's, at the next start**: `titleBar .standard`
+  keeps the system's standard title bar in place of the themed one, whose
+  paper is the theme's (theming phase 7). It is the reducer's state
+  (`State.titleBar`), set at every install and published in the host's
+  progress, which the window mode reads once, when it opens the window
+  after the start-up reload: a reload that changes it takes effect at the
+  next start. Choosing it twice rejects the reload.
+- **The window's appearance follows the paper.** Once the window has
+  opened, the reducer asks it for the light or the dark appearance that
+  contrasts with the effective paper (`Config.Effect.appearance`,
+  `Editor/Appearance.lean`), and afterwards only when a choice of theme or
+  a reload changes whether that paper is light or dark. A rejected reload's first error
   is said in the echo area (`Config.Report.echo`), and its whole report is
   printed: on stdout in the headless mode, on stderr in the window mode.
 - **The session runs no `IO` action from config.** A chunk is elaborated,

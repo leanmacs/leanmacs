@@ -830,11 +830,19 @@ rules (an equal frame is no demand; a loop at rest draws nothing) are
 library's scripted platform: a cells display bound to the presenter, a
 clipboard of its own, the host opening a copy of `ex/note.txt`, and the
 scripted sample window opening, sending its input and asking to close.
-It must exit 0, which it does only when the window ran and closed and the
-render session's counters show a frame drawn, and the copy must be
-unchanged. `ffi-test window-host` with no file runs the same wiring as
-Finder starts the app: the host posts no open, the window runs on the
-editor's one empty buffer, and it must exit 0 the same way.
+It must exit 0, which it does only when the window ran and closed, the
+render session's counters show a frame drawn, the window was opened with
+the themed title bar and asked for the dark appearance of the built-in
+paper and nothing else, and the copy must be unchanged. `ffi-test
+window-host` with no file runs the same wiring as Finder starts the app:
+the host posts no open, the window runs on the editor's one empty buffer,
+and it must exit 0 the same way. `ffi-test window-host-config <sysroot>
+<olean dir> <config dir>` runs the same wiring with no file and config
+loaded at start from the fixture `tests/window/title-bar/config`, whose
+`setup` keeps the standard title bar: the host waits for the start-up
+reload with no bound, so the result does not race the clock, and the
+scenario must exit 0, which it does only when the scripted window was
+opened with the standard title bar.
 `ffi-test window-host-undrawn <file>` runs the same wiring on
 the scripted platform whose renderer cannot be made, as a machine with no
 usable GPU gives: it must exit 0, which it does only when the window mode
