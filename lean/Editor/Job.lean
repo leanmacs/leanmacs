@@ -1,5 +1,6 @@
 import Editor.Command
 import Editor.File
+import Editor.FileWatch
 import Editor.Process
 
 /-!
@@ -53,6 +54,16 @@ process wait cancels the run (`Editor/Job/Runner.lean`, "Cancellation"). A
 streaming child does not outlive its job: the runner cancels it when the job
 ends, however it ends.
 
+A job reaches changes on disk through one request, `fileWatch`, which
+carries a `FileWatchRequest` (`Editor/FileWatch.lean`): `FileWatch.start`
+watches a file, a directory's entries or a directory's tree and replies with
+the watch, named for the job, or a refusal, an `Except FileWatchError`;
+`FileWatch.next` waits for the watch's next delivery, every change recorded
+and not yet taken, coalesced over the job's window. A watch does not outlive
+its job: the runner ends every watch the job holds when the job ends,
+however it ends (`Editor/Job/Runner.lean`, "A watch does not outlive its
+job"). It is not the interrupt port `Editor/Watch.lean`.
+
 No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
 something a job names.
@@ -82,6 +93,15 @@ says what it needs). Its model is `Editor/Process/Model.lean`, its fake
 wait also tells the process service (`Handle.withdraw`), which is how a
 cancelled job's child is killed.
 
+The file-watch service is the third, beside it: `JobRequest.fileWatch`,
+whose requests are `FileWatchRequest`s, so a `stop` that ends a watch early
+is a constructor there and not here (`Editor/FileWatch.lean` says what it
+needs). Its model is `Editor/FileWatch/Model.lean`, which the job model
+composes with the process model so that a command a job runs changes what
+its watches see; its fake is `FakeFileWatches` and its real implementation
+`realFileWatches`. Withdrawing a wait tells the watch service too, and
+ending a job ends its watches (`Handle.endWatches`).
+
 ## The pieces
 
 - the port, here: the requests, the reply to each, the operations a job is
@@ -90,6 +110,8 @@ cancelled job's child is killed.
   files a job reaches, `Editor/File/Model.lean`;
 - the process requests as data, `Editor/Process.lean`, and the pure model of
   the processes a job runs, `Editor/Process/Model.lean`;
+- the file-watch requests as data, `Editor/FileWatch.lean`, and the pure
+  model of what a job's watches see, `Editor/FileWatch/Model.lean`;
 - its pure model, `Editor/Job/Model.lean`, which tests run against;
 - its contract, `Editor/Job/Contract.lean`: three lists of properties, of
   the clock, of the file requests and of the process requests, run against
@@ -121,6 +143,9 @@ inductive JobRequest where
   | file (request : FileRequest)
   /-- Run a process (`Editor/Process.lean`), and wait for it. -/
   | process (request : ProcessRequest)
+  /-- Watch a file or a directory, or wait for a watch's next delivery
+  (`Editor/FileWatch.lean`). -/
+  | fileWatch (request : FileWatchRequest)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -131,6 +156,7 @@ def JobRequest.Reply : JobRequest → Type
   | .waitUntil _ => Unit
   | .file request => request.Reply
   | .process request => request.Reply
+  | .fileWatch request => request.Reply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -225,6 +251,19 @@ def Process.writeLine (process : Process.Id) (line : String) : JobM (Except Proc
 /-- Closes `process`'s standard input: the child reads its end. -/
 def Process.closeInput (process : Process.Id) : JobM (Except ProcessError Unit) :=
   ExceptT.lift (Program.request (port := jobPort) (.process (.closeInput process)))
+
+/-- Watches `target`, coalesced as `coalescing` says: the watch, named for
+the job, which does not outlive it. `Editor/FileWatch.lean` has the
+rules. -/
+def FileWatch.start (target : FileWatch.Target) (coalescing : FileWatch.Coalescing) :
+    JobM (Except FileWatchError FileWatch.Id) :=
+  ExceptT.lift (Program.request (port := jobPort) (.fileWatch (.start target coalescing)))
+
+/-- Waits for the next delivery of `watch`: every change recorded and not yet
+taken, at most one a path, once the window from its first change has
+passed. -/
+def FileWatch.next (watch : FileWatch.Id) : JobM (Except FileWatchError (Array FileWatch.Change)) :=
+  ExceptT.lift (Program.request (port := jobPort) (.fileWatch (.next watch)))
 
 namespace Job
 

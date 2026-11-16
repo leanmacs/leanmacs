@@ -1,4 +1,5 @@
 import Editor.File.Model
+import Editor.FileWatch.Model
 import Editor.Job
 import Editor.Process.Model
 
@@ -31,6 +32,12 @@ here.
   model. A scripted run moves the clock on by the time it takes, as a wait
   does, so a cancellation that falls inside it ends the run as `cancelled`
   at that instant, and the process model records the command as killed.
+- A watch request is answered by the model of what the job's watches see
+  (`JobModel.fileWatches`, `Editor/FileWatch/Model.lean`). A run of a
+  command touches those watches with what the command changes on disk,
+  when the run ends; a `next` moves the clock to when its delivery is due.
+- **A watch does not outlive its job.** When the run ends, however it ends,
+  every watch is recorded as ended and forgotten (`FileWatchModel.endAll`).
 - **A streaming child does not outlive its job.** When the run ends, finished,
   failed or cancelled, every streaming child the job started that is still
   running is recorded as killed, and every one is forgotten
@@ -55,6 +62,8 @@ structure JobModel where
   files : FileModel := {}
   /-- The processes the job runs (`Editor/Process/Model.lean`). -/
   processes : ProcessModel := {}
+  /-- What the job's watches see (`Editor/FileWatch/Model.lean`). -/
+  fileWatches : FileWatchModel := {}
   deriving DecidableEq
 
 namespace JobModel
@@ -68,15 +77,26 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     (reply, { model with files })
   | .process request, model =>
     let (reply, processes, now) := model.processes.handle model.now model.cancelAt request
+    -- A run changes the disk as its command does, when it ends.
+    let fileWatches :=
+      match request with
+      | .run command _ => model.fileWatches.touch (model.fileWatches.effectsOf command) now
+      | _ => model.fileWatches
     (reply,
       { model with
-        processes, now })
+        processes, fileWatches, now })
+  | .fileWatch request, model =>
+    let (reply, fileWatches, now) := model.fileWatches.handle model.now model.cancelAt request
+    (reply,
+      { model with
+        fileWatches, now })
 
 /-- The model once the job has ended: every streaming child it started is
-ended (`ProcessModel.endAll`), as the runner cancels them, however the job
-ended. -/
+ended (`ProcessModel.endAll`), as the runner cancels them, and every watch
+(`FileWatchModel.endAll`), however the job ended. -/
 def ended (model : JobModel) : JobModel :=
-  { model with processes := model.processes.endAll }
+  { model with
+    processes := model.processes.endAll, fileWatches := model.fileWatches.endAll }
 
 /-- Whether the job is cancelled by now. -/
 def cancelled (model : JobModel) : Bool :=

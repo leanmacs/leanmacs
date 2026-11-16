@@ -453,6 +453,8 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.processes.start id (.run command limit)
     return .later id wait (handle.services.processes.take id (.run command limit))
+  | .fileWatch request =>
+    return .now (request.refused (.failed "this runner has no file-watch service"))
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.
