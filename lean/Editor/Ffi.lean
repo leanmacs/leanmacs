@@ -156,14 +156,15 @@ for.
 The timer service is the first: `timersNow`, `timersStart`, `timersCancel`,
 and `timersPending`, a readout for tests.
 
-The file service is the second: `filesLoad` and `filesSave` start a request,
+The file service is the second: `filesLoad`, `filesSave` and `filesStamp`
+start a request,
 `filesTake` hands its result over once its completion has arrived,
 `filesCancel` cancels, and `filesPending` is a readout for tests. A request
 has a result, which a timer's has not, so there is one more step: the
 completion says only that the request `id` is done, and the result is taken
 by that id, once, as one record (`FileResult`): a loaded file's text as a
 `Snapshot` handle with its stamp and its line endings, a saved file's stamp,
-or a refusal (`FileRefusal`). A file's content never crosses as a Lean
+a file's stamp or none, or a refusal (`FileRefusal`). A file's content never crosses as a Lean
 string or a byte array: a load hands back a handle, and a save borrows one.
 A path crosses as the bytes of a Lean string, which the library does not
 decode. What a save expects on disk (`FileExpect`) crosses as a tag and a
@@ -1594,6 +1595,8 @@ inductive FileResult where
   | loaded (snapshot : Snapshot) (stamp : FileStamp) (lineFeeds crlfs : UInt64)
   /-- A file was saved, and has this stamp. -/
   | saved (stamp : FileStamp)
+  /-- A stamp was read: the file's, or `none` when nothing is there. -/
+  | stamped (stamp : Option FileStamp)
   /-- The request was refused. -/
   | refused (refusal : FileRefusal)
 
@@ -1619,6 +1622,14 @@ def FileResult.decode (status : UInt64) (snapshot : Option Snapshot) (words : By
     return .loaded snapshot (stampAt words 0) words[3]! words[4]!
   | 0, 3, none =>
     return .saved (stampAt words 0)
+  | 0, 4, none =>
+    match words[0]! with
+    | 0 =>
+      return .stamped none
+    | 1 =>
+      return .stamped (some (stampAt words 1))
+    | present =>
+      throw s!"a stamped file is present or not, and the word says {present}"
   | 1, 0, none =>
     return .refused .relativePath
   | 2, 0, none =>
@@ -1658,6 +1669,16 @@ The path crosses as its bytes, with no decoding. `false`, with nothing
 started, if `id` is in use or the service could not start its thread. -/
 @[extern "editor_glue_files_load"]
 opaque filesLoad (id : UInt64) (path : @& String) (limit : UInt64) : IO Bool
+
+/-- Asks the library's file service for the stamp of the file at `path`, as
+the request `id`, and returns whether it was accepted. It returns at once,
+and nothing of the file is read. The completion and the result are as
+`filesLoad`'s: the result is `stamped`, or a refusal.
+
+`false`, with nothing started, if `id` is in use or the service could not
+start its thread. -/
+@[extern "editor_glue_files_stamp"]
+opaque filesStamp (id : UInt64) (path : @& String) : IO Bool
 
 /-- `filesSave` as it crosses: what the save expects as a tag (0 whatever, 1
 absent, 2 unchanged) and a stamp's three numbers, its seconds as a two's

@@ -51,6 +51,14 @@
 //! - **The permissions are not returned.** A save takes them from the file
 //!   as it is on disk when the save is made.
 //!
+//! # A stamp alone
+//!
+//! [`stamp`] answers the [`Stamp`] of the file at a path, or none when
+//! nothing is there, from one stat: nothing of the file is read. A path that
+//! is not absolute is refused before the file system is asked, and what is
+//! not a file is [`LoadError::NotAFile`]. It is how a caller tells whether a
+//! file changed without loading it.
+//!
 //! # Saving
 //!
 //! [`save`] saves a [`Snapshot`], so the thread that owns the text hands
@@ -382,6 +390,22 @@ pub fn load(fs: &dyn Fs, path: &Path, limit: u64) -> Result<Loaded, LoadError> {
         },
         endings: LineEndings::count(&bytes),
     })
+}
+
+/// The stamp of the file at `path`, which must be absolute, or `None` when
+/// nothing is there: one stat, and nothing of the file is read. A path that
+/// is not absolute is refused before the file system is asked
+/// ([`LoadError::Relative`]), and what is not a file is
+/// [`LoadError::NotAFile`]. A link is followed.
+pub fn stamp(fs: &dyn Fs, path: &Path) -> Result<Option<Stamp>, LoadError> {
+    if !path.is_absolute() {
+        return Err(LoadError::Relative);
+    }
+    match fs.stat(path)? {
+        None => Ok(None),
+        Some(stat) if stat.kind == Kind::File => Ok(Some(Stamp::of(&stat))),
+        Some(_) => Err(LoadError::NotAFile),
+    }
 }
 
 /// What a save expects to find at the path, which it checks before it
@@ -838,6 +862,56 @@ mod tests {
         // either.
         fs.after(Op::Stat, |fs| fs.take_away(PATH));
         assert_eq!(refusal(&fs, PATH, NO_LIMIT), Some(LoadError::NotFound));
+    }
+
+    #[test]
+    fn a_stamp_of_a_path_that_is_not_absolute_is_refused_before_the_file_system_is_asked() {
+        let fs = fake_with(b"text");
+
+        for path in ["dir/file.txt", "file.txt", ""] {
+            assert_eq!(
+                stamp(&fs, Path::new(path)),
+                Err(LoadError::Relative),
+                "{path:?}"
+            );
+        }
+        assert_eq!(fs.calls(), []);
+    }
+
+    #[test]
+    fn the_stamp_of_nothing_is_none() {
+        let fs = fake_with(b"text");
+
+        assert_eq!(stamp(&fs, Path::new("/dir/other.txt")), Ok(None));
+    }
+
+    #[test]
+    fn the_stamp_of_what_is_not_a_file_is_refused_as_not_a_file() {
+        let fs = FakeFs::new();
+        fs.directory("/dir/sub");
+        fs.other("/dir/pipe");
+
+        for path in ["/dir/sub", "/dir/pipe"] {
+            assert_eq!(
+                stamp(&fs, Path::new(path)),
+                Err(LoadError::NotAFile),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_stamp_of_a_file_is_the_stamp_of_its_stat_and_nothing_of_it_is_read() {
+        let fs = fake_with(b"text");
+
+        assert_eq!(
+            stamp(&fs, Path::new(PATH)),
+            Ok(Some(Stamp {
+                modified: THEN,
+                size: 4,
+            }))
+        );
+        assert_eq!(fs.calls(), [Call::Stat(PATH.into())]);
     }
 
     #[test]

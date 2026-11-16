@@ -463,10 +463,21 @@ def fileChecks (_ : Unit) : List Check :=
             decodedFile 8 [] == (none, some .noTemporaryName) &&
             decodedFile 9 [] "the disk is full" == (none, some (.failed "the disk is full"))) },
     { name :=
+        "a stamp request's result decodes as four words: present or not, then the stamp, its seconds before 1970 negative"
+      run :=
+        let stamped (values : List UInt64) : Option (Option Editor.Ffi.FileStamp) :=
+          match Editor.Ffi.FileResult.decode 0 none (wordBytes values) "" with
+          | .ok (.stamped stamp) => some stamp
+          | _ => none
+        pure
+          (stamped [1, 0xFFFFFFFFFFFFFFFF, 5, 9] ==
+              some (some { seconds := -1, nanoseconds := 5, size := 9 }) &&
+            stamped [0, 0, 0, 0] == some none) },
+    { name :=
         "a file result the bindings cannot read is an error: a status the table does not have, words that are not the status's, and a load with no snapshot"
       run :=
         pure
-          (([(10, []), (0, []), (0, [1, 2]), (0, [1, 2, 3, 4]), (0, [1, 2, 3, 4, 5]), (5, []),
+          (([(10, []), (0, []), (0, [1, 2]), (0, [2, 0, 0, 0]), (0, [1, 2, 3, 4, 5]), (5, []),
                   (6, [1]), (7, [1, 2, 3]), (7, [2, 0, 0, 0]), (2, [1])].all
               fun ((status, values) : UInt64 × List UInt64) =>
               (Editor.Ffi.FileResult.decode status none (wordBytes values) "").toOption.isNone) &&

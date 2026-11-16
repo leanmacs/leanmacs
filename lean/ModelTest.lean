@@ -4741,7 +4741,23 @@ def modelWithFile : FileModel :=
 (`Editor/File/Model.lean`) and of the file data (`Editor/File.lean`). They
 touch no file. -/
 def fileModelChecks : List Check :=
-  [{
+  [{  name :=
+        "the file model's stamp of a file is the stamp it was written with, and a write changes it; of nothing it is none"
+      run :=
+        let (before, model) := modelWithFile.handle (.stamp (modelRoot / "mixed.txt"))
+        let (written, _) := model.written (modelRoot / "mixed.txt") mixedBytes
+        let (after, _) := (model.withFile (modelRoot / "mixed.txt") mixedBytes).handle
+          (.stamp (modelRoot / "mixed.txt"))
+        let (nothing, _) := modelWithFile.handle (.stamp (modelRoot / "missing.txt"))
+        let stampOf : Except FileError (Option File.Stamp) → Option (Option File.Stamp)
+          | .ok stamp => some stamp
+          | .error _ => none
+        pure
+          (stampOf before == some ((modelWithFile.file? (modelRoot / "mixed.txt")).map (·.stamp)) &&
+            stampOf after == some (some written) &&
+            stampOf before != stampOf after &&
+            stampOf nothing == some none) },
+    {
       name :=
         "the file model decodes bytes to the text the library keeps them as, and encodes that text to the bytes again: thirteen byte strings, each against a text written out by hand",
       run :=

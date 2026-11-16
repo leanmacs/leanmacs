@@ -364,6 +364,28 @@ def fileProperties : List FileProperty :=
             made.size == 17
       after := #[("a.txt", rawFile), ("b.txt", rawFile)] },
     { name :=
+        "the stamp of a file is the stamp a load of it answers; of nothing it is none; a directory is refused as notAFile and a relative path as relativePath"
+      files := #[("a.txt", rawFile)]
+      holds := fun root => do
+        let file ← loaded (root / "a.txt")
+        let stamp ← File.stamp (root / "a.txt")
+        let missing ← File.stamp (root / "missing.txt")
+        let directory ← File.stamp root
+        let relative ← File.stamp "relative.txt"
+        return (match stamp with
+            | .ok (some stamp) => stamp == file.stamp
+            | _ => false) &&
+            (match missing with
+            | .ok none => true
+            | _ => false) &&
+            (match directory with
+            | .error .notAFile => true
+            | _ => false) &&
+            match relative with
+            | .error .relativePath => true
+            | _ => false
+      after := #[("a.txt", rawFile)] },
+    { name :=
         "a limit no machine word holds is not cut down: under a limit of 2^64 + 1, which cut down to a 64-bit word is 1, a file of seventeen bytes loads"
       files := #[("a.txt", rawFile)]
       holds := fun root => do

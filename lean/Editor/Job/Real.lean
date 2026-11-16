@@ -54,6 +54,8 @@ reply is then taken from the library by the id, once.
   a save whose source names no snapshot, whose reply is `noSuchSnapshot`,
   and a request the library's service does not take, whose reply is
   `failed`. The reply is kept until it is taken.
+- **A stamp request** goes to the library as its path alone, and its reply
+  is the stamp the library read, or none.
 - **Numbers are machine words there.** A limit or a size no 64-bit word
   holds is sent as the largest, never wrapped.
 - **Cancelling** a wait cancels the request at the library: one still
@@ -289,11 +291,26 @@ def takenSave (held : HeldSnapshots) (id : UInt64) : BaseIO (Except FileError Fi
   | .inr _ =>
     return .error noResult
 
+/-- The reply to a stamp request that was started as the wait `id`, which
+has completed. -/
+def takenStamp (held : HeldSnapshots) (id : UInt64) :
+    BaseIO (Except FileError (Option File.Stamp)) := do
+  match ← fetched held id with
+  | .inl refusal =>
+    return .error refusal
+  | .inr (some (.stamped stamp)) =>
+    return .ok (stamp.map stampOf)
+  | .inr (some (.refused refusal)) =>
+    return .error (errorOf refusal)
+  | .inr _ =>
+    return .error noResult
+
 /-- The reply to `request`, which was started as the wait `id` and has
 completed. -/
 def taken (held : HeldSnapshots) (id : UInt64) : (request : FileRequest) → BaseIO request.Reply
   | .load .. => takenLoad held id
   | .save .. => takenSave held id
+  | .stamp _ => takenStamp held id
 
 /-- The file port answered by the library's file service. `completions` is
 the table its waits are registered in, `published` the read half of the text
@@ -323,6 +340,10 @@ def realFiles (completions : Completions) (published : SnapshotReader) (held : H
                 pure false
           unless started do
             refuse id notTaken
+      | .stamp path =>
+        let started ← (Ffi.filesStamp id path.toString).catchExceptions fun _ => pure false
+        unless started do
+          refuse id notTaken
     take := fun id request => taken held id request
     cancel := fun id => do
       held.refused.modify (·.erase id)

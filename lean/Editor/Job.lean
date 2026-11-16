@@ -31,8 +31,8 @@ the instant of its next tick and its period. A job may also fail: `JobM` has
 an error layer of messages, so a job has `throw`, `try` and `catch`.
 
 A job reaches files through one request, `file`, which carries a
-`FileRequest` (`Editor/File.lean`): `File.load` loads a file and `File.save`
-saves a snapshot as one. Each waits, as a wait on the clock does, and
+`FileRequest` (`Editor/File.lean`): `File.load` loads a file, `File.save`
+saves a snapshot as one, and `File.stamp` reads a file's stamp. Each waits, as a wait on the clock does, and
 replies with a result or a refusal: an `Except FileError`, a value, which
 the job matches on. Nothing about a file ends a job or cancels it. A load
 replies with the name of a snapshot the job then holds (`JobSnapshotId`):
@@ -217,6 +217,13 @@ has the rules. -/
 def File.save (source : File.Source) (path : System.FilePath) (expect : File.Expect) :
     JobM (Except FileError File.Stamp) :=
   ExceptT.lift (Program.request (port := jobPort) (.file (.save source path expect)))
+
+/-- The stamp of the file at `path`, or `none` when nothing is there, and
+waits for it; nothing of the file is read. A directory is refused as
+`notAFile`. The refusal is a value: the job goes on. `Editor/File.lean` has
+the rules. -/
+def File.stamp (path : System.FilePath) : JobM (Except FileError (Option File.Stamp)) :=
+  ExceptT.lift (Program.request (port := jobPort) (.file (.stamp path)))
 
 /-- Runs `command` to its end and waits for it, collecting each output stream
 unless it is longer than `limit` bytes: how the child ended and both its
