@@ -8,6 +8,7 @@ import Editor.Display.Contract
 import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
+import Editor.Ex.Compiled
 import Editor.File.Cases
 import Editor.Fuzzy.Contract
 import Editor.Fuzzy.Real
@@ -18,6 +19,7 @@ import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Key.Notation
 import Editor.Loop
+import Editor.Shell.Compiled
 import Editor.Text.Contract
 import Editor.Text.Model
 import Editor.Text.Real
@@ -156,6 +158,16 @@ job port's, read from a fake clock here, and, with the command loop over
 the real text binding, an interrupt key that arrives while a command runs.
 That check is single-threaded, so where the key arrives is exact: the
 display handler posts it during one of the command's own publishes.
+
+`shellChecks` runs `:!` and a filter (`Editor/Shell.lean`) over the real
+process service, with the command loop over the real text binding: the ex
+line's commands and the shell's are registered, the editor's working
+directory is the fixtures' (`tests/shell`), and each line is run as a host
+runs it, its invocations as steps of their own, each job it starts spawned
+on the runner over the library's services and its command delivered once
+the job has ended (`settle`). `:!` of the fixture `hello` leaves `hello` in
+the echo area, and `%!/usr/bin/sort` over `b`, `c`, `a` leaves `a`, `b`,
+`c`; every child is reaped.
 
 The cases of the editor API (`Editor/Api/Cases.lean`) are played on the
 real text binding, with a recorder as the display and nothing watched
@@ -1575,6 +1587,94 @@ def watchChecks (timers : Job.Timers) : List Check :=
         finally
           discard <| Event.setInterruptKey none }]
 
+/-! ## `:!` over the real process service -/
+
+/-- The keys of the shell checks: none bound, and the ex line's commands and
+the shell's by name; the shell's job is the one registered. -/
+def shellKeys : Loop.Keys TestScheme.scheme :=
+  { command? := fun name =>
+      ((Ex.commands ++ Shell.commands).find? (·.name == name)).bind fun registration =>
+        match registration.action with
+        | .call run =>
+          some fun call => do
+            run call
+            return none
+        | _ => none
+    registered := { jobs := (· == Shell.runJob) } }
+
+/-- `stepped`'s loop once what the step asked for is done, as a host does
+it: each invocation it answered run as a step of its own, and each job it
+started spawned on `services`, waited for, and its command delivered, each
+taken in the same way, at most `depth` deep. `none` when a job did not end
+in time or ended otherwise than finished, or a step was refused. -/
+partial def settle (services : Job.Services) (display : DisplayHandler) (texts : RealTexts)
+    (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8) :
+    IO (Option (Loop TestScheme.scheme × RealTexts)) := do
+  if depth == 0 then
+    return none
+  let mut loop := stepped.loop
+  let mut texts := texts
+  for invocation in stepped.answered do
+    let (next, after) ← (loop.invoke shellKeys invocation).runReal texts display
+    let .ok next := next | return none
+    let some (settled, after) ← settle services display after next (depth - 1) | return none
+    loop := settled
+    texts := after
+  for start in stepped.starts do
+    let some work :=
+      (Shell.jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+    let handle ← Job.spawn services work (pure ())
+    unless ← eventually handle.ended do
+      handle.cancel
+      return none
+    let some (.finished command) ← handle.outcome? | return none
+    handle.settle
+    let (next, after) ← (loop.deliver shellKeys s!"job {start.name}" command).runReal texts display
+    let .ok next := next | return none
+    let some (settled, after) ← settle services display after next (depth - 1) | return none
+    loop := settled
+    texts := after
+  return some (loop, texts)
+
+/-- What only the real process service shows of `:!` and a filter, with the
+loop's working directory the fixtures' (`fixtures`, `tests/shell`). -/
+def shellChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
+  let ran (line : String) (contents : String) : IO (Option (String × String)) := do
+    let published ← Snapshots.new
+    let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
+    let display := recorder.handle
+    let begin : EditorM (Loop TestScheme.scheme) := do
+      let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
+      let some target := loop.state.focusedTarget? | throw TextError.noSuchText
+      target.buffer.text.insert 0 contents
+      return { loop with state := { loop.state with workingDirectory := fixtures } }
+    let (started, texts) ← begin.runReal (RealTexts.over published) display
+    let .ok loop := started | return none
+    let (stepped, texts) ←
+      (loop.invoke shellKeys { command := Ex.name, arguments := [.str line] }).runReal texts display
+    let .ok stepped := stepped | return none
+    let some (loop, texts) ← settle services display texts stepped | return none
+    let read : EditorM String := do
+      let some target := loop.state.focusedTarget? | throw TextError.noSuchText
+      target.buffer.text.read
+    let (text, _) ← read.runReal texts display
+    let .ok text := text | return none
+    return some (loop.state.echo, text)
+  [{  name :=
+        "criterion 16: over the real process service, `:!` running the fixture `hello` leaves `hello` in the echo area, and its child is reaped"
+      run := do
+        let before ← Ffi.processesPending
+        let said ← ran s!"!'{fixtures / "hello"}'" ""
+        let reaped ← eventually (return (← Ffi.processesPending) == before)
+        return said == some ("hello", "") && reaped },
+    { name :=
+        "criterion 17: over the real process service, `:%!/usr/bin/sort` over the lines b, c and a leaves a, b and c, and its child is reaped"
+      run := do
+        let before ← Ffi.processesPending
+        let said ← ran "%!/usr/bin/sort" "b\nc\na\n"
+        let reaped ← eventually (return (← Ffi.processesPending) == before)
+        return said == some ("3 lines filtered", "a\nb\nc\n") && reaped }]
+
 /-! ## A child's environment over the real process service -/
 
 /-- The standard output of `command` run through `services`, as text; a
@@ -1846,13 +1946,13 @@ exit: a task that failed a check may still be blocked in the library. -/
 def main (arguments : List String) : IO UInt32 := do
   -- The fixtures of the environment checks and of the workspace checks, made
   -- absolute here, at the edge.
-  let (fixtures, workspaceFixtures) ←
+  let (fixtures, workspaceFixtures, shellFixtures) ←
     match arguments with
-    | [directory, workspaces] =>
-      pure (← IO.FS.realPath directory, ← IO.FS.realPath workspaces)
+    | [directory, workspaces, shell] =>
+      pure (← IO.FS.realPath directory, ← IO.FS.realPath workspaces, ← IO.FS.realPath shell)
     | _ =>
       IO.eprintln
-          "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures>"
+          "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures> <the directory of the shell fixtures>"
       return 2
   let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
   let completions ← Editor.Job.Completions.new
@@ -1889,6 +1989,8 @@ def main (arguments : List String) : IO UInt32 := do
   let workspaceFailed ← ContractTest.workspaceFailures services workspaceFixtures
   let workspaceChecks := ContractTest.workspaceChecks services workspaceFixtures
   let workspaceCheckFailed ← ContractTest.checkFailures workspaceChecks
+  let shellChecks := ContractTest.shellChecks services shellFixtures
+  let shellCheckFailed ← ContractTest.checkFailures shellChecks
   let fileWatchFailed ← ContractTest.fileWatchFailures services
   let fileWatchChecks := ContractTest.fileWatchChecks services
   let fileWatchCheckFailed ← ContractTest.checkFailures fileWatchChecks
@@ -1923,6 +2025,7 @@ def main (arguments : List String) : IO UInt32 := do
       environmentFailed ++
       workspaceFailed ++
       workspaceCheckFailed ++
+      shellCheckFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
       checkFailed ++
@@ -1945,6 +2048,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {shellChecks.length} checks of `:!` over the process service, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

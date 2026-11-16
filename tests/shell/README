@@ -1,0 +1,7 @@
+The fixture of contract-test's shell checks (lean/ContractTest.lean,
+shellChecks), which `mise run ffi-test` hands contract-test as its third
+argument. It must stay executable (mode 100755).
+
+- hello: prints `hello` and a line feed, and exits 0. contract-test runs it
+  with `:!` over the real process service, in this directory, and expects
+  the echo area to say `hello`. Shell builtins only.
