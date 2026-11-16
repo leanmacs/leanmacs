@@ -233,6 +233,14 @@ loop has little of its own to do.
   answer's command would be looked up before that step's write was
   written back. As a step of its own it is like every other command: one
   rollback, one scene, one log entry, one ending.
+- **An answer for the input scheme** is one whose continuation is the
+  reserved name `InputScheme.answerName`: `Loop.invoke` hands it to the
+  scheme (`Loop.answer`, `InputScheme.answered`) and looks no command up.
+  The invocation the scheme yields for it is run as a key's is, with the
+  scheme's report after the answer, and the scheme's state is kept as the
+  state at rest when the command ran to its end, and put back to the state
+  at rest when it did not. This is how Vim's `/` asks for its pattern and
+  then makes its edit (`Editor/InputScheme/Vim.lean`, "Motions that ask").
 - **A command has another run after it the same way** (`invoke`,
   `Editor/Api.lean`): the invocation is recorded in the same field, after
   what is there, with no prompt, and is handed back and run by the host
@@ -578,7 +586,8 @@ changed the state or not (`Loop.publish`):
    whose buffer's text is at the revision it was last shown at keeps the
    same snapshot; otherwise a new snapshot is taken, and views of one
    buffer share it. A view's scroll anchor and selection are its window's
-   markers, and it has no decorations: later phases choose those. Its
+   markers. Its decorations are the matches of the last search
+   ("Decorations", below), read once the follow has placed its anchor. Its
    cursor is the one the scheme reports of the view
    (`InputScheme.report`, in the scheme's state after the last key): a bar
    in the face `cursor` under a scheme that says nothing. Its status line
@@ -617,6 +626,31 @@ changed the state or not (`Loop.publish`):
    and a real binding resolves them when it is published.
 
 Every edit the loop makes for an input event carries `Origin.user`.
+
+## Decorations
+
+A view's decorations are the one source of them built: the matches of the
+last search (`EditorState.lastSearch`), each in the face `search-match`
+(`searchMatchFace`, defined in the built-in theme, `Editor/Face.lean`).
+
+- **Every view but the minibuffer's** asks its snapshot the matches of the
+  pattern (`SnapshotId.matches`) from the start of its scroll anchor's row
+  to the start of the row `rows + 1` text rows below, or the text's end,
+  where `rows` is the view's height over the height of a text row
+  (`EditorState.heights.text`) plus 1. A view of `n` display rows shows at
+  most `n` text rows from its anchor's, so every visible row is covered,
+  whatever the wrapping; matches just below the fold are drawn too.
+- **It is read after the follow** (step 3 of "After each event"), so the
+  anchor is where the scene shows it from: `/` that moves the cursor off
+  the view draws the matches round where it went.
+- **An empty match draws nothing**, nor does a pattern the syntax refuses,
+  nor a text that refuses.
+- **They sit under the selection** in layout's precedence, so a cursor
+  over a match shows the cursor (`docs/design/text-and-display.md`,
+  "Decorations").
+- **A recorded departure**: Vim 9.1's default is `nohlsearch`; here the
+  matches are always drawn, and `:nohlsearch` is not built. Matches are
+  not drawn while a pattern is typed (`incsearch`).
 
 ## Following the cursor
 
@@ -1039,6 +1073,48 @@ def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option Text
             status := statusOf state id target.buffer report.status }
   return (views, shown, refusal)
 
+/-- The face the matches of the last search are drawn in. -/
+def searchMatchFace : FaceName :=
+  ⟨"search-match"⟩
+
+/-- The decorations of `view` in `state` ("Decorations", in the module docs):
+when there is a last search and the view is not the minibuffer's, each
+match of its pattern that is not empty and starts from the row of the
+view's scroll anchor through `rect.height / heights.text + 1` rows below,
+in `searchMatchFace`, in order. A pattern the syntax refuses, and a text
+that refuses, draw none. -/
+def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration) := do
+  let some search := state.lastSearch | return #[]
+  if state.prompt.map (·.view) == some view.id then
+    return #[]
+  let some target := state.target? view.id | return #[]
+  try
+    let .anchor anchor ← target.buffer.text.marker view.scroll | return #[]
+    let snapshot := view.snapshot
+    let row := (← snapshot.pointOf anchor.offset).row
+    -- A view of `n` display rows shows at most `n` text rows from its
+    -- anchor's, however its rows wrap; one more is drawn, which nothing sees.
+    let rows := view.rect.height / max 1 state.heights.text + 1
+    let start ← snapshot.offsetOf ⟨row, 0⟩
+    let stop ←
+      if row + rows + 1 < (← snapshot.rowCount) then
+        snapshot.offsetOf ⟨row + rows + 1, 0⟩
+      else
+        snapshot.byteLength
+    match ← snapshot.matches search.pattern start stop with
+    | .ranges all =>
+      return (all.filter fun extent => extent.start < extent.stop).map fun extent =>
+          { start := extent.start, stop := extent.stop, face := searchMatchFace }
+    | .invalid _ =>
+      return #[]
+  catch _ =>
+    return #[]
+
+/-- `views` with their decorations (`decorationsOf`), each read with its
+scroll anchor where the follow left it. -/
+def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
+  views.mapM fun view => return { view with decorations := ← decorationsOf state view }
+
 /-- The scene of `state` over `views`: what the state says of the frame, the
 echo area and the preedit, around the views made of its windows, with
 `pending` as the keys typed of a sequence not yet completed. -/
@@ -1145,6 +1221,8 @@ def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   -- snapshots the questions of layout need were taken just above. Each is
   -- asked with its height less its bottom row.
   followed state.scrollMargin state.bottomRow views
+  -- The matches are read from where each anchor now is.
+  let views ← decorated state views
   let state := state.refusedBy (unrecorded <|> unlisted <|> unshown)
   Display.publish (scene state views loop.pending)
   let mut unreleased := none
@@ -1565,6 +1643,31 @@ def Stepped.published (stepped : Stepped scheme) : EditorM (Stepped scheme) := d
   return { stepped with
       loop, next := nextOf loop }
 
+/-- Hands the answer `invocation` carries, its first argument, to the input
+scheme, for the focused view (`InputScheme.answered`), and runs the
+invocation the answer completes as `key` runs a key's: told of the scheme's
+report of the focused view after the answer, and keeping the scheme's state
+as its state at rest when the command ran to its end, or going back to the
+state at rest when it did not ("Prompts", in the module docs). An answer
+that completes nothing keeps the scheme's state after it. Then a scene is
+published. No command of the reserved name is looked up. -/
+def answer (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
+    EditorM (Stepped scheme) := do
+  let text :=
+    match invocation.arguments with
+    | .str text :: _ => text
+    | _ => ""
+  let focused := loop.state.frame.focused
+  let (input, yielded) := scheme.answered focused text loop.input
+  let some completed := yielded |
+    return ← ({ loop := { loop with input, atRest := input }, next := .continue } : Stepped scheme).published
+  let ran ← run keys loop.state completed [] (scheme.report input focused)
+  let stepped :=
+    if ran.finished then
+      ({ loop with input, atRest := input } : Loop scheme).ranInto ran
+    else ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
+  stepped.published
+
 /-- Runs `invocation`, which no key yielded (`run`), and publishes a scene of
 the state after it: the echo area is cleared, the command is looked up, and
 it is called with the focused window, the invocation's arguments, no keys,
@@ -1572,6 +1675,8 @@ and what the scheme reports of the focused view in the state it is in. The
 scheme's states are left as they are, but for a view the command closed. -/
 def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     EditorM (Stepped scheme) := do
+  if invocation.command == InputScheme.answerName then
+    return ← loop.answer keys invocation
   let report := scheme.report loop.input loop.state.frame.focused
   (loop.ranInto (← run keys loop.state invocation [] report)).published
 

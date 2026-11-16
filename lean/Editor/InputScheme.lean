@@ -67,6 +67,18 @@ it. It defaults to the state as it was. Whoever runs the scheme tells it
 once for each commit it inserted, and not for one it dropped (the command
 loop).
 
+A scheme can ask a question and be answered (`answered`). A key whose edit
+needs a text the user types in the minibuffer, as Vim's `/` needs its
+pattern, yields an invocation that opens a prompt whose continuation is
+the reserved name `InputScheme.answerName`; no command can be registered
+under it. When the prompt is accepted, the loop hands the answer to the
+scheme instead of running a command of that name (`Loop.answer`,
+`Editor/Loop.lean`): `answered` is the state once the answer came for the
+view, and the invocation the answer completes, which the loop runs as it
+runs a key's. A scheme that asks nothing answers the state as it was and
+nothing, the default, and the scheme contract holds every scheme to that
+while it is asking nothing.
+
 ## What a scheme reports of a view
 
 A scheme says what it knows of a view in a state (`report`, an
@@ -205,6 +217,11 @@ structure InputScheme where
   inserted in the view. A scheme that keeps nothing of what is typed leaves
   it as it was. -/
   committed : ViewId → String → State → State := fun _ _ state => state
+  /-- The state once `answer` came, for the view, to the question the
+  scheme asked (`answerName`), and the invocation it completes, if it
+  completes one. A scheme that asks nothing leaves the state as it was and
+  yields nothing. -/
+  answered : ViewId → String → State → State × Option Invocation := fun _ _ state => (state, none)
   /-- What the scheme says of a view in a state: how its cursor is drawn,
   its fields of the status line, the shape of its selection, and what the
   loop and a command act on. A scheme that says nothing of a view reports
@@ -214,6 +231,13 @@ structure InputScheme where
   chords, and its binding, consulted with that mode ahead of its roles and
   suffixes. -/
   tuned : List (String × List Key × Binding) := []
+
+/-- The reserved name of a prompt's continuation whose answer is the input
+scheme's (`InputScheme.answered`): the loop hands the answer to the scheme
+and runs no command of this name, so no command can be registered under
+it. -/
+def InputScheme.answerName : String :=
+  "input-scheme-answer"
 
 /-- The keys `role` is on in `scheme`'s role table, if it has a row. -/
 def InputScheme.roleKey (scheme : InputScheme) (role : Role) : Option (List Key) :=

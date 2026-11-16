@@ -50,7 +50,9 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
 cursor face for each editing state of the shipped Vim scheme
 (`cursor.normal`, `cursor.insert`, `cursor.visual`, `cursor.visual-line`
 and `cursor.minibuffer`, `Theme.cursorStates`), `selection`, `echo-area`,
-`minibuffer-prompt` and `mode-line`. Layout reads three names by itself:
+`minibuffer-prompt`, `mode-line` and `search-match`, which the matches of
+the last search are drawn in (`Editor/Loop.lean`, "Decorations"). Layout
+reads three names by itself:
 `default`, under every other face; `selection`, which the selections are
 drawn in; and `mode-line`, under each field of a view's status line.
 `echo-area` and `minibuffer-prompt` are defined and nothing draws them yet.
@@ -204,8 +206,8 @@ def Theme.cursorStates : Array String :=
 
 /-- The built-in theme: `default`, which sets every attribute, then
 `cursor` and a cursor face for each of `Theme.cursorStates`, `selection`,
-`echo-area`, `minibuffer-prompt` and `mode-line`, each of which sets only
-what it changes. Its colours are placeholders. -/
+`echo-area`, `minibuffer-prompt`, `mode-line` and `search-match`, each of
+which sets only what it changes. Its colours are placeholders. -/
 def Theme.builtin : Theme :=
   #[{   name := ⟨"default"⟩
         face :=
@@ -221,6 +223,9 @@ def Theme.builtin : Theme :=
         face := { foreground := some (Color.rgb 136 192 208), weight := some 700 } },
       { name := ⟨"mode-line"⟩
         face :=
-          { foreground := some (Color.rgb 236 239 244), background := some (Color.rgb 59 66 82) } }]
+          { foreground := some (Color.rgb 236 239 244), background := some (Color.rgb 59 66 82) } },
+      { name := ⟨"search-match"⟩
+        face :=
+          { foreground := some (Color.rgb 46 52 64), background := some (Color.rgb 235 203 139) } }]
 
 end Editor

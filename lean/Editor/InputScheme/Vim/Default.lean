@@ -26,7 +26,7 @@ The operators' entries are `Evil.operators`
 
 | Table | Binds |
 |---|---|
-| `motions` | The motions of normal state and the visual states. `f`, `F`, `t` and `T` are motions that take the character the next key names (`Bound.charMotion`) |
+| `motions` | The motions of normal state and the visual states. `f`, `F`, `t` and `T` are motions that take the character the next key names (`Bound.charMotion`), and `/` and `?` motions that ask for a pattern in the minibuffer (`Bound.promptMotion`, labelled `/` and `?`) |
 | `operators` | The operators. `c` names the state `insert`, and `y` changes no text |
 | `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo and the command line, the two that enter a visual state, the register prefix, and the repeat key, `.`, which is a part of speech of its own and no command's key (`Bound.repeat`) |
 | `insertCommands` | Insert state's: the key that returns to normal state, and its editing keys, `<Backspace>`, `RET`, `TAB` and the four arrow keys (`Editor/Evil.lean`, "Editing keys"), each bound as a command that changes no text for the grammar, so it is not the last change. `<Backspace>`, `RET` and `TAB` add themselves to the session's recording (`Command.typed`), so `.` replays them; each arrow key restarts the last change as `i` once something is typed after it (`Command.restarts`), as Vim 9.1's `ins-special-special` says |
@@ -165,7 +165,10 @@ def motions : List (String × Bound) :=
     ("G", .motion "last-line"), ("f", .charMotion "find-forward"),
     ("F", .charMotion "find-backward"), ("t", .charMotion "till-forward"),
     ("T", .charMotion "till-backward"), (";", .motion "find-again"),
-    (",", .motion "find-again-reverse")]
+    (",", .motion "find-again-reverse"), ("n", .motion "search-next"),
+    ("N", .motion "search-previous"), ("*", .motion "word-search-forward"),
+    ("#", .motion "word-search-backward"), ("/", .promptMotion "search-forward" "/"),
+    ("?", .promptMotion "search-backward" "?")]
 
 /-- The operators. -/
 def operators : List (String × Bound) :=

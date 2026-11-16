@@ -38,7 +38,7 @@ registers, undo and dot repeat, on the editor API:
 | A window's wanted column | `lean/Editor/State.lean` (`Window.wanted`), `lean/Editor/Api.lean` (`ViewId.setWanted`) |
 | The vocabulary's motion record, with how an operator takes a motion, and its operator record | `lean/Editor/Vocabulary.lean` |
 | Evil: where a cursor rests, the move command, entering a state, the keys that begin an insert, the two that open a line, typed text | `lean/Editor/Evil.lean` |
-| Evil's twenty-one motions and their table | `lean/Editor/Evil/Motions.lean` |
+| Evil's twenty-seven motions and their table | `lean/Editor/Evil/Motions.lean` |
 | Evil's three operators and their table, what an operator takes, the operate command, and `x` | `lean/Editor/Evil/Operators.lean` |
 | Evil's registers: the unnamed one and the clipboard's, storing, fetching, and `p` and `P` | `lean/Editor/Evil/Registers.lean` |
 | Evil's undo and redo | `lean/Editor/Evil/Undo.lean` |
@@ -212,7 +212,23 @@ structure InputScheme where
   tuned       : List (String × List Key × Binding) := []
   -- what a scheme says of one view ("What a scheme reports of a view")
   report      : State → ViewId → InputScheme.Report := fun _ _ => {}
+  -- notices, each the state once something happened
+  closeView      : ViewId → State → State := fun _ s => s
+  openMinibuffer : ViewId → State → State := fun _ s => s
+  committed      : ViewId → String → State → State := fun _ _ s => s
+  -- the answer to a prompt the scheme asked for, and what it completes
+  answered : ViewId → String → State → State × Option Invocation := fun _ _ s => (s, none)
 ```
+
+- **`answered` is how a scheme is answered.** A key whose edit needs a text
+  typed in the minibuffer (Vim's `/`) yields `minibuffer-ask`, which opens
+  a prompt whose continuation is the reserved name
+  `InputScheme.answerName`. When it is accepted, `Loop.invoke` hands the
+  answer to the scheme instead of looking a command up (`Loop.answer`),
+  and runs what the scheme yields as it runs a key's invocation, keeping
+  or restoring the scheme's state at rest. A scheme that asks nothing
+  yields nothing, which the scheme contract holds every scheme to
+  (`unaskedAnswerYieldsNothing`); the test scheme keeps the default.
 
 - **`command` is what a key bound to a command name is bound to** under the
   scheme. Config and compiled code bind a key sequence to a command's name
@@ -502,7 +518,7 @@ structure Vocabulary.Motion where
   it did not move: `l` at a line's last character answers the line break,
   which normal state's resting rule brings back. Only the command knows
   where the cursor came to rest.
-- **The table is compiled** (`Evil.motions`, twenty-one entries under the
+- **The table is compiled** (`Evil.motions`, twenty-seven entries under the
   names the default tables bind; "Motions as built"). The move command is
   a function of the table it looks names up in (`Evil.move motions`), so
   the caller supplies the vocabulary. A name with no entry says
@@ -655,6 +671,7 @@ structure Command where
 inductive Bound where
   | motion     (name : String)
   | charMotion (name : String)      -- a motion that takes the character the next key names
+  | promptMotion (name label : String) -- a motion that takes a text typed in the minibuffer
   | operator   (operator : Operator)
   | textObject (name : String)
   | command    (command : Command)
@@ -674,6 +691,8 @@ inductive Bound where
   a keymap, and `c` enters insert state the same way.
 - **A motion needs only its name.** How an operator takes it is the
   vocabulary's, read when the edit runs.
+- **`promptMotion`** is a motion that takes a text typed in the
+  minibuffer: `/` and `?` ("Motions that ask", under the last change).
 - **`charMotion`** is a motion that takes the character the next key names
   as its argument: `f`, `t`, `F` and `T`. The key is kept as typed, so it is
   pending alone, and it folds the count being typed as an operator does.
@@ -1050,6 +1069,40 @@ first, in their own order, then the state's.
   the bindings a predicate keeps. The scheme wraps its hand-tuned keys in
   `.mode`, so they follow the same rule. A binding from config's `bindKey`
   is not a mode's and still holds in every state.
+
+### Motions that ask
+
+Status: built, by the daily-driver floor's phase 3
+(`lean/Editor/InputScheme/Vim.lean`, "Motions that ask"; pinned by
+`vimGrammarChecks` and `evilSearchChecks`).
+
+`/` and `?` are `Bound.promptMotion`: their argument is a pattern typed in
+the minibuffer, and a prompt is answered later, so the edit cannot complete
+at the key.
+
+1. **At the key** the grammar records the edit that waits
+   (`State.asking`: the view, the motion, the operator waiting, the count
+   and the register typed), resets the edit begun so the minibuffer's keys
+   parse afresh, and yields `minibuffer-ask` with the label (`/` or `?`).
+   Nothing is the last change and no state is entered.
+2. **`minibuffer-ask`** opens a prompt with that label whose continuation is
+   the reserved name `InputScheme.answerName`.
+3. **On accept** the loop hands the answer to the scheme
+   (`InputScheme.answered`), which completes the waiting edit with the
+   answer as the motion's argument, by the rule a key completes one by
+   (`State.finish`, for the asking view). So `c/foo RET` enters insert
+   state, `.` after `d/foo RET` replays `d/foo` with `foo` (Vim's redo
+   buffer holds `d/foo\r`), and a count and a register typed before `/`
+   are kept.
+4. **Cancel.** `<Escape>` in the minibuffer closes it with no answer. The
+   edit waiting is dropped at the next key for a view other than the
+   minibuffer's, which the scheme is told when the prompt opens
+   (`openMinibuffer`). It is not dropped when the minibuffer's view closes:
+   the accept command closes it one step before the answer arrives. A
+   reset keeps it. So `d/<Escape>` changes nothing and is no change, as in
+   Vim.
+
+In the minibuffer `/` is typed text, as any key that prints is there.
 
 ### The last change
 
@@ -1551,10 +1604,10 @@ follows Vim 9.1 with its default options:
 Status: built, by the command loop's phase 11
 (`lean/Editor/Evil/Motions.lean`; pinned by `evilMotionChecks`).
 
-Twenty-one motions are vocabulary entries. Fifteen are composed from the
+Twenty-seven motions are vocabulary entries. Fifteen are composed from the
 text port's motion primitives ([text-and-display.md](text-and-display.md),
-"Motion primitives"), and the six character finds walk the line's content
-in Lean. What a count means, and what a motion does when it cannot go the
+"Motion primitives"), the six character finds walk the line's content
+in Lean, and the six searches ask the text port's `search`. What a count means, and what a motion does when it cannot go the
 whole way, is Vim's:
 
 | Key | Motion | Composed from | Count |
@@ -1569,6 +1622,49 @@ whole way, is Vim's:
 | `f`, `F` | `find-forward`, `find-backward` | The line's content (`slice` from `lineStart` to `lineEnd`), walked from the cursor | The `count`th occurrence of the character after the cursor (before it, for `F`). With fewer in the line it does not move, and fails |
 | `t`, `T` | `till-forward`, `till-backward` | The same, then one cell back towards the cursor | As `f` and `F`. With the character right beside the cursor it does not move, and does not fail (Vim's `searchc`) |
 | `;`, `,` | `find-again`, `find-again-reverse` | The last find (`EditorState.lastFind`), as it was, and for `,` in the other direction | As the find it runs. With no last find it fails where it is |
+| `/{pat}RET`, `?{pat}RET` | `search-forward`, `search-backward` | The text port's `search` ([text-and-display.md](text-and-display.md); the rule is in `lean/Editor/Text.lean`, "Search") | The `count`th match, each step from the last. Every step must find one, and one that wraps still counts |
+| `n`, `N` | `search-next`, `search-previous` | The same, of the last search (`EditorState.lastSearch`), in its direction and in the other | As above |
+| `*`, `#` | `word-search-forward`, `word-search-backward` | The same, of the word under the cursor as a whole word, searched from the word's start | As above |
+
+**The searches** (`:help /`, `:help n`, `:help star`), under Vim's default
+options (`cpoptions` with `c`, `wrapscan`, `magic`, `noignorecase`):
+
+- **The user types Vim's syntax**, a subset of it under `magic`, not the
+  regex library's ([rust-library.md](rust-library.md), "Search, as
+  built"), so `foo(` and `a|b` are literal, as in Vim.
+- **Each step starts at the head, and a match that starts there is passed
+  over**, so `/abab` in `|abababab` goes to `abab|abab`.
+- **A search that wraps says so**: `search hit BOTTOM, continuing at TOP`
+  forward, `search hit TOP, continuing at BOTTOM` back, as Vim warns. With
+  no match it fails where it is and says `E486: Pattern not found: {pat}`;
+  `n` and `N` with no last search say `E35: No previous regular
+  expression`; `*` and `#` with no word in the line say `E348: No string
+  under cursor`. A motion says these through `Vocabulary.To.said`, and the
+  move command says them; under an operator a failure gives the command
+  up with it, as `operate: E486: Pattern not found: x`.
+- **An empty pattern is the last search's pattern**, in the new
+  direction (`:help last-pattern`). With no last search it is E35.
+- **The last search is remembered as data** (`Vocabulary.To.search`,
+  `EditorState.lastSearch`), pattern and direction, also when the search
+  fails, as Vim keeps the pattern. `N` does not change the direction, and
+  `n` after `#` goes back. A search under an operator that fails gives the
+  command up, which rolls it back, a recorded departure as for the finds.
+- **`*` and `#`** search for the first of: the keyword under the cursor,
+  the first keyword after it in the line, the run of punctuation under the
+  cursor, the first such run after it. A keyword is a run of word
+  characters, the text's class (as for `w`), not Vim's `iskeyword` table,
+  a recorded departure beyond ASCII. The pattern is the word with
+  `\ / . * $ ^ ~ [` escaped, with `\<` before it when it starts with a
+  word character and `\>` after it when it ends with one, as Vim's
+  `nv_ident` builds it. The search starts from the word's start, as Vim
+  moves the cursor there first, so `*` passes over the word under the
+  cursor; an operator still takes from the cursor, as Vim's `oap->start`
+  is set when the operator key is typed.
+- **Under an operator every search is exclusive**, so the two rules for an
+  exclusive motion that ends in column 1 apply: `d*` from a line's start to
+  the next line's start deletes the line, line-wise.
+- **Not built**: search offsets (`/foo/e`), search history, `incsearch`,
+  the jump list, `ignorecase` and `smartcase`.
 
 **The character finds** (`:help f`, `:help t`, `:help ;`):
 
@@ -2124,7 +2220,7 @@ Which names have something behind them:
 
 | Names | State |
 |---|---|
-| The twenty-one motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
+| The twenty-seven motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
 | `self-insert`, which no table names: typed text | Built and registered |
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
@@ -2138,7 +2234,7 @@ Which names have something behind them:
 
 | Table | Keys |
 |---|---|
-| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse |
+| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
 | `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
 | `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `RET` insert-newline, `TAB` insert-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down (each enters no state, and none is a change dot repeat replays) |

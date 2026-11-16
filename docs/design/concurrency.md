@@ -903,6 +903,7 @@ prompt's candidates by its phase 14 ("Candidates", below).
 | The listing, made before each scene from what the fuzzy matcher answers | `lean/Editor/Loop.lean` ("Prompts": `Loop.listed`), `lean/Editor/Fuzzy.lean` |
 | `minibuffer-next`, `minibuffer-previous` and the roles the mode fills with them | `lean/Editor/Minibuffer.lean` |
 | The ex names as the ex line's candidates | `lean/Editor/Ex.lean` (`exCommand`), `lean/Editor/Api.lean` (`exNames`) |
+| An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `lean/Editor/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
 
 Pinned on the models by `ModelTest.stateChecks` and `stateRequestChecks`
 (the state's operations), `promptChecks` (the loop, its host on the
@@ -915,6 +916,16 @@ host over the real library and the real elaborator by
 `ConfigTest.promptChecks`; and on the executable by the fixtures
 `tests/headless/prompt` and, for candidates with the library's matcher,
 `tests/headless/candidates`.
+
+**An answer can be the input scheme's.** A key whose edit needs a text
+typed in the minibuffer, as Vim's `/` needs its pattern, cannot complete at
+the key, and the grammar has no command to name as a continuation: the
+edit is the scheme's. So the scheme yields `minibuffer-ask`, which opens a
+prompt whose continuation is the reserved name `InputScheme.answerName`;
+`Loop.invoke`, the one entry every host already runs an answer through,
+hands that answer to the scheme (`InputScheme.answered`) and runs the
+invocation the scheme yields for it as it runs a key's. No host changes,
+and no command can be registered under the reserved name.
 
 A command can need a string from the user: a file name, an ex command. It
 cannot wait for one. A command may not block, and while a command runs no

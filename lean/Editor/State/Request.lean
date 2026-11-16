@@ -119,6 +119,8 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   string, and which names mean something is the asking command's rule. A
   command reads a register with a read of the state
   (`EditorState.register?`).
+- **The last search is set by one request**, `setLastSearch`
+  (`Editor/State.lean`, "The last search"), as the last find is.
 - **The last character find is set by one request**, `setLastFind`
   (`Editor/State.lean`, "The last find"). It is never refused. A command
   reads it with a read of the state (`EditorState.lastFind`).
@@ -225,6 +227,8 @@ inductive StateRequest where
   | setRegister (name : String) (register : Register)
   /-- Keep `find` as the last character find. -/
   | setLastFind (find : Find)
+  /-- Keep `search` as the last search. -/
+  | setLastSearch (search : Search)
   /-- Keep `rows` rows between every view's cursor's row and the first and
   the last row it shows. -/
   | setScrollMargin (rows : Nat)
@@ -264,6 +268,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .breakOff _ => Unit
   | .setRegister .. => Unit
   | .setLastFind _ => Unit
+  | .setLastSearch _ => Unit
   | .setScrollMargin _ => Unit
 
 namespace EditorState
@@ -320,6 +325,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .breakOff _, state => ((), state)
   | .setRegister name register, state => ((), state.setRegister name register)
   | .setLastFind find, state => ((), state.setLastFind find)
+  | .setLastSearch search, state => ((), state.setLastSearch search)
   | .setScrollMargin rows, state => ((), state.setScrollMargin rows)
 
 end EditorState

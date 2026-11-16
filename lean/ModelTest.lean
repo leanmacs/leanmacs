@@ -4337,13 +4337,23 @@ pinned in `crates/editor-layout`; these pin what Lean itself defines. -/
 def faceChecks : List Check :=
   [{
       name :=
-        "the built-in theme defines default, cursor, a cursor face for each state of the shipped Vim scheme, selection, echo-area, minibuffer-prompt and mode-line, each once",
+        "the built-in theme defines default, cursor, a cursor face for each state of the shipped Vim scheme, selection, echo-area, minibuffer-prompt, mode-line and search-match, each once",
       run :=
         pure
           (Theme.builtin.map (·.name.name) ==
             #["default", "cursor", "cursor.normal", "cursor.insert", "cursor.visual",
               "cursor.visual-line", "cursor.minibuffer", "selection", "echo-area",
-              "minibuffer-prompt", "mode-line"]) },
+              "minibuffer-prompt", "mode-line", "search-match"]) },
+    { name :=
+        "the built-in search-match face sets a background that is not the default face's, and a foreground"
+      run :=
+        let face := (Theme.builtin.find? (·.name == ⟨"search-match"⟩)).map (·.face)
+        let paper := (Theme.builtin.find? (·.name == ⟨"default"⟩)).bind (·.face.background)
+        pure
+          (match face with
+          | some face =>
+            face.background.isSome && face.background != paper && face.foreground.isSome
+          | none => false) },
     { name := "the built-in default face sets every attribute, and no other built-in face does"
       run :=
         let complete (face : Face) : Bool :=
@@ -10800,6 +10810,15 @@ def schemeContractChecks : List Check :=
       run :=
         let names := SchemeContract.properties.map (·.name)
         pure (!names.isEmpty && names.eraseDups.length == names.length) },
+    { name :=
+        "the scheme contract reports a scheme that yields an invocation for an answer it did not ask for, for that property alone"
+      run :=
+        let answering : InputScheme :=
+          { TestScheme.scheme with
+            answered := fun _ answer state => (state, some { command := answer }) }
+        pure
+          (failsOnly (subjectOf answering schemeMaps)
+            [SchemeContract.unaskedAnswerYieldsNothing]) },
     { name := "the scheme contract holds of the test scheme"
       run := pure (SchemeContract.failures (subjectOf TestScheme.scheme schemeMaps) == []) },
     { name :=
@@ -11277,6 +11296,60 @@ def vimGrammarChecks : List Check :=
             escapedYields == [none, none] &&
             decide (escaped = vimInit) &&
             (vimFed "f <Escape> w" active).2.getLast? == some (some (vimMove "word"))) },
+    { name :=
+        "a key bound to a motion that asks yields the command that opens its prompt, with the label, and resets the edit begun: nothing is pending, nothing is the last change, and the edit waits with the operator, the count and the register typed before it"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("/", .promptMotion "search" "/")]]
+        let (asked, yields) := vimFed "/" active
+        let (operated, _) := vimFed "\" a 2 d 3 /" active
+        pure
+          (yields == [some { command := Vim.askCommand, arguments := [.str "/"] }] &&
+            asked.asking == some { view := ⟨0⟩, motion := "search" } &&
+            asked.typed == [] &&
+            asked.lastChange == none &&
+            vimPending "/" active == [] &&
+            operated.asking ==
+              some
+                { view := ⟨0⟩, motion := "search", operator := some vimDelete, count := some 6
+                  register := some "a" }) },
+    { name :=
+        "the answer completes the edit that waits, with the answer as the motion's argument: a move with the count, and an operator over the motion with the count and the register, which is the last change; a second answer yields nothing"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("/", .promptMotion "search" "/")]]
+        let (asked, _) := vimFed "2 /" active
+        let (moved, move) := Vim.State.answered vimStates ⟨0⟩ "foo" asked
+        let (operated, operate) :=
+          Vim.State.answered vimStates ⟨0⟩ "x" (vimFed "\" a d 3 /" active).1
+        let (again, nothing) := Vim.State.answered vimStates ⟨0⟩ "y" moved
+        pure
+          (move == some { command := "move", arguments := [.str "search", .str "foo", .nat 2] } &&
+            moved.asking == none &&
+            moved.lastChange == none &&
+            operate ==
+              some
+                { command := "operate"
+                  arguments :=
+                    [.str "delete", .str "motion", .str "search", .str "x", .nat 3, .str "a"] } &&
+            operated.lastChange ==
+              some (.operate vimDelete (.motion "search" (some "x")) (some 3) (some "a")) &&
+            nothing == none &&
+            decide (again = moved)) },
+    { name :=
+        "the edit that waits for an answer is kept while keys are typed in the minibuffer's view and when that view closes, and dropped at the next key for another view, as after the prompt is cancelled"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("/", .promptMotion "search" "/")]]
+        let (asked, _) := vimFed "/" active
+        let opened := Vim.State.openMinibuffer vimStates ⟨5⟩ asked
+        let (typed, _) := vimFedFrom opened "x y" active ⟨5⟩
+        let closed := Vim.State.closeView ⟨5⟩ typed
+        let (dropped, _) := vimFedFrom closed "w" active ⟨0⟩
+        pure
+          (opened.asking.map (·.minibuffer) == some (some ⟨5⟩) && typed.asking.isSome &&
+            closed.asking.isSome &&
+            dropped.asking == none) },
     { name :=
         "the Vim scheme reports the keys typed of an edit begun as pending, and none before a key and after the edit completes"
       run :=
@@ -14171,14 +14244,15 @@ def promptModeChecks : List Check :=
               closed accepted ⟨1⟩ &&
               accepted.loop.state.windows.map (·.id) == #[⟨1⟩] },
     { name :=
-        "the minibuffer's commands are registered under their six names, each another; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
+        "the minibuffer's commands are registered under their seven names, each another, the one that asks for the input scheme under the name the Vim scheme yields; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
           (Minibuffer.commands.map (·.name) ==
               #[Minibuffer.acceptName, Minibuffer.cancelName, Minibuffer.nextName,
                 Minibuffer.previousName, Minibuffer.deleteBackwardName,
-                Minibuffer.deleteToStartName] &&
-            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 6 &&
+                Minibuffer.deleteToStartName, Minibuffer.askName] &&
+            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 7 &&
+            Minibuffer.askName == Vim.askCommand &&
             Minibuffer.modes.map (·.name) == #[Prompt.mode] &&
             Minibuffer.modes.map (·.roles) ==
               #[[(Role.activate, Minibuffer.acceptName), (Role.quit, Minibuffer.cancelName),
@@ -17188,15 +17262,17 @@ abbrev EvilDriver :=
 
 /-- What a step of the evil checks is handed: no active keymaps, so that a
 key is looked up in the keymaps of its view's Vim state alone, and the
-commands compiled code registers for evil (`Evil.commands`) and those of
-`more`, each under the name it is registered under, then `commands`. A
+commands compiled code registers for evil (`Evil.commands`) and for the
+minibuffer (`Minibuffer.commands`), as the executable registers both, so
+that `/` and `?` ask and are answered, and those of `more`, each under the
+name it is registered under, then `commands`. A
 command of `more` runs in place of one of evil's of the same name, as the
 registry's latest entry of a name does. -/
 def evilHanded (more : Array Config.Registration := #[])
     (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
   {
     command? := fun name =>
-      match (Evil.commands ++ more).findRev? (·.name == name) with
+      match (Evil.commands ++ Minibuffer.commands ++ more).findRev? (·.name == name) with
       | some { action := .call run, .. } =>
         some fun call => do
           run call
@@ -17598,15 +17674,26 @@ def evilMotionChecks : List Check :=
         "from the last character of the text, with a final line feed and with none, every motion key leaves the cursor where Vim's does, with a count as with none: a motion that would leave the text does not move, and the cursor is never past the last character"
       run := evilRows (lastCharacterRows "" ++ lastCharacterRows "\n") },
     { name :=
-        "every key the default tables bind to a motion has a motion of its name in the vocabulary: pressed in a text of three lines, none says anything in the echo area"
+        "every key the default tables bind to a motion has a motion of its name in the vocabulary: pressed in a text of three lines, a motion that takes a character with one, none says it has no such motion, and none but the searches says anything in the echo area (a search says its warning or its error: n and N with no last search, and * on the one occurrence of its word)"
       run := do
         let said :=
-          Vim.Default.motions.filterMap fun (typed, _) =>
+          Vim.Default.motions.filterMap fun (typed, bound) =>
+            let typed :=
+              match bound with
+              | .charMotion _ => typed ++ " a"
+              | .promptMotion .. => typed ++ " e f RET"
+              | _ => typed
+            let name :=
+              match bound with
+              | .motion name | .charMotion name | .promptMotion name _ => name
+              | _ => ""
+            let searches := name.startsWith "search" || name.startsWith "word-search"
             match evilDriver "ab cd\ne|f gh\nij kl" with
             | none => some s!"{typed}: no driver"
             | some driver =>
               let echo := (evilFed driver typed).loop.state.echo
-              if echo.isEmpty then none else some s!"{typed} said {repr echo}"
+              if echo.isEmpty || searches && echo != Evil.noSuchMotion name then none
+              else some s!"{typed} said {repr echo}"
         unless said.isEmpty do
           throw (IO.userError ("; ".intercalate said))
         return !Vim.Default.motions.isEmpty },
@@ -17773,14 +17860,18 @@ def evilMotionChecks : List Check :=
           throw (IO.userError s!"the echo area says {repr echo}")
         return echo != Evil.noSuchMotion "" && evilShown ran == "a|bc" },
     { name :=
-        "the move command called with a motion's name and no count after it moves with no count: every motion of the vocabulary, from the middle of a text of three lines, leaves the cursor where it leaves it when the count is 0, which is how a key with no count calls it, and says nothing; by the name of the motion one cell on it goes where l does"
+        "the move command called with a motion's name and no count after it moves with no count: every motion of the vocabulary, from the middle of a text of three lines, leaves the cursor where it leaves it when the count is 0, which is how a key with no count calls it, and says the same, which is nothing but for the searches; by the name of the motion one cell on it goes where l does"
       run := do
         let here := "ab cd\ne|f gh\nij kl"
         let wrong :=
           Evil.motions.toList.filterMap fun motion =>
             let alone := evilMoved here [.str motion.name]
             let counted := evilMoved here [.str motion.name, .nat 0]
-            if alone.isSome && alone == counted && alone.map (·.2) == some "" then none
+            -- A search says its warning or its error, the same with no count
+            -- and with the count 0; every other motion says nothing.
+            let searches := motion.name.startsWith "search" || motion.name.startsWith "word-search"
+            if alone.isSome && alone == counted && (searches || alone.map (·.2) == some "") then
+              none
             else some s!"{motion.name} alone left {repr alone}, and with the count 0 {repr counted}"
         unless wrong.isEmpty do
           throw (IO.userError ("; ".intercalate wrong))
@@ -18522,6 +18613,9 @@ structure OperatorRow where
   /-- Whether the command gave up or broke off: something is said in the
   echo area, which is no refusal. -/
   gaveUp : Bool := false
+  /-- What the echo area says when the command did not give up: nothing,
+  unless a motion said something, as a search says its warning. -/
+  echo : String := ""
 
 namespace OperatorRow
 
@@ -18555,7 +18649,7 @@ def wrong (row : OperatorRow) : Option String :=
       let saidSo := !left.echo.isEmpty && (left.echo.splitOn "refused").length == 1
       if
           left.shown == row.after && left.register == row.register && left.insert == row.insert &&
-            (if row.gaveUp then saidSo else left.echo.isEmpty) then
+            (if row.gaveUp then saidSo else left.echo == row.echo) then
         none
       else some s!"{row.keys} from {repr row.before} left {repr left}"
 
@@ -18872,13 +18966,52 @@ def findAgainTableRows : List OperatorRow :=
         .givesUp before
           (" ".intercalate ([operator] ++ (if counted then ["2"] else []) ++ [motion]))
 
+/-- The oracle table's rows for each operator over `n` and `N` in its five
+situations: no search was made before the keys, so there is none to repeat
+(`E35`), and the command gives up in every one. -/
+def searchAgainTableRows : List OperatorRow :=
+  operatorSituations.flatMap fun (before, counted) =>
+    ["d", "c", "y"].flatMap fun operator =>
+      ["n", "N"].map fun motion =>
+        .givesUp before
+          (" ".intercalate ([operator] ++ (if counted then ["2"] else []) ++ [motion]))
+
+/-- The oracle table's rows for each operator over `*` and `#` in its five
+situations, each written by hand from Vim 9.1. In the first two the word
+under the cursor, `gh`, is the only occurrence, at the cursor: the search
+wraps back to it, says so, and the operator takes no cell. On the empty
+line there is no word (`E348`). On the buffer's last character the word
+starts one cell before the cursor, where the search comes back to, and the
+operator takes that cell. -/
+def starTableRows : List OperatorRow :=
+  let warned (row : OperatorRow) (forward : Bool) : OperatorRow :=
+    { row with echo := Evil.wrapWarning forward }
+  [("*", true), ("#", false)].flatMap fun (motion, forward) =>
+    let keys (operator : String) (counted : Bool := false) :=
+      " ".intercalate ([operator] ++ (if counted then ["2"] else []) ++ [motion])
+    [false, true].flatMap
+        (fun counted =>
+          [warned (.rests plainText (keys "d" counted) plainText asItWas) forward,
+            warned (.inserts plainText (keys "c" counted) plainText asItWas) forward,
+            warned (.rests plainText (keys "y" counted) plainText (charwise "")) forward]) ++
+      [.givesUp emptyLineText (keys "d"), .givesUp emptyLineText (keys "c"),
+        .givesUp emptyLineText (keys "y"),
+        warned (.rests endText (keys "d") "ab cd\n  ef |h\n" (charwise "g")) forward,
+        warned (.inserts endText (keys "c") "ab cd\n  ef |h\n" (charwise "g")) forward,
+        warned (.rests endText (keys "y") "ab cd\n  ef |gh\n" (charwise "g")) forward,
+        warned (.rests bareEndText (keys "d") "ab cd\n  ef |h" (charwise "g")) forward,
+        warned (.inserts bareEndText (keys "c") "ab cd\n  ef |h" (charwise "g")) forward,
+        warned (.rests bareEndText (keys "y") "ab cd\n  ef |gh" (charwise "g")) forward]
+
 /-- The rows of the operator × motion table, in the order the motions were
 built. -/
 def operatorTable : List OperatorRow :=
   deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows ++ wordForwardRows ++
     changeWordRows ++
     lineMotionRows ++
-    findAgainTableRows
+    findAgainTableRows ++
+    searchAgainTableRows ++
+    starTableRows
 
 /-- The pairs of an operator's key and a motion's key that the rows of
 `operatorTable` have for the situation of the text `before`, with a count
@@ -18930,7 +19063,10 @@ that changes no text leaves the text; and when the text changed, `u`, after
 puts the cursor where it was. It reads the tables, so it covers a key added
 later. A motion key that takes a character (`Bound.charMotion`) is pressed
 with `a` after it, a character every text but the empty one holds, so the
-sweep runs the find and does not leave the operator waiting. -/
+sweep runs the find and does not leave the operator waiting; a motion key
+that asks (`Bound.promptMotion`, `/` and `?`) is answered with the pattern
+`a` and `RET`, through the minibuffer, whose commands the evil checks are
+handed (`evilHanded`). -/
 def operatorSweep (contents : String) : List String :=
   ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap fun position =>
     Vim.Default.operators.flatMap fun (operatorKey, bound) =>
@@ -18939,7 +19075,12 @@ def operatorSweep (contents : String) : List String :=
         Vim.Default.motions.flatMap fun (motionKey, motion) =>
           -- A motion that takes a character is given one the sweep's texts
           -- hold, so that it is a motion and not an operator left waiting.
-          let motionKey := if motion matches .charMotion _ then motionKey ++ " a" else motionKey
+          let motionKey :=
+            match motion with
+            | .charMotion _ => motionKey ++ " a"
+            -- A motion that asks is answered with a pattern the texts hold.
+            | .promptMotion .. => motionKey ++ " a RET"
+            | _ => motionKey
           [false, true].filterMap fun counted =>
             let typed := (if counted then "2 " else "") ++ operatorKey ++ " " ++ motionKey
             let what := s!"{typed} at {position} of {repr contents}"
@@ -19104,6 +19245,467 @@ def evilFindChecks : List Check :=
                       .str ""]).map
                 (·.shown) ==
               some "|cabc") }]
+
+/-- `driver` with the move command run by the motion `name` with `pattern`
+as its argument and the count `count`, as an invocation no key yielded. -/
+def evilSearchedBy (driver : EvilDriver) (name pattern : String) (count : Nat := 0) : EvilDriver :=
+  (driver.stepped
+      (driver.loop.invoke driver.handed
+        { command := Vim.moveCommand, arguments := [.str name, .str pattern, .nat count] })).1
+
+/-- One row of the search checks: the text before with the cursor as a bar,
+the keys pressed first, the searches run then by invocation (a motion's
+name, its pattern and a count), the keys pressed after them, and what is
+left: the text with a bar at the cursor, and what the echo area says. -/
+structure SearchRow where
+  /-- The text before, with the cursor as a bar. -/
+  before : String
+  /-- The keys pressed first. -/
+  first : String := ""
+  /-- The searches run by invocation, in order. -/
+  searches : List (String × String × Nat) := []
+  /-- The keys pressed after them. -/
+  keys : String := ""
+  /-- The text after, with a bar at the cursor. -/
+  after : String
+  /-- What the echo area says after. -/
+  echo : String := ""
+
+/-- What is wrong with each of `rows`, if anything. -/
+def searchRows (rows : List SearchRow) : IO Bool := do
+  let wrong :=
+    rows.filterMap fun row =>
+      match evilDriver row.before with
+      | none => some s!"no driver for {repr row.before}"
+      | some driver =>
+        let driver := evilFed driver row.first
+        let driver :=
+          row.searches.foldl
+            (fun driver (name, pattern, count) => evilSearchedBy driver name pattern count) driver
+        let driver := evilFed driver row.keys
+        let left := (evilShown driver, driver.loop.state.echo)
+        if left == (row.after, row.echo) then none
+        else
+          some
+            s!"{row.first} {repr row.searches} {row.keys} from {repr row.before} left {repr left}"
+  unless wrong.isEmpty do
+    throw (IO.userError ("; ".intercalate wrong))
+  return true
+
+/-- The search motions' rows as moves, each written by hand from Vim 9.1's
+`:help /`, `:help n` and `:help star` under its default options: `/` and
+`?` by invocation, with their patterns, and `n`, `N`, `*` and `#` by key. -/
+def searchMoveRows : List SearchRow :=
+  let forward (pattern : String) (count : Nat := 0) := ("search-forward", pattern, count)
+  let backward (pattern : String) (count : Nat := 0) := ("search-backward", pattern, count)
+  let bottom := Evil.wrapWarning true
+  let top := Evil.wrapWarning false
+  [ -- From before a match, at its start and inside it.
+    { before := "|x foo foo", searches := [forward "foo"], after := "x |foo foo" },
+    { before := "x |foo foo", searches := [forward "foo"], after := "x foo |foo" },
+    { before := "x f|oo foo", searches := [forward "foo"], after := "x foo |foo" },
+    -- `cpo-c`, across lines, and a count.
+    { before := "|abababab", searches := [forward "abab"], after := "abab|abab" },
+    { before := "a|b\nfoo", searches := [forward "foo"], after := "ab\n|foo" },
+    { before := "|foo foo foo foo", searches := [forward "foo" 3], after := "foo foo foo |foo" },
+    -- Wrapping, the only match at the cursor, and no match.
+    { before := "foo |foo", searches := [forward "foo"], after := "|foo foo", echo := bottom },
+    { before := "|foo", searches := [forward "foo"], after := "|foo", echo := bottom },
+    { before := "|abc", searches := [forward "x"], after := "|abc",
+      echo := Evil.patternNotFound "x" },
+    -- Backward, strictly before the cursor, and wrapping.
+    { before := "foo foo |foo", searches := [backward "foo"], after := "foo |foo foo" },
+    { before := "foo f|oo", searches := [backward "foo"], after := "foo |foo" },
+    { before := "|foo foo", searches := [backward "foo"], after := "foo |foo", echo := top },
+    -- `n` and `N` after `/` and after `?`, with counts.
+    { before := "|x foo foo foo", searches := [forward "foo"], keys := "n",
+      after := "x foo |foo foo" },
+    { before := "|x foo foo foo", searches := [forward "foo"], keys := "2 n",
+      after := "x foo foo |foo" },
+    { before := "|x foo foo foo", searches := [forward "foo"], keys := "N",
+      after := "x foo foo |foo", echo := top },
+    { before := "foo foo fo|o", searches := [backward "foo"], keys := "n",
+      after := "foo |foo foo" },
+    { before := "foo foo foo fo|o", searches := [backward "foo"], keys := "2 N",
+      after := "foo |foo foo foo", echo := bottom },
+    -- `N` does not change the direction kept.
+    { before := "foo foo fo|o", searches := [backward "foo"], keys := "N n",
+      after := "foo foo |foo", echo := top },
+    -- The empty pattern is the last search's, in the new direction.
+    { before := "|x foo foo", searches := [forward "foo", forward ""], after := "x foo |foo" },
+    { before := "|x foo foo", searches := [forward "foo", forward "foo", backward ""],
+      after := "x |foo foo" },
+    { before := "|abc", searches := [forward ""], after := "|abc", echo := Evil.noPreviousPattern },
+    { before := "|abc", keys := "n", after := "|abc", echo := Evil.noPreviousPattern },
+    { before := "|abc", keys := "N", after := "|abc", echo := Evil.noPreviousPattern },
+    -- An escaped special, a pattern of several bytes, and a carriage return.
+    { before := "|axb a.b", searches := [forward "a\\.b"], after := "axb |a.b" },
+    { before := "|é x é", searches := [forward "é"], after := "é x |é" },
+    { before := "|a\r\nfoo", searches := [forward "foo"], after := "a\r\n|foo" },
+    -- In a visual state a search extends the selection.
+    { before := "|abcxdef", first := "v", searches := [forward "x"], keys := "d", after := "|def" },
+    -- `*` on a word's start, inside it and on its last character.
+    { before := "|foo bar foo", keys := "*", after := "foo bar |foo" },
+    { before := "f|oo bar foo", keys := "*", after := "foo bar |foo" },
+    { before := "fo|o bar foo", keys := "*", after := "foo bar |foo" },
+    -- On a blank before a word: the first keyword after the cursor.
+    { before := "foo| bar x bar", keys := "*", after := "foo bar x |bar" },
+    -- Whole words only, and a word outside ASCII.
+    { before := "|foo food foo_bar foo", keys := "*", after := "foo food foo_bar |foo" },
+    { before := "|héllo x héllo", keys := "*", after := "héllo x |héllo" },
+    -- Punctuation with no keyword after it: a literal, with no boundaries.
+    { before := "|+= +=", keys := "*", after := "+= |+=" },
+    { before := "| += +=", keys := "*", after := " += |+=" },
+    -- No word in the line.
+    { before := "a\n|  \nb", keys := "*", after := "a\n|  \nb", echo := Evil.noStringUnderCursor },
+    { before := "a\n|\nb", keys := "#", after := "a\n|\nb", echo := Evil.noStringUnderCursor },
+    -- The only occurrence: the cursor goes to the word's start, with the
+    -- warning.
+    { before := "x f|oo y", keys := "*", after := "x |foo y", echo := bottom },
+    { before := "x f|oo y", keys := "#", after := "x |foo y", echo := top },
+    { before := "|foo foo foo", keys := "2 *", after := "foo foo |foo" },
+    -- `#` mirrored.
+    { before := "foo bar |foo", keys := "#", after := "|foo bar foo" },
+    { before := "foo bar f|oo", keys := "#", after := "|foo bar foo" },
+    { before := "foo foo |foo", keys := "2 #", after := "|foo foo foo" },
+    -- `n` after `*` keeps the whole word, `n` after `#` goes back, and `N`.
+    { before := "|foo x foo food foo", keys := "* n", after := "foo x foo food |foo" },
+    { before := "foo x foo x f|oo", keys := "# n", after := "|foo x foo x foo" },
+    { before := "|foo x foo x foo", keys := "* N", after := "|foo x foo x foo" },
+    -- `/` and `?` by key, through the minibuffer.
+    { before := "|x foo foo", keys := "/ f o o RET", after := "x |foo foo" },
+    { before := "x |foo foo", keys := "/ f o o RET", after := "x foo |foo" },
+    { before := "x f|oo foo", keys := "/ f o o RET", after := "x foo |foo" },
+    { before := "|abababab", keys := "/ a b a b RET", after := "abab|abab" },
+    { before := "a|b\nfoo", keys := "/ f o o RET", after := "ab\n|foo" },
+    { before := "|foo foo foo foo", keys := "3 / f o o RET", after := "foo foo foo |foo" },
+    { before := "foo |foo", keys := "/ f o o RET", after := "|foo foo", echo := bottom },
+    { before := "|foo", keys := "/ f o o RET", after := "|foo", echo := bottom },
+    { before := "|abc", keys := "/ x RET", after := "|abc", echo := Evil.patternNotFound "x" },
+    { before := "foo foo |foo", keys := "? f o o RET", after := "foo |foo foo" },
+    { before := "|foo foo", keys := "? f o o RET", after := "foo |foo", echo := top },
+    { before := "|x foo foo foo", keys := "/ f o o RET n", after := "x foo |foo foo" },
+    { before := "|x foo foo foo", keys := "/ f o o RET 2 n", after := "x foo foo |foo" },
+    { before := "foo foo fo|o", keys := "? f o o RET n", after := "foo |foo foo" },
+    { before := "x|ax", keys := "? x RET N n", after := "|xax" },
+    { before := "|x foo foo", keys := "/ f o o RET / RET", after := "x foo |foo" },
+    { before := "|x foo foo", keys := "/ f o o RET / RET ? RET", after := "x |foo foo" },
+    { before := "|abc", keys := "/ RET", after := "|abc", echo := Evil.noPreviousPattern },
+    { before := "|axb a.b", keys := "/ a \\ . b RET", after := "axb |a.b" },
+    { before := "|é x é", keys := "/ é RET", after := "é x |é" },
+    { before := "|a\r\nfoo", keys := "/ f o o RET", after := "a\r\n|foo" },
+    { before := "|abcxdef", keys := "v / x RET d", after := "|def" },
+    -- A cancelled prompt leaves nothing waiting: the next key is a key.
+    { before := "|abc abc", keys := "/ b <Escape> l", after := "a|bc abc" },
+    { before := "|abc abc", keys := "d / b <Escape> l", after := "a|bc abc" }]
+
+/-- The rows of the oracle table for the operators over `n`, `N`, `*` and
+`#`, each written by hand from Vim 9.1: each is exclusive, an operator
+takes what lies from the cursor where the key was typed to where the search
+leads, also when it wrapped and so leads back, and `*` takes from the
+cursor, not from the word's start, which is where its search begins. The
+two rules for an exclusive motion that ends in column 1 apply. -/
+def searchOperatorRows : List OperatorRow :=
+  [.rests "|foo x foo y foo" "* 0 d n" "|foo y foo" (charwise "foo x "),
+    .rests "|foo x foo y foo" "* * d N" "foo x |foo" (charwise "foo y "),
+    { (OperatorRow.rests "|foo x foo y foo" "# d N" "|foo" (charwise "foo x foo y ")) with
+      echo := Evil.wrapWarning true },
+    .rests "f|oo x foo" "d *" "f|foo" (charwise "oo x "),
+    .rests "foo x f|oo" "d #" "|oo" (charwise "foo x f"),
+    .rests "|foo x foo x foo" "* 0 y n" "|foo x foo x foo" (charwise "foo x "),
+    .inserts "|foo x foo" "c *" "|foo" (charwise "foo x "),
+    .rests "|foo x foo x foo" "* 0 d 2 n" "|foo" (charwise "foo x foo x "),
+    -- The column-1 rules: from the line's first non-blank, whole lines;
+    -- from after it, up to the line before's end.
+    .rests "|foo\nfoo" "d *" "|foo" (linewise "foo\n"),
+    .rests "x |foo\nfoo" "d *" "x| \nfoo" (charwise "foo"), .givesUp "|abc" "d n",
+    .givesUp "|abc" "c N", .givesUp "a\n|  \nb" "d *",
+    -- `/` and `?` through the minibuffer.
+    .rests "|foo bar" "d / b a r RET" "|bar" (charwise "foo "),
+    .rests "foo bar f|oo" "d ? b a r RET" "foo |oo" (charwise "bar f"),
+    .rests "|foo bar" "y / b a r RET" "|foo bar" (charwise "foo "),
+    .inserts "|abcxdef" "c / x RET" "|xdef" (charwise "abc"),
+    .rests "|foo bar foo bar" "d 2 / b a r RET" "|bar" (charwise "foo bar foo "),
+    .rests "|foo\nbar" "d / b a r RET" "|bar" (linewise "foo\n"),
+    .rests "x|foo\nbar" "d / b a r RET" "|x\nbar" (charwise "foo"),
+    .rests "foo\n|bar" "d ? f o o RET" "|bar" (linewise "foo\n"),
+    .rests "foo bar f|oo" "y ? b a r RET" "foo |bar foo" (charwise "bar f"),
+    .givesUp "|abc" "d / z RET", .givesUp "|abc" "c ? z RET", .givesUp "|abc" "d / RET"]
+
+/-- The pairs of an operator's key and a motion's key that asks that the
+rows of `searchOperatorRows` have, with the keys typed before the operator
+left out. -/
+def searchOperatorPairs : List (String × String) :=
+  let asking : List String :=
+    Vim.Default.motions.filterMap fun (key, bound) =>
+      match bound with
+      | .promptMotion .. => some key
+      | _ => none
+  searchOperatorRows.filterMap fun row =>
+    match (row.keys.splitOn " ").filter (· != "2") with
+    | operator :: motion :: _ => if asking.contains motion then some (operator, motion) else none
+    | _ => none
+
+/-- The checks of evil's searches (`Editor/Evil/Motions.lean`), on the loop's
+driver over the editor's models, under the Vim scheme that ships with
+evil's commands, the text model answering the searches of literal
+patterns. -/
+def evilSearchChecks : List Check :=
+  [{  name :=
+        "/ and ? (by invocation and by key, through the minibuffer), n, N, * and # move as Vim 9.1 documents for a literal pattern: from before, at and inside a match, cpo-c, across lines, with counts, wrapping with Vim's warning, not found with E486, n with no last search with E35, N keeping the direction, the empty pattern the last one, whole words for * and #, from the word's start, and a visual selection extended"
+      run := searchRows searchMoveRows },
+    { name :=
+        "an operator over /, ?, n, N, * and # takes the range Vim 9.1 documents: exclusive, from the cursor to where the search leads, also back over a wrap, with the rules for an exclusive motion that ends in column 1, and a search with nowhere to go gives the operator up with E486, E35 or E348"
+      run := do
+        let rows ← operatorRows searchOperatorRows
+        return rows &&
+            evilGaveUp (evilEdited "|abc" "d / z RET") "|abc" (Evil.patternNotFound "z") &&
+            evilGaveUp (evilEdited "|abc" "d n") "|abc" Evil.noPreviousPattern &&
+            evilGaveUp (evilEdited "a\n|  \nb" "d *") "a\n|  \nb" Evil.noStringUnderCursor },
+    { name :=
+        "every operator key of the default tables with / and ?, the motion keys that ask, has a row of searchOperatorRows"
+      run :=
+        pure <|
+          Vim.Default.operators.all fun (operator, _) =>
+            ["/", "?"].all fun motion => searchOperatorPairs.contains (operator, motion) },
+    { name :=
+        "an answer for the input scheme is handed to the scheme and no command of the reserved name is looked up: with nothing asked, a command registered under it does not run; after / it completes the search"
+      run :=
+        let reserved : Dispatched := fun _ => do
+          message "the reserved name ran"
+          return none
+        pure <|
+          match evilDriver "|x foo" (evilHanded #[] [(InputScheme.answerName, reserved)]) with
+          | none => false
+          | some driver =>
+            let answer (driver : EvilDriver) : EvilDriver :=
+              (driver.stepped
+                  (driver.loop.invoke driver.handed
+                    { command := InputScheme.answerName, arguments := [.str "foo"] })).1
+            let unasked := answer driver
+            -- The prompt was closed without an answer, and no key came
+            -- since: an answer that comes now completes the edit.
+            let asked := answer (evilFed driver "/ <Escape>")
+            unasked.loop.state.echo.isEmpty && evilShown unasked == "|x foo" &&
+              asked.loop.state.echo.isEmpty &&
+              evilShown asked == "x |foo" },
+    { name :=
+        "a search is kept as the last search, pattern and direction: * keeps the whole word, escaped, and # keeps it going back; n and N keep it as it was; a search under an operator that gives up is rolled back with the command"
+      run :=
+        let last (fixture typed : String) : Option (Option Search) :=
+          (evilDriver fixture).map fun driver => (evilFed driver typed).loop.state.lastSearch
+        pure
+          (last "|foo" "" == some none &&
+            last "|foo foo" "*" == some (some { pattern := "\\<foo\\>", forward := true }) &&
+            last "|foo foo" "#" == some (some { pattern := "\\<foo\\>", forward := false }) &&
+            last "|foo foo" "* N" == some (some { pattern := "\\<foo\\>", forward := true }) &&
+            last "|.* .*" "*" == some (some { pattern := "\\.\\*", forward := true }) &&
+            last "|a.b" "*" == some (some { pattern := "\\<a\\>", forward := true }) &&
+            last "|$^ $^" "*" == some (some { pattern := "\\$\\^", forward := true }) &&
+            last "a\n|  \nb" "d *" == some none &&
+            (evilDriver "|x foo").map
+                (fun driver =>
+                  (evilSearchedBy driver "search-backward" "foo").loop.state.lastSearch) ==
+              some (some { pattern := "foo", forward := false })) }]
+
+/-- The text of the decoration checks: a hundred rows of `foo` and the row's
+number, more than a view of the decoration checks' frame shows
+(`decorationState`), but for row 10, which holds two matches, and row 50,
+whose word is `food`. -/
+def decoratedText : String :=
+  String.join <|
+    (List.range 100).map fun row =>
+      if row == 10 then "foo foo 10\n" else if row == 50 then "food 50\n" else s!"foo {row}\n"
+
+/-- A text whose rows are longer than the decoration checks' frame is wide:
+sixty rows of `foo` and a blank, fifty times each, two hundred cells, so
+every row wraps, and the view shows fewer rows than it is high. -/
+def wrappingText : String :=
+  String.join
+    ((List.range 60).map fun _ => String.join ((List.range 50).map fun _ => "foo ") ++ "\n")
+
+/-- A state of the decoration checks: `evilState` of `contents`, with the
+cursor at 0, in a frame of 80 by 40, where a row of the display model is
+one high and a cell one wide, so a view shows a few dozen rows. -/
+def decorationState (contents : String) : TextM EditorState := do
+  let state ← evilState contents 0
+  return { state with frame := { state.frame with size := ⟨80, 40⟩ } }
+
+/-- A driver of the decoration checks over `decorationState`. -/
+def decorationDriver (contents : String) : Option EvilDriver :=
+  (Loop.Driver.over evilHanded (fun _ => none) (decorationState contents) editorModel).toOption
+
+/-- The matches of `needle` in `contents`, found by hand, row by row: from
+each row's start, each occurrence, and the walk goes on from its end. With
+`whole`, an occurrence that does not start and end a word is passed over
+and the walk goes on one character after its start. Byte offsets, with the
+row each starts in. -/
+def naiveMatches (contents needle : String) (whole : Bool := false) : List (Nat × Nat × Nat) :=
+  Id.run do
+    let chars := contents.toList.toArray
+    let offsets :=
+      (chars.foldl (fun (acc : Array Nat × Nat) c => (acc.1.push acc.2, acc.2 + c.utf8Size))
+          (#[], 0)).1
+    let width := needle.length
+    let word (index : Nat) : Bool := (chars[index]?.map wordCharacter).getD false
+    let mut found := #[]
+    let mut index := 0
+    let mut row := 0
+    let mut rowAt := #[]
+    for char in chars do
+      rowAt := rowAt.push row
+      if char == '\n' then
+        row := row + 1
+    while index + width ≤ chars.size do
+      let here := (chars.extract index (index + width)).toList == needle.toList
+      let bounded :=
+        !whole ||
+          (word index && (index == 0 || !word (index - 1)) && word (index + width - 1) &&
+            !word (index + width))
+      if here && bounded then
+        found :=
+          found.push
+            (rowAt[index]!, offsets[index]!, (offsets[index + width]?).getD contents.utf8ByteSize)
+        index := index + width
+      else
+        index := index + 1
+    return found.toList
+
+/-- What is wrong, if anything, with the decorations of the view `view` in
+the last scene `driver` published, for the matches of `needle` in
+`contents`: every match that starts in a row from the view's anchor's
+through `height / heights.text` rows on is decorated, and every
+decoration is in `search-match` and is a match that starts in a row
+through one more, which is what the loop reads (`Loop.decorationsOf`). -/
+def decorationsWrong (driver : EvilDriver) (contents needle : String) (whole : Bool := false)
+    (view : ViewId := ⟨0⟩) : Option String := do
+  let some scene := driver.model.display.scenes.back? | some "no scene"
+  let some shown := scene.views.find? (·.id == view) | some "no view"
+  let some target := driver.loop.state.target? view | some "no window"
+  let anchor :=
+    match (target.buffer.text.marker target.window.scroll).runModel driver.model.texts with
+    | (.ok (.anchor anchor), _) => some anchor.offset
+    | _ => none
+  let some anchor := anchor | some "no anchor"
+  let rowOf (offset : Nat) : Nat :=
+    ((contents.toList.foldl
+        (fun (acc : Nat × Nat) c =>
+          if acc.1 < offset then (acc.1 + c.utf8Size, acc.2 + if c == '\n' then 1 else 0) else acc)
+        (0, 0)).2)
+  let first := rowOf anchor
+  let rows := shown.rect.height / max 1 driver.loop.state.heights.text
+  let all := naiveMatches contents needle whole
+  let visible := all.filter fun (row, _, _) => first ≤ row && row ≤ first + rows
+  let reachable := all.filter fun (row, _, _) => first ≤ row && row ≤ first + rows + 1
+  let drawn := shown.decorations.toList.map fun decoration => (decoration.start, decoration.stop)
+  if visible.isEmpty then
+    some "no match is visible"
+  else if !visible.all fun (_, start, stop) => drawn.contains (start, stop) then
+    some s!"a visible match is not decorated: {repr drawn}"
+  else if !shown.decorations.all (·.face == Loop.searchMatchFace) then
+    some "a decoration is in another face"
+  else if
+    !drawn.all fun range =>
+        (reachable.map fun (_, start, stop) => (start, stop)).contains range then
+    some s!"a decoration is no match the loop reads: {repr drawn}"
+  else
+    none
+
+/-- The decorations of the view `view` in the last scene `driver`
+published. -/
+def decorationsOfScene (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option (Array Decoration) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map (·.decorations)
+
+/-- A state of the decoration checks: `evilState` of `contents`, with a
+second window on the same buffer below the first, whose anchor is at the
+byte offset `second`. -/
+def twoViewState (contents : String) (second : Nat) : TextM EditorState := do
+  let state ← decorationState contents
+  let some buffer := state.buffers[0]?.join | throw .noSuchText
+  let scroll ← buffer.text.mark (.anchor { offset := second, bias := .before })
+  let selection ←
+    buffer.text.mark (.selection { ranges := #[⟨second, second⟩], shape := .inclusive })
+  return {
+      state with
+      windows := state.windows.push { id := ⟨1⟩, buffer := ⟨0⟩, scroll, selection }
+      nextView := 2
+      frame :=
+        { state.frame with
+          tree := .split .rows (.split .rows (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer } }
+
+/-- The checks of the decorations of a view (`Editor/Loop.lean`,
+"Decorations"): the matches of the last search, in `search-match`, on the
+loop's driver over the editor's models and the display recorder, under the
+Vim scheme that ships. -/
+def searchDecorationChecks : List Check :=
+  let fed (fixture typed : String) : Option EvilDriver :=
+    (decorationDriver (barred fixture).1).map (evilFed · typed)
+  [{  name :=
+        "after / f o o RET every match in the rows the view shows is drawn in search-match, and every decoration is a match of the rows the loop reads, food among none"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "/ f o o RET" with
+          | none => false
+          | some driver => decorationsWrong driver decoratedText "foo" == none },
+    { name := "after C-f the decorations follow the rows the view shows from its new anchor"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "/ f o o RET C-f",
+            fed ("|" ++ decoratedText) "/ f o o RET" with
+          | some paged, some first =>
+            decorationsWrong paged decoratedText "foo" == none &&
+              decorationsOfScene paged != decorationsOfScene first
+          | _, _ => false },
+    { name :=
+        "in rows that wrap, every match the view shows is decorated, and every decoration is a match"
+      run :=
+        pure <|
+          match fed ("|" ++ wrappingText) "/ f o o RET" with
+          | none => false
+          | some driver => decorationsWrong driver wrappingText "foo" == none },
+    { name := "a second view of the buffer has the decorations of its own rows by the same rule"
+      run :=
+        pure <|
+          match
+            (Loop.Driver.over evilHanded (fun _ => none) (twoViewState decoratedText 300)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let driver := evilFed driver "/ f o o RET"
+            decorationsWrong driver decoratedText "foo" == none &&
+              decorationsWrong driver decoratedText "foo" (view := ⟨1⟩) == none &&
+              decorationsOfScene driver ⟨1⟩ != decorationsOfScene driver ⟨0⟩ },
+    { name :=
+        "the minibuffer's view has no decorations while the prompt is open, and with no search no view has any"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "/ f o o RET / f", fed ("|" ++ decoratedText) "l" with
+          | some asking, some unsearched =>
+            let minibuffer := asking.loop.state.prompt.map (·.view)
+            (asking.model.display.scenes.back?.map fun scene =>
+                  scene.views.all fun view =>
+                    some view.id != minibuffer || view.decorations.isEmpty) ==
+                some true &&
+              minibuffer.isSome &&
+              (unsearched.model.display.scenes.back?.map fun scene =>
+                  scene.views.all (·.decorations.isEmpty)) ==
+                some true
+          | _, _ => false },
+    { name := "after * on foo, food is not decorated: the pattern is the whole word"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "*" with
+          | none => false
+          | some driver => decorationsWrong driver decoratedText "foo" (whole := true) == none },
+    { name := "a pattern with no match, and one the syntax refuses, draws nothing"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "/ x y z RET",
+            fed ("|" ++ decoratedText) "/ \\ ( RET" with
+          | some missing, some refused =>
+            decorationsOfScene missing == some #[] && decorationsOfScene refused == some #[]
+          | _, _ => false }]
 
 /-- The checks of evil's operators (`Editor/Evil/Operators.lean`) on the
 loop's driver over the editor's models, under the Vim scheme that ships
@@ -19927,6 +20529,13 @@ def evilRepeatChecks : List Check :=
         evilRows
           [("d f c .", "|abcabcabc", "|abc"), ("d t c .", "|abcabcab", "|cab"),
             ("f a d ; .", "|xabxabxab", "x|b"), ("c f c z <Escape> .", "|abcabcab", "|zab")] },
+    { name :=
+        ". after an operator over a search replays it with the search as it is at the replay: d n deletes to the next match of the last search again, and d * to the next occurrence of the word under the cursor"
+      run :=
+        evilRows
+          [("* 0 d n .", "|foo x foo x foo x", "|foo x"), ("d * .", "|a x a x a x", "|a x"),
+            ("d / f o o RET .", "|a foo b foo c foo", "|foo c foo"),
+            ("c / x RET y <Escape> l .", "|abxcdxef", "y|yxef")] },
     { name :=
         ". replays the last change: after d w it deletes the next word, and after c w, typed text and <Escape> it makes the same change with the same text at the cursor; a count before it replaces the change's and is kept; x, the doubled operator, o, O, i, a, I, A, p and P are replayed, and a yank is not the last change"
       run := evilRows repeatRows },
@@ -21562,6 +22171,8 @@ def checks : List Check :=
     evilInsertChecks ++
     evilOperatorChecks ++
     evilFindChecks ++
+    evilSearchChecks ++
+    searchDecorationChecks ++
     evilSelectionChecks ++
     evilRegisterChecks ++
     evilOpenChecks ++

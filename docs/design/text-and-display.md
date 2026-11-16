@@ -978,6 +978,16 @@ order. Faces are named and defined in Lean.
 Of the kinds above, span faces are built, from two sources: the selections
 and the decorations a scene carries. The rest are not.
 
+**The decorations a scene carries** have one source built: the matches of
+the last search, in the face `search-match` (`lean/Editor/Loop.lean`,
+"Decorations"). Each view but the minibuffer's asks its snapshot the
+matches of the pattern from the start of its scroll anchor's row through
+as many text rows as it has display rows, and one more, which covers every
+visible row however the rows wrap; the loop reads them after the follow
+has placed the anchor. An empty match is not drawn, and a pattern the
+syntax refuses draws nothing. They are always drawn, where Vim's default is
+`nohlsearch`, and `:nohlsearch` is not built.
+
 **A face** sets any of nine attributes and leaves the rest unset: a family,
 a size, a weight, a slant, a foreground, a background, an underline (a
 style and a colour), strike-through and a line height. It is the same nine
@@ -1053,8 +1063,10 @@ pt" font in another app is 14 × 96/72 pixels at scale 1.
 attribute, and `cursor`, a cursor face for each state of the shipped Vim
 scheme (`cursor.normal`, `cursor.insert`, `cursor.visual`,
 `cursor.visual-line`, `cursor.minibuffer`), `selection`, `echo-area`,
-`minibuffer-prompt` and `mode-line`; its colours are placeholders. Layout
-reads three names by itself: `default`, `selection` and `mode-line`.
+`minibuffer-prompt`, `mode-line` and `search-match`, which the matches of
+the last search are drawn in (below, "Decorations"); its colours are
+placeholders. Layout reads three names by itself: `default`, `selection`
+and `mode-line`.
 `echo-area` and `minibuffer-prompt` are defined and nothing draws them. Any
 other name is one a scene names and a theme or config defines, with no
 change to layout. A cursor face nothing defines has the default face's

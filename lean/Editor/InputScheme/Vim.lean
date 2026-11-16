@@ -22,6 +22,7 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
 | `move m c a` | `moveCommand`, with `[.str m, .nat c]`, or `[.str m, .str a, .nat c]` when the motion has an argument |
 | `operate o over c r` | `operateCommand`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""`. A motion's argument, when it has one, is a string right after its name: `[.str o.name, .str "motion", .str m, .str a, .nat c, .str r]` |
 | `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
+| A motion that asks | `askCommand` (`minibuffer-ask`), with `[.str label]`; the edit is compiled when the answer comes ("Motions that ask") |
 | `replay change inserted` | `repeatCommand`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
 
 - **Every part of speech is named by its vocabulary name**, a `String`, so
@@ -113,6 +114,28 @@ the key after it, which names the character it finds.
   waiting, the operator over `.motion name (some char)`.
 - **Any other key resets the edit begun**: `f` then `<Escape>` does
   nothing and leaves nothing pending, as in Vim.
+
+## Motions that ask
+
+`/` and `?` are bound to `Bound.promptMotion`: the motion's argument is a
+text typed in the minibuffer, so the edit cannot complete at the key.
+
+- **At the key** the edit that waits is recorded (`State.asking`, an
+  `Asking`: the view, the motion, the operator waiting, the count and the
+  register), the edit begun is reset so that the minibuffer's keys parse
+  afresh, and the key yields `askCommand` with the prompt's label
+  (`Parsed.ask`). Nothing becomes the last change and no state is
+  entered.
+- **The answer** (`State.answered`, the scheme's `InputScheme.answered`)
+  completes the waiting edit with the answer as the motion's argument, for
+  the view it is for, by `State.finish`, as a key completes one: an
+  operator's edit is the last change and enters the operator's state. A
+  second answer, and one with nothing waiting, yields nothing.
+- **The edit waits while keys are typed in the minibuffer's view**, which
+  the scheme is told when the prompt opens (`State.openMinibuffer` sets
+  `Asking.minibuffer`), and when that view closes: the accept command
+  closes it a step before the answer comes. A key for any other view drops
+  it, as after the prompt was cancelled. A reset keeps it.
 
 ## Registers
 
@@ -354,6 +377,10 @@ inductive Bound where
   /-- The motion of this vocabulary name, which takes the character the next
   key names as its argument: `f`, `t`, `F` and `T`. -/
   | charMotion (name : String)
+  /-- The motion of this vocabulary name, which takes as its argument a text
+  typed in the minibuffer, asked for with a prompt labelled `label`: `/`
+  and `?`. -/
+  | promptMotion (name label : String)
   /-- An operator. -/
   | operator (operator : Operator)
   /-- The text object of this vocabulary name. -/
@@ -486,6 +513,31 @@ structure StateRecord where
   shape : Shape := .inclusive
   deriving Repr
 
+/-- An edit that waits for the answer to a prompt ("Motions that ask", in
+the module docs): the motion that takes the answer as its argument, and
+what was typed before its key. -/
+structure Asking where
+  /-- The view the edit is for. -/
+  view : ViewId
+  /-- The motion's vocabulary name. -/
+  motion : String
+  /-- The operator that waits for the motion, if one was typed. -/
+  operator : Option Operator := none
+  /-- The count typed, if one was. -/
+  count : Option Nat := none
+  /-- The register named, if one was. -/
+  register : Option String := none
+  /-- The view of the minibuffer the prompt opened, once the scheme is told
+  of it. -/
+  minibuffer : Option ViewId := none
+  deriving DecidableEq, Repr
+
+/-- The name of the command a motion that asks yields, to open its prompt:
+the minibuffer's (`Editor/Minibuffer.lean`, "Asking for the input
+scheme"). -/
+def askCommand : String :=
+  "minibuffer-ask"
+
 /-- The registry of Vim states the scheme is built over: an open set, with
 one state that a view is in before any key. -/
 structure States where
@@ -552,6 +604,10 @@ structure State where
   to its text: set by a command that restarts it (`Command.restarts`), and
   dropped when the recording ends. -/
   restart : Option Edit := none
+  /-- The edit that waits for a prompt's answer, if a motion that asks was
+  typed and the answer has not come ("Motions that ask", in the module
+  docs). -/
+  asking : Option Asking := none
   deriving DecidableEq, Repr
 
 /-- The record of the Vim state `view` is in: the registry's record of the
@@ -636,6 +692,9 @@ inductive Parsed where
   | edit (edit : Edit)
   /-- The key is typed text: this is what it prints. -/
   | text (text : String)
+  /-- The key asks for a text typed in the minibuffer, with a prompt
+  labelled `label`: the edit waits for the answer (`State.asking`). -/
+  | ask (label : String)
   deriving DecidableEq, Repr
 
 /-- The state with the edit begun dropped. A reset keeps which Vim state
@@ -644,7 +703,7 @@ began, with the view that text is being kept for and the change it is
 restarted as, and nothing else. -/
 private def State.reset (state : State) : State :=
   { current := state.current, lastChange := state.lastChange, inserted := state.inserted
-    recording := state.recording, restart := state.restart }
+    recording := state.recording, restart := state.restart, asking := state.asking }
 
 /-- The state with the typed text of `view` no longer kept, when `view` is
 the view it is being kept for. The text kept so far stays, and no restart
@@ -691,6 +750,9 @@ does not have is the initial state. With none named, the state is as it
 was. The edit begun and the last change are the scheme's, not the view's,
 and stay. -/
 def State.openMinibuffer (states : States) (view : ViewId) (state : State) : State :=
+  -- An edit that waits for a prompt's answer waits while keys are typed in
+  -- the minibuffer's view.
+  let state := { state with asking := state.asking.map ({ · with minibuffer := some view }) }
   match states.minibuffer with
   | some name => state.enter states view name
   | none => state
@@ -746,6 +808,13 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
     | some operator =>
       state.finish states view (.operate operator (.motion name) state.count state.register)
     | none => state.finish states view (.move name state.count)
+  | .promptMotion name label =>
+    -- The edit cannot complete at the key: its argument is typed in the
+    -- minibuffer, and the keys typed there must parse afresh.
+    let asking : Asking :=
+      { view, motion := name, operator := state.operator, count := state.count
+        register := state.register }
+    ({ state.reset with asking := some asking }, .ask label)
   | .charMotion name =>
     ({ state with
         typed, multiplier := state.count, digits := none, awaitsChar := some name, walked := [] },
@@ -804,6 +873,10 @@ unbound key is text when the view's state inserts text, the key prints and
 no edit is begun, and otherwise resets. -/
 def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId) (state : State)
     (key : Key) : State × Parsed :=
+  -- A key for a view other than the minibuffer's: the prompt was cancelled,
+  -- and the edit that waited for its answer is dropped.
+  let state :=
+    if state.asking.any (·.minibuffer != some view) then { state with asking := none } else state
   let record := state.record states view
   let typed := state.typed ++ [key.chord]
   if let some name := state.awaitsChar then
@@ -863,6 +936,26 @@ def step (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewI
   | (next, .nothing) => (next, none)
   | (next, .edit edit) => (next, some edit.compile)
   | (next, .text text) => (next, some (selfInsert text))
+  | (next, .ask label) => (next, some { command := askCommand, arguments := [.str label] })
+
+/-- The state once `answer` came to the prompt the scheme asked for, and the
+invocation it completes ("Motions that ask", in the module docs): the edit
+that waited, with the answer as its motion's argument, completed for the
+view it is for as a key completes one (`State.finish`). With no edit
+waiting the state is as it was and nothing is yielded. -/
+def State.answered (states : States) (_ : ViewId) (answer : String) (state : State) :
+    State × Option Invocation :=
+  match state.asking with
+  | none => (state, none)
+  | some asking =>
+    let state := { state with asking := none }
+    let edit : Edit :=
+      match asking.operator with
+      | some operator =>
+        .operate operator (.motion asking.motion (some answer)) asking.count asking.register
+      | none => .move asking.motion asking.count (some answer)
+    let (next, _) := state.finish states asking.view edit
+    (next, some edit.compile)
 
 /-- What the Vim scheme says of modes' keys: its role table and its leader,
 each as chords. The grammar reads none of it. -/
@@ -898,6 +991,7 @@ def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
     tuned := modes.tuned.map fun (name, keys, bound) => (name, keys, .mode bound)
     closeView := State.closeView
     openMinibuffer := State.openMinibuffer states
-    committed := fun view text state => state.typedText view text }
+    committed := fun view text state => state.typedText view text
+    answered := State.answered states }
 
 end Editor.Vim

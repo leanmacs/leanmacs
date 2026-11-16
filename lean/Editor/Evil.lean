@@ -41,8 +41,10 @@ looks the motion's name up in, so the caller supplies the vocabulary.
   name, before the count: `[.str "find-forward", .str "x", .nat 2]`.
 - **It keeps what the motion hands back to be remembered** and says what
   it hands back to be said: the find it made as the last find
-  (`setLastFind`, `Vocabulary.To.find`), also when the motion failed, as
-  Vim keeps it, and its `said` in the echo area.
+  (`setLastFind`, `Vocabulary.To.find`) and the search it made as the last
+  search (`setLastSearch`, `Vocabulary.To.search`), also when the motion
+  failed, as Vim keeps them, and its `said` in the echo area: a search's
+  wrap warning or why it failed.
   A name with no entry says `<name>: no such motion` in the echo area and
   moves nothing.
 - **A call that names no motion says so, apart from a name with no
@@ -409,6 +411,8 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   discard <| view.setWanted (keeps.map fun column => { column, head })
   if let some find := raw.find then
     setLastFind find
+  if let some search := raw.search then
+    setLastSearch search
   if let some said := raw.said then
     message said
 

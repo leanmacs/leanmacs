@@ -69,7 +69,9 @@ A motion (`Motion`) is a name and a function from where a cursor is
 - **What is remembered between motions goes out as data too**: a find
   hands back the character find it made (`To.find`), and its caller keeps
   it as the last one (`EditorState.lastFind`), which `;` and `,` read from
-  the editor state. A motion that has something for the echo area hands
+  the editor state; a search hands back the search it made (`To.search`),
+  kept as `EditorState.lastSearch`, which `n` and `N` read. A motion that
+  has something for the echo area hands
   it back (`To.said`), and its caller says it. `Taken` carries both, and
   its default copies them from `To`.
 
@@ -155,6 +157,10 @@ structure To where
   last one (`EditorState.lastFind`), which `;` and `,` repeat; `none` to
   keep the one there was. -/
   find : Option Find := none
+  /-- The search the motion made, for its caller to keep as the last one
+  (`EditorState.lastSearch`), which `n` and `N` repeat; `none` to keep the
+  one there was. -/
+  search : Option Search := none
   deriving DecidableEq, Repr
 
 /-- How an operator takes the cells between the head and a motion's
@@ -181,6 +187,8 @@ structure Taken where
   said : Option String := none
   /-- The character find the motion made, as `To.find`. -/
   find : Option Find := none
+  /-- The search the motion made, as `To.search`. -/
+  search : Option Search := none
   deriving DecidableEq, Repr
 
 /-- A motion: its name, by which an input scheme's binding names it, and
@@ -200,7 +208,9 @@ structure Motion where
   `target` changes nothing. -/
   taken : Bool → TextId → From → EditorM Taken := fun _ text origin => do
     let to ← target text origin
-    return { head := to.head, reach, failed := to.failed, said := to.said, find := to.find }
+    return {
+        head := to.head, reach, failed := to.failed, said := to.said, find := to.find
+        search := to.search }
 
 /-- What an operator acts on. -/
 inductive Stretch where

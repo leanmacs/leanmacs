@@ -360,7 +360,10 @@ is set as a register is: never refused, editor state that a command which
 does not run to its end leaves as it was, and no request of the library.
 A command reads it from the state (`EditorState.lastFind` on
 `editorState`). Pinned through evil's character finds by
-`ModelTest.evilFindChecks`.
+`ModelTest.evilFindChecks`. `setLastSearch search` keeps the last search
+the same way (`Editor/State.lean`, "The last search"), which `n` and `N`
+repeat and the loop draws the matches of; pinned through evil's searches
+by `ModelTest.evilSearchChecks`.
 
 ## Ex bindings
 
@@ -605,6 +608,12 @@ def setRegister (name : String) (register : Register) : EditorM Unit :=
 request of the library. -/
 def setLastFind (find : Find) : EditorM Unit :=
   EditorState.ask (.setLastFind find)
+
+/-- Keeps `search` as the last search, which `n` and `N` repeat
+(`Editor/State.lean`, "The last search"). It is never refused, and makes no
+request of the library. -/
+def setLastSearch (search : Search) : EditorM Unit :=
+  EditorState.ask (.setLastSearch search)
 
 /-- Keeps `rows` rows between every view's cursor's row and the first and
 the last row it shows, from the next scene on ("Scrolling", in the module

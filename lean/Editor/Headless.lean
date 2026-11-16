@@ -1169,8 +1169,10 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
     return running
 
 /-- A scene as `scene` prints it, read from the text store as it is now: its
-frame, then each view, its snapshot's text and its markers' offsets, and
-after each view's line its status line (`statusLine`). `published` is how
+frame, then each view, its snapshot's text and its markers' offsets, then,
+for a view that has any, its decorations, each its face and its range
+(`decorations <view>: <face> <start>..<stop> ...`), and its status line
+(`statusLine`). `published` is how
 many scenes have been published. -/
 def sceneLines (scene : Scene) (published : Nat) : TextM (Array String) := do
   let focused :=
@@ -1192,9 +1194,16 @@ def sceneLines (scene : Scene) (published : Nat) : TextM (Array String) := do
               (selection.ranges.map fun range => s!"{range.anchor}..{range.head}").toList
     let rect := view.rect
     lines :=
-      (lines.push
-            s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}").push
-        (statusLine view.id view.status)
+      lines.push
+        s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}"
+    -- Only a view that has decorations has the line, so a scene with none
+    -- prints as it did before there were any.
+    unless view.decorations.isEmpty do
+      let spans :=
+        view.decorations.map fun decoration =>
+          s!"{decoration.face.name} {decoration.start}..{decoration.stop}"
+      lines := lines.push s!"decorations {view.id.index}: {" ".intercalate spans.toList}"
+    lines := lines.push (statusLine view.id view.status)
   return lines
 
 /-- Prints the last scene published, or that there is none. -/

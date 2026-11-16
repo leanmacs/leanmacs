@@ -176,6 +176,16 @@ A register is a text a command set aside, to put back later
   end leaves them as they were.** The clipboard is not here: it is
   outside the editor, behind a port of its own.
 
+## The last search
+
+The last search (`Search`, `EditorState.lastSearch`) is what `n` and `N`
+repeat and what an empty pattern reuses: the pattern as it was typed, and
+whether it went forward. It is kept for the whole editor, as Vim keeps it,
+and set and kept as the last find is (below): `setLastSearch` sets it, a
+motion hands it back as data (`Vocabulary.To.search`), the command that ran
+the motion keeps it, and a command that does not run to its end leaves it
+as it was. The loop reads it too, for the matches it draws.
+
 ## The last find
 
 The last character find (`Find`, `EditorState.lastFind`) is what Vim's `;`
@@ -755,6 +765,15 @@ structure Register where
   linewise : Bool := false
   deriving DecidableEq, Repr
 
+/-- A search, as `n` and `N` repeat it ("The last search", in the module
+docs). -/
+structure Search where
+  /-- The pattern, as it was typed. -/
+  pattern : String
+  /-- Whether it went forward, as `/` and `*` do. -/
+  forward : Bool
+  deriving DecidableEq, Repr
+
 /-- A character find, as `;` and `,` repeat it ("The last find", in the
 module docs). -/
 structure Find where
@@ -807,6 +826,9 @@ structure EditorState where
   /-- The last character find, if one was made ("The last find", in the
   module docs). -/
   lastFind : Option Find := none
+  /-- The last search, if one was made ("The last search", in the module
+  docs). -/
+  lastSearch : Option Search := none
   /-- How many rows every view keeps between its cursor's row and the first
   and the last row it shows ("The scroll margin", in the module docs). -/
   scrollMargin : Nat := 0
@@ -1404,6 +1426,12 @@ had ("The last find", in the module docs). Nothing else changes, and it is
 never refused. -/
 def setLastFind (find : Find) (state : EditorState) : EditorState :=
   { state with lastFind := some find }
+
+/-- `state` with `search` as its last search, in place of the one it had
+("The last search", in the module docs). Nothing else changes, and it is
+never refused. -/
+def setLastSearch (search : Search) (state : EditorState) : EditorState :=
+  { state with lastSearch := some search }
 
 /-- `state` with `rows` as its scroll margin, in place of the one it had
 ("The scroll margin", in the module docs). Nothing else changes, and it is

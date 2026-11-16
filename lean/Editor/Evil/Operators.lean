@@ -405,6 +405,8 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
             { head, count := if count == 0 then none else some count, argument }
       if let some find := taken.find then
         setLastFind find
+      if let some search := taken.search then
+        setLastSearch search
       if taken.failed then
         -- Vim cancels the operator and leaves the cursor where the motion
         -- got to, as the state the view was in before the key has it: the

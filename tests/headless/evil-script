@@ -22,3 +22,19 @@ scene
 # `0` is a motion in normal state: the cursor goes to the line's start.
 key 0 Digit0 -
 scene
+
+# Slash asks for a pattern in the minibuffer, whose view is printed after
+# the window's with the prompt's label as its status line; Enter accepts
+# it, and the search, answered by the library's engine, moves the cursor to
+# the first l after it. The view's matches are drawn in search-match.
+key / Slash -
+key l KeyL -
+scene
+key <Enter> Enter -
+scene
+
+# n goes on to the next match, and N comes back, by the last search.
+key n KeyN -
+scene
+key N KeyN shift
+scene

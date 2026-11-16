@@ -41,7 +41,8 @@ def commands : Array Config.Registration :=
     { name := nextName, action := .call nextCommand },
     { name := previousName, action := .call previousCommand },
     { name := deleteBackwardName, action := .call deleteBackwardCommand },
-    { name := deleteToStartName, action := .call deleteToStartCommand }]
+    { name := deleteToStartName, action := .call deleteToStartCommand },
+    { name := askName, action := .call askCommand }]
 
 /-- The minibuffer's mode, as a host registers it for the owner
 `compiled`. -/

@@ -97,6 +97,15 @@ loop runs the command with the focused window, which is the minibuffer's.
 | A key every scheme should have in the minibuffer | A role the mode fills |
 | A key one scheme has in the minibuffer | That scheme's own table |
 
+## Asking for the input scheme
+
+`minibuffer-ask` (`askCommand`) is what an input scheme yields when a key
+needs a text typed in the minibuffer before its edit is complete, as Vim's
+`/` needs its pattern (`Editor/InputScheme/Vim.lean`, "Motions that ask").
+It opens a prompt with the label it is handed and the reserved continuation
+`InputScheme.answerName`, so the accepted answer is handed to the scheme
+(`Editor/Loop.lean`, "Prompts") and no command runs under that name.
+
 Pinned by `ModelTest.promptChecks`, on the models and the test scheme, and
 the two commands that move through the candidates by
 `ModelTest.candidateChecks`.
@@ -130,6 +139,30 @@ def deleteBackwardName : String :=
 under. -/
 def deleteToStartName : String :=
   "minibuffer-delete-to-start"
+
+/-- The name the command that asks for the input scheme is registered
+under. -/
+def askName : String :=
+  "minibuffer-ask"
+
+/-- What the command that asks for the input scheme says in the echo area
+when the prompt is refused: its name, then why. -/
+def notAsking (refusal : PromptRefusal) : String :=
+  s!"{askName}: {refusal.describe}"
+
+/-- The command that asks for the input scheme, as it is called ("Asking for
+the input scheme", in the module docs): opens a prompt labelled with its
+first argument, a string, or none, whose continuation is the reserved name
+`InputScheme.answerName`, so the answer goes to the scheme. Where the
+prompt is refused, because one is open, it says so in the echo area
+(`notAsking`). -/
+def askCommand (call : Call) : EditorM Unit := do
+  let label :=
+    match call.arguments with
+    | .str label :: _ => label
+    | _ => ""
+  if let .error refusal← prompt label { command := InputScheme.answerName } then
+    message (notAsking refusal)
 
 /-- What the accept command and the cancel command say in the echo area when
 no prompt is open. -/
