@@ -2244,6 +2244,45 @@ def bracketAnswers : List (Bracket × Bool × Bool × Bool × Nat × Option Nat)
     -- Nothing further at either end.
     (.round, false, true, false, 28, none), (.round, true, false, false, 0, none)]
 
+/-- A case of the bracket walk that passes over quoted brackets, of brackets
+that are not escaped: the text, the kind, whether the walk goes forward to
+a closing bracket or back to an opening one, the offset walked from, and
+the answer, which is what the installed Vim 9.1.1752 answers with
+`-Nu NONE`, by `])` and `[(` (`]}` and `[{` for braces). -/
+def quotedBracketAnswers : List (String × Bracket × Bool × Nat × Option Nat) :=
+  [ -- Inside double quotes, from outside, both ways, through characters of
+    -- two bytes.
+    ("(a \"b)\" c)", .round, true, 0, some 9), ("(a \")\" b)", .round, false, 8, some 0),
+    ("{a \"}\" b}", .curly, true, 0, some 8), ("[a \"]\" b]", .square, true, 0, some 8),
+    ("(é \"ü)\" ö)", .round, true, 0, some 12),
+    -- From the opening quote and from inside a string, the strings are read
+    -- from where the walk starts.
+    ("(a \"b)\" c)", .round, true, 3, some 5), ("(a \")\" b)", .round, false, 4, none),
+    ("\"(a)\"", .round, true, 1, some 3), ("\"(a)\"", .round, false, 3, some 1),
+    -- An odd number of quotes: none is read.
+    ("x \" (a \"b)\" c)", .round, true, 4, some 9),
+    -- Escaped quotes are not counted and start no string; an escaped
+    -- backslash escapes nothing.
+    ("(a \\\"b)\" c)", .round, true, 0, some 6), ("(a \\\"b) \\\" c)", .round, false, 12, none),
+    ("(\"a\\\\\" b) \")\"", .round, true, 0, some 8),
+    -- A double quote between single quotes is not counted, and single-quoted
+    -- characters are passed over.
+    ("(a '\"' \")\" b)", .round, true, 0, some 12), ("(a ')' b)", .round, true, 0, some 8),
+    ("(a ')' b)", .round, false, 8, some 0), ("(a '\\)' b)", .round, true, 0, some 9),
+    ("(a '\\)' b)", .round, false, 9, some 0), ("('(' x)", .round, true, 0, some 6),
+    -- Each row's quotes are its own, and a row's end ends a string.
+    ("{\n  \"}\"\n}", .curly, true, 0, some 8), ("{\n  \"}\"\n}", .curly, false, 8, some 0),
+    ("\" ( \"x\n)", .round, true, 2, some 7), ("\" ( \"x\n)", .round, false, 7, none),
+    -- A backslash at a row's end carries a string across the line break.
+    ("(a \"b\\\nc) d\" e)", .round, true, 0, some 14),
+    ("(a \"b\\\nc) d\" e)", .round, true, 3, some 8),
+    ("(a \"b\\\nc) d\" e)", .round, false, 8, some 0),
+    ("(a \"b\\\nc) d\" e)", .round, false, 9, none),
+    ("(a \"b\\\n c)\" d)", .round, true, 0, some 13),
+    -- In a row that ends in a carriage return and a line feed, the line
+    -- break is the row's end.
+    ("(\")\"\r\n\")\")", .round, true, 0, some 9)]
+
 /-- A case of the quoted string: the text, the quote, the offset, and the
 answer. -/
 def quoteAnswers : List (String × Quote × Nat × Option Extent) :=
@@ -2280,8 +2319,19 @@ def pairProperties : List Property :=
         let mut held := true
         for (bracket, opening, forward, escaped, offset, answer) in bracketAnswers do
           held :=
-            held && (← text.unmatched bracket opening forward escaped offset) == answer &&
-              (← snapshot.unmatched bracket opening forward escaped offset) == answer
+            held && (← text.unmatched bracket opening forward escaped false offset) == answer &&
+              (← snapshot.unmatched bracket opening forward escaped false offset) == answer
+        return held },
+    { name :=
+        "the walk that passes over quoted brackets answers what Vim 9.1's default cpoptions does, as a table written out by hand says: inside double quotes from outside and from inside, an odd number of quotes, escaped quotes, a quote between single quotes, single-quoted characters, quotes in other rows and a string carried across a line break by a backslash"
+      holds := do
+        let mut held := true
+        for (contents, bracket, forward, offset, answer) in quotedBracketAnswers do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          held :=
+            held && (← text.unmatched bracket (!forward) forward false true offset) == answer &&
+              (← snapshot.unmatched bracket (!forward) forward false true offset) == answer
         return held },
     { name :=
         "from every position the bracket walk answers a bracket of the kind and side sought, of the escapedness asked, strictly on the side of the position it walks to"
@@ -2292,10 +2342,13 @@ def pairProperties : List Property :=
           (List.range (bracketText.utf8ByteSize + 1)).filter fun offset =>
             (String.Pos.Raw.mk offset).IsValid bracketText do
           for bracket in [Bracket.round, .square, .curly] do
-            for (opening, forward, escaped) in
-              [(false, true, false), (true, false, false), (true, true, false),
-                (false, false, false), (false, true, true), (true, false, true)] do
-              if let some found← text.unmatched bracket opening forward escaped offset then
+            for (opening, forward, escaped, skipQuoted) in
+              [(false, true, false, false), (true, false, false, false), (true, true, false, false),
+                (false, false, false, false), (false, true, true, false),
+                (true, false, true, false), (false, true, false, true),
+                (true, false, false, true)] do
+              if let some found←
+                  text.unmatched bracket opening forward escaped skipQuoted offset then
                 let char ← text.slice found (found + 1)
                 let sought := if opening then bracket.opening else bracket.closing
                 let before ← text.slice (found - min found 2) found
@@ -2321,16 +2374,18 @@ def pairProperties : List Property :=
         let across ← createText "\"a\nb\""
         let pair ← createText "(a)"
         return (← across.quoted .double 1) == none && (← across.quoted .double 3) == none &&
-            (← pair.unmatched .round false true false 0) == some 2 &&
-            (← pair.unmatched .round false true false 2) == none &&
-            (← pair.unmatched .round true false false 0) == none &&
-            (← pair.unmatched .round true false false 2) == some 0 },
+            (← pair.unmatched .round false true false false 0) == some 2 &&
+            (← pair.unmatched .round false true false false 2) == none &&
+            (← pair.unmatched .round true false false false 0) == none &&
+            (← pair.unmatched .round true false false false 2) == some 0 },
     { name :=
         "both walks are refused with badPosition inside a character of several bytes and past the end"
       holds := do
         let text ← createText "(é)"
-        let inside ← refusedWith .badPosition (discard <| text.unmatched .round false true false 2)
-        let past ← refusedWith .badPosition (discard <| text.unmatched .round true false false 5)
+        let inside ←
+          refusedWith .badPosition (discard <| text.unmatched .round false true false true 2)
+        let past ←
+          refusedWith .badPosition (discard <| text.unmatched .round true false false false 5)
         let quoteInside ← refusedWith .badPosition (discard <| text.quoted .double 2)
         let quotePast ← refusedWith .badPosition (discard <| text.quoted .double 5)
         return inside && past && quoteInside && quotePast }]

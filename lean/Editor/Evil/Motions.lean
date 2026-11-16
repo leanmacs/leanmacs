@@ -107,11 +107,11 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
   after it; a keyword is a run of word characters (`wordCharacter`), and
   punctuation is what is neither that nor a blank, which is Vim's
   `find_ident_under_cursor` with the text's word class for `iskeyword`.
-- **`%` departs from Vim's default `cpoptions` in two ways, both
-  recorded**: it matches the brackets `( [ { } ] )` only, and not `/* */`
-  or `#if`, `#else` and `#endif`, which are syntax's or a plugin's; and a
-  bracket inside quotes is counted, which is Vim's `cpo-%`, where Vim's
-  default passes over brackets it guesses are quoted.
+- **`%` passes over brackets Vim guesses are quoted**, as Vim's default
+  `cpoptions` does (the text port's `unmatched` with `skipQuoted`). It
+  departs from that default in one way, recorded: it matches the brackets
+  `( [ { } ] )` only, and not `/* */` or `#if`, `#else` and `#endif`,
+  which are syntax's or a plugin's.
 - **What a word is is the text port's** (`Editor/Text.lean`): a run of word
   characters or of punctuation, or the line break of an empty line; a WORD
   is a run of characters that are not blank. It is Vim's on ASCII and not
@@ -716,7 +716,7 @@ def matchingBracketTaken (text : TextId) (origin : Vocabulary.From) : TextM Voca
         else none
     let some (index, offset, bracket, opening) := found | return failed
     let backslashes := ((cells.extract 0 index).toList.reverse.takeWhile (·.2 == "\\")).length
-    let partner ← text.unmatched bracket (!opening) opening (backslashes % 2 == 1) offset
+    let partner ← text.unmatched bracket (!opening) opening (backslashes % 2 == 1) true offset
     match partner with
     | some head =>
       return { head, reach := .inclusive }

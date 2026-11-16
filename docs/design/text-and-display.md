@@ -535,9 +535,11 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   "Pairs"): the bracket a walk leaves unbalanced (`unmatched`: a kind of
   bracket, which side is sought, a direction and an escapedness; strictly
   after or before the position; the brackets of the other side raise the
-  depth; quotes are characters like any other; a bracket after an odd
-  number of backslashes is escaped, and only the escapedness asked is
-  counted), and the quoted string round a position, in its row
+  depth; a bracket after an odd number of backslashes is escaped, and
+  only the escapedness asked is counted; quotes are characters like any
+  other, or, when asked, brackets Vim's default `cpoptions` guesses are
+  quoted are passed over, by its guess a line at a time), and the quoted
+  string round a position, in its row
   (`quoted`, Vim 9.1's `current_quote` with a backslash escaping the
   character after it). Each answers none where there is nothing, and is
   refused from an offset that is not a position. In the library they are

@@ -492,7 +492,8 @@ lean_obj_res editor_glue_snapshot_motion(b_lean_obj_arg snapshot,
 
 uint8_t editor_ffi_snapshot_unmatched(const editor_ffi_snapshot *snapshot,
                                       uint8_t bracket, bool opening,
-                                      bool forward, bool escaped, size_t offset,
+                                      bool forward, bool escaped,
+                                      bool skip_quoted, size_t offset,
                                       uint64_t *out);
 uint8_t editor_ffi_snapshot_quoted(const editor_ffi_snapshot *snapshot,
                                    uint8_t quote, size_t offset,
@@ -502,17 +503,18 @@ uint8_t editor_ffi_snapshot_quoted(const editor_ffi_snapshot *snapshot,
 enum { PAIR_FOUND = 0, PAIR_NOT_FOUND = 1 };
 
 // `Editor.Ffi.Snapshot.unmatchedRaw : @& Snapshot → UInt8 → Bool → Bool →
-// Bool → USize → IO (Option (Option UInt64))`: `none` for a refusal, `some
-// none` for no such bracket. The tag is one Lean's `Bracket.tag` wrote, and
-// the library checks it.
+// Bool → Bool → USize → IO (Option (Option UInt64))`: `none` for a refusal,
+// `some none` for no such bracket. The tag is one Lean's `Bracket.tag` wrote,
+// and the library checks it.
 lean_obj_res editor_glue_snapshot_unmatched(b_lean_obj_arg snapshot,
                                             uint8_t bracket, uint8_t opening,
                                             uint8_t forward, uint8_t escaped,
+                                            uint8_t skip_quoted,
                                             size_t offset) {
   uint64_t found;
   uint8_t status = editor_ffi_snapshot_unmatched(
       lean_get_external_data(snapshot), bracket, opening != 0, forward != 0,
-      escaped != 0, offset, &found);
+      escaped != 0, skip_quoted != 0, offset, &found);
   if (status == PAIR_FOUND) {
     return lean_io_result_mk_ok(
         option_some(option_some(lean_box_uint64(found))));

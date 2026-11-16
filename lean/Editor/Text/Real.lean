@@ -534,11 +534,11 @@ def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextEr
       return .ok (.invalid reason)
     | .badPosition =>
       return .error .badPosition
-  | .unmatched bracket opening forward escaped offset => do
+  | .unmatched bracket opening forward escaped skipQuoted offset => do
     unless offset < USize.size do
       return .error .badPosition
     let some found ←
-      snapshot.unmatched (bracketOf bracket) opening forward escaped
+      snapshot.unmatched (bracketOf bracket) opening forward escaped skipQuoted
           offset.toUSize | return .error .badPosition
     return .ok (found.map (·.toNat))
   | .quoted quote offset => do

@@ -266,11 +266,12 @@ impl Snapshot {
         opening: bool,
         forward: bool,
         escaped: bool,
+        skip_quoted: bool,
         offset: usize,
     ) -> Option<Option<u64>> {
         let found = self
             .text
-            .unmatched(bracket, opening, forward, escaped, offset)?;
+            .unmatched(bracket, opening, forward, escaped, skip_quoted, offset)?;
         Some(found.map(|at| at as u64))
     }
 
@@ -493,7 +494,8 @@ pub unsafe extern "C" fn editor_ffi_snapshot_motion(
 /// ([`pair::bracket_of`]) that the walk from the byte offset `offset` of
 /// `snapshot` leaves unbalanced, an opening one when `opening`, strictly
 /// after the offset when `forward` and before it otherwise, counting only
-/// the brackets whose escapedness is `escaped`. Returns
+/// the brackets whose escapedness is `escaped`, and passing over those Vim
+/// guesses are quoted when `skip_quoted`. Returns
 /// [`PairStatus::Found`] with `out` filled, [`PairStatus::NotFound`], or
 /// [`PairStatus::Refused`] for an offset that is not a position or a tag of
 /// no bracket, with `out` untouched.
@@ -509,6 +511,7 @@ pub unsafe extern "C" fn editor_ffi_snapshot_unmatched(
     opening: bool,
     forward: bool,
     escaped: bool,
+    skip_quoted: bool,
     offset: usize,
     out: *mut u64,
 ) -> u8 {
@@ -516,7 +519,8 @@ pub unsafe extern "C" fn editor_ffi_snapshot_unmatched(
         return PairStatus::Refused as u8;
     };
     // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
-    let answer = unsafe { &*snapshot }.unmatched(bracket, opening, forward, escaped, offset);
+    let answer =
+        unsafe { &*snapshot }.unmatched(bracket, opening, forward, escaped, skip_quoted, offset);
     match answer {
         None => PairStatus::Refused as u8,
         Some(None) => PairStatus::NotFound as u8,
@@ -813,10 +817,10 @@ mod tests {
         }
     }
 
-    /// Brackets of each kind, nested, escaped, across rows, and quotes of
-    /// each kind with an escaped one, so that no two reads answer alike
-    /// everywhere.
-    const PAIRED_IN: &str = "f(a [b] {\\(c\\)})\r\n\"x\\\"y\" 'z' `é`\n(";
+    /// Brackets of each kind, nested, escaped, quoted, across rows, and
+    /// quotes of each kind with an escaped one, so that no two reads answer
+    /// alike everywhere.
+    const PAIRED_IN: &str = "f(a [b] {\\(c\\)} \")\")\r\n\"x\\\"y\" 'z' `é`\n(";
 
     #[test]
     fn a_pair_is_what_the_text_answers_for_it() {
@@ -830,20 +834,22 @@ mod tests {
             let bracket = pair::bracket_of(tag).expect("the tag of a bracket");
             let quote = pair::quote_of(tag).expect("the tag of a quote");
             for &offset in &offsets {
-                for (opening, forward, escaped) in [
-                    (false, true, false),
-                    (true, false, false),
-                    (true, true, false),
-                    (false, true, true),
-                    (true, false, true),
+                for (opening, forward, escaped, skip_quoted) in [
+                    (false, true, false, false),
+                    (true, false, false, false),
+                    (true, true, false, false),
+                    (false, true, true, false),
+                    (true, false, true, false),
+                    (false, true, false, true),
+                    (true, false, false, true),
                 ] {
                     let expected = text
-                        .unmatched(bracket, opening, forward, escaped, offset)
+                        .unmatched(bracket, opening, forward, escaped, skip_quoted, offset)
                         .expect("a position");
                     assert_eq!(
-                        snapshot.unmatched(bracket, opening, forward, escaped, offset),
+                        snapshot.unmatched(bracket, opening, forward, escaped, skip_quoted, offset),
                         Some(expected.map(|at| at as u64)),
-                        "{bracket:?} {opening} {forward} {escaped} from {offset}"
+                        "{bracket:?} {opening} {forward} {escaped} {skip_quoted} from {offset}"
                     );
                 }
                 let expected = text.quoted(quote, offset).expect("a position");
@@ -866,7 +872,7 @@ mod tests {
             let quote = pair::quote_of(tag).expect("the tag of a quote");
             for offset in [inside, PAIRED_IN.len() + 1, usize::MAX] {
                 assert_eq!(
-                    snapshot.unmatched(bracket, false, true, false, offset),
+                    snapshot.unmatched(bracket, false, true, false, false, offset),
                     None
                 );
                 assert_eq!(snapshot.quoted(quote, offset), None);
@@ -884,20 +890,29 @@ mod tests {
         // SAFETY: the handle and the out parameters are live and writable.
         unsafe {
             assert_eq!(
-                editor_ffi_snapshot_unmatched(handle, 0, false, true, false, 0, &mut out),
+                editor_ffi_snapshot_unmatched(handle, 0, false, true, false, false, 0, &mut out),
                 PairStatus::Found as u8
             );
             assert_eq!(out, 2);
             assert_eq!(
-                editor_ffi_snapshot_unmatched(handle, 1, false, true, false, 0, &mut out),
+                editor_ffi_snapshot_unmatched(handle, 1, false, true, false, false, 0, &mut out),
                 PairStatus::NotFound as u8
             );
             assert_eq!(
-                editor_ffi_snapshot_unmatched(handle, 0, false, true, false, 99, &mut out),
+                editor_ffi_snapshot_unmatched(handle, 0, false, true, false, false, 99, &mut out),
                 PairStatus::Refused as u8
             );
             assert_eq!(
-                editor_ffi_snapshot_unmatched(handle, pair::TAGS, false, true, false, 0, &mut out),
+                editor_ffi_snapshot_unmatched(
+                    handle,
+                    pair::TAGS,
+                    false,
+                    true,
+                    false,
+                    false,
+                    0,
+                    &mut out
+                ),
                 PairStatus::Refused as u8
             );
             assert_eq!(out, 2);

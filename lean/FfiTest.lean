@@ -2612,12 +2612,15 @@ def pairChecks (_ : Unit) : List Check :=
       run := do
         let document ← Editor.Ffi.Document.new "([{a}]) \\(b\\)"
         let snapshot ← document.snapshot
-        return (← snapshot.unmatched .round false true false 0) == some (some 6) &&
-            (← snapshot.unmatched .square false true false 1) == some (some 5) &&
-            (← snapshot.unmatched .curly true false false 4) == some (some 2) &&
-            (← snapshot.unmatched .round true true false 1) == some none &&
-            (← snapshot.unmatched .round false true true 9) == some (some 12) &&
-            (← snapshot.unmatched .round false true false 99) == none },
+        let quoted ← (← Editor.Ffi.Document.new "(a \")\" b)").snapshot
+        return (← snapshot.unmatched .round false true false false 0) == some (some 6) &&
+            (← snapshot.unmatched .square false true false false 1) == some (some 5) &&
+            (← snapshot.unmatched .curly true false false false 4) == some (some 2) &&
+            (← snapshot.unmatched .round true true false false 1) == some none &&
+            (← snapshot.unmatched .round false true true false 9) == some (some 12) &&
+            (← snapshot.unmatched .round false true false false 99) == none &&
+            (← quoted.unmatched .round false true false false 0) == some (some 4) &&
+            (← quoted.unmatched .round false true false true 0) == some (some 8) },
     { name := "each quote's tag reaches its kind, and a string comes back as its two offsets"
       run := do
         let document ← Editor.Ffi.Document.new "\"a\" 'b' `c`"

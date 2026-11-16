@@ -806,35 +806,171 @@ def charsAt (text : String) : Array (Nat × Char) :=
   (text.toList.foldl
       (fun (chars, walked) char => (chars.push (walked, char), walked + char.utf8Size)) (#[], 0)).1
 
-/-- Whether an odd number of backslashes stands right before the character
-pos `index` of `chars`. -/
-def escapedAt (chars : Array (Nat × Char)) (index : Nat) : Bool :=
-  ((chars.extract 0 index).toList.reverse.takeWhile (·.2 == '\\')).length % 2 == 1
+/-- The byte at `here` of `bytes` as a number, or 0, Vim's NUL, at or past
+`stop`, where a row's content ends. -/
+def byteIn (bytes : ByteArray) (stop here : Nat) : Nat :=
+  if here < stop then bytes[here]!.toNat else 0
+
+/-- How many backslashes stand right before `here` of `bytes`, after the
+offset `start` a row starts at. -/
+def backslashesBefore (bytes : ByteArray) (start here : Nat) : Nat :=
+  Id.run do
+    let mut run := here
+    while run > start && bytes[run - 1]! == 92 do
+      run := run - 1
+    return here - run
+
+/-- How long the character is whose first byte is `byte`, in bytes. -/
+def leadWidth (byte : Nat) : Nat :=
+  if byte < 0x80 then 1 else if byte < 0xE0 then 2 else if byte < 0xF0 then 3 else 4
+
+/-- Vim 9.1's count of the double quotes of the row of `bytes` from `start`
+to `stop` (`do_quotes`, in `findmatchlimit`): whether it is even, and
+whether an even number stands before the offset `looked` at, which is true
+when the count passes over that offset (`at_start`). A double quote is
+counted unless a backslash escapes it or a single quote is on each side of
+it. -/
+def rowQuotes (bytes : ByteArray) (start stop looked : Nat) : Bool × Bool :=
+  Id.run do
+    let mut count := 0
+    let mut evenAtStart := true
+    let mut walked := start
+    while walked < stop do
+      if walked == looked then
+        evenAtStart := count % 2 == 0
+      let byte := byteIn bytes stop walked
+      if
+          byte == 34 &&
+            (walked == start || byteIn bytes stop (walked - 1) != 39 ||
+              byteIn bytes stop (walked + 1) != 39) then
+        count := count + 1
+      if byte == 92 && byteIn bytes stop (walked + 1) != 0 then
+        walked := walked + 1
+      walked := walked + 1
+    return (count % 2 == 0, evenAtStart)
 
 /-- The model's answer to the bracket a walk leaves unbalanced ("Pairs", in
-the rules of the port): the characters of `text` strictly after `offset`,
-or strictly before it going back, walked with a depth. -/
-def unmatched? (text : String) (bracket : Bracket) (opening forward escaped : Bool) (offset : Nat) :
-    Except TextError (Option Nat) :=
+the rules of the port): Vim 9.1's `findmatchlimit`, over the bytes of
+`text` a row here a time, from `offset`, or from where its row's content ends
+when `offset` is in the line break. -/
+def unmatched? (text : String) (bracket : Bracket) (opening forward escaped skipQuoted : Bool)
+    (offset : Nat) : Except TextError (Option Nat) :=
   if !isPosition text offset then .error .badPosition
   else
-    let chars := charsAt text
+    let bytes := text.toUTF8
+    let rows := (rowsOf text).map fun row => (row.start, row.content)
     let (sought, other) :=
-      if opening then (bracket.opening, bracket.closing) else (bracket.closing, bracket.opening)
-    -- The index of the character at the offset, or the count at the end.
-    let here := (chars.findIdx? (·.1 ≥ offset)).getD chars.size
-    let walk :=
-      if forward then (List.range chars.size).filter (· > here)
-      else ((List.range chars.size).filter (· < here)).reverse
-    let rec go (depth : Nat) : List Nat → Option Nat
-      | [] => none
-      | index :: rest =>
-        let (pos, char) := chars[index]!
-        if (char == sought || char == other) && escapedAt chars index == escaped then
-          if char == other then go (depth + 1) rest
-          else if depth == 0 then some pos else go (depth - 1) rest
-        else go depth rest
-    .ok (go 0 walk)
+      if opening then (bracket.opening.toNat, bracket.closing.toNat)
+      else (bracket.closing.toNat, bracket.opening.toNat)
+    .ok <|
+      Id.run do
+        let mut row := (rows.findIdx? (·.1 > offset)).getD rows.size - 1
+        let mut start := rows[row]!.1
+        let mut stop := rows[row]!.2
+        let mut here := min offset stop
+        -- Vim's `do_quotes` (counted, and read), `inquote` and
+        -- `start_in_quotes`.
+        let mut counted := false
+        let mut read := false
+        let mut inside := false
+        let mut started : Option Bool := none
+        let mut depth := 0
+        while true do
+          let mut entered := false
+          if forward then
+            if here == stop then
+              if row + 1 ≥ rows.size then
+                return none
+              row := row + 1
+              start := rows[row]!.1
+              stop := rows[row]!.2
+              here := start
+              entered := true
+            else
+              here := here + leadWidth bytes[here]!.toNat
+          else if here == start then
+            if row == 0 then
+              return none
+            row := row - 1
+            start := rows[row]!.1
+            stop := rows[row]!.2
+            here := stop
+            entered := true
+          else
+            here := here - 1
+            while bytes[here]! &&& 0xC0 == 0x80 do
+              here := here - 1
+          if skipQuoted && (entered || !counted) then
+            counted := true
+            let (even, evenAtStart) :=
+              rowQuotes bytes start stop (if forward then here else here + 1)
+            read := even
+            if !even then
+              inside := false
+              -- A string that goes on across this row's line break.
+              if byteIn bytes stop (stop - 1) == 92 then
+                read := true
+                if started.isNone then
+                  inside := true
+                  started := some true
+                else if !forward then
+                  inside := true
+              -- And one that goes on across the line break before it.
+              if row > 0 then
+                let (aboveStart, aboveStop) := rows[row - 1]!
+                if aboveStop > aboveStart && byteIn bytes aboveStop (aboveStop - 1) == 92 then
+                  read := true
+                  if started.isNone then
+                    inside := evenAtStart
+                    if inside then
+                      started := some true
+                  else if forward then
+                    inside := true
+          if started.isNone then
+            started := some false
+          if here == stop then
+            if skipQuoted && (here == start || byteIn bytes stop (here - 1) != 92) then
+              inside := false
+              started := some false
+            continue
+          let byte := bytes[here]!.toNat
+          if skipQuoted then
+            if byte == 34 then
+              if read && backslashesBefore bytes start here % 2 == 0 then
+                inside := !inside
+                started := some false
+              continue
+            -- 'x' and '\x' are passed over.
+            if byte == 39 then
+              if forward then
+                if byteIn bytes stop (here + 1) != 0 then
+                  if
+                      byteIn bytes stop (here + 1) == 92 && byteIn bytes stop (here + 2) != 0 &&
+                        byteIn bytes stop (here + 3) == 39 then
+                    here := here + 3
+                    continue
+                  else if byteIn bytes stop (here + 2) == 39 then
+                    here := here + 2
+                    continue
+              else if here - start > 1 then
+                if byteIn bytes stop (here - 2) == 39 then
+                  here := here - 2
+                  continue
+                else if
+                  byteIn bytes stop (here - 2) == 92 && here - start > 2 &&
+                    byteIn bytes stop (here - 3) == 39 then
+                  here := here - 3
+                  continue
+          if
+              (!inside || started == some true) && (byte == sought || byte == other) &&
+                (backslashesBefore bytes start here % 2 == 1) == escaped then
+            if byte == other then
+              depth := depth + 1
+            else if depth == 0 then
+              return some here
+            else
+              depth := depth - 1
+        return none
 
 /-- The first quote `quote` among `line`, the characters of a row's content,
 at or after the index `first`, passing over each character a backslash
@@ -944,8 +1080,8 @@ def answer (content : TextContent) : (query : TextQuery) → Except TextError qu
     | none => .error .badPosition
   | .search pattern forward offset => search content.contents pattern forward offset
   | .matches pattern start stop => matchesIn content.contents pattern start stop
-  | .unmatched bracket opening forward escaped offset =>
-    unmatched? content.contents bracket opening forward escaped offset
+  | .unmatched bracket opening forward escaped skipQuoted offset =>
+    unmatched? content.contents bracket opening forward escaped skipQuoted offset
   | .quoted quote offset => quoted? content.contents quote offset
 
 end TextModel

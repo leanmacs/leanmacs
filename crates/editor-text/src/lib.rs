@@ -233,8 +233,10 @@
 //!   closing, strictly after the position or strictly before it, at which
 //!   the brackets of the other side met have all been matched; only
 //!   brackets that are escaped, after an odd number of backslashes, or
-//!   only those that are not, are counted, and the walk crosses rows and
-//!   reads quotes as any other character. The quoted string round a
+//!   only those that are not, are counted, and the walk crosses rows. It
+//!   reads quotes as any other character, or, when asked, passes over the
+//!   brackets Vim's default `cpoptions` guesses are quoted, by its guess a
+//!   row at a time. The quoted string round a
 //!   position ([`Snapshot::quoted`]) is a pair of quotes of a kind
 //!   ([`Quote`]) in the position's row, found by Vim 9.1's rule, in which
 //!   a backslash escapes the character after it. Both are Vim's, and what

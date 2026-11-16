@@ -73,6 +73,35 @@ impl Quote {
 /// `quoteescape`, and the backslash its block objects and `%` count.
 const ESCAPE: char = '\\';
 
+/// What a bracket walk that passes over quoted brackets knows of quotes
+/// (the locals of Vim 9.1's `findmatchlimit` of the same names).
+#[derive(Debug, Default)]
+struct QuoteState {
+    /// Whether the quotes of the row the walk is in have been counted.
+    counted: bool,
+    /// Whether the row's double quotes start and end strings
+    /// (`do_quotes`): its count of them is even, or a string goes on
+    /// across its line break.
+    read: bool,
+    /// Whether the walk is inside a string (`inquote`).
+    inside: bool,
+    /// Whether the walk started inside a string, so that brackets inside
+    /// one are counted (`start_in_quotes`); `None` until the first row's
+    /// quotes are counted.
+    start: Option<bool>,
+}
+
+/// What [`Snapshot::quote_walk`] makes of a position.
+enum Step {
+    /// A character that may be a bracket: it is read.
+    Read,
+    /// A quote or a row's end: no bracket.
+    Passed,
+    /// A single quote and what it holds: the walk goes on from the given
+    /// position, the other single quote.
+    Over(usize),
+}
+
 impl Snapshot {
     /// The first bracket of the kind `bracket` that the walk from the
     /// position `offset` leaves unbalanced: an opening one when `opening`
@@ -83,9 +112,13 @@ impl Snapshot {
     /// each of the side sought lowers it; the answer is the first of the
     /// side sought met at depth 0. Only brackets whose escapedness is
     /// `escaped` are counted: a bracket is escaped when an odd number of
-    /// backslashes stands right before it. The walk crosses rows and
-    /// treats quotes as any other character. This is Vim 9.1's
-    /// `findmatchlimit` with `cpo` holding `%` and not `M`.
+    /// backslashes stands right before it. The walk crosses rows. This is
+    /// Vim 9.1's `findmatchlimit` with `cpo` not holding `M`, and holding
+    /// `%` unless `skip_quoted`.
+    ///
+    /// When `skip_quoted`, brackets Vim guesses are quoted are passed over,
+    /// as its default `cpo` does ([`Snapshot::quote_walk`] has the rule);
+    /// otherwise quotes are characters like any other.
     ///
     /// `Some(None)` when there is no such bracket; `None` unless `offset`
     /// is a position.
@@ -95,50 +128,236 @@ impl Snapshot {
         opening: bool,
         forward: bool,
         escaped: bool,
+        skip_quoted: bool,
         offset: usize,
     ) -> Option<Option<usize>> {
-        if !self.is_char_boundary(offset) {
-            return None;
-        }
+        let (mut row, _) = self.row_of_position(offset)?;
         let (sought, other) = if opening {
             (bracket.opening(), bracket.closing())
         } else {
             (bracket.closing(), bracket.opening())
         };
+        let mut content = self.row_content(row)?;
+        // Within the line break, the walk is where the row's content ends:
+        // Vim's NUL.
+        let mut at = offset.min(content.end);
+        let mut quotes = QuoteState::default();
         let mut depth = 0_usize;
-        let mut at = offset;
-        // Strictly after the position: the character there is passed over.
-        if forward {
-            let Some(here) = self.char_at(at) else {
-                return Some(None);
-            };
-            at += here.len_utf8();
-        }
         loop {
-            // The character the walk meets next, and where it starts.
-            let (start, character) = if forward {
-                let Some(next) = self.char_at(at) else {
+            // The next position, which is a row's end at its line break.
+            let mut entered = false;
+            if forward {
+                if at == content.end {
+                    row += 1;
+                    if row >= self.row_count() {
+                        return Some(None);
+                    }
+                    content = self.row_content(row)?;
+                    at = content.start;
+                    entered = true;
+                } else {
+                    at += self.char_at(at)?.len_utf8();
+                }
+            } else if at == content.start {
+                let Some(above) = row.checked_sub(1) else {
                     return Some(None);
                 };
-                at += next.len_utf8();
-                (at - next.len_utf8(), next)
+                row = above;
+                content = self.row_content(row)?;
+                at = content.end;
+                entered = true;
             } else {
-                let Some(before) = self.char_before(at) else {
-                    return Some(None);
-                };
-                at -= before.len_utf8();
-                (at, before)
-            };
-            if (character == sought || character == other) && self.escaped(start) == escaped {
+                at -= self.char_before(at)?.len_utf8();
+            }
+            if skip_quoted && (entered || !quotes.counted) {
+                self.count_row_quotes(&mut quotes, row, &content, at, forward);
+            }
+            quotes.start.get_or_insert(false);
+            if skip_quoted {
+                match self.quote_walk(&mut quotes, &content, at, forward) {
+                    Step::Over(to) => {
+                        at = to;
+                        continue;
+                    }
+                    Step::Passed => continue,
+                    Step::Read => {}
+                }
+            }
+            if at == content.end {
+                continue;
+            }
+            let character = self.char_at(at)?;
+            if (!quotes.inside || quotes.start == Some(true))
+                && (character == sought || character == other)
+                && self.escaped(at) == escaped
+            {
                 if character == other {
                     depth += 1;
                 } else if depth == 0 {
-                    return Some(Some(start));
+                    return Some(Some(at));
                 } else {
                     depth -= 1;
                 }
             }
         }
+    }
+
+    /// Vim 9.1's count of the double quotes of the row `row`, whose content
+    /// is `content`, when the walk enters it at `at` (`do_quotes`, in
+    /// `findmatchlimit`). A double quote is counted unless a backslash
+    /// escapes it or a single quote stands on each side of it.
+    ///
+    /// With an even count the row's quotes are read (`quotes.read`), and
+    /// the walk starts outside a string. With an odd one they are not,
+    /// unless the row or the one above it ends in a backslash, a string
+    /// that goes on: then they are read, and whether the walk is inside a
+    /// string, and whether it started inside one, are Vim's guess from
+    /// where the walk is and which way it goes.
+    fn count_row_quotes(
+        &self,
+        quotes: &mut QuoteState,
+        row: usize,
+        content: &Range<usize>,
+        at: usize,
+        forward: bool,
+    ) {
+        quotes.counted = true;
+        // Whether an even number of quotes stands before where the walk
+        // looks: one past the position going back. Vim's `at_start`, which
+        // is true when the count passes over that byte.
+        let looked = at + usize::from(!forward);
+        let mut even_at_start = true;
+        let mut count = 0_usize;
+        let mut walked = content.start;
+        while walked < content.end {
+            if walked == looked {
+                even_at_start = count.is_multiple_of(2);
+            }
+            let byte = self.byte_in(content, walked);
+            if byte == b'"'
+                && (walked == content.start
+                    || self.byte_in(content, walked - 1) != b'\''
+                    || self.byte_in(content, walked + 1) != b'\'')
+            {
+                count += 1;
+            }
+            if byte == b'\\' && self.byte_in(content, walked + 1) != 0 {
+                walked += 1;
+            }
+            walked += 1;
+        }
+        quotes.read = count.is_multiple_of(2);
+        if quotes.read {
+            return;
+        }
+        quotes.inside = false;
+        // An odd count is never of an empty row.
+        if self.byte_in(content, content.end - 1) == b'\\' {
+            quotes.read = true;
+            if quotes.start.is_none() {
+                quotes.inside = true;
+                quotes.start = Some(true);
+            } else if !forward {
+                quotes.inside = true;
+            }
+        }
+        let Some(above) = row.checked_sub(1).and_then(|above| self.row_content(above)) else {
+            return;
+        };
+        if above.end > above.start && self.byte_in(&above, above.end - 1) == b'\\' {
+            quotes.read = true;
+            if quotes.start.is_none() {
+                quotes.inside = even_at_start;
+                if quotes.inside {
+                    quotes.start = Some(true);
+                }
+            } else if forward {
+                quotes.inside = true;
+            }
+        }
+    }
+
+    /// What the quotes at the position `at` of a row whose content is
+    /// `content` do to the walk, as Vim 9.1's default `cpo` has it
+    /// (`findmatchlimit`):
+    ///
+    /// - **A row's end** that no backslash is right before ends any string:
+    ///   the walk is outside one from there.
+    /// - **A double quote** that no odd number of backslashes is before
+    ///   starts or ends a string, when the row's quotes are read. Brackets
+    ///   inside a string are passed over, unless the walk started inside
+    ///   one.
+    /// - **A single quote** with one character and another single quote
+    ///   after it (`'x'`), or a backslash, a character and a single quote
+    ///   (`'\x'`), going forward, or a single quote two or three bytes
+    ///   before it, after one character or a backslash and one character,
+    ///   going back, is passed over with what it holds. Its character is
+    ///   one byte: a character of several holds no bracket.
+    fn quote_walk(
+        &self,
+        quotes: &mut QuoteState,
+        content: &Range<usize>,
+        at: usize,
+        forward: bool,
+    ) -> Step {
+        if at == content.end {
+            if at == content.start || self.byte_in(content, at - 1) != b'\\' {
+                quotes.inside = false;
+                quotes.start = Some(false);
+            }
+            return Step::Passed;
+        }
+        match self.byte_in(content, at) {
+            b'"' => {
+                let mut run = at;
+                while run > content.start && self.byte_in(content, run - 1) == b'\\' {
+                    run -= 1;
+                }
+                if quotes.read && (at - run).is_multiple_of(2) {
+                    quotes.inside = !quotes.inside;
+                    quotes.start = Some(false);
+                }
+                Step::Passed
+            }
+            b'\'' if forward => {
+                if self.byte_in(content, at + 1) == 0 {
+                    Step::Read
+                } else if self.byte_in(content, at + 1) == b'\\'
+                    && self.byte_in(content, at + 2) != 0
+                    && self.byte_in(content, at + 3) == b'\''
+                {
+                    Step::Over(at + 3)
+                } else if self.byte_in(content, at + 2) == b'\'' {
+                    Step::Over(at + 2)
+                } else {
+                    Step::Read
+                }
+            }
+            b'\'' if at - content.start > 1 => {
+                if self.byte_in(content, at - 2) == b'\'' {
+                    Step::Over(at - 2)
+                } else if self.byte_in(content, at - 2) == b'\\'
+                    && at - content.start > 2
+                    && self.byte_in(content, at - 3) == b'\''
+                {
+                    Step::Over(at - 3)
+                } else {
+                    Step::Read
+                }
+            }
+            _ => Step::Read,
+        }
+    }
+
+    /// The byte at `offset` of a row whose content is `content`, or 0, Vim's
+    /// NUL, at or past the content's end.
+    fn byte_in(&self, content: &Range<usize>, offset: usize) -> u8 {
+        if offset >= content.end {
+            return 0;
+        }
+        self.chunk_at(offset)
+            .and_then(|(chunk, start)| chunk.as_bytes().get(offset - start).copied())
+            .unwrap_or(0)
     }
 
     /// Whether an odd number of backslashes stands right before the
@@ -285,7 +504,17 @@ mod tests {
     ) -> Option<Option<usize>> {
         Text::from(text)
             .snapshot()
-            .unmatched(bracket, opening, forward, escaped, offset)
+            .unmatched(bracket, opening, forward, escaped, false, offset)
+    }
+
+    /// What `unmatched` answers in `text` passing over quoted brackets, for
+    /// brackets that are not escaped: Vim's `[(` when `forward` is false,
+    /// and its `])` when it is true.
+    fn skipping(text: &str, bracket: Bracket, forward: bool, offset: usize) -> Option<usize> {
+        Text::from(text)
+            .snapshot()
+            .unmatched(bracket, !forward, forward, false, true, offset)
+            .expect("a position")
     }
 
     /// What `quoted` answers in `text`.
@@ -423,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn the_walk_crosses_rows_and_quotes_are_characters_like_any_other() {
+    fn the_walk_crosses_rows_and_unless_it_skips_quoted_brackets_quotes_are_characters() {
         // A pair across rows, one of them with a carriage return and a line
         // feed, and a closing bracket inside quotes counted.
         let text = "{\r\n  a\n\")\"\n}";
@@ -438,6 +667,119 @@ mod tests {
         assert_eq!(
             unmatched("(a \")\" b)", Bracket::Round, false, true, false, 0),
             Some(Some(4))
+        );
+    }
+
+    // Each answer that passes over quoted brackets below is what the
+    // installed Vim 9.1.1752 answers, run headless with `-Nu NONE`: `[(`
+    // for a walk back, `])` for one forward and `[{` and `]}` for braces.
+
+    #[test]
+    fn a_bracket_inside_a_string_is_passed_over() {
+        // (a "b)" c) and (a ")" b): both ways, from outside the string.
+        assert_eq!(skipping("(a \"b)\" c)", Bracket::Round, true, 0), Some(9));
+        assert_eq!(skipping("(a \")\" b)", Bracket::Round, false, 8), Some(0));
+        assert_eq!(skipping("{a \"}\" b}", Bracket::Curly, true, 0), Some(8));
+        assert_eq!(skipping("[a \"]\" b]", Bracket::Square, true, 0), Some(8));
+        // Through characters of several bytes: (é "ü)" ö).
+        assert_eq!(skipping("(é \"ü)\" ö)", Bracket::Round, true, 0), Some(12));
+    }
+
+    #[test]
+    fn strings_are_read_from_where_the_walk_starts() {
+        // The quote the walk starts on is not read, so from it the string
+        // is behind the walk: (a "b)" c) from the opening quote.
+        assert_eq!(skipping("(a \"b)\" c)", Bracket::Round, true, 3), Some(5));
+        // From inside a string the walk takes its first quote as one that
+        // opens: back from inside (a ")" b) there is no bracket.
+        assert_eq!(skipping("(a \")\" b)", Bracket::Round, false, 4), None);
+        // "(a)": inside, the pair is found both ways.
+        assert_eq!(skipping("\"(a)\"", Bracket::Round, true, 1), Some(3));
+        assert_eq!(skipping("\"(a)\"", Bracket::Round, false, 3), Some(1));
+    }
+
+    #[test]
+    fn with_an_odd_number_of_quotes_in_the_row_no_bracket_is_passed_over() {
+        // x " (a "b)" c): three quotes.
+        assert_eq!(
+            skipping("x \" (a \"b)\" c)", Bracket::Round, true, 4),
+            Some(9)
+        );
+        assert_eq!(
+            skipping("x \" (a \"b)\" c)", Bracket::Round, false, 9),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn an_escaped_double_quote_is_not_counted_and_starts_no_string() {
+        // (a \"b)" c): one quote counted, so none is read.
+        assert_eq!(skipping("(a \\\"b)\" c)", Bracket::Round, true, 0), Some(6));
+        // (a \"b) \" c): none counted, and neither starts a string, so the
+        // first closing bracket is counted going back.
+        assert_eq!(
+            skipping("(a \\\"b) \\\" c)", Bracket::Round, false, 12),
+            None
+        );
+        // ("a\\" b) ")": the backslash is escaped, and the quote after it
+        // closes the string.
+        assert_eq!(
+            skipping("(\"a\\\\\" b) \")\"", Bracket::Round, true, 0),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn a_double_quote_between_two_single_quotes_is_not_counted() {
+        // (a '"' ")" b): the quotes counted are the two round ")", and the
+        // single-quoted one is passed over with its quotes.
+        assert_eq!(
+            skipping("(a '\"' \")\" b)", Bracket::Round, true, 0),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn a_character_in_single_quotes_is_passed_over() {
+        // (a ')' b) and (a '\)' b), both ways.
+        assert_eq!(skipping("(a ')' b)", Bracket::Round, true, 0), Some(8));
+        assert_eq!(skipping("(a ')' b)", Bracket::Round, false, 8), Some(0));
+        assert_eq!(skipping("(a '\\)' b)", Bracket::Round, true, 0), Some(9));
+        assert_eq!(skipping("(a '\\)' b)", Bracket::Round, false, 9), Some(0));
+        // ('(' x): a single quote at the row's second byte or earlier is not
+        // looked back from.
+        assert_eq!(skipping("('(' x)", Bracket::Round, true, 0), Some(6));
+        // Without skipping, the quoted brackets are counted.
+        assert_eq!(
+            unmatched("(a ')' b)", Bracket::Round, false, true, false, 0),
+            Some(Some(4))
+        );
+    }
+
+    #[test]
+    fn quotes_in_other_rows_are_read_in_their_own_row() {
+        // {\n  "}"\n}: the string is in the middle row.
+        assert_eq!(skipping("{\n  \"}\"\n}", Bracket::Curly, true, 0), Some(8));
+        assert_eq!(skipping("{\n  \"}\"\n}", Bracket::Curly, false, 8), Some(0));
+        // " ( "x\n): forward from the bracket the walk takes the second quote
+        // to open a string, which the row's end closes.
+        assert_eq!(skipping("\" ( \"x\n)", Bracket::Round, true, 2), Some(7));
+        assert_eq!(skipping("\" ( \"x\n)", Bracket::Round, false, 7), None);
+    }
+
+    #[test]
+    fn a_row_that_ends_in_a_backslash_carries_a_string_into_the_next() {
+        // (a "b\\\nc) d" e): each row has one quote, and the first ends in a
+        // backslash, so the string goes on across the line break.
+        let text = "(a \"b\\\nc) d\" e)";
+        assert_eq!(skipping(text, Bracket::Round, true, 0), Some(14));
+        // From inside the string, its brackets are counted.
+        assert_eq!(skipping(text, Bracket::Round, true, 3), Some(8));
+        assert_eq!(skipping(text, Bracket::Round, false, 8), Some(0));
+        assert_eq!(skipping(text, Bracket::Round, false, 9), None);
+        assert_eq!(
+            skipping("(a \"b\\\n c)\" d)", Bracket::Round, true, 0),
+            Some(13)
         );
     }
 
@@ -512,22 +854,22 @@ mod tests {
         let snapshot = Text::from(text.as_str()).snapshot();
         assert!(snapshot.chunks().count() > 1);
         assert_eq!(
-            snapshot.unmatched(Bracket::Round, false, true, false, 0),
+            snapshot.unmatched(Bracket::Round, false, true, false, false, 0),
             Some(Some(text.len() - 1))
         );
         assert_eq!(
-            snapshot.unmatched(Bracket::Round, true, false, false, text.len() - 1),
+            snapshot.unmatched(Bracket::Round, true, false, false, false, text.len() - 1),
             Some(Some(0))
         );
         // The last escaped opening bracket, from inside its pair, and its
         // partner.
         let last = text.len() - 1 - "\\(x\\) ".len() + 1;
         assert_eq!(
-            snapshot.unmatched(Bracket::Round, true, false, true, last + 1),
+            snapshot.unmatched(Bracket::Round, true, false, true, false, last + 1),
             Some(Some(last))
         );
         assert_eq!(
-            snapshot.unmatched(Bracket::Round, false, true, true, last),
+            snapshot.unmatched(Bracket::Round, false, true, true, false, last),
             Some(Some(last + 3))
         );
     }

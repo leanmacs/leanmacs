@@ -2481,12 +2481,12 @@ private def Quote.tag : Quote → UInt8
   | .single => 1
   | .back => 2
 
-/-- `Snapshot.unmatched` as it crosses: the bracket as a tag, three flags and
+/-- `Snapshot.unmatched` as it crosses: the bracket as a tag, four flags and
 the offset in, and `none` for a refusal, `some none` for no such bracket and
 `some (some at)` for the bracket found. -/
 @[extern "editor_glue_snapshot_unmatched"]
 private opaque Snapshot.unmatchedRaw (snapshot : @& Snapshot) (tag : UInt8)
-    (opening forward escaped : Bool) (offset : USize) : IO (Option (Option UInt64))
+    (opening forward escaped skipQuoted : Bool) (offset : USize) : IO (Option (Option UInt64))
 
 /-- `Snapshot.quoted` as it crosses: the quote as a tag and the offset in, and
 `none` for a refusal, `some none` for no string and `some (some range)` for
@@ -2498,12 +2498,13 @@ private opaque Snapshot.quotedRaw (snapshot : @& Snapshot) (tag : UInt8) (offset
 /-- The bracket of the kind `bracket` that the walk from the byte offset
 `offset` of the snapshot leaves unbalanced: an opening one when `opening`,
 strictly after the offset when `forward` and before it otherwise, counting
-only the brackets whose escapedness is `escaped`. The rule is the library's
+only the brackets whose escapedness is `escaped`, and passing over those Vim
+guesses are quoted when `skipQuoted`. The rule is the library's
 (`crates/editor-text`; `Editor/Text.lean`, "Pairs"). `none` unless the offset
 is a position of the text; `some none` when there is no such bracket. -/
-def Snapshot.unmatched (snapshot : Snapshot) (bracket : Bracket) (opening forward escaped : Bool)
-    (offset : USize) : IO (Option (Option UInt64)) :=
-  snapshot.unmatchedRaw bracket.tag opening forward escaped offset
+def Snapshot.unmatched (snapshot : Snapshot) (bracket : Bracket)
+    (opening forward escaped skipQuoted : Bool) (offset : USize) : IO (Option (Option UInt64)) :=
+  snapshot.unmatchedRaw bracket.tag opening forward escaped skipQuoted offset
 
 /-- The quoted string of `quote` round the byte offset `offset` of the
 snapshot, in its row, from its opening quote's start to its closing quote's

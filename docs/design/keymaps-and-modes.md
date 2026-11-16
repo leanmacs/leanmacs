@@ -1649,11 +1649,13 @@ whole way, is Vim's:
 and with no partner, it fails where it is and says nothing, as Vim only
 beeps; an operator over it gives up. It is inclusive. A bracket after an
 odd number of backslashes is escaped and matches only an escaped one,
-which is Vim's rule without `cpo-M`. Two departures from Vim's default
-`cpoptions`, recorded and pinned by rows that show the editor's
-behaviour: `/* */` and `#if`, `#else`, `#endif` are not matched, being a
-syntax tree's or a plugin's; and a bracket inside quotes is counted, which
-is `cpo-%`, where Vim's default passes over brackets it guesses are quoted.
+which is Vim's rule without `cpo-M`. A bracket Vim guesses is quoted is
+passed over, as under Vim's default `cpoptions` (without `cpo-%`): the
+guess is made a line at a time, and reads the line's double quotes only
+when there is an even number of them (`lean/Editor/Text.lean`, "Pairs").
+One departure from Vim's default `cpoptions`, recorded and pinned by a row
+that shows the editor's behaviour: `/* */` and `#if`, `#else`, `#endif`
+are not matched, being a syntax tree's or a plugin's.
 
 **The searches** (`:help /`, `:help n`, `:help star`), under Vim's default
 options (`cpoptions` with `c`, `wrapscan`, `magic`, `noignorecase`):
@@ -1941,6 +1943,12 @@ literal port of Vim 9.1's `textobject.c`:
   () block, then find the next `(`"), which the installed Vim 9.1.1752
   does for `[` and `{` too. An escaped bracket is passed over (`cpo`
   without `M`), and an empty inner block is none in a visual state.
+- **Quoted brackets are passed over on the way to a block's closing
+  bracket** and not on the way back to its opening one, as Vim 9.1's
+  `current_block` walks back with `cpo` set to `%` and forward with the
+  default `cpo`: in `(a "b|)" c)`, `d i (` takes `a "b)" c`. A visual
+  selection extended to the next pair out walks both ways with the
+  default `cpo`, as Vim's does.
 - **Dot repeat** replays an operator over an object by name, from where
   the cursor is then, with a count typed before `.` in place of the
   change's.
@@ -1949,9 +1957,6 @@ literal port of Vim 9.1's `textobject.c`:
   - A quote object over a visual selection wider than one cell is not
     built (Vim's "another string is included"): there is none, and the
     selection is as it was.
-  - The search for a block's closing bracket counts a bracket inside
-    quotes, where Vim's passes over brackets it guesses are quoted, as its
-    `%` does.
   - Word classes beyond ASCII are the text's word class as it stands.
   - `i<` `a<`, `it` `at`, `is` `as` and `ip` `ap` are not built; the
     syntax-aware objects are rdm:roadmap/syntax-tree-sitter phase 3's,

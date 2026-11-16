@@ -409,8 +409,9 @@ built on: `unmatched` and `quoted`. Each walks the text from a position, as
 a motion does, and answers `none` where there is nothing to find.
 
 - **The bracket a walk leaves unbalanced** (`unmatched bracket opening
-  forward escaped offset`): walking strictly after `offset` when `forward`,
-  and strictly before it otherwise, the first bracket of the kind
+  forward escaped skipQuoted offset`): walking strictly after `offset`
+  when `forward`, and strictly before it otherwise, the first bracket of
+  the kind
   `bracket` (`(` `)`, `[` `]`, `{` `}`) and of the side `opening` says, an
   opening one or a closing one, met at depth 0. Each bracket of the other
   side the walk meets raises the depth, and each of the side sought met
@@ -421,9 +422,32 @@ a motion does, and answers `none` where there is nothing to find.
   backslashes stands right before it in its row, and only brackets whose
   escapedness is `escaped` are counted; the others are characters like any
   other.
-- **The walk crosses rows and reads quotes as any other character.** This
-  is Vim 9.1's `findmatchlimit` with `cpoptions` holding `%` and not `M`,
-  which is how Vim's block objects call it.
+- **The walk crosses rows.** It is Vim 9.1's `findmatchlimit` with
+  `cpoptions` not holding `M`. Unless `skipQuoted` it holds `%` too, and
+  quotes are characters like any other, which is how Vim's block objects
+  walk back to their opening bracket.
+- **With `skipQuoted`, brackets Vim guesses are quoted are passed over**,
+  as its default `cpoptions` has it, which is how `%` and the walk to a
+  block's closing bracket go. The guess is made a row at a time, over the
+  row's bytes:
+  - The row's double quotes are counted, but not one a backslash escapes
+    (a backslash escapes the byte after it) and not one with a single quote
+    on each side. With an even count the row's quotes are read; with an
+    odd one they are not, unless the row or the one above it ends in a
+    backslash, which carries a string across the line break.
+  - When they are read, each double quote after an even number of
+    backslashes starts or ends a string, from where the walk starts: the
+    walk starts outside one, and so takes the first quote it meets as one
+    that opens, whatever is before. A row's end with no backslash right
+    before it ends any string. A bracket inside a string is passed over.
+    With an odd count and a backslash at the end of the row or the one
+    above, the walk may start inside a string, by Vim's guess, and then
+    brackets inside strings are counted until it meets a quote that
+    starts or ends one, or a row's end that ends one.
+  - A single quote with one byte and another single quote after it
+    (`'x'`), or a backslash, one byte and a single quote (`'\x'`), is
+    passed over with what it holds going forward; going back, a single
+    quote two bytes before it, or three with a backslash two before, is.
 - **The quoted string round a position** (`quoted quote offset`): a pair of
   the quote `quote` (`"`, `'`, `` ` ``) in `offset`'s row, from the opening
   quote's start to the closing quote's end, found by Vim 9.1's
@@ -778,9 +802,10 @@ inductive TextQuery where
   /-- The bracket of the kind `bracket` the walk from the byte offset
   `offset` leaves unbalanced: an opening one when `opening`, strictly after
   the offset when `forward` and before it otherwise, counting only the
-  brackets whose escapedness is `escaped` ("Pairs", in the rules of the
+  brackets whose escapedness is `escaped` and passing over those Vim
+  guesses are quoted when `skipQuoted` ("Pairs", in the rules of the
   port). -/
-  | unmatched (bracket : Bracket) (opening forward escaped : Bool) (offset : Nat)
+  | unmatched (bracket : Bracket) (opening forward escaped skipQuoted : Bool) (offset : Nat)
   /-- The quoted string of the quote `quote` round the byte offset `offset`,
   in its row, with its two quotes. -/
   | quoted (quote : Quote) (offset : Nat)
@@ -1291,12 +1316,13 @@ def TextId.matches (text : TextId) (pattern : String) (start stop : Nat) : TextM
 /-- The bracket of the kind `bracket` that the walk from `offset` of `text`
 leaves unbalanced: an opening one when `opening`, strictly after `offset`
 when `forward` and before it otherwise, counting only the brackets whose
-escapedness is `escaped` ("Pairs", in the rules of the port); `none` when
-there is no such bracket. Refused with `badPosition` unless `offset` is a
+escapedness is `escaped`, and passing over those Vim guesses are quoted
+when `skipQuoted` ("Pairs", in the rules of the port); `none` when there is
+no such bracket. Refused with `badPosition` unless `offset` is a
 position. -/
-def TextId.unmatched (text : TextId) (bracket : Bracket) (opening forward escaped : Bool)
+def TextId.unmatched (text : TextId) (bracket : Bracket) (opening forward escaped skipQuoted : Bool)
     (offset : Nat) : TextM (Option Nat) :=
-  (TextSource.text text).ask (.unmatched bracket opening forward escaped offset)
+  (TextSource.text text).ask (.unmatched bracket opening forward escaped skipQuoted offset)
 
 /-- The quoted string of `quote` round `offset` of `text`, in its row, from
 its opening quote's start to its closing quote's end ("Pairs", in the rules
@@ -1380,8 +1406,8 @@ def SnapshotId.matches (snapshot : SnapshotId) (pattern : String) (start stop : 
 /-- The bracket the walk from `offset` of the text `snapshot` holds leaves
 unbalanced, as `TextId.unmatched`. -/
 def SnapshotId.unmatched (snapshot : SnapshotId) (bracket : Bracket)
-    (opening forward escaped : Bool) (offset : Nat) : TextM (Option Nat) :=
-  (TextSource.snapshot snapshot).ask (.unmatched bracket opening forward escaped offset)
+    (opening forward escaped skipQuoted : Bool) (offset : Nat) : TextM (Option Nat) :=
+  (TextSource.snapshot snapshot).ask (.unmatched bracket opening forward escaped skipQuoted offset)
 
 /-- The quoted string of `quote` round `offset` of the text `snapshot`
 holds, as `TextId.quoted`. -/

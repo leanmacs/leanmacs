@@ -43,8 +43,15 @@ over the port's `quoted` walk, and the blocks from `current_block` over its
   Vim 9.1's `ib` ("If the cursor is not inside a () block, then find the
   next `(`") does so for every kind, the installed Vim 9.1.1752 shows.
 - **Escaped brackets are passed over**: a block counts only brackets that
-  are not escaped, which is Vim's `cpo` without `M`. Quotes inside a block
-  are characters like any other (`cpo-%`).
+  are not escaped, which is Vim's `cpo` without `M`.
+- **Quoted brackets are passed over on the way to the closing bracket, and
+  not on the way back to the opening one**, as Vim 9.1's `current_block`
+  does: it walks back with `cpo` set to `%`, so quotes are characters like
+  any other there, and restores the default `cpo` before it walks forward
+  to the partner, which passes over brackets Vim guesses are quoted
+  (`unmatched` with `skipQuoted`). So in `(a "b|)" c)` the block is the
+  outer pair. A visual selection extended to the next block out walks
+  both ways with the default `cpo`, as Vim's does.
 - **In a visual state** the selection is set charwise, from `Span.start`
   to its head. A selection of one cell is the object under the cursor, as
   under an operator. A wider one is extended from its head: a word object
@@ -472,10 +479,10 @@ def aBackquote : Vocabulary.TextObject :=
 one found: back to an unmatched one, or, when there is none back from `p`,
 forward to the next one. `none` when a step finds none. -/
 def openingOf (text : TextId) (bracket : Bracket) (count p : Nat) : TextM (Option Nat) := do
-  let forward := (← text.unmatched bracket true false false p).isNone
+  let forward := (← text.unmatched bracket true false false false p).isNone
   let mut reached := p
   for _ in [0:count] do
-    let some found ← text.unmatched bracket true forward false reached | return none
+    let some found ← text.unmatched bracket true forward false false reached | return none
     reached := found
   return some reached
 
@@ -510,7 +517,7 @@ def currentBlock (text : TextId) (bracket : Bracket) (around : Bool) (within : V
   else
     oldEnd := anchor
   let some opening ← openingOf text bracket (within.count.getD 1) origin | return none
-  let some closing ← text.unmatched bracket false true false opening | return none
+  let some closing ← text.unmatched bracket false true false true opening | return none
   if around then
     return some { start := opening, stop := closing, reach := .inclusive }
   let mut opening := opening
@@ -534,8 +541,8 @@ def currentBlock (text : TextId) (bracket : Bracket) (around : Bool) (within : V
     -- one out.
     if visual && start ≥ oldStart && stop ≤ oldEnd && start != stop then
       let some outer ←
-        text.unmatched bracket true false false (← decl text oldStart).1 | return none
-      let some partner ← text.unmatched bracket false true false outer | return none
+        text.unmatched bracket true false false true (← decl text oldStart).1 | return none
+      let some partner ← text.unmatched bracket false true false true outer | return none
       opening := outer
       closing := partner
     else

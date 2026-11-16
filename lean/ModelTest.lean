@@ -17720,9 +17720,12 @@ def keptFrom (fixture : String) (head : Nat) : Option Window.Wanted :=
 
 /-- The rows of the oracle table for `%` as a move, each run through Vim
 9.1.1752 headless: the keys, the text before with the cursor as a bar, and
-the text after. The last two rows are the recorded departures, which show
-the editor's behaviour: a bracket inside quotes is counted, and `/* */` is
-not matched. -/
+the text after. The rows after the counts pass over brackets Vim guesses
+are quoted: inside a pair of double quotes, from outside and from inside,
+in a line with an odd number of quotes, past escaped quotes, across lines
+and in single quotes, and a first bracket inside quotes that has no
+partner. The last row is the recorded departure, which shows the editor's
+behaviour: `/* */` is not matched. -/
 def percentRows : List (String × String × String) :=
   [("%", "|(a [b] c)", "(a [b] c|)"), ("%", "(a [b] c|)", "|(a [b] c)"),
     ("%", "(a |[b] c)", "(a [b|] c)"), ("%", "a\n|{\n b\n}", "a\n{\n b\n|}"),
@@ -17734,7 +17737,13 @@ def percentRows : List (String × String × String) :=
     ("1 0 0 %", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", "a\nb\nc\nd\ne\nf\ng\nh\ni\n|j\n"),
     ("1 0 1 %", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n"),
     ("9 9 %", "|a\nb\nc\nd\ne\nf\ng\nh\ni\n  j\n", "a\nb\nc\nd\ne\nf\ng\nh\ni\n  |j\n"),
-    ("%", "|(a \")\" b)", "(a \"|)\" b)"), ("%", "|/* x */", "|/* x */")]
+    ("%", "|(a \")\" b)", "(a \")\" b|)"), ("%", "(a \")\" b|)", "|(a \")\" b)"),
+    ("%", "(a \"|)\" b)", "(a \"|)\" b)"), ("%", "\"(a|)\"", "\"|(a)\""),
+    ("%", "x \" |(a \"b)\" c)", "x \" (a \"b|)\" c)"),
+    ("%", "|(a \\\"b) \\\" c)", "(a \\\"b|) \\\" c)"),
+    ("%", "(a \\\"b) \\\" c|)", "(a \\\"b) \\\" c|)"), ("%", "|{\n  \"}\"\n}", "{\n  \"}\"\n|}"),
+    ("%", "{\n  \"|}\"\n}", "|{\n  \"}\"\n}"), ("%", "|(a ')' b)", "(a ')' b|)"),
+    ("%", "|x \"(\" (a)", "|x \"(\" (a)"), ("%", "|/* x */", "|/* x */")]
 
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
@@ -17743,7 +17752,7 @@ is pressed in a text with the cursor written into it, and each expected
 text is written by hand from Vim's documented behaviour, case by case. -/
 def evilMotionChecks : List Check :=
   [{  name :=
-        "% goes from the first bracket of the line at or after the cursor to its partner, across lines, both ways, counting only brackets of its escapedness, and does not move with no bracket on the line or no partner; N% goes to the first non-blank of the line N percent into the text, and above 100 does not move; a bracket inside quotes is counted and /* */ is not matched, two recorded departures"
+        "% goes from the first bracket of the line at or after the cursor to its partner, across lines, both ways, counting only brackets of its escapedness, and does not move with no bracket on the line or no partner; N% goes to the first non-blank of the line N percent into the text, and above 100 does not move; brackets Vim guesses are quoted are passed over, as its default cpoptions has it; /* */ is not matched, a recorded departure"
       run := evilRows percentRows },
     { name :=
         "h and l move by cells and stay on the line: with no count one cell, with a count that many, as far as the line allows; neither leaves an empty line, the empty text or the line of a text that is one line feed, and l does not go onto the line break"
@@ -20256,9 +20265,12 @@ object name, then the rules of `:help text-objects` and Vim 9.1's
 `textobject.c` one by one. Two rows differ from Vim's own report and are the
 editor's: a deletion of every line leaves the empty text, where Vim keeps
 one empty line, and an empty object is no give-up, as Vim's own no-op is no
-error. The last row is a recorded departure, and shows the editor's
-behaviour: a closing bracket inside quotes is counted, where Vim's search
-for it passes over brackets it guesses are quoted. -/
+error. The last rows are the blocks' quoted brackets: the walk to the
+closing bracket passes over those Vim guesses are quoted, with the cursor
+inside the string and outside it, in a line with an odd number of quotes,
+past an escaped quote, across lines and for each kind, and the walk back
+to the opening one does not, so a single-quoted closing bracket before the
+cursor leaves no block. -/
 def objectOperatorRows : List OperatorRow :=
   [.rests "foo b|ar baz" "d i w" "foo | baz" (charwise "bar"),
     .inserts "foo b|ar baz" "c i w" "foo | baz" (charwise "bar"),
@@ -20372,8 +20384,16 @@ def objectOperatorRows : List OperatorRow :=
     .rests "{a |b}" "d i }" "{|}" (charwise "a b"), .rests "{a |b}" "d i B" "{|}" (charwise "a b"),
     .rests "{a |b}" "d a }" "|" (charwise "{a b}"), .rests "{a |b}" "d a B" "|" (charwise "{a b}"),
     .rests "(a [b|) c]" "d i [" "(a [|]" (charwise "b) c"),
-    -- A recorded departure: the closing bracket inside quotes is counted.
-    .rests "(a \"b|)\" c)" "d i (" "(|)\" c)" (charwise "a \"b")]
+    .rests "(a \"b|)\" c)" "d i (" "(|)" (charwise "a \"b)\" c"),
+    .rests "(a \"b|)\" c)" "d a (" "|" (charwise "(a \"b)\" c)"),
+    .inserts "(a \"b|)\" c)" "c i (" "(|)" (charwise "a \"b)\" c"),
+    .rests "\"(|a)\"" "d i (" "\"(|)\"" (charwise "a"),
+    .rests "x \" (a \"b|)\" c)" "d i (" "x \" (|)\" c)" (charwise "a \"b"),
+    .rests "(a \\\"b|)\" c)" "d i (" "(|)\" c)" (charwise "a \\\"b"),
+    .rests "{\n  a|\n  \"}\"\n}" "d i {" "{\n|}" (linewise "  a\n  \"}\"\n"),
+    .rests "{a \"|}\" b}" "d i {" "{|}" (charwise "a \"}\" b"),
+    .rests "[a \"|]\" b]" "d i [" "[|]" (charwise "a \"]\" b"),
+    .rests "x|(a ')' b)" "d i (" "x(|)" (charwise "a ')' b"), .givesUp "(a ')' |b)" "d i ("]
 
 /-- The rows of the oracle table for `%` under an operator, each run through
 Vim 9.1.1752 headless: inclusive, from the cursor, a bracket after the
@@ -20409,7 +20429,9 @@ def objectOperatorPairs : List (String × String) :=
 /-- The rows of the oracle table for the text objects in a visual state, each
 run through Vim 9.1.1752 headless and read off its marks: the text and the
 cursor, the keys, the selection's one range as an anchor and a head, and
-the text it covers. The last four are an object that is not there, where
+the text it covers. A block's closing bracket is found past quoted ones,
+and a selection extended to the next pair out passes over a quoted opening
+bracket too. The last four are an object that is not there, where
 the selection is as it was, and the recorded departure of a quote object
 over a selection wider than one cell, which is left as it was too. -/
 def objectSelectionRows : List (String × String × List (Nat × Nat) × List String) :=
@@ -20436,6 +20458,8 @@ def objectSelectionRows : List (String × String × List (Nat × Nat) × List St
     ("x [a |b] y", "v i [", [(3, 5)], ["a b"]), ("x [a |b] y", "v a [", [(2, 6)], ["[a b]"]),
     ("{a |b}", "v i {", [(1, 3)], ["a b"]), ("{a |b}", "v a {", [(0, 4)], ["{a b}"]),
     ("f(a|b)", "v l i (", [(2, 3)], ["ab"]), ("f(a|b)", "v l a (", [(1, 4)], ["(ab)"]),
+    ("(a \"b|)\" c)", "v i (", [(1, 8)], ["a \"b)\" c"]),
+    ("(x \"(\" (|ab) y)", "v i ( i (", [(1, 12)], ["x \"(\" (ab) y"]),
     ("foo b|ar baz", "V i w", [(4, 6)], ["bar"]), ("f(|a)", "V i (", [(2, 2)], ["a"]),
     ("f(|a)", "V a b", [(1, 3)], ["(a)"]), ("a|b", "v i (", [(1, 1)], ["b"]),
     ("f|()", "v i (", [(1, 1)], ["("]), ("|{\n}", "v i {", [(0, 0)], ["{"]),
