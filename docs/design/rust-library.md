@@ -797,7 +797,10 @@ built"):
   key equivalent comes from the keymap (`Config.Registry.keyEquivalent?`,
   in Lean): AppKit runs a key equivalent before the window's view sees
   the key, so a chord the menu shows never reaches Lean as a key, and the
-  menu and the keymap must agree. On the queue the input is the kind 12,
+  menu and the keymap must agree. A chord a system item already shows
+  (Quit's `s-q`, Hide's `s-h`, Hide Others' `M-s-h`) is shown on no
+  command item, since AppKit matches the system item first and the
+  command would never run by it. On the queue the input is the kind 12,
   code 0, the command's name as the text and no words; Lean runs it as an
   invocation no key yielded, so config's command of the name runs in its
   place. Elsewhere than macOS winit has no menu bar, and a menu changes

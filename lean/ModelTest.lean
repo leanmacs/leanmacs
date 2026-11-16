@@ -20401,7 +20401,20 @@ def menuChecks : List Check :=
         pure <|
           registries.all fun registry =>
             registry.keyEquivalent? "open-file" == none &&
-              ((menuShown registry).bind (keyShown · "open-file")) == some none }]
+              ((menuShown registry).bind (keyShown · "open-file")) == some none },
+    { name :=
+        "a chord a system item shows is no command item's, as AppKit runs the system item: config's s-q, s-h or M-s-h alone to save-buffer shows none on Save, and beside the compiled s-s Save shows s-s"
+      run :=
+        let bound := fun text =>
+          ({} : Config.Registry).replaceBindings .config
+            #[{ keys := keys text, command := Files.saveName }]
+        let beside := frameRegistry #[{ keys := keys "s-q", command := Files.saveName }]
+        pure
+          (["s-q", "s-h", "M-s-h"].all
+              (fun text =>
+                ((menuShown (bound text)).bind (keyShown · Files.saveName)) == some none) &&
+            ((menuShown beside).bind (keyShown · Files.saveName)) == some (equivalent 's') &&
+            (menuShown beside).map (·.systemKeys) == some Menu.standard.systemKeys) }]
 
 /-- What the watch model answers a start of `target` coalesced as
 `coalescing`, made at `now`. -/

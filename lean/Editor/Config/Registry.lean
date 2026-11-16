@@ -68,8 +68,12 @@ key equivalent with no Command would take a plain key from typing, and a
 named key has none). So config's binding is shown over a compiled one, a
 sequence config binds to another command shows for that one, and a
 command bound only to a longer sequence, a named key or a chord without
-the system key shows none. Mode-local bindings and an input scheme's own
-keys are not looked at: the menu bar is the application's.
+the system key shows none. A chord one of the menu's system items already
+shows (`s-q` Quit, `s-h` Hide, `M-s-h` Hide Others) is skipped: AppKit
+matches the system item first, so the command would never run by it, and
+the command shows its next chord, or none. Mode-local bindings and an
+input scheme's own keys are not looked at: the menu bar is the
+application's.
 
 ## Modes
 
@@ -323,9 +327,11 @@ def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding 
 
 /-- The key equivalent the menu bar shows for the command `command`: the
 last chord the bindings bind to it alone that is one character with the
-system key held ("Key bindings", in the module docs); `none` when no
-binding is such a chord. -/
-def keyEquivalent? (registry : Registry) (command : String) : Option KeyEquivalent :=
+system key held and is none of `taken`, the keys the menu's system items
+already show ("Key bindings", in the module docs); `none` when no binding
+is such a chord. -/
+def keyEquivalent? (registry : Registry) (command : String) (taken : List KeyEquivalent := []) :
+    Option KeyEquivalent :=
   let keymap : Keymap String :=
     Keymap.ofList
       (registry.bindings.toList.map fun entry => (entry.binding.keys, entry.binding.command))
@@ -334,7 +340,9 @@ def keyEquivalent? (registry : Registry) (command : String) : Option KeyEquivale
       match chord.logical, chord.modifiers.superKey with
       | .character text, true =>
         match text.toList with
-        | [character] => some { character, modifiers := chord.modifiers }
+        | [character] =>
+          let key : KeyEquivalent := { character, modifiers := chord.modifiers }
+          if taken.contains key then none else some key
         | _ => none
       | _, _ => none
     | _ => none

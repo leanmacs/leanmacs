@@ -21,7 +21,8 @@ command by name, or a thing the system does itself (`SystemAction`).
 **A command item's key equivalent is the keymap's**: `Menu.withKeys` sets
 each from a lookup of its command, which a host makes from the registry's
 bindings (`Config.Registry.menuOf`, `Editor/Menu/Compiled.lean`). A system
-item's key is the menu's own, and `withKeys` leaves it.
+item's key is the menu's own, and `withKeys` leaves it; the lookup is told
+the system items' keys (`Menu.systemKeys`), so no command item shows one.
 
 ## Where an addition goes
 
@@ -110,6 +111,14 @@ are left as they are. -/
 def MenuItem.withKeys (keyOf : String → Option KeyEquivalent) : MenuItem → MenuItem
   | .item title _ (.command name) => .item title (keyOf name) (.command name)
   | other => other
+
+/-- The key equivalents `menu`'s system items show, menu by menu, top to
+bottom. -/
+def Menu.systemKeys (menu : Menu) : List KeyEquivalent :=
+  menu.menus.toList.flatMap fun submenu =>
+    submenu.items.toList.filterMap fun
+      | .item _ key (.system _) => key
+      | _ => none
 
 /-- `menu` with each command item's key set from `keyOf`
 (`MenuItem.withKeys`). -/

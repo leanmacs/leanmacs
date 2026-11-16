@@ -24,8 +24,9 @@ bindings of its editor items, as a host is handed them
 
 A chord the menu shows never reaches the window as a key on macOS: AppKit
 runs the item first. Since the menu's keys are the keymap's, the two agree.
-A config binding of a system item's chord (`s-h`, `s-q`) is shadowed by the
-item.
+A config binding of a system item's chord (`s-h`, `M-s-h`, `s-q`) is
+shadowed by the item, so `menuOf` shows it on no command item: the command
+shows its next chord, or none.
 
 Pinned by `ModelTest.menuChecks` and `ConfigTest.shippedChecks`.
 -/
@@ -82,8 +83,9 @@ def bindings : Array Config.KeyBinding :=
 end Menu
 
 /-- `menu` with each command item's key equivalent the one `registry`'s
-bindings give its command (`keyEquivalent?`). -/
+bindings give its command (`keyEquivalent?`), never a key one of `menu`'s
+system items shows (`Menu.systemKeys`). -/
 def Config.Registry.menuOf (registry : Config.Registry) (menu : Menu) : Menu :=
-  menu.withKeys registry.keyEquivalent?
+  menu.withKeys (registry.keyEquivalent? (taken := menu.systemKeys))
 
 end Editor
