@@ -191,7 +191,8 @@ pub const STREAM_HELD: &str = "a child at the bound is held until its job reads,
 pub const STREAM_LINE_TOO_LONG: &str =
     "a line longer than the bound ends the child, and kills its group";
 /// An unterminated last line exactly the bound long is delivered whole,
-/// and the child exits as it does; one byte more ends it as line too long.
+/// and the child exits as it does; one byte more ends it as line too long,
+/// and so does the line's own line feed, which counts against the bound.
 /// Seen to bite once by hand, on 2026-11-15: over the service as it was
 /// before its reader looked one byte past a partial line that fills the
 /// bound, it fails on the fake and on real processes, the line at the
@@ -286,8 +287,9 @@ const INPUT_CLOSED_SCRIPT: &str = "exec 0<&-; echo closed; exec /bin/sleep 600";
 /// The script of [`STREAM_LINES`].
 const LINES_SCRIPT: &str = r#"echo one; read x; echo "$x"; echo err >&2; read y; exit 4"#;
 /// The scripts of [`STREAM_LINE_AT_BOUND`]: a last line of exactly
-/// [`AT_BOUND`] bytes, and one a byte longer.
-const AT_BOUND_SCRIPTS: [&str; 2] = ["printf abcd", "printf abcde"];
+/// [`AT_BOUND`] bytes, one a byte longer, and one of exactly [`AT_BOUND`]
+/// bytes and its line feed.
+const AT_BOUND_SCRIPTS: [&str; 3] = ["printf abcd", "printf abcde", r"printf 'abcd\n'"];
 /// [`STREAM_LINE_AT_BOUND`]'s bound.
 const AT_BOUND: u64 = 4;
 /// How many lines [`STREAM_ORDER`]'s child writes, and its bound.
@@ -498,6 +500,10 @@ fn stream_scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
         (
             sh(dir, AT_BOUND_SCRIPTS[1]),
             Ok(Script::ends(Exit::Code(0)).stdout("abcde")),
+        ),
+        (
+            sh(dir, AT_BOUND_SCRIPTS[2]),
+            Ok(Script::ends(Exit::Code(0)).stdout("abcd\n")),
         ),
         (
             sh(dir, &counting(ORDER.0, "exit 0")),
@@ -1421,7 +1427,7 @@ impl<G: Ground> Check<'_, G> {
     /// [`STREAM_LINE_AT_BOUND`].
     fn stream_line_at_bound<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
         let service = Self::service(processes);
-        let [at, over] = AT_BOUND_SCRIPTS;
+        let [at, over, terminated] = AT_BOUND_SCRIPTS;
         let mut wait = 10;
         let whole = self.open(
             &service,
@@ -1433,20 +1439,24 @@ impl<G: Ground> Check<'_, G> {
                 && all.last().and_then(|last| last.ended.clone())
                     == Some(End::Exited(Exit::Code(0)))
         });
-        let too_long = self.open(
-            &service,
-            2,
-            sh(self.dir, over),
-            lines(Input::Closed, AT_BOUND),
-        ) && self.to_the_end(&service, 2, &mut wait).is_some_and(|all| {
-            lines_of(&all, Stream::Out).is_empty()
-                && all.last().and_then(|last| last.ended.clone())
-                    == Some(End::LineTooLong {
-                        stream: Stream::Out,
-                        bound: AT_BOUND,
-                    })
-        });
-        self.done(&service, whole && too_long)
+        let mut too_long = |id, script| {
+            self.open(
+                &service,
+                id,
+                sh(self.dir, script),
+                lines(Input::Closed, AT_BOUND),
+            ) && self.to_the_end(&service, id, &mut wait).is_some_and(|all| {
+                lines_of(&all, Stream::Out).is_empty()
+                    && all.last().and_then(|last| last.ended.clone())
+                        == Some(End::LineTooLong {
+                            stream: Stream::Out,
+                            bound: AT_BOUND,
+                        })
+            })
+        };
+        let over = too_long(2, over);
+        let terminated = too_long(3, terminated);
+        self.done(&service, whole && over && terminated)
     }
 
     /// [`STREAM_CANCEL`].

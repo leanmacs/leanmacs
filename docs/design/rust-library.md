@@ -219,7 +219,7 @@ job reads as it comes and whose standard input it writes to (phase 2;
   bytes, 20,000 lines in order at a bound of 256, one completion for
   10,000 lines, a child held at a bound of 4,096 that cannot finish until
   it is read, a line too long, a last line exactly the bound long delivered
-  whole and one a byte longer too long, a cancel of a held child and its
+  whole and one a byte longer, its line feed counted, too long, a cancel of a held child and its
   grandchild, and shutdown of a held child and one waiting for input. In Lean, `Process.start`, `read`, `write`,
   `writeLine` and `closeInput` are requests of the job port; a child is
   named for the job that started it, and the runner cancels every child a

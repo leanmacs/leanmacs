@@ -2626,6 +2626,42 @@ mod streaming {
         assert!(fake.record().killed.is_empty());
     }
 
+    // Seen to bite once by hand, on 2026-11-15: with a probe byte that is a
+    // line feed taken into the outbox, so that it ends the line, "abcd" is
+    // delivered and the child exits, and the test fails on the end.
+    #[test]
+    fn a_line_exactly_the_bound_long_then_its_line_feed_is_too_long_its_line_feed_counted() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).stdout("abcd\n")),
+        )]);
+        let (service, completed) = service(&fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Closed, 4),
+        );
+
+        let deliveries = to_the_end(&service, &completed, 1, 2);
+
+        let last = deliveries.last().expect("a delivery");
+        assert_eq!(
+            last.ended,
+            Some(End::LineTooLong {
+                stream: Stream::Out,
+                bound: 4
+            })
+        );
+        assert!(
+            deliveries.iter().all(|delivered| delivered.out.is_empty()),
+            "no line delivered"
+        );
+        let child = fake.record().spawned[0].0;
+        assert!(fake.until(DEADLINE, |record| record.reaped == [child]));
+    }
+
     // Seen to bite once by hand, on 2026-11-15: with the kill taken out of
     // `stream_reader`'s `Err` arm, the child held until it is killed is
     // never killed, and the test fails waiting for its reap; with the
