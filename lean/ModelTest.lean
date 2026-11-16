@@ -16626,14 +16626,21 @@ def statusOf (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array St
         field.face == ModeLine.bufferFace || field.face == ModeLine.modifiedFace ||
           field.face == ModeLine.changedFace
 
-/-- Whether the status line of the view `view` in the last scene `driver`'s
-display recorded, a view that is not selected, names the buffer `name`: the
-`buffer` segment's field, in `ModeLine.inactiveFace`, as every field of such
-a view is (`statusOf` reads a selected view's). -/
-def inactiveNames (driver : TestDriver) (view : ViewId) (name : String) : Bool :=
-  driver.model.display.scenes.back?.any fun scene =>
-    (scene.views.find? (·.id == view)).any fun view =>
-      view.status.contains { ModeLine.field name ModeLine.inactiveFace with side := .left }
+/-- The buffer's fields of the status line of the view `view` in the last
+scene `driver`'s display recorded, a view that is not selected: what
+`statusOf` reads of a selected view, for a view every field of which is in
+`ModeLine.inactiveFace` (`ModeLine.fields`). The faces no longer tell the
+buffer's fields from the others, so they are told by their text: the
+buffer's name `name`, the modified mark and the changed mark
+(`ModeLine.modifiedMark`, `ModeLine.changedMark`), each on the left. A
+position field on the right, such as `1:1` or `All`, is not one of them. -/
+def inactiveStatusOf (driver : TestDriver) (view : ViewId) (name : String) :
+    Option (Array StatusField) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map fun view =>
+      view.status.filter fun field =>
+        field.face == ModeLine.inactiveFace && field.side == .left &&
+          [name, ModeLine.modifiedMark, ModeLine.changedMark].contains field.text
 
 /-- The buffer's fields of the status line of a selected view of a buffer
 called `name` that is not modified: the name alone, in its face. -/
@@ -19419,7 +19426,8 @@ def bufferCommandChecks : List Check :=
               shownName after other == some "crlf.txt" &&
               (closed.bind before.mostRecent) == bufferNamed after "crlf.txt" &&
               statusOf after == some (named "crlf.txt") &&
-              inactiveNames after other "crlf.txt" &&
+              inactiveStatusOf after other "crlf.txt" ==
+                some #[{ ModeLine.field "crlf.txt" ModeLine.inactiveFace with side := .left }] &&
               closed.all (!state.recent.contains ·) &&
               state.wellFormed &&
               (text.bind fun text => (after.model.texts.texts[text.index]?).join).isNone &&

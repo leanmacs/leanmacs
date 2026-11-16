@@ -393,9 +393,7 @@ request sets a flag of the editor state (`EditorState.quitting`,
   typed in the editor asks the frame nothing. Unlike a close request, it
   runs config's `quit` when config registers one.
 
-Pinned by `ModelTest.systemQuitChecks`.
-
-Pinned by `ModelTest.dispatchQuitChecks`.
+Pinned by `ModelTest.systemQuitChecks` and `ModelTest.dispatchQuitChecks`.
 
 **The scheme after a command that failed.** The loop keeps two states of
 the scheme: the one after the last key (`Loop.input`), and the last one at
