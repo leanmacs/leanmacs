@@ -13,6 +13,7 @@ import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
 import Editor.Themes
+import Editor.Workspace
 
 /-!
 # The editor
@@ -127,6 +128,9 @@ The
 commands' registrations (`Editor/Evil/Compiled.lean`) name the registry
 and are not imported, as the file commands' and the minibuffer's are not.
 Pinned by `ConfigTest.evilChecks`, on a config the real elaborator loads.
+
+Projects, workspaces and locations are here too (`Editor/Workspace.lean`):
+which codebase and which checkout a buffer belongs to, as plain values.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

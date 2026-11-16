@@ -55,6 +55,7 @@ import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
 import Editor.WindowCheck
+import Editor.Workspace
 
 /-!
 # The model tests
@@ -26148,6 +26149,68 @@ def environmentLookupChecks : List Check :=
             other.reported ==
               #[Process.failureMessage "/p/d" missing, Process.failureMessage "/p/e" missing]) }]
 
+/-- The checks of projects, workspaces and locations as data
+(`Editor/Workspace.lean`): how an `origin` URL is normalised, how a project
+is identified and named, how a workspace is labelled, what each location can
+do, and a location's round trip through a buffer-local value. -/
+def workspaceDataChecks : List Check :=
+  let origin := "git@github.com:o/r.git"
+  [{  name :=
+        "an origin URL normalises to host/path whatever its form: git@github.com:o/r.git, https://github.com/o/r, ssh://git@github.com/o/r.git and https://github.com/o/r.git/ are one, and so are a host in capitals and an ssh port"
+      run :=
+        pure <|
+          [origin, "https://github.com/o/r", "ssh://git@github.com/o/r.git",
+                  "https://github.com/o/r.git/", "https://GitHub.com/o/r",
+                  "ssh://git@github.com:22/o/r"].map
+              Workspace.normaliseRemote ==
+            List.replicate 6 "github.com/o/r" },
+    { name :=
+        "a project is identified by its normalised origin, else by its common git directory, else by its root, and a name config declares wins; it is named by the origin's last component, else by the common directory's parent's, else by the root's"
+      run :=
+        let byOrigin := Project.of "/x/clone" (some "/x/clone/.git") (some origin) none
+        let byCommon := Project.of "/w" (some "/r/.git") none none
+        let byRoot := Project.of "/m" none none none
+        let declared := Project.of "/r/tools" none none (some "tools")
+        let both := Project.of "/r" (some "/r/.git") (some origin) (some "mine")
+        pure
+          ((byOrigin.identity, byOrigin.name, byOrigin.remote, byOrigin.commonDir) ==
+              (Project.Identity.remote "github.com/o/r", "r", some origin,
+                some ("/x/clone/.git" : System.FilePath)) &&
+            (byCommon.identity, byCommon.name) == (Project.Identity.commonDir "/r/.git", "r") &&
+            (byRoot.identity, byRoot.name) == (Project.Identity.root "/m", "m") &&
+            (declared.identity, declared.name) == (Project.Identity.declared "tools", "tools") &&
+            (both.identity, both.name) == (Project.Identity.declared "mine", "mine")) },
+    { name :=
+        "a workspace is labelled name@branch, and name@ and its root's last component when it is detached or has no branch"
+      run :=
+        let project := Project.of "/r" (some "/r/.git") (some origin) none
+        let onMain : Workspace :=
+          { location := .local "/r", branch := some (.named "main"), project }
+        let detached : Workspace := { location := .local "/w", branch := some .detached, project }
+        let marked : Workspace :=
+          { location := .local "/m", project := Project.of "/m" none none none }
+        pure ([onMain, detached, marked].map Workspace.label == ["r@main", "r@w", "m@m"]) },
+    { name :=
+        "a local location can read files, run commands and watch files; one reachable by a command and one known only by its branch can do none of them"
+      run :=
+        let all : Location.Capabilities :=
+          { readFiles := true, runCommands := true, watchFiles := true }
+        let none : Location.Capabilities :=
+          { readFiles := false, runCommands := false, watchFiles := false }
+        pure
+          ((Location.local "/r").can == all &&
+            (Location.reachable "kube" "pod/dev" "/src").can == none &&
+            (Location.branchOnly origin "agent/x").can == none) },
+    { name :=
+        "a location crosses as a buffer-local value and back, and a value that is no location reads as none"
+      run :=
+        let locations : List Location :=
+          [.local "/r", .reachable "kube" "pod/dev" "/src", .branchOnly origin "agent/x"]
+        pure
+          (locations.all (fun location => Location.decode? location.encode == some location) &&
+            [Value.null, .str "/r", .record [("local", .nat 1)], .record []].all
+              (Location.decode? · == none)) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -26252,7 +26315,8 @@ def checks : List Check :=
     frameCommandChecks ++
     titleChecks ++
     menuChecks ++
-    clipboardCommandChecks
+    clipboardCommandChecks ++
+    workspaceDataChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
