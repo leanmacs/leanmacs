@@ -228,14 +228,18 @@ job reads as it comes and whose standard input it writes to (phase 2;
   so neither a cancel nor shutdown can hang on a child that ignores a
   polite signal.
 - **Across the boundary**, `editor-ffi`'s `processes.rs` holds the
-  process's one service, over the real adapter, behind five C functions: a
-  run (the command as words and one string, as a list of strings crosses),
-  a take (a status, words, a detail and both streams), a cancel, a
-  shutdown and a readout of what is pending. In Lean a run is a request of
-  the job port (`lean/Editor/Process.lean`, `Process.run`), with a pure
-  model that scripts commands; cancelling a job withdraws its wait, which
-  cancels the run in the library and so kills the child. The headless and
-  window mains call the shutdown before they quit the queues.
+  process's one service, over the real adapter, behind eleven C functions:
+  a run (the command as words and one string, as a list of strings
+  crosses), a take (a status, words, a detail and both streams), a cancel,
+  a shutdown and a readout of what is pending; and for a streaming child an
+  open (a run's words after its input and its two framings, with the bound
+  for the limit), a read, a write, a close of its input, a take of a wait's
+  reply (the same record as a run's result, a delivery's two streams in its
+  buffers) and a readout of whether it is held, for tests. In Lean a run is
+  a request of the job port (`lean/Editor/Process.lean`, `Process.run`),
+  with a pure model that scripts commands; cancelling a job withdraws its
+  wait, which cancels the run in the library and so kills the child. The
+  headless and window mains call the shutdown before they quit the queues.
 
 ## Files and watching
 
