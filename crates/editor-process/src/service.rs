@@ -2488,6 +2488,49 @@ mod streaming {
         assert!(pending_comes_to(&service, 0));
     }
 
+    // Seen to bite once by hand, on 2026-11-15: with the kill taken out of
+    // `stream_reader`'s `Err` arm, the child held until it is killed is
+    // never killed, and the test fails waiting for its reap; with the
+    // `End::Failed` not kept, the failed stream never ends, and the test
+    // fails waiting for the last delivery.
+    #[test]
+    fn a_read_that_fails_kills_the_group_and_ends_the_child_as_failed_the_frames_before_it_intact()
+    {
+        let refusal = Refusal::new(RefusalKind::Failed, "cannot read a child's stream: EIO");
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .stderr("e\n")
+                .hold(Hold::UntilKilled)
+                .members(1)
+                .read_fails(Stream::Err, refusal.clone())),
+        )]);
+        let (service, completed) = service(&fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Closed, ROOMY),
+        );
+
+        let deliveries = to_the_end(&service, &completed, 1, 2);
+
+        let (last, before) = deliveries.split_last().expect("a delivery");
+        assert_eq!(last.ended, Some(End::Failed(refusal)));
+        assert!(before.iter().all(|delivered| delivered.ended.is_none()));
+        assert_eq!(
+            all_bytes(&deliveries, Stream::Err),
+            b"e\n",
+            "intact before it"
+        );
+        let child = fake.record().spawned[0].0;
+        assert!(fake.until(DEADLINE, |record| record.reaped == [child]));
+        assert_eq!(fake.record().killed, [child]);
+        assert!(!fake.alive(child) && !fake.alive(child + 1));
+        assert!(pending_comes_to(&service, 0));
+    }
+
     fn pending_comes_to(service: &Service<FakeProcesses>, count: usize) -> bool {
         let end = std::time::Instant::now() + DEADLINE;
         while std::time::Instant::now() < end {
