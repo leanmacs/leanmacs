@@ -655,6 +655,18 @@ def streamProperties : List ProcessProperty :=
       holds := fun root => do
         let child ← started (sh root "printf '%5000s' x") (lines 1024)
         return endOf (← toTheEnd child) == some (.lineTooLong .out 1024) },
+    { name :=
+        "a last line exactly the bound long, with no line feed, is delivered whole, and one a byte longer ends the child as lineTooLong"
+      streams := fun root =>
+        #[writes (sh root "printf abcd") "abcd".toUTF8,
+          writes (sh root "printf abcde") "abcde".toUTF8]
+      holds := fun root => do
+        let atBound ← toTheEnd (← started (sh root "printf abcd") (lines 4))
+        let over ← toTheEnd (← started (sh root "printf abcde") (lines 4))
+        return linesOf atBound .out == linesFrom ["abcd"] &&
+            endOf atBound == some (.exited (.code 0)) &&
+            linesOf over .out == #[] &&
+            endOf over == some (.lineTooLong .out 4) },
     { name := "a process the job does not hold is noSuchProcess, answered without a request"
       holds := fun _ => do
         match ← Process.read ⟨999999⟩ with

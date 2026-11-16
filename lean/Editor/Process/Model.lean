@@ -231,11 +231,19 @@ def deliverable (child : Child) (stream : Process.Stream) : Bool :=
   | .bytes => held.size > 0
   | .lines => hasLineFeed held || (child.done && held.size > 0)
 
-/-- Whether `stream` holds a partial line that alone fills the bound, so can
-never be delivered whole. -/
+/-- Whether `stream` holds a partial line that alone fills the bound and
+`child` has more of it to write, so the line is longer than the bound and
+can never be delivered whole. A partial line exactly the bound long is not
+too long while the child has nothing more to write to it: it is a last line
+if the child ends there. -/
 def tooLong (child : Child) (stream : Process.Stream) : Bool :=
   let held := child.held stream
-  child.framing stream == .lines && !hasLineFeed held && held.size ≥ child.streaming.bound
+  let writesMore :=
+    match child.writing with
+    | some (writing, _, _) => writing == stream
+    | none => false
+  child.framing stream == .lines && !hasLineFeed held && held.size ≥ child.streaming.bound &&
+    writesMore
 
 /-- The whole lines of `bytes` and the bytes after its last line feed. -/
 def splitLines (bytes : ByteArray) : Array ByteArray × ByteArray :=

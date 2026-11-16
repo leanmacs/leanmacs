@@ -13,8 +13,9 @@
 //! most [`Outbox::room`] bytes, so a stream never holds more than the
 //! bound; at a room of 0 the reader stops reading, which is what holds
 //! the child. A partial line that alone fills the bound can never be
-//! delivered whole: [`Outbox::too_long`] says so, and the service ends
-//! the child with it.
+//! delivered whole unless the stream ends there: [`Outbox::too_long`] says
+//! so, and the service ends the child with it once one more byte of the
+//! stream shows the line goes on.
 
 use crate::Stream;
 
@@ -224,7 +225,8 @@ impl Outbox {
     }
 
     /// Whether `stream` holds a partial line that alone fills the bound,
-    /// so it can never be delivered whole. Never under bytes framing.
+    /// so it can never be delivered whole unless the stream ends here.
+    /// Never under bytes framing.
     pub fn too_long(&self, stream: Stream) -> bool {
         let framer = &self.streams[slot(stream)];
         self.room(stream) == 0 && framer.framing == Framing::Lines && !framer.has_frame()

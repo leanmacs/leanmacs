@@ -1084,6 +1084,30 @@ def processChecks : List Check :=
         let (_, afterSecond, _) := afterRead.handle 0 none (.read ⟨1⟩)
         return heldAt started == some (10, some 10) && heldAt afterRead == some (10, some 20) &&
             heldAt afterSecond == some (5, none) },
+    -- Seen to bite once by hand, on 2026-11-15: over the model as it was,
+    -- which judged a partial line that fills the bound too long whatever
+    -- the child did next, the first read ends the child and the check fails.
+    { name :=
+        "the process model ends a child as lineTooLong only when it has more of the line to write: a partial line exactly the bound long, the child waiting on its input, is not too long, and is delivered whole once the input ends"
+      run := do
+        let script : Process.StreamScript :=
+          { command := sleeper, steps := #[.write .out "abcd".toUTF8, .awaitClosed] }
+        let model : ProcessModel := { streams := #[script] }
+        let (_, started, _) := model.handle 0 none (.start sleeper (JobContract.lines 4 true))
+        let (waiting, afterWaiting, _) := started.handle 0 none (.read ⟨1⟩)
+        let (_, closed, _) := afterWaiting.handle 0 none (.closeInput ⟨1⟩)
+        let (last, afterLast, _) := closed.handle 0 none (.read ⟨1⟩)
+        let notTooLong :=
+          match waiting with
+          | .ok delivery => delivery.ended.isNone
+          | .error _ => true
+        let whole :=
+          match last with
+          | .ok delivery =>
+            delivery.stdout == .lines #["abcd".toUTF8] && delivery.ended == some (.exited (.code 0))
+          | .error _ => false
+        return notTooLong && afterWaiting.killed.isEmpty && whole && afterLast.killed.isEmpty &&
+            afterLast.children.isEmpty },
     -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
     -- taken out of `Handle.conclude`, this check and the next fail.
     { name :=

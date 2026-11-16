@@ -187,8 +187,11 @@ job reads as it comes and whose standard input it writes to (phase 2;
   for ever, and the child would never be read again. A reader reads at most
   the room left, and at none it parks, so the pipe fills and the child
   blocks in `write(2)`: it is **held** until a take makes room. Nothing is
-  dropped and no delivery says so. A line longer than the bound ends the
-  child as `LineTooLong`, its group killed. The last delivery carries the
+  dropped and no delivery says so. A line longer than the bound, its line
+  feed counted, ends the child as `LineTooLong`, its group killed. A partial
+  line that fills the bound exactly is judged by one more byte, read
+  outside the bound: if it comes the line is too long, and if the stream
+  ends there the line is its last, delivered whole. The last delivery carries the
   exit, once both streams have ended and the child is reaped, and the child
   is then forgotten. A write is handed to a writer thread, which writes
   every byte and then completes; a child that closed its input, or ended,

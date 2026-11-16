@@ -41,10 +41,14 @@
 //!   tests). The bound counts each stream on its own, so a reader blocked
 //!   on a stream the child does not write takes nothing from the other's
 //!   room.
-//! - **A line longer than the bound** can never be delivered whole. It
-//!   ends the child: the group is killed, and the last delivery ends with
-//!   [`End::LineTooLong`], the frames before it intact. A read that fails
-//!   ends it the same way, with [`End::Failed`].
+//! - **A line longer than the bound**, its line feed counted, can never be
+//!   delivered whole. It ends the child: the group is killed, and the last
+//!   delivery ends with [`End::LineTooLong`], the frames before it intact.
+//!   A partial line that fills the bound exactly is not yet too long: the
+//!   reader reads one byte more, kept outside the bound, and the line is
+//!   too long only if that byte comes. If the stream ends there instead,
+//!   the line is its last, delivered whole. A read that fails ends the
+//!   child as a line too long does, with [`End::Failed`].
 //! - **The last delivery** says how the child ended ([`Delivery::ended`]):
 //!   [`End::Exited`] once both streams have ended, every frame is in it and
 //!   the child has been reaped. The service then forgets the child: a
@@ -1324,14 +1328,37 @@ fn stream_reader(
             }
             Ok(count) => {
                 streamed.outbox.push(stream, &buffer[..count.min(want)]);
-                // A partial line that alone fills the bound can never be
-                // delivered whole: the child ends, never with a line cut.
-                let too_long = streamed.outbox.too_long(stream) && streamed.failed.is_none();
-                if too_long {
-                    let bound = streamed.outbox.bound();
-                    streamed.failed = Some(End::LineTooLong { stream, bound });
+                if streamed.outbox.too_long(stream) && streamed.failed.is_none() {
+                    // A partial line fills the bound. It is a last line if
+                    // the stream ends here, and longer than the bound if one
+                    // more byte comes: look one byte further, kept outside
+                    // the outbox, so the bound still holds.
+                    drop(streamed);
+                    let probe = output.read(&mut buffer[..1]);
+                    streamed = shared.state();
+                    match probe {
+                        Ok(0) => {
+                            streamed.outbox.end(stream);
+                            (true, false)
+                        }
+                        // The line is longer than the bound, so can never be
+                        // delivered whole: the child ends, never with a line
+                        // cut.
+                        Ok(_) => {
+                            let bound = streamed.outbox.bound();
+                            streamed
+                                .failed
+                                .get_or_insert(End::LineTooLong { stream, bound });
+                            (true, true)
+                        }
+                        Err(refusal) => {
+                            streamed.failed.get_or_insert(End::Failed(refusal));
+                            (true, true)
+                        }
+                    }
+                } else {
+                    (false, false)
                 }
-                (too_long, too_long)
             }
             Err(refusal) => {
                 streamed.failed.get_or_insert(End::Failed(refusal));
@@ -2486,6 +2513,49 @@ mod streaming {
         assert!(fake.until(DEADLINE, |record| record.reaped == [child]));
         assert!(!fake.alive(child) && !fake.alive(child + 1));
         assert!(pending_comes_to(&service, 0));
+    }
+
+    #[test]
+    fn a_partial_line_exactly_the_bound_long_waits_for_the_stream_to_go_on_or_end() {
+        let fake = FakeProcesses::scripted([(
+            piped("x"),
+            Ok(Script::ends(Exit::Code(0)).steps([
+                Step::Write(Stream::Out, b"abcd".to_vec()),
+                Step::AwaitInputClosed,
+            ])),
+        )]);
+        let (service, completed) = service(&fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            piped("x"),
+            lines_with(Input::Pipe, 4),
+        );
+        let child = fake.record().spawned[0].0;
+
+        assert!(service.read(1, 2));
+        assert!(fake.until(DEADLINE, |record| record.children[&child].read[0] == 4));
+        assert!(
+            completed.recv_timeout(Duration::from_millis(50)).is_err(),
+            "not too long while the stream may yet end"
+        );
+        assert!(fake.record().killed.is_empty());
+        assert!(service.close_input(1, 3));
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
+        let Some(StreamReply::Delivered(mut delivered)) = service.take_stream(2) else {
+            panic!("a delivery");
+        };
+        if delivered.ended.is_none() {
+            let rest = to_the_end(&service, &completed, 1, 4);
+            delivered.ended = rest.last().and_then(|last| last.ended.clone());
+            assert!(rest.iter().all(|more| more.out.is_empty()));
+        }
+        assert_eq!(delivered.out, lines(&["abcd"]));
+        assert_eq!(delivered.ended, Some(End::Exited(Exit::Code(0))));
+        assert!(fake.record().killed.is_empty());
     }
 
     // Seen to bite once by hand, on 2026-11-15: with the kill taken out of

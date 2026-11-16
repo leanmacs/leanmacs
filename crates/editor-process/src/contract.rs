@@ -190,6 +190,14 @@ pub const STREAM_HELD: &str = "a child at the bound is held until its job reads,
 /// its group.
 pub const STREAM_LINE_TOO_LONG: &str =
     "a line longer than the bound ends the child, and kills its group";
+/// An unterminated last line exactly the bound long is delivered whole,
+/// and the child exits as it does; one byte more ends it as line too long.
+/// Seen to bite once by hand, on 2026-11-15: over the service as it was
+/// before its reader looked one byte past a partial line that fills the
+/// bound, it fails on the fake and on real processes, the line at the
+/// bound ending its child as line too long.
+pub const STREAM_LINE_AT_BOUND: &str =
+    "a last line exactly the bound long is delivered whole, and one a byte longer is too long";
 /// A cancelled streaming child, held at the bound, ends with the process it
 /// started, and nothing is left pending.
 pub const STREAM_CANCEL: &str =
@@ -207,7 +215,7 @@ pub const STREAM_SHUTDOWN: &str =
 pub const ESCAPE: &str = "/usr/bin/perl";
 
 /// Every property, by name, in the order [`check`] runs them.
-pub const PROPERTIES: [&str; 25] = [
+pub const PROPERTIES: [&str; 26] = [
     RUN,
     SIGNAL,
     DIRECTORY,
@@ -231,6 +239,7 @@ pub const PROPERTIES: [&str; 25] = [
     STREAM_COALESCED,
     STREAM_HELD,
     STREAM_LINE_TOO_LONG,
+    STREAM_LINE_AT_BOUND,
     STREAM_CANCEL,
     STREAM_SHUTDOWN,
 ];
@@ -276,6 +285,11 @@ fn escaping(name: &str) -> String {
 const INPUT_CLOSED_SCRIPT: &str = "exec 0<&-; echo closed; exec /bin/sleep 600";
 /// The script of [`STREAM_LINES`].
 const LINES_SCRIPT: &str = r#"echo one; read x; echo "$x"; echo err >&2; read y; exit 4"#;
+/// The scripts of [`STREAM_LINE_AT_BOUND`]: a last line of exactly
+/// [`AT_BOUND`] bytes, and one a byte longer.
+const AT_BOUND_SCRIPTS: [&str; 2] = ["printf abcd", "printf abcde"];
+/// [`STREAM_LINE_AT_BOUND`]'s bound.
+const AT_BOUND: u64 = 4;
 /// How many lines [`STREAM_ORDER`]'s child writes, and its bound.
 const ORDER: (usize, u64) = (20_000, 256);
 /// How many lines [`STREAM_COALESCED`]'s child writes.
@@ -479,6 +493,14 @@ fn stream_scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
             Ok(Script::ends(Exit::Code(0)).stdout("x\ny")),
         ),
         (
+            sh(dir, AT_BOUND_SCRIPTS[0]),
+            Ok(Script::ends(Exit::Code(0)).stdout("abcd")),
+        ),
+        (
+            sh(dir, AT_BOUND_SCRIPTS[1]),
+            Ok(Script::ends(Exit::Code(0)).stdout("abcde")),
+        ),
+        (
             sh(dir, &counting(ORDER.0, "exit 0")),
             Ok(Script::ends(Exit::Code(0))
                 .stdout(counted(ORDER.0))
@@ -573,6 +595,7 @@ pub fn check<P: Processes + Clone + 'static>(
         (STREAM_COALESCED, check.stream_coalesced(processes)),
         (STREAM_HELD, check.stream_held(processes)),
         (STREAM_LINE_TOO_LONG, check.stream_line_too_long(processes)),
+        (STREAM_LINE_AT_BOUND, check.stream_line_at_bound(processes)),
         (STREAM_CANCEL, check.stream_cancel(processes)),
         (STREAM_SHUTDOWN, check.stream_shutdown(processes)),
     ];
@@ -1395,6 +1418,37 @@ impl<G: Ground> Check<'_, G> {
         self.done(&service, held)
     }
 
+    /// [`STREAM_LINE_AT_BOUND`].
+    fn stream_line_at_bound<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        let [at, over] = AT_BOUND_SCRIPTS;
+        let mut wait = 10;
+        let whole = self.open(
+            &service,
+            1,
+            sh(self.dir, at),
+            lines(Input::Closed, AT_BOUND),
+        ) && self.to_the_end(&service, 1, &mut wait).is_some_and(|all| {
+            lines_of(&all, Stream::Out) == [b"abcd".to_vec()]
+                && all.last().and_then(|last| last.ended.clone())
+                    == Some(End::Exited(Exit::Code(0)))
+        });
+        let too_long = self.open(
+            &service,
+            2,
+            sh(self.dir, over),
+            lines(Input::Closed, AT_BOUND),
+        ) && self.to_the_end(&service, 2, &mut wait).is_some_and(|all| {
+            lines_of(&all, Stream::Out).is_empty()
+                && all.last().and_then(|last| last.ended.clone())
+                    == Some(End::LineTooLong {
+                        stream: Stream::Out,
+                        bound: AT_BOUND,
+                    })
+        });
+        self.done(&service, whole && too_long)
+    }
+
     /// [`STREAM_CANCEL`].
     fn stream_cancel<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
         let service = Self::service(processes);
@@ -1515,10 +1569,10 @@ mod tests {
     use super::PROPERTIES;
 
     #[test]
-    fn the_properties_are_twenty_five_and_each_is_named_once() {
+    fn the_properties_are_twenty_six_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 25);
+        assert_eq!(names.len(), 26);
     }
 }

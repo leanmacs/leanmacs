@@ -61,8 +61,10 @@ Starting, waiting for, killing and reaping a child are the library's
   policy, with no default, and at least one. A child at it is **held**: its
   output is not read, so it waits in its own write until the job reads.
   Nothing is dropped, and no delivery says it was held. A line longer than
-  the bound can never be delivered whole: it ends the child, its group
-  killed, with `lineTooLong`, the frames before it intact.
+  the bound, its line feed counted, can never be delivered whole: it ends
+  the child, its group killed, with `lineTooLong`, the frames before it
+  intact. A last line exactly the bound long, with no line feed, is
+  delivered whole.
 - **The last delivery** says how the child ended (`Process.End`): `exited`
   once both streams have ended and every frame is in it. The child is then
   forgotten: a later read of it is `noSuchProcess`.
