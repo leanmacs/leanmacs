@@ -35,28 +35,27 @@ a scene of it after each.
   marker of the buffer's text, and its selections as one selection marker
   of that text, whose ranges are its cursors.
 - **The frame** (`Frame`) is the one window of the platform: its size, the
-  split tree of the editor's windows (`Split`), the window that is focused,
-  and whether the frame has the keyboard focus.
+  editor's windows as an ordered list (`Frame.windows`), the layout that
+  arranges them (`Frame.layout`, `Editor/Layout.lean`), the window that is
+  focused, and whether the frame has the keyboard focus.
 
-## The split tree and its invariants
+## The window list, the layout and their invariants
 
-The split tree is a binary tree. A leaf is a window, by its `ViewId`, or the
-minibuffer's place; a split divides its rectangle along an axis, rows
-(stacked) or columns (side by side), between its two children
-(`Split.rects`): the first takes half the extent, rounded down, and the
-second the rest. A subtree with no view takes no space and its sibling
-takes all of it.
+The frame's windows are an ordered list of `ViewId`s, the first being main,
+and the focus is held by `ViewId` (`Frame.focused`). A layout value turns
+the list into one rectangle per window shown (`Layout.place`): master-and-
+stack by default, and monocle, which shows only the selected window. The
+list says which windows exist and in what order; the layout says only
+where each goes.
 
-**The minibuffer's place always takes the frame's bottom row.**
-`Split.rects` is handed the minibuffer's view, or none, and the extent of
-the place (`EditorState.minibufferPlace`). With no prompt open the place
-is the frame's bottom row, `heights.message` tall, where the display draws
-the echo, and holds no view. With a prompt open it is a text row and that
-bottom row, `heights.text + heights.message`: the input, then the prompt.
-A split one of whose children is the place gives it that extent along its
-axis, or the whole extent when that is less, and the sibling the rest; the
-view's rectangle, when there is one, is the place's. A tree that is the
-place alone gives the view the whole rectangle.
+**The minibuffer's place always takes the frame's bottom strip**, outside
+the area a layout tiles (`EditorState.tiled`). With no prompt open the
+strip is the frame's bottom row, `heights.message` tall
+(`EditorState.minibufferPlace`), where the display draws the echo, and
+holds no view. With a prompt open it is a text row and that bottom row,
+`heights.text + heights.message`: the input, then the prompt, and the
+minibuffer's view is the strip's rectangle. A frame shorter than the strip
+is all strip, and the tiled area has no height.
 
 **The heights of the rows** are the display's (`Display.heights`):
 `EditorState.heights` holds what it last answered, which `Loop.publish`
@@ -67,20 +66,24 @@ for the minibuffer's view. That is the height the display's frame gives
 its text, so a command's questions of layout are answered with the rows
 the frame shows.
 
-**The rectangles of a state's views** are `EditorState.rects`: the tree
-laid out in the whole frame, with the minibuffer's view while a prompt is
-open. It is the one definition the scene's views and a command's question
-about its view (`EditorState.rect?`) are both read from, so a command is
-answered with the rectangle the next scene gives its view. The rectangles
-tile the frame: a view's padding is inside its rectangle, not between
-rectangles.
+**The rectangles of a state's views** are `EditorState.rects`: the frame's
+windows laid out by its layout in the tiled area, then the minibuffer's view
+in the bottom strip while a prompt is open. Monocle is handed the selected
+view (`EditorState.selectedView`), so while a prompt is open it shows the
+asker, not the minibuffer. A window monocle hides has no rectangle, and so
+is not in the scene, but it is still one of the views and can be focused,
+which shows it. It is the one definition the scene's views and a command's
+question about its view (`EditorState.rect?`) are both read from, so a
+command is answered with the rectangle the next scene gives its view. The
+rectangles tile the area: a view's padding is inside its rectangle, not
+between rectangles.
 
 **The padding of the views** is in whole points, which the display
 multiplies by its scale (Lean handles no scale). `EditorState.padding` is
 the frame padding the last publish laid out with, set from config
 (`framePadding`, `Editor/Setup.lean`) through the loop's keys. Each view's
 is `EditorState.paddingOf`: a window is padded across and down by it, each
-window of a split its own; the minibuffer's view is padded across by the
+window its own; the minibuffer's view is padded across by the
 bottom row's inset (`EditorState.bottomInset`: the padding, and at least
 the window's corner clearance, `Frame.corner`, outside fullscreen) and not
 down, since its place must stay exactly a text row and the bottom row
@@ -92,12 +95,11 @@ command's question about its view carries the view's padding
 (`Scroll.Area.ofRect`), so it is answered with the rows the frame shows.
 
 The invariants are part of the model (`EditorState.wellFormed`). They are
-stated over the state's views (`EditorState.views`): the tree's windows,
-in drawing order, then the minibuffer's view while a prompt is open
+stated over the state's views (`EditorState.views`): the frame's windows,
+in list order, then the minibuffer's view while a prompt is open
 ("Prompts", below).
 
 - the focused window is one of the views;
-- the tree has exactly one minibuffer leaf;
 - the views' ids are distinct, and they are exactly the windows' ids;
 - each window's buffer exists.
 
@@ -110,25 +112,24 @@ changes nothing: it returns the state it was given. A command reaches each
 as a request of the editor's port (`Editor/State/Request.lean`), whose
 handler is these operations:
 
-- `removeWindow` refuses `noSuchWindow` for a window not in the tree, and
+- `removeWindow` refuses `noSuchWindow` for a window not in the list, and
   `onlyWindow` for the last window, which would leave nothing to focus. The
-  removed window's sibling takes the place of the split that held both, and
-  the window is handed back: its markers are the caller's to give up. When
-  the window was focused, the focus moves to the first window, in drawing
-  order, of the subtree that took its place, or, when that subtree has
-  none, to the first window of the tree.
-- `focusWindow` takes a window of the tree, and the minibuffer's window
+  window leaves the list, the layout gives its space to the rest, and the
+  window is handed back: its markers are the caller's to give up. When the
+  window was focused, the focus moves to the window that took its index,
+  or, when it was last, to the new last window, as xmonad's delete does.
+- `focusWindow` takes a window of the list, and the minibuffer's window
   while a prompt is open, so the focus can leave the minibuffer and come
   back. It refuses `noSuchWindow` for any other.
-- `splitWindow` puts a new window where the source window was, second in a
-  split with it along the axis given: below it for `rows`, to its right
-  for `columns`. The new window shows the source window's buffer, with the
-  two markers the caller made for it, and the focus stays where it was. It
-  refuses `noSuchWindow` for a source not in the tree, and
+- `splitWindow` puts a new window right after the source window in the
+  list: splitting main makes the new window the first of the stack, and
+  splitting a stack window puts the new one below it. It takes no axis:
+  no layout reads one. The new window shows the source window's buffer,
+  with the two markers the caller made for it, and the focus stays where
+  it was. It refuses `noSuchWindow` for a source not in the list, and
   `markersOfAnotherText` for a marker that is not of that buffer's text.
-  Splitting a window and removing the new one gives back the tree from
-  before the split, since the sibling of a removed window takes the place
-  of their split.
+  Splitting a window and removing the new one gives back the frame from
+  before the split.
 - `showBuffer` has a window show another buffer, with the two markers the
   caller made on that buffer's text. It refuses `noSuchWindow`,
   `noSuchBuffer` for a buffer there is none of (a window over no buffer
@@ -142,11 +143,12 @@ greater, so it is new on a state built by hand too; `nextView` is then one
 past it. So what a scheme or a scene keeps under a closed view's id can
 never come to mean another view.
 
-The minibuffer's place has no `ViewId`, so no operation here can remove it.
+The minibuffer's place is no window of the list, so no operation here can
+remove it.
 The minibuffer's window is not theirs either: `removeWindow`, `splitWindow`
 and `showBuffer` refuse it with `ofMinibuffer` and its view, and
 `showBuffer` refuses the same way to show the minibuffer's buffer in
-another window. `removeWindow` counts the tree's windows alone, so the last
+another window. `removeWindow` counts the list's windows alone, so the last
 ordinary window cannot be removed while a prompt is open.
 
 ## The wanted column
@@ -261,11 +263,11 @@ A prompt is a request for one string, with a text to show beside the input
   what works on a buffer and a window works on them with no rule of its
   own: a committed text is inserted there, the loop keeps and restores
   its markers and its history, and the scene has its view.
-- **The tree does not change.** The minibuffer leaf says where the
-  minibuffer's place is, and `EditorState.prompt` says whether a prompt is
-  open and which window stands there. A view id on the leaf was set aside:
-  the open prompt would then be in two places that an invariant must keep
-  in step.
+- **The window list does not change.** The minibuffer's place is always
+  the frame's bottom strip, outside the area a layout tiles, and
+  `EditorState.prompt` says whether a prompt is open and which window
+  stands there. A view id in the list was set aside: the open prompt would
+  then be in two places that an invariant must keep in step.
 - `openPrompt` adds the buffer and the window, records the prompt with the
   focused view as its asker, focuses the new view and hands it back. It
   refuses, with the state as it was, `alreadyOpen` and the open prompt's
@@ -275,15 +277,15 @@ A prompt is a request for one string, with a text to show beside the input
   `PromptRefusal.describe` says each as a sentence.
 - `closePrompt` closes the open prompt, with an answer or with none for a
   prompt that is cancelled. It removes the minibuffer's window, empties
-  its buffer's slot, and clears the prompt; the tree is as it was. It
+  its buffer's slot, and clears the prompt; the window list is as it was. It
   refuses `notOpen`, with the state as it was, when no prompt is open.
   - **The focus goes to the asking view**, even if it was moved meanwhile,
     so the answer's command runs with the window the prompt was asked in.
-    When that view is no longer a window of the tree, it goes to the first
-    window of the tree, in drawing order. A view's id is never used again,
+    When that view is no longer a window of the list, it goes to the first
+    window of the list. A view's id is never used again,
     so the asker cannot have come to mean another view. The rule is one
     definition (`askedFrom`), for a command that was handed the
-    minibuffer's view and needs a window of the tree in its place.
+    minibuffer's view and needs a window of the list in its place.
   - **Given an answer it records the continuation**, with the answer as
     its first argument and the continuation's own after it
     (`EditorState.answered`), until the loop hands it to its host
@@ -702,24 +704,16 @@ structure Window where
   wanted : Option Window.Wanted := none
   deriving DecidableEq, Repr
 
-/-- The arrangement of a frame's windows. -/
-inductive Split where
-  /-- A window, by the name of its view. -/
-  | window (id : ViewId)
-  /-- The minibuffer's place. -/
-  | minibuffer
-  /-- `first` and `second` dividing a rectangle along `axis`: `first` above
-  or to the left. -/
-  | split (axis : Axis) (first second : Split)
-  deriving DecidableEq, Repr
-
 /-- The one window of the platform, and how the editor's windows are
 arranged in it. -/
 structure Frame where
   /-- Its size, in physical pixels. -/
   size : Size
-  /-- Its split tree. -/
-  tree : Split
+  /-- The editor's windows, by their views' names, in order: the first is
+  main. The minibuffer's window is not among them. -/
+  windows : Array ViewId
+  /-- How its windows are arranged (`Editor/Layout.lean`). -/
+  layout : Layout := Layout.default
   /-- The window that is focused within it. -/
   focused : ViewId
   /-- Whether it has the keyboard focus. -/
@@ -911,7 +905,7 @@ structure EditorState where
   not yet handed to its host. -/
   starts : Array JobStart := #[]
   /-- The prompt that is open, if one is: its view is a window of `windows`
-  that is not in the frame's tree. -/
+  that is not in the frame's list. -/
   prompt : Option Prompt := none
   /-- The invocations to run next, in order, which the loop has not yet
   handed to its host: the continuations of the prompts commands accepted,
@@ -982,7 +976,7 @@ structure Target where
 inductive LayoutRefusal where
   /-- It would remove the last window, leaving nothing to focus. -/
   | onlyWindow
-  /-- The window is not in the frame's tree. -/
+  /-- The window is not in the frame's list. -/
   | noSuchWindow (id : ViewId)
   /-- The state has no buffer of this id for a window to show. -/
   | noSuchBuffer (id : BufferId)
@@ -1066,84 +1060,6 @@ inductive ModeRefusal where
   | noSuchMode (name : String)
   deriving DecidableEq, Repr
 
-namespace Split
-
-/-- The windows of the tree, in drawing order. -/
-def windows : Split → Array ViewId
-  | .window id => #[id]
-  | .minibuffer => #[]
-  | .split _ first second => first.windows ++ second.windows
-
-/-- How many minibuffer leaves the tree has. -/
-def minibuffers : Split → Nat
-  | .window _ => 0
-  | .minibuffer => 1
-  | .split _ first second => first.minibuffers + second.minibuffers
-
-/-- `rect` cut in two along `axis`: the first part takes half its extent
-along the axis, rounded down, and the second the rest. -/
-def halve (axis : Axis) (rect : Rect) : Rect × Rect :=
-  Layout.cut axis rect (Layout.extent axis rect / 2)
-
-/-- Whether the subtree is the minibuffer's place and nothing else: it has
-the minibuffer leaf and no window. -/
-def isMinibufferPlace (tree : Split) : Bool :=
-  tree.windows.isEmpty && tree.minibuffers > 0
-
-/-- The rectangle of each view of the tree laid out in `rect`, in drawing
-order: its windows, and `minibuffer`, the minibuffer's view while a prompt
-is open, where the minibuffer's place is. A split halves its rectangle
-along its axis; a subtree with no view takes nothing, and its sibling takes
-all of it. The minibuffer's place takes `place` along its split's axis, or
-the whole extent when that is less, and its sibling the rest, whether or
-not the minibuffer's view is there: with no view the place shows the echo,
-and with one the view is the place's rectangle. A place of 0 with no view
-takes nothing. -/
-def rects (tree : Split) (rect : Rect) (minibuffer : Option ViewId := none) (place : Nat := 0) :
-    Array (ViewId × Rect) :=
-  match tree with
-  | .window id => #[(id, rect)]
-  | .minibuffer => (minibuffer.map (·, rect)).toArray
-  | .split axis first second =>
-    let empty (child : Split) : Bool :=
-      child.windows.isEmpty && !((minibuffer.isSome || place > 0) && child.isMinibufferPlace)
-    if empty first then second.rects rect minibuffer place
-    else
-      if empty second then first.rects rect minibuffer place
-      else
-        let (one, other) :=
-          if first.isMinibufferPlace then Layout.cut axis rect (min place (Layout.extent axis rect))
-          else
-            if second.isMinibufferPlace then
-              Layout.cut axis rect (Layout.extent axis rect - min place (Layout.extent axis rect))
-            else halve axis rect
-        first.rects one minibuffer place ++ second.rects other minibuffer place
-
-/-- The tree without the window `id`, whose sibling takes the place of the
-split that held both, and that sibling; `none` when `id` is not a leaf of the
-tree or is the whole tree. -/
-def remove (id : ViewId) : Split → Option (Split × Split)
-  | .window _ | .minibuffer => none
-  | .split axis first second =>
-    if first == .window id then some (second, second)
-    else
-      if second == .window id then some (first, first)
-      else
-        match first.remove id with
-        | some (rest, took) => some (.split axis rest second, took)
-        | none => (second.remove id).map fun (rest, took) => (.split axis first rest, took)
-
-/-- The tree with the window `id` in a split of its own, first, along
-`axis`, and the window `made` second: below it for rows, to its right for
-columns. A tree that does not have `id` is as it was. -/
-def divide (id : ViewId) (axis : Axis) (made : ViewId) : Split → Split
-  | .window leaf => if leaf == id then .split axis (.window leaf) (.window made) else .window leaf
-  | .minibuffer => .minibuffer
-  | .split along first second =>
-    .split along (first.divide id axis made) (second.divide id axis made)
-
-end Split
-
 namespace EditorState
 
 /-- The window whose view is `id`, if there is one. -/
@@ -1189,27 +1105,42 @@ prompt is open. -/
 def minibufferBuffer? (state : EditorState) : Option BufferId := do
   return (← state.window? (← state.minibufferView?)).buffer
 
-/-- The views of the state: the windows of the frame's tree, in drawing
-order, then the minibuffer's view while a prompt is open. -/
+/-- The views of the state: the frame's windows, in list order, then the
+minibuffer's view while a prompt is open. -/
 def views (state : EditorState) : Array ViewId :=
-  state.frame.tree.windows ++ state.minibufferView?.toArray
+  state.frame.windows ++ state.minibufferView?.toArray
 
-/-- How much the minibuffer's place takes along its split's axis: the
-frame's bottom row while no prompt is open, where the echo is drawn, and a
-text row above it while one is, for the input, with the prompt in the
-bottom row (`heights`). -/
+/-- How tall the minibuffer's strip at the frame's bottom is: the frame's
+bottom row while no prompt is open, where the echo is drawn, and a text row
+above it while one is, for the input, with the prompt in the bottom row
+(`heights`). -/
 def minibufferPlace (state : EditorState) : Nat :=
   if state.prompt.isSome then state.heights.text + state.heights.message else state.heights.message
 
-/-- The rectangle of each view of the state in its frame, in drawing order
-(`Split.rects`): the tree's windows, and the minibuffer's view while a
-prompt is open, in the place the minibuffer takes (`minibufferPlace`),
-which it takes with no prompt open too. It is what a scene's views are
-laid out in (`Loop.views`, `Editor/Loop.lean`). -/
+/-- The frame cut in two: the area a layout tiles, and below it the
+minibuffer's strip, `minibufferPlace` tall, or the whole frame when that
+is shorter. -/
+def cutFrame (state : EditorState) : Rect × Rect :=
+  let frame := state.frame
+  let height := frame.size.height
+  Layout.cut .rows { x := 0, y := 0, width := frame.size.width, height }
+    (height - min state.minibufferPlace height)
+
+/-- The area of the frame a layout tiles: the frame above the minibuffer's
+strip (`cutFrame`). -/
+def tiled (state : EditorState) : Rect :=
+  state.cutFrame.1
+
+/-- The rectangle of each view of the state in its frame, in drawing order:
+the frame's windows laid out by its layout in the tiled area (`tiled`), the
+selected view (`selectedView`) being the one monocle shows, and then, while
+a prompt is open, the minibuffer's view in the strip below it. A window the
+layout does not show has none. It is what a scene's views are laid out in
+(`Loop.views`, `Editor/Loop.lean`). -/
 def rects (state : EditorState) : Array (ViewId × Rect) :=
   let frame := state.frame
-  frame.tree.rects { x := 0, y := 0, width := frame.size.width, height := frame.size.height }
-    state.minibufferView? state.minibufferPlace
+  frame.layout.place frame.windows state.selectedView state.tiled ++
+    (state.minibufferView?.map (·, state.cutFrame.2)).toArray
 
 /-- How far the frame's bottom row, where the echo and a prompt are drawn,
 is inset from the frame's left and right edges, in points: the frame
@@ -1234,8 +1165,8 @@ def bottomRow (state : EditorState) (id : ViewId) : Nat :=
   if state.minibufferView? == some id then state.heights.message else state.heights.status
 
 /-- The rectangle of the view `id` in the frame (`rects`); none for a view
-that is not laid out: one with no window in the tree, and the minibuffer's
-when no prompt is open. -/
+that is not laid out: one with no window in the list, a window the layout
+does not show, and the minibuffer's when no prompt is open. -/
 def rect? (state : EditorState) (id : ViewId) : Option Rect :=
   (state.rects.find? (·.1 == id)).map (·.2)
 
@@ -1245,7 +1176,7 @@ top inset (`topInset`) at the top of a window along the frame's top edge;
 and for the minibuffer's view the bottom row's inset across
 (`bottomInset`) and none down, since its place is exactly a text row and
 the bottom row (`minibufferPlace`) and must stay that tall. Each window has
-its own: two windows of a split are each padded, with no gap of their own
+its own: two windows side by side are each padded, with no gap of their own
 between them. -/
 def paddingOf (state : EditorState) (id : ViewId) : Padding :=
   if state.minibufferView? == some id then { across := state.bottomInset, down := 0 }
@@ -1254,16 +1185,14 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
     { across := state.padding, down := state.padding, top }
 
 /-- Whether the state keeps the layout invariants, over its views
-(`views`: the tree's windows, then the open prompt's view): the focused
-window is among them, the tree has one minibuffer leaf, the views' ids are
-distinct and are exactly the windows' ids, and each window's buffer
+(`views`: the frame's windows, then the open prompt's view): the focused
+window is among them, the views' ids are distinct and are exactly the windows' ids, and each window's buffer
 exists. And whether an open prompt's choice, if it has one, is an index of
 its listing, and whether every buffer of the order they were used in
 (`recent`) is open and is there once. -/
 def wellFormed (state : EditorState) : Bool :=
   let ids := state.views
-  ids.contains state.frame.focused && state.frame.tree.minibuffers == 1 &&
-    ids.toList.eraseDups.length == ids.size &&
+  ids.contains state.frame.focused && ids.toList.eraseDups.length == ids.size &&
     ids.size == state.windows.size &&
     ids.all (fun id => (state.window? id).isSome) &&
     (state.windows.all fun window => (state.buffer? window.buffer).isSome) &&
@@ -1283,7 +1212,8 @@ def Recent.touch (recent : Array BufferId) (id : BufferId) : Array BufferId :=
   #[id] ++ recent.filter (· != id)
 
 /-- A buffer called `scratch` (`scratchName`) over a new empty text, and one window on it,
-focused, in a frame of `size` with the minibuffer's place below it. The
+focused, the only window of the frame's list, under the default layout, in
+a frame of `size`. The
 window's scroll anchor is at 0, and its selection one cursor at 0 of the
 shape `shape`, exclusive unless the caller says another. -/
 def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := do
@@ -1294,39 +1224,36 @@ def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := d
   return {
       buffers := #[some { name := scratchName, text, history }]
       windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
-      frame := { size, tree := .split .rows (.window ⟨0⟩) .minibuffer, focused := ⟨0⟩ }
+      frame := { size, windows := #[⟨0⟩], focused := ⟨0⟩ }
       recent := #[⟨0⟩] }
 
-/-- Removes the window `id` from the frame: its sibling takes the place of
-the split that held both, and the window is handed back, its markers the
-caller's to give up. A focused window's focus moves to the first window of
-what took its place, or of the tree when that has none. Refused, with the
-state unchanged, with `ofMinibuffer` for the minibuffer's window, with
-`noSuchWindow` for a window not in the tree and with `onlyWindow` for the
-last one of the tree: the minibuffer's window does not count. -/
+/-- Removes the window `id` from the frame's list, and hands it back, its
+markers the caller's to give up; the layout gives its space to the rest.
+A focused window's focus moves to the window that took its index, or to
+the new last window when it was last. Refused, with the state unchanged,
+with `ofMinibuffer` for the minibuffer's window, with `noSuchWindow` for a
+window not in the list and with `onlyWindow` for the last one of the list:
+the minibuffer's window does not count. -/
 def removeWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Window × EditorState :=
-  let tree := state.frame.tree
-  match state.minibufferView? == some id, state.window? id, tree.windows.contains id with
+  let windows := state.frame.windows
+  match state.minibufferView? == some id, state.window? id, windows.findIdx? (· == id) with
   | true, _, _ => (.error (.ofMinibuffer id), state)
-  | false, some window, true =>
-    match tree.remove id with
-    | some (rest, took) =>
-      if rest.windows.isEmpty then (.error .onlyWindow, state)
-      else
-        let focused :=
-          if state.frame.focused == id then
-            (took.windows[0]?).getD ((rest.windows[0]?).getD state.frame.focused)
-          else state.frame.focused
-        (.ok window,
-          { state with
-            windows := state.windows.filter (·.id != id)
-            frame :=
-              { state.frame with
-                tree := rest, focused } })
-    | none => (.error .onlyWindow, state)
+  | false, some window, some index =>
+    let rest := windows.filter (· != id)
+    if rest.isEmpty then (.error .onlyWindow, state)
+    else
+      let focused :=
+        if state.frame.focused == id then rest[index]?.getD (rest.back?.getD state.frame.focused)
+        else state.frame.focused
+      (.ok window,
+        { state with
+          windows := state.windows.filter (·.id != id)
+          frame :=
+            { state.frame with
+              windows := rest, focused } })
   | false, _, _ => (.error (.noSuchWindow id), state)
 
-/-- Focuses the window `id`: a window of the tree, or the minibuffer's while
+/-- Focuses the window `id`: a window of the list, or the minibuffer's while
 a prompt is open. Its buffer is then the most recently used, unless it is
 the minibuffer's. Refused, with the state unchanged, with `noSuchWindow`
 for any other. -/
@@ -1428,13 +1355,12 @@ def answerSystemQuit (state : EditorState) : EditorState × Bool :=
   if state.systemQuit && !state.quitting then ({ state with systemQuit := false }, true)
   else (state, false)
 
-/-- An editor with no buffer and no window, in a frame of no size whose tree
-is the minibuffer's place alone. It is not well formed: nothing is focused.
+/-- An editor with no buffer and no window, in a frame of no size whose list
+is empty. It is not well formed: nothing is focused.
 It is what a command's state requests are answered from where no loop runs
 the command. -/
 protected def none : EditorState :=
-  { buffers := #[], windows := #[],
-    frame := { size := ⟨0, 0⟩, tree := .minibuffer, focused := ⟨0⟩ } }
+  { buffers := #[], windows := #[], frame := { size := ⟨0, 0⟩, windows := #[], focused := ⟨0⟩ } }
 
 /-- The first buffer of the order buffers were used in (`recent`) that is
 open and is neither `except` nor the minibuffer's, and failing that the
@@ -1775,18 +1701,18 @@ a window has when that is greater. -/
 def freshView (state : EditorState) : ViewId :=
   ⟨state.windows.foldl (fun least window => max least (window.id.index + 1)) state.nextView⟩
 
-/-- Splits the window `id` along `axis`: a new window on the same buffer,
-with `scroll` and `selection` as its markers, is second in a split where
-`id` was, and its id is handed back. The focus stays. Refused, with the
-state unchanged, with `ofMinibuffer` for the minibuffer's window, with
-`noSuchWindow` for a window not in the tree, and with
+/-- Splits the window `id`: a new window on the same buffer, with `scroll`
+and `selection` as its markers, is put right after `id` in the frame's
+list, and its id is handed back. The focus stays. Refused, with the state
+unchanged, with `ofMinibuffer` for the minibuffer's window, with
+`noSuchWindow` for a window not in the list, and with
 `markersOfAnotherText` when a marker is not of that buffer's text. -/
-def splitWindow (id : ViewId) (axis : Axis) (scroll selection : MarkerId) (state : EditorState) :
+def splitWindow (id : ViewId) (scroll selection : MarkerId) (state : EditorState) :
     Except LayoutRefusal ViewId × EditorState :=
-  match state.minibufferView? == some id, state.target? id,
-    state.frame.tree.windows.contains id with
+  let windows := state.frame.windows
+  match state.minibufferView? == some id, state.target? id, windows.findIdx? (· == id) with
   | true, _, _ => (.error (.ofMinibuffer id), state)
-  | false, some target, true =>
+  | false, some target, some index =>
     if scroll.text != target.buffer.text || selection.text != target.buffer.text then
       (.error .markersOfAnotherText, state)
     else
@@ -1795,7 +1721,9 @@ def splitWindow (id : ViewId) (axis : Axis) (scroll selection : MarkerId) (state
         { state with
           windows :=
             state.windows.push { id := made, buffer := target.window.buffer, scroll, selection }
-          frame := { state.frame with tree := state.frame.tree.divide id axis made }
+          frame :=
+            { state.frame with
+              windows := (windows.extract 0 (index + 1)).push made ++ windows.extract (index + 1) }
           nextView := made.index + 1 })
   | false, _, _ => (.error (.noSuchWindow id), state)
 
@@ -1805,7 +1733,7 @@ means nothing in another. The buffer is then the most recently used
 (`recent`). Refused, with the state unchanged, with
 `ofMinibuffer`, and the minibuffer's view, for the minibuffer's window and
 for the minibuffer's buffer in another window, with `noSuchWindow` for a
-window not in the tree, with `noSuchBuffer` for a buffer there is none of,
+window not in the list, with `noSuchBuffer` for a buffer there is none of,
 and with `markersOfAnotherText` when a marker is not of that buffer's
 text. -/
 def showBuffer (id : ViewId) (buffer : BufferId) (scroll selection : MarkerId)
@@ -1820,7 +1748,7 @@ where
   /-- The state with the buffer shown, for a window and a buffer that are
   not the minibuffer's. -/
   showing : Except LayoutRefusal Unit × EditorState :=
-    if (state.window? id).isNone || !state.frame.tree.windows.contains id then
+    if (state.window? id).isNone || !state.frame.windows.contains id then
       (.error (.noSuchWindow id), state)
     else
       match state.buffer? buffer with
@@ -1846,7 +1774,7 @@ and a window on it, with a new view id and `scroll` and `selection` as its
 markers. The prompt is recorded with `label`, `continuation` and the
 focused view as its asker; the new view is focused and handed back; and
 the echo is cleared, as Vim clears it: the prompt takes the bottom row. The
-tree is as it was. Refused, with the state unchanged, with `alreadyOpen`,
+window list is as it was. Refused, with the state unchanged, with `alreadyOpen`,
 and its view, while a prompt is open, with `noWindow` when the focused view
 has no window, and with `notItsText` for a history or a marker of another
 text than `text`. -/
@@ -1877,20 +1805,20 @@ def openPrompt (label : String) (continuation : Invocation) (text : TextId) (his
           -- Vim, and the row is empty once the prompt closes.
           echo := "" })
 
-/-- The window of the tree that stands for the view the prompt `asked` was
-asked from: the asking view while it is a window of the tree, and the first
-window of the tree, in drawing order, otherwise. For a tree with no window
-it is the asking view. The focus goes there when the prompt closes
+/-- The window of the list that stands for the view the prompt `asked` was
+asked from: the asking view while it is a window of the list, and the first
+window of the list otherwise. For a list with no window it is the asking
+view. The focus goes there when the prompt closes
 (`closePrompt`), and a command that was handed the minibuffer's view to
 show a buffer in shows it there (`Editor/Files.lean`, "Open"). -/
 def askedFrom (state : EditorState) (asked : Prompt) : ViewId :=
-  let windows := state.frame.tree.windows
+  let windows := state.frame.windows
   if windows.contains asked.asker then asked.asker else windows[0]?.getD asked.asker
 
 /-- Closes the open prompt: the minibuffer's window is removed, its buffer's
 slot is emptied, and the focus goes to the asking view, or, when that view
-is no longer a window of the tree, to the first window of the tree, in
-drawing order (`askedFrom`). The tree is as it was. Given an answer, the
+is no longer a window of the list, to the first window of the list
+(`askedFrom`). The window list is as it was. Given an answer, the
 prompt's continuation is recorded with the answer as its first argument,
 before its own (`answered`). The minibuffer's markers and text are the
 caller's to give up. Refused, with the state unchanged, with `notOpen` when

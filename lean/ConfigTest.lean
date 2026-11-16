@@ -2307,13 +2307,12 @@ def modeChecks (context : Context) : List Check :=
                 made second "compiled" == 0)
           compiledListing }]
 
-/-- The compiled command `split`: it splits the window it is called on along
-rows. -/
+/-- The compiled command `split`: it splits the window it is called on. -/
 def splitCommand : Config.Registration :=
   { name := "split"
     action :=
       .call fun call => do
-        discard <| call.target.window.id.split .rows }
+        discard <| call.target.window.id.split }
 
 /-- A chunk whose `setup` registers two jobs, a command and a key. `double`
 takes one number, sleeps 10 ms, and its command inserts the double, in

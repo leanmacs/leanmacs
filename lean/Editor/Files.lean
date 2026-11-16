@@ -59,8 +59,8 @@ are in `Editor/Files/Compiled.lean`.
   view was closed and the result is delivered with the prompt open, or
   the asking view itself, when the command was called with a path while
   the minibuffer had the focus. The state refuses to show another buffer
-  there. So the buffer is shown in the window of the tree the prompt was
-  asked from, or in the first window of the tree when that one was closed
+  there. So the buffer is shown in the window of the list the prompt was
+  asked from, or in the first window of the list when that one was closed
   too, the window the focus goes to when the prompt closes
   (`EditorState.askedFrom`), and the prompt stays open with the focus.
   This holds for a path that is already open as for one that is loaded.
@@ -326,7 +326,7 @@ def notAsking (refusal : PromptRefusal) : String :=
 
 /-- The view a buffer is shown in when it is to be shown in `view`: `view`,
 or, when `view` is the minibuffer's, which shows no other buffer, the
-window of the tree the open prompt was asked from
+window of the list the open prompt was asked from
 (`EditorState.askedFrom`). -/
 def shownIn (state : EditorState) (view : ViewId) : ViewId :=
   match state.prompt with
@@ -403,7 +403,7 @@ another (`openAll`). When a buffer holds a path (`EditorState.findFile`),
 it shows that buffer and starts nothing for it. Otherwise it starts the job
 that loads the file, whose result makes the buffer and shows it, and then
 opens the paths after it ("Open", in the module docs). For the minibuffer's
-view the buffer is shown in the window of the tree the prompt was asked
+view the buffer is shown in the window of the list the prompt was asked
 from (`shownIn`). Where no load job is registered it says so in the echo
 area. -/
 def «open» (view : ViewId) (path : System.FilePath) (next : List System.FilePath := []) :

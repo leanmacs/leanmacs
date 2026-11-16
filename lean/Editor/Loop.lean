@@ -614,11 +614,13 @@ changed the state or not (`Loop.publish`):
    event edited is one step of the history. **But for a buffer in an
    insert session**, whose group is left open ("Insert sessions", below).
    Then a quit that cannot go ahead is withdrawn ("Quit", above).
-2. **The scene** (`Loop.views`, `Loop.scene`). Each window in the tree, in
-   drawing order, is a view in the rectangle `Split.rects` gives it in the
-   frame. While a prompt is open the minibuffer's window is a view too, in
-   the strip the minibuffer's place then takes (`Editor/State.lean`, "The
-   split tree and its invariants"): its text is the input typed so far,
+2. **The scene** (`Loop.views`, `Loop.scene`). Each window the layout
+   places, in drawing order, is a view in the rectangle `EditorState.rects`
+   gives it in the frame; a window the layout does not show (monocle's
+   others) is not in the scene. While a prompt is open the minibuffer's
+   window is a view too, in the strip the minibuffer's place then takes
+   (`Editor/State.lean`, "The window list, the layout and their
+   invariants"): its text is the input typed so far,
    its selection the cursor in it, and it is the focused view while it has
    the focus. A view
    whose buffer's text is at the revision it was last shown at keeps the

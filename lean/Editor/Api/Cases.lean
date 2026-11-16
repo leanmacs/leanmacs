@@ -410,22 +410,20 @@ def nextMarker (text : TextId) : TextM Nat := do
 showing another buffer in one. -/
 def windowCases : List Case :=
   [{  name :=
-        "split then close: a split puts a new view, with an id no view had, below the view it was made from, on the same buffer, with markers of its own that read as the source's, and leaves the focus; closing the new view gives back the tree, the windows and the focus from before the split, and the source window's markers are the ones it had, where they were"
+        "split then close: a split puts a new view, with an id no view had, right after the view it was made from in the frame's list, on the same buffer, with markers of its own that read as the source's, and leaves the focus; closing the new view gives back the frame, the windows and the focus from before the split, and the source window's markers are the ones it had, where they were"
       start := holding "héllo" (selection #[(1, 3)])
       run := do
         let view : ViewId := ⟨0⟩
         let before ← editorState
         let some source := before.window? view | return false
         let markers := (← scratch.marker source.selection, ← scratch.marker source.scroll)
-        let .ok made ← view.split .rows | return false
+        let .ok made ← view.split | return false
         let split ← editorState
         let some new := split.window? made | return false
         let copies := (← scratch.marker new.selection, ← scratch.marker new.scroll)
         let .ok () ← made.close | return false
         let after ← editorState
-        return made == ⟨1⟩ && split.wellFormed &&
-            split.frame.tree ==
-              .split .rows (.split .rows (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer &&
+        return made == ⟨1⟩ && split.wellFormed && split.frame.windows == #[⟨0⟩, ⟨1⟩] &&
             split.frame.focused == view &&
             new.buffer == source.buffer &&
             new.selection != source.selection &&
@@ -437,20 +435,18 @@ def windowCases : List Case :=
             (← scratch.marker source.selection) == markers.1 &&
             (← scratch.marker source.scroll) == markers.2 },
     { name :=
-        "a second split, along columns, puts its view to the right, with the next id and not the closed view's; focusing a view in the tree focuses it; and splitting, closing and focusing a view with no window are each refused with noSuchWindow, with no marker made"
+        "a second split puts its view after its source, with the next id and not the closed view's; focusing a view in the list focuses it; and splitting, closing and focusing a view with no window are each refused with noSuchWindow, with no marker made"
       run := do
         let view : ViewId := ⟨0⟩
-        let .ok first ← view.split .rows | return false
+        let .ok first ← view.split | return false
         let .ok () ← first.close | return false
-        let .ok second ← view.split .columns | return false
+        let .ok second ← view.split | return false
         let .ok () ← second.focus | return false
         let state ← editorState
         let absent : ViewId := ⟨9⟩
         let marked ← nextMarker scratch
-        let split ← absent.split .rows
-        return first == ⟨1⟩ && second == ⟨2⟩ &&
-            state.frame.tree ==
-              .split .rows (.split .columns (.window ⟨0⟩) (.window ⟨2⟩)) .minibuffer &&
+        let split ← absent.split
+        return first == ⟨1⟩ && second == ⟨2⟩ && state.frame.windows == #[⟨0⟩, ⟨2⟩] &&
             state.frame.focused == second &&
             state.wellFormed &&
             refusedAs split (.noSuchWindow absent) &&
@@ -459,13 +455,12 @@ def windowCases : List Case :=
             (← nextMarker scratch) == marked + 1 &&
             (← editorState) == state },
     { name :=
-        "close the only window: it is refused with onlyWindow, and the tree and the rest of the state are as they were"
+        "close the only window: it is refused with onlyWindow, and the frame and the rest of the state are as they were"
       run := do
         let before ← editorState
         let closed ← (⟨0⟩ : ViewId).close
         let after ← editorState
-        return refusedAs closed .onlyWindow && after.frame.tree == before.frame.tree &&
-            after == before },
+        return refusedAs closed .onlyWindow && after.frame == before.frame && after == before },
     { name :=
         "showing another buffer in a view puts the view's window on it, with a scroll anchor at its start and one cursor at its start of the shape the view's selection had, and the view of the next scene reads that buffer's text; showing the buffer the view shows changes nothing and marks nothing; a buffer there is none of is refused with noSuchBuffer, and a view with no window with noSuchWindow"
       start := holding "first" (selection #[(2, 4)] .inclusive)
@@ -628,7 +623,7 @@ def promptCases : List Case :=
         let some target := state.target? view | return false
         let text := target.buffer.text
         let marked := (← nextMarker scratch, ← nextMarker text)
-        let split ← view.split .rows
+        let split ← view.split
         let closed ← view.close
         let shown ← view.show ⟨0⟩
         let elsewhere ← (⟨0⟩ : ViewId).show target.window.buffer

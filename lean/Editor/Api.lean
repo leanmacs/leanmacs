@@ -173,13 +173,14 @@ Each operation is a request over the layout operations of
 `Editor/State.lean`, which keep the layout invariants, and is refused, as
 a value, with their `LayoutRefusal`.
 
-- `ViewId.split view axis` makes a new window on the same buffer, below
-  the view for `Axis.rows` and to its right for `Axis.columns`, and returns
-  its view. The new window has markers of its own: copies, marked on the
-  buffer's text, of the source window's scroll anchor and selection as
+- `ViewId.split view` makes a new window on the same buffer, right after
+  the view in the frame's list, and returns its view; the layout says
+  where it goes. The new window has markers of its own: copies, marked on
+  the buffer's text, of the source window's scroll anchor and selection as
   they are. The focus stays.
-- `ViewId.close` removes a window. The last one is refused (`onlyWindow`).
-  Closing the view a split made gives back the tree from before the split.
+- `ViewId.close` removes a window: it leaves the list, and the layout gives
+  its space to the rest. The last one is refused (`onlyWindow`). Closing
+  the view a split made gives back the frame from before the split.
   The window's markers are given up by the loop once the command has run
   to its end (`Editor/Loop.lean`, "What a finished command gave up").
 - `ViewId.focus` focuses a window.
@@ -1207,13 +1208,13 @@ of `view`, with its buffer's line ending (`Target.insertLineBreak`). -/
 def insertLineBreak (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
   view.onTarget (·.insertLineBreak)
 
-/-- Splits the window of `view` along `axis`: a new window on the same
-buffer, below it for rows and to its right for columns, whose markers are
-copies of the window's scroll anchor and selection as they are, and returns
-the new view. The focus stays. Refused with `noSuchWindow` for a view with
+/-- Splits the window of `view`: a new window on the same buffer, right
+after it in the frame's list, whose markers are copies of the window's
+scroll anchor and selection as they are, and returns the new view. The
+focus stays. Refused with `noSuchWindow` for a view with
 no window, and with `ofMinibuffer` for the minibuffer's view, each with no
 marker made. -/
-def split (view : ViewId) (axis : Axis) : EditorM (Except LayoutRefusal ViewId) := do
+def split (view : ViewId) : EditorM (Except LayoutRefusal ViewId) := do
   if (← editorState).minibufferView? == some view then
     return .error (.ofMinibuffer view)
   match ← view.target with
@@ -1223,13 +1224,13 @@ def split (view : ViewId) (axis : Axis) : EditorM (Except LayoutRefusal ViewId) 
     let text := target.buffer.text
     let scroll ← text.mark (← text.marker target.window.scroll)
     let selection ← text.mark (← text.marker target.window.selection)
-    EditorState.ask (.split view axis scroll selection)
+    EditorState.ask (.split view scroll selection)
 
-/-- Closes the window of `view`: its sibling takes the place of the split
-that held both. Refused with `noSuchWindow` for a view with no window, with
-`ofMinibuffer` for the minibuffer's view, and with `onlyWindow` for the
-last window of the tree, which the minibuffer's window does not count
-towards. -/
+/-- Closes the window of `view`: it leaves the list, and the layout gives
+its space to the rest. Refused with `noSuchWindow` for a view with no
+window, with `ofMinibuffer` for the minibuffer's view, and with
+`onlyWindow` for the last window of the list, which the minibuffer's
+window does not count towards. -/
 def close (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
   return (← EditorState.ask (.removeWindow view)).map fun _ => ()
 

@@ -185,9 +185,9 @@ inductive StateRequest where
   | addMinorMode (id : BufferId) (name : String)
   /-- Remove the minor mode called `name` from the buffer `id`. -/
   | removeMinorMode (id : BufferId) (name : String)
-  /-- Split the window `view` along `axis`: a new window on its buffer, with
-  `scroll` and `selection` as its markers. -/
-  | split (view : ViewId) (axis : Axis) (scroll selection : MarkerId)
+  /-- Split the window `view`: a new window on its buffer, right after it in
+  the frame's list, with `scroll` and `selection` as its markers. -/
+  | split (view : ViewId) (scroll selection : MarkerId)
   /-- Remove the window `view`. -/
   | removeWindow (view : ViewId)
   /-- Focus the window `view`. -/
@@ -370,7 +370,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setMajorMode view name, state => state.setMajorModeOf view name
   | .addMinorMode id name, state => state.addMinorMode id name
   | .removeMinorMode id name, state => state.removeMinorMode id name
-  | .split view axis scroll selection, state => state.splitWindow view axis scroll selection
+  | .split view scroll selection, state => state.splitWindow view scroll selection
   | .removeWindow view, state => state.removeWindow view
   | .focus view, state => state.focusWindow view
   | .show view buffer scroll selection, state => state.showBuffer view buffer scroll selection
