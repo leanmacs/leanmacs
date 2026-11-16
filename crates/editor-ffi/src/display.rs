@@ -595,13 +595,15 @@ pub unsafe extern "C" fn editor_ffi_picture_from_png(
 
 /// Fills `out` with the bytes of a PNG file of the picture `width` pixels
 /// across and `height` down whose pixels are the `len` bytes at `rgba`
-/// ([`Image::to_png`]), with the status 0. False, with `out` empty, when
-/// the pixels are not that size. For tests.
+/// ([`Image::to_png`]), with the status 0, and `out_reason` with nothing.
+/// False, with `out` empty and `out_reason` the refusal's sentence, when
+/// the pixels are not that size or the picture is one no PNG file can
+/// hold, such as one 0 by 0. For tests.
 ///
 /// # Safety
 ///
-/// `rgba` points to `len` readable bytes and `out` to a writable
-/// [`RawWords`].
+/// `rgba` points to `len` readable bytes, `out` to a writable
+/// [`RawWords`] and `out_reason` to a writable [`RawText`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_picture_to_png(
     width: u64,
@@ -609,24 +611,31 @@ pub unsafe extern "C" fn editor_ffi_picture_to_png(
     rgba: *const u8,
     len: usize,
     out: *mut RawWords,
+    out_reason: *mut RawText,
 ) -> bool {
     // SAFETY: the caller guarantees the pointer and the length.
     let rgba = unsafe { crate::words::borrow(rgba, len) };
     let sized = u32::try_from(width).ok().zip(u32::try_from(height).ok());
-    let image = sized.and_then(|(width, height)| {
-        let pixels = usize::try_from(u64::from(width) * u64::from(height) * 4).ok()?;
-        (pixels == rgba.len()).then(|| Image {
-            width,
-            height,
-            rgba: rgba.to_vec(),
+    let image = sized
+        .and_then(|(width, height)| {
+            let pixels = usize::try_from(u64::from(width) * u64::from(height) * 4).ok()?;
+            (pixels == rgba.len()).then(|| Image {
+                width,
+                height,
+                rgba: rgba.to_vec(),
+            })
         })
-    });
-    let (bytes, written) = match image {
-        Some(image) => (image.to_png(), true),
-        None => (Vec::new(), false),
+        .ok_or_else(|| String::from("the picture's pixels are not its width by its height"));
+    let (bytes, reason, written) = match image.and_then(|image| image.to_png()) {
+        Ok(bytes) => (bytes, String::new(), true),
+        Err(reason) => (Vec::new(), reason, false),
     };
-    // SAFETY: the caller guarantees `out` is writable.
-    unsafe { out.write(RawWords::with_status(DisplayStatus::Done as u64, bytes)) };
+    let (text, text_len) = text::lend(reason);
+    // SAFETY: the caller guarantees both are writable.
+    unsafe {
+        out.write(RawWords::with_status(DisplayStatus::Done as u64, bytes));
+        out_reason.write(RawText { text, text_len });
+    }
     written
 }
 

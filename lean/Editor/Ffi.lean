@@ -2214,7 +2214,9 @@ def Picture.ofPng (bytes : ByteArray) : IO Picture :=
 private opaque Picture.toPngRaw (width height : UInt64) (rgba : @& ByteArray) : IO ByteArray
 
 /-- The bytes of a PNG file of `picture`: RGB, 8 bits a channel, its alpha
-not written. An `IO` error when its pixels are not its size. For tests. -/
+not written. An `IO` error with the library's reason when its pixels are
+not its size or it is one no PNG file can hold, such as one 0 by 0. For
+tests. -/
 def Picture.toPng (picture : Picture) : IO ByteArray :=
   Picture.toPngRaw picture.width.toUInt64 picture.height.toUInt64 picture.rgba
 

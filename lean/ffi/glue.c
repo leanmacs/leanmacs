@@ -1400,7 +1400,8 @@ bool editor_ffi_picture_from_png(const uint8_t *bytes, size_t len,
                                  editor_ffi_raw_text *out_reason);
 bool editor_ffi_picture_to_png(uint64_t width, uint64_t height,
                                const uint8_t *rgba, size_t len,
-                               editor_ffi_raw_words *out);
+                               editor_ffi_raw_words *out,
+                               editor_ffi_raw_text *out_reason);
 
 // Lean's `RawPicture` for a record the library filled: the object field
 // `rgba`, then `width` and `height`. The library's buffer is handed back.
@@ -1463,15 +1464,17 @@ lean_obj_res editor_glue_picture_from_png(b_lean_obj_arg bytes) {
 lean_obj_res editor_glue_picture_to_png(uint64_t width, uint64_t height,
                                         b_lean_obj_arg rgba) {
   editor_ffi_raw_words raw;
-  bool written = editor_ffi_picture_to_png(
-      width, height, byte_array_bytes(rgba), byte_array_len(rgba), &raw);
+  editor_ffi_raw_text reason;
+  bool written =
+      editor_ffi_picture_to_png(width, height, byte_array_bytes(rgba),
+                                byte_array_len(rgba), &raw, &reason);
   lean_object *png = byte_array_copy(raw.words, raw.len);
   editor_ffi_text_free(raw.words, raw.len);
   if (!written) {
     lean_dec(png);
-    return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(
-        "the picture's pixels are not its width by its height")));
+    return reason_error(reason);
   }
+  editor_ffi_text_free(reason.text, reason.text_len);
   return lean_io_result_mk_ok(png);
 }
 

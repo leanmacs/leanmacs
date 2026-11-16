@@ -2661,6 +2661,13 @@ def pictureChecks (_ : Unit) : List Check :=
       run := do
         let picture := pictureOf [black, white, grey, red]
         return (← Editor.Ffi.Picture.ofPng (← picture.toPng)) == picture },
+    { name := "a picture of no pixels is refused a PNG file with a reason"
+      run := do
+        try
+          discard <| Editor.Ffi.Picture.toPng { width := 0, height := 0, rgba := .empty }
+          pure false
+        catch error =>
+          pure !(toString error).isEmpty },
     { name := "bytes that are no PNG file and a font that is none are refused with a reason"
       run := do
         let notPng ←

@@ -34,7 +34,13 @@ fn main() -> ExitCode {
         target: common::TARGET,
     });
     let image = renderer.image();
-    let bytes = image.to_png();
+    let bytes = match image.to_png() {
+        Ok(bytes) => bytes,
+        Err(reason) => {
+            eprintln!("reference: cannot write {path}: {reason}");
+            return ExitCode::FAILURE;
+        }
+    };
     #[expect(
         clippy::disallowed_methods,
         reason = "this example is the one place the reference image is written, on demand; no test writes a file"

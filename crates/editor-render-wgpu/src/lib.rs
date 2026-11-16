@@ -88,8 +88,9 @@ impl Image {
 
     /// The picture as the bytes of a PNG file: RGB, 8 bits a channel, at
     /// high compression. Its alpha is not written: what this crate draws
-    /// is opaque everywhere.
-    pub fn to_png(&self) -> Vec<u8> {
+    /// is opaque everywhere. Refused, with a sentence, when the picture
+    /// has no pixels across or down, which a PNG file cannot hold.
+    pub fn to_png(&self) -> Result<Vec<u8>, String> {
         png::encode(self)
     }
 

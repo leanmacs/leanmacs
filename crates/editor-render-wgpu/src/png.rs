@@ -55,8 +55,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Image, String> {
 }
 
 /// `image` as the bytes of a PNG file: RGB, 8 bits a channel, without its
-/// alpha.
-pub(crate) fn encode(image: &Image) -> Vec<u8> {
+/// alpha. Refused, with the encoder's sentence, when the encoder will not
+/// write it: a picture 0 pixels across or down, which a PNG file cannot
+/// hold.
+pub(crate) fn encode(image: &Image) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     let mut encoder = library::Encoder::new(&mut bytes, image.width, image.height);
     encoder.set_color(library::ColorType::Rgb);
@@ -69,16 +71,16 @@ pub(crate) fn encode(image: &Image) -> Vec<u8> {
         .iter()
         .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
         .collect();
-    // Writing to memory fails only on a picture whose data is not its
-    // size, which an `Image` of this crate never is.
-    let written = encoder.write_header().and_then(|mut writer| {
-        writer.write_image_data(&rgb)?;
-        writer.finish()
-    });
-    if written.is_err() {
-        bytes.clear();
-    }
-    bytes
+    // Writing to memory fails on a picture of no pixels, and on one whose
+    // data is not its size, which an `Image` of this crate never is.
+    encoder
+        .write_header()
+        .and_then(|mut writer| {
+            writer.write_image_data(&rgb)?;
+            writer.finish()
+        })
+        .map_err(|error| format!("a picture no PNG file can hold: {error}"))?;
+    Ok(bytes)
 }
 
 /// How `image` differs from `other`: `None` when they are not the same
@@ -125,7 +127,7 @@ mod tests {
     #[test]
     fn a_picture_comes_back_from_its_png_file() {
         let image = three_by_two();
-        let bytes = image.to_png();
+        let bytes = image.to_png().expect("a PNG file");
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
         assert_eq!(Image::from_png(&bytes), Ok(image));
     }
@@ -136,9 +138,22 @@ mod tests {
         // whatever the alpha written was.
         let mut image = three_by_two();
         image.rgba[3] = 0x10;
-        let read = Image::from_png(&image.to_png()).expect("a PNG file");
+        let read = Image::from_png(&image.to_png().expect("a PNG file")).expect("a PNG file");
         assert_eq!(read.pixel(0, 0).map(|pixel| pixel[3]), Some(0xff));
         assert_eq!(read.rgba[..3], image.rgba[..3]);
+    }
+
+    #[test]
+    fn a_picture_of_no_pixels_is_not_written() {
+        // A PNG file has at least one pixel each way: a picture 0 by 0,
+        // what a display draws before any scene, is refused with a reason.
+        let empty = Image {
+            width: 0,
+            height: 0,
+            rgba: Vec::new(),
+        };
+        let refused = empty.to_png().expect_err("no PNG file of no pixels");
+        assert!(!refused.is_empty());
     }
 
     #[test]

@@ -1079,15 +1079,9 @@ fn a_picture_crosses_to_a_png_file_and_back() {
     let rgba: Vec<u8> = (0..4u8)
         .flat_map(|index| [index * 60, 7, 255 - index * 60, 0xff])
         .collect();
-    let mut png = MaybeUninit::uninit();
-    // SAFETY: the buffer is alive for the call, `png` writable and filled
-    // before it is read.
-    let (written, (status, bytes)) = unsafe {
-        let written = editor_ffi_picture_to_png(2, 2, rgba.as_ptr(), rgba.len(), png.as_mut_ptr());
-        (written, take_bytes(png.assume_init()))
-    };
+    let (written, status, bytes, reason) = to_png(2, 2, &rgba);
     assert!(written);
-    assert_eq!(status, 0);
+    assert_eq!((status, reason), (0, String::new()));
     let (mut back, mut reason) = (MaybeUninit::uninit(), MaybeUninit::uninit());
     // SAFETY: as above.
     let (read, back, reason) = unsafe {
@@ -1107,14 +1101,12 @@ fn a_picture_crosses_to_a_png_file_and_back() {
     assert_eq!((back, reason), ((2, 2, rgba.clone()), String::new()));
     // A picture whose pixels are not its size is not written, and bytes
     // that are no PNG file are not read.
-    let mut refused = MaybeUninit::uninit();
-    // SAFETY: as above.
-    let (written, (_, bytes)) = unsafe {
-        let written =
-            editor_ffi_picture_to_png(3, 2, rgba.as_ptr(), rgba.len(), refused.as_mut_ptr());
-        (written, take_bytes(refused.assume_init()))
-    };
-    assert!(!written && bytes.is_empty());
+    let (written, _, bytes, reason) = to_png(3, 2, &rgba);
+    assert!(!written && bytes.is_empty() && !reason.is_empty());
+    // Nor is a picture of no pixels, what a display draws before any
+    // scene: a PNG file has at least one pixel each way.
+    let (written, _, bytes, reason) = to_png(0, 0, &[]);
+    assert!(!written && bytes.is_empty() && !reason.is_empty());
     let (mut back, mut reason) = (MaybeUninit::uninit(), MaybeUninit::uninit());
     // SAFETY: as above.
     let (read, back, reason) = unsafe {
@@ -1129,6 +1121,27 @@ fn a_picture_crosses_to_a_png_file_and_back() {
     assert!(!read);
     assert_eq!(back, (0, 0, Vec::new()));
     assert!(!reason.is_empty());
+}
+
+/// What `editor_ffi_picture_to_png` answers for the picture `width` by
+/// `height` of the pixels `rgba`: whether it wrote, the status and bytes
+/// it filled, and its reason.
+fn to_png(width: u64, height: u64, rgba: &[u8]) -> (bool, u64, Vec<u8>, String) {
+    let (mut png, mut reason) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: the buffer is alive for the call, both records writable and
+    // filled before they are read.
+    unsafe {
+        let written = editor_ffi_picture_to_png(
+            width,
+            height,
+            rgba.as_ptr(),
+            rgba.len(),
+            png.as_mut_ptr(),
+            reason.as_mut_ptr(),
+        );
+        let (status, bytes) = take_bytes(png.assume_init());
+        (written, status, bytes, take_text(reason.assume_init()))
+    }
 }
 
 /// The bytes of a filled record, with its status; the buffer is handed
