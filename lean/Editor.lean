@@ -13,7 +13,6 @@ import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
 import Editor.Themes
-import Editor.Workspace.Finder
 
 /-!
 # The editor
@@ -133,7 +132,12 @@ Projects, workspaces and locations are here too (`Editor/Workspace.lean`):
 which codebase and which checkout a buffer belongs to, as plain values,
 and the finder that answers a directory's workspace through config, git
 and marker files (`Editor/Workspace/Finder.lean`, `Workspace.find`), a job
-like any other. Its model and its contract
+like any other. A buffer's workspace is attached when its file opens
+(`Editor/Workspace/Attach.lean`, which comes with the file commands and
+brings the data and the finder with it), and
+`workspace-current` says it; their registrations
+(`Editor/Workspace/Compiled.lean`) name the registry and are not
+imported. Its model and its contract
 (`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
 tests, and are not imported.
 

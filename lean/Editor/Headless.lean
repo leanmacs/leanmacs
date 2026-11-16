@@ -23,6 +23,7 @@ import Editor.Text.Real
 import Editor.Themes.Compiled
 import Editor.Watch.Real
 import Editor.Window
+import Editor.Workspace.Compiled
 
 /-!
 # The headless host
@@ -184,7 +185,11 @@ as before, so reload and job completion work as they did.
   `ex`, so that key opens the ex line. And it is handed the command that
   loads a theme and the themes that ship (`Themes.commands`,
   `Themes.shipped`, `Editor/Themes/Compiled.lean`): `load-theme`, and the
-  theme `default`, the built-in one. The ex line is handed no key
+  theme `default`, the built-in one. And it is handed the workspace
+  command and the job that finds a file's workspace (`Workspace.commands`,
+  `Workspace.jobs`, `Editor/Workspace/Compiled.lean`): `workspace-current`,
+  and `find-workspace`, which a file's open starts for its directory when
+  no answer is cached, so a script that opens a file has that job too. The ex line is handed no key
   binding: the Vim scheme's keys are its states' own keymaps. The frame's
   bindings bind `s-q` to `quit`. Every default key names a command the host
   is handed.
@@ -2087,7 +2092,8 @@ source, `emit` as the output and stderr as the log, and, as its compiled
 ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
 the buffer commands, the frame's commands with their bindings, the command that loads a theme
-with the themes that ship, and the menu bar (`Menu.standard`) with its
+with the themes that ship, the workspace command with the job that finds a
+file's workspace, and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
 
@@ -2103,9 +2109,10 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     commands :=
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
         FrameCommands.commands ++
-        Themes.commands
+        Themes.commands ++
+        Workspace.commands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
-    compiledJobs := Files.jobs
+    compiledJobs := Files.jobs ++ Workspace.jobs
     modes := Minibuffer.modes, ex := Ex.bindings, themes := Themes.shipped
     segments := ModeLine.shipped, log := IO.eprintln }
 

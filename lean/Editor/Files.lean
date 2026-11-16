@@ -1,6 +1,4 @@
-import Editor.Api
-import Editor.Command.Call
-import Editor.Job
+import Editor.Workspace.Attach
 
 /-!
 # Files: opening a file into a buffer, saving a buffer, and reloading one
@@ -40,6 +38,11 @@ are in `Editor/Files/Compiled.lean`.
   break), and shows the buffer (`ViewId.show`), with one cursor at its
   start. The buffer's history is a new tree, saved at its root, so the
   buffer is not modified.
+- **Workspace.** Once the buffer holds the file, `opened` hands it to
+  `Workspace.attach` (`Editor/Workspace/Attach.lean`): the cached
+  workspace of the file's directory is the buffer's at once, and otherwise
+  the job `find-workspace` is started to find it, a start that is refused
+  being silent. A path a buffer already holds is shown and asks nothing.
 - **The path is matched twice**: when the command runs, and again when the
   result is delivered. Two opens of one path can be in flight, and the
   first delivery makes the buffer: the second then shows that buffer and
@@ -372,6 +375,7 @@ def takeIn (order : LoadOrder) (view : ViewId) (reply : Except FileError File.Lo
     let .ok () ←
       buffer.attachFile path loaded.stamp
           (loaded.endings.dominant.getD .lf) | message (notShown path)
+    Workspace.attach buffer path
     let .ok () ← view.show buffer | message (notShown path)
 
 /-- The command a finished load job hands the loop: what the reply to the

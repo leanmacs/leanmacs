@@ -55,6 +55,7 @@ import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
 import Editor.WindowCheck
+import Editor.Workspace.Compiled
 import Editor.Workspace.Contract
 
 /-!
@@ -26440,6 +26441,213 @@ def workspaceStateChecks : List Check :=
               state.workspaces.getOfProject countStore (.remote "github.com/o/r") == 5
           | none => false }]
 
+/-- The `origin` of the repository of the workspace driver checks. -/
+def workspaceOrigin : String :=
+  "git@github.com:o/r.git"
+
+/-- The world of the workspace driver checks: a main checkout at `/r` on
+`main` and a linked worktree of it at `/w` on `feature`, both with
+`workspaceOrigin`; `/x` is in no repository and holds no marker. -/
+def workspaceWorld : Workspace.World :=
+  { repositories :=
+      #[{ toplevel := "/r", commonDir := "/r/.git", origin := some workspaceOrigin },
+        { toplevel := "/w", commonDir := "/r/.git", branch := some "feature"
+          origin := some workspaceOrigin }]
+    markerDirectories := #["/r/.git"], markers := #["/w/.git"] }
+
+/-- The jobs of the workspace driver checks: the find job and the file
+command checks' jobs. -/
+def workspaceJobs (name : String) : Option (List Argument → Work) :=
+  if name == Workspace.findJob then some Workspace.findWork else fileJobs Files.limit name
+
+/-- What a step of the workspace driver checks is handed: `C-o a`, `C-o b`
+and `C-o c` open `a.lean`, `b.lean` and `c.lean` in `/r/src`, `C-o w`
+opens `/w/src/b.lean` and `C-o x` opens `/x/a.txt`; `C-o i` runs
+`workspace-current`; `C-o n` makes a buffer `made` that inherits the
+workspace of the window's buffer, and a buffer `bare` that does not. -/
+def workspaceKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    [("C-o a", opens "/r/src/a.lean"), ("C-o b", opens "/r/src/b.lean"),
+      ("C-o c", opens "/r/src/c.lean"), ("C-o w", opens "/w/src/b.lean"),
+      ("C-o x", opens "/x/a.txt"), ("C-o i", invoke Workspace.currentName),
+      ("C-o n", invoke "inherit")]
+    [(Files.openName, fun call => do
+        Files.openCommand call
+        return none),
+      (Workspace.currentName, fun call => do
+        Workspace.currentCommand call
+        return none),
+      ("inherit", fun call => do
+        if let .ok made← createBuffer "made" then
+          discard <| made.inheritWorkspace call.target.window.buffer
+        discard <| createBuffer "bare"
+        return none)]
+
+/-- A driver with the keys of the workspace driver checks and the jobs
+`registered`, whose jobs meet the processes and the files of
+`workspaceWorld` for its three directories, with the files the keys open;
+`none` if making the state was refused. -/
+def workspaceDriver (registered : String → Option (List Argument → Work) := workspaceJobs) :
+    Option TestDriver :=
+  let model := workspaceWorld.jobModel "git" #["/r/src", "/w/src", "/x"]
+  let files :=
+    [("/r/src/a.lean", "a"), ("/r/src/b.lean", "b"), ("/r/src/c.lean", "c"), ("/w/src/b.lean", "w"),
+          ("/x/a.txt", "x")].foldl
+      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
+  (Loop.Driver.over workspaceKeys registered (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver => { driver with jobs := { model with files } }
+
+/-- `driver` once `keys` are pressed and every job they start, and every job
+those jobs' commands start, is finished, oldest first. -/
+def settledAfter (driver : TestDriver) (keys : String) : TestDriver :=
+  (List.range 8).foldl
+    (fun driver _ =>
+      match driver.pending[0]? with
+      | some job => (driver.finish job.id).1
+      | none => driver)
+    (fedTo driver (presses keys)).1
+
+/-- The workspace of the buffer the view 0 of `driver` shows, and its
+project. -/
+def shownWorkspace (driver : TestDriver) : Option (Workspace × Project) := do
+  driver.loop.state.workspaceOf? (← showing driver).id
+
+/-- The two git commands the finder runs in `directory`. -/
+def gitAsked (directory : System.FilePath) : Array Process.Command :=
+  #[Workspace.Git.revParseCommand "git" directory, Workspace.Git.originCommand "git" directory]
+
+/-- The checks of a buffer's workspace (`Editor/Workspace/Attach.lean`), on
+the loop's driver over the editor's models and the job model of
+`workspaceWorld`. -/
+def workspaceChecks : List Check :=
+  [{  name :=
+        "a file under /r/src opens into a buffer whose workspace has root /r, branch main and location local /r, and whose project is identified by the normalised origin, with the common git directory /r/.git"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            (shownWorkspace opened).map
+                (fun (workspace, project) =>
+                  (workspace.location, workspace.branch, project.identity, project.commonDir,
+                    project.remote)) ==
+              some
+                (.local "/r", some (.named "main"), .remote "github.com/o/r",
+                  some ("/r/.git" : System.FilePath), some workspaceOrigin) },
+    { name :=
+        "a file in the linked worktree /w has workspace root /w and branch feature, of the same project as /r's: two workspaces, each with its own store, and one project, with one store"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let main := settledAfter driver "C-o a"
+            let both := settledAfter main "C-o w"
+            let state := both.loop.state
+            match shownWorkspace main, shownWorkspace both with
+            | some (first, project), some (second, shared) =>
+              let (_, state) := state.handle (.setWorkspaceValue first.location "x" (.nat 1))
+              let (_, state) := state.handle (.setProjectValue project.identity "h" (.nat 2))
+              second.location == .local "/w" && second.branch == some (.named "feature") &&
+                shared == project &&
+                state.workspaces.workspaceValue? second.location "x" == none &&
+                state.workspaces.workspaceValue? first.location "x" == some (.nat 1) &&
+                state.workspaces.projectValue? shared.identity "h" == some (.nat 2) &&
+                state.workspaces.workspaces.size == 2 &&
+                state.workspaces.projects.size == 1
+            | _, _ => false },
+    { name :=
+        "with no adapter answering, a buffer has no workspace, and workspace-current says so, naming the file's directory"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o x"
+            let asked := settledAfter opened "C-o i"
+            (shownWorkspace opened).isNone &&
+              (showing opened).map (·.buffer.name) == some "a.txt" &&
+              echoOf asked == some (Workspace.noWorkspace "/x") },
+    { name :=
+        "two open workspaces of one project are labelled name@branch, and workspace-current in /r's buffer says its workspace and lists the project's other open workspace"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let both := settledAfter (settledAfter driver "C-o a") "C-o w"
+            let back := settledAfter both "C-o a"
+            let asked := settledAfter back "C-o i"
+            match showing back, shownWorkspace back, shownWorkspace both with
+            | some shown, some (main, _), some (worktree, _) =>
+              main.label == "r@main" && worktree.label == "r@feature" &&
+                back.loop.state.workspaces.others main == #[worktree] &&
+                echoOf asked == some (Workspace.describe back.loop.state shown.id)
+            | _, _, _ => false },
+    { name :=
+        "a second file in the same directory asks git nothing and starts no find job, and has the workspace; once a reload has installed a new generation, the next file asks git again"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let first := settledAfter driver "C-o a"
+            let second := settledAfter first "C-o b"
+            let reloaded :=
+              { second with
+                keys :=
+                  { second.keys with
+                    registered := { second.keys.registered with generation := 1 } } }
+            let third := settledAfter reloaded "C-o c"
+            first.jobs.processes.started == gitAsked "/r/src" &&
+              second.jobs.processes.started == gitAsked "/r/src" &&
+              second.next == first.next + 1 &&
+              (shownWorkspace second).map (·.1.location) == some (.local "/r") &&
+              third.jobs.processes.started == gitAsked "/r/src" ++ gitAsked "/r/src" &&
+              (shownWorkspace third).map (·.1.location) == some (.local "/r") },
+    { name :=
+        "a buffer made from a buffer with a workspace inherits it, and one made without inheriting has none"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let made := settledAfter (settledAfter driver "C-o a") "C-o n"
+            let state := made.loop.state
+            match state.findBuffer "made", state.findBuffer "bare" with
+            | some inherited, some bare =>
+              (state.workspaceOf? inherited).isSome &&
+                state.workspaceOf? inherited == shownWorkspace made &&
+                (state.workspaceOf? bare).isNone
+            | _, _ => false },
+    { name :=
+        "with no find job registered, a file still opens, its buffer has no workspace, and nothing is said"
+      run :=
+        pure <|
+          match workspaceDriver (fileJobs Files.limit) with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            (showing opened).map (·.buffer.name) == some "a.lean" &&
+              (shownWorkspace opened).isNone &&
+              echoOf opened == some "" &&
+              opened.jobs.processes.started.isEmpty },
+    { name :=
+        "a find order crosses as arguments and back, its roots with and without a project, and arguments that are no order read as none; the find job started with them fails"
+      run :=
+        let orders : List Workspace.FindOrder :=
+          [{ buffer := ⟨1⟩, directory := "/r/src", generation := 0 },
+            { buffer := ⟨4⟩, directory := "/a b/é", git := "/usr/bin/git", generation := 7
+              roots := #[{ root := "/r/tools", project := some "tools" }, { root := "/notes" }] }]
+        pure
+          (orders.all
+              (fun order => Workspace.FindOrder.ofArguments? order.arguments == some order) &&
+            [[], [.nat 1, .str "/r"], [.nat 1, .str "/r", .str "git", .nat 0, .str "/t"]].all
+              (Workspace.FindOrder.ofArguments? · == none) &&
+            ((Workspace.findWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
+
 /-- The names of the workspace finder's contract properties
 (`Editor/Workspace/Contract.lean`) that do not hold of the pure model
 (`World.find`), or of the real finder run on the job model of the
@@ -26567,7 +26775,8 @@ def checks : List Check :=
     clipboardCommandChecks ++
     workspaceDataChecks ++
     workspaceGitChecks ++
-    workspaceStateChecks
+    workspaceStateChecks ++
+    workspaceChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
