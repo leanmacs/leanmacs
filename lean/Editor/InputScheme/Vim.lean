@@ -19,8 +19,8 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
 
 | Edit | Invocation |
 |---|---|
-| `move m c` | `moveCommand`, with `[.str m, .nat c]` |
-| `operate o over c r` | `operateCommand`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""` |
+| `move m c a` | `moveCommand`, with `[.str m, .nat c]`, or `[.str m, .str a, .nat c]` when the motion has an argument |
+| `operate o over c r` | `operateCommand`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""`. A motion's argument, when it has one, is a string right after its name: `[.str o.name, .str "motion", .str m, .str a, .nat c, .str r]` |
 | `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
 | `replay change inserted` | `repeatCommand`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
 
@@ -29,6 +29,10 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
 - **An absent count is `.nat 0`** and an absent register `.str ""`: an
   invocation's arguments have no optional kind, and a typed count is never
   0. In an edit they stay optional, since no count is not a count of 1.
+- **A motion's argument, when it has one, is the string right after the
+  motion's name**, in a move and over a motion, so the register stays the
+  last argument of an operator's layout, which dot repeat reads
+  (`Editor/Evil/Repeat.lean`).
 - **An operator and a command carry what the grammar cannot look up**:
   whether an edit with it changes text (`Edit.changes`) and which Vim state
   the view is in afterwards (`Edit.enters`).
@@ -93,6 +97,22 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   any key, so it can be bound to a motion. Digits are not bound in a
   keymap: the rule for `0` needs the count typed so far, which a keymap
   does not see.
+
+## Motions that take a character
+
+`f`, `t`, `F` and `T` are bound to `Bound.charMotion`: the motion waits for
+the key after it, which names the character it finds.
+
+- **The key is kept as typed** (`State.awaitsChar`), so it is pending
+  alone, and it folds the count being typed into the multiplier, as an
+  operator does: `2f` then `x` is a count of 2, and so is `d2fx`.
+- **The next key is read before counts and keymaps**, as the key after the
+  register prefix is: a key that prints names the character, a digit
+  included, so `f1` finds a `1`; `TAB` names a tab (`Key.character?`).
+  It completes `Edit.move name count (some char)`, or, with an operator
+  waiting, the operator over `.motion name (some char)`.
+- **Any other key resets the edit begun**: `f` then `<Escape>` does
+  nothing and leaves nothing pending, as in Vim.
 
 ## Registers
 
@@ -331,6 +351,9 @@ speech, named by its vocabulary name. -/
 inductive Bound where
   /-- The motion of this vocabulary name. -/
   | motion (name : String)
+  /-- The motion of this vocabulary name, which takes the character the next
+  key names as its argument: `f`, `t`, `F` and `T`. -/
+  | charMotion (name : String)
   /-- An operator. -/
   | operator (operator : Operator)
   /-- The text object of this vocabulary name. -/
@@ -354,8 +377,9 @@ def Bound.isMode : Bound → Bool
 
 /-- What an operator acts on. -/
 inductive Over where
-  /-- What the motion of this vocabulary name covers. -/
-  | motion (name : String)
+  /-- What the motion of this vocabulary name covers, given `argument` when
+  it takes one. -/
+  | motion (name : String) (argument : Option String := none)
   /-- The text object of this vocabulary name. -/
   | textObject (name : String)
   /-- Whole lines: the operator's key typed twice. -/
@@ -367,8 +391,8 @@ inductive Over where
 /-- What a key sequence parses to. A count is absent when no digit was
 typed, and a register when none was named. -/
 inductive Edit where
-  /-- Move by a motion. -/
-  | move (motion : String) (count : Option Nat)
+  /-- Move by a motion, given `argument` when it takes one. -/
+  | move (motion : String) (count : Option Nat) (argument : Option String := none)
   /-- Apply an operator to a target. -/
   | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
   /-- Run a command. -/
@@ -410,25 +434,27 @@ def enters : Edit → Option String
 
 /-- The edit with `count` as its count: a replay is left as it is. -/
 def withCount (count : Nat) : Edit → Edit
-  | .move motion _ => .move motion (some count)
+  | .move motion _ argument => .move motion (some count) argument
   | .operate operator over _ register => .operate operator over (some count) register
   | .run command _ register => .run command (some count) register
   | .replay change inserted => .replay change inserted
 
 /-- The invocation the edit compiles to (the table in the module docs). -/
 def compile : Edit → Invocation
-  | .move motion count =>
-    { command := moveCommand, arguments := [.str motion, .nat (count.getD 0)] }
+  | .move motion count argument =>
+    { command := moveCommand
+      arguments := [.str motion] ++ argument.toList.map .str ++ [.nat (count.getD 0)] }
   | .operate operator over count register =>
-    let (kind, name) :=
+    let (kind, name, argument) :=
       match over with
-      | .motion name => ("motion", name)
-      | .textObject name => ("text-object", name)
-      | .lines => ("lines", "")
-      | .selection => ("selection", "")
+      | .motion name argument => ("motion", name, argument)
+      | .textObject name => ("text-object", name, none)
+      | .lines => ("lines", "", none)
+      | .selection => ("selection", "", none)
     { command := operateCommand
       arguments :=
-        [.str operator.name, .str kind, .str name, .nat (count.getD 0), .str (register.getD "")] }
+        [.str operator.name, .str kind, .str name] ++ argument.toList.map .str ++
+          [.nat (count.getD 0), .str (register.getD "")] }
   | .run command count register =>
     { command := command.name, arguments := [.nat (count.getD 0), .str (register.getD "")] }
   | .replay change inserted =>
@@ -506,6 +532,9 @@ structure State where
   /-- Whether the register prefix was the last key, so that the next key
   names the register. -/
   awaitsRegister : Bool := false
+  /-- The motion that waits for the character the next key names, if a key
+  bound to one was the last key (`Bound.charMotion`). -/
+  awaitsChar : Option String := none
   /-- The operator waiting for its target, if one was typed. -/
   operator : Option Operator := none
   /-- The keymap prefix walked so far, within the edit begun. -/
@@ -589,6 +618,14 @@ with no count being typed. -/
 private def State.countDigit? (state : State) (key : Key) : Option Nat :=
   if state.walked.isEmpty then (digit? key).filter fun digit => digit != 0 || state.digits.isSome
   else none
+
+/-- The character `key` names as a find's argument: the text it prints, or a
+tab for `TAB` with no modifier held. -/
+def Key.character? (key : Key) : Option String :=
+  match key.printed? with
+  | some text => some text
+  | none =>
+    if key.chord.logical == .named .tab && key.chord.modifiers == {} then some "\t" else none
 
 /-- What one key parses to. -/
 inductive Parsed where
@@ -709,6 +746,10 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
     | some operator =>
       state.finish states view (.operate operator (.motion name) state.count state.register)
     | none => state.finish states view (.move name state.count)
+  | .charMotion name =>
+    ({ state with
+        typed, multiplier := state.count, digits := none, awaitsChar := some name, walked := [] },
+      .nothing)
   | .textObject name =>
     match state.operator with
     | some operator =>
@@ -765,34 +806,45 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
     (key : Key) : State × Parsed :=
   let record := state.record states view
   let typed := state.typed ++ [key.chord]
-  if state.awaitsRegister then
-    match key.printed? with
-    | some name =>
-      ({ state with
-          typed, register := some name, awaitsRegister := false },
-        .nothing)
+  if let some name := state.awaitsChar then
+    match Key.character? key with
+    | some char =>
+      match state.operator with
+      | some operator =>
+        state.finish states view
+          (.operate operator (.motion name (some char)) state.count state.register)
+      | none => state.finish states view (.move name state.count (some char))
     | none => (state.reset, .nothing)
   else
-    match if record.insertsText then none else state.countDigit? key with
-    | some digit =>
-      ({ state with
-          typed, digits := some (state.digits.getD 0 * 10 + digit) },
-        .nothing)
-    | none =>
-      let active := if record.insertsText then (maps view).map (·.filter (!·.isMode)) else maps view
-      match Keymap.walk (active ++ record.keymaps) state.walked key with
-      | (_, some binding) => state.reached states view typed binding
-      | (walked, none) =>
-        if !walked.isEmpty then
-          ({ state with
-              typed, walked },
-            .nothing)
-        else
-          if record.insertsText && state.typed.isEmpty then
-            match key.printed? with
-            | some text => (state.typedText view text, .text text)
-            | none => (state, .nothing)
-          else (state.reset, .nothing)
+    if state.awaitsRegister then
+      match key.printed? with
+      | some name =>
+        ({ state with
+            typed, register := some name, awaitsRegister := false },
+          .nothing)
+      | none => (state.reset, .nothing)
+    else
+      match if record.insertsText then none else state.countDigit? key with
+      | some digit =>
+        ({ state with
+            typed, digits := some (state.digits.getD 0 * 10 + digit) },
+          .nothing)
+      | none =>
+        let active :=
+          if record.insertsText then (maps view).map (·.filter (!·.isMode)) else maps view
+        match Keymap.walk (active ++ record.keymaps) state.walked key with
+        | (_, some binding) => state.reached states view typed binding
+        | (walked, none) =>
+          if !walked.isEmpty then
+            ({ state with
+                typed, walked },
+              .nothing)
+          else
+            if record.insertsText && state.typed.isEmpty then
+              match key.printed? with
+              | some text => (state.typedText view text, .text text)
+              | none => (state, .nothing)
+            else (state.reset, .nothing)
 
 /-- The name of the command typed text runs. -/
 def selfInsertCommand : String :=

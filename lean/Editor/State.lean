@@ -176,6 +176,22 @@ A register is a text a command set aside, to put back later
   end leaves them as they were.** The clipboard is not here: it is
   outside the editor, behind a port of its own.
 
+## The last find
+
+The last character find (`Find`, `EditorState.lastFind`) is what Vim's `;`
+and `,` repeat: the character an `f`, `t`, `F` or `T` looked for, and which
+of the four it was (`docs/design/keymaps-and-modes.md`, "Motions as
+built"). It is kept for the whole editor, as Vim keeps it and as the
+registers are kept.
+
+- **The state starts with none**, and `setLastFind` sets it in place of
+  the one it had. It is never refused.
+- **A motion does not set it**: a motion changes nothing. It hands the
+  find back as data (`Vocabulary.To.find`), and the command that ran it
+  keeps it (`Editor/Evil.lean`, `Editor/Evil/Operators.lean`).
+- **It is a field of the state, so a command that does not run to its end
+  leaves it as it was.**
+
 ## The scroll margin
 
 The scroll margin is how many rows a view keeps between its cursor's row
@@ -739,6 +755,18 @@ structure Register where
   linewise : Bool := false
   deriving DecidableEq, Repr
 
+/-- A character find, as `;` and `,` repeat it ("The last find", in the
+module docs). -/
+structure Find where
+  /-- The character looked for, as the key that named it printed it. -/
+  char : String
+  /-- Whether it looked forward, as `f` and `t` do. -/
+  forward : Bool
+  /-- Whether it stopped one cell short of the character, as `t` and `T`
+  do. -/
+  till : Bool
+  deriving DecidableEq, Repr
+
 /-- Everything the editor is showing and editing. -/
 structure EditorState where
   /-- The buffers, one a slot; a `BufferId` is an index here, and the slot of
@@ -776,6 +804,9 @@ structure EditorState where
   /-- The registers, each under its name, in the order each name was first
   set ("Registers", in the module docs). No name is here twice. -/
   registers : Array (String × Register) := #[]
+  /-- The last character find, if one was made ("The last find", in the
+  module docs). -/
+  lastFind : Option Find := none
   /-- How many rows every view keeps between its cursor's row and the first
   and the last row it shows ("The scroll margin", in the module docs). -/
   scrollMargin : Nat := 0
@@ -1367,6 +1398,12 @@ def setRegister (name : String) (register : Register) (state : EditorState) : Ed
       if state.registers.any (·.1 == name) then
         state.registers.map fun entry => if entry.1 == name then (name, register) else entry
       else state.registers.push (name, register) }
+
+/-- `state` with `find` as its last character find, in place of the one it
+had ("The last find", in the module docs). Nothing else changes, and it is
+never refused. -/
+def setLastFind (find : Find) (state : EditorState) : EditorState :=
+  { state with lastFind := some find }
 
 /-- `state` with `rows` as its scroll margin, in place of the one it had
 ("The scroll margin", in the module docs). Nothing else changes, and it is

@@ -395,11 +395,15 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   (`OperatorRow`, `operatorRows`) says the text, the cursor, the register
   and whether it is line-wise, whether the view is left in insert state,
   and whether the command gave up. `operatorTable` is every operator over
-  every motion in five situations; beside it are the special cases, the
-  calls of the operate command that give up, and that an operator is one
-  step of the history. `operatorSweep` presses every default operator key
-  with every default motion key from every resting position of a few
-  texts;
+  every motion that takes no argument in five situations; beside it are the
+  special cases, the calls of the operate command that give up, and that an
+  operator is one step of the history. `operatorSweep` presses every default
+  operator key with every default motion key from every resting position of
+  a few texts, a motion that takes a character with one;
+- `evilFindChecks`: `f`, `t`, `F`, `T`, `;` and `,` (`Editor/Evil/Motions.lean`)
+  as moves (`findRows`) and under each operator (`findOperatorRows`, which
+  `findOperatorPairs` holds to the default tables), and the last find they
+  keep;
 - `evilSelectionChecks`: the operators over a `v` and a `V` selection, by
   the same rows, and that the operator's key leaves one cursor;
 - `evilRegisterChecks`: `x`, the registers a yank and a deletion set, the
@@ -10956,6 +10960,22 @@ def vimEditChecks : List Check :=
           ((Vim.Edit.run { name := "put-after" } (some 2) (some "+")).compile ==
             { command := "put-after", arguments := [.nat 2, .str "+"] }) },
     { name :=
+        "a motion's argument compiles to a string right after the motion's name, in a move and over a motion, so the register stays the last argument; a count put in its place keeps the argument"
+      run :=
+        let over := Vim.Edit.operate vimDelete (.motion "find" (some "x")) (some 3) (some "a")
+        pure
+          ((Vim.Edit.move "find" (some 2) (some "x")).compile ==
+              { command := "move", arguments := [.str "find", .str "x", .nat 2] } &&
+            over.compile ==
+              { command := "operate"
+                arguments :=
+                  [.str "delete", .str "motion", .str "find", .str "x", .nat 3, .str "a"] } &&
+            over.compile.arguments.getLast? == some (.str "a") &&
+            (Vim.Edit.move "find" none (some "x")).withCount 4 ==
+              .move "find" (some 4) (some "x") &&
+            over.withCount 5 ==
+              .operate vimDelete (.motion "find" (some "x")) (some 5) (some "a")) },
+    { name :=
         "an edit with no count compiles to a count of 0, and one with no register to the empty register name"
       run :=
         pure
@@ -11228,6 +11248,35 @@ def vimGrammarChecks : List Check :=
         pure
           ((vimFed "u").2 == [some { command := "undo", arguments := [.nat 0, .str ""] }] &&
             (vimParsed "u").2 == [.edit (.run { name := "undo" } none none)]) },
+    { name :=
+        "a key bound to a motion that takes a character is pending alone; the key after it names the character, a digit and TAB included, and completes the move, or the operator waiting over the motion with that argument, with the counts multiplied; any other key resets"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) := [vimKeymap [("f", .charMotion "find")]]
+        let move (char : String) (count : Nat) : Invocation :=
+          { command := "move", arguments := [.str "find", .str char, .nat count] }
+        let (escaped, escapedYields) := vimFed "f <Escape>" active
+        pure
+          (vimPending "f" active == keys "f" && vimPending "2 f" active == keys "2 f" &&
+            vimPending "f x" active == [] &&
+            (vimFed "f x" active).2 == [none, some (move "x" 0)] &&
+            (vimParsed "f x" active).2 == [.nothing, .edit (.move "find" none (some "x"))] &&
+            (vimFed "2 f 3" active).2.getLast? == some (some (move "3" 2)) &&
+            (vimFed "f TAB" active).2.getLast? == some (some (move "\t" 0)) &&
+            (vimFed "d 2 f x" active).2.getLast? ==
+              some
+                (some
+                  { command := "operate"
+                    arguments :=
+                      [.str "delete", .str "motion", .str "find", .str "x", .nat 2, .str ""] }) &&
+            (vimFed "2 d 3 f x" active).2.getLast? ==
+              some
+                (some
+                  { command := "operate"
+                    arguments :=
+                      [.str "delete", .str "motion", .str "find", .str "x", .nat 6, .str ""] }) &&
+            escapedYields == [none, none] &&
+            decide (escaped = vimInit) &&
+            (vimFed "f <Escape> w" active).2.getLast? == some (some (vimMove "word"))) },
     { name :=
         "the Vim scheme reports the keys typed of an edit begun as pending, and none before a key and after the edit completes"
       run :=
@@ -18805,18 +18854,31 @@ def lineMotionRows : List OperatorRow :=
     .inserts bareEndText "c G" "ab cd\n|" (linewise "  ef gh\n"),
     .rests bareEndText "y G" "ab cd\n  |ef gh" (linewise "  ef gh\n")]
 
-/-- The rows of the operator × motion table, in the order the motions were
-built. -/
-def operatorTable : List OperatorRow :=
-  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows ++ wordForwardRows ++
-    changeWordRows ++
-    lineMotionRows
-
 /-- The five situations of the operator × motion table: the text and the
 cursor of each, and whether its rows have a count. -/
 def operatorSituations : List (String × Bool) :=
   [(plainText, false), (plainText, true), (emptyLineText, false), (endText, false),
     (bareEndText, false)]
+
+/-- The oracle table's rows for each operator over `;` and `,` in its five
+situations. In each nothing was found before the keys, so there is no last
+find to repeat: Vim fails the motion and cancels the operator, and the
+command gives up in every one. What they take after a find is
+`findOperatorRows`. -/
+def findAgainTableRows : List OperatorRow :=
+  operatorSituations.flatMap fun (before, counted) =>
+    ["d", "c", "y"].flatMap fun operator =>
+      [";", ","].map fun motion =>
+        .givesUp before
+          (" ".intercalate ([operator] ++ (if counted then ["2"] else []) ++ [motion]))
+
+/-- The rows of the operator × motion table, in the order the motions were
+built. -/
+def operatorTable : List OperatorRow :=
+  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows ++ wordForwardRows ++
+    changeWordRows ++
+    lineMotionRows ++
+    findAgainTableRows
 
 /-- The pairs of an operator's key and a motion's key that the rows of
 `operatorTable` have for the situation of the text `before`, with a count
@@ -18831,11 +18893,32 @@ def operatorPairs (before : String) (counted : Bool) : List (String × String) :
       | [] => none
     else none
 
+/-- The motion keys of the default tables that are a motion alone, with no
+argument to type after them: those bound to `Bound.motion`. A key bound to a
+motion that takes a character (`Bound.charMotion`) is no motion until its
+character is typed, so the table of five fixed situations has no row for
+it; its rows, each with a character, are `findOperatorRows`, and
+`findOperatorPairs` holds them to the default tables. -/
+def bareMotionKeys : List String :=
+  Vim.Default.motions.filterMap fun (key, bound) =>
+    match bound with
+    | .motion _ => some key
+    | _ => none
+
+/-- The motion keys of the default tables that take the character the next
+key names (`Bound.charMotion`). -/
+def charMotionKeys : List String :=
+  Vim.Default.motions.filterMap fun (key, bound) =>
+    match bound with
+    | .charMotion _ => some key
+    | _ => none
+
 /-- Every pair of an operator's key and a motion's key of the default
-tables (`Vim.Default.operators`, `Vim.Default.motions`). -/
+tables (`Vim.Default.operators`, `Vim.Default.motions`) whose motion is a
+motion alone (`bareMotionKeys`). -/
 def defaultPairs : List (String × String) :=
   Vim.Default.operators.flatMap fun (operator, _) =>
-    Vim.Default.motions.map fun (motion, _) => (operator, motion)
+    bareMotionKeys.map fun motion => (operator, motion)
 
 /-- What is wrong, if anything, with each operator key of the default tables
 pressed with each motion key, with no count and with a count of 2, from
@@ -18845,13 +18928,18 @@ enters no state the cursor is where normal state lets one rest; an operator
 that changes no text leaves the text; and when the text changed, `u`, after
 `<Escape>` for an operator that enters a state, gives the text back and
 puts the cursor where it was. It reads the tables, so it covers a key added
-later. -/
+later. A motion key that takes a character (`Bound.charMotion`) is pressed
+with `a` after it, a character every text but the empty one holds, so the
+sweep runs the find and does not leave the operator waiting. -/
 def operatorSweep (contents : String) : List String :=
   ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap fun position =>
     Vim.Default.operators.flatMap fun (operatorKey, bound) =>
       match bound with
       | .operator operator =>
-        Vim.Default.motions.flatMap fun (motionKey, _) =>
+        Vim.Default.motions.flatMap fun (motionKey, motion) =>
+          -- A motion that takes a character is given one the sweep's texts
+          -- hold, so that it is a motion and not an operator left waiting.
+          let motionKey := if motion matches .charMotion _ then motionKey ++ " a" else motionKey
           [false, true].filterMap fun counted =>
             let typed := (if counted then "2 " else "") ++ operatorKey ++ " " ++ motionKey
             let what := s!"{typed} at {position} of {repr contents}"
@@ -18892,6 +18980,131 @@ def evilGaveUp (left : Option EvilEdited) (shown reason : String) : Bool :=
         (left.echo.splitOn "refused").length == 1
     | none => false
 
+/-- The rows of the oracle table for `f`, `t`, `F`, `T`, `;` and `,` under an
+operator, each written by hand from Vim 9.1's `:help f` and `:help ;`: `f`
+and `t` are inclusive and `F` and `T` exclusive, `;` and `,` take the reach
+of the motion they run, a till with a count of 1 repeated by `;` or `,`
+passes over the character beside the cursor, and a find with nowhere to go
+cancels the operator. -/
+def findOperatorRows : List OperatorRow :=
+  [.rests "|abcabc" "d f c" "|abc" (charwise "abc"),
+    .rests "|abcabc" "d t c" "|cabc" (charwise "ab"),
+    .rests "abcab|c" "d F a" "abc|c" (charwise "ab"),
+    .rests "abcab|c" "d T a" "abca|c" (charwise "b"),
+    .rests "|abcabc" "d 2 f c" "|" (charwise "abcabc"),
+    .rests "|abcabc" "2 d t c" "|c" (charwise "abcab"),
+    .rests "|abcabcabc" "f c d ;" "ab|abc" (charwise "cabc"),
+    .rests "|abcabc" "f c ; d ," "ab|c" (charwise "cab"),
+    .rests "|abcabc" "t c d ;" "a|c" (charwise "bcab"),
+    .rests "|abcabc" "t c ; d ," "abc|bc" (charwise "a"),
+    .rests "abcab|c" "F a d ;" "|abc" (charwise "abc"),
+    .rests "a|bcabc" "F a d ," "|bc" (charwise "abca"),
+    .rests "abcab|c" "T a d ;" "a|bc" (charwise "bca"),
+    .rests "abcab|ca" "T a d ," "abca|a" (charwise "bc"),
+    .inserts "|abcabc" "c f c" "|abc" (charwise "abc"),
+    .inserts "abcab|c" "c F a" "abc|c" (charwise "ab"),
+    .rests "|abcabc" "y t c" "|abcabc" (charwise "ab"),
+    .rests "ab|cabc" "y T a" "a|bcabc" (charwise "b"), .rests "|ax" "d t x" "|x" (charwise "a"),
+    .inserts "|ax" "c t x" "|x" (charwise "a"), .rests "|abcabc" "y f c" "|abcabc" (charwise "abc"),
+    .rests "abcab|c" "y F a" "abc|abc" (charwise "ab"),
+    .inserts "abcab|c" "c T a" "abca|c" (charwise "b"), .givesUp "|abc" "d f z",
+    .givesUp "|abc" "d F a", .givesUp "|ab\nz" "d t z", .givesUp "|abc" "d ;",
+    .givesUp "|abc" "y ,", .givesUp "|abcabc" "d 3 f c"]
+
+/-- The pairs of an operator's key and a motion's key that take a character
+the rows of `findOperatorRows` have, with the keys typed before the
+operator left out: the operator's key, and the motion's key after it. -/
+def findOperatorPairs : List (String × String) :=
+  findOperatorRows.filterMap fun row =>
+    match ((row.keys.splitOn " ").filter (· != "2")).reverse with
+    | _ :: motion :: operator :: _ =>
+      if charMotionKeys.contains motion then some (operator, motion) else none
+    | _ => none
+
+/-- The rows of the oracle table for `f`, `t`, `F`, `T`, `;` and `,` as
+moves, each written by hand from Vim 9.1's `:help f`, `:help t` and
+`:help ;`: the keys, the text before with the cursor as a bar, and the text
+after. -/
+def findRows : List (String × String × String) :=
+  [("f c", "|abcabc", "ab|cabc"), ("1 f c", "|abcabc", "ab|cabc"), ("2 f c", "|abcabc", "abcab|c"),
+    ("f c", "ab|cabc", "abcab|c"), ("3 f c", "|abcabc", "|abcabc"), ("f z", "|abc", "|abc"),
+    ("f x", "|ab\nx", "|ab\nx"), ("f x", "|ab\r\nx", "|ab\r\nx"), ("F a", "abca|bc", "abc|abc"),
+    ("2 F a", "abcab|c", "|abcabc"), ("F a", "|abc", "|abc"), ("F x", "x\na|b", "x\na|b"),
+    ("t c", "|abcabc", "a|bcabc"), ("2 t c", "|abcabc", "abca|bc"), ("t x", "|ax", "|ax"),
+    ("t z", "|abc", "|abc"), ("t x", "|ab\nx", "|ab\nx"), ("T a", "abcab|c", "abca|bc"),
+    ("2 T a", "abcab|c", "a|bcabc"), ("T x", "x|a", "x|a"), ("T x", "x\na|b", "x\na|b"),
+    ("f c ;", "|abcabc", "abcab|c"), ("f c ; ,", "|abcabc", "ab|cabc"),
+    ("f c 2 ;", "|abcabcabc", "abcabcab|c"), ("F a ;", "abcab|c", "|abcabc"),
+    ("F a ,", "a|bcabc", "abc|abc"), ("t c ;", "|abcabc", "abca|bc"),
+    ("t x ;", "|axbxcx", "ax|bxcx"), ("t x 2 ;", "|axbxcx", "ax|bxcx"),
+    ("t x 3 ;", "|axbxcx", "axbx|cx"), ("T x ,", "x|axbx", "xax|bx"), ("T x ;", "xaxb|x", "x|axbx"),
+    ("f c ; ; ,", "|abcabcabc", "abcab|cabc"), (";", "|abc", "|abc"), (",", "|abc", "|abc"),
+    ("f z ;", "|abz", "ab|z"), ("2 f é", "|aébé", "aéb|é"), ("f é", "|aébé", "a|ébé"),
+    ("f 1", "|a1b1", "a|1b1"), ("2 f 1", "|a1b1", "a1b|1"), ("f TAB", "|a\tb", "a|\tb"),
+    ("f <Escape> l", "|abc", "a|bc"), ("v f c d", "|abcabc", "|abc"),
+    ("v t c d", "|abcabc", "|cabc"), ("v F a d", "abcab|c", "ab|c")]
+
+/-- The checks of evil's character finds (`Editor/Evil/Motions.lean`), on the
+loop's driver over the editor's models, under the Vim scheme that ships
+with evil's commands. -/
+def evilFindChecks : List Check :=
+  [{  name :=
+        "f, t, F and T move within the line to the character their next key names, with and without a count, and not when the line has fewer; t and T stop one cell short and do not move with the character beside the cursor; ; and , repeat the last find, , in the other direction, and a till repeated with a count of 1 passes over the character beside the cursor; a character of several bytes, a digit and TAB are characters; f then <Escape> does nothing; and in a visual state a find extends the selection"
+      run := evilRows findRows },
+    { name :=
+        "an operator over f, t, F, T, ; and , takes the range Vim 9.1 documents: f and t through the cell they lead to, F and T up to it, ; and , as the motion they run, and a find with nowhere to go gives the operator up"
+      run := operatorRows findOperatorRows },
+    { name :=
+        "every operator key of the default tables with every motion key that takes a character has a row of findOperatorRows"
+      run :=
+        pure <|
+          !charMotionKeys.isEmpty &&
+            Vim.Default.operators.all fun (operator, _) =>
+              charMotionKeys.all fun motion => findOperatorPairs.contains (operator, motion) },
+    { name :=
+        "a find is kept as the last find, also when it fails, and ; and , keep it as it was, its direction included; a find under an operator that gives up is rolled back with the command"
+      run :=
+        let lastFind (fixture typed : String) : Option (Option Find) :=
+          (evilDriver fixture).map fun driver => (evilFed driver typed).loop.state.lastFind
+        pure
+          (lastFind "|abc" "" == some none &&
+            lastFind "|abc" "f c" == some (some { char := "c", forward := true, till := false }) &&
+            lastFind "|abc" "T z" == some (some { char := "z", forward := false, till := true }) &&
+            lastFind "|abcabc" "f c ; ," ==
+              some (some { char := "c", forward := true, till := false }) &&
+            lastFind "|abc" "d f z" == some none &&
+            lastFind "|abc" "d f c" ==
+              some (some { char := "c", forward := true, till := false })) },
+    { name :=
+        "the move command runs a find with its argument after the motion's name, before the count"
+      run :=
+        pure <|
+          match evilDriver "|abcabc" with
+          | none => false
+          | some driver =>
+            let ran (arguments : List Argument) : String :=
+              evilShown
+                (driver.stepped
+                    (driver.loop.invoke driver.handed { command := Vim.moveCommand, arguments })).1
+            ran [.str "find-forward", .str "c", .nat 2] == "abcab|c" &&
+              ran [.str "find-forward", .str "c"] == "ab|cabc" &&
+              ran [.str "find-forward", .nat 1] == "|abcabc" &&
+              ran [.str "find-again", .nat 0] == "|abcabc" },
+    { name :=
+        "the operate command takes a motion's argument after the motion's name, before the count and the register"
+      run :=
+        pure
+          ((evilOperated "|abcabc"
+                    [.str "delete", .str "motion", .str "find-forward", .str "c", .nat 2,
+                      .str ""]).map
+                (·.shown) ==
+              some "|" &&
+            (evilOperated "|abcabc"
+                    [.str "delete", .str "motion", .str "till-forward", .str "c", .nat 0,
+                      .str ""]).map
+                (·.shown) ==
+              some "|cabc") }]
+
 /-- The checks of evil's operators (`Editor/Evil/Operators.lean`) on the
 loop's driver over the editor's models, under the Vim scheme that ships
 with evil's commands: an operator's keys are pressed in a text with the
@@ -18906,7 +19119,7 @@ def evilOperatorChecks : List Check :=
         "each operator over each motion, in five situations (no count, a count of 2, on an empty line, on the buffer's last character with and without a final line feed), leaves the text, the cursor and the unnamed register Vim leaves"
       run := operatorRows operatorTable },
     { name :=
-        "the table is complete: in each of its five situations, the pairs of an operator's key and a motion's key its rows have are exactly those of the default tables, each once"
+        "the table is complete: in each of its five situations, the pairs of an operator's key and a motion's key its rows have are exactly those of the default tables whose motion takes no argument, each once (the motions that take a character are held to the default tables by findOperatorPairs)"
       run :=
         pure <|
           !defaultPairs.isEmpty &&
@@ -19709,6 +19922,12 @@ the loop's driver over the editor's models, under the Vim scheme that ships
 with evil's commands. -/
 def evilRepeatChecks : List Check :=
   [{  name :=
+        ". after an operator over a find replays it with the same character: d f c deletes to the next c again, d t c up to the next c, d ; repeats the last find as it is at the replay, and c f c with typed text makes the same change"
+      run :=
+        evilRows
+          [("d f c .", "|abcabcabc", "|abc"), ("d t c .", "|abcabcab", "|cab"),
+            ("f a d ; .", "|xabxabxab", "x|b"), ("c f c z <Escape> .", "|abcabcab", "|zab")] },
+    { name :=
         ". replays the last change: after d w it deletes the next word, and after c w, typed text and <Escape> it makes the same change with the same text at the cursor; a count before it replaces the change's and is kept; x, the doubled operator, o, O, i, a, I, A, p and P are replayed, and a yank is not the last change"
       run := evilRows repeatRows },
     { name :=
@@ -21342,6 +21561,7 @@ def checks : List Check :=
     evilStateChecks ++
     evilInsertChecks ++
     evilOperatorChecks ++
+    evilFindChecks ++
     evilSelectionChecks ++
     evilRegisterChecks ++
     evilOpenChecks ++

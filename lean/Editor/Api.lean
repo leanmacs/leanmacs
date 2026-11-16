@@ -354,6 +354,14 @@ own requests have left.
   `ModelTest.apiStateChecks`, and the rollback by
   `ModelTest.dispatchRollbackChecks`.
 
+`setLastFind find` keeps the last character find, which `;` and `,` repeat
+(`Editor/State.lean`, "The last find"), in place of the one there was. It
+is set as a register is: never refused, editor state that a command which
+does not run to its end leaves as it was, and no request of the library.
+A command reads it from the state (`EditorState.lastFind` on
+`editorState`). Pinned through evil's character finds by
+`ModelTest.evilFindChecks`.
+
 ## Ex bindings
 
 `exBinding name` asks which command the ex name `name` is bound to, and
@@ -591,6 +599,12 @@ def breakOff {α : Type} (reason : String) : EditorM α := do
 request of the library. -/
 def setRegister (name : String) (register : Register) : EditorM Unit :=
   EditorState.ask (.setRegister name register)
+
+/-- Keeps `find` as the last character find, which `;` and `,` repeat
+(`Editor/State.lean`, "The last find"). It is never refused, and makes no
+request of the library. -/
+def setLastFind (find : Find) : EditorM Unit :=
+  EditorState.ask (.setLastFind find)
 
 /-- Keeps `rows` rows between every view's cursor's row and the first and
 the last row it shows, from the next scene on ("Scrolling", in the module

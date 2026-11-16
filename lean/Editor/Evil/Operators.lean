@@ -21,7 +21,14 @@ one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
 - **Its arguments are the layout the Vim scheme compiles an operator to**
   (`Editor/InputScheme/Vim.lean`, "Edits"): the operator's name, the kind
   of what it acts on, that thing's name, the count, 0 for none, and the
-  register's name, empty for none.
+  register's name, empty for none. A motion's argument, when it has one, is
+  a string right after the motion's name, so the register stays last.
+- **It keeps and says what the motion hands back** (`Vocabulary.Taken`):
+  the find it made as the last find (`setLastFind`), and its `said` in the
+  echo area once the operator has acted. A motion that failed gives the
+  command up, or breaks it off, with its `said` in place of `cannotMove`.
+  A give-up rolls the find back: `dfz` where the line has no `z` leaves the
+  last find as it was, where Vim keeps `z`, a recorded departure.
 - **It reads the selection once, when it is called**: the head the stretch
   is worked out from, and the selection every edit of the operator carries
   as the one before (`Operand.before`), so an undo hands back the cursor
@@ -371,8 +378,15 @@ doubled operator with a count above 1 on the last line gives up too ("The
 doubled operator on the last line", in the module docs). -/
 def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.Motion)
     (call : Call) : EditorM Unit := do
-  let [.str operator, .str kind, .str name, .nat count, .str register] :=
-    call.arguments | giveUp noOperatorNamed
+  -- A motion's argument, when it has one, is the string after its name.
+  let (operator, kind, name, argument, count, register) ←
+    match call.arguments with
+    | [.str operator, .str kind, .str name, .nat count, .str register] =>
+      pure (operator, kind, name, none, count, register)
+    | [.str operator, .str kind, .str name, .str argument, .nat count, .str register] =>
+      pure (operator, kind, name, some argument, count, register)
+    | _ =>
+      giveUp noOperatorNamed
   let some operator := operators.find? (·.name == operator) | giveUp (noSuchOperator operator)
   -- Before anything is taken: an operator may never reach its store.
   discard <| registerNamed register
@@ -380,13 +394,17 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
   let before ← call.target.selection
   let some range := before.ranges[before.primary]? | throw .badSelection
   let head := range.head
-  let operand : Vocabulary.Operand ←
+  -- What the echo area is to say once the operator has acted: what the
+  -- motion handed back to be said.
+  let (operand, said) : Vocabulary.Operand × Option String ←
     match kind with
     | "motion" =>
       let some motion := motions.find? (·.name == name) | giveUp (noSuchMotion name)
       let taken ←
         motion.taken operator.replaces text
-            { head, count := if count == 0 then none else some count }
+            { head, count := if count == 0 then none else some count, argument }
+      if let some find := taken.find then
+        setLastFind find
       if taken.failed then
         -- Vim cancels the operator and leaves the cursor where the motion
         -- got to, as the state the view was in before the key has it: the
@@ -396,13 +414,14 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
             shape := before.shape, selecting := false }
         let reached ← rested (restOf cursor) text taken.head
         if reached == head then
-          giveUp (cannotMove name)
+          giveUp (taken.said.getD (cannotMove name))
         call.target.select { ranges := #[⟨reached, reached⟩], shape := before.shape }
         discard <| call.target.window.id.setWanted none
-        breakOff (cannotMove name)
+        breakOff (taken.said.getD (cannotMove name))
       pure
-          { stretch := ← stretch operator text head taken, head, rest := min head taken.head,
-            register, before }
+          ({ stretch := ← stretch operator text head taken, head, rest := min head taken.head,
+             register, before },
+            taken.said)
     | "lines" =>
       -- The doubled operator: the head's line and `count - 1` lines below,
       -- stopped at the last line. Vim goes down those lines first, which
@@ -412,8 +431,9 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       if count > 1 && first ≥ last then
         giveUp noLineBelow
       pure
-          { stretch := .lines first (max first (min (first + count - 1) last)), head, rest := head,
-            register, before }
+          ({ stretch := .lines first (max first (min (first + count - 1) last)), head, rest := head,
+             register, before },
+            none)
     | "selection" =>
       if before.shape == .line then
         -- The lines of the selection's two ends. A yank leaves the cursor
@@ -424,10 +444,13 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
             pure head
           else
             text.motion .lineStart range.anchor
-        pure {
-              stretch :=
-                .lines (← rowOf text (min range.anchor head)) (← rowOf text (max range.anchor head))
-              head, rest, register, before }
+        pure
+            ({
+                stretch :=
+                  .lines (← rowOf text (min range.anchor head))
+                    (← rowOf text (max range.anchor head)),
+                head, rest, register, before },
+              none)
       else
         -- What the text says the range covers, by the selection's shape,
         -- and nothing past where the last line's content ends.
@@ -439,13 +462,17 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
         let limit ← text.motion .lineEnd (← text.offsetOf ⟨← lastLine text, 0⟩)
         let stop := min extent.stop limit
         let start := min extent.start stop
-        pure { stretch := .cells ⟨start, stop⟩ .exclusive, head, rest := start, register, before }
+        pure
+            ({ stretch := .cells ⟨start, stop⟩ .exclusive, head, rest := start, register, before },
+              none)
     | "text-object" =>
       giveUp noTextObject
     | _ =>
       giveUp noOperatorNamed
   discard <| call.target.window.id.setWanted none
   operator.act call operand
+  if let some said := said then
+    message said
 
 /-- The command that deletes the cell under the cursor, Vim's `x`, as it is
 called: with the count and the register a command's key compiles to

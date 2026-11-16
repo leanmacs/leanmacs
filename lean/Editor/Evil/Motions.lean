@@ -1,3 +1,4 @@
+import Editor.Api
 import Editor.Vocabulary
 
 /-!
@@ -30,6 +31,8 @@ means, and what a motion does when it cannot go the whole way, is Vim's
 | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
 | `line-end` | `rowsDown (count - 1)`, then `lineEnd` | The end of the line `count - 1` lines below. With fewer lines below it goes to the last line's end. On the last line with a count above 1 it does not move, which is Vim's failed motion |
 | `first-line`, `last-line` | `offsetOf` of the row's start, then `lineFirstNonBlank` | The line number, from 1, stopped at the last line. With none: the first line, and the last |
+| `find-forward`, `find-backward`, `till-forward`, `till-backward` | The line's cells (`lineCells`: `slice` from `lineStart` to `lineEnd`), walked from the cursor (`foundIn`) | The `count`th occurrence of the character the argument names. A till stops one cell short, and with the character beside the cursor it does not move |
+| `find-again`, `find-again-reverse` | The last find (`EditorState.lastFind`), and for the second in the other direction | As the find it runs; a till with a count of 1 passes over the character beside the cursor (Vim's `cpo` without `;`) |
 
 What each says of itself for an operator (`Editor/Vocabulary.lean`,
 "Motions"; what an operator then takes is `Editor/Evil/Operators.lean`):
@@ -45,6 +48,9 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
 | `line-first-non-blank` | exclusive | On a line of blanks only, the line's last blank | Never |
 | `line-end` | inclusive | | With a count above 1 on the last line |
 | `first-line`, `last-line` | lines | | Never |
+| `find-forward`, `till-forward` | inclusive | | With fewer occurrences in the line than the count, and with no argument: where it starts |
+| `find-backward`, `till-backward` | exclusive | | The same |
+| `find-again`, `find-again-reverse` | that of the find it runs: inclusive forward, exclusive back | | As the find it runs, and with no last find |
 
 - **The last line** (`lastLine`) is the last row a cursor may rest in
   outside insert state: the row before the empty last row of a text that
@@ -78,6 +84,11 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
   - **A cursor on a tab counts at the tab's first column**, where Vim's
     counts at its last: the x the display answers for a position is where
     its character starts. A recorded departure.
+- **A find hands back the find it made** (`Vocabulary.To.find`), also
+  when it fails, for its caller to keep as the last find; `;` and `,` read
+  it from the editor state (`editorState`) and hand back none, so the last
+  find is kept as it was, its direction included. A find never leaves the
+  line.
 - **What a word is is the text port's** (`Editor/Text.lean`): a run of word
   characters or of punctuation, or the line break of an empty line; a WORD
   is a run of characters that are not blank. It is Vim's on ASCII and not
@@ -364,10 +375,129 @@ def firstLine : Vocabulary.Motion :=
 def lastLineMotion : Vocabulary.Motion :=
   toLine "last-line" true
 
+/-- The cells of the line of `head` in `text`, each with the offset it
+starts at: its characters up to where its content ends, without its line
+break. -/
+def lineCells (text : TextId) (head : Nat) : TextM (Array (Nat × String)) := do
+  let start ← text.motion .lineStart head
+  let line ← text.slice start (← text.motion .lineEnd head)
+  let mut offset := start
+  let mut cells := #[]
+  for char in line.toList do
+    cells := cells.push (offset, char.toString)
+    offset := offset + char.utf8Size
+  return cells
+
+/-- Where `find` leads among `cells`, the cells of a line, from `head`,
+`count` times: the offset of the `count`th cell after `head` (before it,
+going back) that holds the character, or of the cell next to that one on
+the side of `head` for a till; `none` when the line has fewer. With
+`skipNext`, the cell next to `head` is passed over, which is Vim's rule for
+`;` and `,` after a till with a count of 1 (`cpo` without `;`): the cursor
+moves although the character is right beside it. -/
+def foundIn (cells : Array (Nat × String)) (head : Nat) (find : Find) (count : Nat)
+    (skipNext : Bool) : Option Nat :=
+  let indexed := (List.range cells.size).zip cells.toList
+  let ahead :=
+    if find.forward then indexed.filter (·.2.1 > head) else (indexed.filter (·.2.1 < head)).reverse
+  let ahead := if skipNext then ahead.drop 1 else ahead
+  match (ahead.filter (·.2.2 == find.char))[count - 1]? with
+  | none => none
+  | some (index, (offset, _)) =>
+    if !find.till then some offset
+    else
+      if find.forward then (cells[index - 1]?.map (·.1)).filter (· ≥ head)
+      else some ((cells[index + 1]?.map (·.1)).getD head)
+
+/-- How an operator takes a find: through the cell it leads to going
+forward, and up to it going back. -/
+def findReach (find : Find) : Vocabulary.Reach :=
+  if find.forward then .inclusive else .exclusive
+
+/-- Where `find` leads in the line of the head of `origin`, `count` times, 1
+with no count (`foundIn`). It has failed, and stays where it is, when the
+line has fewer. -/
+def findTarget (text : TextId) (origin : Vocabulary.From) (find : Find) (skipNext : Bool) :
+    TextM Vocabulary.To := do
+  let cells ← lineCells text origin.head
+  match foundIn cells origin.head find (origin.count.getD 1) skipNext with
+  | some head =>
+    return { head }
+  | none =>
+    return { head := origin.head, failed := true }
+
+/-- The motion called `name` to the character its argument names, in the
+line: forward when `forward` and back otherwise, onto it, or one cell short
+of it for a till. It hands the find back to be kept as the last one, also
+when it fails. With no argument it fails where it is and hands back none. -/
+def charFind (name : String) (forward till : Bool) : Vocabulary.Motion :=
+  { name
+    reach := if forward then .inclusive else .exclusive
+    target := fun text origin => do
+      let some char := origin.argument | return { head := origin.head, failed := true }
+      let find : Find := { char, forward, till }
+      return { (← findTarget text origin find false) with find := some find } }
+
+/-- To the `count`th character the argument names after the cursor in the
+line. An operator takes the cell there. -/
+def findForward : Vocabulary.Motion :=
+  charFind "find-forward" true false
+
+/-- To the `count`th character the argument names before the cursor in the
+line. -/
+def findBackward : Vocabulary.Motion :=
+  charFind "find-backward" false false
+
+/-- To one cell before the `count`th character the argument names after the
+cursor in the line. An operator takes the cell there. -/
+def tillForward : Vocabulary.Motion :=
+  charFind "till-forward" true true
+
+/-- To one cell after the `count`th character the argument names before the
+cursor in the line. -/
+def tillBackward : Vocabulary.Motion :=
+  charFind "till-backward" false true
+
+/-- The last find, as `;` repeats it, and in the other direction when
+`reverse`, as `,` does: none when no find was made. -/
+def lastFindOf (reverse : Bool) : EditorM (Option Find) := do
+  return (← editorState).lastFind.map fun find =>
+      if reverse then { find with forward := !find.forward } else find
+
+/-- Where the last find leads again, in the other direction when `reverse`,
+taken as the motion it is: a till with a count of 1 passes over the cell
+next to the cursor, as Vim's `;` does under its default `cpo`. It fails
+where it is with no last find, and hands back no find: the last one is
+kept as it was, its direction included. -/
+def findAgainTaken (reverse : Bool) (text : TextId) (origin : Vocabulary.From) :
+    EditorM Vocabulary.Taken := do
+  let some find ←
+    lastFindOf reverse | return { head := origin.head, reach := .exclusive, failed := true }
+  let to ← findTarget text origin find (find.till && origin.count.getD 1 == 1)
+  return { head := to.head, reach := findReach find, failed := to.failed }
+
+/-- The motion called `name` that repeats the last find, in the other
+direction when `reverse`. -/
+def findAgainMotion (name : String) (reverse : Bool) : Vocabulary.Motion :=
+  { name
+    target := fun text origin => do
+      let taken ← findAgainTaken reverse text origin
+      return { head := taken.head, failed := taken.failed }
+    taken := fun _ text origin => findAgainTaken reverse text origin }
+
+/-- Repeats the last find, Vim's `;`. -/
+def findAgain : Vocabulary.Motion :=
+  findAgainMotion "find-again" false
+
+/-- Repeats the last find in the other direction, Vim's `,`. -/
+def findAgainReverse : Vocabulary.Motion :=
+  findAgainMotion "find-again-reverse" true
+
 /-- The table the move command looks a motion's name up in: one entry for
 each name the Vim scheme's default tables bind a key to. -/
 def motions : Array Vocabulary.Motion :=
   #[left, down, up, right, wordForward, wordBackward, wordEnd, bigwordForward, bigwordBackward,
-    bigwordEnd, lineStart, lineFirstNonBlank, lineEnd, firstLine, lastLineMotion]
+    bigwordEnd, lineStart, lineFirstNonBlank, lineEnd, firstLine, lastLineMotion, findForward,
+    findBackward, tillForward, tillBackward, findAgain, findAgainReverse]
 
 end Editor.Evil

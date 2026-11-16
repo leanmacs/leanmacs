@@ -37,6 +37,12 @@ looks the motion's name up in, so the caller supplies the vocabulary.
   number, with 0 for none, as the Vim scheme lays a move out
   (`Editor/InputScheme/Vim.lean`, "Edits"). The count may be left out,
   which is no count, so a command of config's calls it with a name alone.
+  A motion's argument, when it has one, is the string right after the
+  name, before the count: `[.str "find-forward", .str "x", .nat 2]`.
+- **It keeps what the motion hands back to be remembered** and says what
+  it hands back to be said: the find it made as the last find
+  (`setLastFind`, `Vocabulary.To.find`), also when the motion failed, as
+  Vim keeps it, and its `said` in the echo area.
   A name with no entry says `<name>: no such motion` in the echo area and
   moves nothing.
 - **A call that names no motion says so, apart from a name with no
@@ -374,12 +380,16 @@ from the editor state. A call that names no motion (`noMotionNamed`) and a
 name with no motion (`noSuchMotion`) are each said in the echo area, and
 nothing moves. -/
 def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
-  let named : Option (String × Option Nat) :=
-    match call.arguments with
-    | .str name :: .nat count :: _ => some (name, if count == 0 then none else some count)
-    | .str name :: _ => some (name, none)
+  let counted (rest : List Argument) : Option Nat :=
+    match rest with
+    | .nat count :: _ => if count == 0 then none else some count
     | _ => none
-  let some (name, count) := named | message noMotionNamed
+  let named : Option (String × Option String × Option Nat) :=
+    match call.arguments with
+    | .str name :: .str argument :: rest => some (name, some argument, counted rest)
+    | .str name :: rest => some (name, none, counted rest)
+    | _ => none
+  let some (name, argument, count) := named | message noMotionNamed
   let some motion := motions.find? (·.name == name) | message (noSuchMotion name)
   let text := call.target.buffer.text
   let view := call.target.window.id
@@ -391,12 +401,16 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let kept := ((← editorState).window? view).bind (·.wanted)
   -- The kept column holds only while the cursor is where it was kept.
   let wanted := (kept.filter (·.head == range.head)).map (·.column)
-  let raw ← motion.target text { head := range.head, count, wanted }
+  let raw ← motion.target text { head := range.head, count, wanted, argument }
   let head ← rested (restOf call.report) text raw.head
   let anchor := if call.report.selecting then range.anchor else head
   call.target.select { ranges := #[⟨anchor, head⟩], shape := call.report.shape }
   let keeps := if head == range.head then raw.unmoved else raw.wanted
   discard <| view.setWanted (keeps.map fun column => { column, head })
+  if let some find := raw.find then
+    setLastFind find
+  if let some said := raw.said then
+    message said
 
 /-- Enters the Vim state the call's report says, with the head first put
 where `place` leads from where it is ("Entering a state", in the module

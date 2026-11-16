@@ -38,7 +38,7 @@ registers, undo and dot repeat, on the editor API:
 | A window's wanted column | `lean/Editor/State.lean` (`Window.wanted`), `lean/Editor/Api.lean` (`ViewId.setWanted`) |
 | The vocabulary's motion record, with how an operator takes a motion, and its operator record | `lean/Editor/Vocabulary.lean` |
 | Evil: where a cursor rests, the move command, entering a state, the keys that begin an insert, the two that open a line, typed text | `lean/Editor/Evil.lean` |
-| Evil's fifteen motions and their table | `lean/Editor/Evil/Motions.lean` |
+| Evil's twenty-one motions and their table | `lean/Editor/Evil/Motions.lean` |
 | Evil's three operators and their table, what an operator takes, the operate command, and `x` | `lean/Editor/Evil/Operators.lean` |
 | Evil's registers: the unnamed one and the clipboard's, storing, fetching, and `p` and `P` | `lean/Editor/Evil/Registers.lean` |
 | Evil's undo and redo | `lean/Editor/Evil/Undo.lean` |
@@ -502,7 +502,7 @@ structure Vocabulary.Motion where
   it did not move: `l` at a line's last character answers the line break,
   which normal state's resting rule brings back. Only the command knows
   where the cursor came to rest.
-- **The table is compiled** (`Evil.motions`, fifteen entries under the
+- **The table is compiled** (`Evil.motions`, twenty-one entries under the
   names the default tables bind; "Motions as built"). The move command is
   a function of the table it looks names up in (`Evil.move motions`), so
   the caller supplies the vocabulary. A name with no entry says
@@ -654,6 +654,7 @@ structure Command where
 
 inductive Bound where
   | motion     (name : String)
+  | charMotion (name : String)      -- a motion that takes the character the next key names
   | operator   (operator : Operator)
   | textObject (name : String)
   | command    (command : Command)
@@ -673,6 +674,14 @@ inductive Bound where
   a keymap, and `c` enters insert state the same way.
 - **A motion needs only its name.** How an operator takes it is the
   vocabulary's, read when the edit runs.
+- **`charMotion`** is a motion that takes the character the next key names
+  as its argument: `f`, `t`, `F` and `T`. The key is kept as typed, so it is
+  pending alone, and it folds the count being typed as an operator does.
+  The next key is read before counts and keymaps, as the key after the
+  register prefix is: a key that prints names the character, a digit
+  included, and `TAB` names a tab. It completes the move, or the operator
+  waiting over the motion, with that argument. Any other key resets the
+  edit begun, as `f<Escape>` does in Vim.
 - **`register`** is the key that begins a register's name (`"`). See
   Registers.
 - **`repeat`** is the repeat key (`.`). It is a part of speech and not a
@@ -685,10 +694,11 @@ inductive Bound where
 
 ```lean
 inductive Over where
-  | motion (name : String) | textObject (name : String) | lines | selection
+  | motion (name : String) (argument : Option String := none)
+  | textObject (name : String) | lines | selection
 
 inductive Edit where
-  | move    (motion : String) (count : Option Nat)
+  | move    (motion : String) (count : Option Nat) (argument : Option String := none)
   | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
   | run     (command : Command) (count : Option Nat) (register : Option String)
   | replay  (change : Edit) (inserted : Option String)   -- the last change, and its typed text, editing keys' marks in it
@@ -713,10 +723,17 @@ scheme's one rule for it:
 
 | Edit | Invocation |
 |---|---|
-| `move m c` | `move`, with `[.str m, .nat c]` |
-| `operate o over c r` | `operate`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""` |
+| `move m c a` | `move`, with `[.str m, .nat c]`, or `[.str m, .str a, .nat c]` when the motion has an argument |
+| `operate o over c r` | `operate`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""`. A motion's argument, when it has one, is a string right after its name: `[.str o.name, .str "motion", .str m, .str a, .nat c, .str r]` |
 | `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
 | `replay change inserted` | `repeat`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
+
+**A motion's argument, when it has one, is the string right after the
+motion's name.** So the register stays the last argument of the `operate`
+layout, which is the one thing dot repeat reads of a layout ("The last
+change"), and a move and an operation over a motion carry the argument in
+the same place. The move and operate commands read both layouts: a string
+after the name is the argument, and a number the count.
 
 The three command names are constants of the scheme (`Vim.moveCommand`,
 `Vim.operateCommand`, `Vim.repeatCommand`), and so is the name typed text
@@ -1534,10 +1551,11 @@ follows Vim 9.1 with its default options:
 Status: built, by the command loop's phase 11
 (`lean/Editor/Evil/Motions.lean`; pinned by `evilMotionChecks`).
 
-Fifteen motions are vocabulary entries, each composed from the text
-port's motion primitives ([text-and-display.md](text-and-display.md),
-"Motion primitives"). What a count means, and what a motion does when it
-cannot go the whole way, is Vim's:
+Twenty-one motions are vocabulary entries. Fifteen are composed from the
+text port's motion primitives ([text-and-display.md](text-and-display.md),
+"Motion primitives"), and the six character finds walk the line's content
+in Lean. What a count means, and what a motion does when it cannot go the
+whole way, is Vim's:
 
 | Key | Motion | Composed from | Count |
 |---|---|---|---|
@@ -1548,6 +1566,34 @@ cannot go the whole way, is Vim's:
 | `^` | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
 | `$` | `line-end` | `rowsDown (count - 1)`, then `lineEnd` | The end of the line `count - 1` lines below. With fewer lines below it goes to the last line's end. On the last line with a count above 1 it does not move, which is Vim's failed motion |
 | `g g`, `G` | `first-line`, `last-line` | `offsetOf` of the row's start, then `lineFirstNonBlank` | The line number, from 1, stopped at the last line. With none: the first line, and the last |
+| `f`, `F` | `find-forward`, `find-backward` | The line's content (`slice` from `lineStart` to `lineEnd`), walked from the cursor | The `count`th occurrence of the character after the cursor (before it, for `F`). With fewer in the line it does not move, and fails |
+| `t`, `T` | `till-forward`, `till-backward` | The same, then one cell back towards the cursor | As `f` and `F`. With the character right beside the cursor it does not move, and does not fail (Vim's `searchc`) |
+| `;`, `,` | `find-again`, `find-again-reverse` | The last find (`EditorState.lastFind`), as it was, and for `,` in the other direction | As the find it runs. With no last find it fails where it is |
+
+**The character finds** (`:help f`, `:help t`, `:help ;`):
+
+- **They never leave the line.** A character on the next line is not
+  found.
+- **The character is the motion's argument** (`Vocabulary.From.argument`),
+  the text the next key printed (`Bound.charMotion`, "What a key is bound
+  to"). Run with none, by its name, by config or by a sweep, a find fails
+  where it is.
+- **The find is remembered as data.** `f`, `t`, `F` and `T` hand back the
+  find they made (`Vocabulary.To.find`), also when they fail, and the move
+  and operate commands keep it (`setLastFind`), as Vim keeps the character
+  even when the motion fails. It is global, as Vim's is. `;` and `,` hand
+  back none, so `,` does not change the direction kept: `f x , ;` goes
+  back and then forward again.
+- **A till repeated with a count of 1 passes over the character beside the
+  cursor**: Vim's default `cpoptions` has no `;`, so `t x ;` right before
+  an `x` goes on to the next `x` (`searchc` sets `stop = FALSE`). With a
+  count, as `2;`, the first step does stop at it.
+- **Under an operator** `f` and `t` are inclusive and `F` and `T`
+  exclusive; `;` and `,` take the reach of the motion they run, so `d,`
+  after `t` is exclusive. `dtx` in `|ax` deletes the `a`.
+- **A recorded departure**: a find under an operator that fails gives the
+  command up, which rolls back what it kept, so `dfz` on a line with no
+  `z` leaves the last find as it was, where Vim keeps `z`.
 
 - **The last line** (`Evil.lastLine`) is the last row a cursor may rest
   in outside insert state. It is the row before the empty last row of a
@@ -2078,7 +2124,7 @@ Which names have something behind them:
 
 | Names | State |
 |---|---|
-| The fifteen motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
+| The twenty-one motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
 | `self-insert`, which no table names: typed text | Built and registered |
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
@@ -2092,7 +2138,7 @@ Which names have something behind them:
 
 | Table | Keys |
 |---|---|
-| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line |
+| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
 | `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
 | `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `RET` insert-newline, `TAB` insert-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down (each enters no state, and none is a change dot repeat replays) |

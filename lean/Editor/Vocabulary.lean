@@ -63,6 +63,15 @@ A motion (`Motion`) is a name and a function from where a cursor is
   by its caller, which leaves the cursor at the position the motion
   answers (`Editor/Evil/Operators.lean`). The move command does not read
   it: the cursor goes to the target the motion answers.
+- **A motion may take an argument** (`From.argument`): the character its
+  key's next key named, for `f`, `t`, `F` and `T`. A motion that takes one
+  and is given none fails where it is.
+- **What is remembered between motions goes out as data too**: a find
+  hands back the character find it made (`To.find`), and its caller keeps
+  it as the last one (`EditorState.lastFind`), which `;` and `,` read from
+  the editor state. A motion that has something for the echo area hands
+  it back (`To.said`), and its caller says it. `Taken` carries both, and
+  its default copies them from `To`.
 
 ## Operators
 
@@ -117,6 +126,9 @@ structure From where
   /-- The wanted column the view keeps, when it still holds: when the cursor
   is where it was left when the column was kept. -/
   wanted : Option WantedColumn := none
+  /-- The argument its key gave the motion, if it takes one: a character for
+  `f`, a pattern for `/`. -/
+  argument : Option String := none
   deriving DecidableEq, Repr
 
 /-- Where a motion leads. -/
@@ -136,6 +148,13 @@ structure To where
   operator that waits for it is cancelled. A cursor is moved to `head` all
   the same. -/
   failed : Bool := false
+  /-- What the echo area is to say of the motion, if anything: a warning,
+  or why it failed. Its caller says it. -/
+  said : Option String := none
+  /-- The character find the motion made, for its caller to keep as the
+  last one (`EditorState.lastFind`), which `;` and `,` repeat; `none` to
+  keep the one there was. -/
+  find : Option Find := none
   deriving DecidableEq, Repr
 
 /-- How an operator takes the cells between the head and a motion's
@@ -158,6 +177,10 @@ structure Taken where
   /-- Whether the motion could not be made: the operator is cancelled, and
   the cursor is left at `head`. -/
   failed : Bool := false
+  /-- What the echo area is to say, as `To.said`. -/
+  said : Option String := none
+  /-- The character find the motion made, as `To.find`. -/
+  find : Option Find := none
   deriving DecidableEq, Repr
 
 /-- A motion: its name, by which an input scheme's binding names it, and
@@ -177,7 +200,7 @@ structure Motion where
   `target` changes nothing. -/
   taken : Bool → TextId → From → EditorM Taken := fun _ text origin => do
     let to ← target text origin
-    return { head := to.head, reach, failed := to.failed }
+    return { head := to.head, reach, failed := to.failed, said := to.said, find := to.find }
 
 /-- What an operator acts on. -/
 inductive Stretch where
