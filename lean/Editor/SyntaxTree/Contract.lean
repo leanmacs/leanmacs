@@ -180,8 +180,9 @@ def properties : List Property :=
           SyntaxTree.detach never
           return refused &&
               (← refusedWith .notAttached (SyntaxTree.captures highlighted query 0 3)) &&
-              (← refusedWith .notAttached
-                  (SyntaxTree.highlight highlighted query #[some ⟨"syntax.number"⟩])) &&
+              (←
+                refusedWith .notAttached
+                    (SyntaxTree.highlight highlighted query #[some ⟨"syntax.number"⟩])) &&
               (← refusedWith .notAttached (SyntaxTree.captures never query 0 3)) },
       { name :=
           "a query that is not one is refused as syntax, an unknown kind as a node type and an unknown field as a field"

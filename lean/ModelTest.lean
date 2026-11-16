@@ -14293,13 +14293,15 @@ def highlightEnterChecks : List Check :=
             | some (["", echo], major, model) =>
               echo == "highlights: `cobol-mode`: no grammar of that name" &&
                 major == some "cobol-mode" &&
-                model.attached.isEmpty && model.highlighted.isEmpty
+                model.attached.isEmpty &&
+                model.highlighted.isEmpty
             | _ => false) &&
             match highlightedBy modes ["json", "broken"] with
             | some (["", echo], major, model) =>
               echo.startsWith "highlights: `broken`: the query is not one" &&
                 major == some "broken" &&
-                model.attached.isEmpty && model.highlighted.isEmpty
+                model.attached.isEmpty &&
+                model.highlighted.isEmpty
             | _ => false },
     { name := "a derived mode that says nothing of a syntax tree takes its parent's"
       run :=
