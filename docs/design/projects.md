@@ -143,9 +143,19 @@ does: the workspace is rooted right but is its own project, with no branch.
 |---|---|---|
 | What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer and its error list, running jobs |
 | What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` and compile lines), the commands and settings config gives the project |
+| What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers |
 
-Both stores are `Value` trees by name, as a buffer's locals are, so a
-reload leaves them; both live as long as the session. A feature declares a
+The stores are `Value` trees by name, as a buffer's locals are, so a
+reload leaves them; they live as long as the session. The unscoped store
+is read with `Workspace.Table.getUnscoped` and written with
+`Workspace.setUnscoped`, and is never refused: it is always there.
+
+A command run for a buffer runs in its workspace's root, or, with no
+workspace, in its file's directory (`BufferId.workingDirectory`). A
+buffer with neither runs in the editor's working directory
+(`EditorState.workingDirectory`), which each host sets once from its own
+process's working directory: the window mode's and the headless mode's
+alike. It is `/` until a host sets it. A feature declares a
 `Store α` (`lean/Editor/Store.lean`) and reads and writes it through
 `Workspace.Table.get` and `Workspace.set`, or `getOfProject` and
 `Project.set`. They are compiled state that follows `Store`'s encoding, not

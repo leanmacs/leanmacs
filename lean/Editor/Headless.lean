@@ -797,6 +797,12 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   `Loop.start` in a frame of 0 by 0, which a resize changes. A test hands
   one that is refused, to see what the host does with no frame. -/
   start : TextM (Loop scheme) := Loop.start scheme ⟨0, 0⟩
+  /-- The host's working directory, which `start` writes into the editor
+  state of the loop it makes (`EditorState.workingDirectory`): where a
+  command run for a buffer with neither a workspace nor a file runs. The
+  window mode's is the process's working directory, read at the edge, and
+  so is the headless mode's. -/
+  workingDirectory : System.FilePath := "/"
   /-- How the host makes its display, over the read half of the table of
   snapshots the text binding publishes (`published`). The headless mode's
   is a recorder in `cells`; a host that draws is handed the real binding. -/
@@ -1600,8 +1606,17 @@ structure Host where
   /-- The loop. -/
   thread : Task (Except IO.Error Unit)
 
-/-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`. -/
+/-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`.
+The loop it makes, when it is first needed, has the collaborators' working
+directory in its state (`Collaborators.workingDirectory`). -/
 def start {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) : IO Host := do
+  let made := collaborators.start
+  let collaborators :=
+    { collaborators with
+      start := do
+        let loop ← made
+        return { loop with
+            state := { loop.state with workingDirectory := collaborators.workingDirectory } } }
   let progress ← IO.mkRef {}
   let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress)
   return { requests := collaborators.requests, posted := ← IO.mkRef 0, progress, thread }
@@ -2187,7 +2202,10 @@ The Lean toolchain's directory and the directory holding the editor
 package's `.olean` files are the first two of four paths, or, with two, the
 bundle's, resolved from the executable's path, which `main` reads at the
 edge (`IO.appPath`; `Editor/ModuleLookup.lean`). Nothing is read from the
-environment or the working directory. -/
+environment. The working directory is read once, at the edge, as the
+editor's (`Collaborators.workingDirectory`): where `:!` runs for a buffer
+with neither a workspace nor a file; no path of the command line is read
+against it. -/
 def main (arguments : List String) : IO UInt32 := do
   let { render := drawn, sysroot, oleans := oleanDir, config := configDir, script := scriptPath } ←
     match read (← IO.appPath).toString arguments with
@@ -2210,9 +2228,11 @@ def main (arguments : List String) : IO UInt32 := do
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
   let shipped ← shipped sysroot oleanDir configDir IO.println .headless
+  let workingDirectory ← IO.currentDir
   let failure ←
     run
         { shipped with
+          workingDirectory
           display :=
             if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
           render := if drawn then some Render.library else none }

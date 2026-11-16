@@ -145,12 +145,14 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   number of rows (`Editor/State.lean`, "The scroll margin"). It is never
   refused: any number is taken. A command reads the margin with a read of
   the state (`EditorState.scrollMargin`).
-- **Workspaces are changed by four requests** (`Editor/State.lean`,
+- **Workspaces are changed by five requests** (`Editor/State.lean`,
   "Workspaces"): `recordWorkspace` takes in what the finder answered for a
   directory, and is never refused; `registerWorkspace` makes a workspace
   that is not on this machine, and refuses `local`; `setWorkspaceValue` and
   `setProjectValue` set a value in a store, and refuse `noSuchWorkspace`
-  and `noSuchProject` (`WorkspaceRefusal`). A command reads them with a
+  and `noSuchProject` (`WorkspaceRefusal`); `setUnscopedValue` sets a
+  value in the store of the buffers outside any workspace, and is never
+  refused. A command reads them with a
   read of the state (`EditorState.workspaceOf?`, `workspaces`).
 - **What the finder is handed is asked by one request**,
   `workspaceSettings`: config's workspace roots and the config generation,
@@ -301,6 +303,9 @@ inductive StateRequest where
   /-- What the finder is to be handed, config's roots among it, and the
   config generation, which the loop that runs the command answers with. -/
   | workspaceSettings
+  /-- Have the unscoped store, of the buffers outside any workspace, keep
+  `value` under `name`. -/
+  | setUnscopedValue (name : String) (value : Value)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -353,6 +358,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setWorkspaceValue .. => Except WorkspaceRefusal Unit
   | .setProjectValue .. => Except WorkspaceRefusal Unit
   | .workspaceSettings => Workspace.Settings × Nat
+  | .setUnscopedValue .. => Unit
 
 namespace EditorState
 
@@ -435,6 +441,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   -- Config's roots and its generation are the loop's to answer with
   -- (`Program.dispatched`): here, with no loop, config has none.
   | .workspaceSettings, state => (({}, 0), state)
+  | .setUnscopedValue name value, state =>
+    ((), { state with workspaces := state.workspaces.setUnscopedValue name value })
 
 end EditorState
 

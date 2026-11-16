@@ -601,6 +601,13 @@ is one read of the state or one state request (`Editor/State.lean`,
   `Workspace.Table.get` and `getOfProject` read one back, its initial value
   where none was set. The typed operations are here, not beside the table,
   because the stores' module is downstream of the editor state.
+- `Workspace.setUnscopedValue` and `Workspace.setUnscoped` set a value of
+  the unscoped store, the one store of the buffers outside any workspace,
+  which have no project either; `Workspace.Table.getUnscoped` reads one
+  back. Neither is refused.
+- The editor's working directory, where a command run for a buffer with
+  neither a workspace nor a file runs, is the state's
+  (`EditorState.workingDirectory`), read from `editorState`.
 
 Pinned by `ModelTest.workspaceStateChecks`.
 
@@ -1369,6 +1376,22 @@ store does not decode. -/
 def Table.getOfProject {α : Type} (table : Table) (store : Store α) (identity : Project.Identity) :
     α :=
   ((table.projectValue? identity store.name).bind store.decode).getD store.initial
+
+/-- Has the unscoped store, of the buffers outside any workspace, keep
+`value` under `name`. Never refused. -/
+def setUnscopedValue (name : String) (value : Value) : EditorM Unit :=
+  EditorState.ask (.setUnscopedValue name value)
+
+/-- Has the unscoped store keep `value` as the value of `store`, by the
+store's encoding. Never refused. -/
+def setUnscoped {α : Type} (store : Store α) (value : α) : EditorM Unit :=
+  setUnscopedValue store.name (store.encode value)
+
+/-- The value of `store` in the unscoped store: what its cell decodes to, or
+the store's initial value when it has no cell or one the store does not
+decode. -/
+def Table.getUnscoped {α : Type} (table : Table) (store : Store α) : α :=
+  ((table.unscopedValue? store.name).bind store.decode).getD store.initial
 
 end Workspace
 

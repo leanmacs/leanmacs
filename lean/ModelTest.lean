@@ -26506,6 +26506,25 @@ def workspaceStateChecks : List Check :=
               directory == .workspace "/r"
           | none => false },
     { name :=
+        "from a command: the unscoped store, for buffers outside any workspace, reads a store as its initial value until it is set there, then as what was set, a value of its own name beside it; and the editor's working directory is / until a host sets it, while a buffer with no workspace and no file still has none"
+      run :=
+        pure <|
+          match
+            dispatchedFrom do
+              let before := (← editorState).workspaces.getUnscoped countStore
+              Workspace.setUnscoped countStore 4
+              Workspace.setUnscopedValue "other" (.str "kept")
+              return (before, ← (⟨0⟩ : BufferId).workingDirectory) with
+          | some ((before, directory), state) =>
+            before == 0 && state.workspaces.getUnscoped countStore == 4 &&
+              state.workspaces.unscopedValue? "other" == some (.str "kept") &&
+              state.workspaces.unscopedValue? "missing" == none &&
+              state.workspaces.workspaces.isEmpty &&
+              state.workingDirectory == ("/" : System.FilePath) &&
+              EditorState.none.workingDirectory == ("/" : System.FilePath) &&
+              directory == .none
+          | none => false },
+    { name :=
         "from a command: a buffer with no workspace and no file has no working directory, and the API's registration and project values are the state requests'"
       run :=
         pure <|
@@ -26734,6 +26753,22 @@ def workspaceChecks : List Check :=
                 state.workspaceOf? inherited == shownWorkspace made &&
                 (state.workspaceOf? bare).isNone
             | _, _ => false },
+    { name :=
+        "the unscoped store is the editor state's, so a new config generation and the files opened under it leave it as it was"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let ((), state) := driver.loop.state.handle (.setUnscopedValue countStore.name (.nat 7))
+            let set := { driver with loop := { driver.loop with state } }
+            let reloaded :=
+              { set with
+                keys :=
+                  { set.keys with registered := { set.keys.registered with generation := 1 } } }
+            let opened := settledAfter (settledAfter reloaded "C-o a") "C-o x"
+            opened.loop.state.workspaces.getUnscoped countStore == 7 &&
+              (shownWorkspace opened).isNone },
     { name :=
         "with no find job registered, a file still opens, its buffer has no workspace, and nothing is said"
       run :=

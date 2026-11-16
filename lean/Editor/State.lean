@@ -554,6 +554,15 @@ leaves them.
   location that is not on this machine; it refuses `local`.
 - `setWorkspaceValue` and `setProjectValue` set a value in a workspace's or
   a project's store; they refuse `noSuchWorkspace` and `noSuchProject`.
+- `setUnscopedValue` sets a value in the store of the buffers outside any
+  workspace (`Workspace.Table.unscoped`); it is never refused.
+- **The editor's working directory** (`workingDirectory`) is where a
+  command run for a buffer with no workspace and no file runs. A host sets
+  it once, when its loop's frame is made, from its own working directory
+  (`Headless.Collaborators.workingDirectory`); it is `/` until then. A
+  buffer's own answer (`BufferId.workingDirectory`, `Editor/Api.lean`)
+  is still `none` for such a buffer: the command that runs something
+  falls back to this.
 
 ## Where a new field goes
 
@@ -978,6 +987,10 @@ structure EditorState where
   /-- The workspaces and projects of the session, with their stores, and
   each directory's cached answer ("Workspaces", in the module docs). -/
   workspaces : Workspace.Table := {}
+  /-- The editor's working directory: where a command run for a buffer with
+  no workspace and no file runs ("Workspaces", in the module docs). A host
+  sets it once, from its own; `/` until it does. -/
+  workingDirectory : System.FilePath := "/"
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
