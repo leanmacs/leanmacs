@@ -232,7 +232,9 @@ def Theme.builtin : Theme :=
           { foreground := some (Color.rgb 236 239 244), background := some (Color.rgb 59 66 82) } }]
 
 /-- A theme with the name it is registered and chosen by
-(`Editor/Config/Registry.lean`, "Themes"). -/
+(`Editor/Config/Registry.lean`, "Themes"). In force, it stands in for
+`Theme.builtin` wholesale, so it defines every face it needs; a theme that
+keeps the built-in faces is built as `Theme.builtin ++ #[…]`. -/
 structure NamedTheme where
   /-- The theme's name. -/
   name : String

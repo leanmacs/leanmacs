@@ -171,8 +171,10 @@ def commands (state : State σ) : Nat :=
 the definitions the installed config made, in the order its `setup` made
 them. A later definition of a name is over an earlier one, so a face the
 config sets takes the config's attributes over the theme's, whichever theme
-is in force, and a face it does not set is the theme's. A registry that
-holds no theme of the name in force draws in the built-in theme. -/
+is in force, and a face it does not set is the theme's. The theme in force
+stands in for the built-in theme wholesale: a face it does not define is not
+the built-in theme's. A registry that holds no theme of the name in force
+draws in the built-in theme. -/
 def theme (state : State σ) : Theme :=
   (((state.registry.theme? state.themeName).map (·.theme)).getD Theme.builtin) ++
     state.registry.definitions

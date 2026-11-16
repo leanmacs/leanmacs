@@ -141,15 +141,22 @@ Config registers whole themes too, and names the one in force:
 
 ```lean
 def setup : SetupM Unit := do
-  defineTheme "dusk" #[{ name := ⟨"default"⟩, face := { foreground := some (Color.rgb 200 200 0) } }]
+  defineTheme "dusk" (Theme.builtin ++
+    #[{ name := ⟨"default"⟩, face := { foreground := some (Color.rgb 200 200 0) } }])
   useTheme "dusk"
   face "keyword" { foreground := some (Color.rgb 200 0 0) }
 ```
 
 `defineTheme` registers a theme by name, for this config; `useTheme` names
 the theme in force once the config is installed, a compiled one (`default`
-is the built-in theme) or one the `setup` defines. Config's own faces are
-over whichever theme is in force. A `setup` that defines a theme name twice,
+is the built-in theme) or one the `setup` defines. A theme in force replaces
+the built-in theme wholesale, not over it: it must define every face it
+needs, the cursor faces, `selection`, `echo-area` and `mode-line` among them,
+or those faces are not drawn (a cursor face nothing defines is not seen).
+The example keeps the built-in faces by building `dusk` as `Theme.builtin`
+followed by its own definitions; a later definition of a name is over an
+earlier one. Config's own faces are over whichever theme is in force. A
+`setup` that defines a theme name twice,
 or names a theme twice, is refused. A name no theme is registered under is
 not refused: it is looked up when the config is installed, and the theme in
 force then stays, and the echo area says so (`Editor/Config/Reload.lean`).

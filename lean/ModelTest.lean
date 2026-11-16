@@ -3138,6 +3138,23 @@ def reloadChecks : List Check :=
             mine.themeName == "mine" &&
             mine.theme == oneFace 9) },
     { name :=
+        "a theme config defines replaces the built-in theme wholesale: one of `default` alone, in force, defines no `cursor.normal`; one built as `Theme.builtin ++ #[…]` keeps it"
+      run :=
+        let definesCursor (theme : Theme) : Bool := theme.any (·.name == ⟨"cursor.normal"⟩)
+        let bare : SetupM Unit := do
+          defineTheme "bare" (oneFace 9)
+          useTheme "bare"
+        let over : SetupM Unit := do
+          defineTheme "over" (Theme.builtin ++ oneFace 9)
+          useTheme "over"
+        let (bareState, _) := reduceFrom themed [.requested, .finished (accepted ["a"] bare)]
+        let (overState, _) := reduceFrom themed [.requested, .finished (accepted ["a"] over)]
+        pure
+          (definesCursor Theme.builtin && bareState.themeName == "bare" &&
+            !definesCursor bareState.theme &&
+            overState.themeName == "over" &&
+            definesCursor overState.theme) },
+    { name :=
         "criterion 2: a config that names no theme starts in default, the built-in theme, with config's faces over it; a state before any config is in default"
       run :=
         let (state, _) :=

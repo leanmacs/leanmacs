@@ -1077,6 +1077,11 @@ theme in force is state of the reload reducer (`Config.State.themeName`,
   attributes over the theme's, whichever theme is in force and across a
   switch, and one it stops setting is the theme's again at the next reload
   that installs ([lean-runtime.md](lean-runtime.md), "Config and reload").
+- **A theme in force replaces the built-in theme wholesale.** It is not
+  over `Theme.builtin`: a theme config defines must define every face it
+  needs, or that face is not drawn, and a cursor face nothing defines is
+  not seen. A config theme keeps the built-in faces by being built as
+  `Theme.builtin ++ #[…]`. Nothing yet checks a theme for completeness.
 - **A reload whose config names a registered theme puts it in force.** One
   whose config names none keeps the theme in force, so a theme picked with
   the command survives a reload that does not name one. One whose config
