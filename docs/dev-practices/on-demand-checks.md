@@ -94,8 +94,9 @@ read key by key with `plutil -extract`; a walk over the whole plist finds no
 or `UTExportedTypeDeclarations`; and both checks are run on mutated copies
 that must each fail naming the key: a rank of `Default` on the first entry,
 a role of `Viewer` on the second, a second content type, a third entry, and
-for the walk a `Default`, an `Owner` and an inserted
-`UTExportedTypeDeclarations`; `CFBundleShortVersionString` and `CFBundleVersion`
+for the walk a `Default`, an `Owner`, an inserted
+`UTExportedTypeDeclarations` and an `Owner` under a dotted key it cannot
+address (which fails as `cannot read` that path); `CFBundleShortVersionString` and `CFBundleVersion`
 are each the line of `lean/app/version`, read from the file the build
 reads; `LSApplicationCategoryType` is `public.app-category.developer-tools`
 and `NSHumanReadableCopyright` is not empty) and the executable with `lipo`

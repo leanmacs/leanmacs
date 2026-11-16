@@ -22,7 +22,8 @@
 #    `UTImportedTypeDeclarations` or `UTExportedTypeDeclarations`. Both
 #    checks run on mutated copies too (a wrong rank, role, content-type
 #    count or entry count; a `Default`, an `Owner`, an inserted
-#    `UTExportedTypeDeclarations`), and each must fail naming the key. Its
+#    `UTExportedTypeDeclarations`, an `Owner` under a dotted key the walk
+#    cannot address), and each must fail naming the key. Its
 #    `CFBundleShortVersionString` and `CFBundleVersion` are each the line of
 #    `lean/app/version`, read here from the file the build reads; its
 #    `LSApplicationCategoryType` is `public.app-category.developer-tools`
@@ -204,7 +205,8 @@ check_document_types() {
 # one. plutil cannot address the root by key path, so the root's keys are
 # read from `plutil -p`, whose top-level keys are the lines indented by two
 # spaces; below the root, `plutil -type` and `-extract … raw` (keys of a
-# dictionary, count of an array) walk it. No key in our plist holds a dot.
+# dictionary, count of an array) walk it. A key path plutil cannot read
+# (a key holding a dot) fails the check as `cannot read <path>`.
 check_no_claims() {
   local p=$1 key
   claims_problem=
@@ -227,23 +229,36 @@ check_no_claims() {
 # Walks the value at key path $2, whose last key is $3, in the plist at $1.
 walk_claims() {
   local p=$1 path=$2 last=$3 type child n i value
-  type=$(plutil -type "$path" "$p")
+  type=$(plutil -type "$path" "$p" 2>/dev/null) || {
+    claims_problem="cannot read $path"
+    return 1
+  }
   case $type in
     dictionary)
+      value=$(plutil -extract "$path" raw -o - "$p" 2>/dev/null) || {
+        claims_problem="cannot read $path"
+        return 1
+      }
       while IFS= read -r child; do
         [ -n "$child" ] || continue
         walk_claims "$p" "$path.$child" "$child" || return 1
-      done < <(plutil -extract "$path" raw -o - "$p")
+      done <<<"$value"
       ;;
     array)
-      n=$(plutil -extract "$path" raw -o - "$p")
+      n=$(plutil -extract "$path" raw -o - "$p" 2>/dev/null) || {
+        claims_problem="cannot read $path"
+        return 1
+      }
       for ((i = 0; i < n; i++)); do
         walk_claims "$p" "$path.$i" "$i" || return 1
       done
       ;;
     string)
       if [ "$last" = LSHandlerRank ]; then
-        value=$(plutil -extract "$path" raw -o - "$p")
+        value=$(plutil -extract "$path" raw -o - "$p" 2>/dev/null) || {
+          claims_problem="cannot read $path"
+          return 1
+        }
         case $value in
           Default | Owner)
             claims_problem="$path is $value"
@@ -281,6 +296,7 @@ claims_mutations=(
   "-replace CFBundleDocumentTypes.1.LSHandlerRank -string Default|CFBundleDocumentTypes.1.LSHandlerRank is Default"
   "-replace CFBundleDocumentTypes.0.LSHandlerRank -string Owner|CFBundleDocumentTypes.0.LSHandlerRank is Owner"
   "-insert UTExportedTypeDeclarations -array|Info.plist declares UTExportedTypeDeclarations"
+  "-insert X -xml <dict><key>has.dot</key><dict><key>LSHandlerRank</key><string>Owner</string></dict></dict>|cannot read X.has.dot"
 )
 for m in "${claims_mutations[@]}"; do
   read -r -a args <<<"${m%%|*}"
