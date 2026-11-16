@@ -59,8 +59,13 @@ fn injections(host: &str) -> Injections<TreeSitterQuery> {
 /// The layers of `text` parsed with `host`.
 fn layers_of(host: &str, text: &str) -> Vec<Layer<TreeSitterTree>> {
     let snapshot = Text::from(text).snapshot();
-    let (_, layers) =
-        inject::fresh(&TreeSitter, &GrammarName::new(host), &injections(host), &snapshot).unwrap();
+    let (_, layers) = inject::fresh(
+        &TreeSitter,
+        &GrammarName::new(host),
+        &injections(host),
+        &snapshot,
+    )
+    .unwrap();
     layers
 }
 
@@ -123,7 +128,11 @@ fn a_fenced_json_block_is_a_json_layer_and_an_unknown_language_none() {
     assert!(found.contains(&("json", 1, vec![json])));
     // `cobol` names no grammar, and inline text names `markdown_inline`,
     // which is not listed: neither is a layer.
-    assert!(found.iter().all(|(language, _, _)| ["rust", "json"].contains(language)));
+    assert!(
+        found
+            .iter()
+            .all(|(language, _, _)| ["rust", "json"].contains(language))
+    );
     let cobol = nth(FENCED, "DISPLAY", 0);
     assert!(
         found

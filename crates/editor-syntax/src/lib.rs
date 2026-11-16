@@ -50,7 +50,7 @@
 //! |---|---|---|
 //! | Something more asked of a parsing library | A method of [`Syntax`], answered in plain data | A property of [`contract`], with a broken implementation that it catches, and the fake |
 //! | A rule of what a range answers, or of the order | [`query`] | Its unit tests, on a syntax that answers out of order; and the same rule in the Lean model (`lean/Editor/SyntaxTree/Model.lean`) |
-//! | A rule of when a text is reparsed, which result is handed out, or when a question of captures is refused | [`session`] | Its unit tests, on the fake and a recording mock, single-threaded |
+//! | A rule of when a text is reparsed, which result is handed out, or when a question of captures or of a kept query is refused | [`session`] | Its unit tests, on the fake and a recording mock, single-threaded |
 //! | A rule of how captures are drawn, or carried through edits | [`highlight`] | Its unit tests, on the fake and hand-built patches |
 //! | A rule of which injections a query's matches say, or how layers nest | [`inject`] | Its unit tests, on a mock that answers canned matches and on the fake; the adapter's `tests/injections.rs` on the real grammars |
 //! | A rule of which tree a snapshot is drawn from | [`session`] ("Highlights") | Its unit tests, single-threaded, and `tests/highlight.rs` on a real thread with a parse held |
@@ -71,5 +71,7 @@ pub use port::{
     Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
     Setting, Syntax,
 };
-pub use session::{CapturesRefusal, Consumer, Latest, Outcome, Parsed, Session, Source};
+pub use session::{
+    CapturesRefusal, Consumer, Kept, KeptRefusal, Latest, Outcome, Parsed, Session, Source,
+};
 pub use worker::{Handle, Worker};

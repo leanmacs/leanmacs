@@ -66,6 +66,27 @@
 //! answers of that tree. The order is what the Lean model of the syntax
 //! interface reproduces.
 //!
+//! # Kept queries ([`Session::keep`], [`Session::kept_captures`])
+//!
+//! A session keeps one query of each structural kind it is given
+//! ([`QueryKind::TextObjects`], [`QueryKind::Indents`]), a later one
+//! replacing the one before, so a question of text objects or indentation
+//! names a kind, not a query. A question of a kept query's captures is
+//! answered as one of captures is, from the tree delivered, with the
+//! query's capture names; it is refused, checked in this order, when
+//! nothing of that kind is kept ([`KeptRefusal::NoQuery`]), when the range
+//! is not two positions of the snapshot's text in order
+//! ([`KeptRefusal::BadRange`]), and when the tree delivered last is not of
+//! the snapshot's revision ([`KeptRefusal::NotParsed`]).
+//!
+//! **Refused, not carried.** Highlights are carried through the edits since
+//! the tree delivered, since a frame must draw something; an indent level
+//! or a text object of a tree that lacks the latest edit would be wrong,
+//! not stale (an indent asked right after the line break that makes it
+//! matter). So a structural question before its reparse is delivered is
+//! refused, and the caller keeps the row's indent or finds no object. The
+//! reparse is milliseconds, and keys come further apart than that.
+//!
 //! # Highlights ([`Session::highlights`])
 //!
 //! A session may be given a [`Highlighter`] ([`Session::set_highlighter`]),
@@ -117,7 +138,7 @@ use editor_text::{Patch, Revision, Snapshot};
 
 use crate::highlight::{Highlighter, Highlights};
 use crate::inject::{Injections, Language, Layer, layers};
-use crate::port::{Capture, GrammarName, Syntax};
+use crate::port::{Capture, GrammarName, QueryKind, Syntax};
 use crate::query::{captures_in, positions};
 
 /// How the session reaches its text: the text as it is now and, when the
@@ -204,6 +225,22 @@ pub enum CapturesRefusal {
     NotParsed,
 }
 
+/// Why a question of a kept query's captures was refused
+/// ([`Session::kept_captures`]), in the order the refusals are checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeptRefusal {
+    /// The session keeps no query of that kind.
+    NoQuery,
+    /// The range is not two positions of the snapshot's text in order.
+    BadRange,
+    /// No tree of the snapshot's revision is the one delivered last.
+    NotParsed,
+}
+
+/// The capture names of a kept query and its captures in a range
+/// ([`Session::kept_captures`]).
+pub type Kept = (Vec<String>, Vec<Capture>);
+
 /// A tree as a round makes it ([`reparse`]).
 pub struct Reparse<T> {
     /// The tree.
@@ -289,6 +326,8 @@ struct State<S: Syntax> {
     injections: Arc<Injections<S::Query>>,
     /// How many times the injections have changed.
     generation: u64,
+    /// The query kept of each kind.
+    kept: BTreeMap<QueryKind, Arc<S::Query>>,
 }
 
 /// `mutex`, locked. A round and a touch leave what they guard whole at
@@ -318,6 +357,7 @@ impl<S: Syntax> Session<S> {
                 highlighter: None,
                 injections: Arc::new(Injections::default()),
                 generation: 0,
+                kept: BTreeMap::new(),
             }),
             delivered: Condvar::new(),
             queued: AtomicBool::new(false),
@@ -477,6 +517,36 @@ impl<S: Syntax> Session<S> {
         // its positions too.
         captures_in(syntax, query, &parsed.tree, &parsed.snapshot, range)
             .map_err(|_| CapturesRefusal::BadRange)
+    }
+
+    /// Keeps `query` as the query of `kind`, in place of any before
+    /// ("Kept queries", in the module docs).
+    pub fn keep(&self, kind: QueryKind, query: Arc<S::Query>) {
+        lock(&self.state).kept.insert(kind, query);
+    }
+
+    /// The capture names of the query kept of `kind` and its captures in
+    /// `range` of `text`, from the tree delivered last when it is of
+    /// `text`'s revision; or why not, as the module docs say.
+    pub fn kept_captures(
+        &self,
+        syntax: &S,
+        kind: QueryKind,
+        text: &Snapshot,
+        range: Range<usize>,
+    ) -> Result<Kept, KeptRefusal> {
+        let (query, parsed) = {
+            let state = lock(&self.state);
+            (state.kept.get(&kind).cloned(), state.delivered.clone())
+        };
+        let query = query.ok_or(KeptRefusal::NoQuery)?;
+        let range = positions(text, range).map_err(|_| KeptRefusal::BadRange)?;
+        let parsed = parsed
+            .filter(|parsed| parsed.revision == text.revision())
+            .ok_or(KeptRefusal::NotParsed)?;
+        let captures = captures_in(syntax, &query, &parsed.tree, &parsed.snapshot, range)
+            .map_err(|_| KeptRefusal::BadRange)?;
+        Ok((syntax.capture_names(&query), captures))
     }
 
     /// One round, as the module docs say.
@@ -1491,6 +1561,124 @@ pub(crate) mod tests {
 
         let drawn = highlighted(&fixture.syntax, &fixture.session, &snapshot).unwrap();
         assert!(drawn.iter().all(|(_, face)| !face.starts_with("inner.")));
+    }
+
+    /// The kept captures of `kind` in `range` of `snapshot`, each as its
+    /// capture's name and range.
+    fn kept(
+        fixture: &Fixture,
+        kind: QueryKind,
+        snapshot: &Snapshot,
+        range: Range<usize>,
+    ) -> Result<Vec<(String, Range<usize>)>, KeptRefusal> {
+        let (names, captures) =
+            fixture
+                .session
+                .kept_captures(&fixture.syntax, kind, snapshot, range)?;
+        Ok(captures
+            .iter()
+            .map(|capture| (names[capture.capture as usize].clone(), capture.range()))
+            .collect())
+    }
+
+    #[test]
+    fn kept_captures_answer_the_kept_querys_captures_of_the_delivered_tree() {
+        let fixture = Fixture::new("(a b) c");
+        fixture
+            .session
+            .keep(QueryKind::TextObjects, parens_query("list @l\natom @a"));
+        fixture
+            .session
+            .keep(QueryKind::Indents, parens_query("list @indent.begin"));
+        fixture.session.parse_once(&fixture.syntax);
+        let snapshot = lock(&fixture.text).snapshot();
+        let at = |name: &str, range: Range<usize>| (name.to_owned(), range);
+
+        assert_eq!(
+            kept(&fixture, QueryKind::TextObjects, &snapshot, 2..4),
+            Ok(vec![at("l", 0..5), at("a", 3..4)])
+        );
+        assert_eq!(
+            kept(&fixture, QueryKind::Indents, &snapshot, 0..7),
+            Ok(vec![at("indent.begin", 0..5)])
+        );
+        // A later query of a kind replaces the one before.
+        fixture
+            .session
+            .keep(QueryKind::Indents, parens_query("atom @x"));
+        assert_eq!(
+            kept(&fixture, QueryKind::Indents, &snapshot, 5..7),
+            Ok(vec![at("x", 6..7)])
+        );
+    }
+
+    #[test]
+    fn kept_captures_of_a_snapshot_not_yet_parsed_are_refused() {
+        let fixture = Fixture::new("(a b)");
+        fixture
+            .session
+            .keep(QueryKind::TextObjects, parens_query("atom @a"));
+        fixture.session.parse_once(&fixture.syntax);
+        let revision = fixture.replace(5..5, " c");
+        fixture.session.touch(revision);
+        let edited = lock(&fixture.text).snapshot();
+
+        // The edit is told and not parsed: the tree delivered lacks it.
+        assert_eq!(
+            kept(&fixture, QueryKind::TextObjects, &edited, 0..7),
+            Err(KeptRefusal::NotParsed)
+        );
+        fixture.session.parse_once(&fixture.syntax);
+        assert_eq!(
+            kept(&fixture, QueryKind::TextObjects, &edited, 0..7).map(|found| found.len()),
+            Ok(3)
+        );
+    }
+
+    #[test]
+    fn the_refusals_are_checked_no_query_then_bad_range_then_not_parsed() {
+        let fixture = Fixture::new("(é)");
+        let snapshot = lock(&fixture.text).snapshot();
+
+        assert_eq!(
+            kept(&fixture, QueryKind::Indents, &snapshot, 2..3),
+            Err(KeptRefusal::NoQuery)
+        );
+        fixture
+            .session
+            .keep(QueryKind::Indents, parens_query("list @indent.begin"));
+        assert_eq!(
+            kept(&fixture, QueryKind::Indents, &snapshot, 2..3),
+            Err(KeptRefusal::BadRange)
+        );
+        assert_eq!(
+            kept(&fixture, QueryKind::Indents, &snapshot, 0..4),
+            Err(KeptRefusal::NotParsed)
+        );
+        fixture.session.parse_once(&fixture.syntax);
+        assert_eq!(
+            kept(&fixture, QueryKind::Indents, &snapshot, 0..4).map(|found| found.len()),
+            Ok(1)
+        );
+        assert_eq!(
+            kept(&fixture, QueryKind::TextObjects, &snapshot, 0..4),
+            Err(KeptRefusal::NoQuery)
+        );
+    }
+
+    #[test]
+    fn a_kept_query_survives_its_handles_release() {
+        let fixture = Fixture::new("(a)");
+        let query = parens_query("atom @a");
+        fixture.session.keep(QueryKind::TextObjects, query.clone());
+        drop(query);
+        fixture.session.parse_once(&fixture.syntax);
+        let snapshot = lock(&fixture.text).snapshot();
+
+        assert_eq!(
+            kept(&fixture, QueryKind::TextObjects, &snapshot, 0..3),
+            Ok(vec![("a".to_owned(), 1..2)])
+        );
     }
 
     #[test]
