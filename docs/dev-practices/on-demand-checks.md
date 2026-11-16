@@ -796,9 +796,9 @@ what the image shows and when to make it again.
 mise run theme-references
 ```
 
-This writes `tests/render/themes/solarized-dark.png` and
-`solarized-light.png`, the pictures the gate compares the shipped
-Solarized themes' with, by running `ffi-test theme-pictures … --write`.
+This writes three files, `tests/render/themes/solarized-dark.png`,
+`solarized-light.png` and `fairy-floss.png`, the pictures the gate
+compares the shipped themes' with, by running `ffi-test theme-pictures … --write`.
 It writes files of the repository, so it is never part of the gate.
 `tests/render/themes/README.md` says what the images show and when to make
 them again.

@@ -13,6 +13,7 @@ what the editor sends, not a theme written again in Rust.
 |---|---|---|---|
 | `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 14000 | `57948cfdd113477aeea2920de92319e32844ee3cb6eef82039d8e314852c0fdc` |
 | `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 13920 | `1feb26e15f5224693d0c07d7b0923e3e824b11033d0d9130aef32add9e6b9490` |
+| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 14442 | `9b4225527076d1601155adc14259e8ee7b937e860bf49f989b3179eb80f11d5d` |
 
 Each is kept small on purpose: the scene's size, 320 by 160, and at most
 20 KB, which the scenario checks.
@@ -38,9 +39,12 @@ not in the set and falls through to it. It is drawn at 16 points, the
 theme's default size, at scale 1, with grayscale antialiasing and hinting,
 at the linear weight.
 
-The files were looked at, enlarged four times, when they were made
+The Solarized files were looked at, enlarged four times, when they were made
 (2026-11-16), and each of those was seen in both: by the agent that
-implemented the Solarized themes, and not yet by a person. Looking at them
+implemented the Solarized themes, and not yet by a person.
+`fairy-floss.png` was looked at the same way when it was made
+(2026-11-16), by the agent that implemented Fairy Floss, and not yet by a
+person. Looking at them
 checks that they show text, a selection and a cursor; it does not judge
 how the theme looks, which is left to the owner's day-to-day use.
 
@@ -54,7 +58,7 @@ point.
 
 The scenario also checks, in each variant's picture, that the colours of
 the palette's roles are where they belong, with the expected colours
-written from Solarized's specification and not read from the theme. It
+written from each theme's published record and not read from the theme. It
 finds each region by differencing pictures it draws itself, and names no
 cell size, line height or other value layout or the renderer owns:
 
@@ -84,7 +88,7 @@ which runs `ffi-test theme-pictures ../tests/render/themes
 ../tests/fonts/NotoSansMono-Regular.subset.ttf --write` in `lean/`. It is
 run by hand and never by the gate.
 
-Make them again when a shipped Solarized definition, the fixture, the
+Make them again when a shipped theme's definition, the fixture, the
 font, the painter, the blend or the rasteriser's pins change, in the
 commit that changes it. Then:
 
@@ -94,5 +98,3 @@ commit that changes it. Then:
 
 If the comparison fails and nothing was meant to change, the picture
 changed by accident: find out why before making the files again.
-
-Phase 4 of the theming roadmap adds Fairy Floss's picture beside them.

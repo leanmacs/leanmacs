@@ -1,6 +1,7 @@
 import Editor.Config.Registry
 import Editor.Themes
 import Editor.Themes.Check
+import Editor.Themes.FairyFloss
 import Editor.Themes.Solarized
 
 /-!
@@ -22,7 +23,8 @@ drops it.
 - **`Themes.shipped`**: the themes that ship. `default` is the built-in
   theme (`Theme.builtin`, `Editor/Face.lean`), the one in force when no
   config names a theme; then `solarized-dark` and `solarized-light`
-  (`Editor/Themes/Solarized.lean`). A new shipped theme is a palette's
+  (`Editor/Themes/Solarized.lean`), and `fairy-floss`
+  (`Editor/Themes/FairyFloss.lean`). A new shipped theme is a palette's
   theme (`Palette.theme`, `Editor/Face.lean`), plus that theme's own
   definitions after it, appended here, and must pass the completeness check
   (`Themes.problems`, `Editor/Themes/Check.lean`), which
@@ -33,7 +35,7 @@ registry, which is the config session's: `Editor.lean` imports the command,
 so that config can call it, and not this.
 
 Pinned by `ModelTest.themeChecks`, `ModelTest.faceVocabularyChecks`,
-`ModelTest.solarizedChecks`,
+`ModelTest.solarizedChecks`, `ModelTest.fairyFlossChecks`,
 `ConfigTest.shippedChecks` and `ConfigTest.cursorResolutionChecks`.
 -/
 
@@ -45,8 +47,9 @@ def commands : Array Config.Registration :=
   #[{ name := loadName, action := .call loadThemeCommand }]
 
 /-- The themes that ship, as a host registers them for the owner
-`compiled`: `default`, the built-in theme, then Solarized dark and light. -/
+`compiled`: `default`, the built-in theme, then Solarized dark and light, then Fairy Floss. -/
 def shipped : Array NamedTheme :=
-  #[{ name := Theme.defaultName, theme := Theme.builtin }, Solarized.dark, Solarized.light]
+  #[{ name := Theme.defaultName, theme := Theme.builtin }, Solarized.dark, Solarized.light,
+    FairyFloss.fairyFloss]
 
 end Editor.Themes

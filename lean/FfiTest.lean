@@ -3,6 +3,7 @@ import Editor.Event.Queue
 import Editor.Ffi
 import Editor.InputScheme.Vim
 import Editor.Themes.Compiled
+import Editor.Themes.FairyFloss
 import Editor.Themes.Solarized
 import Editor.Window.Real
 import Editor.WindowCheck.Real
@@ -20,7 +21,7 @@ Some behaviour needs a process of its own, so it is a scenario chosen by an
 argument (see `main`): `exit <code>` for the exit status, `shutdown` and
 `exit-while-blocked` because quitting the queues is for good, and `overflow`
 because it ends in an abort. `theme-pictures <dir> <font>` compares the
-shipped Solarized themes' pictures of a fixture file with their reference
+shipped themes' pictures of a fixture file with their reference
 images (`themePicturesScenario`), and with `--write` makes them again. `mise run ffi-test` runs the checks and every
 scenario but `overflow`, under a time limit, and is part of the gate.
 `mise run ffi-overflow` runs `overflow`, on demand only: on macOS every abort
@@ -2746,10 +2747,10 @@ def themePicture (font : ByteArray) (theme : Editor.Theme) (text selectedIn : St
   discard <| document.read
   return picture
 
-/-- The colours Solarized's specification gives a variant's paper, its
-body text and its cursor, written from the published colours
-(`Themes.Solarized.published`, pinned by `ModelTest.solarizedChecks`), not
-read from the theme. -/
+/-- The colours a shipped theme's source gives its paper, its body text and
+its cursor, written from its published record (`Themes.Solarized.published`,
+`Themes.FairyFloss.published`, pinned by `ModelTest.solarizedChecks` and
+`ModelTest.fairyFlossChecks`), not read from the theme. -/
 structure ThemeRoles where
   /-- The shipped theme's name, and its reference image's. -/
   name : String
@@ -2766,6 +2767,22 @@ def solarizedRoles : List ThemeRoles :=
   let c := Editor.Themes.Solarized.published
   [{ name := "solarized-dark", paper := c.base03, ink := c.base0, cursor := c.base0 },
     { name := "solarized-light", paper := c.base3, ink := c.base00, cursor := c.base00 }]
+
+/-- Fairy Floss's roles: the tmTheme's foreground on its background, its
+cursor the caret. -/
+def fairyFlossRoles : ThemeRoles :=
+  let c := Editor.Themes.FairyFloss.published
+  { name := "fairy-floss", paper := c.background, ink := c.foreground, cursor := c.caret }
+
+/-- The roles of every shipped theme that has a reference image. -/
+def shippedRoles : List ThemeRoles :=
+  solarizedRoles ++ [fairyFlossRoles]
+
+/-- `names` as a list in prose: `a`, `a and b`, `a, b and c`. -/
+def proseList : List String → String
+  | [] => ""
+  | [one] => one
+  | names => ", ".intercalate names.dropLast ++ " and " ++ names.getLast!
 
 /-- How far any channel of any pixel may be from the reference's: 2 of 255,
 the bound and the reason of the renderer's own reference image
@@ -2836,19 +2853,18 @@ def roleChecks (roles : ThemeRoles) (pictures : ThemePictures) : List String :=
   paper ++ cursor ++ blended
 
 /-- The theme-pictures scenario over the reference images in `dir`, its
-fixture `dir/source.lean`, and the font file `font`. For each of
-`solarized-dark` and `solarized-light`, looked up by name in
-`Themes.shipped`, it draws the four pictures (`themePictures`) and, with
+fixture `dir/source.lean`, and the font file `font`. For each theme of
+`variants`, looked up by name in `Themes.shipped`, it draws the four pictures (`themePictures`) and, with
 `write`, writes the scene's picture to `dir/<name>.png` (`mise run
 theme-references`); without, it compares the scene's picture with that
 file within `pictureTolerance`, runs `roleChecks`, and guards that each
 reference is the scene's size and at most `largestReference` bytes, and
 that the light picture does not match the dark reference. Exits 0 after a
 line naming what held, or 1 after `FAILED:` lines, in either mode.
-`variants`, the themes it draws, are `solarizedRoles` except in its own
+`variants`, the themes it draws, are `shippedRoles` except in its own
 check (`themePicturesChecks`). -/
 def themePicturesScenario (dir font : String) (write : Bool)
-    (variants : List ThemeRoles := solarizedRoles) : IO UInt8 := do
+    (variants : List ThemeRoles := shippedRoles) : IO UInt8 := do
   let source ← IO.FS.readFile (System.FilePath.mk dir / "source.lean")
   let fontBytes ← IO.FS.readBinFile font
   let mut failed : List String := []
@@ -2899,7 +2915,7 @@ def themePicturesScenario (dir font : String) (write : Bool)
   if write then
     return 0
   IO.println
-      "ffi-test theme-pictures: solarized-dark and solarized-light match their reference images; in each the paper, the cursor and the text carry the palette's colours; the light picture is not the dark reference"
+      s!"ffi-test theme-pictures: {proseList (variants.map (·.name))} match their reference images; in each the paper, the cursor and the text carry the palette's colours; the light picture is not the dark reference"
   return 0
 
 /-- The checks of the theme-pictures scenario's own reporting, over a

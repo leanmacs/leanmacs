@@ -1,0 +1,19 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which names the shipped theme `solarized-light`,
+# then switches to the shipped `fairy-floss`. What it prints must be exactly
+# `expected`.
+
+reload
+settle
+
+# A key makes the frame, and its scene is drawn in `solarized-light`, the
+# theme the config names.
+key <Escape> Escape -
+scene
+
+# `load-theme` is answered with `fairy-floss`: the theme is switched with no
+# reload, and the scene after it is drawn in `fairy-floss`.
+run load-theme
+commit fairy-floss
+key <Enter> Enter -
+scene

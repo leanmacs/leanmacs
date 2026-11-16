@@ -1,6 +1,7 @@
 # The script `mise run ffi-test` has the editor's headless mode run against
 # the config in `config/`, which defines two themes, `first` and `second`,
-# and names `first`. What it prints must be exactly `expected`.
+# and names `first`, then switches to `second` and to two shipped themes.
+# What it prints must be exactly `expected`.
 
 reload
 settle
@@ -23,5 +24,12 @@ scene
 # code registers (`Themes.shipped`), and the scene after it is drawn in it.
 run load-theme
 commit solarized-dark
+key <Enter> Enter -
+scene
+
+# And so is `fairy-floss`, shipped beside it: the scene after it is drawn in
+# `fairy-floss`.
+run load-theme
+commit fairy-floss
 key <Enter> Enter -
 scene

@@ -1,0 +1,37 @@
+The colours of Fairy Floss (lean/Editor/Themes/FairyFloss.lean) are those
+of https://github.com/sailorhg/fairyfloss at commit
+982e64a9e36160350125c0a82a7981dca6200150 (master, tag v0.2.0).
+
+That repository has no LICENSE file. The grant is the "license" field of
+its package.json at that commit (the file package.json at the repository's
+root, 346 bytes, sha256
+1dd9b819130f0eb3a0e0758fc8ef627c5e67c9df3b321bcba51b0a74dd71e039, git
+blob 67aa3b121d45d6cde06905a18a5a106c407c0b03), which declares
+"license": "MIT" and "author": "Amy Wibowo <sailorhg@gmail.com>". The
+notice below is that declaration written out as the standard MIT
+licence; the source states no year.
+
+----
+
+MIT License
+
+Copyright (c) Amy Wibowo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+

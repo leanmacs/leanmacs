@@ -196,7 +196,7 @@ One more compiled command switches the theme (`lean/Editor/Themes.lean`):
 
 | Command | Does |
 |---|---|
-| `load-theme` | With a name as its first argument, makes the theme registered under it the theme in force, with no reload, and the next scene is drawn in it. With none it asks `Theme: `, with the registered themes' names as its candidates. A name nobody registered is said in the echo area, ``load-theme: no theme is registered as `<name>` ``, and changes nothing. The editor ships three themes, `default`, `solarized-dark` and `solarized-light`; config registers more with `defineTheme` and names the one in force with `useTheme`. |
+| `load-theme` | With a name as its first argument, makes the theme registered under it the theme in force, with no reload, and the next scene is drawn in it. With none it asks `Theme: `, with the registered themes' names as its candidates. A name nobody registered is said in the echo area, ``load-theme: no theme is registered as `<name>` ``, and changes nothing. The editor ships four themes, `default`, `solarized-dark`, `solarized-light` and `fairy-floss`; config registers more with `defineTheme` and names the one in force with `useTheme`. |
 
 The mode `minibuffer` is the major mode of the minibuffer's buffer. It
 puts the four commands on the keys the input scheme has for the roles
@@ -702,7 +702,8 @@ is drawn in `second`. The switch is followed by a scene of its own, after
 the scene the accepted command's step published, so the count of scenes
 goes up by one more. Then `load-theme` is run again, and `solarized-dark`,
 a theme the editor ships, is committed and accepted: the next scene is
-drawn in it. Its output must be exactly
+drawn in it. Last, `fairy-floss`, another shipped theme, is loaded the same
+way, and the next scene is drawn in it. Its output must be exactly
 `tests/headless/themes/expected`:
 
 ```console
@@ -720,6 +721,33 @@ status 0: status.state "normal", status.name "scratch"
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", preedit -, published 13, theme "solarized-dark"
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+run load-theme: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", preedit -, published 19, theme "fairy-floss"
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+```
+
+An eleventh, `tests/headless/shipped-themes/script`, runs on the config in
+`tests/headless/shipped-themes/config`, which names a shipped theme,
+`solarized-light` (`useTheme`): compiled code registers the shipped themes
+before any config, so the name is found when the config is installed. The
+first scene is drawn in `solarized-light`. Then `load-theme` is answered
+with `fairy-floss`, and the next scene is drawn in it. Its output must be
+exactly `tests/headless/shipped-themes/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/shipped-themes/config ../tests/headless/shipped-themes/script
+reload 1: installed, 1 chunks, 0 commands
+key arrived: <Escape> Escape -
+scene 0x0, focused 0, echo "", preedit -, published 1, theme "solarized-light"
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+run load-theme: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", preedit -, published 7, theme "fairy-floss"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 ```

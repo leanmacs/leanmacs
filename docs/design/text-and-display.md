@@ -1113,6 +1113,18 @@ in the module docs of `Solarized.lean`, pinned by
 `ModelTest.solarizedChecks`. Solarized's MIT licence notice is beside it,
 `lean/Editor/Themes/Solarized-LICENSE.txt`, verbatim.
 
+The shipped `fairy-floss` (`lean/Editor/Themes/FairyFloss.lean`) is
+written the same way: one record of the nineteen colours sailorhg's
+repository `sailorhg/fairyfloss` publishes at commit `982e64a`, in its
+tmTheme and Atom styles, and one mapping from it: background the paper,
+foreground the ink and strong, the caret the cursor, selection selected,
+lineHighlight raised and lavender faint. Its own definitions after the
+shared ones follow the tmTheme's scopes and the Atom styles, and the table
+of each choice and its source is in the module docs of `FairyFloss.lean`,
+pinned by `ModelTest.fairyFlossChecks`. The repository has no LICENSE
+file; its `package.json` declares MIT, and that notice, with its
+provenance, is beside the module, `lean/Editor/Themes/FairyFloss-LICENSE.txt`.
+
 **A shipped theme reaches the CPU renderer in a test** through three
 test-facing bindings of `editor-ffi` (`crates/editor-ffi/src/display.rs`):
 a display over the real shaper and one font file it is given, with no
@@ -1123,7 +1135,7 @@ and a picture read from and written to a PNG file (`Picture.ofPng`,
 `Picture.toPng`, over `Image::from_png` and `Image::to_png` in
 `editor-render-wgpu`, which keeps `png` behind it). `ffi-test
 theme-pictures` publishes a fixture file through the display's real
-binding in each shipped Solarized theme and compares the picture with a
+binding in each shipped theme and compares the picture with a
 reference image (`tests/render/themes/README.md`). The headless mode's
 `--render` session is not that path: it lays out in cells, whose glyphs
 have no font bytes, so it draws no text.

@@ -269,8 +269,8 @@ needs none. What it checks:
   shaper, for the wiring alone.
 - **The shipped themes' pictures.** `ffi-test theme-pictures`, in
   `mise run ffi-test`, publishes a fixture file from Lean through the
-  display's real binding, in `solarized-dark` and in `solarized-light`,
-  over a display of one fixture font, and the CPU renderer draws it. No
+  display's real binding, in `solarized-dark`, `solarized-light` and
+  `fairy-floss`, over a display of one fixture font, and the CPU renderer draws it. No
   channel of any pixel may be further than 2 of 255 from the reference
   images under `tests/render/themes`, and the light picture must not
   match the dark reference. In each picture the paper, the cursor and the
@@ -943,7 +943,7 @@ need a process each:
 | `ffi-test exit 7` | The entry point passes arguments to Lean's `main` and its result is the exit status. |
 | `ffi-test shutdown` | Quitting the queues wakes every task blocked in a pull, and the process then exits. |
 | `ffi-test exit-while-blocked` | An explicit exit ends the process although a task is still blocked in the library. |
-| `ffi-test theme-pictures <dir> <font>` | The shipped Solarized themes' pictures of the fixture file match their reference images in `<dir>`, and carry the palette's colours where the paper, the cursor and the text are ("The shipped themes' pictures", above). |
+| `ffi-test theme-pictures <dir> <font>` | The shipped themes' pictures of the fixture file match their reference images in `<dir>`, and carry the palette's colours where the paper, the cursor and the text are ("The shipped themes' pictures", above). |
 
 The conventions every binding follows, and the test that pins each, are in
 the crate docs of `crates/editor-ffi/src/lib.rs` and the module docs of
