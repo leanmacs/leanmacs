@@ -13,7 +13,7 @@
 //!
 //! - **The spawn** puts the child in a new group whose id is its pid
 //!   (`CommandExt::process_group(0)`), with both output streams piped and
-//!   standard input closed (`/dev/null`), or piped when the command asks
+//!   standard input closed (`/dev/null`), or piped when the spawn asks
 //!   for it ([`Input::Pipe`]). The std `Child` is dropped once its pipes are
 //!   taken: dropping it neither waits nor kills, and this crate reaps the
 //!   pid itself.
@@ -110,7 +110,7 @@ fn refusal(error: &std::io::Error, command: &Command) -> Refusal {
 impl Processes for StdProcesses {
     type Child = StdChild;
 
-    fn spawn(&self, command: &Command) -> Result<StdChild, Refusal> {
+    fn spawn(&self, command: &Command, input: Input) -> Result<StdChild, Refusal> {
         let mut std_command = std::process::Command::new(&command.program);
         std_command
             .args(&command.arguments)
@@ -125,7 +125,7 @@ impl Processes for StdProcesses {
         for (name, value) in &environment.set {
             std_command.env(name, value);
         }
-        let stdin = match command.input {
+        let stdin = match input {
             Input::Closed => Stdio::null(),
             Input::Pipe => Stdio::piped(),
         };

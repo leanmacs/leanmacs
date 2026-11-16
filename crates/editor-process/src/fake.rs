@@ -33,7 +33,7 @@
 //! [`Script::steps`] in order: it writes to a stream, echoes a line of its
 //! input or all of it, waits for its input to end, closes its own input,
 //! or makes an empty file ([`Step`]). Its standard input is a pipe when its
-//! command asks for one ([`Input::Pipe`]): [`Child::take_input`] gives a
+//! spawn asks for one ([`Input::Pipe`]): [`Child::take_input`] gives a
 //! [`FakeInput`], whose writes the child receives, and whose drop ends the
 //! child's input. Each of its pipes holds [`Script::pipe_capacity`] unread
 //! bytes, no limit by default: a write step stops at a full pipe, as a
@@ -43,9 +43,10 @@
 //! The fake is passive: on every interaction (a spawn, a read, a write to
 //! an input, its drop, a kill, a let go) it takes each child as far as it
 //! can go, under its lock, until the child waits for input or for room in
-//! a pipe. Its [`Record::children`] say, for each child, what it received,
-//! whether its input is closed, what it has written and what has been
-//! read of each stream, and what it waits for ([`Blocked`]).
+//! a pipe. Its [`Record::children`] say, for each child, the input it was
+//! spawned with, what it received, whether its input is closed, what it
+//! has written and what has been read of each stream, and what it waits
+//! for ([`Blocked`]).
 //!
 //! [`Flaws`] makes a fake that breaks a rule, for the contract's own tests:
 //! that is how they show the contract bites.
@@ -149,6 +150,8 @@ pub enum Blocked {
 /// What the fake has seen of one child's streams and input.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChildRecord {
+    /// The standard input it was spawned with.
+    pub input: Input,
     /// Every byte written to its standard input.
     pub received: Vec<u8>,
     /// Whether its standard input has been closed by the editor's side.
@@ -876,7 +879,7 @@ impl FakeProcesses {
 impl Processes for FakeProcesses {
     type Child = FakeChild;
 
-    fn spawn(&self, command: &Command) -> Result<FakeChild, Refusal> {
+    fn spawn(&self, command: &Command, input: Input) -> Result<FakeChild, Refusal> {
         let mut state = self.shared.state();
         let script = state.scripts.get(command).cloned().unwrap_or_else(|| {
             Err(Refusal::new(
@@ -919,7 +922,7 @@ impl Processes for FakeProcesses {
             }
         }
         steps.extend(script.steps.iter().cloned());
-        let piped = command.input == Input::Pipe;
+        let piped = input == Input::Pipe;
         state.groups.insert(
             id,
             Group {
@@ -938,7 +941,13 @@ impl Processes for FakeProcesses {
                 let_go: false,
             },
         );
-        state.record.children.insert(id, ChildRecord::default());
+        state.record.children.insert(
+            id,
+            ChildRecord {
+                input,
+                ..ChildRecord::default()
+            },
+        );
         state.record.spawned.push((id, command.clone()));
         state.advance();
         drop(state);
@@ -1144,7 +1153,9 @@ mod tests {
     fn an_unscripted_command_is_refused_as_not_found_naming_the_program_and_the_directory() {
         let fake = FakeProcesses::new();
 
-        let refusal = fake.spawn(&command("true")).expect_err("refused");
+        let refusal = fake
+            .spawn(&command("true"), Input::Closed)
+            .expect_err("refused");
 
         assert_eq!(refusal.kind, RefusalKind::NotFound);
         assert!(refusal.detail.contains("/bin/sh") && refusal.detail.contains("/dir"));
@@ -1156,7 +1167,11 @@ mod tests {
         let refusal = Refusal::new(RefusalKind::Denied, "no");
         let fake = FakeProcesses::scripted([(command("x"), Err(refusal.clone()))]);
 
-        assert_eq!(fake.spawn(&command("x")).expect_err("refused"), refusal);
+        assert_eq!(
+            fake.spawn(&command("x"), Input::Closed)
+                .expect_err("refused"),
+            refusal
+        );
     }
 
     #[test]
@@ -1165,7 +1180,7 @@ mod tests {
             command("x"),
             Ok(Script::ends(Exit::Code(3)).stdout("out\n").stderr("err")),
         )]);
-        let mut child = fake.spawn(&command("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
         let id = child.id();
         let mut out = child.take_output(Stream::Out).expect("out");
         let mut err = child.take_output(Stream::Err).expect("err");
@@ -1194,7 +1209,9 @@ mod tests {
                 .members(1)
                 .writes("/dir/grandchild", Writer::Member(0))),
         )]);
-        let child = fake.spawn(&command("family")).expect("spawned");
+        let child = fake
+            .spawn(&command("family"), Input::Closed)
+            .expect("spawned");
         let grandchild = fake
             .ground()
             .written(Path::new("/dir/grandchild"))
@@ -1224,7 +1241,7 @@ mod tests {
             command("x"),
             Ok(Script::ends(Exit::Code(0)).stdout("a").members(2)),
         )]);
-        let mut child = fake.spawn(&command("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
         let mut out = child.take_output(Stream::Out).expect("out");
         let members = [child.id() + 1, child.id() + 2];
         assert!(members.iter().all(|&member| fake.alive(member)));
@@ -1242,7 +1259,7 @@ mod tests {
             command("x"),
             Ok(Script::ends(Exit::Code(4)).hold(Hold::UntilLetGo)),
         )]);
-        let child = fake.spawn(&command("x")).expect("spawned");
+        let child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
 
         let exit = thread::scope(|scope| {
             let waiting = scope.spawn(|| child.wait());
@@ -1264,7 +1281,7 @@ mod tests {
                 .hold(Hold::UntilKilled)
                 .read_fails(Stream::Err, refusal.clone())),
         )]);
-        let mut child = fake.spawn(&command("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
         let mut err = child.take_output(Stream::Err).expect("err");
         let mut buffer = [0; 3];
 
@@ -1286,7 +1303,7 @@ mod tests {
                 .escaped(1)
                 .writes("/dir/escaped", Writer::Escaped(0))),
         )]);
-        let mut child = fake.spawn(&command("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
         let mut out = child.take_output(Stream::Out).expect("out");
         let ground = fake.ground();
         let escaped = ground.written(Path::new("/dir/escaped")).expect("written");
@@ -1311,7 +1328,7 @@ mod tests {
             command("x"),
             Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled)),
         )]);
-        let child = fake.spawn(&command("x")).expect("spawned");
+        let child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
         fake.hold_reaps();
 
         thread::scope(|scope| {
@@ -1331,7 +1348,7 @@ mod tests {
     fn held_reads_park_until_released() {
         let fake =
             FakeProcesses::scripted([(command("x"), Ok(Script::ends(Exit::Code(0)).stdout("a")))]);
-        let mut child = fake.spawn(&command("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
         let mut out = child.take_output(Stream::Out).expect("out");
         fake.hold_reads();
 
@@ -1341,10 +1358,6 @@ mod tests {
         child.wait();
 
         assert_eq!(reading.join().expect("the read ends"), b"a");
-    }
-
-    fn piped(script: &str) -> Command {
-        command(script).with_input(Input::Pipe)
     }
 
     fn read_some(output: &mut FakeOutput) -> Vec<u8> {
@@ -1359,13 +1372,10 @@ mod tests {
 
     #[test]
     fn a_command_with_no_input_has_none_to_take_and_a_piped_one_gives_it_once() {
-        let fake = FakeProcesses::scripted([
-            (command("x"), Ok(Script::ends(Exit::Code(0)))),
-            (piped("x"), Ok(Script::ends(Exit::Code(0)))),
-        ]);
+        let fake = FakeProcesses::scripted([(command("x"), Ok(Script::ends(Exit::Code(0))))]);
 
-        let mut closed = fake.spawn(&command("x")).expect("spawned");
-        let mut open = fake.spawn(&piped("x")).expect("spawned");
+        let mut closed = fake.spawn(&command("x"), Input::Closed).expect("spawned");
+        let mut open = fake.spawn(&command("x"), Input::Pipe).expect("spawned");
 
         assert!(closed.take_input().is_none());
         assert!(open.take_input().is_some());
@@ -1375,10 +1385,10 @@ mod tests {
     #[test]
     fn a_child_that_echoes_until_closed_gives_back_what_it_was_written_and_ends_at_the_close() {
         let fake = FakeProcesses::scripted([(
-            piped("cat"),
+            command("cat"),
             Ok(Script::ends(Exit::Code(0)).step(Step::EchoUntilClosed(Stream::Out))),
         )]);
-        let mut child = fake.spawn(&piped("cat")).expect("spawned");
+        let mut child = fake.spawn(&command("cat"), Input::Pipe).expect("spawned");
         let mut input = child.take_input().expect("an input");
         let mut out = child.take_output(Stream::Out).expect("out");
         assert_eq!(io(&fake, child.id()).blocked_on, Blocked::Input);
@@ -1397,7 +1407,7 @@ mod tests {
     #[test]
     fn a_stepped_child_writes_waits_for_a_line_echoes_it_and_ends_once_its_input_closes() {
         let fake = FakeProcesses::scripted([(
-            piped("steps"),
+            command("steps"),
             Ok(Script::ends(Exit::Code(4)).steps([
                 Step::Write(Stream::Out, b"one\n".to_vec()),
                 Step::EchoLine(Stream::Out),
@@ -1405,7 +1415,7 @@ mod tests {
                 Step::AwaitInputClosed,
             ])),
         )]);
-        let mut child = fake.spawn(&piped("steps")).expect("spawned");
+        let mut child = fake.spawn(&command("steps"), Input::Pipe).expect("spawned");
         let id = child.id();
         let mut input = child.take_input().expect("an input");
         let mut out = child.take_output(Stream::Out).expect("out");
@@ -1432,13 +1442,13 @@ mod tests {
     #[test]
     fn a_child_that_closes_its_input_refuses_a_later_write_as_input_closed() {
         let fake = FakeProcesses::scripted([(
-            piped("x"),
+            command("x"),
             Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled).steps([
                 Step::CloseInput,
                 Step::Write(Stream::Out, b"closed\n".to_vec()),
             ])),
         )]);
-        let mut child = fake.spawn(&piped("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Pipe).expect("spawned");
         let mut input = child.take_input().expect("an input");
 
         let refusal = input.write(b"x").expect_err("refused");
@@ -1457,7 +1467,7 @@ mod tests {
                 .pipe_capacity(4)
                 .step(Step::Touch(PathBuf::from("/dir/finished")))),
         )]);
-        let mut child = fake.spawn(&command("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
         let id = child.id();
         let mut out = child.take_output(Stream::Out).expect("out");
         let ground = fake.ground();
@@ -1481,12 +1491,12 @@ mod tests {
     #[test]
     fn a_write_to_a_child_that_does_not_read_blocks_at_the_capacity_until_the_child_is_killed() {
         let fake = FakeProcesses::scripted([(
-            piped("x"),
+            command("x"),
             Ok(Script::ends(Exit::Code(0))
                 .hold(Hold::UntilKilled)
                 .pipe_capacity(2)),
         )]);
-        let mut child = fake.spawn(&piped("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Pipe).expect("spawned");
         let mut input = child.take_input().expect("an input");
         assert_eq!(input.write(b"abc"), Ok(2), "a partial write");
 
@@ -1505,12 +1515,12 @@ mod tests {
     #[test]
     fn a_child_left_by_let_go_ends_only_once_its_steps_are_done() {
         let fake = FakeProcesses::scripted([(
-            piped("x"),
+            command("x"),
             Ok(Script::ends(Exit::Code(5))
                 .hold(Hold::UntilLetGo)
                 .step(Step::AwaitInputClosed)),
         )]);
-        let mut child = fake.spawn(&piped("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Pipe).expect("spawned");
         let input = child.take_input().expect("an input");
 
         fake.let_go(child.id());
@@ -1531,10 +1541,10 @@ mod tests {
             ..Flaws::default()
         });
         fake.script(
-            piped("cat"),
+            command("cat"),
             Ok(Script::ends(Exit::Code(0)).step(Step::EchoUntilClosed(Stream::Out))),
         );
-        let mut child = fake.spawn(&piped("cat")).expect("spawned");
+        let mut child = fake.spawn(&command("cat"), Input::Pipe).expect("spawned");
         let mut input = child.take_input().expect("an input");
 
         assert_eq!(input.write(b"lost"), Ok(4));
@@ -1550,12 +1560,12 @@ mod tests {
             ..Flaws::default()
         });
         fake.script(
-            piped("x"),
+            command("x"),
             Ok(Script::ends(Exit::Code(0))
                 .hold(Hold::UntilKilled)
                 .step(Step::CloseInput)),
         );
-        let mut child = fake.spawn(&piped("x")).expect("spawned");
+        let mut child = fake.spawn(&command("x"), Input::Pipe).expect("spawned");
         let mut input = child.take_input().expect("an input");
 
         assert_eq!(input.write(b"x"), Ok(1));

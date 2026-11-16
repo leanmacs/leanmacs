@@ -166,8 +166,8 @@ pub const INPUT: &str = "what is written to a child's standard input reaches it,
 /// A write to an input the child has closed is a refusal as input closed,
 /// not a signal.
 pub const INPUT_CLOSED: &str = "a write to an input the child closed is refused as input closed";
-/// A command whose input is closed has no input to take.
-pub const NO_INPUT: &str = "a command whose input is closed has none to take";
+/// A child spawned with its input closed has no input to take.
+pub const NO_INPUT: &str = "a child spawned with its input closed has none to take";
 /// A job that asked for lines receives each line as the child writes it,
 /// a line written to the child's input reaches it, and the last delivery
 /// says how the child exited.
@@ -462,21 +462,20 @@ pub fn scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
 /// The scripts of the input's and the streaming child's properties.
 fn stream_scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
     let at = |name: &str| dir.join(name);
-    let piped = |script: &str| sh(dir, script).with_input(Input::Pipe);
     vec![
         (
-            Command::new("/bin/cat", [""; 0], dir).with_input(Input::Pipe),
+            Command::new("/bin/cat", [""; 0], dir),
             Ok(Script::ends(Exit::Code(0)).step(Step::EchoUntilClosed(Stream::Out))),
         ),
         (
-            piped(INPUT_CLOSED_SCRIPT),
+            sh(dir, INPUT_CLOSED_SCRIPT),
             Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled).steps([
                 Step::CloseInput,
                 Step::Write(Stream::Out, b"closed\n".to_vec()),
             ])),
         ),
         (
-            piped(LINES_SCRIPT),
+            sh(dir, LINES_SCRIPT),
             Ok(Script::ends(Exit::Code(4)).steps([
                 Step::Write(Stream::Out, b"one\n".to_vec()),
                 Step::EchoLine(Stream::Out),
@@ -507,7 +506,7 @@ fn stream_scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
                 .pipe_capacity(PIPE)),
         ),
         (
-            piped(&counting(COALESCED, ": > written; read x")),
+            sh(dir, &counting(COALESCED, ": > written; read x")),
             Ok(Script::ends(Exit::Code(0))
                 .stdout(counted(COALESCED))
                 .pipe_capacity(PIPE)
@@ -552,7 +551,7 @@ fn stream_scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
                 .writes(at("h-child"), Writer::Child)),
         ),
         (
-            piped("echo $$ > w-child; read x"),
+            sh(dir, "echo $$ > w-child; read x"),
             Ok(Script::ends(Exit::Code(0))
                 .hold(Hold::UntilKilled)
                 .step(Step::AwaitInputClosed)
@@ -672,9 +671,10 @@ impl<G: Ground> Check<'_, G> {
         }
     }
 
-    /// Starts `command` and a reader for each of its streams.
+    /// Starts `command`, its input closed, and a reader for each of its
+    /// streams.
     fn start<P: Processes>(processes: &P, command: &Command) -> Result<Started<P::Child>, Refusal> {
-        Ok(Self::reading(processes.spawn(command)?))
+        Ok(Self::reading(processes.spawn(command, Input::Closed)?))
     }
 
     /// How `child` ended, if its wait returns within the deadline.
@@ -718,7 +718,7 @@ impl<G: Ground> Check<'_, G> {
         command: &Command,
         kind: Option<RefusalKind>,
     ) -> bool {
-        match processes.spawn(command) {
+        match processes.spawn(command, Input::Closed) {
             Ok(child) => {
                 child.kill();
                 child.wait();
@@ -1071,8 +1071,8 @@ impl<G: Ground> Check<'_, G> {
 
     /// [`INPUT`].
     fn input<P: Processes>(&self, processes: &P) -> bool {
-        let command = Command::new("/bin/cat", [""; 0], self.dir).with_input(Input::Pipe);
-        let Ok(mut child) = processes.spawn(&command) else {
+        let command = Command::new("/bin/cat", [""; 0], self.dir);
+        let Ok(mut child) = processes.spawn(&command, Input::Pipe) else {
             return false;
         };
         let input = child.take_input();
@@ -1119,8 +1119,8 @@ impl<G: Ground> Check<'_, G> {
 
     /// [`INPUT_CLOSED`].
     fn input_closed<P: Processes>(&self, processes: &P) -> bool {
-        let command = sh(self.dir, INPUT_CLOSED_SCRIPT).with_input(Input::Pipe);
-        let Ok(mut child) = processes.spawn(&command) else {
+        let command = sh(self.dir, INPUT_CLOSED_SCRIPT);
+        let Ok(mut child) = processes.spawn(&command, Input::Pipe) else {
             return false;
         };
         let (Some(mut input), Some(mut out)) = (child.take_input(), child.take_output(Stream::Out))
@@ -1159,7 +1159,7 @@ impl<G: Ground> Check<'_, G> {
 
     /// [`NO_INPUT`].
     fn no_input<P: Processes>(&self, processes: &P) -> bool {
-        let Ok(mut child) = processes.spawn(&sh(self.dir, "exit 0")) else {
+        let Ok(mut child) = processes.spawn(&sh(self.dir, "exit 0"), Input::Closed) else {
             return false;
         };
         let none = child.take_input().is_none();
@@ -1485,7 +1485,7 @@ impl<G: Ground> Check<'_, G> {
         let waiting_open = self.open(
             &service,
             2,
-            sh(self.dir, "echo $$ > w-child; read x").with_input(Input::Pipe),
+            sh(self.dir, "echo $$ > w-child; read x"),
             lines(Input::Pipe, ROOMY),
         );
         let ids = (

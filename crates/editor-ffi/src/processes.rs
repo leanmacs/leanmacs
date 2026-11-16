@@ -182,14 +182,14 @@ pub fn command_of(words: &[u8], strings: &[u8]) -> Option<(Command, u64)> {
             arguments,
             environment: Environment { clear, set, unset },
             directory,
-            input: Input::Closed,
         },
         limit,
     ))
 }
 
 /// The command and the streaming that the words and the string of an open
-/// spell: three words, the input (0 closed, 1 a pipe) and the framing of
+/// spell: three words, the input (0 closed, 1 a pipe), which only the
+/// streaming carries, and the framing of
 /// standard output and of standard error (0 lines, 1 bytes), then a run's
 /// words, whose limit is read as the bound. `None` when they spell none.
 pub fn open_of(words: &[u8], strings: &[u8]) -> Option<(Command, Streaming)> {
@@ -209,7 +209,7 @@ pub fn open_of(words: &[u8], strings: &[u8]) -> Option<(Command, Streaming)> {
     reader.finish()?;
     let (command, bound) = command_of(&words[24..], strings)?;
     Some((
-        command.with_input(input),
+        command,
         Streaming {
             input,
             out,
@@ -908,7 +908,8 @@ mod tests {
 
         assert_eq!(
             open_of(&words, strings.as_bytes()),
-            Some((full().with_input(Input::Pipe), streaming))
+            Some((full(), streaming)),
+            "the input is the streaming's alone"
         );
         let closed = Streaming {
             input: Input::Closed,
@@ -1028,7 +1029,7 @@ mod tests {
 
     #[test]
     fn a_streaming_childs_replies_cross_from_a_service_over_the_fake() {
-        let command = full().with_input(Input::Pipe);
+        let command = full();
         let fake = FakeProcesses::scripted([(
             command.clone(),
             Ok(Script::ends(Exit::Code(2)).stdout("a\nb\n")),

@@ -82,7 +82,9 @@
 //! 1. refuses a directory that is not absolute, or a program that names a
 //!    directory without being absolute ([`refusal_before_spawn`]), before
 //!    any spawn;
-//! 2. spawns the command; a refusal is the run's result;
+//! 2. spawns the command, its standard input closed: a run's child has no
+//!    input, so one that reads it reads its end at once. A refusal is the
+//!    run's result;
 //! 3. takes both streams and starts a reader thread for each, which keeps
 //!    up to `limit` bytes; a stream with more than that kills the group,
 //!    and the run comes to [`RunResult::OutputTooLarge`], never to output
@@ -184,7 +186,9 @@ pub enum RunResult {
 /// reaches its job, and its bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Streaming {
-    /// Its standard input: closed, or a pipe the job writes to.
+    /// Its standard input: closed, or a pipe the job writes to. It is the
+    /// one place a child's input is chosen: a [`Command`] carries none, and
+    /// a run's child has its input closed.
     pub input: Input,
     /// How its standard output is framed.
     pub out: Framing,
@@ -698,7 +702,6 @@ impl<P: Processes + 'static> Service<P> {
     /// `id` and completed; after shutdown it is refused as shut down at
     /// once.
     pub fn open(&self, id: u64, command: Command, streaming: Streaming) -> bool {
-        let command = command.with_input(streaming.input);
         let mut state = self.inner.state();
         if state.in_use(id) {
             return false;
@@ -943,7 +946,7 @@ impl<P: Processes + 'static> Inner<P> {
     fn run(&self, id: u64, command: &Command, limit: u64) {
         let result = match refusal_before_spawn(command) {
             Some(refusal) => RunResult::Refused(refusal),
-            None => match self.processes.spawn(command) {
+            None => match self.processes.spawn(command, Input::Closed) {
                 Err(refusal) => RunResult::Refused(refusal),
                 Ok(child) => match self.own(id, child, limit) {
                     Some(result) => result,
@@ -1080,7 +1083,7 @@ impl<P: Processes + 'static> Inner<P> {
         });
         let child = match refusal {
             Some(refusal) => Err(refusal),
-            None => inner.processes.spawn(command),
+            None => inner.processes.spawn(command, streaming.input),
         };
         let mut child = match child {
             Ok(child) => child,
@@ -1849,6 +1852,22 @@ mod tests {
     }
 
     #[test]
+    fn a_runs_child_has_no_input_so_a_child_that_reads_it_reads_its_end_at_once() {
+        let fake = FakeProcesses::scripted([(
+            command("cat"),
+            Ok(Script::ends(Exit::Code(0)).step(crate::fake::Step::EchoUntilClosed(Stream::Out))),
+        )]);
+        let (service, completed) = service(&fake);
+
+        assert!(service.start(1, command("cat"), ROOMY));
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(service.take(1), Some(ran(Exit::Code(0), b"", b"")));
+        let child = fake.record().spawned[0].0;
+        assert_eq!(fake.record().children[&child].input, Input::Closed);
+    }
+
+    #[test]
     fn output_at_the_limit_is_kept_whole() {
         let fake = FakeProcesses::scripted([(
             command("x"),
@@ -1881,10 +1900,6 @@ mod streaming {
 
     fn command(script: &str) -> Command {
         Command::new("/bin/sh", ["-c", script], "/dir")
-    }
-
-    fn piped(script: &str) -> Command {
-        command(script).with_input(Input::Pipe)
     }
 
     fn lines_with(input: Input, bound: u64) -> Streaming {
@@ -2049,7 +2064,7 @@ mod streaming {
     #[test]
     fn a_read_delivers_each_line_as_the_child_writes_it_while_the_child_waits_for_input() {
         let fake = FakeProcesses::scripted([(
-            piped("x"),
+            command("x"),
             Ok(Script::ends(Exit::Code(0)).steps([
                 Step::Write(Stream::Out, b"one\n".to_vec()),
                 Step::EchoLine(Stream::Out),
@@ -2060,7 +2075,7 @@ mod streaming {
             &service,
             &completed,
             1,
-            piped("x"),
+            command("x"),
             lines_with(Input::Pipe, ROOMY),
         );
 
@@ -2203,7 +2218,7 @@ mod streaming {
     #[test]
     fn a_write_reaches_the_childs_input_and_closing_it_ends_an_echoing_child() {
         let fake = FakeProcesses::scripted([(
-            piped("cat"),
+            command("cat"),
             Ok(Script::ends(Exit::Code(0)).step(Step::EchoUntilClosed(Stream::Out))),
         )]);
         let (service, completed) = service(&fake);
@@ -2211,7 +2226,7 @@ mod streaming {
             &service,
             &completed,
             1,
-            piped("cat"),
+            command("cat"),
             lines_with(Input::Pipe, ROOMY),
         );
 
@@ -2224,6 +2239,11 @@ mod streaming {
             Some(StreamReply::Written)
         );
         let child = fake.record().spawned[0].0;
+        assert_eq!(
+            fake.record().children[&child].input,
+            Input::Pipe,
+            "spawned with the streaming's input"
+        );
         assert_eq!(fake.record().children[&child].received, b"a\n");
         assert_eq!(delivery(&service, &completed, 1, 3).out, lines(&["a"]));
         assert_eq!(
@@ -2247,11 +2267,7 @@ mod streaming {
                 Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled)),
             ),
             (
-                piped("x"),
-                Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled)),
-            ),
-            (
-                piped("closes"),
+                command("closes"),
                 Ok(Script::ends(Exit::Code(0))
                     .hold(Hold::UntilKilled)
                     .step(Step::CloseInput)),
@@ -2269,14 +2285,14 @@ mod streaming {
             &service,
             &completed,
             10,
-            piped("x"),
+            command("x"),
             lines_with(Input::Pipe, ROOMY),
         );
         opened(
             &service,
             &completed,
             20,
-            piped("closes"),
+            command("closes"),
             lines_with(Input::Pipe, ROOMY),
         );
 
@@ -2518,7 +2534,7 @@ mod streaming {
     #[test]
     fn a_partial_line_exactly_the_bound_long_waits_for_the_stream_to_go_on_or_end() {
         let fake = FakeProcesses::scripted([(
-            piped("x"),
+            command("x"),
             Ok(Script::ends(Exit::Code(0)).steps([
                 Step::Write(Stream::Out, b"abcd".to_vec()),
                 Step::AwaitInputClosed,
@@ -2529,7 +2545,7 @@ mod streaming {
             &service,
             &completed,
             1,
-            piped("x"),
+            command("x"),
             lines_with(Input::Pipe, 4),
         );
         let child = fake.record().spawned[0].0;
@@ -2649,7 +2665,7 @@ mod streaming {
     #[test]
     fn a_cancel_of_a_child_in_a_pending_read_never_completes_the_read() {
         let fake = FakeProcesses::scripted([(
-            piped("x"),
+            command("x"),
             Ok(Script::ends(Exit::Code(0)).step(Step::EchoLine(Stream::Out))),
         )]);
         let (service, completed) = service(&fake);
@@ -2657,7 +2673,7 @@ mod streaming {
             &service,
             &completed,
             1,
-            piped("x"),
+            command("x"),
             lines_with(Input::Pipe, ROOMY),
         );
         assert!(service.read(1, 2));
@@ -2672,7 +2688,7 @@ mod streaming {
     #[test]
     fn a_cancelled_pending_read_is_never_completed_and_the_child_keeps_its_data() {
         let fake = FakeProcesses::scripted([(
-            piped("x"),
+            command("x"),
             Ok(Script::ends(Exit::Code(0))
                 .hold(Hold::UntilKilled)
                 .step(Step::EchoLine(Stream::Out))),
@@ -2682,7 +2698,7 @@ mod streaming {
             &service,
             &completed,
             1,
-            piped("x"),
+            command("x"),
             lines_with(Input::Pipe, ROOMY),
         );
         assert!(service.read(1, 2));
@@ -2702,7 +2718,7 @@ mod streaming {
     #[test]
     fn a_cancelled_write_blocked_on_a_child_that_does_not_read_is_never_completed() {
         let fake = FakeProcesses::scripted([(
-            piped("x"),
+            command("x"),
             Ok(Script::ends(Exit::Code(0))
                 .hold(Hold::UntilKilled)
                 .pipe_capacity(2)),
@@ -2712,7 +2728,7 @@ mod streaming {
             &service,
             &completed,
             1,
-            piped("x"),
+            command("x"),
             lines_with(Input::Pipe, ROOMY),
         );
         assert!(service.write(1, 2, b"abc".to_vec()));
@@ -2740,7 +2756,7 @@ mod streaming {
                     .pipe_capacity(4)),
             ),
             (
-                piped("deaf"),
+                command("deaf"),
                 Ok(Script::ends(Exit::Code(0))
                     .hold(Hold::UntilKilled)
                     .pipe_capacity(2)),
@@ -2758,7 +2774,7 @@ mod streaming {
             &service,
             &completed,
             2,
-            piped("deaf"),
+            command("deaf"),
             lines_with(Input::Pipe, ROOMY),
         );
         assert!(comes_to_be_held(&service, 1));

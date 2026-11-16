@@ -27,8 +27,10 @@
 //!   applied.
 //! - **[`Processes::spawn`]** starts the child in a new process group whose
 //!   id is the child's, with its standard output and error piped, and its
-//!   standard input closed, or a pipe when the command asks for one
-//!   ([`Command::input`]). A program that cannot be started is a
+//!   standard input closed, or a pipe when the spawn asks for one
+//!   ([`Input`]). The input is the spawn's, not the command's: the service
+//!   decides it, a run's child always closed and a streaming child's as
+//!   its [`service::Streaming`] says. A program that cannot be started is a
 //!   [`Refusal`], a value: its kind is what the editor decides on, and its
 //!   detail the platform's words, naming the program and the directory.
 //! - **[`Child::wait`]** blocks until the child has ended; then ends every
@@ -42,7 +44,7 @@
 //!   there is something to read; 0 means the stream has closed, which it
 //!   does once every process that held it has ended.
 //! - **[`Child::take_input`]** gives the child's standard input once, when
-//!   the command asked for a pipe ([`Input::Pipe`]), and `None` otherwise.
+//!   the spawn asked for a pipe ([`Input::Pipe`]), and `None` otherwise.
 //! - **[`ChildInput::write`]** writes to it, blocking while the pipe is
 //!   full, and says how many bytes it took, which may be fewer than it was
 //!   given. A write after the child has closed its end, or has ended, is
@@ -66,7 +68,7 @@
 //!
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
-//! | Something more a child is started with (as its standard input was, [`Command::input`]) | A field of [`Command`], with a default that keeps today's behaviour | A property of [`contract`], and the fake's tests |
+//! | Something more a child is started with | A field of [`Command`], with a default that keeps today's behaviour; or, when the service decides it for each kind of child, as it does the standard input, an argument of [`Processes::spawn`] | A property of [`contract`], and the fake's tests |
 //! | Something more a running child is asked | A method of [`Child`], with its rule in the list above | Its property in [`contract::check`], with a fake written to break it in `tests/contract.rs` |
 //! | Another failure the editor decides on | A variant of [`RefusalKind`] | The property that asks for it |
 //! | A rule of the service (what a run comes to, what cancelling means) | [`service::Service`] | The service's unit tests, on the fake, and a service property of [`contract`] where a real process must show it |
@@ -92,8 +94,6 @@ pub struct Command {
     pub environment: Environment,
     /// The directory the child runs in: an absolute path.
     pub directory: PathBuf,
-    /// The child's standard input: closed, or a pipe the editor writes to.
-    pub input: Input,
 }
 
 /// What a child's standard input is.
@@ -108,7 +108,7 @@ pub enum Input {
 
 impl Command {
     /// The command that runs `program` with `arguments` in `directory`, with
-    /// the editor's environment as it is and its standard input closed.
+    /// the editor's environment as it is.
     pub fn new(
         program: impl Into<String>,
         arguments: impl IntoIterator<Item = impl Into<String>>,
@@ -119,15 +119,7 @@ impl Command {
             arguments: arguments.into_iter().map(Into::into).collect(),
             environment: Environment::default(),
             directory: directory.into(),
-            input: Input::Closed,
         }
-    }
-
-    /// The same command with `input` as its standard input.
-    #[must_use]
-    pub const fn with_input(mut self, input: Input) -> Self {
-        self.input = input;
-        self
     }
 
     /// The same command with `environment`.
@@ -222,10 +214,10 @@ pub trait Processes: Send + Sync {
     type Child: Child;
 
     /// Starts `command` as a child in a new process group of its own, with
-    /// its standard output and error piped and its standard input as the
-    /// command says. A program that cannot be started is a refusal, never
-    /// a panic.
-    fn spawn(&self, command: &Command) -> Result<Self::Child, Refusal>;
+    /// its standard output and error piped and `input` as its standard
+    /// input. A program that cannot be started is a refusal, never a
+    /// panic.
+    fn spawn(&self, command: &Command, input: Input) -> Result<Self::Child, Refusal>;
 }
 
 /// A child a [`Processes`] started. It is shared between the thread that
@@ -244,7 +236,7 @@ pub trait Child: Send + Sync + 'static {
     /// The stream `stream`, once: `None` when it was taken already.
     fn take_output(&mut self, stream: Stream) -> Option<Self::Output>;
 
-    /// Its standard input, once: `None` when the command's input is
+    /// Its standard input, once: `None` when it was spawned with
     /// [`Input::Closed`], or when it was taken already.
     fn take_input(&mut self) -> Option<Self::Input>;
 

@@ -28,10 +28,9 @@ fn a_write_to_an_input_the_child_closed_is_refused_with_sigpipe_at_its_default()
         "/bin/sh",
         ["-c", "exec 0<&-; echo closed; exec /bin/sleep 600"],
         directory.path(),
-    )
-    .with_input(Input::Pipe);
+    );
     let mut child = StdProcesses::system()
-        .spawn(&command)
+        .spawn(&command, Input::Pipe)
         .expect("the child starts");
     let mut input = child.take_input().expect("an input");
     let mut out = child.take_output(Stream::Out).expect("its output");

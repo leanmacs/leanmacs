@@ -12,7 +12,7 @@ use editor_process::contract::{
     STRAGGLERS, STREAM_CANCEL, STREAM_LINE_TOO_LONG, STREAM_LINES, STREAM_SHUTDOWN, TOO_LARGE,
 };
 use editor_process::fake::{FakeChild, FakeInput, FakeOutput, FakeProcesses, Flaws};
-use editor_process::{Child, Command, Exit, Output, Processes, Refusal, Stream};
+use editor_process::{Child, Command, Exit, Input, Output, Processes, Refusal, Stream};
 
 /// The made-up directory the contract runs in.
 const DIR: &str = "/fake/contract";
@@ -200,9 +200,9 @@ struct Bending {
 impl Processes for Bending {
     type Child = Bent;
 
-    fn spawn(&self, command: &Command) -> Result<Bent, Refusal> {
+    fn spawn(&self, command: &Command, input: Input) -> Result<Bent, Refusal> {
         Ok(Bent {
-            child: self.fake.spawn(command)?,
+            child: self.fake.spawn(command, input)?,
             drops_stderr: self.drops_stderr,
             signal_as_code: self.signal_as_code,
         })
@@ -265,9 +265,9 @@ fn a_wait_asked_again_and_a_kill_after_the_reap_are_part_of_the_contract() {
     }
     impl Processes for Forgetful {
         type Child = Once;
-        fn spawn(&self, command: &Command) -> Result<Once, Refusal> {
+        fn spawn(&self, command: &Command, input: Input) -> Result<Once, Refusal> {
             Ok(Once(
-                self.0.spawn(command)?,
+                self.0.spawn(command, input)?,
                 std::sync::atomic::AtomicBool::new(false),
             ))
         }

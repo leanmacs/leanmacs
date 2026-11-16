@@ -98,7 +98,10 @@ job reads as it comes and whose standard input it writes to (phase 2;
   `Command` (a program, its arguments, an environment and an absolute
   directory) is spawned as a `Child` in a process group of its own, with
   both output streams piped and its standard input closed or, when the
-  command asks (`Input::Pipe`), piped and taken as a `ChildInput`; the child's
+  spawn asks (`Input::Pipe`), piped and taken as a `ChildInput`. The input
+  is the spawn's, not the command's, and the service decides it once: a
+  run's child has its input closed, and a streaming child's is its
+  `Streaming`'s, as in Lean, where only `Process.Streaming` has one. The child's
   streams are read with a pull (`Output::read`), it is waited for
   (`Child::wait`) and killed (`Child::kill`). A program is a bare name,
   looked up on the `PATH` the child gets, or an absolute path; the
@@ -210,8 +213,8 @@ job reads as it comes and whose standard input it writes to (phase 2;
   and drops the child's waits uncompleted; shutdown cancels every child as
   it does every run. The contract holds the port's input to three more
   properties (a write reaches `/bin/cat` byte for byte, a write to an input
-  the child closed is `InputClosed`, a command with no input has none to
-  take) and the service to eight more, 25 in all, on real processes: lines
+  the child closed is `InputClosed`, a child spawned with no input has
+  none to take) and the service to eight more, 25 in all, on real processes: lines
   as they are written and a line written echoed back, bytes, 20,000 lines
   in order at a bound of 256, one completion for 10,000 lines, a child held
   at a bound of 4,096 that cannot finish until it is read, a line too long,

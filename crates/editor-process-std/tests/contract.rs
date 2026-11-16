@@ -19,7 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use editor_process::contract::{self, Ground};
-use editor_process::{Command, Processes, RefusalKind};
+use editor_process::{Command, Input, Processes, RefusalKind};
 use editor_process_std::StdProcesses;
 use rustix::process::{Pid, Signal, kill_process, test_kill_process};
 use tempfile::TempDir;
@@ -134,7 +134,10 @@ fn a_regular_file_that_is_not_executable_is_denied_and_the_detail_names_the_prog
     let program = program.display().to_string();
 
     let refusal = StdProcesses::system()
-        .spawn(&Command::new(program.clone(), [""; 0], &system.root))
+        .spawn(
+            &Command::new(program.clone(), [""; 0], &system.root),
+            Input::Closed,
+        )
         .expect_err("refused");
 
     assert_eq!(refusal.kind, RefusalKind::Denied);
@@ -147,7 +150,10 @@ fn a_failure_that_is_neither_missing_nor_denied_is_failed() {
     let system = System::new();
     // A program name with a NUL byte cannot be handed to the system at all.
     let refusal = StdProcesses::system()
-        .spawn(&Command::new("/bin/s\0h", [""; 0], &system.root))
+        .spawn(
+            &Command::new("/bin/s\0h", [""; 0], &system.root),
+            Input::Closed,
+        )
         .expect_err("refused");
 
     assert_eq!(refusal.kind, RefusalKind::Failed);
