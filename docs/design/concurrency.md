@@ -659,7 +659,8 @@ A job cannot change editor state. There is no `JobM` operation that does.
 Interpreted jobs run in parallel: in the experiments, 16 CPU-bound
 interpreted jobs finished in 2.3 s where one takes 1.2 s.
 
-As built (`lean/Editor/Job.lean`), a job reaches time, files and processes:
+As built (`lean/Editor/Job.lean`), a job reaches time, files, processes
+and changes on disk:
 
 - **`JobM` is a program over the job port** that may fail with a message,
   so it has `throw`, `try` and `catch`. It is plain data and holds no `IO`.
@@ -695,6 +696,14 @@ As built (`lean/Editor/Job.lean`), a job reaches time, files and processes:
   its bytes are in the child's input, or is `inputClosed`; and
   `Process.closeInput` closes the input. A read, a write or a close of a
   child the job does not hold is `noSuchProcess`, answered at once.
+- **Watching a file or a directory is requests a job awaits**
+  (`lean/Editor/FileWatch.lean`): `FileWatch.start` watches a file, a
+  directory's entries or a directory's tree, with the job's window and
+  bound, and names the watch for the job; `FileWatch.next` waits for the
+  next delivery, every change recorded and not yet taken, once the window
+  from its first change has passed. A `next` of a watch the job does not
+  hold is `noSuchWatch`, answered at once. A watch does not outlive its
+  job.
 - **No request carries a promise.** A request is plain data; how a wait is
   completed is the runner's business. A snapshot of editor state arrives as
   a further request of this port, each with a reply type, a
@@ -1405,13 +1414,23 @@ As built:
   implementation the library's process service, which runs each child on
   threads of its own ([rust-library.md](rust-library.md), "Processes, as
   built"). No Lean thread is parked for a run.
+- **The file-watch port** (`Job.FileWatches`) is beside the process port:
+  start a watch request as a wait, take its reply once the wait has
+  completed, and withdraw a wait or end a watch. Its fake is the pure
+  model of watches behind a reference (`Job.FakeFileWatches`), which
+  completes a read as soon as a change is recorded and does not apply the
+  window; its real implementation is the library's watch service, which
+  registers each watch on a thread of its own and coalesces on its timer
+  thread ([rust-library.md](rust-library.md), "Watching, as built"). No
+  Lean thread is parked for a watch.
 - **The pump** (`Job.pump`) is one dedicated task for the process's one
   table: it pulls the completion queue and finishes the wait each
   completion names, until quit. A completion carries an id whichever
   service queued it.
 - **Cancelling a job cancels the request**: the timer leaves the library's
-  schedule, a file request leaves the file service, and a run's child is
-  killed with its process group.
+  schedule, a file request leaves the file service, a run's child is
+  killed with its process group, and a pending watch read is withdrawn.
+  Ending a job, however it ends, also ends every watch it still holds.
 - **A completion-queue turn** is one iteration of the pump: one pull, one
   completion, and the one wait it names finished, whose job's continuation
   then takes its reply on the pool. So a turn ends at most one wait, and a
@@ -1419,7 +1438,10 @@ As built:
   turn. The process service queues one completion for each read of a
   streaming child, never one for each chunk the child writes: however fast
   the child writes, the completions of its output equal the reads its job
-  made, and each delivery holds everything read up to its take.
+  made, and each delivery holds everything read up to its take. The watch
+  service does the same for a watch: one completion for each `next`, never
+  one for each change on disk, and the delivery holds every change
+  recorded up to its take.
 
 A job reaches time and files only through its port, and the runner does not
 use `Std.Async`. `Std.Async` works in this process with no extra setup, and
@@ -1455,7 +1477,10 @@ Lean-side sources (an agent session, a timer, a job result) post to the
 same editor queue.
 
 - Events for one subscriber are delivered in order, coalesced where the
-  event type allows (output chunks batch, file-watch bursts are debounced).
+  event type allows (output chunks batch; a watch's changes are coalesced
+  over a fixed window from the first, one change a path, and delivered a
+  read at a time, so a file written without pause is still delivered once
+  a window; [rust-library.md](rust-library.md), "Watching, as built").
 - A handler runs as a foreground command, or starts a job if it has real
   work to do.
 - High-rate streams never reach the editor thread per item: terminal output
@@ -1553,6 +1578,19 @@ with their handlers. The reload starts no job of the new config.
 `config-test` checks both through the headless host: the cancelled job's
 line comes before the reload's, its wait is withdrawn at the clock, and its
 handler never runs.
+
+**Config's watches end with its jobs.** A watch belongs to the job that
+started it, and the runner ends every watch a job holds when the job ends,
+cancelled included (`lean/Editor/Job/Runner.lean`, "A watch does not
+outlive its job"). So `cancelJobs` ends the old config's watches, and the
+library drops their registrations once no other watch shares them: after a
+reload installs, only the watches the new config's jobs start deliver, and
+watches are replaced, never piled up. The reload path has no code of its
+own for this. `ConfigTest.watchReloadChecks` checks it through the
+headless host over the fake watch service: the old config's job is
+cancelled before the reload is reported and its watch is ended, the new
+config's job is told of a change and says the new version, and a rejected
+reload leaves the old config's watch delivering.
 
 ## What this buys over Emacs
 
@@ -1767,8 +1805,12 @@ handler never runs.
 - **Backpressure.** Answered for process output: a streaming child whose
   undelivered output reaches its bound is held, by not being read, until its
   job reads ([rust-library.md](rust-library.md), "Processes, as built").
-  Still open for jobs' results and events: what happens when they pile up
-  faster than the foreground drains them?
+  Answered for watches: a delivery holds at most a bound of distinct
+  paths, the job's, and past it the batch is one change, missed, on the
+  watch's own path, so a recursive watch during a `git checkout` hands its
+  job one change ([rust-library.md](rust-library.md), "Watching, as
+  built"). Still open for jobs' results and events: what happens when they
+  pile up faster than the foreground drains them?
 - **Prompts** ("Prompts"). Each of these was decided one way, and the
   other is still possible:
   - the answer is the continuation's first argument, and not its last;

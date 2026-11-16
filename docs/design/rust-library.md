@@ -92,7 +92,7 @@ process is a handle plus a stream of events.
 The first use, "run to the end and collect the output", which git needs
 (the process service's phase 1), and streaming children, whose output a
 job reads as it comes and whose standard input it writes to (phase 2;
-"Streams and input", below). Watching is not built.
+"Streams and input", below).
 
 - **The port** is `editor-process`'s `Processes`, in the editor's terms: a
   `Command` (a program, its arguments, an environment and an absolute
@@ -247,22 +247,23 @@ job reads as it comes and whose standard input it writes to (phase 2;
 |---|---|---|
 | **Load a file into a rope, save a rope** | Rust | Bytes go straight between disk and the rope. Saves are atomic (temporary file, then rename). Invalid bytes and line endings are preserved. |
 | **Small reads and writes, stat, list, rename, remove** | Lean | Lean's own file functions, called from jobs on a dedicated thread, behind the editor's file interface. |
-| **Watching** | Rust | Watch a path or tree; events debounced and coalesced. |
+| **Watching** | Rust | Watch a file, a directory's entries or a directory's tree; changes coalesced over a fixed window, one a path, and delivered a read at a time. Built: "Watching, as built", below. |
 
 As built, loading and saving are whole: the port, its adapter, the logic and
 the service behind the completion queue, here, and in Lean the bindings and
 the job interface's file requests, which a job awaits
 ([lean-runtime.md](lean-runtime.md), "Interfaces and models";
 [concurrency.md](concurrency.md), "Sharing state", says how a job names a
-snapshot). Lean's own interface for small reads and writes, and watching,
-are not built. The editor's commands over them are built
+snapshot). Lean's own interface for small reads and writes is not built;
+watching is ("Watching, as built", below). The editor's commands over
+loading and saving are built
 (`lean/Editor/Files.lean`, the command loop's phase 9;
 [concurrency.md](concurrency.md), "Getting results back"): the open command
 loads under a limit of 1 GiB, which is the editor's policy and a round
 number with no measurement behind it, and the save command expects the
 stamp the buffer holds, or whatever is there when it is forced. Nothing
-reloads a buffer whose file changed on disk, and nothing watches one: a
-change is found when a save is asked for.
+reloads a buffer whose file changed on disk, and nothing follows a buffer's
+file with a watch yet: a change is found when a save is asked for.
 
 - **The port.** `editor_text::fs::Fs`, defined by `editor-text` in its own
   terms, with seven methods. `stat` says what is at a path, following links,
@@ -370,6 +371,307 @@ change is found when a save is asked for.
   real files in a temporary directory, with a fixture of each kind (LF,
   CRLF, and bytes that are not UTF-8). A path crosses as the bytes of a Lean
   string, so a file whose name is not UTF-8 cannot be named from Lean yet.
+
+### Watching, as built
+
+Built by the process service's phase 3. A job asks to be told when a file,
+a directory's entries or a directory's whole tree changes on disk, and
+waits for each delivery as it waits for a stream read. The port, its fake,
+its contract, the coalescing rule and the service are `crates/editor-watch`,
+which has no dependencies; the adapter is `crates/editor-watch-notify`; the
+C functions are `crates/editor-ffi/src/watches.rs`.
+
+- **The port** is `editor_watch::Watch`. `watch(directory, depth, sink)`
+  registers a directory to a depth (`Entries`, what is directly inside it;
+  `Tree`, everything under it) and tells each change to the sink as a
+  `Notice`: a path and a kind, one of created, written, renamed, removed
+  and missed. Dropping the registration ends it. A refusal is a kind the
+  editor decides on (not absolute, not found, not a directory, denied, the
+  system's limit on watches, shut down, failed) and the platform's words.
+  The port watches directories only; a watch on a file is the service's.
+  Its rules:
+  - `watch` is refused, as a value, for a directory that is not there, for
+    something that is not a directory, and for one the system will not let
+    it watch. A path that is not absolute, or has a `..` component, is the
+    core's to refuse (`refusal_before_watch`), so no adapter is asked one.
+  - **A registration is live when `watch` returns**: a change made after
+    that is noticed.
+  - It notices each entry created, written, renamed (under its old path
+    and its new one) or removed inside the directory, or anywhere under it
+    for `Tree`, subdirectories made after `watch` returned among them. It
+    may notice more than it covers (FSEvents is recursive underneath, and
+    an earlier change can show up in a flag), never less.
+  - A notice names its path under the directory as the caller spelled it.
+  - Registrations are independent: two of one directory each notice its
+    changes, and dropping one leaves the other whole.
+  - **After a registration's drop returns, its sink is never called
+    again.**
+  - One registration's notices reach its sink in the order the platform
+    reported them.
+  - An overflow is one `Missed` notice naming the directory. A change of
+    metadata alone, and a read, are not noticed.
+- **The coalescing rule is pure** (`editor_watch::batch`). Time reaches it
+  as a number of milliseconds the caller passes in. A batch holds one
+  change a path, in the order of each path's first notice, and a change is
+  a path and a *set* of kinds (`Kinds`, the bits created 1, written 2,
+  renamed 4, removed 8, missed 16), because FSEvents gives no order inside
+  a record it coalesced and can carry an earlier change's flag. **The
+  window is fixed from the batch's first notice**, not a trailing
+  debounce: the batch is deliverable once the window has passed since its
+  first notice, however many notices follow, so a file written without
+  pause is delivered once a window and never held back. **The bound** is
+  how many distinct paths a batch may hold. A notice for a new path past
+  it collapses the batch to one change, missed, on the watch's own path,
+  and the batch stays collapsed until it is taken; a `Missed` notice, the
+  platform's own overflow, collapses it the same way. This is the
+  backpressure answer for watches: a recursive watch during a `git
+  checkout` can make hundreds of thousands of notices, and the job is told
+  one change. A take leaves the batch empty and not collapsed.
+- **The clock** is a trait of the crate's own (`editor_watch::clock::Clock`),
+  because the crate cannot depend on `editor-ffi`, where the job clock is;
+  `ManualClock` is published for tests. The service's timer thread parks
+  until the earliest deadline of a batch with a read pending, or until
+  `Service::wake`. A test advances the manual clock and wakes the service,
+  then waits for the completion with a deadline: no test sleeps for a fixed
+  time. The crate's `clippy.toml` refuses `std::fs`, the `Path` methods
+  that ask the disk, the machine's clocks and the adapter's constructor,
+  so its tests run on the fake and the manual clock.
+- **The fake** (`editor_watch::fake::FakeWatch`) is a file system in memory
+  and the registrations on it. `notice` tells a notice, on the calling
+  thread, to every live registration that covers its path. Its ground
+  (`FakeGround`) writes, makes directories, renames, removes and links, and
+  tells the notices a real file system would: a write to a new file is
+  created then written, a rename is renamed under the old path then the
+  new one. It records every `watch` call, refusal and drop, scripts a
+  refusal for a directory, latches every `watch` call until a test lets go
+  (`hold_watches`), and can have each drop call its sink before it
+  returns, as a platform's drop that joins a thread in the sink does,
+  which is how a test sees that a registration is never dropped under the
+  service's lock. `Flaws` makes a fake that breaks one rule of the port.
+- **The contract** (`editor_watch::contract::check(watch, clock, ground,
+  dir)`) runs 23 properties, each in a fresh subdirectory of a directory
+  its caller owns, and returns the names of those that fail. Twelve are
+  the port's: live on return (on 20 fresh registrations, so a race shows
+  up); created; written; removed; renamed, under both paths; renamed over
+  another entry; a tree's write two levels down; a subdirectory made after
+  `watch` returned and a file written in it; spelled as given, for a
+  directory registered through a link; independent registrations; a
+  dropped registration silent (200 writes right after the drop, then a
+  sentinel on a second registration); and the refusals. Eleven are the
+  service's, run over `Service` on the watch and the clock the check is
+  given: a file watch is told of a write, of a rename over the file, of its
+  removal, of its creation, of a write after an atomic save, and of nothing
+  beside it; a directory watch of each entry created, written, renamed and
+  removed directly inside it, and of nothing deeper; a tree watch of a
+  change in a subdirectory; five writes within a window of 300 ms arrive as
+  one delivery (`COALESCED`); a cancelled watch's pending read is never
+  completed; and after shutdown a start is refused and a pending read never
+  completed.
+  - **How a property waits.** A sink sends each notice to a channel, and
+    the property waits for one that matches, up to the ground's deadline
+    (1 s on the fake, 10 s on real files). A negative claim uses a
+    sentinel: the change that must not be noticed, then one that must, and
+    when the sentinel's notice arrives nothing of the first may have come
+    before it. That holds because one registration's notices are in order.
+  - **On real files a service property checks that a kind is present**,
+    never that the set is exactly something, and reads up to `READS` (4)
+    deliveries for each change it looks for; `DIRECTORY_ENTRIES` looks for
+    five. With no window each delivery is taken as soon as it is completed,
+    and inotify tells a new file's creation, its write and the write's
+    close one by one, so what one step made comes in several deliveries
+    (seen in the Linux container). `COALESCED` is the exception: it fails
+    if the path written five times is in more than its first delivery. The
+    exact sets are pinned on the fake, in the service's unit tests.
+  - **The window passes through the ground.** `Ground::let_pass(ms)` lets
+    time pass on the clock the check was given: the fake's ground, put on
+    a manual clock (`FakeGround::on(clock)`), advances it, and the property
+    then wakes the service; a real ground does nothing, and real time
+    passes while the property waits. So `COALESCED` is deterministic on
+    the fake, and on real files needs only that five writes take less than
+    the window.
+  - The fake keeps the contract, and each `Flaws` fake fails its own port
+    property and the service properties that rest on that rule
+    (`crates/editor-watch/tests/contract.rs`).
+- **The service** (`editor_watch::service::Service<W, C>`), in the process
+  service's shape: a watch is started with the caller's id, a target (a
+  file, or a directory to a depth) and its coalescing (a window and a
+  bound, both the caller's, with no default), and the call returns at once.
+  A short-lived thread refuses a path that is not absolute or has a `..`,
+  and a bound of 0 (as failed), then registers through the port, keeps
+  `Started` or the refusal and completes. Registration is off the caller's
+  thread because a recursive inotify watch walks the whole tree. From then
+  on the id names the watch.
+  - **A file is watched through the directory it is in**, registered to
+    `Entries`, and only the changes that name the file are kept. So a
+    write, a rename over the file, and a remove followed by a new file are
+    each seen under its name, and a file that is not there yet can be
+    watched, its creation told; its directory must be there. A watch on the
+    file's own inode would go dead at the first rename over it (inotify's
+    `IN_DELETE_SELF`). Siblings' changes are dropped before they reach a
+    batch, which costs work in a busy directory and nothing else.
+  - **Watches with the same directory and depth share one registration**,
+    so N files followed in one directory cost one platform watch.
+    Cancelling one drops the registration once no other watch uses it.
+  - **A read** (`next`) is a pull, as a stream read is. A watch has at most
+    one pending; a second is refused. It is completed at once if the batch
+    is deliverable, and otherwise by whoever first makes it so: the notice
+    itself when the window is 0, or the timer thread at the batch's
+    deadline. One completion a read, and **the delivery is drained when it
+    is taken**, so notices between the completion and the take are in it.
+  - **The router.** Each registration's sink carries its serial, and a
+    notice for a serial no longer live reaches no one. A live serial's
+    notice goes to each watch on the registration: a file watch keeps its
+    file's path, an entries watch its directory and what is directly
+    inside it, a tree watch everything under its directory. A `Missed`
+    notice reaches every watch on the registration, so a file watch is
+    told missed on its file.
+  - **Cancelling** takes a watch's id or a wait's. A watch's drops its
+    batch, its pending read and its kept reply, none of them completed; a
+    start cancelled while its port call is in flight drops the
+    registration when the call returns, and is never completed. An id in
+    use is refused. **Shutdown** refuses every later start (as shut down,
+    completed at once), cancels every watch, waits for every start in
+    flight, and drops every registration; it is idempotent.
+  - **A registration is never dropped, and the completion never called,
+    under the service's lock.** It is taken out under the lock and dropped
+    after: notify's FSEvents drop joins its run-loop thread, which may be
+    in the sink waiting for that lock.
+  - **Threads**: one timer thread for the service, a short-lived one for
+    each start, and the adapter's for each registration.
+- **The adapter** (`editor-watch-notify`) is over `notify`, pinned
+  `=8.2.2` with only `macos_fsevent` on: inotify on Linux, FSEvents on
+  macOS. `NotifyWatch::system()` is its one constructor, and no notify type
+  is public.
+  - A registration checks the directory first (one not there, a dangling
+    link among them, is not found; something else, not a directory),
+    canonicalizes it once, and makes a notify watcher of its own, so that
+    registrations are independent: inside one watcher, `unwatch` of a
+    directory drops the inotify watch that a recursive watch of its parent
+    also uses, since notify keeps one descriptor a path.
+  - **Paths are respelled as the caller gave them.** FSEvents reports
+    canonical, firmlink-resolved paths (`/private/var/...` for a directory
+    given as `/var/...`), and notify filters FSEvents' events on the
+    canonical path; so the canonical spelling is registered, and every
+    notice under it is spelled again under the given one.
+  - **Events map to notices**: a creation is created; a write of data, a
+    write's close, and an event notify could not name are written; a
+    rename is renamed under each path it names, old and new; a removal is
+    removed. A change of metadata alone and every other access are
+    dropped. An event that asks for a rescan (inotify's queue overflowing,
+    FSEvents' must-scan-subdirectories) and an error in the event stream
+    are one missed on the directory. notify's errors: too many watches is
+    the system's limit, a path not found is not found, permission denied is
+    denied, anything else failed.
+  - **A gate** keeps a dropped registration silent. The handler holds it
+    for reading while it calls the sink; the drop takes it for writing,
+    shuts it, and only then drops the watcher, because notify's inotify
+    watcher does not join its thread when it is dropped. Looked at by hand
+    on 2026-11-15: with the gate's check taken out of the handler, the
+    contract still passed, three runs in the Linux container and on macOS;
+    the gate is kept because notify does not promise it.
+  - What notify brings in, as `Cargo.lock` resolves it: `notify-types`
+    2.3.1, notify's own crate of event types; `walkdir`, `libc` and `log`,
+    already in the lock; on Linux `inotify` 0.11.5 and `mio` 1.2.5; on
+    macOS `objc2-core-services` 0.3.2 and `bitflags`. `deny.toml` lets only
+    the adapter depend on `notify`, only notify on `notify-types`, only the
+    adapter and `editor-ffi` on `editor-watch`, and only `editor-ffi` on
+    the adapter.
+  - **Set aside**, 2026-11-15 (the manifest says why): notify 9.0.0-rc.9,
+    a release candidate still changing week to week, to move to in a commit
+    of its own; `notify-debouncer-full` and `notify-debouncer-mini`, whose
+    window runs on their own thread on the real clock, so the rule could
+    not be pinned on a fake, and whose rename stitching relies on inotify's
+    cookies, which FSEvents does not have; notify's kqueue back end, with
+    no native recursion and a descriptor for each file; and `inotify` or
+    `fsevent-sys` directly, two adapters for nothing gained.
+  - Its test runs the contract on real files in a `tempfile` directory,
+    deliberately not canonicalized, so that on macOS, where the temporary
+    directory is reached through `/var`, every property shows the
+    respelling. The watch crate has no real clock, so the test defines a
+    monotonic one of its own.
+- **Across the boundary**, `editor-ffi`'s `watches.rs` is the fourth service
+  behind the completion queue (source id 4). The process has one service, a
+  static `WATCHES: Service<NotifyWatch, Monotonic>` made on its first use,
+  which completes through the completion queue. `editor-ffi` implements
+  `editor_watch::clock::Clock` for `timers::Monotonic`, so the window is
+  measured on the job clock; the static has a `Monotonic` of its own, not
+  the timer service's instance, since only intervals matter.
+  `NotifyWatch::system` is on `crates/editor-ffi/clippy.toml`'s list, with
+  the static its one caller, so the unit tests run on the fake.
+
+  | Function | Does |
+  |---|---|
+  | `editor_ffi_watches_start(id, words, words_len, path, path_len)` | Three words, the target (0 a file, 1 a directory's entries, 2 a directory's tree), the window in milliseconds and the bound, then the path's bytes, which must be UTF-8. False, starting nothing, for words that spell no start, a path that is not UTF-8, an id in use, or when the system refuses the start its thread |
+  | `editor_ffi_watches_next(watch, wait)` | Asks for the watch's next delivery, as the wait `wait`. False for a watch that is not live, one with a read pending, or a wait id in use |
+  | `editor_ffi_watches_take(wait, *mut RawWatchReply)` | Fills the record and returns true, or returns false when nothing is kept for the wait |
+  | `editor_ffi_watches_cancel(id)` | Cancels a watch, dropping its registration once no other watch shares it, or a wait |
+  | `editor_ffi_watches_pending()` | Watches starting or live, and waits not answered or not taken: a readout for tests |
+  | `editor_ffi_watches_shutdown()` | Ends every watch; a later start is refused as shut down |
+
+  A reply is a status (0 started, 1 not absolute, 2 not found, 3 not a
+  directory, 4 denied, 5 the system's limit, 6 shut down, 7 failed, 8
+  changes), words, a detail and one buffer, each freed with
+  `editor_ffi_text_free`. For changes the words are the count and then,
+  for each change, its path's length in bytes and its kinds' bits, and the
+  buffer is the paths end to end. **A delivered path is its raw bytes**, as
+  the platform gave them, which on Linux need not be UTF-8. The headless
+  and window mains call the shutdown after the process service's and
+  before they quit the queues.
+- **In Lean**, `FileWatch.start` and `FileWatch.next` are requests of the
+  job port (`lean/Editor/FileWatch.lean`; [lean-runtime.md](lean-runtime.md),
+  "An interface is a port, and a command is a program over it"), with a
+  pure model composed with the process model, so that a command a job runs
+  changes what its watches see. A watch is named for the job that started
+  it and does not outlive it: the runner ends every watch a job still
+  holds when the job ends, however it ends. A delivered path that is not
+  UTF-8 becomes a change of the watch's own path with missed: the job is
+  told that something changed which it cannot name.
+
+| | macOS, FSEvents through notify | Linux, inotify through notify |
+|---|---|---|
+| Paths | Canonical (`/private/var/...`); the adapter respells them | As registered |
+| Recursion | Native, always. notify filters `Entries`, and the service filters again | A watch for each subdirectory, added by walking the tree, and for each new subdirectory as it is made |
+| Flags | Coalesced in each record, sometimes with an earlier change's flag. Real-file tests check that a kind is present | One event each, in order: a new file's creation, its write and the write's close come apart. A rename gives `From`, `To` and `Both` |
+| A registration | A run-loop thread, joined on drop | An inotify instance and its thread. The drop does not join (hence the gate) |
+| Limits | None met in practice | `max_user_instances` (often 128) caps registrations across every program of the user, and `max_user_watches` a tree's directories. Both come back as the system's limit at the registration, or as missed for a subdirectory made later that could not be watched |
+| Overflow | Must-scan-subdirectories | `IN_Q_OVERFLOW`. Both come back as missed on the directory |
+| Names not UTF-8 | APFS refuses them; notify's callback would panic on one | Possible. Lean delivers missed on the watch's path |
+| A watched directory removed | Told as removed when the platform says so; FSEvents goes on following the path | Told as removed when the platform says so; the watch goes dead. Not pinned (open questions) |
+
+Linux is checked by `mise run linux-ci`, which runs the same contract in
+the container's own `/tmp`. `LIVE_ON_RETURN` and `DROPPED_IS_SILENT` pass
+on both platforms, so the rule that a registration is live when `watch`
+returns stays in the port.
+
+**The acceptance criteria and the tests that confirm each.** The Lean
+properties are `JobContract.fileWatchProperties`
+(`lean/Editor/Job/Contract.lean`), numbered in their order, each run on the
+model and on the runner over the fake watch service in `ModelTest`, and on
+the runner over the library's service, on real files in a temporary
+directory, in `contract-test`.
+
+| Criterion | Tests |
+|---|---|
+| A job watching a file is told when the file is written | Service `a_file_watch_is_told_when_the_file_is_written` (fake); contract `FILE_WRITTEN` (fake, and real in `crates/editor-watch-notify/tests/contract.rs`); port `WRITTEN`; Lean property 1 |
+| … when another file is renamed over it | Service `a_file_watch_is_told_when_the_file_is_renamed_over`; contract `FILE_RENAMED_OVER`, `FILE_SURVIVES_SAVE`; port `RENAMED_OVER`; Lean properties 2 and 7 |
+| … when the file is removed | Service `a_file_watch_is_told_when_the_file_is_removed`; contract `FILE_REMOVED`; port `REMOVED`; Lean property 3 |
+| A job watching a directory is told the path of each entry created, written, renamed or removed directly inside it | Port `CREATED`, `WRITTEN`, `RENAMED`, `REMOVED`; service `a_directory_watch_is_told_each_entry_directly_inside_and_nothing_deeper`; contract `DIRECTORY_ENTRIES`; Lean property 4 |
+| A job with a recursive directory watch is told the path of an entry changed in any of its subdirectories | Port `TREE`, `TREE_NEW_SUBDIRECTORY`; service `a_tree_watch_is_told_of_a_change_in_any_subdirectory`; contract `DIRECTORY_TREE`; Lean property 5 |
+| Several writes to one path within the coalescing window arrive as one event | `batch.rs`'s unit tests; service `writes_within_the_window_arrive_as_one_change`, `a_read_waits_for_the_window_from_the_first_notice` and `a_continuous_writer_is_delivered_once_a_window` (`ManualClock`); contract `COALESCED` (deterministic on the fake, and real); `ModelTest.fileWatchModelChecks` (the exact window); Lean property 6, which checks that the five writes are in the first delivery, once, and in no delivery twice, and that a later write is told: that no later delivery holds the path on the real library is left to `COALESCED` |
+| After a config reload installs, only the watches the new config made deliver events; none of the old config's do | `ConfigTest.watchReloadChecks` (the headless host, a reload, the fake watch service); `ModelTest.fileWatchRunnerChecks`, "Jobs.removeOwner ends the watches of the owner's jobs, and leaves another owner's" and "a watch ends with its job, finished, failed or cancelled, through the watch service's cancel"; service `a_cancelled_watch_delivers_nothing_and_drops_its_registration` and `a_notice_after_the_registration_is_dropped_reaches_no_one`; contract `CANCELLED_SILENT` and port `DROPPED_IS_SILENT` (real); `ContractTest.fileWatchChecks`, "a job's watch does not outlive it" (the library) |
+
+Other tests: `crates/editor-ffi/src/watches.rs`'s unit tests, on the fake
+and the manual clock (words in, a reply out, malformed words refused);
+`crates/editor-ffi/tests/watches.rs`, the wiring test, which watches a real
+file in a temporary directory through the C functions and pulls the
+completion from the real completion queue; and
+`crates/editor-ffi/tests/watches_shutdown.rs`, a test binary of its own
+because shutdown is process-wide. In Lean, `ffi-test` checks a start, a
+read and a take in a temporary directory, words that spell no start, and a
+reply's decoding; `contract-test` (`ContractTest.fileWatchChecks`) also
+checks that a change whose path is not UTF-8 is delivered as missed on the
+watch's own path, and skips that, saying so on stderr, where the volume
+refuses such a name (APFS does).
 
 ## What Lean's runtime provides directly
 
@@ -739,8 +1041,9 @@ better generic primitive, not a feature-specific service.
   could move there, delivering plain values.
 - **HTTP.** A Lean client, or a small Rust one behind the same pattern.
 - **Backpressure** for a process that outpaces its consumer: answered for
-  process output, which is held at its bound by not being read. Still open
-  for what else a job is handed, its results and events.
+  process output, which is held at its bound by not being read, and for
+  watches, whose batch past its bound collapses to one missed change.
+  Still open for what else a job is handed, its results and events.
 - **A write while the child is held.** A job that writes to a child that is
   not reading its standard input, while the child is held at its bound
   because the job is not reading, waits in that write until it is
@@ -789,6 +1092,29 @@ better generic primitive, not a feature-specific service.
 - **File names that are not UTF-8.** The service takes a path as bytes and
   decodes nothing, but Lean's paths are strings, so such a file cannot be
   named from Lean. The route is the text model's escapes, applied to names.
+  A watch's delivery carries such a path as bytes, and Lean, until then,
+  turns it into missed on the watch's own path.
+- **A followed file that is a link.** A file watch is on the name in its
+  directory, not on the link's target. A change of what the link holds is
+  told as a change of that name; a write to the target, which may be in
+  another directory, is not expected to be told. No test looks at either.
+- **A watched directory that is removed** is told as removed when the
+  platform says so. What follows differs: inotify's watch goes dead, and
+  FSEvents goes on following the path. Not pinned by any test.
+- **The inotify instance limit.** Each registration is a notify watcher of
+  its own, an inotify instance and a thread on Linux, and
+  `max_user_instances` (often 128) caps them across every program of the
+  user. Sharing applies only to an exact directory and depth. One watcher
+  for every registration, with the overlap of a tree and a directory under
+  it handled in the adapter (inside one watcher, `unwatch` of one drops the
+  descriptor the other uses), would lift the cap; it is not built.
+- **A `stop` request**, which would end a watch before its job ends. A
+  watch ends only with its job. `lean/Editor/FileWatch.lean` says where
+  the request would go.
+- **Presence.** A change says what happened at a path, not whether the
+  path exists afterwards: a remove and a create inside one window are one
+  change with both kinds, and their order is lost. A job that must know
+  asks for the file; whether a delivery should say it is open.
 - **A change inside the clock's granularity** that keeps the size is not
   noticed by a stamp. A content hash would notice it, at the cost of reading
   the file at every save.

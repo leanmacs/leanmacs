@@ -135,7 +135,7 @@ adapter could replace it.
 
 | Gap | Workaround |
 |---|---|
-| No change notification on any surface | A file watch on the plan repo; the client re-queries on change. rdm writes atomically, which makes this safe. |
+| No change notification on any surface | A file watch on the plan repo; the client re-queries on change. rdm writes atomically, which makes this safe. The watch it needs is built: a recursive directory watch from a job, which an atomic write, a rename over a file, does not lose ([rust-library.md](rust-library.md), "Watching, as built"). |
 | Run records have no stage, heartbeat or process id | The agent table knows liveness for sessions the editor started |
 | No position for code comments in the working file | Show the file at the reviewed commit |
 | Finding severity and confidence are text in the comment body | Parse them, until rdm exposes fields |
