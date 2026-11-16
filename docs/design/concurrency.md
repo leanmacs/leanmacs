@@ -742,6 +742,49 @@ and changes on disk:
   relative directory or program, a program that is not there or not
   allowed, or a stream past the run's limit, which has no default. A
   cancelled job's child is killed with its process group.
+- **A child's environment, as built** (`lean/Editor/Process/Environment.lean`,
+  `Process.prepared` in `lean/Editor/Job.lean`). The question is "what
+  environment does a child started in this directory get?", and the answer
+  is the editor's own, then the variables its directory's lookup returns set
+  over it, then the command's own `Environment`. The editor's own process
+  environment is never changed. `Process.run`, `Process.runWithin` and
+  `Process.start` each prepare their command first, as a job program, so the
+  model and the runner run the same code; the lookup itself is a raw
+  request, so it never looks itself up.
+  - *Sources.* Config's setting (`processEnvironment`, the setup port's
+    first option): `inherited`, no lookup, children exactly as before;
+    `mise` with an absolute path, or with none; and the default `auto`.
+  - *Resolution.* `mise` with no path, and `auto` in the window mode, take
+    the first of `~/.local/bin/mise` (from `HOME`), `/opt/homebrew/bin/mise`
+    and `/usr/local/bin/mise` whose stamp a file request answers; with none,
+    `mise` reports "mise is not at …" once for each directory and `auto` is
+    `inherited`. `auto` in the headless mode and the checks is `inherited`.
+    The first job to resolve the setting keeps the answer in the shared
+    state until a reload.
+  - *The lookup* runs `<mise> env --json` in the child's directory through
+    the process service, with a mebibyte of output and a time limit, 5 s by
+    default (`ProcessRequest.runWithin`, a run killed with its group once
+    its limit has passed: the runner arms an alarm on the clock and cancels
+    the run at the library when the alarm comes first). The JSON object of
+    strings is read in Lean, outside `Lean.Data.Json`, which config's
+    closure leaves out.
+  - *The cache* is one entry for each directory in the state every job of a
+    host shares (`JobRequest.environment`, answered at once, as `now` is;
+    `Job.sharedEnvironments` behind a reference). An entry is kept while the
+    stamps of `mise.toml`, `.mise.toml`, `.tool-versions` and
+    `mise.local.toml` in the directory and each ancestor, read through the
+    file port's stamp request before the lookup ran, are unchanged. A
+    reload that installs drops every entry. mise's global config and
+    environment variables are not stamped: a change there is picked up
+    after a reload.
+  - *Ordering.* A start in a directory with no entry waits for the lookup
+    and then starts its child, in the job; the loop never waits for either.
+  - *Failures* (a status other than 0, a signal, output that is not a JSON
+    object of strings, a run past its limit, a refusal, no mise) start the
+    child with the inherited environment and are reported once for the
+    directory until its entry is dropped: the host posts the message to the
+    editor queue and says it in the echo area. In an untrusted directory
+    `mise env` exits non-zero, which is this path.
 - **A streaming child is requests a job awaits, one at a time**:
   `Process.start` starts it with its input, how each output stream is
   framed (lines or bytes) and its bound, and names it for the job;

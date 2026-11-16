@@ -238,8 +238,15 @@ job reads as it comes and whose standard input it writes to (phase 2;
   buffers) and a readout of whether it is held, for tests. In Lean a run is
   a request of the job port (`lean/Editor/Process.lean`, `Process.run`),
   with a pure model that scripts commands; cancelling a job withdraws its
-  wait, which cancels the run in the library and so kills the child. The
-  headless and window mains call the shutdown before they quit the queues.
+  wait, which cancels the run in the library and so kills the child. A run
+  with a time limit (`Process.runWithin`) is a run here: Lean's adapter
+  arms an alarm on the timer service and cancels the run when the alarm
+  comes first, so the library has no deadline of its own. Before a child
+  starts, Lean looks up the environment of its directory, a run of
+  `mise env --json` there with such a limit, and sets its variables under
+  the command's own ([concurrency.md](concurrency.md), "A child's
+  environment, as built"). The headless and window mains call the shutdown
+  before they quit the queues.
 
 ## Files and watching
 
@@ -344,15 +351,24 @@ file with a watch yet: a change is found when a save is asked for.
   over the file. It is checked when a save is asked for and at no other
   time. A change that keeps the size inside one tick of the file system's
   clock is not seen; a test pins that.
+- **A stamp alone** (`editor_text::file::stamp`): the stamp of the file at
+  a path, or none when nothing is there, from one stat, with nothing read;
+  a path that is not absolute is refused before the file system is asked,
+  and what is not a file is refused as not a file. It is how a caller tells
+  whether a file changed without loading it: Lean's lookup of a child's
+  environment keeps a directory's entry by the stamps of mise's config
+  files.
 - **The service** (`editor-ffi`, `src/files.rs`), in the timer service's
-  shape: a load or a save is started with the caller's id and returns at
-  once; **one thread works the requests in the order they were started**,
+  shape: a load, a save or a stamp is started with the caller's id and
+  returns at once; **one thread works the requests in the order they were started**,
   so two saves of one file land in order; one completion is queued; the
   result is then taken once by its id, as a status, a snapshot handle for a
   load, words and a detail string. Cancelling a request that waits means it
   is never worked; a save being worked reads the flag before it replaces
   the file. The statuses: done, not absolute, not found, not a file,
-  denied, binary, too large, changed, no temporary name, failed.
+  denied, binary, too large, changed, no temporary name, failed. A stamp
+  request's result is done with four words: present or not, then the
+  stamp.
 - **How the tests are kept off the disk.** `editor-text`'s tests, and the
   service's unit tests, run on the fake. That is held by the gate, not by
   review: a `clippy.toml` beside each of the two crates lists `std::fs`,
