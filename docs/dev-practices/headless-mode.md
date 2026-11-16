@@ -573,7 +573,10 @@ directory and loads none of it: it has no `reload`. So every command its
 keys run is one the editor ships. It presses `i`, which begins an insert,
 then the five keys of `hello`, each typed text; `<Escape>`, which returns
 to normal state with the cursor on the last character typed; and `0`,
-which is a motion there. Its output must be exactly
+which is a motion there. It goes on to search with `/`, `n` and `N`, to
+type a pair of brackets after the text and go back over it with `%`, and
+to delete inside it with `d i (`, so the library's bracket walk answers
+both. Its output must be exactly
 `tests/headless/evil-expected`:
 
 ```console

@@ -38,3 +38,21 @@ key n KeyN -
 scene
 key N KeyN shift
 scene
+
+# `A` appends at the line's end, and a pair typed there is text. `%` from
+# the closing bracket goes back to the opening one, by the library's walk.
+key A KeyA shift
+key ( Digit9 shift
+key a KeyA -
+key ) Digit0 shift
+key <Escape> Escape -
+key % Digit5 shift
+scene
+
+# `d i (` deletes inside the pair the cursor is on: the operator over the
+# text object `inner-paren`, which normal state's keys reach only while an
+# operator waits. The cursor rests on the closing bracket.
+key d KeyD -
+key i KeyI -
+key ( Digit9 shift
+scene

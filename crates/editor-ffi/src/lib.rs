@@ -140,7 +140,7 @@
 //! length or an offset the other side cannot hold is sent as the largest it
 //! can, which no text accepts, so it too is refused and never cut down.
 //! Tests: the unit tests in `text.rs`, `document.rs`, `snapshot.rs`,
-//! `motion.rs`, `words.rs`, `transaction.rs`, `log.rs`, `marker.rs`,
+//! `motion.rs`, `pair.rs`, `words.rs`, `transaction.rs`, `log.rs`, `marker.rs`,
 //! `inverse.rs` and `fuzzy.rs`, and, for a scene's words, in
 //! `display/wire.rs`;
 //! the tag tests in `events.rs`;
@@ -508,6 +508,7 @@ pub mod log;
 pub mod main_thread;
 pub mod marker;
 pub mod motion;
+pub mod pair;
 pub mod processes;
 pub mod render;
 pub mod search;

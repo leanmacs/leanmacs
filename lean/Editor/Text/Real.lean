@@ -464,6 +464,18 @@ def motionOf : Motion → Ffi.Motion
   | .rowsUp count column => .rowsUp (word count) (word column)
   | .rowsDown count column => .rowsDown (word count) (word column)
 
+/-- The library's kind of bracket for the port's. -/
+def bracketOf : Bracket → Ffi.Bracket
+  | .round => .round
+  | .square => .square
+  | .curly => .curly
+
+/-- The library's kind of quote for the port's. -/
+def quoteOf : Quote → Ffi.Quote
+  | .double => .double
+  | .single => .single
+  | .back => .back
+
 /-- The library's answer to `query` about `snapshot`.
 
 The port's offsets, rows and columns are `Nat` and the library's are machine
@@ -522,6 +534,18 @@ def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextEr
       return .ok (.invalid reason)
     | .badPosition =>
       return .error .badPosition
+  | .unmatched bracket opening forward escaped offset => do
+    unless offset < USize.size do
+      return .error .badPosition
+    let some found ←
+      snapshot.unmatched (bracketOf bracket) opening forward escaped
+          offset.toUSize | return .error .badPosition
+    return .ok (found.map (·.toNat))
+  | .quoted quote offset => do
+    unless offset < USize.size do
+      return .error .badPosition
+    let some found ← snapshot.quoted (quoteOf quote) offset.toUSize | return .error .badPosition
+    return .ok (found.map fun range => ⟨range.start.toNat, range.stop.toNat⟩)
   | .matches pattern start stop => do
     unless start < USize.size ∧ stop < USize.size do
       return .error .badRange

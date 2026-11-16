@@ -490,6 +490,60 @@ lean_obj_res editor_glue_snapshot_motion(b_lean_obj_arg snapshot,
   return lean_io_result_mk_ok(option_some(lean_box_uint64(answer)));
 }
 
+uint8_t editor_ffi_snapshot_unmatched(const editor_ffi_snapshot *snapshot,
+                                      uint8_t bracket, bool opening,
+                                      bool forward, bool escaped, size_t offset,
+                                      uint64_t *out);
+uint8_t editor_ffi_snapshot_quoted(const editor_ffi_snapshot *snapshot,
+                                   uint8_t quote, size_t offset,
+                                   uint64_t *start, uint64_t *stop);
+
+// The statuses of the two reads of a pair: the library's `PairStatus`.
+enum { PAIR_FOUND = 0, PAIR_NOT_FOUND = 1 };
+
+// `Editor.Ffi.Snapshot.unmatchedRaw : @& Snapshot → UInt8 → Bool → Bool →
+// Bool → USize → IO (Option (Option UInt64))`: `none` for a refusal, `some
+// none` for no such bracket. The tag is one Lean's `Bracket.tag` wrote, and
+// the library checks it.
+lean_obj_res editor_glue_snapshot_unmatched(b_lean_obj_arg snapshot,
+                                            uint8_t bracket, uint8_t opening,
+                                            uint8_t forward, uint8_t escaped,
+                                            size_t offset) {
+  uint64_t found;
+  uint8_t status = editor_ffi_snapshot_unmatched(
+      lean_get_external_data(snapshot), bracket, opening != 0, forward != 0,
+      escaped != 0, offset, &found);
+  if (status == PAIR_FOUND) {
+    return lean_io_result_mk_ok(
+        option_some(option_some(lean_box_uint64(found))));
+  }
+  if (status == PAIR_NOT_FOUND) {
+    return lean_io_result_mk_ok(option_some(lean_box(0)));
+  }
+  return lean_io_result_mk_ok(lean_box(0)); // `none`
+}
+
+// `Editor.Ffi.Snapshot.quotedRaw : @& Snapshot → UInt8 → USize → IO (Option
+// (Option ByteRange))`, as `unmatchedRaw`.
+lean_obj_res editor_glue_snapshot_quoted(b_lean_obj_arg snapshot, uint8_t quote,
+                                         size_t offset) {
+  uint64_t start;
+  uint64_t stop;
+  uint8_t status = editor_ffi_snapshot_quoted(lean_get_external_data(snapshot),
+                                              quote, offset, &start, &stop);
+  if (status == PAIR_FOUND) {
+    // `ByteRange`: no object fields, then `start` and `stop`.
+    lean_object *range = lean_alloc_ctor(0, 0, 2 * sizeof(uint64_t));
+    lean_ctor_set_uint64(range, uint64_field(0, 0), start);
+    lean_ctor_set_uint64(range, uint64_field(0, 1), stop);
+    return lean_io_result_mk_ok(option_some(option_some(range)));
+  }
+  if (status == PAIR_NOT_FOUND) {
+    return lean_io_result_mk_ok(option_some(lean_box(0)));
+  }
+  return lean_io_result_mk_ok(lean_box(0)); // `none`
+}
+
 // The `some` of a text the library lent in `raw`, copied, with the buffer
 // handed back.
 static lean_object *some_text(editor_ffi_raw_text raw) {

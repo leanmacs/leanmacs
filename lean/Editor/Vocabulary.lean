@@ -12,7 +12,8 @@ one command. This module names no scheme and no key. An input scheme names
 an entry by its name, a `String`, and the entry is looked up when the
 invocation runs.
 
-Two parts of speech are here: the motion and the operator.
+Three parts of speech are here: the motion, the operator and the text
+object.
 
 ## Motions
 
@@ -100,6 +101,31 @@ An operator's `act` is a command's body, so this module imports the
 editor's port (`Editor/Command.lean`) and the call
 (`Editor/Command/Call.lean`); it still names no scheme and no key.
 
+## Text objects
+
+A text object (`TextObject`) is a name and a function from where it is asked
+from (`Within`) to what it covers (`Span`), or `none` where there is no
+object, as Vim fails a text object.
+
+- **It is asked from the head**, with the count, and in a visual state with
+  the selection's other end (`Within.anchor`), since a visual state extends
+  a selection that is wider than one cell where an operator takes the
+  object afresh. Under an operator the anchor is none.
+- **What it covers is a start and a stop with a reach** (`Span`): under an
+  operator, from `start` up to `stop` when the reach is `exclusive`, and
+  through the cell at `stop` when it is `inclusive`, which is Vim's own
+  pair of an object's end and whether it is inclusive. An operator takes a
+  span as it takes a motion's target from `start`, so Vim's rules for an
+  exclusive end at a line's start and for a deletion over lines apply to
+  it, as Vim applies them (`Editor/Evil/Operators.lean`, "What an operator
+  takes"). In a visual state `start` is the selection's new anchor and
+  `stop` its new head, or the cell before `stop` when the reach is
+  `exclusive`; the two may be in either order.
+- **Its function is a command** (`EditorM`), as a motion's target is, so
+  that an object that asks more than the text, such as a syntax tree, has
+  the same shape. It changes nothing: the entry's rule, which its type does
+  not enforce.
+
 ## Where an addition goes
 
 | Addition | Where |
@@ -110,11 +136,14 @@ editor's port (`Editor/Command.lean`) and the call
 | How an operator takes a motion | The motion's `reach`, or its `taken` when the position differs too |
 | A new operator | An entry, an `Operator` value, in the table its command looks names up in (`Editor/Evil/Operators.lean`) |
 | Something every operator is told of what it acts on | A field of `Operand` |
-| A new part of speech (a text object) | A record here, beside `Motion` and `Operator` |
+| A new text object | An entry, a `TextObject` value, in the table its commands look names up in (`Editor/Evil/Objects.lean`) |
+| Something every text object is told of where it is asked from | A field of `Within` |
+| A new part of speech | A record here, beside `Motion`, `Operator` and `TextObject` |
 
 Pinned through the motions that are entries, by
-`ModelTest.evilMotionChecks`, and through the operators that are, by
-`ModelTest.evilOperatorChecks`.
+`ModelTest.evilMotionChecks`, through the operators that are, by
+`ModelTest.evilOperatorChecks`, and through the text objects that are, by
+`ModelTest.evilObjectChecks`.
 -/
 
 namespace Editor.Vocabulary
@@ -251,5 +280,38 @@ structure Operator where
   /-- What it does, as a command's body: a function of its call and of what
   it acts on. -/
   act : Call → Operand → EditorM Unit
+
+/-- Where a text object is asked from. -/
+structure Within where
+  /-- The position the cursor is at: the selection's head. -/
+  head : Nat
+  /-- The count typed, if one was. None is not a count of 1. -/
+  count : Option Nat := none
+  /-- The selection's other end, in a visual state; none under an
+  operator. -/
+  anchor : Option Nat := none
+  deriving DecidableEq, Repr
+
+/-- What a text object covers ("Text objects", in the module docs). -/
+structure Span where
+  /-- Where it starts; in a visual state, the selection's new anchor. -/
+  start : Nat
+  /-- Where it stops: the position after it when the reach is `exclusive`,
+  and its last cell when it is `inclusive`; in a visual state, the
+  selection's new head, or the cell before it when exclusive. -/
+  stop : Nat
+  /-- How `stop` is read: `exclusive` or `inclusive`. -/
+  reach : Reach := .exclusive
+  deriving DecidableEq, Repr
+
+/-- A text object: its name, by which an input scheme's binding names it,
+and what it covers in a text. -/
+structure TextObject where
+  /-- The object's vocabulary name. -/
+  name : String
+  /-- What the object covers in `text`, asked from `within`; `none` where
+  there is no object. It changes nothing: the entry's rule, which its type
+  does not enforce. -/
+  span : TextId → Within → EditorM (Option Span)
 
 end Editor.Vocabulary

@@ -2602,6 +2602,32 @@ def searchChecks (_ : Unit) : List Check :=
             (← snapshot.matches "l" 3 1) == .badRange &&
             (← snapshot.matches "l" 0 99) == .badRange }]
 
+/-- The checks of the two reads of a pair as they cross: each tag reaches the
+kind it names, the three flags reach the walk, a string's two offsets come
+back in order, and nothing found and a refusal are told apart. What the
+walks answer is the library's rule, which the text contract pins on both
+sides (`TextContract.pairProperties`). -/
+def pairChecks (_ : Unit) : List Check :=
+  [{  name := "each bracket's tag reaches its kind, and the flags reach the walk"
+      run := do
+        let document ← Editor.Ffi.Document.new "([{a}]) \\(b\\)"
+        let snapshot ← document.snapshot
+        return (← snapshot.unmatched .round false true false 0) == some (some 6) &&
+            (← snapshot.unmatched .square false true false 1) == some (some 5) &&
+            (← snapshot.unmatched .curly true false false 4) == some (some 2) &&
+            (← snapshot.unmatched .round true true false 1) == some none &&
+            (← snapshot.unmatched .round false true true 9) == some (some 12) &&
+            (← snapshot.unmatched .round false true false 99) == none },
+    { name := "each quote's tag reaches its kind, and a string comes back as its two offsets"
+      run := do
+        let document ← Editor.Ffi.Document.new "\"a\" 'b' `c`"
+        let snapshot ← document.snapshot
+        return (← snapshot.quoted .double 1) == some (some ⟨0, 3⟩) &&
+            (← snapshot.quoted .single 5) == some (some ⟨4, 7⟩) &&
+            (← snapshot.quoted .back 9) == some (some ⟨8, 11⟩) &&
+            (← snapshot.quoted .double 9) == some none &&
+            (← snapshot.quoted .double 99) == none }]
+
 /-- The checks of the fuzzy ranking's binding: a pattern and a list of
 strings in, as words and one string, and the indices of the candidates the
 pattern matches out, as words. Which candidates match and in what order are
@@ -2827,6 +2853,7 @@ def checks (_ : Unit) : List Check :=
     interruptChecks () ++
     fuzzyChecks () ++
     searchChecks () ++
+    pairChecks () ++
     renderChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. A check that

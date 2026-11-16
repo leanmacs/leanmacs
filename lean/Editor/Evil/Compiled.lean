@@ -1,6 +1,7 @@
 import Editor.Config.Registry
 import Editor.Evil
 import Editor.Evil.Motions
+import Editor.Evil.Objects
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
 import Editor.Evil.Scroll
@@ -25,7 +26,8 @@ they hold when config fails to load, and a reload does not replace them.
   | `normal`, `visual`, `visual-line` | `Evil.enter`, one function for the three: it reads the state it enters from its call's report |
   | `insert`, `append`, `insert-line-start`, `append-line-end` | `Evil.insert`, `Evil.append`, `Evil.insertLineStart`, `Evil.appendLineEnd`: an insert before the cursor's cell, after it, at the line's first character that is not a blank, and at the line's end |
   | `self-insert` (`Vim.selfInsertCommand`) | `Evil.selfInsert`: typed text, in insert state and in the minibuffer |
-  | `operate` (`Vim.operateCommand`) | `Evil.operate` over the compiled vocabulary, `Evil.operators` and `Evil.motions` (`Editor/Evil/Operators.lean`) |
+  | `operate` (`Vim.operateCommand`) | `Evil.operate` over the compiled vocabulary, `Evil.operators`, `Evil.motions` and `Evil.objects` (`Editor/Evil/Operators.lean`) |
+  | `select-object` (`Vim.selectObjectCommand`) | `Evil.selectObject` over `Evil.objects`: a visual selection set to a text object (`Editor/Evil/Objects.lean`) |
   | `delete-char` | `Evil.deleteChar`: the cell under the cursor, which is the operator `delete` over the motion `right` |
   | `put-after`, `put-before` | `Evil.putAfter`, `Evil.putBefore`: the register the call names, after and before the cursor (`Editor/Evil/Registers.lean`) |
   | `open-below`, `open-above` | `Evil.openBelow`, `Evil.openAbove`: an empty line below and above the cursor's, and an insert on it |
@@ -49,9 +51,9 @@ yields an invocation of a name, and this is where the name is given a
 command.
 
 This module is apart from `Editor/Evil.lean` because it names the registry,
-which is the config session's: `Editor.lean` imports the commands and the
-motions (`Editor/Evil/Motions.lean`), so that config can call them, and
-not this, which is the one module of evil's it leaves out.
+which is the config session's: `Editor.lean` imports the commands, the
+motions (`Editor/Evil/Motions.lean`) and the text objects
+(`Editor/Evil/Objects.lean`), so that config can call them, and not this, which is the one module of evil's it leaves out.
 
 Pinned by `ModelTest.evilMotionChecks`, `ModelTest.evilStateChecks` and
 `ModelTest.evilInsertChecks`, on the models, and the scroll commands by
@@ -69,7 +71,8 @@ def commands : Array Config.Registration :=
     { name := "insert-line-start", action := .call insertLineStart },
     { name := "append-line-end", action := .call appendLineEnd },
     { name := Vim.selfInsertCommand, action := .call selfInsert },
-    { name := Vim.operateCommand, action := .call (operate operators motions) },
+    { name := Vim.operateCommand, action := .call (operate operators motions objects) },
+    { name := Vim.selectObjectCommand, action := .call (selectObject objects) },
     { name := "delete-char", action := .call deleteChar },
     { name := "put-after", action := .call putAfter },
     { name := "put-before", action := .call putBefore },

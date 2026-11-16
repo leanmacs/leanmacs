@@ -1,5 +1,6 @@
 import Editor.Evil
 import Editor.Evil.Motions
+import Editor.Evil.Objects
 import Editor.Evil.Registers
 
 /-!
@@ -14,9 +15,9 @@ The names are the ones the Vim scheme's default tables bind keys to
 
 ## The operate command
 
-`operate operators motions` is the command an operator's keys run: a
-function of the two tables it looks names up in, as the move command is of
-one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
+`operate operators motions objects` is the command an operator's keys run:
+a function of the three tables it looks names up in, as the move command is
+of one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
 
 - **Its arguments are the layout the Vim scheme compiles an operator to**
   (`Editor/InputScheme/Vim.lean`, "Edits"): the operator's name, the kind
@@ -37,7 +38,8 @@ one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
   `motion`, from where the motion leads (`stretch`); for the kind `lines`,
   which is the doubled key, the head's line and `count - 1` lines below,
   stopped at the last line ("The doubled operator on the last line"); for
-  the kind `selection`, which an operator's key in a visual state
+  the kind `text-object`, from what the object covers ("A text object
+  under an operator"); for the kind `selection`, which an operator's key in a visual state
   compiles to, what the selection covers. A selection of the line shape
   is the lines of its two ends. Any other is
   what the text port says its primary range covers by its shape
@@ -50,13 +52,34 @@ one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
   normal state's report, or insert state's for a change, and what it
   leaves is one cursor of that shape.
 - **A call that cannot be made gives up** (`giveUp`, `Editor/Api.lean`),
-  each with a sentence a function here makes: an operator no entry has
+  each with a sentence a function makes: an operator no entry has
   (`noSuchOperator`), a motion no entry has (`noSuchMotion`), a text
-  object, none being built (`noTextObject`), and arguments that are not
+  object no entry has (`noSuchObject`, `Editor/Evil/Objects.lean`), a text
+  object that is not there (`noObjectHere`), and arguments that are not
   the layout (`noOperatorNamed`). It gives up and does not only say so:
   the key that ran it may have entered a state and has been made the last
   change, and a command that gives up is rolled back with the scheme put
   back at rest.
+
+## A text object under an operator
+
+The kind `text-object` names an entry of `objects`, which is asked from the
+head with the count (`Vocabulary.Within`, with no anchor) and answers what
+it covers (`Vocabulary.Span`).
+
+- **An object that is not there gives up** (`noObjectHere`), as a motion
+  that did not move does: nothing is taken, the register is as it was, a
+  change begins no insert, and the edit is not the last change. Vim fails
+  the object and beeps.
+- **What the operator takes is worked out as for a motion** (`stretch`),
+  from the span's start, as the head, to its stop, with its reach as the
+  motion's: so an exclusive object that stops at a line's start takes
+  whole lines from an indent (`di{` over lines), and Vi's rule makes `daw`
+  of a last word on its own line whole lines, as Vim's `op_delete` does.
+  The operand's `rest` is the span's start.
+- **An object that covers no cell first moves the cursor to its start**,
+  rested, as Vim's `do_pending_operator` does: `d i (` on `f|()` leaves
+  `f(|)`, and `y i (` there empties the register with the cursor on `)`.
 
 ## The doubled operator on the last line
 
@@ -171,11 +194,6 @@ namespace Editor.Evil
 operator of. -/
 def noSuchOperator (name : String) : String :=
   s!"{name}: no such operator"
-
-/-- What the operate command gives up with when it is asked to act on a
-text object: none is built. -/
-def noTextObject : String :=
-  "no text object is built"
 
 /-- What the operate command gives up with when its arguments are not the
 layout an operator is compiled to: the call is malformed, so it says what
@@ -365,10 +383,10 @@ for each name the Vim scheme's default tables bind a key to. -/
 def operators : Array Vocabulary.Operator :=
   #[delete, change, yank]
 
-/-- The operate command over the vocabulary `operators` and `motions`, as it
-is called ("The operate command", in the module docs): its arguments name
-the operator, the kind of what it acts on, that thing, the count, 0 for
-none, and the register. The operator is handed the stretch its target
+/-- The operate command over the vocabulary `operators`, `motions` and
+`objects`, as it is called ("The operate command", in the module docs): its
+arguments name the operator, the kind of what it acts on, that thing, the
+count, 0 for none, and the register. The operator is handed the stretch its target
 amounts to from the head of the primary range of the target's selection,
 and the window then keeps no wanted column. A call that cannot be made
 gives up, and so does one whose motion failed where the cursor is; one
@@ -377,7 +395,7 @@ to and breaks off ("What an operator takes", in the module docs). A
 doubled operator with a count above 1 on the last line gives up too ("The
 doubled operator on the last line", in the module docs). -/
 def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.Motion)
-    (call : Call) : EditorM Unit := do
+    (objects : Array Vocabulary.TextObject) (call : Call) : EditorM Unit := do
   -- A motion's argument, when it has one, is the string after its name.
   let (operator, kind, name, argument, count, register) ←
     match call.arguments with
@@ -468,7 +486,16 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
             ({ stretch := .cells ⟨start, stop⟩ .exclusive, head, rest := start, register, before },
               none)
     | "text-object" =>
-      giveUp noTextObject
+      let some object := objects.find? (·.name == name) | giveUp (noSuchObject name)
+      let some span ←
+        object.span text
+            { head, count := if count == 0 then none else some count } | giveUp (noObjectHere name)
+      let stretched ← stretch operator text span.start { head := span.stop, reach := span.reach }
+      -- An object of no cell: the cursor goes to where it starts.
+      if let .cells extent _ := stretched then
+        if extent.start == extent.stop then
+          settle call extent.start
+      pure ({ stretch := stretched, head, rest := span.start, register, before }, none)
     | _ =>
       giveUp noOperatorNamed
   discard <| call.target.window.id.setWanted none
@@ -489,7 +516,7 @@ def deleteChar (call : Call) : EditorM Unit :=
     | .nat count :: .str register :: _ => (count, register)
     | .nat count :: _ => (count, "")
     | _ => (0, "")
-  operate operators motions
+  operate operators motions #[]
     { call with
       arguments := [.str delete.name, .str "motion", .str right.name, .nat count, .str register] }
 

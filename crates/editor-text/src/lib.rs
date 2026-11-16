@@ -226,6 +226,20 @@
 //!   builds nothing: no string and no list of the text's cells or words.
 //!   No answer is clamped: which motion a key runs, a count as repetition
 //!   and keeping a cursor on a line are the editor's rules.
+//! - **A pair** is read as a motion is, by a walk of the rope from a
+//!   position that builds nothing, and is refused from an offset that is
+//!   none. The bracket a walk leaves unbalanced ([`Snapshot::unmatched`])
+//!   is the first bracket of a kind ([`Bracket`]) and a side, opening or
+//!   closing, strictly after the position or strictly before it, at which
+//!   the brackets of the other side met have all been matched; only
+//!   brackets that are escaped, after an odd number of backslashes, or
+//!   only those that are not, are counted, and the walk crosses rows and
+//!   reads quotes as any other character. The quoted string round a
+//!   position ([`Snapshot::quoted`]) is a pair of quotes of a kind
+//!   ([`Quote`]) in the position's row, found by Vim 9.1's rule, in which
+//!   a backslash escapes the character after it. Both are Vim's, and what
+//!   a key makes of them (`%`, a block or quote object, a count, the
+//!   blanks round a string) is the editor's.
 //! - **An origin** ([`Origin`]) says who made an edit. It is an opaque
 //!   number given when a transaction is applied, not part of the
 //!   transaction. The crate keeps it in the transaction's log entry
@@ -381,6 +395,7 @@
 //! | A change to what a cell is | The private module `cell`, and nowhere else: every reader steps by its `cell_end` and `cell_start_before` and asks its `cell_kind` what a cell is, and none reads the text's characters for itself. If a cell comes to be more than one character, `cell::Kind` changes, and the compiler names its readers, the word motions | Its unit tests, and `extents_agree_with_a_reference_on_a_string`, `cell_points_round_trip_at_every_position_and_count_the_characters_before_it_in_its_row` and the reference of `tests/properties/motions.rs`, which change with it. `a_column_in_cells_is_that_many_steps_of_the_next_cell_from_its_rows_start` there states no rule: it holds both conversions of a column in cells to the module's step |
 //! | A change to what a word character or a blank is | The private module `word`, and nowhere else | Its unit tests on named characters, and the reference of `tests/properties/motions.rs`, which states the rule again and changes with it |
 //! | Another motion | A variant of [`Motion`], with its arm in [`Snapshot::motion`] | Its unit tests beside it, on the fixture's table, and the reference of `tests/properties/motions.rs`, which gains the motion |
+//! | Another kind of bracket or quote, or another read of a pair | A variant of [`Bracket`] or [`Quote`], or a method of [`Snapshot`] in the private module `pair` | The unit tests of `pair`, one for each rule |
 //! | Another thing the crate needs of a file system | A method of [`fs::Fs`], as the module docs of [`fs`] say | Its rule in [`fs::contract::check`], with a fake written to break it, which the fake and every real adapter are then held to |
 
 mod anchor;
@@ -394,6 +409,7 @@ mod inverse;
 mod log;
 mod marker;
 mod motion;
+mod pair;
 mod patch;
 mod point;
 mod rope;
@@ -410,6 +426,7 @@ pub use inverse::{InverseError, Inverted};
 pub use log::{Attribution, LogEntry, LogError, Origin, Source, Subscription};
 pub use marker::{MarkError, Marker, MarkerId};
 pub use motion::Motion;
+pub use pair::{Bracket, Quote};
 pub use patch::{Edit, InputEdit, Patch, Span};
 pub use point::{Point, PointCells, PointUtf16};
 pub use selection::{Selection, SelectionRange, Shape};

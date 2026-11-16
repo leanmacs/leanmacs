@@ -402,6 +402,45 @@ options (`cpoptions` with `c`, `wrapscan`):
   and `matches` with `badRange` for a range that is not two positions in
   order.
 
+### Pairs
+
+Two questions find the pairs Vim's `%` and its block and quote objects are
+built on: `unmatched` and `quoted`. Each walks the text from a position, as
+a motion does, and answers `none` where there is nothing to find.
+
+- **The bracket a walk leaves unbalanced** (`unmatched bracket opening
+  forward escaped offset`): walking strictly after `offset` when `forward`,
+  and strictly before it otherwise, the first bracket of the kind
+  `bracket` (`(` `)`, `[` `]`, `{` `}`) and of the side `opening` says, an
+  opening one or a closing one, met at depth 0. Each bracket of the other
+  side the walk meets raises the depth, and each of the side sought met
+  above depth 0 lowers it. So from an opening bracket the closing one
+  forward is its partner, and from inside a pair the opening one back is
+  the pair's.
+- **Escapedness is a filter**: a bracket is escaped when an odd number of
+  backslashes stands right before it in its row, and only brackets whose
+  escapedness is `escaped` are counted; the others are characters like any
+  other.
+- **The walk crosses rows and reads quotes as any other character.** This
+  is Vim 9.1's `findmatchlimit` with `cpoptions` holding `%` and not `M`,
+  which is how Vim's block objects call it.
+- **The quoted string round a position** (`quoted quote offset`): a pair of
+  the quote `quote` (`"`, `'`, `` ` ``) in `offset`'s row, from the opening
+  quote's start to the closing quote's end, found by Vim 9.1's
+  `current_quote` for a cursor with no Visual area, where a backslash
+  escapes the character after it (`quoteescape`). The cursor is `offset`,
+  or where the row's content ends when `offset` is past it.
+  - On a quote, the row's pairs are walked from its start: an opening
+    quote is the next quote, escaped or not, and its closing one the next
+    quote after it that is not escaped. The answer is the first pair whose
+    span holds the cursor, and none once an opening quote is past it.
+  - Elsewhere, the opening quote is the nearest quote before the cursor
+    that is not escaped, and with none the row's first quote, escaped or
+    not. The closing quote is the next one after it that is not escaped.
+  - Nothing outside the row is read, and a missing quote is `none`.
+- Both are refused with `badPosition` for an offset that is not a
+  position.
+
 The library keeps a byte of a file that is not valid UTF-8 as one character
 in `U+10DC80..U+10DCFF` (`crates/editor-text`). To this port it is a
 character like any other: four bytes long, and two UTF-16 code units.
@@ -422,6 +461,12 @@ It is not a new question: `motion` carries every one. A change to what a
 word character is is one function in the model (`TextModel.classOf`) and
 one private module in the library, and the contract's tables say whether
 the two still agree.
+
+A new kind of bracket or quote is a constructor of `Bracket` or `Quote`,
+with its character here, its tag in the real binding's encoder
+(`RealTexts.bracketOf`, `RealTexts.quoteOf`, and a tag in the library),
+and its rows in the contract's tables (`TextContract.bracketAnswers`,
+`TextContract.quoteAnswers`). It is not a new question.
 
 A new question about a text's edit log is a constructor of `LogQuery` with
 its case in `LogQuery.Answer`, and an operation here that asks it. It needs
@@ -661,6 +706,46 @@ inductive Matched where
   | invalid (reason : String)
   deriving DecidableEq, Repr
 
+/-- A kind of bracket: a pair of an opening character and a closing one
+("Pairs", in the rules of the port). -/
+inductive Bracket where
+  /-- `(` and `)`. -/
+  | round
+  /-- `[` and `]`. -/
+  | square
+  /-- `{` and `}`. -/
+  | curly
+  deriving DecidableEq, Repr
+
+/-- The opening character of `bracket`. -/
+def Bracket.opening : Bracket → Char
+  | .round => '('
+  | .square => '['
+  | .curly => '{'
+
+/-- The closing character of `bracket`. -/
+def Bracket.closing : Bracket → Char
+  | .round => ')'
+  | .square => ']'
+  | .curly => '}'
+
+/-- A kind of quote: the one character that opens a quoted string and closes
+it ("Pairs", in the rules of the port). -/
+inductive Quote where
+  /-- `"`. -/
+  | double
+  /-- `'`. -/
+  | single
+  /-- `` ` ``. -/
+  | back
+  deriving DecidableEq, Repr
+
+/-- The character of `quote`. -/
+def Quote.char : Quote → Char
+  | .double => '"'
+  | .single => '\''
+  | .back => '`'
+
 /-- A question about a text or a snapshot. A new question is a constructor
 here, not a request. -/
 inductive TextQuery where
@@ -690,6 +775,15 @@ inductive TextQuery where
   /-- The matches of `pattern` that start from the byte offset `start` up to,
   not including, `stop`. -/
   | matches (pattern : String) (start stop : Nat)
+  /-- The bracket of the kind `bracket` the walk from the byte offset
+  `offset` leaves unbalanced: an opening one when `opening`, strictly after
+  the offset when `forward` and before it otherwise, counting only the
+  brackets whose escapedness is `escaped` ("Pairs", in the rules of the
+  port). -/
+  | unmatched (bracket : Bracket) (opening forward escaped : Bool) (offset : Nat)
+  /-- The quoted string of the quote `quote` round the byte offset `offset`,
+  in its row, with its two quotes. -/
+  | quoted (quote : Quote) (offset : Nat)
 
 /-- The type of the answer to each question. It is an `abbrev` so that an
 answer's type unfolds where an instance is looked for: with a `def`,
@@ -707,6 +801,8 @@ abbrev TextQuery.Answer : TextQuery → Type
   | .motion .. => Nat
   | .search .. => Searched
   | .matches .. => Matched
+  | .unmatched .. => Option Nat
+  | .quoted .. => Option Extent
 
 /-- Who made an edit: a number the editor chooses and the text store keeps
 with the edit and never reads. What a number stands for is the editor's
@@ -1192,6 +1288,23 @@ including, `stop`. Refused with `badRange` unless both are positions and
 def TextId.matches (text : TextId) (pattern : String) (start stop : Nat) : TextM Matched :=
   (TextSource.text text).ask (.matches pattern start stop)
 
+/-- The bracket of the kind `bracket` that the walk from `offset` of `text`
+leaves unbalanced: an opening one when `opening`, strictly after `offset`
+when `forward` and before it otherwise, counting only the brackets whose
+escapedness is `escaped` ("Pairs", in the rules of the port); `none` when
+there is no such bracket. Refused with `badPosition` unless `offset` is a
+position. -/
+def TextId.unmatched (text : TextId) (bracket : Bracket) (opening forward escaped : Bool)
+    (offset : Nat) : TextM (Option Nat) :=
+  (TextSource.text text).ask (.unmatched bracket opening forward escaped offset)
+
+/-- The quoted string of `quote` round `offset` of `text`, in its row, from
+its opening quote's start to its closing quote's end ("Pairs", in the rules
+of the port); `none` when a quote is missing. Refused with `badPosition`
+unless `offset` is a position. -/
+def TextId.quoted (text : TextId) (quote : Quote) (offset : Nat) : TextM (Option Extent) :=
+  (TextSource.text text).ask (.quoted quote offset)
+
 /-- Gives `text` up. Its id is refused from then on; its snapshots still
 read. -/
 def TextId.release (text : TextId) : TextM Unit :=
@@ -1263,6 +1376,18 @@ def SnapshotId.search (snapshot : SnapshotId) (pattern : String) (forward : Bool
 def SnapshotId.matches (snapshot : SnapshotId) (pattern : String) (start stop : Nat) :
     TextM Matched :=
   (TextSource.snapshot snapshot).ask (.matches pattern start stop)
+
+/-- The bracket the walk from `offset` of the text `snapshot` holds leaves
+unbalanced, as `TextId.unmatched`. -/
+def SnapshotId.unmatched (snapshot : SnapshotId) (bracket : Bracket)
+    (opening forward escaped : Bool) (offset : Nat) : TextM (Option Nat) :=
+  (TextSource.snapshot snapshot).ask (.unmatched bracket opening forward escaped offset)
+
+/-- The quoted string of `quote` round `offset` of the text `snapshot`
+holds, as `TextId.quoted`. -/
+def SnapshotId.quoted (snapshot : SnapshotId) (quote : Quote) (offset : Nat) :
+    TextM (Option Extent) :=
+  (TextSource.snapshot snapshot).ask (.quoted quote offset)
 
 /-- Gives `snapshot` up. Its id is refused from then on. -/
 def SnapshotId.release (snapshot : SnapshotId) : TextM Unit :=

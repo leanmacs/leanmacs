@@ -2206,6 +2206,135 @@ def searchProperties : List Property :=
         let beyond ← refusedWith .badRange (discard <| text.matches "l" 0 9)
         return inside && past && reversed && split && beyond }]
 
+/-- The text the bracket walk's cases are of: nested brackets of the three
+kinds, an escaped pair, a row that ends in a carriage return and a line
+feed, a character of two bytes and a pair across rows.
+
+| Offset | Holds |
+|---|---|
+| 0 to 12 | `(a [b {c} d] `: `(` at 0, `[` at 3, `{` at 6, `}` at 8, `]` at 11 |
+| 13 to 17 | `\\(e\\)`: an escaped `(` at 14 and an escaped `)` at 17 |
+| 18, 19 | A carriage return and a line feed |
+| 20 to 23 | ` é)`: `é` at 21, two bytes, and `)` at 23 |
+| 24 to 27 | A line feed, `{` at 25, a line feed, `}` at 27 |
+-/
+def bracketText : String :=
+  "(a [b {c} d] \\(e\\)\r\n é)\n{\n}"
+
+/-- A case of the bracket walk over `bracketText`: the kind, whether an
+opening bracket is sought, whether the walk goes forward, whether escaped
+brackets are counted, the offset walked from, and the answer. -/
+def bracketAnswers : List (Bracket × Bool × Bool × Bool × Nat × Option Nat) :=
+  [ -- A closing bracket forward passes the other kinds and the escaped pair,
+    -- across a row that ends in a carriage return and a line feed.
+    (.round, false, true, false, 0, some 23), (.round, false, true, false, 14, some 23),
+    -- An opening bracket back, from its partner and from inside a
+    -- character of two bytes' row.
+    (.round, true, false, false, 23, some 0), (.round, true, false, false, 21, some 0),
+    -- Escaped brackets only.
+    (.round, false, true, true, 15, some 17), (.round, true, false, true, 17, some 14),
+    (.round, true, false, true, 15, some 14), (.round, true, false, true, 23, none),
+    -- The other kinds, nested, and a pair across rows.
+    (.square, false, true, false, 3, some 11), (.square, true, false, false, 10, some 3),
+    (.square, true, false, false, 7, some 3), (.curly, false, true, false, 6, some 8),
+    (.curly, false, true, false, 25, some 27), (.curly, true, false, false, 27, some 25),
+    (.curly, true, false, false, 26, some 25), (.curly, true, false, false, 9, none),
+    -- An opening bracket forward: a closing one met first raises the depth.
+    (.curly, true, true, false, 9, some 25), (.round, true, true, false, 1, none),
+    -- Nothing further at either end.
+    (.round, false, true, false, 28, none), (.round, true, false, false, 0, none)]
+
+/-- A case of the quoted string: the text, the quote, the offset, and the
+answer. -/
+def quoteAnswers : List (String × Quote × Nat × Option Extent) :=
+  [ -- Before the first quote, inside, on the opening quote and on the
+    -- closing one.
+    ("x = \"ab\" y", .double, 0, some ⟨4, 8⟩), ("x = \"ab\" y", .double, 5, some ⟨4, 8⟩),
+    ("x = \"ab\" y", .double, 4, some ⟨4, 8⟩), ("x = \"ab\" y", .double, 7, some ⟨4, 8⟩),
+    -- Between two strings: the closing quote before and the opening one
+    -- after.
+    ("\"a\" x \"b\"", .double, 4, some ⟨2, 7⟩),
+    -- On a quote, the pairs from the row's start.
+    ("\"a\" \"b\"", .double, 4, some ⟨4, 7⟩), ("\"a\" \"", .double, 4, none),
+    -- An escaped quote closes nothing, and opens when it is the row's first.
+    ("\"a\\\"b\"", .double, 4, some ⟨0, 6⟩), ("\\\"x y \"a\"", .double, 3, some ⟨1, 7⟩),
+    -- A missing quote, a row with no quote, and the empty text.
+    ("a \"b", .double, 0, none), ("x \"ab\" y", .double, 7, none), ("ab", .double, 1, none),
+    ("", .double, 0, none),
+    -- Each kind, and a row after another, whose offsets are the text's.
+    ("'a' `b`", .single, 1, some ⟨0, 3⟩), ("'a' `b`", .back, 5, some ⟨4, 7⟩),
+    ("'a'", .double, 1, none), ("\"a\"\n\"b\"", .double, 5, some ⟨4, 7⟩),
+    -- A row that ends in a carriage return and a line feed, and a character
+    -- of two bytes.
+    ("\"a\"\r\nb", .double, 1, some ⟨0, 3⟩), ("\"a\"\r\nb", .double, 4, none),
+    ("é\"x\"", .double, 3, some ⟨2, 5⟩)]
+
+/-- The properties of the two questions of pairs ("Pairs", in the rules of
+the port). -/
+def pairProperties : List Property :=
+  [{  name :=
+        "the bracket walk answers what a table written out by hand says, for each kind, both sides, both directions and both escapednesses, across rows and through characters of several bytes"
+      holds := do
+        let text ← createText bracketText
+        let snapshot ← text.snapshot
+        let mut held := true
+        for (bracket, opening, forward, escaped, offset, answer) in bracketAnswers do
+          held :=
+            held && (← text.unmatched bracket opening forward escaped offset) == answer &&
+              (← snapshot.unmatched bracket opening forward escaped offset) == answer
+        return held },
+    { name :=
+        "from every position the bracket walk answers a bracket of the kind and side sought, of the escapedness asked, strictly on the side of the position it walks to"
+      holds := do
+        let text ← createText bracketText
+        let mut held := true
+        for offset in
+          (List.range (bracketText.utf8ByteSize + 1)).filter fun offset =>
+            (String.Pos.Raw.mk offset).IsValid bracketText do
+          for bracket in [Bracket.round, .square, .curly] do
+            for (opening, forward, escaped) in
+              [(false, true, false), (true, false, false), (true, true, false),
+                (false, false, false), (false, true, true), (true, false, true)] do
+              if let some found← text.unmatched bracket opening forward escaped offset then
+                let char ← text.slice found (found + 1)
+                let sought := if opening then bracket.opening else bracket.closing
+                let before ← text.slice (found - min found 2) found
+                let isEscaped := before.endsWith "\\" && !before.endsWith "\\\\"
+                held :=
+                  held && char == sought.toString && isEscaped == escaped &&
+                    if forward then found > offset else found < offset
+        return held },
+    { name :=
+        "the quoted string round a position is what a table written out by hand says: before the first quote, on either quote, between two strings, past an escaped quote, of each kind, and none when a quote is missing"
+      holds := do
+        let mut held := true
+        for (contents, quote, offset, answer) in quoteAnswers do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          held :=
+            held && (← text.quoted quote offset) == answer &&
+              (← snapshot.quoted quote offset) == answer
+        return held },
+    { name :=
+        "neither walk reads past what it says: a quoted string never leaves its row, and the bracket walk never answers the position it starts from"
+      holds := do
+        let across ← createText "\"a\nb\""
+        let pair ← createText "(a)"
+        return (← across.quoted .double 1) == none && (← across.quoted .double 3) == none &&
+            (← pair.unmatched .round false true false 0) == some 2 &&
+            (← pair.unmatched .round false true false 2) == none &&
+            (← pair.unmatched .round true false false 0) == none &&
+            (← pair.unmatched .round true false false 2) == some 0 },
+    { name :=
+        "both walks are refused with badPosition inside a character of several bytes and past the end"
+      holds := do
+        let text ← createText "(é)"
+        let inside ← refusedWith .badPosition (discard <| text.unmatched .round false true false 2)
+        let past ← refusedWith .badPosition (discard <| text.unmatched .round true false false 5)
+        let quoteInside ← refusedWith .badPosition (discard <| text.quoted .double 2)
+        let quotePast ← refusedWith .badPosition (discard <| text.quoted .double 5)
+        return inside && past && quoteInside && quotePast }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
@@ -2219,7 +2348,8 @@ def properties : List Property :=
     copyProperties ++
     readProperties ++
     motionProperties ++
-    searchProperties
+    searchProperties ++
+    pairProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property

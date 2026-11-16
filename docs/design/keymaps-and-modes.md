@@ -66,8 +66,8 @@ reached through a port defined here, with a model and a contract; the
 adapter to a window system's clipboard is the display pipeline's, and a
 host with no window keeps a clipboard of its own ("Registers"). One
 mode ships, the minibuffer's ("The minibuffer"); the others are built and
-tested with the modes their tests define. Of the vocabulary, motions and
-operators are built; text objects are a proposal from a design discussion.
+tested with the modes their tests define. Of the vocabulary, motions,
+operators and the text objects that need no syntax tree are built.
 Nothing is measured. The one settled input is the
 priority:
 Vim-style editing is the scheme that ships and is polished; other schemes
@@ -452,8 +452,9 @@ scheme.
 
 ### Vocabulary
 
-Status: motions and operators are built (`lean/Editor/Vocabulary.lean`);
-text objects are a proposal.
+Status: motions, operators and text objects are built
+(`lean/Editor/Vocabulary.lean`; the objects that ship are in "Text objects
+as built").
 
 Motions, operators and text objects are data in the core, separate from
 any keymap. The grammar belongs to a scheme; the vocabulary belongs to
@@ -727,8 +728,11 @@ The rules of the grammar:
 
 - A motion alone is a `move`. After an operator it is the operator's
   target.
-- A text object after an operator is its target. With no operator waiting
-  it is dropped, and the input is reset.
+- A text object after an operator is its target. With no operator waiting,
+  in a state where operators act on the selection, it is `Edit.select`,
+  which sets the selection to the object and enters the state the record
+  names for an object (`StateRecord.objectEnters`); elsewhere it is
+  dropped, and the input is reset.
 - The operator that is waiting, typed again, acts on lines (`Over.lines`):
   `dd`.
 - A different operator, a command or the register prefix while an operator
@@ -892,6 +896,12 @@ here (`lean/Editor/Evil/Compiled.lean`), and all four are built.
   That it extends the selection is the command's, when the edit runs: the
   move command keeps the range's anchor where the scheme reports the view
   as selecting, and moves the head alone.
+- A text object in a visual state is the edit `select o count`
+  (`Edit.select`), which compiles to `select-object` and is never the last
+  change. The command sets the selection to the object, charwise, and the
+  view enters the state the record names for an object
+  (`StateRecord.objectEnters`): `visual-line` names `visual`, so `V i w`
+  is in `v` ("Text objects as built").
 
 **How entering and leaving a visual state changes the selection.**
 Decided 2026-11-14 and built, by the command loop's phase 11
@@ -1041,7 +1051,14 @@ state.
 
 For a key for a view whose Vim state has the record `record`, the walk runs
 over `maps view ++ record.keymaps`: the active keymaps passed to `step`
-first, in their own order, then the state's.
+first, in their own order, then the state's. **While an operator waits it
+runs over `maps view ++ record.pending`** when the record has pending
+keymaps (`StateRecord.pending`, Vim's Operator-pending mode), and over the
+state's own otherwise. Normal state's pending keymaps are its own without
+`normalCommands` and with `objects` first, so `i` and `a`, which begin an
+insert alone, begin a text object after an operator; every other command
+key resets there as an unbound key does, which is what it did as a
+command.
 
 - **The active keymaps are the specific ones** (the view's modes, the
   user's config) and the state's are the scheme's defaults. A specific
@@ -1604,10 +1621,11 @@ follows Vim 9.1 with its default options:
 Status: built, by the command loop's phase 11
 (`lean/Editor/Evil/Motions.lean`; pinned by `evilMotionChecks`).
 
-Twenty-seven motions are vocabulary entries. Fifteen are composed from the
+Twenty-eight motions are vocabulary entries. Fifteen are composed from the
 text port's motion primitives ([text-and-display.md](text-and-display.md),
 "Motion primitives"), the six character finds walk the line's content
-in Lean, and the six searches ask the text port's `search`. What a count means, and what a motion does when it cannot go the
+in Lean, the six searches ask the text port's `search`, and `%` its
+`unmatched`. What a count means, and what a motion does when it cannot go the
 whole way, is Vim's:
 
 | Key | Motion | Composed from | Count |
@@ -1625,6 +1643,17 @@ whole way, is Vim's:
 | `/{pat}RET`, `?{pat}RET` | `search-forward`, `search-backward` | The text port's `search` ([text-and-display.md](text-and-display.md); the rule is in `lean/Editor/Text.lean`, "Search") | The `count`th match, each step from the last. Every step must find one, and one that wraps still counts |
 | `n`, `N` | `search-next`, `search-previous` | The same, of the last search (`EditorState.lastSearch`), in its direction and in the other | As above |
 | `*`, `#` | `word-search-forward`, `word-search-backward` | The same, of the word under the cursor as a whole word, searched from the word's start | As above |
+| `%` | `matching-bracket` | The first of `( [ { } ] )` on the line at or after the cursor, then the text port's `unmatched` walk to its partner, counting only brackets of its escapedness (`lean/Editor/Text.lean`, "Pairs") | With a count, Vim's `N%`: the first non-blank of the line `(N * lines + 99) / 100`, taken as whole lines. A count above 100 fails |
+
+**`%`** (`:help %`): with no bracket on the line at or after the cursor,
+and with no partner, it fails where it is and says nothing, as Vim only
+beeps; an operator over it gives up. It is inclusive. A bracket after an
+odd number of backslashes is escaped and matches only an escaped one,
+which is Vim's rule without `cpo-M`. Two departures from Vim's default
+`cpoptions`, recorded and pinned by rows that show the editor's
+behaviour: `/* */` and `#if`, `#else`, `#endif` are not matched, being a
+syntax tree's or a plugin's; and a bracket inside quotes is counted, which
+is `cpo-%`, where Vim's default passes over brackets it guesses are quoted.
 
 **The searches** (`:help /`, `:help n`, `:help star`), under Vim's default
 options (`cpoptions` with `c`, `wrapscan`, `magic`, `noignorecase`):
@@ -1867,6 +1896,66 @@ its owner:
   last row after an insert** ("Where a cursor rests").
 - **A count before `i a I A` is ignored** ("Insert state"). Vim repeats
   the insert.
+
+### Text objects as built
+
+Status: built, by daily-driver-floor phase 4
+(`lean/Editor/Evil/Objects.lean`, over the text port's two pair questions,
+`lean/Editor/Text.lean`, "Pairs"; pinned by `evilObjectChecks`).
+
+Sixteen text objects are vocabulary entries (`Vocabulary.TextObject`): a
+name and a function from where it is asked (`Within`: the head, the count
+and, in a visual state, the anchor) to what it covers (`Span`: a start, a
+stop and a reach, Vim's own end and inclusiveness), or none. Each is a
+literal port of Vim 9.1's `textobject.c`:
+
+| Keys | Objects | Composed from | Count | Rule |
+|---|---|---|---|---|
+| `iw`, `iW` | `inner-word`, `inner-bigword` | Vim's cursor steps (`inc`, `dec`, `incl`, `decl`) and word walks (`fwd_word`, `end_word`, `bck_word`, `bckend_word`, `back_in_line`) over the text port, a cell's class by the text's word class | Each further count adds one word or one run of blanks | The word or the run of blanks under the cursor (`current_word`) |
+| `aw`, `aW` | `a-word`, `a-bigword` | The same | Each further count adds a word and its blanks | The word and the blanks after it, or before it when none are after and they are no indent; on blanks, the blanks and the word after |
+| `i"`, `i'`, `` i` `` | `inner-double-quote`, `inner-single-quote`, `inner-backquote` | The text port's `quoted` | 2 or more takes the quotes and no blanks | The quoted string round the cursor in its line, without its quotes (`current_quote`) |
+| `a"`, `a'`, `` a` `` | `a-double-quote`, `a-single-quote`, `a-backquote` | `quoted`, and the line's cells for the blanks | Ignored | With its quotes and the blanks after it, or before it, indent included, when none are after |
+| `i(` `i)` `ib`, `i[` `i]`, `i{` `i}` `iB` | `inner-paren`, `inner-bracket`, `inner-brace` | The text port's `unmatched`: back to the `count`th unmatched opening bracket, or, with none round the cursor, forward to the `count`th next one, and forward to its partner | The `count`th pair out | Between the brackets; from the line after an opening bracket that ends its line; when the closing bracket is at or before its line's first non-blank, up to the start of the line after the last that has content, so an operator takes whole lines (`current_block`) |
+| `a(` `a)` `ab`, `a[` `a]`, `a{` `a}` `aB` | `a-paren`, `a-bracket`, `a-brace` | The same | The same | The pair with both brackets |
+
+- **Under an operator** an object is taken as a motion's target is, from
+  the span's start with the span's reach (`Editor/Evil/Operators.lean`, "A
+  text object under an operator"): Vim's exclusive-linewise rule and Vi's
+  rule for a deletion over lines apply, as Vim applies them, so `d i {`
+  over lines is line-wise and `d a w` of a word alone on its line takes the
+  line. An object that covers no cell first moves the cursor to its start,
+  as `d i (` on `f|()` leaves `f(|)`. An object that is not there gives
+  the command up, nothing taken.
+- **In a visual state** (`v`, `V`) an object's keys are `Edit.select`,
+  which runs `select-object`: the selection becomes one charwise range,
+  from the span's start to its head, and `V` enters `v`, as Vim's objects
+  make a line-wise selection characterwise. A selection of one cell is the
+  object under the cursor. A wider one is extended from its head: a word
+  object by one more, backward when the head is before the anchor; a block
+  object from the selection's low end, and by the next pair out when the
+  block found is no bigger. An object that is not there leaves the
+  selection and says nothing, as Vim beeps; after `V` the command gives up
+  so the view stays in `visual-line`.
+- **Blocks search forward** with no pair round the cursor, for every kind,
+  and across lines: Vim 9.1's `:help ib` ("If the cursor is not inside a
+  () block, then find the next `(`"), which the installed Vim 9.1.1752
+  does for `[` and `{` too. An escaped bracket is passed over (`cpo`
+  without `M`), and an empty inner block is none in a visual state.
+- **Dot repeat** replays an operator over an object by name, from where
+  the cursor is then, with a count typed before `.` in place of the
+  change's.
+- **Recorded departures**, each pinned by a row that shows the editor's
+  behaviour:
+  - A quote object over a visual selection wider than one cell is not
+    built (Vim's "another string is included"): there is none, and the
+    selection is as it was.
+  - The search for a block's closing bracket counts a bracket inside
+    quotes, where Vim's passes over brackets it guesses are quoted, as its
+    `%` does.
+  - Word classes beyond ASCII are the text's word class as it stands.
+  - `i<` `a<`, `it` `at`, `is` `as` and `ip` `ap` are not built; the
+    syntax-aware objects are rdm:roadmap/syntax-tree-sitter phase 3's,
+    and reuse this vocabulary's shape.
 
 ### Operators as built
 
@@ -2220,12 +2309,13 @@ Which names have something behind them:
 
 | Names | State |
 |---|---|
-| The twenty-seven motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
+| The twenty-eight motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
 | `self-insert`, which no table names: typed text | Built and registered |
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
 | `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
 | The operators (`delete`, `change`, `yank`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
+| The sixteen text objects of `objects` | Built: entries of `Evil.objects`, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
 | `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
@@ -2234,7 +2324,8 @@ Which names have something behind them:
 
 | Table | Keys |
 |---|---|
-| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward |
+| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward, `%` matching-bracket |
+| `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
 | `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
 | `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `RET` insert-newline, `TAB` insert-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down (each enters no state, and none is a change dot repeat replays) |
@@ -3345,8 +3436,8 @@ every build). The second is proved on the text model
   ([concurrency.md](concurrency.md), "Prompts"). No command that ships is
   one; a config that binds a store's command as changing text would need
   the replay to carry the write.
-- **`p` and `P` in a visual state, named registers, and text objects**
-  are not built.
+- **`p` and `P` in a visual state and named registers** are not built.
+  Text objects are ("Text objects as built").
 - **A put that ends in a cell of more than one character** carries the
   start of its last character as the cursor after, and places the cursor
   on the cell's start, so a redo of it lands inside the cell.
@@ -3433,11 +3524,9 @@ every build). The second is proved on the text model
   placement, and one state request. Nothing is measured. If typing or a
   held `j` is slow, the resting rule can become one question of the port,
   which is a change to the Rust library.
-- **Text objects on `i` and `a`.** Vim's text objects begin with `i` or `a`
-  (`diw`, `da(`). The default normal state binds both keys as commands, and
-  a bound sequence is never also a prefix, so they cannot also begin a text
-  object after an operator. The grammar accepts a text object after an
-  operator; which keys the default ones are on is not decided.
+- **Text objects on `i` and `a`** are settled: while an operator waits,
+  normal state walks its pending keymaps, which hold the objects and not
+  its commands ("Which keymaps a key is looked up in").
 - **The `kbd` macro.** Macros need the `Lean` package at elaboration time,
   and importing it at runtime is what the memory figures in
   [lean-runtime.md](lean-runtime.md) argue against. Not measured, and not

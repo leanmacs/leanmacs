@@ -36,6 +36,7 @@ means, and what a motion does when it cannot go the whole way, is Vim's
 | `search-forward`, `search-backward` | The text port's `search` of the pattern the argument names, or the last search's when it is empty or absent | The `count`th match, each step from the last. Every step must find one |
 | `search-next`, `search-previous` | The same, of the last search (`EditorState.lastSearch`), in its direction and in the other | As above |
 | `word-search-forward`, `word-search-backward` | The same, of the word under the cursor as a whole word (`starWord`, `starPattern`), from the word's start | As above |
+| `matching-bracket` | The first bracket of the line at or after the cursor (`lineCells`), then the text port's `unmatched` walk to its partner, counting only brackets of its escapedness | With a count, Vim's `N%`: the first non-blank of the line `(N * lines + 99) / 100`. A count above 100 fails |
 
 What each says of itself for an operator (`Editor/Vocabulary.lean`,
 "Motions"; what an operator then takes is `Editor/Evil/Operators.lean`):
@@ -55,6 +56,7 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
 | `find-backward`, `till-backward` | exclusive | | The same |
 | `find-again`, `find-again-reverse` | that of the find it runs: inclusive forward, exclusive back | | As the find it runs, and with no last find |
 | The six searches | exclusive | | With no match (`E486`), a pattern the syntax refuses (its sentence), no last search to repeat (`E35`), and for `*` and `#` no word in the line (`E348`): where it starts, saying why |
+| `matching-bracket` | inclusive | With a count, the line it goes to, as whole lines | With no bracket on the line at or after the cursor, with no partner, and with a count above 100: where it starts, saying nothing |
 
 - **The last line** (`lastLine`) is the last row a cursor may rest in
   outside insert state: the row before the empty last row of a text that
@@ -105,6 +107,11 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
   after it; a keyword is a run of word characters (`wordCharacter`), and
   punctuation is what is neither that nor a blank, which is Vim's
   `find_ident_under_cursor` with the text's word class for `iskeyword`.
+- **`%` departs from Vim's default `cpoptions` in two ways, both
+  recorded**: it matches the brackets `( [ { } ] )` only, and not `/* */`
+  or `#if`, `#else` and `#endif`, which are syntax's or a plugin's; and a
+  bracket inside quotes is counted, which is Vim's `cpo-%`, where Vim's
+  default passes over brackets it guesses are quoted.
 - **What a word is is the text port's** (`Editor/Text.lean`): a run of word
   characters or of punctuation, or the line break of an empty line; a WORD
   is a run of characters that are not blank. It is Vim's on ASCII and not
@@ -672,12 +679,69 @@ def wordSearchForward : Vocabulary.Motion :=
 def wordSearchBackward : Vocabulary.Motion :=
   wordSearch "word-search-backward" false
 
+/-- The kind of bracket `cell` is, and whether it is the opening one, when it
+is one of `( [ { } ] )`. -/
+def bracketOf (cell : String) : Option (Bracket × Bool) :=
+  [Bracket.round, .square, .curly].findSome? fun bracket =>
+    if cell == bracket.opening.toString then some (bracket, true)
+    else if cell == bracket.closing.toString then some (bracket, false) else none
+
+/-- Where `%` leads in `text` from the head of `origin` ("Motions as built"),
+and how an operator takes it. With no count: the first bracket of the line at
+or after the cursor (`lineCells`), and then its partner, by the text port's
+walk (`TextId.unmatched`): forward to the closing bracket from an opening
+one and back to the opening one from a closing one, counting only brackets
+of the first one's escapedness, which is whether an odd number of
+backslashes is right before it. It fails where it is with no bracket on the
+line at or after the cursor, and with no partner. Taken inclusively.
+
+With a count, Vim's `N%`: the first non-blank of the line
+`(N * lines + 99) / 100`, of the text's lines, taken as whole lines. A count
+above 100 fails where it is. -/
+def matchingBracketTaken (text : TextId) (origin : Vocabulary.From) : TextM Vocabulary.Taken := do
+  let failed : Vocabulary.Taken := { head := origin.head, reach := .inclusive, failed := true }
+  match origin.count with
+  | some count =>
+    if count > 100 then
+      return failed
+    let last ← lastLine text
+    let row := min ((count * (last + 1) + 99) / 100 - 1) last
+    return { head := ← text.motion .lineFirstNonBlank (← text.offsetOf ⟨row, 0⟩), reach := .lines }
+  | none =>
+    let cells ← lineCells text origin.head
+    let found :=
+      (List.range cells.size).findSome? fun index =>
+        let (offset, cell) := cells[index]!
+        if offset ≥ origin.head then (bracketOf cell).map fun found => (index, offset, found)
+        else none
+    let some (index, offset, bracket, opening) := found | return failed
+    let backslashes := ((cells.extract 0 index).toList.reverse.takeWhile (·.2 == "\\")).length
+    let partner ← text.unmatched bracket (!opening) opening (backslashes % 2 == 1) offset
+    match partner with
+    | some head =>
+      return { head, reach := .inclusive }
+    | none =>
+      return failed
+
+/-- To the bracket that matches the first one on the line at or after the
+cursor, Vim's `%`; with a count, to the line that many percent into the
+text (`matchingBracketTaken`). An operator takes it inclusively, or with a
+count as whole lines. -/
+def matchingBracket : Vocabulary.Motion :=
+  { name := "matching-bracket"
+    reach := .inclusive
+    target := fun text origin => do
+      let taken ← matchingBracketTaken text origin
+      return { head := taken.head, failed := taken.failed }
+    taken := fun _ text origin => matchingBracketTaken text origin }
+
 /-- The table the move command looks a motion's name up in: one entry for
 each name the Vim scheme's default tables bind a key to. -/
 def motions : Array Vocabulary.Motion :=
   #[left, down, up, right, wordForward, wordBackward, wordEnd, bigwordForward, bigwordBackward,
     bigwordEnd, lineStart, lineFirstNonBlank, lineEnd, firstLine, lastLineMotion, findForward,
     findBackward, tillForward, tillBackward, findAgain, findAgainReverse, searchForward,
-    searchBackward, searchNext, searchPrevious, wordSearchForward, wordSearchBackward]
+    searchBackward, searchNext, searchPrevious, wordSearchForward, wordSearchBackward,
+    matchingBracket]
 
 end Editor.Evil

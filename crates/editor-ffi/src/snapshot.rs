@@ -50,6 +50,12 @@
 //! columns as `u64`, in and out. A row or a column that no `usize` holds is
 //! refused, never cut down.
 //!
+//! A bracket and a quote cross as tags as well ([`crate::pair`]), for the
+//! two reads of a pair ([`editor_ffi_snapshot_unmatched`],
+//! [`editor_ffi_snapshot_quoted`]), each of which answers with a status
+//! ([`PairStatus`]) and fills its out parameters only when it found
+//! something.
+//!
 //! A motion crosses as a tag too, with a count and a column for the two
 //! motions by rows ([`editor_ffi_snapshot_motion`]; the table of tags is in
 //! [`crate::motion`]), so another motion is a tag and not a function. Its
@@ -69,11 +75,16 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError, Weak};
 
-use editor_text::{Marker, MarkerId, Motion, Patch, Point, PointCells, PointUtf16, Revision, Text};
+use std::ops::Range;
+
+use editor_text::{
+    Bracket, Marker, MarkerId, Motion, Patch, Point, PointCells, PointUtf16, Quote, Revision, Text,
+};
 
 use crate::document::{Document, RawText, next_key};
 use crate::log::RawWords;
 use crate::marker::{self, MarkStatus};
+use crate::pair::{self, PairStatus};
 use crate::{motion, text};
 
 /// A document's text as it was when the snapshot was taken, or a file's
@@ -244,6 +255,31 @@ impl Snapshot {
     /// position of the text.
     pub fn motion(&self, motion: Motion, offset: usize) -> Option<u64> {
         Some(self.text.motion(motion, offset)? as u64)
+    }
+
+    /// The bracket the walk from the byte offset `offset` leaves unbalanced
+    /// ([`editor_text::Snapshot::unmatched`]). `None` when the offset is not
+    /// a position of the text; `Some(None)` when there is no such bracket.
+    pub fn unmatched(
+        &self,
+        bracket: Bracket,
+        opening: bool,
+        forward: bool,
+        escaped: bool,
+        offset: usize,
+    ) -> Option<Option<u64>> {
+        let found = self
+            .text
+            .unmatched(bracket, opening, forward, escaped, offset)?;
+        Some(found.map(|at| at as u64))
+    }
+
+    /// The quoted string round the byte offset `offset`
+    /// ([`editor_text::Snapshot::quoted`]). `None` when the offset is not a
+    /// position of the text; `Some(None)` when there is no such string.
+    pub fn quoted(&self, quote: Quote, offset: usize) -> Option<Option<Range<u64>>> {
+        let found = self.text.quoted(quote, offset)?;
+        Some(found.map(|range| range.start as u64..range.end as u64))
     }
 
     /// A copy of the content of the row `row`: the row without its line
@@ -451,6 +487,82 @@ pub unsafe extern "C" fn editor_ffi_snapshot_motion(
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(answer) };
     true
+}
+
+/// [`Snapshot::unmatched`] for C: the bracket the tag `bracket` names
+/// ([`pair::bracket_of`]) that the walk from the byte offset `offset` of
+/// `snapshot` leaves unbalanced, an opening one when `opening`, strictly
+/// after the offset when `forward` and before it otherwise, counting only
+/// the brackets whose escapedness is `escaped`. Returns
+/// [`PairStatus::Found`] with `out` filled, [`PairStatus::NotFound`], or
+/// [`PairStatus::Refused`] for an offset that is not a position or a tag of
+/// no bracket, with `out` untouched.
+///
+/// # Safety
+///
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `out` points to a writable `u64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_snapshot_unmatched(
+    snapshot: *const Snapshot,
+    bracket: u8,
+    opening: bool,
+    forward: bool,
+    escaped: bool,
+    offset: usize,
+    out: *mut u64,
+) -> u8 {
+    let Some(bracket) = pair::bracket_of(bracket) else {
+        return PairStatus::Refused as u8;
+    };
+    // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
+    let answer = unsafe { &*snapshot }.unmatched(bracket, opening, forward, escaped, offset);
+    match answer {
+        None => PairStatus::Refused as u8,
+        Some(None) => PairStatus::NotFound as u8,
+        Some(Some(at)) => {
+            // SAFETY: the caller guarantees `out` is writable.
+            unsafe { out.write(at) };
+            PairStatus::Found as u8
+        }
+    }
+}
+
+/// [`Snapshot::quoted`] for C: the quoted string of the quote the tag
+/// `quote` names ([`pair::quote_of`]) round the byte offset `offset` of
+/// `snapshot`, from its opening quote's start to its closing quote's end.
+/// Returns [`PairStatus::Found`] with `start` and `stop` filled,
+/// [`PairStatus::NotFound`], or [`PairStatus::Refused`] for an offset that
+/// is not a position or a tag of no quote, with both untouched.
+///
+/// # Safety
+///
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `start` and `stop` each point to a writable `u64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_snapshot_quoted(
+    snapshot: *const Snapshot,
+    quote: u8,
+    offset: usize,
+    start: *mut u64,
+    stop: *mut u64,
+) -> u8 {
+    let Some(quote) = pair::quote_of(quote) else {
+        return PairStatus::Refused as u8;
+    };
+    // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
+    match unsafe { &*snapshot }.quoted(quote, offset) {
+        None => PairStatus::Refused as u8,
+        Some(None) => PairStatus::NotFound as u8,
+        Some(Some(range)) => {
+            // SAFETY: the caller guarantees both are writable.
+            unsafe {
+                start.write(range.start);
+                stop.write(range.end);
+            }
+            PairStatus::Found as u8
+        }
+    }
 }
 
 /// [`Snapshot::row`] for C: returns whether `snapshot` has the row `row`,
@@ -699,6 +811,115 @@ mod tests {
                 assert_eq!(snapshot.motion(motion, offset), None, "{motion:?}");
             }
         }
+    }
+
+    /// Brackets of each kind, nested, escaped, across rows, and quotes of
+    /// each kind with an escaped one, so that no two reads answer alike
+    /// everywhere.
+    const PAIRED_IN: &str = "f(a [b] {\\(c\\)})\r\n\"x\\\"y\" 'z' `é`\n(";
+
+    #[test]
+    fn a_pair_is_what_the_text_answers_for_it() {
+        let snapshot = snapshot(PAIRED_IN);
+        let text = Document::new(PAIRED_IN).snapshot();
+
+        let offsets: Vec<usize> = (0..=PAIRED_IN.len())
+            .filter(|&offset| PAIRED_IN.is_char_boundary(offset))
+            .collect();
+        for tag in 0..pair::TAGS {
+            let bracket = pair::bracket_of(tag).expect("the tag of a bracket");
+            let quote = pair::quote_of(tag).expect("the tag of a quote");
+            for &offset in &offsets {
+                for (opening, forward, escaped) in [
+                    (false, true, false),
+                    (true, false, false),
+                    (true, true, false),
+                    (false, true, true),
+                    (true, false, true),
+                ] {
+                    let expected = text
+                        .unmatched(bracket, opening, forward, escaped, offset)
+                        .expect("a position");
+                    assert_eq!(
+                        snapshot.unmatched(bracket, opening, forward, escaped, offset),
+                        Some(expected.map(|at| at as u64)),
+                        "{bracket:?} {opening} {forward} {escaped} from {offset}"
+                    );
+                }
+                let expected = text.quoted(quote, offset).expect("a position");
+                assert_eq!(
+                    snapshot.quoted(quote, offset),
+                    Some(expected.map(|range| range.start as u64..range.end as u64)),
+                    "{quote:?} from {offset}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_pair_from_an_offset_that_is_no_position_is_refused() {
+        let snapshot = snapshot(PAIRED_IN);
+        // Inside "é", past the end, and as far as an offset goes.
+        let inside = PAIRED_IN.find('é').expect("an é") + 1;
+        for tag in 0..pair::TAGS {
+            let bracket = pair::bracket_of(tag).expect("the tag of a bracket");
+            let quote = pair::quote_of(tag).expect("the tag of a quote");
+            for offset in [inside, PAIRED_IN.len() + 1, usize::MAX] {
+                assert_eq!(
+                    snapshot.unmatched(bracket, false, true, false, offset),
+                    None
+                );
+                assert_eq!(snapshot.quoted(quote, offset), None);
+            }
+        }
+    }
+
+    #[test]
+    fn a_pair_for_c_says_found_not_found_or_refused_and_fills_only_what_it_found() {
+        let snapshot = snapshot("(a) \"b\"");
+        let handle: *const Snapshot = &snapshot;
+        let mut out = 99_u64;
+        let (mut start, mut stop) = (98_u64, 99_u64);
+
+        // SAFETY: the handle and the out parameters are live and writable.
+        unsafe {
+            assert_eq!(
+                editor_ffi_snapshot_unmatched(handle, 0, false, true, false, 0, &mut out),
+                PairStatus::Found as u8
+            );
+            assert_eq!(out, 2);
+            assert_eq!(
+                editor_ffi_snapshot_unmatched(handle, 1, false, true, false, 0, &mut out),
+                PairStatus::NotFound as u8
+            );
+            assert_eq!(
+                editor_ffi_snapshot_unmatched(handle, 0, false, true, false, 99, &mut out),
+                PairStatus::Refused as u8
+            );
+            assert_eq!(
+                editor_ffi_snapshot_unmatched(handle, pair::TAGS, false, true, false, 0, &mut out),
+                PairStatus::Refused as u8
+            );
+            assert_eq!(out, 2);
+            assert_eq!(
+                editor_ffi_snapshot_quoted(handle, 0, 5, &mut start, &mut stop),
+                PairStatus::Found as u8
+            );
+            assert_eq!((start, stop), (4, 7));
+            assert_eq!(
+                editor_ffi_snapshot_quoted(handle, 1, 5, &mut start, &mut stop),
+                PairStatus::NotFound as u8
+            );
+            assert_eq!(
+                editor_ffi_snapshot_quoted(handle, 0, 99, &mut start, &mut stop),
+                PairStatus::Refused as u8
+            );
+            assert_eq!(
+                editor_ffi_snapshot_quoted(handle, pair::TAGS, 5, &mut start, &mut stop),
+                PairStatus::Refused as u8
+            );
+        }
+        assert_eq!((start, stop), (4, 7));
     }
 
     #[test]

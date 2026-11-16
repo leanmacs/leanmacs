@@ -104,7 +104,11 @@ real binding (`Editor/Fuzzy/Real.lean`). A search of a snapshot is the
 example of words out that are a sentence when the call refuses: the pattern
 as a string and scalars in, and words out with a status, whose bytes are the
 sentence in UTF-8 for a pattern the syntax refuses (`Snapshot.search`,
-`Snapshot.matches`, whose one caller is the text port's real binding). A length or an offset in words is a `UInt64`, and the
+`Snapshot.matches`, whose one caller is the text port's real binding). The
+two reads of a pair take a bracket or a quote as a tag, which a private
+encoder here writes, and answer an option of an option: none for a
+refusal, and inside it none for nothing found (`Snapshot.unmatched`,
+`Snapshot.quoted`). A length or an offset in words is a `UInt64`, and the
 largest one is a number no text accepts: a caller with a number no word
 holds sends that, so the library refuses it and nothing is cut down. Tests:
 the `find` and event checks of `ffi-test` (`FfiTest.dataChecks`), its
@@ -2443,6 +2447,71 @@ def fuzzyRank (pattern : String) (candidates : Array String) : IO (Array Nat) :=
     return ranking
   | none =>
     throw (IO.userError "the library's words do not spell a fuzzy ranking")
+
+/-- A kind of bracket of the library (`crates/editor-text`, `Bracket`). -/
+inductive Bracket where
+  /-- `(` and `)`. -/
+  | round
+  /-- `[` and `]`. -/
+  | square
+  /-- `{` and `}`. -/
+  | curly
+  deriving DecidableEq, Repr
+
+/-- A kind of quote of the library (`crates/editor-text`, `Quote`). -/
+inductive Quote where
+  /-- `"`. -/
+  | double
+  /-- `'`. -/
+  | single
+  /-- `` ` ``. -/
+  | back
+  deriving DecidableEq, Repr
+
+/-- A bracket as it crosses: its tag. The table of tags is in the module docs
+of `crates/editor-ffi/src/pair.rs`, which checks the tag. -/
+private def Bracket.tag : Bracket → UInt8
+  | .round => 0
+  | .square => 1
+  | .curly => 2
+
+/-- A quote as it crosses: its tag, from the same table. -/
+private def Quote.tag : Quote → UInt8
+  | .double => 0
+  | .single => 1
+  | .back => 2
+
+/-- `Snapshot.unmatched` as it crosses: the bracket as a tag, three flags and
+the offset in, and `none` for a refusal, `some none` for no such bracket and
+`some (some at)` for the bracket found. -/
+@[extern "editor_glue_snapshot_unmatched"]
+private opaque Snapshot.unmatchedRaw (snapshot : @& Snapshot) (tag : UInt8)
+    (opening forward escaped : Bool) (offset : USize) : IO (Option (Option UInt64))
+
+/-- `Snapshot.quoted` as it crosses: the quote as a tag and the offset in, and
+`none` for a refusal, `some none` for no string and `some (some range)` for
+the string found. -/
+@[extern "editor_glue_snapshot_quoted"]
+private opaque Snapshot.quotedRaw (snapshot : @& Snapshot) (tag : UInt8) (offset : USize) :
+    IO (Option (Option ByteRange))
+
+/-- The bracket of the kind `bracket` that the walk from the byte offset
+`offset` of the snapshot leaves unbalanced: an opening one when `opening`,
+strictly after the offset when `forward` and before it otherwise, counting
+only the brackets whose escapedness is `escaped`. The rule is the library's
+(`crates/editor-text`; `Editor/Text.lean`, "Pairs"). `none` unless the offset
+is a position of the text; `some none` when there is no such bracket. -/
+def Snapshot.unmatched (snapshot : Snapshot) (bracket : Bracket) (opening forward escaped : Bool)
+    (offset : USize) : IO (Option (Option UInt64)) :=
+  snapshot.unmatchedRaw bracket.tag opening forward escaped offset
+
+/-- The quoted string of `quote` round the byte offset `offset` of the
+snapshot, in its row, from its opening quote's start to its closing quote's
+end, by the library's rule. `none` unless the offset is a position of the
+text; `some none` when a quote is missing. -/
+def Snapshot.quoted (snapshot : Snapshot) (quote : Quote) (offset : USize) :
+    IO (Option (Option ByteRange)) :=
+  snapshot.quotedRaw quote.tag offset
 
 /-- What a search of a snapshot answers (`Snapshot.search`). -/
 inductive SearchAnswer where

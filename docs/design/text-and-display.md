@@ -529,6 +529,27 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   three line motions; `first-line` and `last-line` a row motion or the
   offset of a point, then the first non-blank. The previous end of a word
   has no default key yet (`ge`, `gE`).
+- **Pairs** (built by daily-driver-floor phase 4). Two more questions of
+  the text port, beside the motions, answer what Vim's `%` and its block
+  and quote objects need (the rules are in `lean/Editor/Text.lean`,
+  "Pairs"): the bracket a walk leaves unbalanced (`unmatched`: a kind of
+  bracket, which side is sought, a direction and an escapedness; strictly
+  after or before the position; the brackets of the other side raise the
+  depth; quotes are characters like any other; a bracket after an odd
+  number of backslashes is escaped, and only the escapedness asked is
+  counted), and the quoted string round a position, in its row
+  (`quoted`, Vim 9.1's `current_quote` with a backslash escaping the
+  character after it). Each answers none where there is nothing, and is
+  refused from an offset that is not a position. In the library they are
+  two methods of a snapshot in the private module `pair`, which walk the
+  rope by characters and build nothing, as a motion does; across the
+  boundary a bracket and a quote are tags, and each answers with a status
+  of found, not found or refused. The contract holds the model and the
+  library to two tables written out by hand and a property from every
+  position of a text (`TextContract.pairProperties`). What a key makes of
+  them is evil's: `%` (`matching-bracket`) and the sixteen text objects
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "Text objects as
+  built"); the word objects need no pair and are composed in Lean.
 - Why this rule for a word character. The pure Lean model answers every
   question of the port without the Rust library, so a character's class has
   to be a rule both sides can state in a line. Rust's

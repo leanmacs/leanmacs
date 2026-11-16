@@ -22,6 +22,7 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
 | `move m c a` | `moveCommand`, with `[.str m, .nat c]`, or `[.str m, .str a, .nat c]` when the motion has an argument |
 | `operate o over c r` | `operateCommand`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""`. A motion's argument, when it has one, is a string right after its name: `[.str o.name, .str "motion", .str m, .str a, .nat c, .str r]` |
 | `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
+| `select obj c` | `selectObjectCommand` (`select-object`), with `[.str obj, .nat c]` |
 | A motion that asks | `askCommand` (`minibuffer-ask`), with `[.str label]`; the edit is compiled when the answer comes ("Motions that ask") |
 | `replay change inserted` | `repeatCommand`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
 
@@ -46,7 +47,12 @@ is `parse` with the edit compiled, and `scheme` packages it as an
 
 - **A key is walked through the active keymaps, then the Vim state's**
   (`Keymap.walk` over `maps view ++ record.keymaps`, with `record` the
-  record of the Vim state the key's view is in). The active keymaps are the
+  record of the Vim state the key's view is in). **While an operator
+  waits, a state's pending keymaps are walked in place of its own**
+  (`StateRecord.pending`, Vim's Operator-pending mode), when it has any:
+  so a key a state binds to a command alone, such as normal state's `i`,
+  can begin a text object after an operator. A state with none walks its
+  own keymaps while an operator waits, as before. The active keymaps are the
   specific ones, so a binding of theirs replaces a default, and it holds in
   every Vim state, except a mode's where typing is text ("Mode keys"
   below). It is one walk, so prefixes merge across the two lists,
@@ -56,12 +62,17 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   command name alone (`scheme.command`, as a binding from config is) is
   bound to `Bound.command` of that name, which changes no text and enters
   no state.
-- **An operator waits for its target** (`State.operator`). There is no
-  keymap for the wait: the motion that moves when typed alone is the
+- **An operator waits for its target** (`State.operator`). The wait has
+  no keymap of its own: the motion that moves when typed alone is the
   operator's target when typed after it, so a motion bound once, in any
-  keymap, works with every operator.
+  keymap, works with every operator, unless a state's pending keymaps
+  leave it out.
 - **A text object after an operator is its target.** With no operator
-  waiting it resets.
+  waiting, in a state where operators act on the selection, it completes
+  `Edit.select` with the count typed, which sets the selection to the
+  object, enters the state the record names for it
+  (`StateRecord.objectEnters`), and is never the last change; elsewhere
+  it resets.
 - **The operator that is waiting, typed again, acts on lines**
   (`Over.lines`), and that edit always has a count, 1 when none was typed:
   the doubled operator counts lines. It is the same operator when it has
@@ -279,6 +290,11 @@ the text store, and the scheme holds only which Vim state the view is in.
   operator names, or the initial state when it names none.
 - **A motion in such a state is the same move as anywhere.** That it
   extends the selection is the command's, when the edit runs.
+- **A text object in such a state sets the selection** (`Edit.select`):
+  the command sets it to the object, and the view enters the state the
+  record names for an object (`StateRecord.objectEnters`), when it names
+  one, as `visual-line` names `visual`. A register named before it is
+  dropped.
 
 ## Mode keys
 
@@ -309,6 +325,7 @@ config's `bindKey`, holds in every state.
 | A new target of an operator | A variant of `Over`, and its row in `Edit.compile` |
 | A new fact about an operator or a command that the grammar needs | A field of `Operator` or of `Command` |
 | A new fact about a Vim state | A field of `StateRecord` |
+| A key read only after an operator | A row of a keymap in the state's `StateRecord.pending`, with the keys of its own keymaps an operator still takes |
 | A new fact about a Vim state that the loop, the scene or a command reads | A field of `StateRecord`, and how `State.report` reads it into the report |
 | A new part of speech | A variant of `Bound`, and its case in `State.reached` |
 | Something the scheme remembers between keys | A field of `State`, with what a reset does to it (`State.reset`) |
@@ -427,6 +444,8 @@ inductive Edit where
   /-- Replay `change`, the last change, with `inserted`, the text typed in
   the insert session it began, or none when it began none. -/
   | replay (change : Edit) (inserted : Option String)
+  /-- Set a visual selection to the text object of this vocabulary name. -/
+  | select (object : String) (count : Option Nat)
   deriving DecidableEq, Repr
 
 /-- The name of the command a replay compiles to. -/
@@ -441,6 +460,10 @@ def moveCommand : String :=
 def operateCommand : String :=
   "operate"
 
+/-- The name of the command a text object in a visual state compiles to. -/
+def selectObjectCommand : String :=
+  "select-object"
+
 namespace Edit
 
 /-- Whether the edit changes text: its operator's or its command's word for
@@ -450,6 +473,7 @@ def changes : Edit → Bool
   | .operate operator .. => operator.changes
   | .run command .. => command.changes
   | .replay .. => false
+  | .select .. => false
 
 /-- The Vim state the view is in after the edit, if its operator or its
 command names one. -/
@@ -458,6 +482,7 @@ def enters : Edit → Option String
   | .operate operator .. => operator.enters
   | .run command .. => command.enters
   | .replay .. => none
+  | .select .. => none
 
 /-- The edit with `count` as its count: a replay is left as it is. -/
 def withCount (count : Nat) : Edit → Edit
@@ -465,6 +490,7 @@ def withCount (count : Nat) : Edit → Edit
   | .operate operator over _ register => .operate operator over (some count) register
   | .run command _ register => .run command (some count) register
   | .replay change inserted => .replay change inserted
+  | .select object _ => .select object (some count)
 
 /-- The invocation the edit compiles to (the table in the module docs). -/
 def compile : Edit → Invocation
@@ -490,6 +516,8 @@ def compile : Edit → Invocation
       arguments :=
         [.bool inserted.isSome, .str (inserted.getD ""), .str compiled.command] ++
           compiled.arguments }
+  | .select object count =>
+    { command := selectObjectCommand, arguments := [.str object, .nat (count.getD 0)] }
 
 end Edit
 
@@ -511,6 +539,14 @@ structure StateRecord where
   operatesOnSelection : Bool := false
   /-- The shape the view's selection has in the state. -/
   shape : Shape := .inclusive
+  /-- The keymaps walked, after the active ones, in place of `keymaps` while
+  an operator waits: Vim's Operator-pending mode. With none, `keymaps` are
+  walked then too. -/
+  pending : List (Keymap Bound) := []
+  /-- The Vim state a view enters when a text object sets its selection in
+  this state, if one: `visual-line` names `visual`, as an object makes a
+  line-wise selection character-wise. -/
+  objectEnters : Option String := none
   deriving Repr
 
 /-- An edit that waits for the answer to a prompt ("Motions that ask", in
@@ -823,7 +859,11 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
     match state.operator with
     | some operator =>
       state.finish states view (.operate operator (.textObject name) state.count state.register)
-    | none => (state.reset, .nothing)
+    | none =>
+      let record := state.record states view
+      if record.operatesOnSelection then
+        state.finish states view (.select name state.count) record.objectEnters
+      else (state.reset, .nothing)
   | .operator operator =>
     match state.operator with
     | some waiting =>
@@ -868,7 +908,8 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
 /-- One key of the grammar, a key for `view`: the state it leaves, and what
 it parsed to (the rules in the module docs). A digit of a count is taken
 first, where typing is not text; any other key is walked through the
-active keymaps of `view` and then the keymaps of the view's Vim state. An
+active keymaps of `view` and then the keymaps of the view's Vim state, its
+pending keymaps while an operator waits when it has any. An
 unbound key is text when the view's state inserts text, the key prints and
 no edit is begun, and otherwise resets. -/
 def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId) (state : State)
@@ -905,7 +946,10 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
       | none =>
         let active :=
           if record.insertsText then (maps view).map (·.filter (!·.isMode)) else maps view
-        match Keymap.walk (active ++ record.keymaps) state.walked key with
+        let own :=
+          if state.operator.isSome && !record.pending.isEmpty then record.pending
+          else record.keymaps
+        match Keymap.walk (active ++ own) state.walked key with
         | (_, some binding) => state.reached states view typed binding
         | (walked, none) =>
           if !walked.isEmpty then
@@ -987,7 +1031,9 @@ def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
     roles := modes.roles
     leader := modes.leader
     modeCommand := fun name => .mode (.command { name })
-    defaults := states.initial.keymaps ++ states.others.flatMap (·.keymaps)
+    defaults :=
+      states.initial.keymaps ++ states.initial.pending ++
+        states.others.flatMap fun record => record.keymaps ++ record.pending
     tuned := modes.tuned.map fun (name, keys, bound) => (name, keys, .mode bound)
     closeView := State.closeView
     openMinibuffer := State.openMinibuffer states

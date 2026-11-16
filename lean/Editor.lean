@@ -94,9 +94,11 @@ config's hands it the vocabulary that ships, or that vocabulary with
 motions of its own added (`Evil.move (Evil.motions.push mine)`). The
 operators are here too (`Editor/Evil/Operators.lean`, with the registers
 they set in `Editor/Evil/Registers.lean`): the operate command is a
-function of the operators and the motions it looks names up in
-(`Evil.operate Evil.operators Evil.motions`). That module brings the
-commands and the motions with it. Undo and redo, which place the cursor a
+function of the operators, the motions and the text objects it looks names
+up in (`Evil.operate Evil.operators Evil.motions Evil.objects`), and the
+text objects and their select command are in `Editor/Evil/Objects.lean`.
+That module brings the commands, the motions and the text objects with
+it. Undo and redo, which place the cursor a
 step of the history hands back, are in `Editor/Evil/Undo.lean`, and dot
 repeat, which replays the change the Vim scheme hands it with the command
 the registry holds for the change's name, in `Editor/Evil/Repeat.lean`:

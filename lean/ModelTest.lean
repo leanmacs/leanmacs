@@ -11022,6 +11022,17 @@ def vimEditChecks : List Check :=
         let compiled := edits.map (·.compile)
         pure (compiled.eraseDups.length == edits.length) },
     { name :=
+        "a selection by a text object compiles to the select command with the object's name and the count, changes no text, names no state, and takes a count as a move does"
+      run :=
+        pure
+          ((Vim.Edit.select "thing" (some 2)).compile ==
+              { command := Vim.selectObjectCommand, arguments := [.str "thing", .nat 2] } &&
+            (Vim.Edit.select "thing" none).compile ==
+              { command := Vim.selectObjectCommand, arguments := [.str "thing", .nat 0] } &&
+            !(Vim.Edit.select "thing" none).changes &&
+            (Vim.Edit.select "thing" none).enters == none &&
+            (Vim.Edit.select "thing" none).withCount 3 == .select "thing" (some 3)) },
+    { name :=
         "whether an edit changes text is its operator's or its command's word for it, and a move changes none"
       run :=
         pure
@@ -11437,6 +11448,26 @@ def vimGrammarChecks : List Check :=
             commandYields == [none, none] &&
             decide (command = vimInit) &&
             (vimFed "d c w").2 == [none, none, some (vimMove "word")]) },
+    { name :=
+        "while an operator waits, a state with pending keymaps walks them in place of its own: a key its own keymaps bind to a command is a text object there after an operator, and the command alone; a key only its own bind resets after an operator; the state's keymaps hold for the rest; and a state with none walks its own"
+      run :=
+        let states :=
+          vimStates.register
+            { vimStates.initial with
+              pending :=
+                [vimKeymap
+                    [("i", .textObject "inside"), ("d", .operator vimDelete),
+                      ("w", .motion "word")]] }
+        pure
+          ((vimFed "d i" (states := states)).2 ==
+              [none, some (vimOperate "delete" "text-object" "inside")] &&
+            (vimFed "i" (states := states)).2 == (vimFed "i").2 &&
+            (vimFed "d w" (states := states)).2 ==
+              [none, some (vimOperate "delete" "motion" "word")] &&
+            (vimFed "d x" (states := states)).2 == [none, none] &&
+            (vimFed "d d" (states := states)).2 ==
+              [none, some (vimOperate "delete" "lines" "" 1)] &&
+            (vimFed "d i").2 == [none, none]) },
     { name :=
         "a text object after an operator is the operator's target, and a text object with no operator yields nothing and resets"
       run :=
@@ -12211,11 +12242,57 @@ def vimDefaultSubject : SchemeContract.Subject :=
 the grammar, by what the default keys parse to, and restate no table: a
 check names a key, and no vocabulary or command name. -/
 def vimDefaultChecks : List Check :=
-  [{  name := "every row of each default table binds its keys, and no table is empty"
+  [{  name :=
+        "after an operator's key, i or a and the key after it are a text object, the operator's target: i alone still runs the command that enters insert, d i <Escape> and d i x reset and leave nothing pending, the counts of 2 d 3 i w multiply, a register named before the operator is kept, and d z t still yields nothing and leaves nothing pending"
+      run :=
+        let objectOver (text : String) : Option (String × Option Nat × Option String) :=
+          match vimDefaultEdit text with
+          | some (.operate _ (.textObject name) count register) => some (name, count, register)
+          | _ => none
+        let resets (text : String) : Bool :=
+          (vimDefault text).2.getLast? == some .nothing && (vimDefault text).1.typed == []
+        pure
+          ((objectOver "d i w").isSome && (objectOver "c a (").isSome &&
+            (objectOver "y i \"").isSome &&
+            (vimDefaultCommand "i").bind (·.enters) == some (vimDefaultRecord "i").name &&
+            (vimDefaultRecord "i").insertsText &&
+            resets "d i <Escape>" &&
+            resets "d i x" &&
+            resets "d z t" &&
+            (objectOver "2 d 3 i w").map (·.2.1) == some (some 6) &&
+            (objectOver "\" a d a w").map (·.2.2) == some (some "a")) },
+    { name :=
+        "each alias of a block object after an operator yields what its primary key yields: i ) and i b as i (, a ) and a b as a (, i ] as i [, a ] as a [, i } and i B as i {, a } and a B as a {"
+      run :=
+        let aliases :=
+          [("i )", "i ("), ("i b", "i ("), ("a )", "a ("), ("a b", "a ("), ("i ]", "i ["),
+            ("a ]", "a ["), ("i }", "i {"), ("i B", "i {"), ("a }", "a {"), ("a B", "a {")]
+        pure <|
+          aliases.all fun (alias, primary) =>
+            (vimDefaultEdit s!"d {alias}").isSome &&
+              vimDefaultEdit s!"d {alias}" == vimDefaultEdit s!"d {primary}" &&
+              vimDefaultEdit s!"d {alias}" != vimDefaultEdit "d i w" },
+    { name :=
+        "in a visual state a text object's keys select it: v i w yields an edit that is not the last change and leaves the view in v's state, v 2 i w carries the count, a register named before it is dropped, and V a ( leaves the view in v's state"
+      run :=
+        let selects (text : String) : Option (Option Nat) :=
+          match vimDefaultEdit text with
+          | some (.select _ count) => some count
+          | _ => none
+        pure
+          (selects "v i w" == some none && (vimDefault "v i w").1.lastChange == none &&
+            (vimDefaultRecord "v i w").name == (vimDefaultRecord "v").name &&
+            selects "v 2 i w" == some (some 2) &&
+            selects "v \" a i w" == some none &&
+            (vimDefault "v \" a i w").1.register == none &&
+            selects "V a (" == some none &&
+            (vimDefaultRecord "V a (").name == (vimDefaultRecord "v").name &&
+            (vimDefaultRecord "V").name != (vimDefaultRecord "v").name) },
+    { name := "every row of each default table binds its keys, and no table is empty"
       run :=
         pure <|
-          [Vim.Default.motions, Vim.Default.operators, Vim.Default.normalCommands,
-                Vim.Default.insertCommands, Vim.Default.visualCommands,
+          [Vim.Default.motions, Vim.Default.operators, Vim.Default.objects,
+                Vim.Default.normalCommands, Vim.Default.insertCommands, Vim.Default.visualCommands,
                 Vim.Default.visualLineCommands, Vim.Default.minibufferCommands,
                 Vim.Default.scrollCommands].all
             fun table =>
@@ -17371,12 +17448,13 @@ def restsWell (contents : String) (head : Nat) : Bool :=
         !((char == '\n' || char == '\r' && after == some '\n') && before.isSome &&
             before != some '\n')
 
-/-- The texts every motion is swept over: those of the resting rule's
-checks, and one with a run of punctuation beside a word, a run of blanks,
-an empty line, a line that begins with a tab, and a last line with no line
-feed. -/
+/-- The texts every motion, operator and text object is swept over: those
+of the resting rule's checks, one with a run of punctuation beside a word, a
+run of blanks, an empty line, a line that begins with a tab, and a last line
+with no line feed, and one with brackets of each kind nested, quotes of two
+kinds, an escaped pair and an indented `{ }` block over lines. -/
 def sweepTexts : List String :=
-  restings.map (·.1) ++ ["foo.bar  x\n\n\tab\nend"]
+  restings.map (·.1) ++ ["foo.bar  x\n\n\tab\nend", "f(a [b] \"c\" 'd' \\(e\\))\n  {\n x\n }"]
 
 /-- The counts every motion is swept with, as a move's invocation carries
 one: 0, which is no count, a count of 1, a count inside most of the texts,
@@ -17640,6 +17718,24 @@ def keptFrom (fixture : String) (head : Nat) : Option Window.Wanted :=
   | .inr moved => some { column := .goal moved.goal, head }
   | .inl _ => none
 
+/-- The rows of the oracle table for `%` as a move, each run through Vim
+9.1.1752 headless: the keys, the text before with the cursor as a bar, and
+the text after. The last two rows are the recorded departures, which show
+the editor's behaviour: a bracket inside quotes is counted, and `/* */` is
+not matched. -/
+def percentRows : List (String × String × String) :=
+  [("%", "|(a [b] c)", "(a [b] c|)"), ("%", "(a [b] c|)", "|(a [b] c)"),
+    ("%", "(a |[b] c)", "(a [b|] c)"), ("%", "a\n|{\n b\n}", "a\n{\n b\n|}"),
+    ("%", "a\n{\n b\n|}", "a\n|{\n b\n}"), ("%", "|x (a)", "x (a|)"), ("%", "|x\n(a)", "|x\n(a)"),
+    ("%", "|(a", "|(a"), ("%", "|\\(a\\)", "\\(a\\|)"), ("%", "|(a \\) b)", "(a \\) b|)"),
+    ("%", "(a \\|) b)", "(a \\|) b)"), ("%", "|\\\\(a)", "\\\\(a|)"),
+    ("5 0 %", "|a\nb\nc\nd\n  e\nf\ng\nh\ni\nj\n", "a\nb\nc\nd\n  |e\nf\ng\nh\ni\nj\n"),
+    ("1 %", "a\nb\nc\nd\ne\nf\ng\nh\ni\n|j\n", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n"),
+    ("1 0 0 %", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", "a\nb\nc\nd\ne\nf\ng\nh\ni\n|j\n"),
+    ("1 0 1 %", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n"),
+    ("9 9 %", "|a\nb\nc\nd\ne\nf\ng\nh\ni\n  j\n", "a\nb\nc\nd\ne\nf\ng\nh\ni\n  |j\n"),
+    ("%", "|(a \")\" b)", "(a \"|)\" b)"), ("%", "|/* x */", "|/* x */")]
+
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
 ships with the commands compiled code registers for evil: a motion's key
@@ -17647,6 +17743,9 @@ is pressed in a text with the cursor written into it, and each expected
 text is written by hand from Vim's documented behaviour, case by case. -/
 def evilMotionChecks : List Check :=
   [{  name :=
+        "% goes from the first bracket of the line at or after the cursor to its partner, across lines, both ways, counting only brackets of its escapedness, and does not move with no bracket on the line or no partner; N% goes to the first non-blank of the line N percent into the text, and above 100 does not move; a bracket inside quotes is counted and /* */ is not matched, two recorded departures"
+      run := evilRows percentRows },
+    { name :=
         "h and l move by cells and stay on the line: with no count one cell, with a count that many, as far as the line allows; neither leaves an empty line, the empty text or the line of a text that is one line feed, and l does not go onto the line break"
       run := evilRows leftRightRows },
     { name :=
@@ -19003,6 +19102,19 @@ def starTableRows : List OperatorRow :=
         warned (.inserts bareEndText (keys "c") "ab cd\n  ef |h" (charwise "g")) forward,
         warned (.rests bareEndText (keys "y") "ab cd\n  ef |gh" (charwise "g")) forward]
 
+/-- The oracle table's rows for each operator over `%` in its five
+situations, each run through Vim 9.1.1752 headless. With no count no line
+of the situations has a bracket at or after the cursor, so Vim fails the
+motion and cancels the operator. With a count of 2, `N%` goes to the line
+`(2 * 5 + 99) / 100`, the first, and is taken as whole lines. -/
+def percentTableRows : List OperatorRow :=
+  [plainText, emptyLineText, endText, bareEndText].flatMap
+      (fun before => ["d", "c", "y"].map fun operator => .givesUp before s!"{operator} %") ++
+    [.rests plainText "d 2 %" "|mn\nop\n" (linewise "ab\ncd\n  ef gh.ij kl\n"),
+      .inserts plainText "c 2 %" "|\nmn\nop\n" (linewise "ab\ncd\n  ef gh.ij kl\n"),
+      .rests plainText "y 2 %" "|ab\ncd\n  ef gh.ij kl\nmn\nop\n"
+        (linewise "ab\ncd\n  ef gh.ij kl\n")]
+
 /-- The rows of the operator × motion table, in the order the motions were
 built. -/
 def operatorTable : List OperatorRow :=
@@ -19011,7 +19123,8 @@ def operatorTable : List OperatorRow :=
     lineMotionRows ++
     findAgainTableRows ++
     searchAgainTableRows ++
-    starTableRows
+    starTableRows ++
+    percentTableRows
 
 /-- The pairs of an operator's key and a motion's key that the rows of
 `operatorTable` have for the situation of the text `before`, with a count
@@ -19053,6 +19166,39 @@ def defaultPairs : List (String × String) :=
   Vim.Default.operators.flatMap fun (operator, _) =>
     bareMotionKeys.map fun motion => (operator, motion)
 
+/-- What is wrong, if anything, with the keys `typed`, which end with the
+operator `operator` acting, pressed from the byte offset `position` of a
+text holding `contents` (the rules `operatorSweep` lists): a refusal said, a
+cursor where normal state lets none rest after an operator that enters no
+state, a text an operator that changes none changed, and a change `u` does
+not give back with the cursor where it was. -/
+def sweptWrong (contents : String) (position : Nat) (operator : Vim.Operator) (typed : String) :
+    Option String :=
+  let what := s!"{typed} at {position} of {repr contents}"
+  match
+    (Loop.Driver.over evilHanded (fun _ => none) (evilState contents position)
+        editorModel).toOption with
+  | none => some s!"{what}: no driver"
+  | some driver =>
+    let after := evilFed driver typed
+    let text := evilText after
+    let head :=
+      (evilSelection after).bind fun selection => selection.ranges[selection.primary]?.map (·.head)
+    let refused := (after.loop.state.echo.splitOn "refused").length != 1
+    let rests :=
+      operator.enters.isSome ||
+        match text, head with
+        | some text, some head => restsWell text head
+        | _, _ => false
+    let kept := operator.changes || text == some contents
+    let ended := if operator.enters.isSome then evilFed after "<Escape>" else after
+    let undone :=
+      text == some contents || evilShown (evilFed ended "u") == withBar contents position
+    if !refused && rests && kept && undone then none
+    else
+      some
+        s!"{what}: left {repr (evilShown after)}, echo {repr after.loop.state.echo}, undone to {repr (evilShown (evilFed ended "u"))}"
+
 /-- What is wrong, if anything, with each operator key of the default tables
 pressed with each motion key, with no count and with a count of 2, from
 every position of a text holding `contents` where a normal-state cursor may
@@ -19082,32 +19228,8 @@ def operatorSweep (contents : String) : List String :=
             | .promptMotion .. => motionKey ++ " a RET"
             | _ => motionKey
           [false, true].filterMap fun counted =>
-            let typed := (if counted then "2 " else "") ++ operatorKey ++ " " ++ motionKey
-            let what := s!"{typed} at {position} of {repr contents}"
-            match
-              (Loop.Driver.over evilHanded (fun _ => none) (evilState contents position)
-                  editorModel).toOption with
-            | none => some s!"{what}: no driver"
-            | some driver =>
-              let after := evilFed driver typed
-              let text := evilText after
-              let head :=
-                (evilSelection after).bind fun selection =>
-                  selection.ranges[selection.primary]?.map (·.head)
-              let refused := (after.loop.state.echo.splitOn "refused").length != 1
-              let rests :=
-                operator.enters.isSome ||
-                  match text, head with
-                  | some text, some head => restsWell text head
-                  | _, _ => false
-              let kept := operator.changes || text == some contents
-              let ended := if operator.enters.isSome then evilFed after "<Escape>" else after
-              let undone :=
-                text == some contents || evilShown (evilFed ended "u") == withBar contents position
-              if !refused && rests && kept && undone then none
-              else
-                some
-                  s!"{what}: left {repr (evilShown after)}, echo {repr after.loop.state.echo}, undone to {repr (evilShown (evilFed ended "u"))}"
+            sweptWrong contents position operator
+              ((if counted then "2 " else "") ++ operatorKey ++ " " ++ motionKey)
       | _ => []
 
 /-- Whether `left` is what a command that gave up with `reason` leaves: the
@@ -20031,7 +20153,7 @@ def evilOperatorChecks : List Check :=
                 [.str Evil.yank.name, .str "motion", .str Evil.right.name, .nat 2, .str ""] ==
               some ⟨"a|bc", charwise "bc", false, ""⟩ },
     { name :=
-        "operate gives up, with the sentence its function makes and nothing changed, when it names an operator no entry has, a motion no entry has, a text object, a kind there is none of, and when its arguments are not an operator's"
+        "operate gives up, with the sentence its function makes and nothing changed, when it names an operator no entry has, a motion no entry has, a text object no entry has, a text object that is not there, a kind there is none of, and when its arguments are not an operator's"
       run :=
         pure <|
           let operated (arguments : List Argument) := evilOperated "a|bc" arguments
@@ -20042,7 +20164,12 @@ def evilOperatorChecks : List Check :=
               "a|bc" (Evil.noSuchMotion "nowhere") &&
             evilGaveUp
               (operated [.str Evil.delete.name, .str "text-object", .str "word", .nat 0, .str ""])
-              "a|bc" Evil.noTextObject &&
+              "a|bc" (Evil.noSuchObject "word") &&
+            evilGaveUp
+              (operated
+                [.str Evil.delete.name, .str "text-object", .str Evil.innerParen.name, .nat 0,
+                  .str ""])
+              "a|bc" (Evil.noObjectHere Evil.innerParen.name) &&
             evilGaveUp (operated [.str Evil.delete.name, .str "sideways", .str "", .nat 0, .str ""])
               "a|bc" Evil.noOperatorNamed &&
             evilGaveUp (operated []) "a|bc" Evil.noOperatorNamed &&
@@ -20121,6 +20248,324 @@ def evilSelectionChecks : List Check :=
         operatorRows
           [.rests "foo |bar baz" "v w 3 d" "foo |az" (charwise "bar b"),
             .rests "abc\nd|ef\nghi" "V 2 y" "abc\n|def\nghi" (linewise "def\n")] }]
+
+/-- The oracle table's rows for each operator over each text object, each
+run through Vim 9.1.1752 headless (`vim -Nu NONE -es`), with what an insert
+leaves read off a marker typed in it: every default operator over every
+object name, then the rules of `:help text-objects` and Vim 9.1's
+`textobject.c` one by one. Two rows differ from Vim's own report and are the
+editor's: a deletion of every line leaves the empty text, where Vim keeps
+one empty line, and an empty object is no give-up, as Vim's own no-op is no
+error. The last row is a recorded departure, and shows the editor's
+behaviour: a closing bracket inside quotes is counted, where Vim's search
+for it passes over brackets it guesses are quoted. -/
+def objectOperatorRows : List OperatorRow :=
+  [.rests "foo b|ar baz" "d i w" "foo | baz" (charwise "bar"),
+    .inserts "foo b|ar baz" "c i w" "foo | baz" (charwise "bar"),
+    .rests "foo b|ar baz" "y i w" "foo |bar baz" (charwise "bar"),
+    .rests "foo b|ar baz" "d a w" "foo |baz" (charwise "bar "),
+    .inserts "foo b|ar baz" "c a w" "foo |baz" (charwise "bar "),
+    .rests "foo b|ar baz" "y a w" "foo |bar baz" (charwise "bar "),
+    .rests "foo b|a.r baz" "d i W" "foo | baz" (charwise "ba.r"),
+    .inserts "foo b|a.r baz" "c i W" "foo | baz" (charwise "ba.r"),
+    .rests "foo b|a.r baz" "y i W" "foo |ba.r baz" (charwise "ba.r"),
+    .rests "foo b|a.r baz" "d a W" "foo |baz" (charwise "ba.r "),
+    .inserts "foo b|a.r baz" "c a W" "foo |baz" (charwise "ba.r "),
+    .rests "foo b|a.r baz" "y a W" "foo |ba.r baz" (charwise "ba.r "),
+    .rests "x = \"a|b c\" y" "d i \"" "x = \"|\" y" (charwise "ab c"),
+    .inserts "x = \"a|b c\" y" "c i \"" "x = \"|\" y" (charwise "ab c"),
+    .rests "x = \"a|b c\" y" "y i \"" "x = \"|ab c\" y" (charwise "ab c"),
+    .rests "x = \"a|b c\" y" "d a \"" "x = |y" (charwise "\"ab c\" "),
+    .inserts "x = \"a|b c\" y" "c a \"" "x = |y" (charwise "\"ab c\" "),
+    .rests "x = \"a|b c\" y" "y a \"" "x = |\"ab c\" y" (charwise "\"ab c\" "),
+    .rests "x = 'a|b c' y" "d i '" "x = '|' y" (charwise "ab c"),
+    .inserts "x = 'a|b c' y" "c i '" "x = '|' y" (charwise "ab c"),
+    .rests "x = 'a|b c' y" "y i '" "x = '|ab c' y" (charwise "ab c"),
+    .rests "x = 'a|b c' y" "d a '" "x = |y" (charwise "'ab c' "),
+    .inserts "x = 'a|b c' y" "c a '" "x = |y" (charwise "'ab c' "),
+    .rests "x = 'a|b c' y" "y a '" "x = |'ab c' y" (charwise "'ab c' "),
+    .rests "x = `a|b c` y" "d i `" "x = `|` y" (charwise "ab c"),
+    .inserts "x = `a|b c` y" "c i `" "x = `|` y" (charwise "ab c"),
+    .rests "x = `a|b c` y" "y i `" "x = `|ab c` y" (charwise "ab c"),
+    .rests "x = `a|b c` y" "d a `" "x = |y" (charwise "`ab c` "),
+    .inserts "x = `a|b c` y" "c a `" "x = |y" (charwise "`ab c` "),
+    .rests "x = `a|b c` y" "y a `" "x = |`ab c` y" (charwise "`ab c` "),
+    .rests "f(a, |b)" "d i (" "f(|)" (charwise "a, b"),
+    .inserts "f(a, |b)" "c i (" "f(|)" (charwise "a, b"),
+    .rests "f(a, |b)" "y i (" "f(|a, b)" (charwise "a, b"),
+    .rests "f(a, |b)" "d a (" "|f" (charwise "(a, b)"),
+    .inserts "f(a, |b)" "c a (" "f|" (charwise "(a, b)"),
+    .rests "f(a, |b)" "y a (" "f|(a, b)" (charwise "(a, b)"),
+    .rests "x [a |b] y" "d i [" "x [|] y" (charwise "a b"),
+    .inserts "x [a |b] y" "c i [" "x [|] y" (charwise "a b"),
+    .rests "x [a |b] y" "y i [" "x [|a b] y" (charwise "a b"),
+    .rests "x [a |b] y" "d a [" "x | y" (charwise "[a b]"),
+    .inserts "x [a |b] y" "c a [" "x | y" (charwise "[a b]"),
+    .rests "x [a |b] y" "y a [" "x |[a b] y" (charwise "[a b]"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "d i {" "if x {\n|}\n" (linewise "  ab\n  cd\n"),
+    .inserts "if x {\n  a|b\n  cd\n}\n" "c i {" "if x {\n|\n}\n" (linewise "  ab\n  cd\n"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "y i {" "if x {\n|  ab\n  cd\n}\n" (linewise "  ab\n  cd\n"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "d a {" "if x| \n" (charwise "{\n  ab\n  cd\n}"),
+    .inserts "if x {\n  a|b\n  cd\n}\n" "c a {" "if x |\n" (charwise "{\n  ab\n  cd\n}"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "y a {" "if x |{\n  ab\n  cd\n}\n"
+      (charwise "{\n  ab\n  cd\n}"),
+    .rests "foo b|ar" "d a w" "fo|o" (charwise " bar"),
+    .rests "foo|  bar" "d i w" "foo|bar" (charwise "  "),
+    .rests "foo|  bar" "d a w" "fo|o" (charwise "  bar"),
+    .rests "|ab cd ef" "d 3 i w" "| ef" (charwise "ab cd"),
+    .rests "|ab cd ef" "d 2 a w" "|ef" (charwise "ab cd "),
+    .rests "foo b|a.r baz" "d i w" "foo |.r baz" (charwise "ba"),
+    .rests "  |foo bar" "d a w" "  |bar" (charwise "foo "),
+    .rests "  foo b|ar" "d a w" "  fo|o" (charwise " bar"),
+    .rests "ab c|d\nef gh" "d 3 i w" "ab |gh" (charwise "cd\nef "),
+    .rests "ab c|d\nef gh" "d 2 a w" "ab |gh" (charwise "cd\nef "),
+    .rests "|ab\n\ncd" "d 2 i w" "|cd" (linewise "ab\n\n"),
+    .rests "ab|  \n\ncd" "d a w" "a|b\ncd" (charwise "  \n"),
+    .rests "ab\n|\ncd" "d a w" "|ab" (linewise "\ncd\n"),
+    .rests "ab\n|\ncd" "d i w" "ab\n|\ncd" asItWas,
+    .rests "ab\n|\ncd" "y i w" "ab\n|\ncd" (charwise ""),
+    .inserts "ab\n|\ncd" "c i w" "ab\n|\ncd" (charwise ""),
+    .rests "ab c|d." "d 2 a w" "a|b" (charwise " cd."), .givesUp "ab c|d" "d 2 a w",
+    .inserts "foo b|ar baz" "c a w" "foo |baz" (charwise "bar "),
+    .rests "foo b|ar baz" "2 d a w" "fo|o" (charwise " bar baz"),
+    .rests "x = \"a|b c\"" "d a \"" "x |=" (charwise " \"ab c\""),
+    .rests "|x = \"ab\" y" "d i \"" "x = \"|\" y" (charwise "ab"),
+    .rests "x = \"ab|\" y" "d i \"" "x = \"|\" y" (charwise "ab"),
+    .rests "\"a\" |x \"b\"" "d i \"" "\"a\"|\"b\"" (charwise " x "),
+    .rests "x = \"a|b c\" y" "d 2 i \"" "x = | y" (charwise "\"ab c\""),
+    .rests "x = \"a|b c\" y" "y 2 i \"" "x = |\"ab c\" y" (charwise "\"ab c\""),
+    .rests "x \"a\\\"|b\" y" "d i \"" "x \"|\" y" (charwise "a\\\"b"),
+    .rests "x \\\"a|b\" y" "d i \"" "x \\\"|\" y" (charwise "ab"),
+    .inserts "x = \"|\" y" "c i \"" "x = \"|\" y" asItWas,
+    .rests "x = \"|\" y" "d i \"" "x = \"|\" y" asItWas, .givesUp "a|b" "d i \"",
+    .givesUp "x \"ab\" |y" "d i \"",
+    .rests "x = \"a|b c\" y" "d 3 a \"" "x = |y" (charwise "\"ab c\" "),
+    .rests "\"a\" \"b|\"" "d i \"" "\"a\" \"|\"" (charwise "b"),
+    .rests "x \"a|b\" \ty" "d a \"" "x |y" (charwise "\"ab\" \t"),
+    .rests "  \"a|b\"" "d a \"" "|" (charwise "  \"ab\""),
+    .rests "f|(a, b)" "d i (" "f(|)" (charwise "a, b"),
+    .rests "f(a, b|)" "d i (" "f(|)" (charwise "a, b"),
+    .rests "f(a, (b|), c)" "d 2 i (" "f(|)" (charwise "a, (b), c"),
+    .rests "|f(a)" "d i (" "f(|)" (charwise "a"),
+    .rests "|x ((a))" "d 2 i (" "x ((|))" (charwise "a"), .givesUp "|x) (a)" "d i (",
+    .givesUp "(|x) (a)" "d 2 i (", .rests "f(a \\( |b)" "d i (" "f(|)" (charwise "a \\( b"),
+    .givesUp "\\(a |b\\)" "d i (", .rests "f|()" "d i (" "f(|)" asItWas,
+    .rests "f|()" "y i (" "f(|)" (charwise ""), .inserts "f|()" "c i (" "f(|)" asItWas,
+    .rests "{ a\n  b|\n}" "d i {" "|{\n}" (charwise " a\n  b"),
+    .rests "if x {\n  a|b\n}\n" "d a {" "if x| \n" (charwise "{\n  ab\n}"),
+    .rests "  |  {\n  a\n  }\n" "d i {" "    {\n  |}\n" (linewise "  a\n"),
+    .rests "  |  {\n  a\n  }\n" "d a {" "|" (linewise "    {\n  a\n  }\n"),
+    .rests "{a {b |c} d}" "d 2 i {" "{|}" (charwise "a {b c} d"),
+    .rests "|x {a}" "d i {" "x {|}" (charwise "a"),
+    .rests "|x\n(a)" "d i (" "x\n(|)" (charwise "a"),
+    .rests "|x (a\n)" "d i (" "x |(\n)" (charwise "a"), .rests "|{\n}" "d i {" "{\n|}" asItWas,
+    .rests "|{\n}" "y i {" "{\n|}" (charwise ""), .rests "|{\n\n}" "d i {" "{\n|}" (linewise "\n"),
+    .rests "|{\n  \n}" "d i {" "{\n|  \n}" asItWas,
+    .rests "|{\n a\n  \n}" "d i {" "{\n | \n}" (linewise " a\n"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "y i {" "if x {\n|  ab\n  cd\n}\n" (linewise "  ab\n  cd\n"),
+    .rests "f(a, |b)" "d i )" "f(|)" (charwise "a, b"),
+    .rests "f(a, |b)" "d i b" "f(|)" (charwise "a, b"),
+    .rests "f(a, |b)" "d a )" "|f" (charwise "(a, b)"),
+    .rests "f(a, |b)" "d a b" "|f" (charwise "(a, b)"),
+    .rests "x [a |b] y" "d i ]" "x [|] y" (charwise "a b"),
+    .rests "x [a |b] y" "d a ]" "x | y" (charwise "[a b]"),
+    .rests "{a |b}" "d i }" "{|}" (charwise "a b"), .rests "{a |b}" "d i B" "{|}" (charwise "a b"),
+    .rests "{a |b}" "d a }" "|" (charwise "{a b}"), .rests "{a |b}" "d a B" "|" (charwise "{a b}"),
+    .rests "(a [b|) c]" "d i [" "(a [|]" (charwise "b) c"),
+    -- A recorded departure: the closing bracket inside quotes is counted.
+    .rests "(a \"b|)\" c)" "d i (" "(|)\" c)" (charwise "a \"b")]
+
+/-- The rows of the oracle table for `%` under an operator, each run through
+Vim 9.1.1752 headless: inclusive, from the cursor, a bracket after the
+cursor on the line included, across lines, and a line with no bracket. -/
+def percentOperatorRows : List OperatorRow :=
+  [.rests "|(a) b" "d %" "| b" (charwise "(a)"), .rests "|x (a) b" "d %" "| b" (charwise "x (a)"),
+    .givesUp "|ab" "d %", .inserts "|(a\nb) c" "c %" "| c" (charwise "(a\nb)"),
+    .rests "|(a\nb) c" "y %" "|(a\nb) c" (charwise "(a\nb)")]
+
+/-- The name the default `objects` table binds the key string `key` to, if it
+binds one. -/
+def objectNamed (key : String) : Option String :=
+  Vim.Default.objects.findSome? fun (text, bound) =>
+    match bound with
+    | .textObject name => if text == key then some name else none
+    | _ => none
+
+/-- Every name the default `objects` table binds a key to, once each. -/
+def objectNames : List String :=
+  (Vim.Default.objects.filterMap fun (_, bound) =>
+      match bound with
+      | .textObject name => some name
+      | _ => none).eraseDups
+
+/-- The pairs of an operator's key and a text object's name that the rows of
+`objectOperatorRows` have, with the counts left out. -/
+def objectOperatorPairs : List (String × String) :=
+  objectOperatorRows.filterMap fun row =>
+    match (row.keys.splitOn " ").filter (fun token => !token.all Char.isDigit) with
+    | operator :: rest => (objectNamed (" ".intercalate rest)).map (operator, ·)
+    | [] => none
+
+/-- The rows of the oracle table for the text objects in a visual state, each
+run through Vim 9.1.1752 headless and read off its marks: the text and the
+cursor, the keys, the selection's one range as an anchor and a head, and
+the text it covers. The last four are an object that is not there, where
+the selection is as it was, and the recorded departure of a quote object
+over a selection wider than one cell, which is left as it was too. -/
+def objectSelectionRows : List (String × String × List (Nat × Nat) × List String) :=
+  [("foo b|ar baz", "v i w", [(4, 6)], ["bar"]), ("foo b|ar baz", "v a w", [(4, 7)], ["bar "]),
+    ("foo b|a.r baz", "v i W", [(4, 7)], ["ba.r"]), ("foo b|a.r baz", "v a W", [(4, 8)], ["ba.r "]),
+    ("a|  b", "v i w", [(1, 2)], ["  "]), ("a|  b", "v a w", [(1, 3)], ["  b"]),
+    ("foo b|ar baz", "v 3 i w", [(4, 10)], ["bar baz"]),
+    ("foo |bar baz", "v i w i w", [(4, 7)], ["bar "]),
+    ("foo |bar baz", "v a w a w", [(4, 10)], ["bar baz"]),
+    ("foo b|ar baz", "v b i w", [(5, 3)], [" ba"]),
+    ("foo bar b|az", "v h a w", [(9, 4)], ["bar ba"]), ("ab\n|\ncd", "v i w", [(3, 3)], ["\n"]),
+    ("ab\n|\ncd", "v a w", [(3, 5)], ["\ncd"]), ("|ab\n\ncd", "v 2 i w", [(0, 4)], ["ab\n\nc"]),
+    ("x = \"a|b c\" y", "v i \"", [(5, 8)], ["ab c"]),
+    ("x = \"a|b c\" y", "v a \"", [(4, 10)], ["\"ab c\" "]),
+    ("|x = \"ab\" y", "v i \"", [(5, 6)], ["ab"]),
+    ("x = \"a|b c\" y", "v 2 i \"", [(4, 9)], ["\"ab c\""]),
+    ("x \"|\" y", "v i \"", [(3, 2)], ["\"\""]), ("x 'a|b' y", "v i '", [(3, 4)], ["ab"]),
+    ("x 'a|b' y", "v a '", [(2, 6)], ["'ab' "]), ("x `a|b` y", "v i `", [(3, 4)], ["ab"]),
+    ("x `a|b` y", "v a `", [(2, 6)], ["`ab` "]), ("f(a, |b)", "v i (", [(2, 5)], ["a, b"]),
+    ("f(a, |b)", "v a (", [(1, 6)], ["(a, b)"]), ("g(f(a|b))", "v i ( i (", [(2, 6)], ["f(ab)"]),
+    ("g(f(|a))", "v i ( a (", [(3, 5)], ["(a)"]), ("g(f(|a))", "v a ( a (", [(1, 6)], ["(f(a))"]),
+    ("|x (a)", "v i (", [(3, 3)], ["a"]), ("{\n  a|b\n}", "v i {", [(2, 6)], ["  ab\n"]),
+    ("x {\n  a|b\n  }", "v i {", [(4, 8)], ["  ab\n"]), ("x{\n  |}", "v i {", [(3, 2)], ["\n "]),
+    ("x [a |b] y", "v i [", [(3, 5)], ["a b"]), ("x [a |b] y", "v a [", [(2, 6)], ["[a b]"]),
+    ("{a |b}", "v i {", [(1, 3)], ["a b"]), ("{a |b}", "v a {", [(0, 4)], ["{a b}"]),
+    ("f(a|b)", "v l i (", [(2, 3)], ["ab"]), ("f(a|b)", "v l a (", [(1, 4)], ["(ab)"]),
+    ("foo b|ar baz", "V i w", [(4, 6)], ["bar"]), ("f(|a)", "V i (", [(2, 2)], ["a"]),
+    ("f(|a)", "V a b", [(1, 3)], ["(a)"]), ("a|b", "v i (", [(1, 1)], ["b"]),
+    ("f|()", "v i (", [(1, 1)], ["("]), ("|{\n}", "v i {", [(0, 0)], ["{"]),
+    ("x = \"a|b c\" y", "v l i \"", [(6, 7)], ["b "])]
+
+/-- What is wrong, if anything, with each of `v` and `V` followed by each key
+of the default `objects` table, with no count and with a count of 2, from
+every position of a text holding `contents` where a normal-state cursor may
+rest: the echo area says no refusal, the selection is one range with both
+ends at positions of the text, and the view is in `visual`, or, where the
+object is not there after `V`, in the state it was in, with the give-up's
+sentence said. -/
+def visualObjectSweep (contents : String) : List String :=
+  let visual := (vimDefaultReport "v").status[0]?
+  let visualLine := (vimDefaultReport "V").status[0]?
+  ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap fun position =>
+    ["v", "V"].flatMap fun state =>
+      Vim.Default.objects.flatMap fun (objectKey, bound) =>
+        let name :=
+          match bound with
+          | .textObject name => name
+          | _ => ""
+        [false, true].filterMap fun counted =>
+          let typed := state ++ (if counted then " 2 " else " ") ++ objectKey
+          let what := s!"{typed} at {position} of {repr contents}"
+          match
+            (Loop.Driver.over evilHanded (fun _ => none) (evilState contents position)
+                editorModel).toOption with
+          | none => some s!"{what}: no driver"
+          | some driver =>
+            let after := evilFed driver typed
+            let refused := (after.loop.state.echo.splitOn "refused").length != 1
+            let atPositions :=
+              match evilSelection after with
+              | some { ranges := #[range], .. } =>
+                [range.anchor, range.head].all fun end_ =>
+                  end_ ≤ contents.utf8ByteSize && (String.Pos.Raw.mk end_).IsValid contents
+              | _ => false
+            let seen := (evilSeen after).bind (·.status[0]?)
+            let kept :=
+              seen == visual ||
+                state == "V" && seen == visualLine &&
+                  after.loop.state.echo.endsWith (Evil.noObjectHere name)
+            if !refused && atPositions && kept then none
+            else
+              some s!"{what}: left {repr (evilSelection after)}, echo {repr after.loop.state.echo}"
+
+/-- The checks of evil's text objects (`Editor/Evil/Objects.lean`), by key,
+on the loop's driver over the editor's models, under the Vim scheme that
+ships: what each operator takes over each object and what each object
+selects in a visual state, against Vim 9.1's rows, `%` under an operator,
+the tables' completeness, and two sweeps. -/
+def evilObjectChecks : List Check :=
+  [{  name :=
+        "an operator over each text object takes the range Vim 9.1 documents: the words and WORDs with their blanks and counts, the quoted strings and their blanks, the blocks with an escaped bracket passed over, a block found forward with none round the cursor, an empty block, and i{ over lines as whole lines; the text, the cursor, the register and the insert state are Vim's"
+      run := operatorRows objectOperatorRows },
+    { name :=
+        "% under an operator takes from the cursor through the partner of the first bracket of the line at or after it, across lines, and gives up on a line with no bracket; v % extends the selection to the partner, as Vim 9.1.1752 does"
+      run := do
+        let held ← operatorRows percentOperatorRows
+        return held &&
+            evilSelected "x |(a [b] c)" "v %" == some ([(2, 10)], .inclusive, ["(a [b] c)"]) &&
+            evilSelected "|x (a)" "v %" == some ([(0, 4)], .inclusive, ["x (a)"]) },
+    { name :=
+        "the object table is complete: every operator key of the default tables has a row over every text object the default tables name"
+      run :=
+        pure <|
+          !objectNames.isEmpty &&
+            Vim.Default.operators.all fun (operator, _) =>
+              objectNames.all fun name => objectOperatorPairs.contains (operator, name) },
+    { name :=
+        "in v and V each text object sets the selection Vim 9.1 documents: one range, inclusive, covering the object, with the view in visual; a selection wider than one cell is extended from its head, a block one out when it is no bigger; an object that is not there leaves the selection as it was, and so does a quote object over a wider selection, a recorded departure"
+      run := do
+        let visual := (vimDefaultReport "v").status[0]?
+        let wrong :=
+          objectSelectionRows.filterMap fun (fixture, typed, ranges, covered) =>
+            let got := evilSelected fixture typed
+            let state := (evilScene fixture typed).bind (·.status[0]?)
+            if got == some (ranges, .inclusive, covered) && state == visual then none
+            else some s!"{typed} from {repr fixture} left {repr got}, in {repr state}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong))
+        return true },
+    { name := "the visual table is complete: every text object the default tables name has a row"
+      run :=
+        pure <|
+          objectNames.all fun name =>
+            objectSelectionRows.any fun (_, typed, _, _) =>
+              let tokens := (typed.splitOn " ").filter (fun token => !token.all Char.isDigit)
+              (objectNamed (" ".intercalate (tokens.drop (tokens.length - 2)))) == some name },
+    { name :=
+        "a sweep of every default operator key over every default text object key, with no count and with a count of 2, from every position a cursor may rest at in a few texts: nothing is refused, after an operator that enters no state the cursor is where normal state lets one rest, a yank leaves the text, and u gives back a text that changed, with the cursor where it was"
+      run := do
+        let wrong :=
+          sweepTexts.flatMap fun contents =>
+            ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap
+              fun position =>
+              Vim.Default.operators.flatMap fun (operatorKey, bound) =>
+                match bound with
+                | .operator operator =>
+                  Vim.Default.objects.flatMap fun (objectKey, _) =>
+                    [false, true].filterMap fun counted =>
+                      sweptWrong contents position operator
+                        ((if counted then "2 " else "") ++ operatorKey ++ " " ++ objectKey)
+                | _ => []
+        unless wrong.isEmpty do
+          throw
+              (IO.userError s!"{wrong.length} cases, the first: {"; ".intercalate (wrong.take 5)}")
+        return true },
+    { name :=
+        "a sweep of v and V followed by every default text object key, with no count and with a count of 2, from every position a cursor may rest at in a few texts: nothing is refused, the selection is one range with both ends at positions, and the view is in visual"
+      run := do
+        let wrong := sweepTexts.flatMap visualObjectSweep
+        unless wrong.isEmpty do
+          throw
+              (IO.userError s!"{wrong.length} cases, the first: {"; ".intercalate (wrong.take 5)}")
+        return true },
+    { name :=
+        "the select command sets the selection by its call: an object no entry has and arguments that are not a name and a count give up with the sentence their function makes"
+      run :=
+        pure <|
+          let selected (arguments : List Argument) : Option EvilEdited :=
+            (evilRegistered "a|bc").map fun driver =>
+              evilLeft
+                (driver.stepped
+                    (driver.loop.invoke driver.handed
+                      { command := Vim.selectObjectCommand, arguments })).1
+          evilGaveUp (selected [.str "word", .nat 0]) "a|bc" (Evil.noSuchObject "word") &&
+            evilGaveUp (selected []) "a|bc" Evil.noObjectNamed &&
+            evilGaveUp (selected [.str Evil.innerWord.name]) "a|bc" Evil.noObjectNamed }]
 
 /-- The keys the key string `typed` names, pressed from the text and the
 cursor `fixture` says with the unnamed register holding a sentinel, on the
@@ -20536,6 +20981,14 @@ the loop's driver over the editor's models, under the Vim scheme that ships
 with evil's commands. -/
 def evilRepeatChecks : List Check :=
   [{  name :=
+        ". after an operator over a text object replays it where the cursor is then: c i w with typed text, d a w, d i ( on another pair, d a w with a count that replaces the change's, d 2 i w, and c i \" with typed text in another string, as Vim 9.1.1752 does them"
+      run :=
+        evilRows
+          [("c i w x y <Escape> w .", "|foo bar baz", "xy x|y baz"),
+            ("d a w .", "|a b c d", "|c d"), ("d i ( $ .", "f(|a) g(b)", "f() g(|)"),
+            ("d a w 3 .", "|a b c d e f", "|e f"), ("d 2 i w .", "|a b c d e", "|c d e"),
+            ("c i \" z <Escape> f c .", "\"|ab\" \"cd\"", "\"z\" \"|z\"")] },
+    { name :=
         ". after an operator over a find replays it with the same character: d f c deletes to the next c again, d t c up to the next c, d ; repeats the last find as it is at the replay, and c f c with typed text makes the same change"
       run :=
         evilRows
@@ -20721,7 +21174,8 @@ def evilRepeatChecks : List Check :=
           let erase : Vocabulary.Operator := { Evil.delete with name := "erase" }
           let more : Array Config.Registration :=
             #[{ name := Vim.operateCommand
-                action := .call (Evil.operate (Evil.operators.push erase) Evil.motions) },
+                action :=
+                  .call (Evil.operate (Evil.operators.push erase) Evil.motions Evil.objects) },
               { name := "delete-char"
                 action :=
                   .call fun call => Evil.deleteChar { call with arguments := [.nat 2, .str ""] } },
@@ -22186,6 +22640,7 @@ def checks : List Check :=
     evilSearchChecks ++
     searchDecorationChecks ++
     evilSelectionChecks ++
+    evilObjectChecks ++
     evilRegisterChecks ++
     evilOpenChecks ++
     evilUndoChecks ++

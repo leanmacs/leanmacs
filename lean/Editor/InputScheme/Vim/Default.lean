@@ -22,12 +22,14 @@ registered in `Editor/Evil/Compiled.lean`,
 which opens the ex command line, `Editor/Ex/Compiled.lean`; a name with
 nothing registered under it says so in the echo area when its key runs.
 The operators' entries are `Evil.operators`
-(`Editor/Evil/Operators.lean`).
+(`Editor/Evil/Operators.lean`), and the text objects' `Evil.objects`
+(`Editor/Evil/Objects.lean`).
 
 | Table | Binds |
 |---|---|
-| `motions` | The motions of normal state and the visual states. `f`, `F`, `t` and `T` are motions that take the character the next key names (`Bound.charMotion`), and `/` and `?` motions that ask for a pattern in the minibuffer (`Bound.promptMotion`, labelled `/` and `?`) |
+| `motions` | The motions of normal state and the visual states. `f`, `F`, `t` and `T` are motions that take the character the next key names (`Bound.charMotion`), and `/` and `?` motions that ask for a pattern in the minibuffer (`Bound.promptMotion`, labelled `/` and `?`). `%` is the motion `matching-bracket` |
 | `operators` | The operators. `c` names the state `insert`, and `y` changes no text |
+| `objects` | The text objects: `i` or `a` and then `w`, `W`, `"`, `'`, `` ` ``, `(`, `[` or `{`. `)` and `b` are aliases of `(`, `]` of `[`, and `}` and `B` of `{`, bound to the same names |
 | `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo and the command line, the two that enter a visual state, the register prefix, and the repeat key, `.`, which is a part of speech of its own and no command's key (`Bound.repeat`) |
 | `insertCommands` | Insert state's: the key that returns to normal state, and its editing keys, `<Backspace>`, `RET`, `TAB` and the four arrow keys (`Editor/Evil.lean`, "Editing keys"), each bound as a command that changes no text for the grammar, so it is not the last change. `<Backspace>`, `RET` and `TAB` add themselves to the session's recording (`Command.typed`), so `.` replays them; each arrow key restarts the last change as `i` once something is typed after it (`Command.restarts`), as Vim 9.1's `ins-special-special` says |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
@@ -38,11 +40,18 @@ The operators' entries are `Evil.operators`
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
 |---|---|---|---|---|
-| `normal`, the initial state | `normalCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | |
+| `normal`, the initial state | `normalCommands`, `scrollCommands`, `operators`, `motions`; while an operator waits, `objects`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | |
 | `insert` | `insertCommands` | Bar | Exclusive | Typing is text |
-| `visual` | `visualCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | Operators act on the selection |
-| `visual-line` | `visualLineCommands`, `scrollCommands`, `operators`, `motions` | Block | Line | Operators act on the selection |
+| `visual` | `visualCommands`, `scrollCommands`, `operators`, `motions`, `objects` | Block | Inclusive | Operators act on the selection |
+| `visual-line` | `visualLineCommands`, `scrollCommands`, `operators`, `motions`, `objects` | Block | Line | Operators act on the selection, and a text object enters `visual` |
 | `minibuffer`, the state of the minibuffer's view | `minibufferCommands` | Bar | Exclusive | Typing is text |
+
+**Normal state's pending keymaps** (`StateRecord.pending`) are what it
+walks while an operator waits, Vim's Operator-pending mode: its commands
+are left out, so `i` and `a` begin a text object after `d`, `c` or `y`, and
+every other key of `normalCommands` resets there as an unbound key does,
+which is what it did as a command. `scrollCommands` stays, so `d z t`
+resets as before.
 
 The selection's shape is the one the text store's shapes map a state onto
 (`docs/design/text-and-display.md`, "What a selection covers, and how evil
@@ -168,13 +177,29 @@ def motions : List (String × Bound) :=
     (",", .motion "find-again-reverse"), ("n", .motion "search-next"),
     ("N", .motion "search-previous"), ("*", .motion "word-search-forward"),
     ("#", .motion "word-search-backward"), ("/", .promptMotion "search-forward" "/"),
-    ("?", .promptMotion "search-backward" "?")]
+    ("?", .promptMotion "search-backward" "?"), ("%", .motion "matching-bracket")]
 
 /-- The operators. -/
 def operators : List (String × Bound) :=
   [("d", .operator { name := "delete" }),
     ("c", .operator { name := "change", enters := some "insert" }),
     ("y", .operator { name := "yank", changes := false })]
+
+/-- The text objects: each key string, and the object's vocabulary name. -/
+def objects : List (String × Bound) :=
+  [("i w", .textObject "inner-word"), ("a w", .textObject "a-word"),
+    ("i W", .textObject "inner-bigword"), ("a W", .textObject "a-bigword"),
+    ("i \"", .textObject "inner-double-quote"), ("a \"", .textObject "a-double-quote"),
+    ("i '", .textObject "inner-single-quote"), ("a '", .textObject "a-single-quote"),
+    ("i `", .textObject "inner-backquote"), ("a `", .textObject "a-backquote"),
+    ("i (", .textObject "inner-paren"), ("i )", .textObject "inner-paren"),
+    ("i b", .textObject "inner-paren"), ("a (", .textObject "a-paren"),
+    ("a )", .textObject "a-paren"), ("a b", .textObject "a-paren"),
+    ("i [", .textObject "inner-bracket"), ("i ]", .textObject "inner-bracket"),
+    ("a [", .textObject "a-bracket"), ("a ]", .textObject "a-bracket"),
+    ("i {", .textObject "inner-brace"), ("i }", .textObject "inner-brace"),
+    ("i B", .textObject "inner-brace"), ("a {", .textObject "a-brace"),
+    ("a }", .textObject "a-brace"), ("a B", .textObject "a-brace")]
 
 /-- Normal state's commands, and the register prefix. -/
 def normalCommands : List (String × Bound) :=
@@ -236,7 +261,8 @@ def keymap (table : List (String × Bound)) : Keymap Bound :=
 def states : States :=
   { initial :=
       { name := "normal"
-        keymaps := [normalCommands, scrollCommands, operators, motions].map keymap }
+        keymaps := [normalCommands, scrollCommands, operators, motions].map keymap
+        pending := [objects, scrollCommands, operators, motions].map keymap }
     others :=
       [{  name := "insert"
           keymaps := [keymap insertCommands]
@@ -244,12 +270,13 @@ def states : States :=
           insertsText := true
           shape := .exclusive },
         { name := "visual"
-          keymaps := [visualCommands, scrollCommands, operators, motions].map keymap
+          keymaps := [visualCommands, scrollCommands, operators, motions, objects].map keymap
           operatesOnSelection := true },
         { name := "visual-line"
-          keymaps := [visualLineCommands, scrollCommands, operators, motions].map keymap
+          keymaps := [visualLineCommands, scrollCommands, operators, motions, objects].map keymap
           operatesOnSelection := true
-          shape := .line },
+          shape := .line
+          objectEnters := some "visual" },
         { name := "minibuffer"
           keymaps := [keymap minibufferCommands]
           cursor := .bar

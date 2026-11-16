@@ -801,6 +801,117 @@ def matchesIn (text : String) (pattern : String) (start stop : Nat) : Except Tex
           ((literalMatches text literal).filter fun extent =>
             start ≤ extent.start && extent.start < stop))
 
+/-- The characters of `text`, each with the byte offset it starts pos. -/
+def charsAt (text : String) : Array (Nat × Char) :=
+  (text.toList.foldl
+      (fun (chars, walked) char => (chars.push (walked, char), walked + char.utf8Size)) (#[], 0)).1
+
+/-- Whether an odd number of backslashes stands right before the character
+pos `index` of `chars`. -/
+def escapedAt (chars : Array (Nat × Char)) (index : Nat) : Bool :=
+  ((chars.extract 0 index).toList.reverse.takeWhile (·.2 == '\\')).length % 2 == 1
+
+/-- The model's answer to the bracket a walk leaves unbalanced ("Pairs", in
+the rules of the port): the characters of `text` strictly after `offset`,
+or strictly before it going back, walked with a depth. -/
+def unmatched? (text : String) (bracket : Bracket) (opening forward escaped : Bool) (offset : Nat) :
+    Except TextError (Option Nat) :=
+  if !isPosition text offset then .error .badPosition
+  else
+    let chars := charsAt text
+    let (sought, other) :=
+      if opening then (bracket.opening, bracket.closing) else (bracket.closing, bracket.opening)
+    -- The index of the character at the offset, or the count at the end.
+    let here := (chars.findIdx? (·.1 ≥ offset)).getD chars.size
+    let walk :=
+      if forward then (List.range chars.size).filter (· > here)
+      else ((List.range chars.size).filter (· < here)).reverse
+    let rec go (depth : Nat) : List Nat → Option Nat
+      | [] => none
+      | index :: rest =>
+        let (pos, char) := chars[index]!
+        if (char == sought || char == other) && escapedAt chars index == escaped then
+          if char == other then go (depth + 1) rest
+          else if depth == 0 then some pos else go (depth - 1) rest
+        else go depth rest
+    .ok (go 0 walk)
+
+/-- The first quote `quote` among `line`, the characters of a row's content,
+at or after the index `first`, passing over each character a backslash
+escapes when `escapes` (Vim's `find_next_quote`). -/
+def nextQuote (line : Array (Nat × Char)) (quote : Char) (first : Nat) (escapes : Bool) :
+    Option Nat :=
+  Id.run do
+    let mut index := first
+    while index < line.size do
+      let char := line[index]!.2
+      if escapes && char == '\\' then
+        index := index + 2
+      else if char == quote then
+        return some index
+      else
+        index := index + 1
+    return none
+
+/-- The nearest quote `quote` among `line` before the index `first` that is
+not escaped, or 0 when there is none (Vim's `find_prev_quote`): a character
+after an odd number of backslashes is passed over with them. -/
+def previousQuote (line : Array (Nat × Char)) (quote : Char) (first : Nat) : Nat :=
+  Id.run do
+    let mut index := first
+    while index > 0 do
+      index := index - 1
+      let run := ((line.extract 0 index).toList.reverse.takeWhile (·.2 == '\\')).length
+      if run % 2 == 1 then
+        index := index - run
+      else if line[index]!.2 == quote then
+        break
+    return index
+
+/-- The model's answer to the quoted string round `offset` ("Pairs", in the
+rules of the port): Vim's walk over the characters of `offset`'s row. -/
+def quoted? (text : String) (quote : Quote) (offset : Nat) : Except TextError (Option Extent) :=
+  if !isPosition text offset then .error .badPosition
+  else
+    let chars := charsAt text
+    -- The row: from after the last line feed before the offset to the next
+    -- line feed, without a carriage return right before it.
+    let start :=
+      ((chars.filter fun (pos, char) => char == '\n' && pos < offset).back?.map (·.1 + 1)).getD 0
+    let feed := (chars.find? fun (pos, char) => char == '\n' && pos ≥ start).map (·.1)
+    let row := chars.filter fun (pos, _) => pos ≥ start && feed.all (pos < ·)
+    let line := if feed.isSome && (row.back?.map (·.2)) == some '\r' then row.pop else row
+    let cursor := (line.findIdx? (·.1 ≥ offset)).getD line.size
+    let q := quote.char
+    let extent (opening closing : Nat) : Extent := ⟨line[opening]!.1, line[closing]!.1 + 1⟩
+    let found : Option Extent :=
+      if (line[cursor]?.map (·.2)) == some q then
+        -- The pairs from the row's start, until one holds the cursor.
+        let rec pairs (first : Nat) (fuel : Nat) : Option Extent :=
+          match fuel with
+          | 0 => none
+          | fuel + 1 => do
+            let opening ← nextQuote line q first false
+            if opening > cursor then
+              none
+            else
+              let closing ← nextQuote line q (opening + 1) true
+              if cursor ≤ closing then
+                some (extent opening closing)
+              else
+                pairs (closing + 1) fuel
+        pairs 0 (line.size + 1)
+      else do
+        let before := previousQuote line q cursor
+        let opening ←
+          if (line[before]?.map (·.2)) == some q then
+            some before
+          else
+            nextQuote line q before false
+        let closing ← nextQuote line q (opening + 1) true
+        some (extent opening closing)
+    .ok found
+
 /-- The model's answer to `query` about `content`. -/
 def answer (content : TextContent) : (query : TextQuery) → Except TextError query.Answer
   | .revision => .ok content.revision
@@ -833,6 +944,9 @@ def answer (content : TextContent) : (query : TextQuery) → Except TextError qu
     | none => .error .badPosition
   | .search pattern forward offset => search content.contents pattern forward offset
   | .matches pattern start stop => matchesIn content.contents pattern start stop
+  | .unmatched bracket opening forward escaped offset =>
+    unmatched? content.contents bracket opening forward escaped offset
+  | .quoted quote offset => quoted? content.contents quote offset
 
 end TextModel
 

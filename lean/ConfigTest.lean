@@ -2910,7 +2910,7 @@ def setup : SetupM Unit := do
 /-- A chunk whose `setup` registers three commands that are given their
 call, over the tables the editor ships, each named by the chunk and none
 restated: `delete-word` moves to the line's start (`Evil.move`) and runs
-evil's operate command (`Evil.operate Evil.operators Evil.motions`) with
+evil's operate command (`Evil.operate Evil.operators Evil.motions Evil.objects`) with
 the arguments the Vim scheme compiles `d w` to; `again` hands evil's repeat
 command (`Evil.repeat`) that same change, as the scheme's repeat key would,
 which the repeat command has the registry's operate command run; and `back`
@@ -2923,7 +2923,7 @@ def operatorsChunk : String :=
 def setup : SetupM Unit := do
   commandWith \"delete-word\" fun call => do
     Evil.move Evil.motions { call with arguments := [.str Evil.lineStart.name] }
-    Evil.operate Evil.operators Evil.motions { call with arguments := deleteWord }
+    Evil.operate Evil.operators Evil.motions Evil.objects { call with arguments := deleteWord }
   commandWith \"again\" fun call =>
     Evil.repeat
       { call with
@@ -2946,10 +2946,12 @@ def eraseWord : List Argument :=
   [.str erase.name, .str \"motion\", .str Evil.wordForward.name, .nat 0, .str \"\"]
 
 def setup : SetupM Unit := do
-  commandWith Vim.operateCommand (Evil.operate (Evil.operators.push erase) Evil.motions)
+  commandWith Vim.operateCommand
+    (Evil.operate (Evil.operators.push erase) Evil.motions Evil.objects)
   commandWith \"erase-word\" fun call => do
     Evil.move Evil.motions { call with arguments := [.str Evil.lineStart.name] }
-    Evil.operate (Evil.operators.push erase) Evil.motions { call with arguments := eraseWord }
+    Evil.operate (Evil.operators.push erase) Evil.motions Evil.objects
+      { call with arguments := eraseWord }
   commandWith \"again\" fun call =>
     Evil.repeat
       { call with
