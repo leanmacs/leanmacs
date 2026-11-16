@@ -2712,10 +2712,31 @@ background is the paper. -/
 def unthemedFace : Editor.FaceName :=
   ⟨"theme-pictures.unthemed"⟩
 
+/-- The status line of the theme pictures: the shipped mode line
+(`ModeLine.standard`) of the selected window on `source.lean`, opened as
+`source.lean` and not modified, of which the Vim scheme reports `VISUAL` in
+`Vim.stateFace "visual"`, with its cursor at the byte `head` of `text`, the
+fixture's own text, and `text`'s rows: what the editor sends of such a
+window. -/
+def themeStatus (text : String) (head : Nat) : Array Editor.StatusField :=
+  let before := (String.fromUTF8? (text.toUTF8.extract 0 head)).getD ""
+  let rows := before.splitOn "\n"
+  let all := text.splitOn "\n"
+  let lines := if all.length > 1 && all.getLast? == some "" then all.length - 1 else all.length
+  let buffer : Editor.Buffer :=
+    { name := "source.lean", text := ⟨0⟩, history := Editor.UndoTree.new ⟨0⟩ 0
+      file :=
+        some { path := "source.lean", stamp := { seconds := 0, nanoseconds := 0, size := 0 } } }
+  Editor.ModeLine.standard.fields
+    { buffer, reported := #[{ text := "VISUAL", face := Editor.Vim.stateFace "visual" }]
+      cursor := some ⟨rows.length - 1, ((rows.getLast?).getD "").length⟩, lines }
+
 /-- One picture of the theme-pictures scene, drawn through the real
 binding over a display of the one font `font`: `text` in one view the size
-of `themePictureSize`, in `theme`, with the status fields `status.state`
-"VISUAL" and `status.name` "source.lean". With `selected`, the text holds
+of `themePictureSize`, in `theme`, with the shipped mode line of a selected
+window in visual state on `source.lean` (`themeStatus`): the `VISUAL` badge,
+the buffer's name, and on the right line:col and the position, the same in
+every draw, read from `selectedIn`. With `selected`, the text holds
 one selection, from the `a` of `area` to its head on the `h` of `(w h`,
 with a block cursor there in `cursor`; without, it holds none, and so no
 cursor. The offsets are found in `selectedIn`, the fixture's own text, so
@@ -2743,9 +2764,7 @@ def themePicture (font : ByteArray) (theme : Editor.Theme) (text selectedIn : St
             selections := if selected.isSome then #[marker selection] else #[]
             cursor := { shape := .block, face := selected.getD unthemedFace }
             decorations := #[]
-            status :=
-              #[{ text := "VISUAL", face := ⟨"status.state"⟩ },
-                { text := "source.lean", face := ⟨"status.name"⟩ }] }]
+            status := themeStatus selectedIn (head + 3) }]
       focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
   if let .error refusal← (Editor.Display.publish scene).runReal real then
     throw (IO.userError s!"publishing was refused: {repr refusal}")

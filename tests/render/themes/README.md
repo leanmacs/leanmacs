@@ -11,9 +11,9 @@ what the editor sends, not a theme written again in Rust.
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
-| `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 14000 | `57948cfdd113477aeea2920de92319e32844ee3cb6eef82039d8e314852c0fdc` |
-| `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 13920 | `1feb26e15f5224693d0c07d7b0923e3e824b11033d0d9130aef32add9e6b9490` |
-| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 14442 | `9b4225527076d1601155adc14259e8ee7b937e860bf49f989b3179eb80f11d5d` |
+| `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15482 | `3f64c5fd2deac25bd2e75ad13cea0b03d5e2523860ae6fb2c72d860779de0693` |
+| `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15455 | `b1d66800a228667b8c572bbc614ceecf77e20f39a8b1d134bf20e95c4bd13104` |
+| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16043 | `ec26893ec07cca9a03b7b8332fd2b13feaf4dabf5ef4a830ef447cae977bedae` |
 
 Each is kept small on purpose: the scene's size, 320 by 160, and at most
 20 KB, which the scenario checks.
@@ -29,8 +29,15 @@ remain below it:
   the `h` of `(w h`, in the theme's selection background;
 - a block cursor on that `h`, in the face of the Vim scheme's visual state
   (`cursor.visual`): the paper on the cursor colour;
-- a status line across the bottom, `VISUAL` in `status.state` and
-  `source.lean` in `status.name`, over `mode-line`.
+- the mode line across the bottom, the shipped one of a selected window
+  in visual state (`FfiTest.themeStatus`, `lean/Editor/ModeLine.lean`):
+  on the left the `VISUAL` badge in `mode-line.state.visual`, the paper on
+  the theme's visual accent, with 8 points of it each side of the text,
+  then `source.lean` in `mode-line.buffer`; on the right, ending at the
+  row's end, the cursor's line:col `2:13` and its position `50%` in
+  `mode-line.secondary`; over `mode-line`, in a row made taller by
+  `mode-line`'s and `echo-area`'s padding of 3 points above and below (the
+  font's 22-pixel line and 6, 28 pixels, the view's bottom row).
 
 It is laid out by the real shaper over one font file, the fixture
 `tests/fonts/NotoSansMono-Regular.subset.ttf`, the default family of a
@@ -39,12 +46,15 @@ not in the set and falls through to it. It is drawn at 16 points, the
 theme's default size, at scale 1, with grayscale antialiasing and hinting,
 at the linear weight.
 
-The Solarized files were looked at, enlarged four times, when they were made
-(2026-11-16), and each of those was seen in both: by the agent that
-implemented the Solarized themes, and not yet by a person.
-`fairy-floss.png` was looked at the same way when it was made
-(2026-11-16), by the agent that implemented Fairy Floss, and not yet by a
-person. Looking at them
+The three files were made again for the segmented mode line and looked
+at, enlarged four times, when they were (2026-11-16), by the agent that
+implemented it, and not yet by a person: in each, the text, the selection
+and the block cursor on the `h` are as before; the badge is a box of its
+accent (Solarized's magenta, Fairy Floss's lavender) 74 pixels across from
+the row's start, its text 8 pixels in; the buffer's name follows in bold;
+line:col and the position end at the row's right edge; and the status row
+is 28 pixels tall, from row 132. Measured too, by decoding the files'
+pixels. Looking at them
 checks that they show text, a selection and a cursor; it does not judge
 how the theme looks, which is left to the owner's day-to-day use.
 
