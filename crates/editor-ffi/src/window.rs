@@ -690,6 +690,15 @@ impl PlatformId {
     }
 
     /// The process-wide platform this names.
+    fn platform(self) -> &'static dyn Platform {
+        match self {
+            Self::Scripted => &*SCRIPTED,
+            Self::Winit => &WINIT,
+            Self::ScriptedFailing => &*SCRIPTED_FAILING,
+            Self::ScriptedUndrawn => &*SCRIPTED_UNDRAWN,
+        }
+    }
+
     /// The scripted platform this names, when it names one.
     pub fn scripted(self) -> Option<&'static ScriptedPlatform> {
         match self {
@@ -697,15 +706,6 @@ impl PlatformId {
             Self::ScriptedFailing => Some(&*SCRIPTED_FAILING),
             Self::ScriptedUndrawn => Some(&*SCRIPTED_UNDRAWN),
             Self::Winit => None,
-        }
-    }
-
-    fn platform(self) -> &'static dyn Platform {
-        match self {
-            Self::Scripted => &*SCRIPTED,
-            Self::Winit => &WINIT,
-            Self::ScriptedFailing => &*SCRIPTED_FAILING,
-            Self::ScriptedUndrawn => &*SCRIPTED_UNDRAWN,
         }
     }
 }

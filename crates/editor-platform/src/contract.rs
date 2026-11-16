@@ -15,9 +15,6 @@
 //!   run is not reported first by the run that follows, and one asked after
 //!   a run reports nothing. The check asks for a title, which is harmless
 //!   on a real desktop.
-//!
-//! What a window does with a request while it runs is the contract of
-//! [`requests`], which needs no platform.
 //! - **The drawer is told the window opened before anyone hears of it.**
 //!   The first thing a run tells its [`Drawer`] is [`Canvas::Opened`], and it
 //!   tells it before it reports its first input: whoever learns of the
@@ -27,6 +24,9 @@
 //!   that whatever was made on the window is let go while the window is
 //!   still there.
 //! - **A platform that cannot open a window tells the drawer nothing.**
+//!
+//! What a window does with a request while it runs is the contract of
+//! [`requests`], which needs no platform.
 //!
 //! A platform that cannot open a window does not pass: the contract is of a
 //! window that opens.

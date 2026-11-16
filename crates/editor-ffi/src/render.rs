@@ -250,6 +250,11 @@ pub enum Follows {
     Scene,
 }
 
+/// Where the presenter sends a request to the open window: the platform's
+/// [`Platform::request`](editor_platform::Platform::request), in the
+/// process. It never calls back into the presenter.
+pub type Asker = Arc<dyn Fn(Request) + Send + Sync>;
+
 /// Where the frames bound displays publish go, and what the window said
 /// of its scale: one value, handed explicitly to everything that uses it.
 ///
@@ -268,11 +273,6 @@ pub enum Follows {
 ///
 /// Each part is behind its own lock or atomic. The process has one, at the
 /// C edge only ([`PRESENTER`]); every test makes its own.
-/// Where the presenter sends a request to the open window: the platform's
-/// [`Platform::request`](editor_platform::Platform::request), in the
-/// process. It never calls back into the presenter.
-pub type Asker = Arc<dyn Fn(Request) + Send + Sync>;
-
 pub struct Presenter {
     /// The handle that takes submits, and whose size it follows.
     target: Mutex<Option<(RenderHandle, Follows)>>,
@@ -358,6 +358,10 @@ impl Presenter {
     }
 
     /// The stamp the next frame presented answers.
+    pub fn answering(&self) -> &Answering {
+        &self.answering
+    }
+
     /// Keeps `title` as the one the scenes name, and sends it to the open
     /// window when it is not the title last sent there: a publish per key
     /// does not ask the window per key. The asker is called under the
@@ -380,10 +384,6 @@ impl Presenter {
     /// goes to the next window that opens.
     pub fn close_window(&self) {
         locked(&self.titles).window = None;
-    }
-
-    pub fn answering(&self) -> &Answering {
-        &self.answering
     }
 
     /// Presents `frame`, laid out from a scene `size` across and down: the
@@ -774,6 +774,10 @@ impl<R: Renderer + Send + 'static> Session<R> {
     /// Why nothing draws in the window, when nothing does: what the factory
     /// said, or that the render thread could not be started or did not end
     /// well.
+    pub fn failure(&self) -> Option<String> {
+        self.state().failure.clone()
+    }
+
     /// The same session, which hands `asker` to its presenter when the
     /// window opens ([`Presenter::open_window`]), so that the title the
     /// scenes name reaches the window, and lets it go when the window is
@@ -782,10 +786,6 @@ impl<R: Renderer + Send + 'static> Session<R> {
     pub fn asking(self, asker: Asker) -> Self {
         self.state().asker = Some(asker);
         self
-    }
-
-    pub fn failure(&self) -> Option<String> {
-        self.state().failure.clone()
     }
 
     /// Takes one thing the window tells: the table in the module docs, and
