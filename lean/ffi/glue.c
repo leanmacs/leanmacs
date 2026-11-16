@@ -1374,6 +1374,107 @@ lean_obj_res editor_glue_display_scene(b_lean_obj_arg display) {
   return lean_io_result_mk_ok(scene);
 }
 
+// ---- A display's picture, for tests ----
+//
+// A display over one font file it is given, and the picture of its latest
+// frame, drawn by the library's CPU renderer; and a picture read from and
+// written to a PNG file. A picture crosses as the library's `RawPicture`,
+// which the glue builds into Lean's: its pixels copied into a `ByteArray`,
+// and the library's buffer handed back.
+
+// The library's `RawPicture`.
+typedef struct {
+  uint64_t width;
+  uint64_t height;
+  uint8_t *rgba;
+  size_t len;
+} editor_ffi_raw_picture;
+editor_ffi_display *
+editor_ffi_display_new_font(const uint8_t *bytes, size_t len,
+                            const uint8_t *family, size_t family_len,
+                            editor_ffi_raw_text *out_reason);
+void editor_ffi_display_picture(const editor_ffi_display *display,
+                                editor_ffi_raw_picture *out);
+bool editor_ffi_picture_from_png(const uint8_t *bytes, size_t len,
+                                 editor_ffi_raw_picture *out,
+                                 editor_ffi_raw_text *out_reason);
+bool editor_ffi_picture_to_png(uint64_t width, uint64_t height,
+                               const uint8_t *rgba, size_t len,
+                               editor_ffi_raw_words *out);
+
+// Lean's `RawPicture` for a record the library filled: the object field
+// `rgba`, then `width` and `height`. The library's buffer is handed back.
+static lean_object *raw_picture_take(editor_ffi_raw_picture raw) {
+  lean_object *picture = lean_alloc_ctor(0, 1, 2 * sizeof(uint64_t));
+  lean_ctor_set(picture, 0, byte_array_copy(raw.rgba, raw.len));
+  lean_ctor_set_uint64(picture, uint64_field(1, 0), raw.width);
+  lean_ctor_set_uint64(picture, uint64_field(1, 1), raw.height);
+  editor_ffi_text_free(raw.rgba, raw.len);
+  return picture;
+}
+
+// The `IO` error of the library's reason, whose buffer is handed back.
+static lean_obj_res reason_error(editor_ffi_raw_text reason) {
+  lean_object *text =
+      lean_mk_string_from_bytes((const char *)reason.text, reason.text_len);
+  editor_ffi_text_free(reason.text, reason.text_len);
+  return lean_io_result_mk_error(lean_mk_io_user_error(text));
+}
+
+// `Editor.Ffi.Display.newFont : @& ByteArray → @& String → IO Display`
+lean_obj_res editor_glue_display_new_font(b_lean_obj_arg bytes,
+                                          b_lean_obj_arg family) {
+  pthread_once(&display_class_once, display_class_register);
+  editor_ffi_raw_text reason;
+  editor_ffi_display *display = editor_ffi_display_new_font(
+      byte_array_bytes(bytes), byte_array_len(bytes), string_bytes(family),
+      string_len(family), &reason);
+  if (display == NULL) {
+    return reason_error(reason);
+  }
+  editor_ffi_text_free(reason.text, reason.text_len);
+  return lean_io_result_mk_ok(lean_alloc_external(display_class, display));
+}
+
+// `Editor.Ffi.Display.pictureRaw : @& Display → IO RawPicture`
+lean_obj_res editor_glue_display_picture(b_lean_obj_arg display) {
+  editor_ffi_raw_picture raw;
+  editor_ffi_display_picture(lean_get_external_data(display), &raw);
+  return lean_io_result_mk_ok(raw_picture_take(raw));
+}
+
+// `Editor.Ffi.Picture.ofPngRaw : @& ByteArray → IO RawPicture`
+lean_obj_res editor_glue_picture_from_png(b_lean_obj_arg bytes) {
+  editor_ffi_raw_picture raw;
+  editor_ffi_raw_text reason;
+  bool read = editor_ffi_picture_from_png(byte_array_bytes(bytes),
+                                          byte_array_len(bytes), &raw, &reason);
+  lean_object *picture = raw_picture_take(raw);
+  if (!read) {
+    lean_dec(picture);
+    return reason_error(reason);
+  }
+  editor_ffi_text_free(reason.text, reason.text_len);
+  return lean_io_result_mk_ok(picture);
+}
+
+// `Editor.Ffi.Picture.toPngRaw : UInt64 → UInt64 → @& ByteArray → IO
+// ByteArray`
+lean_obj_res editor_glue_picture_to_png(uint64_t width, uint64_t height,
+                                        b_lean_obj_arg rgba) {
+  editor_ffi_raw_words raw;
+  bool written = editor_ffi_picture_to_png(
+      width, height, byte_array_bytes(rgba), byte_array_len(rgba), &raw);
+  lean_object *png = byte_array_copy(raw.words, raw.len);
+  editor_ffi_text_free(raw.words, raw.len);
+  if (!written) {
+    lean_dec(png);
+    return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(
+        "the picture's pixels are not its width by its height")));
+  }
+  return lean_io_result_mk_ok(png);
+}
+
 // ---- The display's binding to the presenter, and the render session ----
 //
 // A display bound to the library's presenter has its frames drawn by the

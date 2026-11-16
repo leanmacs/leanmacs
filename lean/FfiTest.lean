@@ -1,6 +1,9 @@
 import Editor.Display.Real
 import Editor.Event.Queue
 import Editor.Ffi
+import Editor.InputScheme.Vim
+import Editor.Themes.Compiled
+import Editor.Themes.Solarized
 import Editor.Window.Real
 import Editor.WindowCheck.Real
 import Lean.Environment
@@ -16,7 +19,9 @@ object, Rust archive and entry point. With no arguments it runs every check in
 Some behaviour needs a process of its own, so it is a scenario chosen by an
 argument (see `main`): `exit <code>` for the exit status, `shutdown` and
 `exit-while-blocked` because quitting the queues is for good, and `overflow`
-because it ends in an abort. `mise run ffi-test` runs the checks and every
+because it ends in an abort. `theme-pictures <dir> <font>` compares the
+shipped Solarized themes' pictures of a fixture file with their reference
+images (`themePicturesScenario`), and with `--write` makes them again. `mise run ffi-test` runs the checks and every
 scenario but `overflow`, under a time limit, and is part of the gate.
 `mise run ffi-overflow` runs `overflow`, on demand only: on macOS every abort
 leaves a crash report on the machine.
@@ -2544,6 +2549,348 @@ def displayScenario (fixture : String) : IO UInt8 := do
       "ffi-test display: the published frame is the fixture, the scene comes back as sent, and three moves land on the frame's next row"
   return 0
 
+/-! ## Theme pictures
+
+Pictures the library's CPU renderer draws of a display's frame
+(`Ffi.Display.picture`), and the pure helpers the theme-pictures scenario
+reads them with. A pixel is a `Color`, its four bytes red first, so it
+compares with a theme's colours as they are. -/
+
+/-- The pixel numbered `index` of `picture`, counted row by row from the
+top left; `none` past its last. -/
+def pixelAt (picture : Editor.Ffi.Picture) (index : Nat) : Option Editor.Color :=
+  if index * 4 + 4 ≤ picture.rgba.size then
+    let byte (offset : Nat) : UInt8 := picture.rgba.get! (index * 4 + offset)
+    some (.rgba (byte 0) (byte 1) (byte 2) (byte 3))
+  else none
+
+/-- How many pixels `picture` has. -/
+def pixelCount (picture : Editor.Ffi.Picture) : Nat :=
+  picture.rgba.size / 4
+
+/-- The four bytes of `color`, red first. -/
+def channels (color : Editor.Color) : List Nat :=
+  [24, 16, 8, 0].map fun shift => ((color.word >>> shift.toUInt32) &&& 0xff).toNat
+
+/-- The largest difference of any channel of two colours. -/
+def channelDistance (one two : Editor.Color) : Nat :=
+  ((channels one).zip (channels two)).foldl (fun worst (a, b) => max worst (max a b - min a b)) 0
+
+/-- The numbers of the pixels where `one` and `two` differ; none when they
+are not the same size. -/
+def differing (one two : Editor.Ffi.Picture) : Array Nat :=
+  if (one.width, one.height) != (two.width, two.height) then #[]
+  else (Array.range (pixelCount one)).filter fun index => pixelAt one index != pixelAt two index
+
+/-- How `one` differs from `two`: `none` when they are not the same size,
+and otherwise the largest difference of any channel of any pixel, with how
+many pixels differ at all. -/
+def difference (one two : Editor.Ffi.Picture) : Option (Nat × Nat) :=
+  if (one.width, one.height) != (two.width, two.height) then none
+  else
+    some <|
+      (differing one two).foldl
+        (fun (worst, count) index =>
+          match pixelAt one index, pixelAt two index with
+          | some a, some b => (max worst (channelDistance a b), count + 1)
+          | _, _ => (worst, count + 1))
+        (0, 0)
+
+/-- The colour most of the pixels numbered `indices` of `picture` have;
+`none` when there are none. -/
+def commonest (picture : Editor.Ffi.Picture) (indices : Array Nat) : Option Editor.Color :=
+  let counts : Std.HashMap UInt32 Nat :=
+    indices.foldl
+      (fun counts index =>
+        match pixelAt picture index with
+        | some color => counts.insert color.word (counts.getD color.word 0 + 1)
+        | none => counts)
+      {}
+  let best :=
+    counts.fold
+      (fun (best : Option (UInt32 × Nat)) word count =>
+        match best with
+        | some (_, most) => if count > most then some (word, count) else best
+        | none => some (word, count))
+      none
+  best.map fun (word, _) => { word }
+
+/-- Whether `color` lies, channel by channel, between `paper` and `ink`,
+within `slack` of either end: a blend of the two. -/
+def between (paper ink color : Editor.Color) (slack : Nat) : Bool :=
+  ((channels paper).zip ((channels ink).zip (channels color))).all fun (p, i, c) =>
+    min p i ≤ c + slack && c ≤ max p i + slack
+
+/-- A picture 2 pixels by 2 of `colors`, row by row. -/
+def pictureOf (colors : List Editor.Color) : Editor.Ffi.Picture :=
+  { width := 2, height := 2
+    rgba := ⟨(colors.flatMap fun color => (channels color).map (·.toUInt8)).toArray⟩ }
+
+/-- The checks of the helpers the theme-pictures scenario reads its
+pictures with, on pictures 2 by 2 written here, and of a picture's round
+trip through a PNG file by the real binding. -/
+def pictureChecks (_ : Unit) : List Check :=
+  let black := Editor.Color.rgb 0 0 0
+  let white := Editor.Color.rgb 255 255 255
+  let grey := Editor.Color.rgb 128 128 128
+  let red := Editor.Color.rgb 200 0 0
+  [{  name := "two pictures differ where their pixels do, by their worst channel"
+      run :=
+        let one := pictureOf [black, white, grey, grey]
+        let two := pictureOf [black, Editor.Color.rgb 250 255 254, grey, red]
+        pure
+          (differing one two == #[1, 3] && difference one two == some (128, 2) &&
+            difference one one == some (0, 0) &&
+            difference one
+                { one with
+                  width := 4, height := 1 } ==
+              none) },
+    { name := "the commonest colour of some pixels is the one most of them have"
+      run :=
+        let picture := pictureOf [grey, white, grey, red]
+        pure
+          (commonest picture #[0, 1, 2, 3] == some grey && commonest picture #[1] == some white &&
+            commonest picture #[] == none) },
+    { name := "a blend of paper and ink is between them, and a third colour is not"
+      run :=
+        pure
+          (between black white grey 0 && between white black grey 0 && !between black grey red 0 &&
+            between black grey (Editor.Color.rgb 129 130 0) 2 &&
+            !between black grey (Editor.Color.rgb 129 131 0) 2) },
+    { name := "a picture comes back from its PNG file through the library"
+      run := do
+        let picture := pictureOf [black, white, grey, red]
+        return (← Editor.Ffi.Picture.ofPng (← picture.toPng)) == picture },
+    { name := "bytes that are no PNG file and a font that is none are refused with a reason"
+      run := do
+        let notPng ←
+          try
+            discard <| Editor.Ffi.Picture.ofPng "no".toUTF8
+            pure false
+          catch error =>
+            pure !(toString error).isEmpty
+        let notFont ←
+          try
+            discard <| Editor.Ffi.Display.newFont "no".toUTF8 "Noto Sans Mono"
+            pure false
+          catch error =>
+            pure !(toString error).isEmpty
+        return notPng && notFont }]
+
+/-- Where `needle` first starts in `haystack`, as a byte offset. -/
+def offsetOf (haystack needle : String) : Option Nat :=
+  let hay := haystack.toUTF8
+  let pin := needle.toUTF8
+  (List.range (hay.size + 1 - pin.size)).find? fun start =>
+    (List.range pin.size).all fun index => hay.get! (start + index) == pin.get! index
+
+/-- The size of the theme pictures: one view covers it, taller than the
+fixture's text, so rows of bare paper remain. -/
+def themePictureSize : Editor.Size :=
+  { width := 320, height := 160 }
+
+/-- The face name no theme defines, which the scenario draws the cursor in
+to find the cursor's cell: by the face rule (`Editor/Face.lean`) a cursor
+in it is drawn in the default face's paint, the ink on the paper, so its
+background is the paper. -/
+def unthemedFace : Editor.FaceName :=
+  ⟨"theme-pictures.unthemed"⟩
+
+/-- One picture of the theme-pictures scene, drawn through the real
+binding over a display of the one font `font`: `text` in one view the size
+of `themePictureSize`, in `theme`, with the status fields `status.state`
+"VISUAL" and `status.name` "source.lean". With `selected`, the text holds
+one selection, from the `a` of `area` to its head on the `h` of `(w h`,
+with a block cursor there in `cursor`; without, it holds none, and so no
+cursor. The offsets are found in `selectedIn`, the fixture's own text, so
+that a text of spaces is selected where the fixture is. -/
+def themePicture (font : ByteArray) (theme : Editor.Theme) (text selectedIn : String)
+    (selected : Option Editor.FaceName) : IO Editor.Ffi.Picture := do
+  let some anchor := offsetOf selectedIn "def area"
+    | throw (IO.userError "the fixture has no `def area`")
+  let some head := offsetOf selectedIn "(w h"
+    | throw (IO.userError "the fixture has no `(w h`")
+  let document ← Editor.Ffi.Document.new text
+  let scroll ← markIn document (.anchor { offset := 0, bias := .before })
+  let selection ← markIn document (rangeMarker (anchor + 4).toUInt64 (head + 3).toUInt64)
+  let table ← Editor.Snapshots.new
+  let snapshot ← table.add (← document.snapshot)
+  let display ← Editor.Ffi.Display.newFont font "Noto Sans Mono"
+  let real ← Editor.RealDisplay.over display table.reader theme
+  let marker (index : Nat) : Editor.MarkerId := { text := ⟨0⟩, index }
+  let size := themePictureSize
+  let scene : Editor.Scene :=
+    { size
+      views :=
+        #[{ id := ⟨1⟩, rect := { x := 0, y := 0, width := size.width, height := size.height }
+            snapshot, scroll := marker scroll
+            selections := if selected.isSome then #[marker selection] else #[]
+            cursor := { shape := .block, face := selected.getD unthemedFace }
+            decorations := #[]
+            status :=
+              #[{ text := "VISUAL", face := ⟨"status.state"⟩ },
+                { text := "source.lean", face := ⟨"status.name"⟩ }] }]
+      focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
+  if let .error refusal← (Editor.Display.publish scene).runReal real then
+    throw (IO.userError s!"publishing was refused: {repr refusal}")
+  let picture ← display.picture
+  -- The document is held until here, past the publish: the library reads
+  -- its markers.
+  discard <| document.read
+  return picture
+
+/-- The colours Solarized's specification gives a variant's paper, its
+body text and its cursor, written from the published colours
+(`Themes.Solarized.published`, pinned by `ModelTest.solarizedChecks`), not
+read from the theme. -/
+structure ThemeRoles where
+  /-- The shipped theme's name, and its reference image's. -/
+  name : String
+  /-- The background. -/
+  paper : Editor.Color
+  /-- The body text. -/
+  ink : Editor.Color
+  /-- The cursor's background. -/
+  cursor : Editor.Color
+
+/-- Solarized dark's and light's roles: base0 on base03, its cursor
+base0; base00 on base3, its cursor base00. -/
+def solarizedRoles : List ThemeRoles :=
+  let c := Editor.Themes.Solarized.published
+  [{ name := "solarized-dark", paper := c.base03, ink := c.base0, cursor := c.base0 },
+    { name := "solarized-light", paper := c.base3, ink := c.base00, cursor := c.base00 }]
+
+/-- How far any channel of any pixel may be from the reference's: 2 of 255,
+the bound and the reason of the renderer's own reference image
+(`crates/editor-render-wgpu/tests/reference.rs`). -/
+def pictureTolerance : Nat :=
+  2
+
+/-- The largest a theme's reference image may be as a file. -/
+def largestReference : Nat :=
+  20000
+
+/-- The four pictures of one variant: the scene, the scene with its cursor
+in a face nothing defines, and the scene with no selection over the
+fixture's text and over the same text with every character but a newline a
+space. -/
+structure ThemePictures where
+  /-- The scene. -/
+  scene : Editor.Ffi.Picture
+  /-- Its cursor unthemed. -/
+  unthemed : Editor.Ffi.Picture
+  /-- No selection, over the text. -/
+  text : Editor.Ffi.Picture
+  /-- No selection, over spaces. -/
+  blank : Editor.Ffi.Picture
+
+/-- The four pictures of `theme`, over the fixture `source`. -/
+def themePictures (font : ByteArray) (theme : Editor.Theme) (source : String) : IO ThemePictures :=
+  do
+  let spaces := String.ofList (source.toList.map fun c => if c == '\n' then c else ' ')
+  return {
+      scene := ← themePicture font theme source source (some (Editor.Vim.cursorFace "visual"))
+      unthemed := ← themePicture font theme source source (some unthemedFace)
+      text := ← themePicture font theme source source none
+      blank := ← themePicture font theme spaces source none }
+
+/-- The role checks of one variant's pictures, as the names of what did
+not hold: the commonest colour is the paper; the pixels where the cursor's
+cell changes when its face is unthemed are mostly the cursor colour; and
+the pixels the text changes from spaces are blends of the paper and the
+ink, one of them within the tolerance of the ink. -/
+def roleChecks (roles : ThemeRoles) (pictures : ThemePictures) : List String :=
+  let all := Array.range (pixelCount pictures.scene)
+  let paper :=
+    if commonest pictures.scene all == some roles.paper then []
+    else [s!"{roles.name}: the commonest colour is not the paper"]
+  let cell := differing pictures.scene pictures.unthemed
+  let cursor :=
+    if cell.isEmpty then [s!"{roles.name}: the cursor's face changes no pixel"]
+    else
+      if commonest pictures.scene cell == some roles.cursor then []
+      else [s!"{roles.name}: the cursor's cell is not mostly the cursor colour"]
+  let glyphs := differing pictures.text pictures.blank
+  let inked := glyphs.filterMap (pixelAt pictures.text)
+  let blended :=
+    if inked.isEmpty then [s!"{roles.name}: the text changes no pixel from spaces"]
+    else
+      if !inked.all (between roles.paper roles.ink · pictureTolerance) then
+        [s!"{roles.name}: a pixel of the text is not between the paper and the ink"]
+      else
+        let farthest :=
+          inked.foldl
+            (fun (far : Editor.Color) pixel =>
+              if channelDistance pixel roles.paper > channelDistance far roles.paper then pixel
+              else far)
+            roles.paper
+        if channelDistance farthest roles.ink ≤ pictureTolerance then []
+        else [s!"{roles.name}: no pixel of the text is the ink"]
+  paper ++ cursor ++ blended
+
+/-- The theme-pictures scenario over the reference images in `dir`, its
+fixture `dir/source.lean`, and the font file `font`. For each of
+`solarized-dark` and `solarized-light`, looked up by name in
+`Themes.shipped`, it draws the four pictures (`themePictures`) and, with
+`write`, writes the scene's picture to `dir/<name>.png` (`mise run
+theme-references`); without, it compares the scene's picture with that
+file within `pictureTolerance`, runs `roleChecks`, and guards that each
+reference is the scene's size and at most `largestReference` bytes, and
+that the light picture does not match the dark reference. Exits 0 after a
+line naming what held, or 1 after `FAILED:` lines. -/
+def themePicturesScenario (dir font : String) (write : Bool) : IO UInt8 := do
+  let source ← IO.FS.readFile (System.FilePath.mk dir / "source.lean")
+  let fontBytes ← IO.FS.readBinFile font
+  let mut failed : List String := []
+  let mut scenes : List (String × Editor.Ffi.Picture) := []
+  let mut references : List (String × Editor.Ffi.Picture) := []
+  for roles in solarizedRoles do
+    let some named := Editor.Themes.shipped.find? (·.name == roles.name)
+      | failed := failed ++ [s!"no shipped theme is named {roles.name}"]
+    let pictures ← themePictures fontBytes named.theme source
+    let path := System.FilePath.mk dir / s!"{roles.name}.png"
+    scenes := scenes ++ [(roles.name, pictures.scene)]
+    if write then
+      let bytes ← pictures.scene.toPng
+      IO.FS.writeBinFile path bytes
+      IO.println
+          s!"ffi-test theme-pictures: wrote {path}: {pictures.scene.width} by {pictures.scene.height} pixels, {bytes.size} bytes"
+      continue
+    let file ← IO.FS.readBinFile path
+    let reference ← Editor.Ffi.Picture.ofPng file
+    references := references ++ [(roles.name, reference)]
+    let size := themePictureSize
+    unless
+      (reference.width, reference.height) == (size.width, size.height) &&
+        file.size ≤ largestReference do
+      failed :=
+        failed ++
+          [s!"{path} is {reference.width} by {reference.height} and {file.size} bytes, not {size.width} by {size.height} and at most {largestReference}"]
+    match difference pictures.scene reference with
+    | some (worst, count) =>
+      unless worst ≤ pictureTolerance do
+        failed :=
+          failed ++
+            [s!"{count} pixels of {roles.name} differ from {path}, one by {worst} of 255; the tolerance is {pictureTolerance}"]
+    | none =>
+      failed := failed ++ [s!"the picture of {roles.name} is not the size of {path}"]
+    failed := failed ++ roleChecks roles pictures
+  if write then
+    return if failed.isEmpty then 0 else 1
+  match scenes.lookup "solarized-light", references.lookup "solarized-dark" with
+  | some light, some dark =>
+    unless (difference light dark).any (·.1 > pictureTolerance) do
+      failed := failed ++ ["the light picture matches the dark reference"]
+  | _, _ =>
+    failed := failed ++ ["there is no light picture and dark reference to tell apart"]
+  for name in failed do
+    IO.eprintln s!"FAILED: {name}"
+  unless failed.isEmpty do
+    return 1
+  IO.println
+      "ffi-test theme-pictures: solarized-dark and solarized-light match their reference images; in each the paper, the cursor and the text carry the palette's colours; the light picture is not the dark reference"
+  return 0
+
 /-- The checks of the fuzzy ranking's binding: a pattern and a list of
 strings in, as words and one string, and the indices of the candidates the
 pattern matches out, as words. Which candidates match and in what order are
@@ -2768,6 +3115,7 @@ def checks (_ : Unit) : List Check :=
     eventChecks () ++
     interruptChecks () ++
     fuzzyChecks () ++
+    pictureChecks () ++
     renderChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. A check that
@@ -2872,7 +3220,7 @@ def run (scenario : String) (checks : List Check) : IO UInt8 := do
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | window-host [<file>] | window-host-undrawn <file>]"
+      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | theme-pictures <dir> <font> [--write] | window-host [<file>] | window-host-undrawn <file>]"
   return 2
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
@@ -2982,6 +3330,10 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← FfiTest.run "ffi-test shutdown" (FfiTest.shutdownChecks ()))
   | ["display", fixture] =>
     IO.Process.exit (← FfiTest.displayScenario fixture)
+  | ["theme-pictures", dir, font] =>
+    IO.Process.exit (← FfiTest.themePicturesScenario dir font false)
+  | ["theme-pictures", dir, font, "--write"] =>
+    IO.Process.exit (← FfiTest.themePicturesScenario dir font true)
   | ["window-host", file] =>
     let status ← FfiTest.windowHostScenario (some file)
     Editor.Ffi.quit

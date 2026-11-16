@@ -47,17 +47,20 @@ wgpu = "=30.0.2"
 # error scope's answer, and mapping the read-back buffer. Pinned exactly;
 # `deny.toml` lets no other crate depend on it.
 pollster = "=1.0.1"
+# Reads and writes a picture as a PNG file (`Image::from_png`,
+# `Image::to_png`), kept behind the private module `png`: no type of it is
+# public. Its users are the reference images: this crate's own test and the
+# example that makes it, and the shipped themes' pictures, which
+# `editor-ffi` reads and writes for Lean's `ffi-test`. A normal dependency
+# since then, so the library Lean links holds it. Pinned exactly;
+# `deny.toml` lets no other crate depend on it.
+png = "=0.18.1"
 
 [dev-dependencies]
 # wgpu's no-op back end, for this crate's own tests and no other build:
 # it validates every call and draws nothing, so the gate checks the
 # shader, the pipeline and every draw on a machine with no GPU.
 wgpu = { version = "=30.0.2", features = ["noop"] }
-# Reads the reference image in `tests/reference.rs`, and writes it in the
-# example that makes it (`examples/reference.rs`). Pinned exactly; a
-# dev-dependency only, so no build of the library links it. `deny.toml`
-# lets no other crate depend on it.
-png = "=0.18.1"
 # The real shaper, for one thing: the fixture frame of real text
 # (`tests/common/mod.rs`), which the two tests the port's module docs
 # name as wiring lay out, `tests/reference.rs` and `tests/reuse.rs`, and

@@ -16,11 +16,12 @@ use std::slice;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_ffi::display::{
-    DisplayStatus, WireFace, WireScene, WireView, editor_ffi_display_define,
+    DisplayStatus, RawPicture, WireFace, WireScene, WireView, editor_ffi_display_define,
     editor_ffi_display_frame_rows, editor_ffi_display_frame_text, editor_ffi_display_free,
     editor_ffi_display_heights, editor_ffi_display_live, editor_ffi_display_move,
-    editor_ffi_display_new_cells, editor_ffi_display_publish, editor_ffi_display_rows,
-    editor_ffi_display_scene, encode_definitions,
+    editor_ffi_display_new_cells, editor_ffi_display_new_font, editor_ffi_display_picture,
+    editor_ffi_display_publish, editor_ffi_display_rows, editor_ffi_display_scene,
+    editor_ffi_picture_from_png, editor_ffi_picture_to_png, encode_definitions,
 };
 use editor_ffi::document::{
     Document, RawText, editor_ffi_document_free, editor_ffi_document_new,
@@ -955,4 +956,191 @@ fn a_scene_published_with_faces_comes_back_with_them() {
         editor_ffi_document_free(document);
         editor_ffi_display_free(display);
     }
+}
+
+/// The fixture mono font, compiled in for this test alone: no file is read
+/// when it runs, and no font of the machine is used.
+const MONO: &[u8] = include_bytes!("../../../tests/fonts/NotoSansMono-Regular.subset.ttf");
+
+/// The family the fixture mono font holds.
+const MONO_FAMILY: &str = "Noto Sans Mono";
+
+/// A display over the one font `bytes` holds, as family `family`, through
+/// C: the handle, or the reason it was refused.
+fn font_display(bytes: &[u8], family: &str) -> Result<*mut editor_ffi::display::Display, String> {
+    let mut reason = MaybeUninit::uninit();
+    // SAFETY: the buffers are alive for the call, `reason` is writable and
+    // filled before it is read.
+    let (display, reason) = unsafe {
+        let display = editor_ffi_display_new_font(
+            bytes.as_ptr(),
+            bytes.len(),
+            family.as_ptr(),
+            family.len(),
+            reason.as_mut_ptr(),
+        );
+        (display, take_text(reason.assume_init()))
+    };
+    if display.is_null() {
+        Err(reason)
+    } else {
+        assert_eq!(reason, "");
+        Ok(display)
+    }
+}
+
+/// A picture through C: its width, its height and its pixels.
+///
+/// # Safety
+///
+/// `raw` was filled by the library, and its buffer has not been handed
+/// back.
+unsafe fn take_picture(raw: RawPicture) -> (u64, u64, Vec<u8>) {
+    // SAFETY: the record's buffer is `len` bytes, owned until handed back.
+    let rgba = unsafe { slice::from_raw_parts(raw.rgba, raw.len) }.to_vec();
+    // SAFETY: the buffer came from the library in this record, handed back
+    // once.
+    unsafe { editor_ffi_text_free(raw.rgba, raw.len) };
+    (raw.width, raw.height, rgba)
+}
+
+/// The picture of `display`'s latest frame, through C.
+fn picture(display: *const editor_ffi::display::Display) -> (u64, u64, Vec<u8>) {
+    let mut raw = MaybeUninit::uninit();
+    // SAFETY: `display` is live, `raw` writable and filled before it is
+    // read.
+    unsafe {
+        editor_ffi_display_picture(display, raw.as_mut_ptr());
+        take_picture(raw.assume_init())
+    }
+}
+
+#[test]
+fn a_display_over_one_font_is_refused_for_bytes_that_are_no_font_and_a_family_it_does_not_hold() {
+    let _alone = alone();
+    let before = editor_ffi_display_live();
+    assert!(font_display(b"not a font", MONO_FAMILY).is_err_and(|reason| !reason.is_empty()));
+    assert!(font_display(MONO, "No Such Family").is_err_and(|reason| !reason.is_empty()));
+    assert_eq!(editor_ffi_display_live(), before);
+}
+
+#[test]
+fn a_display_over_the_fixture_font_draws_its_text_in_a_picture() {
+    // Wiring: the real shaper over the font given, layout and the CPU
+    // renderer, through C. What the glyphs look like is the renderer's,
+    // pinned by its reference image; what is pinned here is that a font
+    // display's picture has text on it, and that it is the scene's size.
+    let _alone = alone();
+    let before = editor_ffi_display_live();
+    let display = font_display(MONO, MONO_FAMILY).expect("the fixture font");
+    assert_eq!(editor_ffi_display_live(), before + 1);
+    assert_eq!(picture(display), (0, 0, Vec::new()));
+    let document = document_new("wh=");
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let paper = [0xf8, 0xf8, 0xf8, 0xff];
+    let wire = WireScene {
+        size: [64, 32],
+        views: vec![WireView {
+            id: 1,
+            rect: [0, 0, 64, 32],
+            snapshot: Some(0),
+            ..WireView::default()
+        }],
+        faces: Some(vec![WireFace {
+            name: "default".to_owned(),
+            face: Face {
+                family: Some("monospace".to_owned()),
+                size: Some(Length::pixels(16)),
+                foreground: Some(Color::rgb(0x20, 0x20, 0x20)),
+                background: Some(Color::rgb(paper[0], paper[1], paper[2])),
+                ..Face::default()
+            },
+        }]),
+        ..WireScene::default()
+    };
+    assert!(publish_wire(display, snapshot, &wire));
+    let (width, height, rgba) = picture(display);
+    assert_eq!((width, height, rgba.len()), (64, 32, 64 * 32 * 4));
+    let pixels = rgba.as_chunks::<4>().0;
+    assert!(pixels.contains(&paper));
+    assert!(pixels.iter().any(|pixel| *pixel != paper));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+    assert_eq!(editor_ffi_display_live(), before);
+}
+
+#[test]
+fn a_picture_crosses_to_a_png_file_and_back() {
+    let rgba: Vec<u8> = (0..4u8)
+        .flat_map(|index| [index * 60, 7, 255 - index * 60, 0xff])
+        .collect();
+    let mut png = MaybeUninit::uninit();
+    // SAFETY: the buffer is alive for the call, `png` writable and filled
+    // before it is read.
+    let (written, (status, bytes)) = unsafe {
+        let written = editor_ffi_picture_to_png(2, 2, rgba.as_ptr(), rgba.len(), png.as_mut_ptr());
+        (written, take_bytes(png.assume_init()))
+    };
+    assert!(written);
+    assert_eq!(status, 0);
+    let (mut back, mut reason) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: as above.
+    let (read, back, reason) = unsafe {
+        let read = editor_ffi_picture_from_png(
+            bytes.as_ptr(),
+            bytes.len(),
+            back.as_mut_ptr(),
+            reason.as_mut_ptr(),
+        );
+        (
+            read,
+            take_picture(back.assume_init()),
+            take_text(reason.assume_init()),
+        )
+    };
+    assert!(read);
+    assert_eq!((back, reason), ((2, 2, rgba.clone()), String::new()));
+    // A picture whose pixels are not its size is not written, and bytes
+    // that are no PNG file are not read.
+    let mut refused = MaybeUninit::uninit();
+    // SAFETY: as above.
+    let (written, (_, bytes)) = unsafe {
+        let written =
+            editor_ffi_picture_to_png(3, 2, rgba.as_ptr(), rgba.len(), refused.as_mut_ptr());
+        (written, take_bytes(refused.assume_init()))
+    };
+    assert!(!written && bytes.is_empty());
+    let (mut back, mut reason) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: as above.
+    let (read, back, reason) = unsafe {
+        let read =
+            editor_ffi_picture_from_png(b"no".as_ptr(), 2, back.as_mut_ptr(), reason.as_mut_ptr());
+        (
+            read,
+            take_picture(back.assume_init()),
+            take_text(reason.assume_init()),
+        )
+    };
+    assert!(!read);
+    assert_eq!(back, (0, 0, Vec::new()));
+    assert!(!reason.is_empty());
+}
+
+/// The bytes of a filled record, with its status; the buffer is handed
+/// back.
+///
+/// # Safety
+///
+/// As [`take`].
+unsafe fn take_bytes(raw: RawWords) -> (u64, Vec<u8>) {
+    // SAFETY: the record's buffer is `len` bytes, owned until handed back.
+    let bytes = unsafe { slice::from_raw_parts(raw.words, raw.len) }.to_vec();
+    // SAFETY: handed back once.
+    unsafe { editor_ffi_text_free(raw.words, raw.len) };
+    (raw.status, bytes)
 }

@@ -31,10 +31,13 @@ editor-text = { path = "../editor-text" }
 # and the gate, and over the real shaper in a window.
 editor-layout = { path = "../editor-layout" }
 # The real shaper: the display Lean's window mode makes lays out over it,
-# in the machine's fonts (`editor_ffi_display_new_system`). Through it the
-# static library Lean links holds Parley. No test here calls that
-# constructor; `clippy.toml` marks its one call of the machine's fonts.
-# `deny.toml` lists this crate among its wrappers.
+# in the machine's fonts (`editor_ffi_display_new_system`); and the display
+# tests make over one font file they are given, with no font of the
+# machine (`editor_ffi_display_new_font`), which Lean's `ffi-test` draws
+# the shipped themes' pictures with. Through it the static library Lean
+# links holds Parley. No test here calls the system constructor;
+# `clippy.toml` marks its one call of the machine's fonts. `deny.toml`
+# lists this crate among its wrappers.
 editor-shape-parley = { path = "../editor-shape-parley" }
 # The render loop: this is the crate that starts the render thread, turns
 # what a window tells whatever draws in it into words left with the loop,
@@ -43,9 +46,14 @@ editor-shape-parley = { path = "../editor-shape-parley" }
 editor-render = { path = "../editor-render" }
 # The renderer's real adapters: the CPU renderer the headless mode's render
 # session draws with (`editor_ffi_render_headless_start`), which needs no
-# GPU and runs in the gate, and the wgpu renderer a window draws with.
-# Through it the static library Lean links holds wgpu. No test here makes
-# a renderer on a window; `clippy.toml` forbids its window constructor to
+# GPU and runs in the gate, and the wgpu renderer a window draws with. The
+# CPU renderer also draws a display's picture synchronously, for tests
+# (`editor_ffi_display_picture`), and its crate reads and writes a picture
+# as a PNG file (`editor_ffi_picture_from_png`,
+# `editor_ffi_picture_to_png`), so Lean's `ffi-test` can compare the
+# shipped themes' pictures with their reference images. Through it the
+# static library Lean links holds wgpu and png. No test here makes a
+# renderer on a window; `clippy.toml` forbids its window constructor to
 # them. It is also the example `window`'s. `deny.toml` lists this crate
 # among its wrappers.
 editor-render-wgpu = { path = "../editor-render-wgpu" }

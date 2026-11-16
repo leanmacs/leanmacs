@@ -1094,6 +1094,40 @@ serves a light and a dark variant. `Theme.builtin` is
 `Palette.placeholder.theme`. A face naming another as its base is not
 built: the palette already shares colours across faces and variants.
 
+A shipped theme is a palette's theme **plus that theme's own definitions
+after it**, where the theme gives a face another colour than the shared
+mapping: by the rule that a later definition's set attributes are over an
+earlier one's, each sets only what it changes. `Palette` itself is not
+widened for one theme's choices. The shipped Solarized themes,
+`solarized-dark` and `solarized-light` (`lean/Editor/Themes/Solarized.lean`),
+are written so: one record of Solarized's sixteen published colours, and
+one mapping from it, written in the dark names (base03 the paper, base0 the
+ink, base02 raised and selected, base01 faint, base1 strong, the cursor
+base0), then Schoonover's own definitions after it. The light variant is
+the same mapping over the same colours with the four base pairs swapped
+(base03 and base3, base02 and base2, base01 and base1, base00 and base0),
+as the specification and Schoonover's Vim and Emacs themes do. Where the
+vocabulary needs a role the specification does not name, the choice
+follows those two themes, and the table of each choice and its source is
+in the module docs of `Solarized.lean`, pinned by
+`ModelTest.solarizedChecks`. Solarized's MIT licence notice is beside it,
+`lean/Editor/Themes/Solarized-LICENSE.txt`, verbatim.
+
+**A shipped theme reaches the CPU renderer in a test** through three
+test-facing bindings of `editor-ffi` (`crates/editor-ffi/src/display.rs`):
+a display over the real shaper and one font file it is given, with no
+font of the machine (`Display.newFont`); a picture of a display's latest
+frame, drawn synchronously by the CPU renderer with grayscale antialiasing
+and hinting, with no render session, thread or clock (`Display.picture`);
+and a picture read from and written to a PNG file (`Picture.ofPng`,
+`Picture.toPng`, over `Image::from_png` and `Image::to_png` in
+`editor-render-wgpu`, which keeps `png` behind it). `ffi-test
+theme-pictures` publishes a fixture file through the display's real
+binding in each shipped Solarized theme and compares the picture with a
+reference image (`tests/render/themes/README.md`). The headless mode's
+`--render` session is not that path: it lays out in cells, whose glyphs
+have no font bytes, so it draws no text.
+
 **The completeness check** (`Themes.problems`,
 `lean/Editor/Themes/Check.lean`) holds that a theme defines every
 vocabulary face, that its `default` states a paper and an ink (its merged
@@ -2249,8 +2283,12 @@ bound submits nothing.
 - **How it is tested.** wgpu has no software renderer of its own: a
   machine with no GPU and no driver has no adapter, and the gate runs on
   such machines. So the gate draws with the CPU compositor, and compares
-  one frame of real text with one reference image, `tests/render/
-  frame.png`, within 2 of 255 a channel; and it runs the wgpu adapter on
+  one frame of real text with the renderer's reference image,
+  `tests/render/frame.png`, within 2 of 255 a channel, and each shipped
+  Solarized theme's picture of a fixture file, published from Lean, with
+  its reference image under `tests/render/themes`, within the same bound
+  ("A shipped theme reaches the CPU renderer in a test", above); and it
+  runs the wgpu adapter on
   wgpu's no-op back end, which validates every call (the shader, the
   pipeline, every draw, inside an error scope) and draws nothing. What a
   real GPU draws is compared with the same image on demand

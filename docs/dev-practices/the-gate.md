@@ -259,14 +259,25 @@ needs none. What it checks:
 - **The rasteriser**, on the fixture fonts under `tests/fonts`, compiled
   in, with glyph ids read from each font's own character map. Its tests
   state relations only (more ink, wider, differs, the same twice).
-- **One picture.** The headless adapter draws one frame of real text on
-  the CPU, and no channel of any pixel may be further than 2 of 255 from
-  the reference image checked in at `tests/render/frame.png`
+- **The renderer's picture.** The headless adapter draws one frame of
+  real text on the CPU, and no channel of any pixel may be further than 2
+  of 255 from the reference image checked in at `tests/render/frame.png`
   (`crates/editor-render-wgpu/tests/reference.rs`). The image is compiled
   into the test, so nothing is read or written when it runs; its README
   says what it shows and when to make it again. That test and one other
-  (`tests/reuse.rs`) are the only two that run the real shaper outside
-  its own crate, for the wiring alone.
+  (`tests/reuse.rs`) are the only two of that crate that run the real
+  shaper, for the wiring alone.
+- **The shipped themes' pictures.** `ffi-test theme-pictures`, in
+  `mise run ffi-test`, publishes a fixture file from Lean through the
+  display's real binding, in `solarized-dark` and in `solarized-light`,
+  over a display of one fixture font, and the CPU renderer draws it. No
+  channel of any pixel may be further than 2 of 255 from the reference
+  images under `tests/render/themes`, and the light picture must not
+  match the dark reference. In each picture the paper, the cursor and the
+  text must carry the palette's colours, found by differencing pictures
+  the scenario draws itself, so it names no size layout or the renderer
+  owns. It reads only checked-in files. `tests/render/themes/README.md`
+  says what the images show and when to make them again.
 - **The wgpu adapter's calls.** It runs on wgpu's no-op back end, which
   validates every call as a real one would and draws nothing: the shader
   compiles in both its forms, the pipeline's vertex layout is the
@@ -923,13 +934,16 @@ scripted platform that cannot open a window gives its reason, which the
 keyboard check reports with status 1; a scripted platform whose renderer
 cannot be made runs its window and then says why nothing drew in it; and
 each event of a window is decoded
-to the input the keyboard check counts. Three scenarios need a process each:
+to the input the keyboard check counts; and a picture crosses through a PNG
+file and back, and its helpers read it (`pictureChecks`). These scenarios
+need a process each:
 
 | Command | Shows |
 |---|---|
 | `ffi-test exit 7` | The entry point passes arguments to Lean's `main` and its result is the exit status. |
 | `ffi-test shutdown` | Quitting the queues wakes every task blocked in a pull, and the process then exits. |
 | `ffi-test exit-while-blocked` | An explicit exit ends the process although a task is still blocked in the library. |
+| `ffi-test theme-pictures <dir> <font>` | The shipped Solarized themes' pictures of the fixture file match their reference images in `<dir>`, and carry the palette's colours where the paper, the cursor and the text are ("The shipped themes' pictures", above). |
 
 The conventions every binding follows, and the test that pins each, are in
 the crate docs of `crates/editor-ffi/src/lib.rs` and the module docs of

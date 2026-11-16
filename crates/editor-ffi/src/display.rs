@@ -10,9 +10,23 @@
 //!   out with, and what the gate draws; made by
 //!   [`editor_ffi_display_new_cells`];
 //! - the real shaper over the fonts of this machine, for Lean's window
-//!   mode; made by [`editor_ffi_display_new_system`], which no test calls.
+//!   mode; made by [`editor_ffi_display_new_system`], which no test calls;
+//! - the real shaper over one font file it is given, the default family of
+//!   a set with no font of the machine, for tests ([`Display::font`]; made
+//!   by [`editor_ffi_display_new_font`]): what Lean's `ffi-test` lays the
+//!   shipped themes' pictures out with, so they are the same on every
+//!   machine.
 //!
 //! Each is counted live and freed by [`editor_ffi_display_free`].
+//!
+//! **A picture** of the latest frame ([`Display::picture`],
+//! [`editor_ffi_display_picture`]) is the frame drawn by the CPU renderer,
+//! synchronously, with no render session, no thread and no clock: how a
+//! theme written in Lean reaches the renderer in a test. It crosses as a
+//! [`RawPicture`], and a picture is read from and written to a PNG file
+//! by [`editor_ffi_picture_from_png`] and [`editor_ffi_picture_to_png`],
+//! which forward to the renderer's crate ([`Image::from_png`],
+//! [`Image::to_png`]). All three are for tests.
 //!
 //! **The scale.** A display lays out at the scale it was last told
 //! ([`Display::set_scale`], which is [`Layout::set_scale`]), and at 1
@@ -80,6 +94,8 @@ use editor_layout::query::{Moved, QueryError, RowRange};
 use editor_layout::scene::{Changes, Scene, TextKey, TextRef};
 use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
+use editor_render::port::{DrawRequest, Renderer, Target};
+use editor_render_wgpu::{Antialiasing, HeadlessRenderer, Image, Settings};
 use editor_shape_parley::{FontSet, ParleyShaper};
 use editor_text::{Patch, Revision};
 
@@ -206,6 +222,9 @@ pub struct Display {
     /// Where its frames are presented, once it is bound
     /// ([`Display::present_to`]).
     presenter: Mutex<Option<Arc<Presenter>>>,
+    /// The scale it was last told ([`Display::set_scale`]); 1 until it is
+    /// told one. A picture of a display not bound is drawn at it.
+    scale: Mutex<f32>,
 }
 
 impl Display {
@@ -225,7 +244,18 @@ impl Display {
             scene: Mutex::new(None),
             frame: Mutex::new(Arc::new(Frame::default())),
             presenter: Mutex::new(None),
+            scale: Mutex::new(1.0),
         }
+    }
+
+    /// A display over the real shaper and one font file, `bytes`, whose
+    /// family `family` is the default family of a font set with no font of
+    /// the machine ([`FontSet::only`]): a face naming any other family is
+    /// drawn in it. Refused, with a sentence, when the bytes are not a font
+    /// or hold no such family.
+    pub fn font(bytes: Vec<u8>, family: &str) -> Result<Self, String> {
+        let fonts = FontSet::only(family, &[], [bytes]).map_err(|error| error.to_string())?;
+        Ok(Self::over(Layout::new(ParleyShaper::new(fonts))))
     }
 
     /// Binds the display to `presenter`: from now on every scene it
@@ -252,7 +282,46 @@ impl Display {
     /// ([`Layout::set_scale`]): every later frame, query and heights answer
     /// is at it.
     pub fn set_scale(&self, scale: f32) {
+        *self.scale.lock().unwrap_or_else(PoisonError::into_inner) = scale;
         self.layout().set_scale(scale);
+    }
+
+    /// The latest frame ([`Display::latest`]) drawn by the CPU renderer
+    /// ([`HeadlessRenderer`]), synchronously, at the last published scene's
+    /// size and at the display's scale: its presenter's when it is bound,
+    /// and otherwise the scale it was told. Glyphs are drawn with one
+    /// coverage a pixel (grayscale antialiasing) and hinting, so a glyph's
+    /// partial pixels are blends of its ink and the paper in every channel
+    /// alike. Before any scene it is 0 by 0. For tests: it draws a
+    /// display's frame to a picture with no render session, no thread and
+    /// no clock.
+    pub fn picture(&self) -> Image {
+        let Some(scene) = self.scene() else {
+            return Image {
+                width: 0,
+                height: 0,
+                rgba: Vec::new(),
+            };
+        };
+        let scale = match self.presenter() {
+            Some(presenter) => presenter.scale(),
+            None => *self.scale.lock().unwrap_or_else(PoisonError::into_inner),
+        };
+        let size = |pixels: u64| u32::try_from(pixels).unwrap_or(u32::MAX);
+        let mut renderer = HeadlessRenderer::new(Settings {
+            antialiasing: Antialiasing::Grayscale,
+            hinting: true,
+            ..Settings::default()
+        });
+        renderer.draw(&DrawRequest {
+            frame: &self.latest(),
+            target: Target {
+                width: size(scene.size[0]),
+                height: size(scene.size[1]),
+                scale,
+            },
+        });
+        renderer.image().clone()
     }
 
     /// The heights of a text row, a status row and the frame's bottom row
@@ -369,7 +438,8 @@ fn answered<T>(answer: Result<T, QueryError>, write: impl FnOnce(T, &mut Writer)
 }
 
 /// How many display handles this library has handed out
-/// ([`editor_ffi_display_new_cells`]) that [`editor_ffi_display_free`] has
+/// ([`editor_ffi_display_new_cells`], [`editor_ffi_display_new_system`],
+/// [`editor_ffi_display_new_font`]) that [`editor_ffi_display_free`] has
 /// not taken back.
 static LIVE: AtomicU64 = AtomicU64::new(0);
 
@@ -398,6 +468,166 @@ pub extern "C" fn editor_ffi_display_new_system() -> *mut Display {
     Box::into_raw(Box::new(Display::over(Layout::new(ParleyShaper::new(
         fonts,
     )))))
+}
+
+/// A new display over the real shaper and the one font file of the `len`
+/// bytes at `bytes`, whose family is the `family_len` bytes of text at
+/// `family` ([`Display::font`]), owned by the caller, who must hand it to
+/// [`editor_ffi_display_free`] exactly once; or null when it is refused.
+/// `out_reason` is filled either way: empty, or the refusal's sentence.
+/// For tests: it lays out with no font of the machine, so what it draws
+/// is the same on every machine (`ffi-test theme-pictures`).
+///
+/// # Safety
+///
+/// `bytes` points to `len` readable bytes, `family` to `family_len`, and
+/// `out_reason` to a writable [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_new_font(
+    bytes: *const u8,
+    len: usize,
+    family: *const u8,
+    family_len: usize,
+    out_reason: *mut RawText,
+) -> *mut Display {
+    // SAFETY: the caller guarantees the pointers and lengths.
+    let (bytes, family) = unsafe {
+        (
+            crate::words::borrow(bytes, len).to_vec(),
+            text::borrow(family, family_len),
+        )
+    };
+    let (display, reason) = match Display::font(bytes, &family) {
+        Ok(display) => {
+            LIVE.fetch_add(1, Ordering::Relaxed);
+            (Box::into_raw(Box::new(display)), String::new())
+        }
+        Err(reason) => (std::ptr::null_mut(), reason),
+    };
+    let (text, text_len) = text::lend(reason);
+    // SAFETY: the caller guarantees `out_reason` is writable.
+    unsafe { out_reason.write(RawText { text, text_len }) };
+    display
+}
+
+/// A picture as it crosses: its width and height in pixels, and its
+/// pixels, row by row from the top, red, green, blue and alpha for each,
+/// as sRGB values: a buffer of `len` bytes, owned by the caller until it is
+/// handed back with [`editor_ffi_text_free`](crate::text::editor_ffi_text_free).
+#[repr(C)]
+pub struct RawPicture {
+    /// How far across it is.
+    pub width: u64,
+    /// How far down.
+    pub height: u64,
+    /// Its pixels.
+    pub rgba: *mut u8,
+    /// The length of `rgba` in bytes.
+    pub len: usize,
+}
+
+impl RawPicture {
+    /// The record of `image`.
+    fn of(image: Image) -> Self {
+        let (rgba, len) = crate::words::lend(image.rgba);
+        Self {
+            width: u64::from(image.width),
+            height: u64::from(image.height),
+            rgba,
+            len,
+        }
+    }
+}
+
+/// Fills `out` with the picture of `display`'s latest frame
+/// ([`Display::picture`]): 0 by 0 before any scene. For tests.
+///
+/// # Safety
+///
+/// `display` is a display handle this library handed out and has not taken
+/// back, and `out` points to a writable [`RawPicture`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_picture(display: *const Display, out: *mut RawPicture) {
+    // SAFETY: the caller guarantees the handle.
+    let image = unsafe { &*display }.picture();
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(RawPicture::of(image)) };
+}
+
+/// Fills `out` with the picture the PNG file of the `len` bytes at `bytes`
+/// holds ([`Image::from_png`]), and `out_reason` with nothing; or, refused,
+/// `out` with a picture 0 by 0 and `out_reason` with the refusal's
+/// sentence, and answers false. For tests.
+///
+/// # Safety
+///
+/// `bytes` points to `len` readable bytes, `out` to a writable
+/// [`RawPicture`] and `out_reason` to a writable [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_picture_from_png(
+    bytes: *const u8,
+    len: usize,
+    out: *mut RawPicture,
+    out_reason: *mut RawText,
+) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let bytes = unsafe { crate::words::borrow(bytes, len) };
+    let (image, reason, read) = match Image::from_png(bytes) {
+        Ok(image) => (image, String::new(), true),
+        Err(reason) => (
+            Image {
+                width: 0,
+                height: 0,
+                rgba: Vec::new(),
+            },
+            reason,
+            false,
+        ),
+    };
+    let (text, text_len) = text::lend(reason);
+    // SAFETY: the caller guarantees both are writable.
+    unsafe {
+        out.write(RawPicture::of(image));
+        out_reason.write(RawText { text, text_len });
+    }
+    read
+}
+
+/// Fills `out` with the bytes of a PNG file of the picture `width` pixels
+/// across and `height` down whose pixels are the `len` bytes at `rgba`
+/// ([`Image::to_png`]), with the status 0. False, with `out` empty, when
+/// the pixels are not that size. For tests.
+///
+/// # Safety
+///
+/// `rgba` points to `len` readable bytes and `out` to a writable
+/// [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_picture_to_png(
+    width: u64,
+    height: u64,
+    rgba: *const u8,
+    len: usize,
+    out: *mut RawWords,
+) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let rgba = unsafe { crate::words::borrow(rgba, len) };
+    let sized = u32::try_from(width).ok().zip(u32::try_from(height).ok());
+    let image = sized.and_then(|(width, height)| {
+        let pixels = usize::try_from(u64::from(width) * u64::from(height) * 4).ok()?;
+        (pixels == rgba.len()).then(|| Image {
+            width,
+            height,
+            rgba: rgba.to_vec(),
+        })
+    });
+    let (bytes, written) = match image {
+        Some(image) => (image.to_png(), true),
+        None => (Vec::new(), false),
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(RawWords::with_status(DisplayStatus::Done as u64, bytes)) };
+    written
 }
 
 /// Binds `display` to the process's presenter ([`Display::present_to`]):
@@ -677,7 +907,9 @@ mod tests {
     use editor_render::port::Target;
     use editor_render::render_loop::{RecordingPark, RenderHandle, RenderLoop, Step};
 
-    use super::{Display, WireScene, WireView, text_ref};
+    use editor_layout::face::{Color, Face};
+
+    use super::{Display, WireFace, WireScene, WireView, text_ref};
     use crate::document::Document;
     use crate::render::{Follows, Presenter};
     use crate::snapshot::Snapshot;
@@ -771,6 +1003,59 @@ mod tests {
         );
         // A display that is not bound is at its own scale.
         assert_eq!(Display::cells(8, 16).heights().text, 16);
+    }
+
+    #[test]
+    fn a_display_over_bytes_that_are_not_a_font_is_refused() {
+        let refused = Display::font(b"not a font".to_vec(), "Noto Sans Mono");
+        assert!(refused.is_err_and(|reason| !reason.is_empty()));
+    }
+
+    #[test]
+    fn a_picture_before_any_scene_is_empty() {
+        let picture = Display::cells(8, 16).picture();
+        assert_eq!((picture.width, picture.height), (0, 0));
+        assert!(picture.rgba.is_empty());
+    }
+
+    #[test]
+    fn a_picture_is_the_scenes_size_in_its_faces() {
+        // Cells draw no glyphs, so a view of text is its default face's
+        // background everywhere: this pins the wiring, the size and that
+        // the faces published are the ones drawn.
+        let display = Display::cells(8, 16);
+        let snapshot = Snapshot::of(&Document::new("ab\ncd"));
+        let paper = Color::rgb(0x12, 0x34, 0x56);
+        let wire = WireScene {
+            size: [80, 32],
+            views: vec![WireView {
+                id: 1,
+                rect: [0, 0, 80, 32],
+                snapshot: Some(0),
+                ..WireView::default()
+            }],
+            faces: Some(vec![WireFace {
+                name: "default".to_owned(),
+                face: Face {
+                    background: Some(paper),
+                    ..Face::default()
+                },
+            }]),
+            ..WireScene::default()
+        };
+        let (words, strings) = wire.encode();
+        assert!(display.publish(&words, &strings, &[&snapshot]));
+        let picture = display.picture();
+        assert_eq!((picture.width, picture.height), (80, 32));
+        assert_eq!(picture.rgba.len(), 80 * 32 * 4);
+        assert!(
+            picture
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [0x12, 0x34, 0x56, 0xff])
+        );
     }
 
     #[test]

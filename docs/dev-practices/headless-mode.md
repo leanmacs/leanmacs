@@ -196,7 +196,7 @@ One more compiled command switches the theme (`lean/Editor/Themes.lean`):
 
 | Command | Does |
 |---|---|
-| `load-theme` | With a name as its first argument, makes the theme registered under it the theme in force, with no reload, and the next scene is drawn in it. With none it asks `Theme: `, with the registered themes' names as its candidates. A name nobody registered is said in the echo area, ``load-theme: no theme is registered as `<name>` ``, and changes nothing. The editor ships one theme, `default`; config registers more with `defineTheme` and names the one in force with `useTheme`. |
+| `load-theme` | With a name as its first argument, makes the theme registered under it the theme in force, with no reload, and the next scene is drawn in it. With none it asks `Theme: `, with the registered themes' names as its candidates. A name nobody registered is said in the echo area, ``load-theme: no theme is registered as `<name>` ``, and changes nothing. The editor ships three themes, `default`, `solarized-dark` and `solarized-light`; config registers more with `defineTheme` and names the one in force with `useTheme`. |
 
 The mode `minibuffer` is the major mode of the minibuffer's buffer. It
 puts the four commands on the keys the input scheme has for the roles
@@ -700,7 +700,9 @@ in `tests/headless/themes/config`, which defines two themes, `first` and
 `<Enter>` accepts: the theme is switched with no reload, and the next scene
 is drawn in `second`. The switch is followed by a scene of its own, after
 the scene the accepted command's step published, so the count of scenes
-goes up by one more. Its output must be exactly
+goes up by one more. Then `load-theme` is run again, and `solarized-dark`,
+a theme the editor ships, is committed and accepted: the next scene is
+drawn in it. Its output must be exactly
 `tests/headless/themes/expected`:
 
 ```console
@@ -713,6 +715,11 @@ status 0: status.state "normal", status.name "scratch"
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", preedit -, published 7, theme "second"
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+run load-theme: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", preedit -, published 13, theme "solarized-dark"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 ```

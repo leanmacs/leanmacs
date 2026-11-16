@@ -59,6 +59,15 @@ answers cross (`FfiTest.displayChecks`); `tests/c_api.rs`,
 | List of handles | `@& Array Snapshot`, an array of handles borrowed for the call, beside the words, which name a handle by its index in it; the glue passes it as a C array of the handles' pointers and its count, which it builds for the call (`Display.publish`) | None yet |
 | List of strings | Words, the count and then the byte length of each string, written by a private encoder here, and one `@& String` of all of them end to end; Rust refuses lengths that do not add up to the string or that end inside a character (`fuzzyRank`) | None yet |
 
+A picture (`Picture`, for tests) crosses as a small structure: its pixels,
+an object field the glue copies from the library's buffer into a
+`ByteArray`, then its width and height as `UInt64` (`Display.picture`,
+`Picture.ofPng`); and in, as its width and height as scalars and its pixels
+as a `@& ByteArray`, with a PNG file's bytes out as a `ByteArray`
+(`Picture.toPng`). A refusal with a reason the library gives in a sentence
+is an `IO` error the glue raises with it (`Display.newFont`,
+`Picture.ofPng`).
+
 Prefer a few scalar arguments or one structure to many calls: one `nextEvent`
 returns one whole event. A raw structure whose shape the glue knows stays
 private to this module; what a caller sees is the typed value.
@@ -2140,6 +2149,74 @@ def Display.scene (display : Display) : IO (Option (Array UInt64 × String)) := 
   let some words := wordsOf? raw.words
     | throw (IO.userError "the library's scene is not whole words")
   return some (words, raw.strings)
+
+/-! ## A display's picture, for tests -/
+
+/-- A new display over the library's real shaper and one font file, `bytes`,
+whose family `family` is the default family of a font set with no font of
+the machine: a face naming any other family is drawn in it. An `IO` error
+with the library's reason when the bytes are not a font or hold no such
+family. For tests, as `Display.frameText` is: what it lays out is the same
+on every machine (`FfiTest.themePicturesScenario`). -/
+@[extern "editor_glue_display_new_font"]
+opaque Display.newFont (bytes : @& ByteArray) (family : @& String) : IO Display
+
+/-- A picture, as the library's CPU renderer draws one: `width` pixels
+across, `height` down, and its pixels, row by row from the top, red, green,
+blue and alpha for each, as sRGB values. For tests. -/
+structure Picture where
+  /-- How far across it is. -/
+  width : Nat
+  /-- How far down. -/
+  height : Nat
+  /-- Its pixels: four bytes each. -/
+  rgba : ByteArray
+  deriving DecidableEq
+
+/-- A picture as the glue builds it. Object fields first, so the order here
+is the layout the glue writes. -/
+private structure RawPicture where
+  /-- The pixels. -/
+  rgba : ByteArray
+  /-- How far across. -/
+  width : UInt64
+  /-- How far down. -/
+  height : UInt64
+
+/-- The picture `raw` stands for. -/
+private def RawPicture.picture (raw : RawPicture) : Picture :=
+  { width := raw.width.toNat, height := raw.height.toNat, rgba := raw.rgba }
+
+/-- `Display.picture` as it crosses. -/
+@[extern "editor_glue_display_picture"]
+private opaque Display.pictureRaw (display : @& Display) : IO RawPicture
+
+/-- The latest frame the display laid out, drawn by the library's CPU
+renderer synchronously, with no render session, thread or clock, at the
+last published scene's size and at the display's scale, with one coverage a
+pixel and hinting: 0 by 0 before any scene. For tests: it is how a theme
+written here reaches the renderer in `ffi-test`. -/
+def Display.picture (display : Display) : IO Picture :=
+  return (← display.pictureRaw).picture
+
+/-- `Picture.ofPng` as it crosses. -/
+@[extern "editor_glue_picture_from_png"]
+private opaque Picture.ofPngRaw (bytes : @& ByteArray) : IO RawPicture
+
+/-- The picture the PNG file `bytes` holds, 8 bits a channel, RGB or RGBA,
+an RGB one read as opaque; an `IO` error with the library's reason when the
+bytes are no such file. For tests. -/
+def Picture.ofPng (bytes : ByteArray) : IO Picture :=
+  return (← Picture.ofPngRaw bytes).picture
+
+/-- `Picture.toPng` as it crosses. -/
+@[extern "editor_glue_picture_to_png"]
+private opaque Picture.toPngRaw (width height : UInt64) (rgba : @& ByteArray) : IO ByteArray
+
+/-- The bytes of a PNG file of `picture`: RGB, 8 bits a channel, its alpha
+not written. An `IO` error when its pixels are not its size. For tests. -/
+def Picture.toPng (picture : Picture) : IO ByteArray :=
+  Picture.toPngRaw picture.width.toUInt64 picture.height.toUInt64 picture.rgba
 
 /-! ## The render session -/
 

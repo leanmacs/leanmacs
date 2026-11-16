@@ -792,6 +792,17 @@ headless renderer's with, by running the example `reference` of
 gate may do, so the gate only builds it. `tests/render/README.md` says
 what the image shows and when to make it again.
 
+```sh
+mise run theme-references
+```
+
+This writes `tests/render/themes/solarized-dark.png` and
+`solarized-light.png`, the pictures the gate compares the shipped
+Solarized themes' with, by running `ffi-test theme-pictures … --write`.
+It writes files of the repository, so it is never part of the gate.
+`tests/render/themes/README.md` says what the images show and when to make
+them again.
+
 ## The Core Text reference, on demand
 
 ```sh

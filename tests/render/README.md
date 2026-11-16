@@ -10,7 +10,10 @@ into the test, so no test reads or writes a file when it runs.
 | `frame.png` | 256 by 96 pixels, 8 bits a channel, no alpha | 5334 | `a4d552a5bab109a3f289020934b2f1ab868aad698f428eb0ce608a929f64a700` |
 
 It is kept small on purpose: at most 256 by 96 pixels and 20 KB, which
-the test checks. There is one such image and no more.
+the test checks. It is the renderer's own reference image. Beside it,
+`themes/` holds the shipped themes' pictures, drawn from Lean through the
+display's real binding and compared by `ffi-test theme-pictures`; their
+README (`themes/README.md`) says what they show and how they are made.
 
 ## What it shows
 

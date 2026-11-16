@@ -18,3 +18,10 @@ run load-theme
 commit second
 key <Enter> Enter -
 scene
+
+# A shipped theme is loaded the same way: `solarized-dark`, which compiled
+# code registers (`Themes.shipped`), and the scene after it is drawn in it.
+run load-theme
+commit solarized-dark
+key <Enter> Enter -
+scene

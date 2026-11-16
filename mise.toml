@@ -212,9 +212,10 @@ run = [
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/candidates/expected -",
   # Named themes, on a config of its own (tests/headless/themes) that
   # defines two themes and names the first: the scene line names the theme
-  # each scene was drawn in, the first after the reload, and the second
-  # after the compiled command `load-theme` is answered with its name, with
-  # no reload between (`themes/expected`). It touches no file.
+  # each scene was drawn in, the first after the reload, the second after
+  # the compiled command `load-theme` is answered with its name, with no
+  # reload between, and the shipped `solarized-dark` after it is answered
+  # with that (`themes/expected`). It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/themes/config ../tests/headless/themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/themes/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
@@ -319,6 +320,16 @@ run = [
   # tests/display/frame.expected; the scene must come back as sent; and a
   # move asked through the binding must land on the frame's next row.
   ".lake/build/bin/ffi-test display ../tests/display/frame.expected",
+  # The shipped themes' pictures: the fixture file tests/render/themes/
+  # source.lean, published from Lean through the display's real binding in
+  # `solarized-dark` and in `solarized-light`, over a display of the one
+  # fixture font given here, and drawn by the CPU renderer, must match
+  # `tests/render/themes/<name>.png` within 2 of 255 a channel; in each,
+  # the paper, the cursor and the text must carry the palette's colours;
+  # and the light picture must not match the dark reference
+  # (tests/render/themes/README.md). It reads only checked-in files and
+  # writes nothing. `mise run theme-references` makes the images again.
+  ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf",
   # The window mode's wiring, `editor <file>` (lean/Editor/Window/Real.lean),
   # on the library's scripted platform, as a process of its own, so that its
   # render session is the only one the process starts: a cells display bound
@@ -689,6 +700,23 @@ run = "cargo run --locked --package editor-shape-parley --example system"
 [tasks.render-reference]
 description = "Opt-in, never part of ci: draw the renderer's fixture frame with the headless adapter and write it to tests/render/frame.png, the reference image. Look at the file before committing it"
 run = "cargo run --locked --package editor-render-wgpu --example reference -- tests/render/frame.png"
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It
+# writes files of the repository, which no gate may do.
+#
+# It draws the shipped Solarized themes' pictures of the fixture file
+# `tests/render/themes/source.lean`, as `ffi-test theme-pictures` in the
+# `ffi-test` task does, and writes them to
+# `tests/render/themes/solarized-dark.png` and `solarized-light.png`. Run
+# it when a shipped Solarized definition, the fixture, the font, the
+# painter, the blend or the rasteriser's pins change. Then look at the
+# files enlarged before committing them, and update the table in
+# `tests/render/themes/README.md`.
+[tasks.theme-references]
+description = "Opt-in, never part of ci: draw the shipped Solarized themes' pictures of the fixture file and write them to tests/render/themes, their reference images. Look at the files before committing them"
+depends = ["lean"]
+dir = "lean"
+run = ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf --write"
 
 # Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl.
 # It needs the system's `swift`, and it writes a file of the repository,
