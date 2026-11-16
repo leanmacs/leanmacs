@@ -209,7 +209,8 @@ arrives on the editor queue.
   from `windowOpened` on, pulled with `nextEvent` like any other. Each is
   stamped with the reading of the library's input clock when the window
   reported it, and `inputClock` reads the same clock.
-- A key, a pointer and a resize carry their detail as the event's words.
+- A key, a pointer, a resize and files to open carry their detail as the
+  event's words.
   The table of codes, texts and word layouts is in the module docs of
   `crates/editor-ffi/src/window.rs`:
 
@@ -218,6 +219,7 @@ arrives on the editor queue.
   | `key` | Bit 0 pressed, bit 1 repeat, bit 2 dead, bit 3 the interrupt mark ("The interrupt flag") | `[logical tag, n, n scalars, physical tag, m, m scalars, modifiers]`; logical 0 unidentified, 1 character, 2 named (a W3C UI Events `key` name), 3 dead (n is 0 or 1); physical 0 unidentified, 1 a W3C UI Events `code` |
   | `pointer` | 0 press, 1 drag, 2 release, 3 wheel | `[x, y, button tag, other, modifiers, delta tag, dx, dy]`; button 0 none, 1 primary, 2 secondary, 3 middle, 4 back, 5 forward, 6 another (its number in `other`); delta 0 none, 1 lines, 2 pixels |
   | `resize` | Bit 0 in fullscreen | `[width, height, scale]` |
+  | `openFiles` | 0 | `[n, then for each of the n paths: m, m scalars]`; the text is empty |
 
   The modifiers are bits: shift 1, control 2, alt 4, super 8. A float
   crosses as its IEEE 754 bits (`Float.ofBits`). These bindings carry the
@@ -1326,6 +1328,10 @@ inductive EventKind where
   /-- The window's drawable area changed size, or its scale factor did. The
   code is 0; the words are the new width, height and scale. -/
   | resize
+  /-- The system asked for files to be opened. The code is 0 and the text
+  empty; the words are the paths: their count, then each path's count of
+  characters and its characters ("The window" in the module docs). -/
+  | openFiles
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
@@ -1340,6 +1346,7 @@ def EventKind.ofTag? : UInt64 → Option EventKind
   | 7 => some .pointer
   | 8 => some .closeRequested
   | 9 => some .resize
+  | 10 => some .openFiles
   | _ => none
 
 /-- What kind of thing an event came from. -/

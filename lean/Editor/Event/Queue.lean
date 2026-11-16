@@ -7,16 +7,21 @@ import Editor.Keymap
 
 `Editor.Event` read from the queue's events (`Event.ofFfi`), and posted to the
 queue as a window would report them (`Event.post`). This is the one place on
-the Lean side that knows the queue's layouts of a key, a pointer and a resize
-as words: the table in the module docs of `crates/editor-ffi/src/window.rs`,
-repeated in "The window" of `Editor/Ffi.lean`. It imports `Editor.Ffi`, so
-only an executable linked with the library imports it.
+the Lean side that knows the queue's layouts of a key, a pointer, a resize
+and files to open as words: the table in the module docs of
+`crates/editor-ffi/src/window.rs`, repeated in "The window" of
+`Editor/Ffi.lean`. It imports `Editor.Ffi`, so only an executable linked with
+the library imports it.
 
 Decoding trusts nothing: a code the table does not have, words that are too
 few or left over, an unknown tag, a scalar that is not a character, a
 modifier bit past the system key's, and a dead bit with no dead key are each
 an error, never a guess. A message's words are the source's and are not read;
 every other kind with no words in the table must have none.
+
+Files to open are `[n, then for each of the n paths: m, m scalars]`: a count
+of paths, then each path laid out as a key's names are (`EventWords.paths`,
+`EventWords.pathWords`), with code 0 and no text.
 
 ## The interrupt key
 
@@ -242,6 +247,23 @@ def pointerWords (pointer : Pointer) : UInt64 × Array UInt64 :=
     | some (.other number) => (6, number.toUInt64)
   (code, #[pointer.x.toBits, pointer.y.toBits, tag, other, modifierBits pointer.modifiers] ++ delta)
 
+/-- A count of paths, then each path's characters as `scalars` reads them:
+the words of files to open. The count is checked against the words left, as
+`scalars` checks its own, since each path takes at least its count. -/
+def paths : Reader (List String) := do
+  let count := (← word).toNat
+  unless count <= (← get).length do
+    throw "the event has too few words for its paths"
+  let mut paths := #[]
+  for _ in [0:count] do
+    paths := paths.push (← scalars)
+  return paths.toList
+
+/-- The words of files to open: the count of paths, then each path's
+`scalarWords`. -/
+def pathWords (paths : List String) : Array UInt64 :=
+  paths.foldl (fun words path => words ++ scalarWords path) #[paths.length.toUInt64]
+
 /-- Runs `read` over all of `words`, which it must use up. -/
 def readAll {α : Type} (read : Reader α) (words : Array UInt64) : Except String α :=
   (do
@@ -325,6 +347,11 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
           throw "a resize has three words"
     | .closeRequested, 0 =>
       none .closeRequested
+    | .openFiles, 0 =>
+      if event.text.isEmpty then
+        Event.openFiles <$> EventWords.readAll EventWords.paths event.words
+      else
+        throw "files to open have no text"
     | kind, code =>
       throw s!"{repr kind} has no code {code}"
   return { event := decoded, stamp := event.stamp, interrupt }
@@ -350,6 +377,7 @@ def Event.post : Event → IO Bool
     Ffi.postInput .resize (if size.fullscreen then 1 else 0) ""
       #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits]
   | .closeRequested => Ffi.postInput .closeRequested 0 "" #[]
+  | .openFiles paths => Ffi.postInput .openFiles 0 "" (EventWords.pathWords paths)
   | .message .. | .completion .. | .quit => pure false
 
 /-- Tells the library which key is the interrupt key, or that there is none:

@@ -177,13 +177,13 @@ def dataChecks (_ : Unit) : List Check :=
     { name := "the tags of a window's events and of the window source are known"
       run :=
         pure
-          ((([3, 4, 5, 6, 7, 8, 9] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
+          ((([3, 4, 5, 6, 7, 8, 9, 10] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
               [some .windowOpened, some .windowFocus, some .key, some .composition, some .pointer,
-                some .closeRequested, some .resize] &&
+                some .closeRequested, some .resize, some .openFiles] &&
             Editor.Ffi.SourceKind.ofTag? 3 == some .window) },
     { name := "a tag the bindings do not know is refused"
       run :=
-        pure ((Editor.Ffi.EventKind.ofTag? 10).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
+        pure ((Editor.Ffi.EventKind.ofTag? 11).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
 
 /-- An hour, in milliseconds: a deadline no check reaches. -/
 def hour : UInt64 :=
@@ -1638,6 +1638,22 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             decodedWindow .resize 1 #[1440, 900, (2.0 : Float).toBits] ==
               some (.resize { width := 1440, height := 900, scale := 2.0, fullscreen := true }) &&
             decodedWindow .closeRequested 0 == some .closeRequested) },
+    { name :=
+        "files to open decode with their paths in order, each its count of characters and its characters, and no path to none"
+      run :=
+        pure
+          (decodedWindow .openFiles 0 #[2, 1, 97, 2, 98, 99] == some (.openFiles ["a", "bc"]) &&
+            decodedWindow .openFiles 0 #[0] == some (.openFiles [])) },
+    { name :=
+        "files to open are refused with a code, with text, with too few words, with words left over, and with a scalar that is not a character"
+      run :=
+        pure
+          ((decodedWindow .openFiles 1 #[1, 1, 97]).isNone &&
+            (decodedWindow .openFiles 0 #[1, 1, 97] "x").isNone &&
+            (decodedWindow .openFiles 0 #[2, 1, 97]).isNone &&
+            (decodedWindow .openFiles 0 #[]).isNone &&
+            (decodedWindow .openFiles 0 #[1, 1, 97, 5]).isNone &&
+            (decodedWindow .openFiles 0 #[1, 1, 0xD800]).isNone) },
     { name := "the stamp of an event is kept beside it"
       run := pure ((decodedEvent (windowEvent .closeRequested 0)).map (·.stamp) == some 7) },
     { name :=
@@ -1736,7 +1752,7 @@ def eventChecks (_ : Unit) : List Check :=
             events.head? == some (.windowOpened "scripted") &&
             events.getLast? == some .closeRequested },
     { name :=
-        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, and a request to close posted as a window would come back from the library equal"
+        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, files to open, none to open, and a request to close posted as a window would come back from the library equal"
       run := do
         let events : List Editor.Event :=
           [.windowOpened "x", .focus true, .focus false,
@@ -1751,7 +1767,7 @@ def eventChecks (_ : Unit) : List Check :=
             .pointer (pointerAt (.wheel (.pixels 0.25 8)) none),
             .resize { width := 1920, height := 1080, scale := 1.25 },
             .resize { width := 1920, height := 1080, scale := 1.25, fullscreen := true },
-            .closeRequested]
+            .openFiles ["/Users/me/notes.txt", "/tmp/é x.lean"], .openFiles [], .closeRequested]
         events.allM fun event => return (← roundTrip event) == some event },
     { name := "an event no window reports is not posted: a message, a completion and a quit"
       run := do

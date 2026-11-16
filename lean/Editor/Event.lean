@@ -36,6 +36,15 @@ system's fullscreen (`Resize`): the window says so after every change of it,
 whether a request or the user (the green button) made it. Positions and sizes
 are in the frame's physical pixels.
 
+## Files to open
+
+When the system asks the program to open files (Finder's "Open With", a
+double-click on a document of a type the app claims, a drop on its Dock
+icon), the window reports them as one event, `Event.openFiles`, with the
+absolute paths in the order the system gave them. The window holds files it
+is told of before it has opened, and reports them after `windowOpened` and
+the resize after it. What the loop does with them is `Editor/Loop.lean`'s.
+
 ## Where an addition goes
 
 Two roadmaps build on these events. The display pipeline owns producing them
@@ -315,6 +324,9 @@ inductive Event where
   /-- The user asked for the window to be closed. It stays open until Lean
   closes it. -/
   | closeRequested
+  /-- The system asked for these files to be opened, absolute, in its
+  order. -/
+  | openFiles (paths : List String)
   /-- The queue has been quit: the loop pulling it must return. -/
   | quit
   deriving BEq, Repr
