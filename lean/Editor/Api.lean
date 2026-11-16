@@ -1,5 +1,5 @@
-import Editor.Command
 import Editor.Scroll
+import Editor.Store
 
 /-!
 # The editor API
@@ -570,6 +570,32 @@ here:
 
 The three state requests ask the library nothing, and are pinned once, on
 the models (`ModelTest.stateRequestChecks`, `ModelTest.fileCommandChecks`).
+
+## Workspaces
+
+Which workspace and which project a buffer belongs to, and the stores each
+keeps (`Editor/Workspace.lean`, `docs/design/projects.md`). Each operation
+is one read of the state or one state request (`Editor/State.lean`,
+"Workspaces").
+
+- `BufferId.workspace?` is the buffer's workspace and its project, read from
+  its buffer-local value (`Workspace.bufferLocal`), or `none`.
+- `BufferId.inheritWorkspace id source` gives a buffer the workspace of the
+  buffer it was made from; a source with none gives none.
+- `BufferId.workingDirectory` is where a command run for a buffer runs: its
+  workspace's root on this machine, its workspace's location when that is
+  elsewhere, the directory of its file when it has no workspace, or none.
+- `Workspace.register` makes a workspace that is not on this machine, for
+  a remote agent session or a later remote adapter; a local location is
+  refused, since local workspaces are found.
+- `Workspace.setValue` and `Project.setValue` set a value of a workspace's
+  or a project's store by name; `Workspace.set` and `Project.set` set the
+  value of a `Store` (`Editor/Store.lean`) there, by its encoding, and
+  `Workspace.Table.get` and `getOfProject` read one back, its initial value
+  where none was set. The typed operations are here, not beside the table,
+  because the stores' module is downstream of the editor state.
+
+Pinned by `ModelTest.workspaceStateChecks`.
 
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
@@ -1252,5 +1278,98 @@ def setMajorMode (view : ViewId) (name : String) : EditorM (Except ModeRefusal B
   EditorState.ask (.setMajorMode view name)
 
 end ViewId
+
+/-! ## Workspaces -/
+
+namespace BufferId
+
+/-- The workspace of the buffer `id` and its project, or `none` when it has
+none ("Workspaces", in the module docs). -/
+def workspace? (id : BufferId) : EditorM (Option (Workspace × Project)) :=
+  return (← editorState).workspaceOf? id
+
+/-- Gives the buffer `id` the workspace of the buffer `source`, the one it
+was made from: its buffer-local value. A source with none gives none, and
+changes nothing. Refused with `noSuchBuffer` for a buffer `id` there is none
+of. -/
+def inheritWorkspace (id source : BufferId) : EditorM (Except BufferRefusal Unit) := do
+  match (← editorState).value? source Workspace.bufferLocal with
+  | some value =>
+    id.setValue Workspace.bufferLocal value
+  | none =>
+    return .ok ()
+
+/-- Where a command run for the buffer `id` runs: its workspace's root on
+this machine, its workspace's location when that is elsewhere, the
+directory of its file when it has no workspace, or none. -/
+def workingDirectory (id : BufferId) : EditorM Workspace.WorkingDirectory := do
+  let state ← editorState
+  match state.workspaceOf? id with
+  | some (workspace, _) =>
+    match workspace.location with
+    | .local root =>
+      return .workspace root
+    | location =>
+      return .elsewhere location
+  | none =>
+    match ((state.buffer? id).bind (·.file)).bind (·.path.parent) with
+    | some directory =>
+      return .fileDirectory directory
+    | none =>
+      return .none
+
+end BufferId
+
+namespace Workspace
+
+/-- Registers a workspace at `location`, not on this machine, of the project
+of `remote`, with `branch` checked out if it is given. Refused with `local`
+for a local location: those are found. -/
+def register (location : Location) (remote : String) (branch : Option String := none) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  EditorState.ask (.registerWorkspace location remote branch)
+
+/-- Has the workspace at `location` keep `value` under `name`. Refused with
+`noSuchWorkspace` when there is none. -/
+def setValue (location : Location) (name : String) (value : Value) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  EditorState.ask (.setWorkspaceValue location name value)
+
+/-- Has the workspace at `location` keep `value` as the value of `store`, by
+the store's encoding. Refused with `noSuchWorkspace` when there is none. -/
+def set {α : Type} (store : Store α) (location : Location) (value : α) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  setValue location store.name (store.encode value)
+
+/-- The value of `store` in the workspace at `location`: what its cell
+decodes to, or the store's initial value when it has no cell or one the
+store does not decode. -/
+def Table.get {α : Type} (table : Table) (store : Store α) (location : Location) : α :=
+  ((table.workspaceValue? location store.name).bind store.decode).getD store.initial
+
+/-- The value of `store` in the project of `identity`: what its cell
+decodes to, or the store's initial value when it has no cell or one the
+store does not decode. -/
+def Table.getOfProject {α : Type} (table : Table) (store : Store α) (identity : Project.Identity) :
+    α :=
+  ((table.projectValue? identity store.name).bind store.decode).getD store.initial
+
+end Workspace
+
+namespace Project
+
+/-- Has the project of `identity` keep `value` under `name`. Refused with
+`noSuchProject` when there is none. -/
+def setValue (identity : Project.Identity) (name : String) (value : Value) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  EditorState.ask (.setProjectValue identity name value)
+
+/-- Has the project of `identity` keep `value` as the value of `store`, by
+the store's encoding. Refused with `noSuchProject` when there is none. -/
+def set {α : Type} (store : Store α) (identity : Project.Identity) (value : α) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  setValue identity store.name (store.encode value)
+
+end Project
 
 end Editor

@@ -4,7 +4,7 @@ import Editor.File
 import Editor.Invocation
 import Editor.Scene
 import Editor.UndoTree
-import Editor.Value
+import Editor.Workspace
 
 /-!
 # The editor state
@@ -534,6 +534,27 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
   are answered from where no loop runs the command
   (`Editor/Command/Model.lean`).
 
+## Workspaces
+
+The state keeps the workspaces and the projects of the session
+(`EditorState.workspaces`, a `Workspace.Table`, `Editor/Workspace.lean`):
+each workspace and each project with a store of values by name, and each
+directory's answer from the finder, stamped with the config generation it
+was found under. Both stores live as long as the session; a reload of config
+leaves them.
+
+- **A buffer's workspace is a buffer-local value** (`Workspace.bufferLocal`):
+  its location, encoded (`Location.encode`). `workspaceOf?` reads it and
+  looks the workspace and its project up in the table; a buffer with no
+  such value, or one whose workspace is not in the table, has none.
+- `recordWorkspace` takes in what the finder answered for a directory: the
+  workspace is added, or, found again, keeps its root, its project and its
+  store and takes the new branch; the directory's answer is cached.
+- `registerWorkspace` adds a workspace that is made, not found, for a
+  location that is not on this machine; it refuses `local`.
+- `setWorkspaceValue` and `setProjectValue` set a value in a workspace's or
+  a project's store; they refuse `noSuchWorkspace` and `noSuchProject`.
+
 ## Where a new field goes
 
 | What it belongs to | Where |
@@ -542,6 +563,7 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
 | The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
 | The whole editor (registers, the scroll margin, the pending key prefix, the order buffers were used in) | A field of `EditorState` |
+| One checkout or one codebase (compilation state, command history) | A value in a workspace's or a project's store (`Workspace.Table`) |
 | The open prompt (what completes it, what it has shown) | A field of `Prompt` |
 | What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
 
@@ -950,6 +972,9 @@ structure EditorState where
   /-- The file buffers the loop follows for auto-reload, each with its path
   and whether its watch was refused (`Editor/Loop.lean`, "Auto-reload"). -/
   following : Array Following := #[]
+  /-- The workspaces and projects of the session, with their stores, and
+  each directory's cached answer ("Workspaces", in the module docs). -/
+  workspaces : Workspace.Table := {}
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -1663,6 +1688,47 @@ def setScrollMargin (rows : Nat) (state : EditorState) : EditorState :=
 def value? (state : EditorState) (id : BufferId) (name : String) : Option Value := do
   let buffer ← state.buffer? id
   (← buffer.locals.find? (·.1 == name)).2
+
+/-- The workspace of the buffer `id`, and its project, as the table has
+them: the workspace at the location its buffer-local value names
+("Workspaces", in the module docs). -/
+def workspaceOf? (state : EditorState) (id : BufferId) : Option (Workspace × Project) := do
+  let location ← Location.decode? (← state.value? id Workspace.bufferLocal)
+  let workspace ← state.workspaces.workspace? location
+  return (workspace, (← state.workspaces.project? workspace.project.identity))
+
+/-- `state` once the finder answered `found` for `directory` under the config
+generation `generation` (`Workspace.Table.record`). Never refused. -/
+def recordWorkspace (directory : System.FilePath) (generation : Nat)
+    (found : Option Workspace.Found) (state : EditorState) : EditorState :=
+  { state with workspaces := state.workspaces.record directory generation found }
+
+/-- `state` with the result of `change` on its table, or the refusal with
+the state as it was. -/
+def changeWorkspaces (change : Workspace.Table → Except WorkspaceRefusal Workspace.Table)
+    (state : EditorState) : Except WorkspaceRefusal Unit × EditorState :=
+  match change state.workspaces with
+  | .ok workspaces => (.ok (), { state with workspaces })
+  | .error refusal => (.error refusal, state)
+
+/-- Registers a workspace at `location`, not on this machine, of the project
+of `remote`, with `branch` checked out if it is given
+(`Workspace.Table.register`). Refused with `local` for a local location. -/
+def registerWorkspace (location : Location) (remote : String) (branch : Option String)
+    (state : EditorState) : Except WorkspaceRefusal Unit × EditorState :=
+  state.changeWorkspaces (·.register location remote branch)
+
+/-- Has the workspace at `location` keep `value` under `name`. Refused with
+`noSuchWorkspace` when there is none. -/
+def setWorkspaceValue (location : Location) (name : String) (value : Value) (state : EditorState) :
+    Except WorkspaceRefusal Unit × EditorState :=
+  state.changeWorkspaces (·.setWorkspaceValue location name value)
+
+/-- Has the project of `identity` keep `value` under `name`. Refused with
+`noSuchProject` when there is none. -/
+def setProjectValue (identity : Project.Identity) (name : String) (value : Value)
+    (state : EditorState) : Except WorkspaceRefusal Unit × EditorState :=
+  state.changeWorkspaces (·.setProjectValue identity name value)
 
 /-- Adds a buffer called `name` over `text`, whose history is `history`, in
 the next slot, and hands back its id. It is the least recently used buffer

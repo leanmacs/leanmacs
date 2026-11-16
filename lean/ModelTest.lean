@@ -26237,6 +26237,161 @@ def workspaceGitChecks : List Check :=
               some "git@github.com:o/r.git" &&
             Workspace.Git.parseOrigin (printed "") == none) }]
 
+/-- A store of a number, for the checks of the workspace and project
+stores. -/
+def countStore : Store Nat :=
+  { name := "count", version := 1, initial := 0, encode := .nat
+    decode := fun
+      | .nat n => some n
+      | _ => none }
+
+/-- The checks of the workspaces and projects the editor state keeps
+(`EditorState.workspaces`, `Editor/Workspace.lean`, "The table"), through
+the state requests that change them (`Editor/State/Request.lean`) and the
+editor API (`Editor/Api.lean`, "Workspaces"). -/
+def workspaceStateChecks : List Check :=
+  let origin := "git@github.com:o/r.git"
+  let main :=
+    Workspace.Found.ofGit { toplevel := "/r", commonDir := "/r/.git", branch := .named "main" } none
+  let worktree :=
+    Workspace.Found.ofGit { toplevel := "/w", commonDir := "/r/.git", branch := .named "feature" }
+      none
+  let request (state : EditorState) (request : StateRequest) : EditorState :=
+    (state.handle request).2
+  let recorded : EditorState :=
+    request (request EditorState.none (.recordWorkspace "/r/src" 0 (some main)))
+      (.recordWorkspace "/w/src" 0 (some worktree))
+  let one : BufferId := ⟨1⟩
+  [{  name :=
+        "a workspace registered with a location known only by its branch and one reachable through kube belong to the project of their remote, whichever form it is in, and neither can run commands or read files; registering a local location is refused, with the state as it was"
+      run :=
+        let branchOnly := Location.branchOnly origin "agent/x"
+        let reachable := Location.reachable "kube" "pod/dev" "/src"
+        let (first, state) :=
+          EditorState.none.handle (.registerWorkspace branchOnly origin (some "agent/x"))
+        let (second, state) :=
+          state.handle (.registerWorkspace reachable "https://github.com/o/r" none)
+        let (refused, after) := state.handle (.registerWorkspace (.local "/r") origin none)
+        let table := state.workspaces
+        pure
+          (replied first == .inr () && replied second == .inr () &&
+            [branchOnly, reachable].all
+              (fun location =>
+                ((table.workspace? location).map (·.project.identity)) ==
+                    some (.remote "github.com/o/r") &&
+                  !location.can.runCommands &&
+                  !location.can.readFiles) &&
+            table.projects.size == 1 &&
+            replied refused == .inl .local &&
+            after.workspaces == table) },
+    { name :=
+        "a main checkout and a linked worktree found once each are two workspaces of one project: a value in one's workspace store is not seen from the other's, and one in the project store is seen through both"
+      run :=
+        let mainAt := Location.local "/r"
+        let worktreeAt := Location.local "/w"
+        let (set, state) := recorded.handle (.setWorkspaceValue mainAt "x" (.nat 1))
+        let identity := (state.workspaces.workspace? mainAt).map (·.project.identity)
+        let shared := (state.workspaces.workspace? worktreeAt).map (·.project.identity)
+        match identity with
+        | none => pure false
+        | some identity =>
+          let (told, state) := state.handle (.setProjectValue identity "h" (.str "make"))
+          let table := state.workspaces
+          pure
+            (replied set == .inr () && replied told == .inr () &&
+              table.workspaceValue? mainAt "x" == some (.nat 1) &&
+              table.workspaceValue? worktreeAt "x" == none &&
+              shared == some identity &&
+              table.projectValue? identity "h" == some (.str "make") &&
+              table.workspaces.size == 2 &&
+              table.projects.size == 1) },
+    { name :=
+        "a value for a workspace or a project there is none of is refused, noSuchWorkspace and noSuchProject, with the state as it was"
+      run :=
+        let (noWorkspace, kept) := recorded.handle (.setWorkspaceValue (.local "/z") "x" .null)
+        let (noProject, held) := recorded.handle (.setProjectValue (.root "/z") "x" .null)
+        pure
+          (replied noWorkspace == .inl (.noSuchWorkspace (.local "/z")) &&
+            replied noProject == .inl (.noSuchProject (.root "/z")) &&
+            kept.workspaces == recorded.workspaces &&
+            held.workspaces == recorded.workspaces) },
+    { name :=
+        "a workspace found again keeps its root, its project and its store, and takes the branch it now has"
+      run :=
+        let (_, stored) := recorded.handle (.setWorkspaceValue (.local "/r") "x" (.nat 1))
+        let moved :=
+          Workspace.Found.ofGit
+            { toplevel := "/r", commonDir := "/r/.git", branch := .named "other" } (some origin)
+        let again := request stored (.recordWorkspace "/r/lib" 0 (some moved))
+        let workspace := again.workspaces.workspace? (.local "/r")
+        pure
+          ((workspace.map fun found => (found.branch, found.project.identity)) ==
+              some (some (.named "other"), .commonDir "/r/.git") &&
+            again.workspaces.workspaceValue? (.local "/r") "x" == some (.nat 1) &&
+            again.workspaces.workspaces.size == 2) },
+    { name :=
+        "each directory's answer is cached under the generation it was found under, a directory with no workspace included, and is not an answer under another"
+      run :=
+        let none' := request recorded (.recordWorkspace "/x/" 0 none)
+        let table := none'.workspaces
+        pure
+          (table.cached? "/r/src" 0 == some (some (.local "/r")) &&
+            table.cached? "/r/src" 1 == none &&
+            table.cached? "/x" 0 == some none &&
+            table.cached? "/y" 0 == none) },
+    { name :=
+        "with no loop to answer, the workspace settings are config's defaults under generation 0"
+      run := pure ((EditorState.none.handle .workspaceSettings).1 == ({}, 0)) },
+    { name :=
+        "from a command: a buffer whose local value names a workspace has that workspace and its project; one that inherits from it has the same, and its working directory is the workspace's root; a buffer with none has no workspace and no working directory, and a store's value reads as its initial until it is set"
+      run :=
+        pure <|
+          match
+            dispatchedFrom do
+              discard <| EditorState.ask (.recordWorkspace "/r/src" 0 (some main))
+              discard <| one.setValue Workspace.bufferLocal (Location.local "/r").encode
+              let found ← one.workspace?
+              let none' ← (⟨0⟩ : BufferId).workspace?
+              let before := (← editorState).workspaces.get countStore (.local "/r")
+              let set ← Workspace.set countStore (.local "/r") 3
+              let inherited ← (⟨0⟩ : BufferId).inheritWorkspace one
+              return (found, none', before, set, inherited, ← (⟨0⟩ : BufferId).workspace?,
+                  ← (⟨0⟩ : BufferId).workingDirectory) with
+          | some ((found, none', before, set, inherited, after, directory), state) =>
+            (found.map fun (workspace, project) => (workspace.location, project.identity)) ==
+                some (.local "/r", .commonDir "/r/.git") &&
+              none'.isNone &&
+              before == 0 &&
+              replied set == .inr () &&
+              state.workspaces.get countStore (.local "/r") == 3 &&
+              state.workspaces.get countStore (.local "/w") == 0 &&
+              replied inherited == .inr () &&
+              after == found &&
+              directory == .workspace "/r"
+          | none => false },
+    { name :=
+        "from a command: a buffer with no workspace and no file has no working directory, and the API's registration and project values are the state requests'"
+      run :=
+        pure <|
+          match
+            dispatchedFrom do
+              let directory ← (⟨0⟩ : BufferId).workingDirectory
+              let local' ← Workspace.register (.local "/r") origin none
+              let registered ←
+                Workspace.register (.branchOnly origin "agent/x") origin (some "agent/x")
+              let told ← Project.setValue (.remote "github.com/o/r") "h" (.nat 2)
+              let typed ← Project.set countStore (.remote "github.com/o/r") 5
+              let unknown ← Workspace.setValue (.local "/z") "x" .null
+              return (directory, local', registered, told, typed, unknown) with
+          | some ((directory, local', registered, told, typed, unknown), state) =>
+            directory == .none && replied local' == .inl .local && replied registered == .inr () &&
+              replied told == .inr () &&
+              replied typed == .inr () &&
+              replied unknown == .inl (.noSuchWorkspace (.local "/z")) &&
+              state.workspaces.projectValue? (.remote "github.com/o/r") "h" == some (.nat 2) &&
+              state.workspaces.getOfProject countStore (.remote "github.com/o/r") == 5
+          | none => false }]
+
 /-- The names of the workspace finder's contract properties
 (`Editor/Workspace/Contract.lean`) that do not hold of the pure model
 (`World.find`), or of the real finder run on the job model of the
@@ -26253,7 +26408,7 @@ def workspaceFinderFailures : IO (List String) :=
       (if byModel == property.expected then []
         else [s!"the workspace finder's model: {property.name}"]) ++
         (if outcome == .finished property.expected then []
-          else [s!"the workspace finder on the job model: {property.name}"]) ++
+        else [s!"the workspace finder on the job model: {property.name}"]) ++
         if property.asksGit || after.processes.started.isEmpty then []
         else [s!"the workspace finder on the job model starts no process: {property.name}"]
 
@@ -26363,7 +26518,8 @@ def checks : List Check :=
     menuChecks ++
     clipboardCommandChecks ++
     workspaceDataChecks ++
-    workspaceGitChecks
+    workspaceGitChecks ++
+    workspaceStateChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

@@ -26,7 +26,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   put a state of its own making in place of the editor's.
 - **A refusal is a value.** A reply that can be refused is an `Except` of
   the operation's refusal (`LayoutRefusal`, `BufferRefusal`, `ModeRefusal`,
-  `JobRefusal`, `PromptRefusal`, `ThemeRefusal`), with the state as it was. Nothing is thrown, so a command
+  `JobRefusal`, `PromptRefusal`, `ThemeRefusal`, `WorkspaceRefusal`), with the state as it was. Nothing is thrown, so a command
   matches on it, and a command's error stays a `TextError`.
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
@@ -138,6 +138,18 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   number of rows (`Editor/State.lean`, "The scroll margin"). It is never
   refused: any number is taken. A command reads the margin with a read of
   the state (`EditorState.scrollMargin`).
+- **Workspaces are changed by four requests** (`Editor/State.lean`,
+  "Workspaces"): `recordWorkspace` takes in what the finder answered for a
+  directory, and is never refused; `registerWorkspace` makes a workspace
+  that is not on this machine, and refuses `local`; `setWorkspaceValue` and
+  `setProjectValue` set a value in a store, and refuse `noSuchWorkspace`
+  and `noSuchProject` (`WorkspaceRefusal`). A command reads them with a
+  read of the state (`EditorState.workspaceOf?`, `workspaces`).
+- **What the finder is handed is asked by one request**,
+  `workspaceSettings`: config's workspace roots and the config generation,
+  which the loop answers from what it was told of the registry
+  (`Editor/Command/Dispatch.lean`). Here, with no registry, it is answered
+  no root and generation 0.
 
 ## Where an addition goes
 
@@ -263,6 +275,21 @@ inductive StateRequest where
   /-- Keep `rows` rows between every view's cursor's row and the first and
   the last row it shows. -/
   | setScrollMargin (rows : Nat)
+  /-- Take in what the finder answered for `directory` under the config
+  generation `generation`: the workspace, added or with its branch updated,
+  and the directory's cached answer. -/
+  |
+  recordWorkspace (directory : System.FilePath) (generation : Nat) (found : Option Workspace.Found)
+  /-- Register a workspace at `location`, not on this machine, of the
+  project of `remote`, with `branch` checked out if it is given. -/
+  | registerWorkspace (location : Location) (remote : String) (branch : Option String)
+  /-- Have the workspace at `location` keep `value` under `name`. -/
+  | setWorkspaceValue (location : Location) (name : String) (value : Value)
+  /-- Have the project of `identity` keep `value` under `name`. -/
+  | setProjectValue (identity : Project.Identity) (name : String) (value : Value)
+  /-- What the finder is to be handed, config's roots among it, and the
+  config generation, which the loop that runs the command answers with. -/
+  | workspaceSettings
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -309,6 +336,11 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setLastFind _ => Unit
   | .setLastSearch _ => Unit
   | .setScrollMargin _ => Unit
+  | .recordWorkspace .. => Unit
+  | .registerWorkspace .. => Except WorkspaceRefusal Unit
+  | .setWorkspaceValue .. => Except WorkspaceRefusal Unit
+  | .setProjectValue .. => Except WorkspaceRefusal Unit
+  | .workspaceSettings => Workspace.Settings × Nat
 
 namespace EditorState
 
@@ -381,6 +413,15 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setLastFind find, state => ((), state.setLastFind find)
   | .setLastSearch search, state => ((), state.setLastSearch search)
   | .setScrollMargin rows, state => ((), state.setScrollMargin rows)
+  | .recordWorkspace directory generation found, state =>
+    ((), state.recordWorkspace directory generation found)
+  | .registerWorkspace location remote branch, state =>
+    state.registerWorkspace location remote branch
+  | .setWorkspaceValue location name value, state => state.setWorkspaceValue location name value
+  | .setProjectValue identity name value, state => state.setProjectValue identity name value
+  -- Config's roots and its generation are the loop's to answer with
+  -- (`Program.dispatched`): here, with no loop, config has none.
+  | .workspaceSettings, state => (({}, 0), state)
 
 end EditorState
 
