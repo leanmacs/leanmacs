@@ -120,7 +120,8 @@ with that message, and the config that was loaded before stays.
 The editor refuses a `setup` too, the same way, when what it registered
 cannot be meant: a command name or a job name registered twice (the first
 could never run), a key sequence bound twice (the first binding could never
-run), an ex name bound twice, a store name declared twice, a command over a store the `setup`
+run), an ex name bound twice, a store name declared twice, a theme defined
+twice or named twice, a command over a store the `setup`
 does not declare, a mode name defined twice, or a mode that cannot be meant
 under any scheme (`Mode.problems`: a role that is not registered, a suffix
 used twice, a suffix that is not keys). The diagnostic names the command,
@@ -135,6 +136,24 @@ the face `keyword`, over the theme's, and leaves the rest to the theme. A
 face a config stops setting is the theme's again when the config is
 installed. One `setup` sets a name once: a second `face` of a name is
 refused like a second command of a name, and the diagnostic names the face.
+
+Config registers whole themes too, and names the one in force:
+
+```lean
+def setup : SetupM Unit := do
+  defineTheme "dusk" #[{ name := ⟨"default"⟩, face := { foreground := some (Color.rgb 200 200 0) } }]
+  useTheme "dusk"
+  face "keyword" { foreground := some (Color.rgb 200 0 0) }
+```
+
+`defineTheme` registers a theme by name, for this config; `useTheme` names
+the theme in force once the config is installed, a compiled one (`default`
+is the built-in theme) or one the `setup` defines. Config's own faces are
+over whichever theme is in force. A `setup` that defines a theme name twice,
+or names a theme twice, is refused. A name no theme is registered under is
+not refused: it is looked up when the config is installed, and the theme in
+force then stays, and the echo area says so (`Editor/Config/Reload.lean`).
+A config that names no theme keeps the theme in force.
 
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
@@ -184,6 +203,11 @@ inductive SetupRequest where
   /-- Set the attributes `attributes` sets of the face called `name`, over
   the theme's (`Editor/Face.lean`). -/
   | face (name : FaceName) (attributes : Face)
+  /-- Register `named` as a theme, by its name (`Editor/Face.lean`). -/
+  | theme (named : NamedTheme)
+  /-- Name the theme called `name` as the one in force once the config is
+  installed. -/
+  | useTheme (name : String)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -196,6 +220,8 @@ def SetupRequest.Reply : SetupRequest → Type
   | .mode _ => Unit
   | .ex _ => Unit
   | .face .. => Unit
+  | .theme _ => Unit
+  | .useTheme _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -304,5 +330,19 @@ what the face looks like from the first frame after the config is
 installed. -/
 def face (name : String) (attributes : Face) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.face ⟨name⟩ attributes))
+
+/-- Registers `theme` as the theme called `name`, for this config: a config
+can then name it (`useTheme`), and the command that loads a theme lists it.
+The editor refuses the `setup` for a theme name defined twice. -/
+def defineTheme (name : String) (theme : Theme) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.theme { name, theme }))
+
+/-- Names the theme called `name` as the one in force once the config is
+installed: the compiled theme of that name, or one this `setup` defines.
+The name is looked up when the config is installed, and a name no theme is
+registered under keeps the theme in force and says so in the echo area. The
+editor refuses the `setup` for naming a theme twice. -/
+def useTheme (name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.useTheme name))
 
 end Editor

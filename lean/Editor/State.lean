@@ -1,4 +1,5 @@
 import Editor.Display
+import Editor.Face
 import Editor.File
 import Editor.Invocation
 import Editor.Scene
@@ -741,6 +742,9 @@ structure EditorState where
   /-- Whether a command asked for the config to be reloaded, which the loop
   has not yet handed to its host. -/
   reload : Bool := false
+  /-- The theme a command asked to be loaded, the latest if it asked more
+  than once, which the loop has not yet handed to its host. -/
+  theme : Option String := none
   /-- The registers, each under its name, in the order each name was first
   set ("Registers", in the module docs). No name is here twice. -/
   registers : Array (String × Register) := #[]
@@ -831,6 +835,17 @@ inductive JobRefusal where
 /-- Why a job was not started, as a sentence for the echo area. -/
 def JobRefusal.describe : JobRefusal → String
   | .noSuchJob name => s!"no job is registered under {name}"
+
+/-- Why a theme was not loaded. -/
+inductive ThemeRefusal where
+  /-- No theme is registered under this name. -/
+  | noSuchTheme (name : String)
+  deriving DecidableEq, Repr
+
+/-- Why a theme was not loaded, as a sentence for the echo area
+(`Theme.unknown`). -/
+def ThemeRefusal.describe : ThemeRefusal → String
+  | .noSuchTheme name => Theme.unknown name
 
 /-- Why setting a mode was refused. -/
 inductive ModeRefusal where

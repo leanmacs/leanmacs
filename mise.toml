@@ -210,6 +210,12 @@ run = [
   # candidate matches the scene lists none, and the command receives the
   # typed text (`candidates/expected`). It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/candidates/expected -",
+  # Named themes, on a config of its own (tests/headless/themes) that
+  # defines two themes and names the first: the scene line names the theme
+  # each scene was drawn in, the first after the reload, and the second
+  # after the compiled command `load-theme` is answered with its name, with
+  # no reload between (`themes/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/themes/config ../tests/headless/themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/themes/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed

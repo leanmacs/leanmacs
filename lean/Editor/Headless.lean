@@ -18,6 +18,7 @@ import Editor.Job.Real
 import Editor.Loop
 import Editor.Minibuffer.Compiled
 import Editor.Text.Real
+import Editor.Themes.Compiled
 import Editor.Watch.Real
 import Editor.Window
 
@@ -99,12 +100,20 @@ as before, so reload and job completion work as they did.
   what its driver's `reload` does, so the reducer's rules hold unchanged:
   one job at a time, and a request made while one runs makes one
   follow-up. The reload's report is printed as the driver's is.
+- **A theme a command loaded is switched to** when its step is taken in
+  (`Loop.Stepped.theme`, `loadTheme`, `Editor/Api.lean`): the host feeds
+  the reload reducer a choice (`Config.Event.choose`), which hands the
+  display the theme (`Config.retheme`), and publishes a scene, so the
+  switch is drawn at once: the step's own scene was published in the theme
+  before. No reload runs.
 - **A reload's error is said in the echo area** (`Config.Report.echo`,
   `Running.said`), whoever asked for the reload: a rejected one's first
   error, with its place and the first line of its message, and how many
   more there are. The old config keeps running: a rejected reload installs
   nothing. A reload that installs says nothing there, so what a command
-  said stays, and it hands the display the new theme (`Config.retheme`),
+  said stays, unless its config named a theme nobody registered, which it
+  says (`reload: no theme is registered as …`); and it hands the display
+  the new theme (`Config.retheme`),
   which the next scene is drawn in and sized by. With no frame made yet, the error is
   kept and said when the frame is made (`Running.unsaid`); a command that
   makes the frame clears the echo before it runs, as any command does, so
@@ -126,9 +135,9 @@ as before, so reload and job completion work as they did.
   name. So a reload's modes, bindings and commands hold from the next key.
   What a command over a store asked to be written is written back to the
   stores.
-- **Compiled commands, jobs, bindings, modes and ex bindings are registered
-  when the loop starts** (`compiled`), for the owner `compiled`, before any
-  config: they are what the host's collaborators hand it. A reload replaces
+- **Compiled commands, jobs, bindings, modes, ex bindings and themes are
+  registered when the loop starts** (`compiled`), for the owner `compiled`,
+  before any config: they are what the host's collaborators hand it. A reload replaces
   config's commands, jobs, bindings, modes and ex bindings and never these,
   so they run
   when config fails to load, and config's command of a compiled command's
@@ -157,7 +166,10 @@ as before, so reload and job completion work as they did.
   `ex`, which opens the ex line and runs its answer, `quit`,
   `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`,
   `wq` and `reload`. The Vim scheme's default table binds `:` to the name
-  `ex`, so that key opens the ex line. It is handed no key binding: the
+  `ex`, so that key opens the ex line. And it is handed the command that
+  loads a theme and the themes that ship (`Themes.commands`,
+  `Themes.shipped`, `Editor/Themes/Compiled.lean`): `load-theme`, and the
+  theme `default`, the built-in one. It is handed no key binding: the
   Vim scheme's keys are its states' own keymaps. Every default key names
   a command the host is handed.
 - **The interrupt key.** When the loop starts the host tells the library
@@ -179,7 +191,8 @@ as before, so reload and job completion work as they did.
   (`Running.publish`), unless the loop took a step for the event and
   published its own: a reload's install, a `show` and a marker are each
   followed by one, so the count of scenes says how many events there were.
-  The driver's `stop` publishes nothing.
+  A theme switch a command asked for is followed by one more, after the
+  step's own. The driver's `stop` publishes nothing.
 - **A refusal is never dropped.** The loop puts a refusal in the echo area
   of the scene, a handler's and one met while publishing alike
   (`Editor/Loop.lean`, "When publishing is refused"), so `scene` prints it.
@@ -193,7 +206,8 @@ as before, so reload and job completion work as they did.
   that the host keeps the last scene and counts them, which the `scene`
   request prints, and the rows queries answered since the publish before
   the last one, with what each was answered. It holds how to set the
-  display's theme, and, where the display lays frames out, how to read the
+  display's theme, the name of the theme it was last handed and the name
+  of the one the last scene was drawn in, and, where the display lays frames out, how to read the
   rows of its frame. The headless mode's display is a recorder
   (`Editor/Display/Recorder.lean`, `Host.Display.recorder`), in cells 8
   pixels across and 16 down (`cells`), which sets no theme and lays out no
@@ -268,6 +282,8 @@ dropped. `stop` ends this loop only; quitting the queues is for the process
 reload <n>: installed, <c> chunks, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
+theme: no theme is registered as `<name>`
+                          (the reload's config named a theme nobody registered)
 run <name>: ok            (or "refused: <error>", "interrupted",
                            "gave up: <reason>", "broke off: <reason>",
                            "no such command", "no window", or "no frame"
@@ -284,7 +300,7 @@ key arrived: <logical> <physical> <modifiers>
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
-scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>
+scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>, theme <quoted name>
 view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
 status <view id>: <face> <quoted text>, …   (or "-" for no field)
 scene: none               (no scene has been published)
@@ -314,7 +330,8 @@ and `journal` the entries since the last `journal` line, with their
 it is for measuring, never for a fixture.
 
 The `scene`, `view` and `status` lines answer `scene`: the last scene
-published, with how many scenes have been, then each view in drawing order,
+published, with how many scenes have been and the name of the theme it was
+drawn in (`Host.Display.drawnIn`), then each view in drawing order,
 its snapshot's text read from the library, and the offsets of its scroll
 anchor and of each range of its selection, as the markers are when it is
 asked. After each view's line comes its status line (`statusLine`), one
@@ -588,9 +605,16 @@ structure Host.Display where
   oldest first: those made before the last publish, then those made since.
   A refused query is not kept. -/
   asked : IO.Ref (Array Asked × Array Asked)
-  /-- Makes a theme what the faces look like from the next publish on. The
-  recorder draws no face, and ignores it. -/
-  setTheme : Theme → BaseIO Unit
+  /-- The name of the theme the display was last handed (`setTheme`),
+  `default` until one is. -/
+  named : IO.Ref String
+  /-- The name `named` held when the last scene was published: the theme
+  that scene was drawn in, since a theme set goes with the next publish. -/
+  drawnIn : IO.Ref String
+  /-- Makes a theme, called by its name, what the faces look like from the
+  next publish on: keeps the name (`named`), and hands the theme to the
+  display. The recorder draws no face, and ignores the theme. -/
+  setTheme : String → Theme → BaseIO Unit
   /-- The rows the frame the display laid out last shows of a view, where
   the display lays frames out: the real binding's. `none` for the
   recorder, which lays out no frame. -/
@@ -600,18 +624,22 @@ namespace Host.Display
 
 /-- The host's display over `answer`, with no scene published and no query
 asked: every request goes to `answer`, and a publish and a rows query that
-it answers are kept. -/
+it answers are kept, with the name of the theme a publish was drawn in.
+`setTheme` is how `answer`'s display is handed a theme. -/
 def over (answer : DisplayHandler) (setTheme : Theme → BaseIO Unit := fun _ => pure ())
     (frameRows : Option (ViewId → IO (Option (Array Display.Row))) := none) : BaseIO Host.Display :=
   do
   let last ← IO.mkRef none
   let count ← IO.mkRef 0
   let asked ← IO.mkRef (#[], #[])
+  let named ← IO.mkRef Theme.defaultName
+  let drawnIn ← IO.mkRef Theme.defaultName
   let handle : DisplayHandler := fun
     | .publish scene => do
       answer (.publish scene)
       last.set (some scene)
       count.modify (· + 1)
+      drawnIn.set (← named.get)
       asked.modify fun (_, since) => (since, #[])
     | .rows query => do
       let reply ← answer (.rows query)
@@ -621,7 +649,10 @@ def over (answer : DisplayHandler) (setTheme : Theme → BaseIO Unit := fun _ =>
     | .move query => answer (.move query)
     | .heights => answer .heights
     | .frame request => answer (.frame request)
-  return { handle, last, count, asked, setTheme, frameRows }
+  let setNamed (name : String) (theme : Theme) : BaseIO Unit := do
+    named.set name
+    setTheme theme
+  return { handle, last, count, asked, named, drawnIn, setTheme := setNamed, frameRows }
 
 /-- The host's display over a recorder in `cells` that reads snapshots
 through `snapshots` (`Editor/Display/Recorder.lean`): the headless mode's. -/
@@ -644,6 +675,10 @@ def last? (display : Host.Display) : BaseIO (Option Scene) :=
 /-- How many scenes have been published. -/
 def published (display : Host.Display) : BaseIO Nat :=
   display.count.get
+
+/-- The name of the theme the last scene published was drawn in. -/
+def drawn (display : Host.Display) : BaseIO String :=
+  display.drawnIn.get
 
 end Host.Display
 
@@ -692,6 +727,9 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The compiled ex bindings (`Editor/Ex/Line.lean`): registered for the
   owner `compiled` when the loop starts, before any config. -/
   ex : Array Ex.Binding := #[]
+  /-- The compiled themes (`Editor/Themes/Compiled.lean`): registered for
+  the owner `compiled` when the loop starts, before any config. -/
+  themes : Array NamedTheme := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`.
   The editor thread calls it. It is not `emit`: the output is what a test
   compares, and a log entry depends on how long the machine took. -/
@@ -787,15 +825,18 @@ def severityName : Config.Severity → String
   | .error => "error"
 
 /-- The lines a reload's report is printed as: what it came to, then its
-diagnostics. -/
+diagnostics, then, when its config named a theme nobody registered, a line
+that says so. -/
 def reportLines (report : Config.Report) : Array String :=
   let outcome :=
     if report.installed then
       s!"reload {report.number}: installed, {report.chunks} chunks, {report.commands} commands"
     else s!"reload {report.number}: rejected"
-  #[outcome] ++
+  let diagnostics :=
     report.diagnostics.map fun diagnostic =>
       s!"diagnostic: {diagnostic.source}:{diagnostic.line}:{diagnostic.column}: {severityName diagnostic.severity}: {(diagnostic.message.splitOn "\n").headD ""}"
+  #[outcome] ++ diagnostics ++
+    report.unknownTheme.toArray.map fun name => s!"theme: {Theme.unknown name}"
 
 /-- How a job that has ended is reported, after `job <id> <name>: `. -/
 def firstLine (message : String) : String :=
@@ -892,6 +933,9 @@ def reduce (collaborators : Collaborators σ scheme) (running : Running σ schem
       let promise ← IO.Promise.new
       discard <| IO.asTask (prio := .dedicated) (reloadJob collaborators base chunks promise)
       running := { running with job := some promise }
+    | .themed =>
+      -- `retheme` above has handed the display the theme.
+      pure ()
   return running
 
 /-- Takes the finished reload job's outcome and feeds it to the reducer. This
@@ -1022,7 +1066,10 @@ written is written back to the stores, and each job its command asked for
 is started, for the owner that registered it, and printed,
 `job <id> <name>: started`. A step whose command asked for the config to be
 reloaded (`Loop.Stepped.reload`) feeds the reload reducer a request, as the
-driver's `reload` does. A step that said stop ends the loop.
+driver's `reload` does. A step whose command asked for a theme to be loaded
+(`Loop.Stepped.theme`) feeds the reducer a choice of it, which hands the
+display the theme (`Config.retheme`), and publishes a scene, drawn in it. A
+step that said stop ends the loop.
 
 Then each invocation the step answered, the continuation of a prompt its
 command accepted, is run as a step of its own (`Loop.invoke`), with keys
@@ -1054,6 +1101,11 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
   if stepped.reload then
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested
+  if let some name := stepped.theme then
+    -- The step's scene was published in the theme before: the switch is
+    -- drawn in a scene of its own.
+    running ← running.reduce collaborators (.choose name)
+    running ← running.publish collaborators
   for invocation in stepped.answered do
     -- A step that said stop has ended the loop: nothing more is run.
     if running.stopped then
@@ -1161,8 +1213,9 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
 /-- A scene as `scene` prints it, read from the text store as it is now: its
 frame, then each view, its snapshot's text and its markers' offsets, and
 after each view's line its status line (`statusLine`). `published` is how
-many scenes have been published. -/
-def sceneLines (scene : Scene) (published : Nat) : TextM (Array String) := do
+many scenes have been published, and `theme` the name of the theme the
+scene was drawn in. -/
+def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array String) := do
   let focused :=
     match scene.focused with
     | some id => toString id.index
@@ -1172,7 +1225,7 @@ def sceneLines (scene : Scene) (published : Nat) : TextM (Array String) := do
     | some text => text.quote
     | none => "-"
   let mut lines :=
-    #[s!"scene {scene.size.width}x{scene.size.height}, focused {focused}, echo {scene.echo.quote}, preedit {preedit}, published {published}"]
+    #[s!"scene {scene.size.width}x{scene.size.height}, focused {focused}, echo {scene.echo.quote}, preedit {preedit}, published {published}, theme {theme.quote}"]
   for view in scene.views do
     let .anchor scroll ← view.scroll.text.marker view.scroll | throw .noSuchMarker
     let selections ←
@@ -1193,7 +1246,8 @@ def scene (collaborators : Collaborators σ scheme) (running : Running σ scheme
   let some scene ← running.display.last? |
     collaborators.emit "scene: none"
     return running
-  let (result, texts) ← (sceneLines scene (← running.display.published)).runReal running.texts
+  let (result, texts) ←
+    (sceneLines scene (← running.display.published) (← running.display.drawn)).runReal running.texts
   match result with
   | .ok lines =>
     for line in lines do
@@ -1348,15 +1402,16 @@ structure Progress where
   jobs : Nat := 0
 
 /-- The registry a host starts with: what compiled code hands it, its
-commands, jobs, key bindings, modes and ex bindings, for the owner
+commands, jobs, key bindings, modes, ex bindings and themes, for the owner
 `compiled`, before any config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  ((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
-                collaborators.compiledJobs).replaceBindings
-            .compiled collaborators.bindings).replaceModes
-        .compiled collaborators.modes).replaceEx
-    .compiled collaborators.ex
+  (((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
+                    collaborators.compiledJobs).replaceBindings
+                .compiled collaborators.bindings).replaceModes
+            .compiled collaborators.modes).replaceEx
+        .compiled collaborators.ex).replaceThemes
+    .compiled collaborators.themes
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of
@@ -1900,7 +1955,8 @@ the real elaborator over the toolchain in `sysroot` and the editor's
 source, `emit` as the output and stderr as the log, and, as its compiled
 ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
-and the frame's commands with their bindings. Its display is the recorder
+the frame's commands with their bindings, and the command that loads a
+theme with the themes that ship. Its display is the recorder
 and its clipboard its own, as a host's are by default.
 
 It is apart from `shipped`, which makes what it is over, so that what the
@@ -1914,10 +1970,11 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     wakeups := 2, jobs := 3
     commands :=
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++
-        FrameCommands.commands
+        FrameCommands.commands ++
+        Themes.commands
     bindings := FrameCommands.bindings
     compiledJobs := Files.jobs
-    modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln }
+    modes := Minibuffer.modes, ex := Ex.bindings, themes := Themes.shipped, log := IO.eprintln }
 
 /-- The collaborators the executable's hosts are made of, the headless
 mode's and the window mode's: `shippedOver` the library's timer service,

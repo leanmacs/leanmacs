@@ -1062,14 +1062,36 @@ paint, the paper's colour on the paper, and is not seen: so each state the
 shipped scheme has gets its cursor face in the built-in theme (the default
 face's colours the other way round), and a state config registers needs
 config to define its own. Config sets a face in `setup`, `face "name" { … }`; a name is set
-once in a `setup`. The theme a display is sent is the built-in one followed
-by the installed config's definitions, so a face config sets takes
-config's attributes over the theme's, and one it stops setting is the
-theme's again at the next reload that installs
-([lean-runtime.md](lean-runtime.md), "Config and reload").
+once in a `setup`.
 
-Not built: a face naming another as its base; choosing between whole
-themes.
+Themes are registered by name, by owner, as commands and modes are
+(`lean/Editor/Config/Registry.lean`, "Themes"): compiled code registers
+the themes that ship (`Themes.shipped`, `lean/Editor/Themes/Compiled.lean`),
+of which `Theme.builtin` is the one called `default`, and `setup` registers
+more with `defineTheme` and names the one in force with `useTheme`. The
+theme in force is state of the reload reducer (`Config.State.themeName`,
+`lean/Editor/Config/Reload.lean`), `default` until a config names another:
+
+- **The theme a display is sent is the theme in force followed by the
+  installed config's definitions**, so a face config sets takes config's
+  attributes over the theme's, whichever theme is in force and across a
+  switch, and one it stops setting is the theme's again at the next reload
+  that installs ([lean-runtime.md](lean-runtime.md), "Config and reload").
+- **A reload whose config names a registered theme puts it in force.** One
+  whose config names none keeps the theme in force, so a theme picked with
+  the command survives a reload that does not name one. One whose config
+  names a theme nobody registered is installed all the same, keeps the
+  theme in force, and says so in the echo area: ``reload: no theme is
+  registered as `<name>` ``. A theme of config's in force that a reload
+  drops falls back to `default`.
+- **`load-theme` switches the theme live, with no reload**
+  (`lean/Editor/Themes.lean`): it asks for a name with the registered
+  themes as its candidates, and the host feeds the reducer the choice
+  (`Config.Event.choose`). A name nobody registered is refused in the echo
+  area, ``load-theme: no theme is registered as `<name>` ``, and changes
+  nothing.
+
+Not built: a face naming another as its base.
 
 ### Text is the only layout engine
 
@@ -1417,11 +1439,15 @@ is therefore Lean's scene and one field more, the definitions, with none
 meaning "as last given". The layout of the words is the table in
 `crates/editor-ffi/src/display/wire.rs`.
 
-After a reload that installs, the runtime that owns a display hands the
+After a reload that installs, and after a theme is chosen with no reload
+(the reducer's effect `themed`), the runtime that owns a display hands the
 binding the new theme (`Config.retheme`, `lean/Editor/Config/Display.lean`).
 The headless host does, through its display's `setTheme`: the real
 binding's in the window mode and under `--render`, and nothing for the
-recorder.
+recorder, which keeps only the theme's name, for the scene line. A switch
+from the command comes after the step that ran the command has published
+its scene in the old theme, so the host publishes once more after it, and
+the switch is drawn at once.
 
 The theme takes effect at the next publish, and that publish is sized in
 it too. `Loop.publish` asks the display's heights before it lays out the

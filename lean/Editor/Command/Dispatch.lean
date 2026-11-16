@@ -145,6 +145,15 @@ from the next command.
   the names the loop was told (`Loop.Registered.exNames`): each bound name
   once. The state is not read and not changed. The ex line asks, for the
   candidates of its prompt.
+- **Asking which themes are registered** (`StateRequest.themeNames`) is
+  answered the names the loop was told (`Loop.Registered.themeNames`), the
+  state not read and not changed. The command that loads a theme asks, for
+  the candidates of its prompt.
+- **Loading a theme** (`StateRequest.loadTheme`) is refused with
+  `noSuchTheme` for a name the loop was not told a theme is registered
+  under, with the state as it was. Otherwise the name is kept in the state,
+  for the loop to hand to its host once the command has run to its end
+  (`Editor/Loop.lean`, "A theme switch from a command").
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -220,6 +229,9 @@ structure Loop.Registered where
   fills them from one list of bindings, so that every name here has a
   binding there. -/
   exNames : Array String := #[]
+  /-- The names themes are registered under, each once, for the command
+  that loads a theme: its candidates, and the names it may load. -/
+  themeNames : Array String := #[]
   /-- The command registered under this name, as one run inside another is
   run: given the call, its program. `none` for a name no command is
   registered under. The loop fills it from the lookup a key's invocation
@@ -274,6 +286,13 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
   | state, .step (.state .exNames) next => dispatched registered state (next registered.exNames)
+  | state, .step (.state .themeNames) next =>
+    dispatched registered state (next registered.themeNames)
+  | state, .step (.state (.loadTheme name)) next =>
+    if registered.themeNames.contains name then
+      let (reply, state) := state.handle (.loadTheme name)
+      dispatched registered state (next reply)
+    else dispatched registered state (next (.error (.noSuchTheme name)))
   | state, .step (.state (.runCommand name call)) next =>
     match registered.command name with
     | none => dispatched registered state (next false)

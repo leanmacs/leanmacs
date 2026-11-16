@@ -4,6 +4,7 @@ import Editor.Clipboard.Model
 import Editor.Command.Append
 import Editor.Command.Dispatch
 import Editor.Command.Model
+import Editor.Config.Display
 import Editor.Config.Reload
 import Editor.Display.Contract
 import Editor.Display.Model
@@ -40,6 +41,7 @@ import Editor.Scroll
 import Editor.State
 import Editor.State.Request
 import Editor.Text.Contract
+import Editor.Themes.Compiled
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
 import Editor.Watch.Model
@@ -233,7 +235,11 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   as a step of its own, with the rest of the line as its argument; a name
   nobody bound, an argument a name does not take, an empty line, a bound
   command that is not registered or is refused, and a cancelled line.
-  Each message is read from the function that makes it.
+  Each message is read from the function that makes it;
+- `themeChecks`: the command that loads a theme (`Editor/Themes.lean`) on
+  that driver, told of two registered themes: with no name it asks among
+  them, with a registered name the step hands the name back, and a name
+  nobody registered, or a prompt already open, is said in the echo area.
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
@@ -2054,6 +2060,15 @@ def coloured (red : UInt8) : Face :=
 def defined (name : String) (attributes : Face) : FaceDefinition :=
   { name := ⟨name⟩, face := attributes }
 
+/-- A theme of one definition: the face `default` in the red `red`. -/
+def oneFace (red : UInt8) : Theme :=
+  #[defined "default" (coloured red)]
+
+/-- The theme called `name`, of one definition in the red `red`
+(`oneFace`). -/
+def namedTheme (name : String) (red : UInt8) : NamedTheme :=
+  { name, theme := oneFace red }
+
 /-- The message a `setup` was refused with, if it was. -/
 def refusal (setup : SetupM Unit) : Option String :=
   match Config.Registrations.ofSetup setup with
@@ -2354,7 +2369,39 @@ def setupChecks : List Check :=
         let shared : SetupM Unit := do
           command "keyword" (makes "1")
           face "keyword" (coloured 1)
-        pure (refusal twice == some "the face `keyword` is set twice" && refusal shared == none) }]
+        pure (refusal twice == some "the face `keyword` is set twice" && refusal shared == none) },
+    { name :=
+        "a setup's themes are collected in the order it defined them, each with its definitions, with the theme it names; a setup that defines and names none has none"
+      run :=
+        let setup : SetupM Unit := do
+          defineTheme "first" (oneFace 1)
+          useTheme "second"
+          command "greet" (makes "1")
+          defineTheme "second" (oneFace 2)
+        match Config.Registrations.ofSetup setup,
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.themes == #[namedTheme "first" 1, namedTheme "second" 2] &&
+              collected.theme == some "second" &&
+              collected.commands.map (·.name) == #["greet"] &&
+              plain.themes.isEmpty &&
+              plain.theme == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup that defines a theme twice is refused with a message that names the theme, one that names a theme twice with a message that names both, and naming a theme nobody defined is not refused"
+      run :=
+        let twice : SetupM Unit := do
+          defineTheme "first" (oneFace 1)
+          defineTheme "other" (oneFace 2)
+          defineTheme "first" (oneFace 3)
+        let named : SetupM Unit := do
+          useTheme "a"
+          useTheme "b"
+        pure
+          (refusal twice == some "the theme `first` is defined twice" &&
+            refusal named == some "the theme is named twice: `a`, then `b`" &&
+            refusal (useTheme "nope") == none) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -2569,6 +2616,27 @@ def registryChecks : List Check :=
             registry.registered.exNames.all (fun name => (registry.registered.ex name).isSome) &&
             ({} : Config.Registry).registered.exNames == #[] &&
             (registry.replaceEx .config #[]).registered.exNames == #["w", "q"]) },
+    { name :=
+        "themes are held by owner and replaced as a set: the latest entry of a name is the one found, config's theme of a compiled theme's name while config registers it and the compiled one again once it does not; the theme names are each listed once, in the order first registered, and are what the loop is told; the commands and the faces are left as they were"
+      run :=
+        let registry : Config.Registry :=
+          ((({} : Config.Registry).replace .config #[registration "greet" "1"]).replaceThemes
+                .compiled #[namedTheme "default" 1, namedTheme "second" 2]).replaceThemes
+            .config #[namedTheme "mine" 3, namedTheme "second" 4]
+        let replaced := registry.replaceThemes .config #[namedTheme "other" 5]
+        pure
+          (registry.theme? "second" == some (namedTheme "second" 4) &&
+            registry.theme? "default" == some (namedTheme "default" 1) &&
+            registry.theme? "nope" == none &&
+            registry.themeNames == #["default", "second", "mine"] &&
+            registry.registered.themeNames == registry.themeNames &&
+            replaced.theme? "second" == some (namedTheme "second" 2) &&
+            replaced.theme? "mine" == none &&
+            replaced.themeNames == #["default", "second", "other"] &&
+            replaced.themes.size == 3 &&
+            replaced.names == #["greet"] &&
+            replaced.definitions.isEmpty &&
+            ({} : Config.Registry).registered.themeNames == #[]) },
     { name :=
         "replacing an owner's ex bindings leaves the commands, the jobs, the key bindings and the modes as they were"
       run :=
@@ -2911,6 +2979,8 @@ inductive Seen where
   | cancelJobs (owner : String)
   /-- A reload was reported. -/
   | report (number : Nat) (installed : Bool) (sources : Array String) (chunks commands : Nat)
+  /-- The theme in force was switched. -/
+  | themed
   deriving DecidableEq, Repr
 
 /-- `effect` as a check compares it. -/
@@ -2920,6 +2990,7 @@ def seen : Config.Effect Elaborated → Seen
   | .report report =>
     .report report.number report.installed (report.diagnostics.map (·.source)) report.chunks
       report.commands
+  | .themed => .themed
 
 /-- The state the reducer reaches from `state` through `events`, and every
 effect on the way. -/
@@ -3027,18 +3098,145 @@ before any config. -/
 def compiledWith (registrations : Array Config.Registration) : Config.State Elaborated :=
   { registry := ({} : Config.Registry).replace .compiled registrations }
 
+/-- The theme `second` of the reducer's checks: one definition of its own. -/
+def secondTheme : Theme :=
+  oneFace 7
+
+/-- A config state in which compiled code has registered two themes, before
+any config: `default`, the built-in one, and `second` (`secondTheme`). -/
+def themed : Config.State Elaborated :=
+  {
+    registry :=
+      ({} : Config.Registry).replaceThemes .compiled
+        #[{ name := Theme.defaultName, theme := Theme.builtin },
+          { name := "second", theme := secondTheme }] }
+
+/-- The report of the reload that finishes with `outcome` from `state`. -/
+def reportFrom (state : Config.State Elaborated) (outcome : Config.Outcome Elaborated) :
+    Config.Report :=
+  (state.install outcome).2
+
 /-- The checks of the reload reducer (`Editor/Config/Reload.lean`), with
 outcomes built by hand. -/
 def reloadChecks : List Check :=
-  [{ name := "a request with no job running starts one, carrying the base and the loaded chunks",
-     run :=
-       let first := reduce [.requested]
-       let later := reduce [.requested, .finished (accepted ["a", "b"] (greets "1")), .requested]
-       pure
-         (first.2 == #[.start none #[]] &&
-           later.2 ==
-             #[.start none #[], .cancelJobs "config", .report 1 true #[] 2 1,
-               .start (some #[]) #["a", "b"]]) },
+  [{  name :=
+        "criterion 1: a config that names a registered theme starts in it, with config's faces over it; so does one that names a theme it defines itself, and the report says nothing in the echo area"
+      run :=
+        let named : SetupM Unit := do
+          useTheme "second"
+          face "keyword" (coloured 1)
+        let own : SetupM Unit := do
+          defineTheme "mine" (oneFace 9)
+          useTheme "mine"
+        let (state, effects) := reduceFrom themed [.requested, .finished (accepted ["a"] named)]
+        let (mine, _) := reduceFrom themed [.requested, .finished (accepted ["a"] own)]
+        pure
+          (state.themeName == "second" &&
+            state.theme == secondTheme ++ #[defined "keyword" (coloured 1)] &&
+            effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 0] &&
+            (reportFrom themed (accepted ["a"] named)).echo == none &&
+            mine.themeName == "mine" &&
+            mine.theme == oneFace 9) },
+    { name :=
+        "criterion 2: a config that names no theme starts in default, the built-in theme, with config's faces over it; a state before any config is in default"
+      run :=
+        let (state, _) :=
+          reduceFrom themed [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1)))]
+        pure
+          (({} : Config.State Elaborated).themeName == Theme.defaultName &&
+            themed.themeName == Theme.defaultName &&
+            state.themeName == Theme.defaultName &&
+            state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)]) },
+    { name :=
+        "criterion 2: choosing a registered theme switches to it with the effect that says so, and a reload whose config names no theme keeps the theme in force"
+      run :=
+        let (chosen, effects) := Config.step themed (.choose "second")
+        let (reloaded, _) :=
+          reduceFrom chosen [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1)))]
+        pure
+          (chosen.themeName == "second" && effects.map seen == #[.themed] &&
+            reloaded.themeName == "second" &&
+            reloaded.theme == secondTheme ++ #[defined "keyword" (coloured 1)]) },
+    { name :=
+        "criterion 4: after a switch, config's own faces still apply over the new theme, in their order"
+      run :=
+        let setup : SetupM Unit := do
+          face "keyword" (coloured 1)
+          face "default" (coloured 2)
+        let (loaded, _) := reduceFrom themed [.requested, .finished (accepted ["a"] setup)]
+        let (switched, _) := Config.step loaded (.choose "second")
+        pure
+          (loaded.theme ==
+              Theme.builtin ++ #[defined "keyword" (coloured 1), defined "default" (coloured 2)] &&
+            switched.theme ==
+              secondTheme ++ #[defined "keyword" (coloured 1), defined "default" (coloured 2)]) },
+    { name :=
+        "criteria 5 and 6: a config that names a theme nobody registered is installed, leaves the theme in force as it was, and its report names the unknown theme in the echo area"
+      run :=
+        let (chosen, _) := Config.step themed (.choose "second")
+        let unknown : SetupM Unit := do
+          useTheme "nope"
+          face "keyword" (coloured 1)
+        let (state, effects) := reduceFrom chosen [.requested, .finished (accepted ["a"] unknown)]
+        let report := reportFrom chosen (accepted ["a"] unknown)
+        pure
+          (state.themeName == "second" &&
+            state.theme == secondTheme ++ #[defined "keyword" (coloured 1)] &&
+            effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 0] &&
+            report.unknownTheme == some "nope" &&
+            report.echo == some s!"reload: {Theme.unknown "nope"}" &&
+            report.echo == some "reload: no theme is registered as `nope`" &&
+            (reportFrom chosen (accepted ["a"] (useTheme "second"))).unknownTheme == none) },
+    { name :=
+        "a rejected reload leaves the theme in force; choosing a theme nobody registered leaves the state and has no effect; a theme of config's in force that the next reload drops falls back to default"
+      run :=
+        let (chosen, _) := Config.step themed (.choose "second")
+        let (kept, _) := reduceFrom chosen [.requested, .finished (rejected "a")]
+        let (unknown, nothing) := Config.step chosen (.choose "nope")
+        let own : SetupM Unit := do
+          defineTheme "mine" (oneFace 9)
+          useTheme "mine"
+        let (mine, _) := reduceFrom themed [.requested, .finished (accepted ["a"] own)]
+        let (dropped, _) := reduceFrom mine [.requested, .finished (accepted ["a"] (pure ()))]
+        pure
+          (kept.themeName == "second" && unknown.themeName == "second" &&
+            unknown.theme == chosen.theme &&
+            nothing.isEmpty &&
+            mine.themeName == "mine" &&
+            dropped.themeName == Theme.defaultName &&
+            dropped.theme == Theme.builtin) },
+    { name :=
+        "the display is handed the theme in force, with its name, after a reload that installs and after a choice that switched the theme, and not after a rejected reload or a choice of a theme nobody registered"
+      run := do
+        let handed ← IO.mkRef (#[] : Array (String × Theme))
+        let setTheme (name : String) (theme : Theme) : BaseIO Unit :=
+          handed.modify (·.push (name, theme))
+        let steps : List (Config.Event Elaborated) :=
+          [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1))), .choose "second",
+            .requested, .finished (rejected "a"), .choose "nope"]
+        let mut state := themed
+        for event in steps do
+          let (next, effects) := Config.step state event
+          Config.retheme setTheme next effects
+          state := next
+        return (← handed.get) ==
+            #[(Theme.defaultName, Theme.builtin ++ #[defined "keyword" (coloured 1)]),
+              ("second", secondTheme ++ #[defined "keyword" (coloured 1)])] },
+    { name :=
+        "a state whose registry holds no theme of the name in force is drawn in the built-in theme"
+      run :=
+        pure
+          (({ themeName := "second" } : Config.State Elaborated).theme == Theme.builtin &&
+            ({} : Config.State Elaborated).theme == Theme.builtin) },
+    { name := "a request with no job running starts one, carrying the base and the loaded chunks"
+      run :=
+        let first := reduce [.requested]
+        let later := reduce [.requested, .finished (accepted ["a", "b"] (greets "1")), .requested]
+        pure
+          (first.2 == #[.start none #[]] &&
+            later.2 ==
+              #[.start none #[], .cancelJobs "config", .report 1 true #[] 2 1,
+                .start (some #[]) #["a", "b"]]) },
     { name :=
         "requests while a job runs start nothing, and the finish then starts exactly one more job"
       run :=
@@ -6694,8 +6892,8 @@ def stateRequests : List StateRequest :=
     .closePrompt none, .closePrompt (some "typed"), .setCandidates #["one", "two"],
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .invoke asked,
-    .quit, .reload, .giveUp "no", .breakOff "far enough",
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
+    .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
     .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
@@ -7185,6 +7383,20 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (names, after) := state.handle .exNames
             names == #[] && after == state },
+    { name :=
+        "the handler knows no registry: asked which themes are registered, it answers none and leaves the state as it was; asked to load a theme, it takes any name and keeps the latest until the loop takes it out"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (names, after) := state.handle .themeNames
+            let (first, loaded) := state.handle (.loadTheme "first")
+            let (second, again) := loaded.handle (.loadTheme "second")
+            names == #[] && after == state && replied first == .inr () &&
+              replied second == .inr () &&
+              loaded == { state with theme := some "first" } &&
+              again == { state with theme := some "second" } },
     { name :=
         "the request to have an invocation run next records it after what is recorded, the answer of a prompt that was closed among it, and changes nothing else"
       run :=
@@ -9375,6 +9587,37 @@ def dispatchStateChecks : List Check :=
             (program.runModel editorModel).1.toOption
           asks registered == some (.finished #["w", "q", "greet"], true) &&
             asks {} == some (.finished #[], true) },
+    { name :=
+        "a command that asks which themes are registered is answered the names the loop was told, in their order, with the state as it was"
+      run :=
+        pure <|
+          let asks (registered : Loop.Registered) : Option (Guarded (Array String) × Bool) :=
+            let program : EditorM (Guarded (Array String) × Bool) := do
+              let start ← EditorState.initial ⟨640, 480⟩
+              let (outcome, state) ← themeNames.dispatched registered start
+              return (outcome, state == start)
+            (program.runModel editorModel).1.toOption
+          asks { themeNames := #["default", "second"] } ==
+              some (.finished #["default", "second"], true) &&
+            asks {} == some (.finished #[], true) },
+    { name :=
+        "a command that asks to load a theme the loop was told is registered is answered ok, and the state keeps the name for the loop to take out; one nobody registered is refused with its name, and the state is as it was"
+      run :=
+        pure <|
+          let registered : Loop.Registered := { themeNames := #["default", "second"] }
+          let asks (name : String) : Option (Option (ThemeRefusal ⊕ Unit) × Option String × Bool) :=
+            let program : EditorM (Option (ThemeRefusal ⊕ Unit) × Option String × Bool) := do
+              let start ← EditorState.initial ⟨640, 480⟩
+              let (outcome, state) ← (loadTheme name).dispatched registered start
+              let reply :=
+                match outcome with
+                | .finished reply => some (replied reply)
+                | _ => none
+              return (reply, state.theme, { state with theme := none } == start)
+            (program.runModel editorModel).1.toOption
+          asks "second" == some (some (.inr ()), some "second", true) &&
+            asks "nope" == some (some (.inl (.noSuchTheme "nope")), none, true) &&
+            ThemeRefusal.describe (.noSuchTheme "nope") == Theme.unknown "nope" },
     { name :=
         "a command that asks for the command of a name to be run inside it: the command the loop was told of under that name runs there, with the call it is handed, before the asking command goes on, and what it said is in the state the asking command then reads; a name the loop was told no command of is answered false, and nothing runs"
       run :=
@@ -15705,39 +15948,49 @@ command checks have them, and six commands written here, under `C-l`:
 buffer, `other` (`o`) says `other`, `hand-leave` (`h`) asks for `leave`
 to be run after it, and `hand-leave-other` (`t`) asks for `leave` and then
 `other` to be run after it. Two more ask for the config to be reloaded: `again`
-(`r`), and `again-then-fail` (`g`), which asks and is then refused. -/
+(`r`), and `again-then-fail` (`g`), which asks and is then refused; and two
+ask for the theme `second` to be loaded, which the loop is told is
+registered: `pick` (`p`), and `pick-then-fail` (`k`), which asks and is then
+refused. -/
 def quitKeys : Loop.Keys TestScheme.scheme :=
-  dispatchKeys
-    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
-      ("C-l l", invoke "leave"), ("C-l f", invoke "leave-then-fail"), ("C-l s", invoke "stamp"),
-      ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"),
-      ("C-l t", invoke "hand-leave-other"), ("C-l r", invoke "again"),
-      ("C-l g", invoke "again-then-fail")]
-    [(Files.openName, fun call => do
-        Files.openCommand call
-        return none),
-      (Files.saveName, fun call => do
-        Files.saveCommand call
-        return none),
-      ("leave", fun _ => do
-        if let .error (.unsaved name)← quit then
-          message (notLeaving name)
-        return none),
-      ("leave-then-fail", failingAfter fun _ => discard quit), ("stamp", stamp),
-      ("other", fun _ => do
-        message "other"
-        return none),
-      ("hand-leave", fun _ => do
-        Editor.invoke { command := "leave" }
-        return none),
-      ("hand-leave-other", fun _ => do
-        Editor.invoke { command := "leave" }
-        Editor.invoke { command := "other" }
-        return none),
-      ("again", fun _ => do
-        reloadConfig
-        return none),
-      ("again-then-fail", failingAfter fun _ => reloadConfig)]
+  {
+    dispatchKeys
+      [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
+        ("C-l l", invoke "leave"), ("C-l f", invoke "leave-then-fail"), ("C-l s", invoke "stamp"),
+        ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"),
+        ("C-l t", invoke "hand-leave-other"), ("C-l r", invoke "again"),
+        ("C-l g", invoke "again-then-fail"), ("C-l p", invoke "pick"),
+        ("C-l k", invoke "pick-then-fail")]
+      [(Files.openName, fun call => do
+          Files.openCommand call
+          return none),
+        (Files.saveName, fun call => do
+          Files.saveCommand call
+          return none),
+        ("leave", fun _ => do
+          if let .error (.unsaved name)← quit then
+            message (notLeaving name)
+          return none),
+        ("leave-then-fail", failingAfter fun _ => discard quit), ("stamp", stamp),
+        ("other", fun _ => do
+          message "other"
+          return none),
+        ("hand-leave", fun _ => do
+          Editor.invoke { command := "leave" }
+          return none),
+        ("hand-leave-other", fun _ => do
+          Editor.invoke { command := "leave" }
+          Editor.invoke { command := "other" }
+          return none),
+        ("again", fun _ => do
+          reloadConfig
+          return none),
+        ("again-then-fail", failingAfter fun _ => reloadConfig),
+        ("pick", fun _ => do
+          discard <| loadTheme "second"
+          return none),
+        ("pick-then-fail", failingAfter fun _ => discard <| loadTheme "second")] with
+    registered := { themeNames := #["second"] } }
 
 /-- A driver of the quit checks over the files `files`, with the file
 `note.txt` open in view 0: the open command, and its job finished. The load
@@ -15916,7 +16169,26 @@ def dispatchQuitChecks : List Check :=
               !failed.loop.state.reload &&
               failed.reloads == 1 &&
               twice.reloads == 2 &&
-              driver.reloads == 0 }]
+              driver.reloads == 0 },
+    { name :=
+        "a step whose command asked for a theme to be loaded hands its name back, and the state after it holds none; a step that ran another command hands back none, and so does one whose command asked and was then refused; the driver records the themes asked for"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let asked (steps : Array (Option (Loop.Stepped TestScheme.scheme))) :=
+              steps.map (·.map (·.theme))
+            let (once, steps) := fedTo driver (presses "C-l p")
+            let (other, went) := fedTo once (presses "C-l o")
+            let (failed, lost) := fedTo other (presses "C-l k")
+            asked steps == #[some none, some (some "second")] && once.loop.state.theme == none &&
+              once.themes == #["second"] &&
+              asked went == #[some none, some none] &&
+              asked lost == #[some none, some none] &&
+              failed.loop.state.theme == none &&
+              failed.themes == #["second"] &&
+              driver.themes == #[] }]
 
 /-- The ex bindings of the ex line's own checks, written here: `say` runs
 the command `greet` of the prompt checks with the rest of the line, and
@@ -16463,6 +16735,98 @@ def exChecks : List Check :=
               (candidatesOf typed).map (·.listed) == some #["e", "reload"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
+
+/-- The command `other` of the theme command's checks: it says `other`. -/
+def saysOther : Dispatched := fun _ => do
+  message "other"
+  return none
+
+/-- What a step of the theme command's checks is handed: the commands
+compiled code registers for loading a theme and for the minibuffer
+(`Themes.commands`, `Minibuffer.commands`), and `other`, which says
+`other`; told that the themes `default` and `second` are registered. `C-t
+t` runs the theme command with nothing, `C-t s` with the name `second`,
+`C-t n` with the name `nope`, `C-e y` runs the minibuffer's accept and `C-e
+o` runs `other`. -/
+def themeKeys : Loop.Keys TestScheme.scheme :=
+  let compiled : List (String × Dispatched) :=
+    (Themes.commands ++ Minibuffer.commands).toList.filterMap fun registration =>
+      match registration.action with
+      | .call run =>
+        some
+          (registration.name, fun call => do
+            run call
+            return none)
+      | _ => none
+  {
+    dispatchKeys
+      [("C-t t", invoke Themes.loadName),
+        ("C-t s", { command := Themes.loadName, arguments := [.str "second"] }),
+        ("C-t n", { command := Themes.loadName, arguments := [.str "nope"] }),
+        ("C-e y", invoke Minibuffer.acceptName), ("C-e o", invoke "other")]
+      (compiled ++ [("other", saysOther)]) with
+    registered := { themeNames := #[Theme.defaultName, "second"] } }
+
+/-- The checks of the command that loads a theme (`Editor/Themes.lean`,
+`Editor/Themes/Compiled.lean`), on the loop's driver over the editor's
+models and the test scheme: it asks for a name among the registered ones,
+and a step that loads one hands the name back. -/
+def themeChecks : List Check :=
+  let driver? : Option TestDriver :=
+    (Loop.Driver.over themeKeys (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption
+  [{  name :=
+        "the theme command with no name opens a prompt labelled with its label, whose continuation is the command itself and whose candidates are the registered themes' names"
+      run :=
+        pure <|
+          match driver? with
+          | none => false
+          | some driver =>
+            let (asking, steps) := fedTo driver (presses "C-t t")
+            asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
+                some (Themes.label, { command := Themes.loadName }) &&
+              (candidatesOf asking).map (·.all) == some #[Theme.defaultName, "second"] &&
+              steps.map (·.map (·.theme)) == #[some none, some none] },
+    { name :=
+        "the theme command with a registered name hands the name back with its step and says nothing; accepting its prompt with a name loads that one"
+      run :=
+        pure <|
+          match driver? with
+          | none => false
+          | some driver =>
+            let (loaded, steps) := fedTo driver (presses "C-t s")
+            let (typed, _) := fedTo driver (presses "C-t t" ++ [.commit "second"])
+            let (accepted, _) := fedTo typed (presses "C-e y")
+            steps.map (·.map (·.theme)) == #[some none, some (some "second")] &&
+              promptEcho loaded == "" &&
+              loaded.themes == #["second"] &&
+              accepted.themes == #["second"] &&
+              accepted.loop.state.prompt == none },
+    { name :=
+        "the theme command with a name nobody registered says so in the echo area, by its name and the theme's, and loads none; the editor goes on"
+      run :=
+        pure <|
+          match driver? with
+          | none => false
+          | some driver =>
+            let (unknown, _) := fedTo driver (presses "C-t n")
+            let (after, _) := fedTo unknown (presses "C-e o")
+            promptEcho unknown == "load-theme: no theme is registered as `nope`" &&
+              promptEcho unknown == Themes.notLoaded (.noSuchTheme "nope") &&
+              unknown.themes == #[] &&
+              promptEcho after == "other" },
+    { name :=
+        "the theme command while a prompt is open says the refusal after its own name and leaves that prompt open"
+      run :=
+        pure <|
+          match driver? with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-t t")
+            let (again, _) := fedTo asking (presses "C-t t")
+            promptEcho again == Themes.notAsking (.alreadyOpen ⟨1⟩) &&
+              promptEcho again == "load-theme: a prompt is open already" &&
+              again.loop.state.prompt.isSome }]
 
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,
@@ -20484,6 +20848,7 @@ def checks : List Check :=
     openFilesChecks ++
     dispatchQuitChecks ++
     exChecks ++
+    themeChecks ++
     evilRestChecks ++
     evilMotionChecks ++
     evilStateChecks ++

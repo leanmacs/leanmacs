@@ -300,6 +300,27 @@ one-shot output of the step, like the jobs to start
 
 Pinned by `ModelTest.dispatchQuitChecks`.
 
+## A theme switch from a command
+
+A command asks for a theme to be loaded (`loadTheme`, `Editor/Api.lean`),
+and the loop refuses a name it was not told a theme is registered under
+(`Editor/Command/Dispatch.lean`). The loop holds no config session, and the
+theme in force is the reload reducer's, so the request is a one-shot output
+of the step, as a reload is.
+
+- **The request is kept in the state** until the command ends
+  (`EditorState.theme`, the latest one asked for). After a command that ran
+  to its end the loop takes it out and hands it back with the step
+  (`Loop.Stepped.theme`). A command that did not run to its end asks for
+  none.
+- **The host switches the theme** with no reload: it feeds its reload
+  reducer a choice (`Config.Event.choose`), hands its display the new theme
+  and publishes a scene in it (`Editor/Headless.lean`).
+- **On the models** `Loop.Driver` records the names
+  (`Loop.Driver.themes`): it has no config session.
+
+Pinned by `ModelTest.dispatchQuitChecks`.
+
 ## Quit
 
 A command asks the editor to quit (`quit`, `Editor/Api.lean`), and the
@@ -876,6 +897,11 @@ structure Loop.Stepped (scheme : InputScheme) where
   session. `false` for a step that ran no command, and for one whose
   command did not run to its end. -/
   reload : Bool := false
+  /-- The theme the command the step ran asked to be loaded (`loadTheme`,
+  `Editor/Api.lean`), for the host to switch to. `none` for a step that ran
+  no command, for one whose command asked for none, and for one whose
+  command did not run to its end. -/
+  theme : Option String := none
   /-- How the command the step ran ended; `none` for a step that ran no
   command. -/
   ended : Option Loop.Ending := none
@@ -1376,6 +1402,8 @@ structure Ran where
   /-- Whether the command asked for the config to be reloaded, when it ran
   to its end. -/
   reload : Bool := false
+  /-- The theme the command asked to be loaded, when it ran to its end. -/
+  theme : Option String := none
 
 /-- Whether the command ran to its end: one that broke off did not, though
 what it did was kept. -/
@@ -1448,7 +1476,7 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     return {
         state :=
           { left.refusedBy ungiven with
-            starts := #[], answered := #[], reload := false }
+            starts := #[], answered := #[], reload := false, theme := none }
         ending
         closed := closedViews state left
         opened := openedMinibuffer state left
@@ -1456,7 +1484,8 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
         log
         starts := left.starts
         answered := left.answered
-        reload := left.reload }
+        reload := left.reload
+        theme := left.theme }
   match outcome with
   | .finished write =>
     stays left .finished write
@@ -1504,6 +1533,7 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     starts := ran.starts
     answered := ran.answered
     reload := ran.reload
+    theme := ran.theme
     ended := some ran.ending }
 
 /-- One key through the scheme, for the focused view, and the invocation it

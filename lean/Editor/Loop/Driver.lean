@@ -49,8 +49,9 @@ handled after the answer's command.
   command asked for. A host ends its loop there (`Editor/Loop.lean`,
   "Quit"), so the driver runs no further invocation of that step. It does
   not refuse what a test feeds it afterwards: a test reads `stopped`.
-- **A reload a step asked for is counted** (`reloads`). The driver has no
-  config session to reload: a host feeds its reload reducer
+- **A reload a step asked for is counted** (`reloads`), and **a theme a step
+  asked for is recorded** (`themes`). The driver has no config session to
+  reload or to switch the theme of: a host feeds its reload reducer
   (`Editor/Headless.lean`).
 - **A step that is refused changes the models and not the loop.** No
   program of the loop is refused today (`Editor/Loop.lean`, "When
@@ -128,6 +129,10 @@ structure Loop.Driver (scheme : InputScheme) where
   reloaded (`Loop.Stepped.reload`). The driver has no config session: a
   host feeds its reload reducer for each. -/
   reloads : Nat := 0
+  /-- The themes steps the driver took in asked to be loaded
+  (`Loop.Stepped.theme`), in order. The driver has no config session: a
+  host feeds its reload reducer a choice for each. -/
+  themes : Array String := #[]
 
 namespace Loop.Driver
 
@@ -199,7 +204,7 @@ of its own (`Loop.invoke`), which is taken in the same way, before anything
 else is fed. An answer's step that is refused changes the models and not
 the loop. A step that said stop is recorded (`stopped`), and no invocation
 is run once one has. A step that asked for a reload is counted
-(`reloads`).
+(`reloads`), and the theme a step asked for is recorded (`themes`).
 
 It has no termination proof: an answer's command can ask and accept again,
 for ever, which is runaway code (`docs/design/concurrency.md`, "Runaway
@@ -210,7 +215,8 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
     ({ driver with
           loop := stepped.loop, model
           stopped := driver.stopped || stepped.next == Loop.Next.stop
-          reloads := driver.reloads + if stepped.reload then 1 else 0 }).started
+          reloads := driver.reloads + if stepped.reload then 1 else 0
+          themes := driver.themes ++ stepped.theme.toArray }).started
       stepped.starts
   stepped.answered.foldl
     (fun driver invocation =>

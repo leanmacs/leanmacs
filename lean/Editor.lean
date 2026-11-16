@@ -10,6 +10,7 @@ import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
+import Editor.Themes
 
 /-!
 # The editor
@@ -63,7 +64,12 @@ commands come with `Editor/Ex.lean`, whose save-and-quit command calls
 (`Editor/FrameCommands.lean`): `toggle-fullscreen` and `minimise-window`,
 which ask the platform's window through the display; their registrations
 and default bindings (`Editor/FrameCommands/Compiled.lean`) are not
-imported.
+imported. The command that switches the theme in force is here too
+(`Editor/Themes.lean`): `load-theme`, which a command of config's calls
+with `Themes.loadThemeCommand`, over `themeNames` and `loadTheme`
+(`Editor/Api.lean`); `setup` registers a theme with `defineTheme` and names
+the one in force with `useTheme` (`Editor/Setup.lean`). Its registration and
+the themes that ship (`Editor/Themes/Compiled.lean`) are not imported.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they

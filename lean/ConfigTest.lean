@@ -8,6 +8,7 @@ import Editor.Headless
 import Editor.InputScheme.Test
 import Editor.Job.Fake
 import Editor.Minibuffer.Compiled
+import Editor.Themes.Compiled
 
 /-!
 # Checks of the config session against the real elaborator
@@ -110,6 +111,10 @@ fakes. The checks here pin what only real collaborators can show:
   display's frame of the same scene in a theme written here; and a reload
   that makes `mode-line` taller sizes the next scene by the new heights,
   which `agree`, asked with no event between, shows;
+- `themeChecks`: named themes through a host over the display's real
+  binding: `load-theme` switches the frame to the chosen theme with config's
+  face over it, with no reload, and the scene line names the theme; and a
+  config naming a theme nobody registered says so in the echo area;
 - `fileChecks`: files through the host, over the library's file service.
   They are the checks whose hosts are over a real service, so they share
   one table of waits and the one completion pump, which the first of them
@@ -446,6 +451,8 @@ structure Compiled where
   modes : Array Mode := #[]
   /-- The compiled ex bindings. -/
   ex : Array Ex.Binding := #[]
+  /-- The compiled themes. -/
+  themes : Array NamedTheme := #[]
   /-- How long a command may take before it is logged, in milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
   /-- The major mode the scratch buffer starts in, if any: the host's frame
@@ -483,8 +490,8 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
           wakeups := requests + 1, jobs := requests + 2, commands := compiled.commands,
           compiledJobs := compiled.jobs, bindings := compiled.bindings, modes := compiled.modes,
-          ex := compiled.ex, log := fun entry => log.modify (·.push entry),
-          slowAfter := compiled.slowAfter,
+          ex := compiled.ex, themes := compiled.themes,
+          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
             match compiled.major with
@@ -1644,9 +1651,9 @@ def scriptChecks (context : Context) : List Check :=
                 patience
           return failure == none &&
               (← stage.output.get) ==
-                #["scene 640x480, focused 0, echo \"\", preedit -, published 1",
+                #["scene 640x480, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
                   "view 0 0,0 640x464: \"\", scroll 0, selections 0..0", statusOf,
-                  "scene 320x200, focused 0, echo \"\", preedit -, published 3",
+                  "scene 320x200, focused 0, echo \"\", preedit -, published 3, theme \"default\"",
                   "view 0 0,0 320x184: \"\", scroll 0, selections 0..0", statusOf] },
     { name :=
         "a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it"
@@ -1661,10 +1668,11 @@ def scriptChecks (context : Context) : List Check :=
                 patience
           return failure == none &&
               (← stage.output.get) ==
-                #["scene: none", "scene 0x0, focused 0, echo \"\", preedit -, published 1",
+                #["scene: none",
+                  "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
                   "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6",
                   statusOf (modified := true),
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 3",
+                  "scene 0x0, focused 0, echo \"\", preedit -, published 3, theme \"default\"",
                   "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12",
                   statusOf (modified := true)] },
     { name :=
@@ -1689,9 +1697,9 @@ def scriptChecks (context : Context) : List Check :=
           return failure == none && statusOf != statusOf (modified := true) &&
               (← stage.output.get) ==
                 #["key arrived: <F5> - -",
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 1",
+                  "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
                   "view 0 0,0 0x0: \"\", scroll 0, selections 0..0", statusOf,
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 3",
+                  "scene 0x0, focused 0, echo \"\", preedit -, published 3, theme \"default\"",
                   "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1",
                   statusOf (modified := true)] },
     { name :=
@@ -1717,11 +1725,11 @@ def scriptChecks (context : Context) : List Check :=
           -- reload's install published nothing, the count would be short.
           return (← session.lines) ==
               #["reload 1: installed, 2 chunks, 1 commands",
-                "scene 0x0, focused 0, echo \"\", preedit -, published 1",
+                "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
                 "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4", statusOf (modified := true),
                 "spawn count: job 1", "job 1 count: ok",
                 "reload 2: installed, 2 chunks, 1 commands",
-                "scene 0x0, focused 0, echo \"\", preedit -, published 10",
+                "scene 0x0, focused 0, echo \"\", preedit -, published 10, theme \"default\"",
                 "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4",
                 statusOf (modified := true)] },
     { name :=
@@ -1741,10 +1749,10 @@ def scriptChecks (context : Context) : List Check :=
           -- after the release been refused, the count would be short.
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 1 commands",
-                "scene 0x0, focused 0, echo \"\", preedit -, published 1",
+                "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
                 "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1", statusOf (modified := true),
                 "run forget: ok",
-                "scene 0x0, focused 0, echo \"refused: no such text\", preedit -, published 5"] },
+                "scene 0x0, focused 0, echo \"refused: no such text\", preedit -, published 5, theme \"default\""] },
     { name :=
         "a program of the editor loop that is refused is printed as refused and hands back nothing, and what it made before the refusal is kept; one that is not refused prints nothing and hands back its result"
       run := do
@@ -3669,6 +3677,121 @@ def faceChecks (context : Context) : List Check :=
                 throw (IO.userError s!"before the reload: {before}; after it: {after}")
               return lines.any (·.startsWith "reload 1: installed") }]
 
+/-- What compiled code hands the hosts of the theme checks: the command that
+loads a theme and the themes that ship (`Editor/Themes/Compiled.lean`), and
+the minibuffer's commands and its mode, which its prompt is answered with. -/
+def themeCompiled : Compiled :=
+  { commands := Themes.commands ++ Minibuffer.commands, modes := Minibuffer.modes
+    themes := Themes.shipped }
+
+/-- The face `default` of the theme `second` the theme checks' config
+defines: a background of its own. -/
+def secondDefault : Face :=
+  { background := some (Color.rgb 0 90 0) }
+
+/-- The face `keyword` the theme checks' config sets. -/
+def keywordFace : Face :=
+  { foreground := some (Color.rgb 200 0 0) }
+
+/-- The checks of named themes through a host: a config directory of real
+files, the real elaborator, the display's real binding and the library's
+layout. As in `faceChecks`, a frame is compared with the frame a second
+display, handed the same themes in the same order, lays out of the same
+scene in a theme written here. -/
+def themeChecks (context : Context) : List Check :=
+  [{  name :=
+        "criteria 3 and 4: the theme command switches the theme the display draws in with no reload, to the frame the chosen theme followed by config's own face gives, and the scene line names the theme it was drawn in"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory
+              [("10-themes.lean",
+                  "def setup : SetupM Unit := do\n  defineTheme \"second\" #[{ name := ⟨\"default\"⟩, face := { background := some (Color.rgb 0 90 0) } }]\n  face \"keyword\" { foreground := some (Color.rgb 200 0 0) }\n")]
+          let configured : Theme := #[{ name := ⟨"keyword"⟩, face := keywordFace }]
+          let stage ←
+            Stage.new context context.elaborator (Config.Directory.source directory) themeCompiled
+          let library ← Ffi.Display.newCells 8 16
+          let made ← IO.mkRef (none : Option Headless.Host.Display)
+          let collaborators :=
+            { stage.collaborators with
+              display := fun snapshots => do
+                let display ←
+                  Headless.Host.Display.real (← RealDisplay.over library snapshots Theme.builtin)
+                made.set (some display)
+                return display }
+          let mirror ←
+            RealDisplay.over (← Ffi.Display.newCells 8 16) collaborators.published.reader
+                Theme.builtin
+          onStage { stage with collaborators } fun host _ => do
+              let holds (parts : List (String × Bool)) : IO Unit := do
+                if let some (part, _) := parts.find? (!·.2) then
+                  throw (IO.userError part)
+              let settled : IO Unit := do
+                unless ← host.settle patience do
+                  throw (IO.userError "the editor thread did not settle")
+              let frames (theme : Theme) : IO (String × String) := do
+                let some display ← made.get | throw (IO.userError "the host made no display")
+                let some scene ← display.last? | throw (IO.userError "the host published no scene")
+                mirror.setTheme theme
+                mirror.publish scene
+                return (← library.frameText, ← mirror.display.frameText)
+              let sceneLine : IO String := do
+                host.send .scene
+                settled
+                return ((← stage.output.get).filter (·.startsWith "scene ")).back?.getD ""
+              host.send .reload
+              settled
+              host.resize 160 96
+              unless ← Event.post (.commit "let x = 1") do
+                return false
+              settled
+              let (plain, plainMirror) ← frames (Theme.builtin ++ configured)
+              let before ← sceneLine
+              host.send (.run Themes.loadName)
+              settled
+              unless ← Event.post (.commit "second") do
+                return false
+              for key in acceptKeys do
+                host.press key
+              settled
+              let (switched, switchedMirror) ←
+                frames (#[{ name := ⟨"default"⟩, face := secondDefault }] ++ configured)
+              let after ← sceneLine
+              let lines ← stage.output.get
+              holds
+                  [("the frame after the reload is the default theme's with config's face",
+                      plain == plainMirror),
+                    ("the frame after the switch differs", switched != plain),
+                    ("and is the one the second theme with config's face gives",
+                      switched == switchedMirror),
+                    (s!"the scene before names the default theme: {before}",
+                      before.endsWith ", theme \"default\""),
+                    (s!"the scene after names the second theme: {after}",
+                      after.endsWith ", theme \"second\""),
+                    ("there was one reload",
+                      (lines.filter (·.startsWith "reload ")) ==
+                        #["reload 1: installed, 1 chunks, 0 commands"])]
+              return true },
+    { name :=
+        "criterion 6: a config that names a theme nobody registered says so in the echo area, naming the theme, before the frame is made and after, and its report says so; the theme in force stays"
+      run :=
+        withHost context
+          [("10-themes.lean", "def setup : SetupM Unit := do\n  useTheme \"nope\"\n")] (compiled :=
+          themeCompiled) fun session => do
+          session.ask [.reload]
+          session.host.resize 80 64
+          session.ask []
+          let made ← session.echo
+          session.ask [.say "cleared"]
+          let cleared ← session.echo
+          session.ask [.reload]
+          let again ← session.echo
+          let lines ← session.lines
+          let said := "reload: no theme is registered as `nope`".quote
+          let scene := (lines.filter (·.startsWith "scene ")).back?.getD ""
+          return made == said && cleared == "cleared".quote && again == said &&
+              (lines.filter (· == "theme: no theme is registered as `nope`")).size == 2 &&
+              scene.endsWith ", theme \"default\"" }]
+
 /-- The checks of what the executable's hosts are handed as compiled code
 (`Headless.shippedOver`, which `Headless.shipped` makes them with), on the
 registry a host starts with (`Headless.compiled`) and the test scheme's
@@ -3690,7 +3813,20 @@ def shippedChecks (_ : Unit) : List Check :=
         return bound "C-s-f" == some { command := "toggle-fullscreen" } &&
             bound "s-m" == some { command := "minimise-window" } &&
             compiled "toggle-fullscreen" &&
-            compiled "minimise-window" }]
+            compiled "minimise-window" },
+    { name :=
+        "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return (registry.find? Themes.loadName).any (·.owner == .compiled) &&
+            registry.theme? Theme.defaultName ==
+              some { name := "default", theme := Theme.builtin } &&
+            registry.themes.all (·.owner == .compiled) }]
 
 /-- A chunk whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and
@@ -3786,6 +3922,7 @@ def checks (context : Context) : List Check :=
     evilChecks context ++
     reloadEchoChecks context ++
     faceChecks context ++
+    themeChecks context ++
     fileChecks context ++
     exScriptChecks context
 

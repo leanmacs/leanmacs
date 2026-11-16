@@ -24,10 +24,27 @@ the model tests run it with outcomes built by hand
   never an append) and meets the config's stores with the cells there are
   (`Cells.install`). A rejected outcome changes none of them: the config that
   was loaded stays.
-- **The theme follows the registry.** `State.theme` is the built-in theme
-  followed by the installed config's definitions of faces, so it changes
-  when, and only when, a reload installs. The runtime that owns a display
-  hands it the theme then (`Config.retheme`, `Editor/Config/Display.lean`).
+- **The theme follows the registry and the theme in force.** The theme in
+  force is a name (`State.themeName`), `default` to start with, and
+  `State.theme` is the registry's theme of that name followed by the
+  installed config's definitions of faces, so config's faces are over
+  whichever theme is in force, and survive a switch. It changes when a
+  reload installs and when a theme is chosen (`Event.choose`), and only
+  then. The runtime that owns a display hands it the theme then
+  (`Config.retheme`, `Editor/Config/Display.lean`).
+- **Which theme is in force.** An install also replaces config's themes
+  (`Registry.replaceThemes`), then: a config that names a registered theme
+  (`useTheme`) puts it in force; one that names a theme nobody registered
+  keeps the theme in force and its report names the unknown theme, which
+  the echo area says (`Report.echo`); one that names none keeps the theme in
+  force, so a theme chosen by the command survives a reload that does not
+  name one. A theme in force that is no longer registered, because config
+  defined it and dropped it, falls back to `default` (`chooseAt`). A
+  rejected outcome changes none of it.
+- **Choosing a theme** (`Event.choose`, which the host feeds for a command
+  that loaded one) puts a registered theme in force, with the effect
+  `themed`; a name nobody registered changes nothing and has no effect,
+  since the command has already said so.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -69,15 +86,19 @@ structure Report where
   chunks : Nat
   /-- How many commands the config that is now installed registers. -/
   commands : Nat
+  /-- The theme the installed config named that no theme is registered
+  under, if it named one: the theme in force stayed. -/
+  unknownTheme : Option String := none
 
 /-- What a reload says in the echo area: for a rejected one, its first
 error, `reload: <source>:<line>:<column>: error: ` and the first line of its
 message, then ` (and <n> more)` when it has more errors; for one rejected
 with no error to name, `reload: rejected`. A reload that installs says
-nothing, so a working config does not cover what a command said. The whole
-report is the host's to print. -/
+nothing, so a working config does not cover what a command said, unless its
+config named a theme nobody registered: then `reload: ` and
+`Theme.unknown`. The whole report is the host's to print. -/
 def Report.echo (report : Report) : Option String :=
-  if report.installed then none
+  if report.installed then report.unknownTheme.map fun name => s!"reload: {Theme.unknown name}"
   else
     let errors := report.diagnostics.filter (·.severity == .error)
     match errors[0]? with
@@ -103,6 +124,9 @@ structure State (σ : Type) where
   pending : Bool := false
   /-- How many reloads have finished. -/
   finished : Nat := 0
+  /-- The name of the theme in force: set by an install whose config names
+  a registered theme, and by `choose`. -/
+  themeName : String := Theme.defaultName
 
 /-- What happened, as far as reloads go. -/
 inductive Event (σ : Type) where
@@ -110,6 +134,9 @@ inductive Event (σ : Type) where
   | requested
   /-- The reload job finished with `outcome`. -/
   | finished (outcome : Outcome σ)
+  /-- The theme called `name` was chosen, by a command, to be the theme in
+  force. -/
+  | choose (name : String)
 
 /-- What the runtime is to do. -/
 inductive Effect (σ : Type) where
@@ -122,6 +149,9 @@ inductive Effect (σ : Type) where
   | cancelJobs (owner : Owner)
   /-- Show what a reload came to. -/
   | report (report : Report)
+  /-- The theme in force was switched, with no reload: the display is to
+  be handed the new theme. -/
+  | themed
 
 namespace State
 
@@ -137,13 +167,27 @@ def start (state : State σ) : State σ × Array (Effect σ) :=
 def commands (state : State σ) : Nat :=
   (state.registry.entries.filter (·.owner == .config)).size
 
-/-- What the faces look like now: the built-in theme, then the definitions
-the installed config made, in the order its `setup` made them. A later
-definition of a name is over an earlier one, so a face the config sets
-takes the config's attributes over the theme's, and a face it does not set
-is the theme's. -/
+/-- What the faces look like now: the theme in force (`themeName`), then
+the definitions the installed config made, in the order its `setup` made
+them. A later definition of a name is over an earlier one, so a face the
+config sets takes the config's attributes over the theme's, whichever theme
+is in force, and a face it does not set is the theme's. A registry that
+holds no theme of the name in force draws in the built-in theme. -/
 def theme (state : State σ) : Theme :=
-  Theme.builtin ++ state.registry.definitions
+  (((state.registry.theme? state.themeName).map (·.theme)).getD Theme.builtin) ++
+    state.registry.definitions
+
+/-- The theme in force once a config that named `named` is installed over
+`registry`, from `current`, the one in force before: a name registered under
+is in force; with an unregistered name, or none, `current` stays, unless no
+theme is registered under it any more, when `default` is. The second is the
+unregistered name, for the report. -/
+def chooseAt (registry : Registry) (current : String) (named : Option String) :
+    String × Option String :=
+  let kept := if (registry.theme? current).isSome then current else Theme.defaultName
+  match named with
+  | some name => if (registry.theme? name).isSome then (name, none) else (kept, some name)
+  | none => (kept, none)
 
 /-- The state once `outcome` is handled, and the report of it: an outcome
 that built a config installs it, and any other leaves the config as it was. -/
@@ -162,16 +206,19 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { state with
         chunks := built.chunks,
         registry :=
-          (((((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                            built.registrations.jobs).replaceBindings
-                        .config built.registrations.bindings).replaceModes
-                    .config built.registrations.modes).replaceEx
-                .config built.registrations.ex).replaceFaces
-            .config built.registrations.faces,
+          ((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                                built.registrations.jobs).replaceBindings
+                            .config built.registrations.bindings).replaceModes
+                        .config built.registrations.modes).replaceEx
+                    .config built.registrations.ex).replaceFaces
+                .config built.registrations.faces).replaceThemes
+            .config built.registrations.themes,
         cells }
-    (state,
+    let (themeName, unknownTheme) :=
+      chooseAt state.registry state.themeName built.registrations.theme
+    ({ state with themeName },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
-        chunks := state.chunks.size, commands := state.commands })
+        chunks := state.chunks.size, commands := state.commands, unknownTheme })
 
 end State
 
@@ -187,6 +234,9 @@ def step {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect
       let (state, effects) := state.start
       (state, installed ++ effects)
     else (state, installed)
+  | .choose name =>
+    if (state.registry.theme? name).isSome then ({ state with themeName := name }, #[.themed])
+    else (state, #[])
 
 namespace State
 

@@ -15,9 +15,16 @@ precedence"). What matters here is the one rule that orders a list of
 definitions: **where a list defines a name more than once, a later
 definition's set attributes are over an earlier one's.** So a theme is
 overridden by appending to it, and config's definitions are appended to the
-built-in theme (`Editor/Config/Reload.lean`): a face config sets takes
+theme in force (`Editor/Config/Reload.lean`): a face config sets takes
 config's attributes over the theme's, attribute by attribute, and a face
 config stops setting is the theme's again.
+
+A theme has a name when it is registered (`NamedTheme`), as a command does
+(`Editor/Config/Registry.lean`, "Themes"). The built-in theme is the one
+called `default` (`Theme.defaultName`), in force until config names another
+or one is loaded. `Theme.unknown` is the one sentence said of a name no
+theme is registered under, by a reload and by the command that loads a
+theme.
 
 The real binding of the display sends a theme with a scene, in the same
 call, and only when the theme changed (`Editor/Display/Real.lean`).
@@ -46,7 +53,7 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
 
 ## The built-in faces
 
-`Theme.builtin` defines `default` (every attribute set), `cursor`, a
+`Theme.builtin`, the theme `default`, defines `default` (every attribute set), `cursor`, a
 cursor face for each editing state of the shipped Vim scheme
 (`cursor.normal`, `cursor.insert`, `cursor.visual`, `cursor.visual-line`
 and `cursor.minibuffer`, `Theme.cursorStates`), `selection`, `echo-area`,
@@ -69,8 +76,9 @@ A new attribute is a field of `Face` here, a field of `Face` in
 `crates/editor-layout/src/face.rs`, and two words of a definition as it
 crosses (`crates/editor-ffi/src/display/wire.rs`, written by
 `RealDisplay.encodeFace`). A new built-in face is a definition in
-`Theme.builtin`, and a name in `ModelTest.faceChecks`. A face naming
-another as its base is not built.
+`Theme.builtin`, and a name in `ModelTest.faceChecks`. A new shipped theme
+is a `NamedTheme` in `Themes.shipped` (`Editor/Themes/Compiled.lean`). A
+face naming another as its base is not built.
 -/
 
 namespace Editor
@@ -222,5 +230,25 @@ def Theme.builtin : Theme :=
       { name := ⟨"mode-line"⟩
         face :=
           { foreground := some (Color.rgb 236 239 244), background := some (Color.rgb 59 66 82) } }]
+
+/-- A theme with the name it is registered and chosen by
+(`Editor/Config/Registry.lean`, "Themes"). -/
+structure NamedTheme where
+  /-- The theme's name. -/
+  name : String
+  /-- Its definitions. -/
+  theme : Theme
+  deriving DecidableEq, Repr
+
+/-- The name of the built-in theme, `Theme.builtin`, registered by compiled
+code: the theme in force when no config has named one. -/
+def Theme.defaultName : String :=
+  "default"
+
+/-- What is said of the theme name `name` when no theme is registered under
+it: by a reload whose config names it, and by the command that loads a
+theme. -/
+def Theme.unknown (name : String) : String :=
+  s!"no theme is registered as `{name}`"
 
 end Editor

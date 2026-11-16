@@ -192,6 +192,12 @@ answer, as its first argument.
 | `minibuffer-next` | Moves the choice to the next of the candidates the open prompt has listed: from nothing chosen to the first, and from the last to nothing chosen. The minibuffer's text is not changed. With nothing listed it does nothing, and with no prompt open it says so. |
 | `minibuffer-previous` | The same, backward: from nothing chosen to the last, and from the first to nothing chosen. |
 
+One more compiled command switches the theme (`lean/Editor/Themes.lean`):
+
+| Command | Does |
+|---|---|
+| `load-theme` | With a name as its first argument, makes the theme registered under it the theme in force, with no reload, and the next scene is drawn in it. With none it asks `Theme: `, with the registered themes' names as its candidates. A name nobody registered is said in the echo area, ``load-theme: no theme is registered as `<name>` ``, and changes nothing. The editor ships one theme, `default`; config registers more with `defineTheme` and names the one in force with `useTheme`. |
+
 The mode `minibuffer` is the major mode of the minibuffer's buffer. It
 puts the four commands on the keys the input scheme has for the roles
 `activate`, `quit`, `next-item` and `previous-item`; under the Vim scheme,
@@ -371,12 +377,12 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config load-theme greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config load-theme greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -386,8 +392,8 @@ Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
 `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`,
 `minibuffer-previous`, evil's twenty-five, from `move` to
-`scroll-line-to-bottom`, and the ex line's four, from `ex` to
-`reload-config`, are
+`scroll-line-to-bottom`, the ex line's four, from `ex` to
+`reload-config`, the frame's two, and `load-theme`, are
 the commands the editor ships, compiled in: `show` lists them before
 config's.
 
@@ -409,13 +415,13 @@ be dropped:
 ```console
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/scene-script
 key arrived: i KeyI -
-scene 0x0, focused 0, echo "", preedit -, published 2
+scene 0x0, focused 0, echo "", preedit -, published 2, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
 status 0: status.state "insert", status.name "scratch", status.modified "[+]"
 reload 1: installed, 2 chunks, 1 commands
 spawn count: job 1
 job 1 count: ok
-scene 0x0, focused 0, echo "", preedit -, published 9
+scene 0x0, focused 0, echo "", preedit -, published 9, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
 status 0: status.state "insert", status.name "scratch", status.modified "[+]"
 ```
@@ -438,19 +444,19 @@ reload 1: installed, 1 chunks, 3 commands
 key arrived: c KeyC control
 key arrived: s KeyS -
 key arrived: g KeyG control
-scene 0x0, focused 0, echo "spin: interrupted", preedit -, published 3
+scene 0x0, focused 0, echo "spin: interrupted", preedit -, published 3, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 key arrived: c KeyC control
 key arrived: m KeyM -
-scene 0x0, focused 0, echo "", preedit -, published 6
+scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
 view 0 0,0 0x0: "mark", scroll 0, selections 4..4
 status 0: status.state "normal", status.name "scratch", status.modified "[+]"
 key arrived: c KeyC control
 key arrived: d KeyD -
 job 1 double: started
 job 1 double: ok
-scene 0x0, focused 0, echo "doubled to 42", preedit -, published 11
+scene 0x0, focused 0, echo "doubled to 42", preedit -, published 11, theme "default"
 view 0 0,0 0x0: "mark", scroll 0, selections 4..4
 status 0: status.state "normal", status.name "scratch", status.modified "[+]"
 ```
@@ -480,13 +486,13 @@ output must be exactly `tests/headless/files/expected`:
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script
 reload 1: installed, 1 chunks, 1 commands
 run save-buffer: ok
-scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 1
+scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 run open-relative: ok
 job 1 load-file: started
 job 1 load-file: ok
-scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 5
+scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 ```
@@ -531,25 +537,25 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 1 chunks, 2 commands
 run ask-name: ok
 key arrived: ! Digit1 shift
-scene 0x0, focused 1, echo "", preedit -, published 2
+scene 0x0, focused 1, echo "", preedit -, published 2, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 view 1 0,0 0x0: "Ada!", scroll 0, selections 4..4
 status 1: minibuffer.prompt "Name: "
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "hello Ada!", preedit -, published 5
+scene 0x0, focused 0, echo "hello Ada!", preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 run ask-name: ok
 key arrived: <Escape> Escape -
-scene 0x0, focused 0, echo "", preedit -, published 8
+scene 0x0, focused 0, echo "", preedit -, published 8, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 run open-file: ok
 key arrived: <Enter> Enter -
 job 1 load-file: started
 job 1 load-file: ok
-scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 15
+scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 15, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 ```
@@ -570,15 +576,15 @@ key arrived: e KeyE -
 key arrived: l KeyL -
 key arrived: l KeyL -
 key arrived: o KeyO -
-scene 0x0, focused 0, echo "", preedit -, published 6
+scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
 status 0: status.state "insert", status.name "scratch", status.modified "[+]"
 key arrived: <Escape> Escape -
-scene 0x0, focused 0, echo "", preedit -, published 8
+scene 0x0, focused 0, echo "", preedit -, published 8, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 4..4
 status 0: status.state "normal", status.name "scratch", status.modified "[+]"
 key arrived: 0 Digit0 -
-scene 0x0, focused 0, echo "", preedit -, published 10
+scene 0x0, focused 0, echo "", preedit -, published 10, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch", status.modified "[+]"
 ```
@@ -610,23 +616,23 @@ and the exit status is 0. Its output must be exactly
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "bogus: not an ex command", preedit -, published 4
+scene 0x0, focused 0, echo "bogus: not an ex command", preedit -, published 4, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 run ex: ok
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 10
+scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 10, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 key arrived: : Semicolon shift
-scene 0x0, focused 3, echo "", preedit -, published 13
+scene 0x0, focused 3, echo "", preedit -, published 13, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 view 3 0,0 0x0: "e", scroll 0, selections 1..1
 status 3: minibuffer.prompt ":", minibuffer.candidate "e", minibuffer.candidate "reload"
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
-scene 0x0, focused 4, echo "", preedit -, published 18
+scene 0x0, focused 4, echo "", preedit -, published 18, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 view 4 0,0 0x0: "", scroll 0, selections 0..0
@@ -657,32 +663,56 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 1 chunks, 2 commands
 run pick: ok
 key arrived: w KeyW -
-scene 0x0, focused 1, echo "", preedit -, published 2
+scene 0x0, focused 1, echo "", preedit -, published 2, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 view 1 0,0 0x0: "w", scroll 0, selections 1..1
 status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.candidate "wq"
 key arrived: <Tab> Tab -
 key arrived: <Tab> Tab -
-scene 0x0, focused 1, echo "", preedit -, published 5
+scene 0x0, focused 1, echo "", preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 view 1 0,0 0x0: "w", scroll 0, selections 1..1
 status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.chosen "wq"
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "picked wq", preedit -, published 8
+scene 0x0, focused 0, echo "picked wq", preedit -, published 8, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 run pick: ok
 key arrived: z KeyZ -
-scene 0x0, focused 2, echo "", preedit -, published 11
+scene 0x0, focused 2, echo "", preedit -, published 11, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 view 2 0,0 0x0: "z", scroll 0, selections 1..1
 status 2: minibuffer.prompt "Pick: "
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "picked z", preedit -, published 15
+scene 0x0, focused 0, echo "picked z", preedit -, published 15, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+```
+
+A tenth, `tests/headless/themes/script`, switches the theme, on the config
+in `tests/headless/themes/config`, which defines two themes, `first` and
+`second`, and names `first` (`useTheme`). The first scene is drawn in
+`first`. `load-theme` is run, `second` committed into its minibuffer and
+`<Enter>` accepts: the theme is switched with no reload, and the next scene
+is drawn in `second`. The switch is followed by a scene of its own, after
+the scene the accepted command's step published, so the count of scenes
+goes up by one more. Its output must be exactly
+`tests/headless/themes/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/themes/config ../tests/headless/themes/script
+reload 1: installed, 1 chunks, 0 commands
+key arrived: <Escape> Escape -
+scene 0x0, focused 0, echo "", preedit -, published 1, theme "first"
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+run load-theme: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", preedit -, published 7, theme "second"
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 ```
@@ -828,7 +858,7 @@ key arrived: <logical> <physical> <modifiers>
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
-scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>
+scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>, theme <quoted name>
 view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
 status <view id>: <face> <quoted text>, …   (or "-" for no field)
 scene: none
@@ -837,7 +867,9 @@ loop: refused: <error>
 
 `scene` prints the frame's size, the focused view (`-` while the frame does
 not have the keyboard focus), the echo area, the input method's preedit
-(`-` when there is none) and how many scenes have been published; then, for
+(`-` when there is none), how many scenes have been published and the name
+of the theme the scene was drawn in (`default` until a config names another
+or `load-theme` loads one); then, for
 each view in drawing order, its rectangle, the text of its snapshot, read
 from the library, and the offsets of its scroll anchor and of each range of
 its selection. After each view's line comes its status line, one entry a
@@ -849,6 +881,10 @@ is how a script sees a view's state, its buffer's name and whether the
 buffer is modified.
 `scene: none` means no scene has been published: the loop has not been
 needed yet.
+
+A reload whose config names a theme nobody registered is installed, and
+its report's lines end with `theme: no theme is registered as `<name>``;
+the echo area says ``reload: no theme is registered as `<name>` ``.
 
 What the editor loop is refused is in the scene's echo area, as
 `refused: <error>`: a commit the library refused, and a text or a snapshot

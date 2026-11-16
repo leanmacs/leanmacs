@@ -39,9 +39,10 @@ a theme in: a later definition of a name is over an earlier one.
 handler of the setup port and then checked. `Registrations.ofSetup` is the
 whole of it: the registrations, or the message the `setup` is refused with.
 A `setup` is refused when it declares a store name twice, registers a
-command name twice or a job name twice, sets a face twice, binds a key
-sequence twice or binds no keys, binds an ex name twice, or registers a
-command over a store it does not declare
+command name twice or a job name twice, sets a face twice, defines a theme
+twice or names one twice, binds a key sequence twice or binds no keys,
+binds an ex name twice, or registers a command over a store it does not
+declare
 (`Registrations.problem?`). So one owner's entries have different names, and
 the number of commands a config registers is the number of names it can be
 run by. Two owners may still register one name: a lookup then finds the
@@ -103,6 +104,23 @@ Motions, operators and text objects will be registered the same way, as
 vocabulary: entries by owner, replaced as a set, the latest of a name
 winning. No table of them is here, since no type for their entries exists
 yet.
+
+## Themes
+
+A theme (`NamedTheme`, `Editor/Face.lean`) is held by owner like a mode, in
+a `ThemeEntry`, and replaced as a set (`replaceThemes`). The latest entry of
+a name is the one found (`theme?`), so config's theme of a compiled theme's
+name is used in its place until a reload drops it. Compiled code registers
+the themes that ship (`Themes.shipped`, `Editor/Themes/Compiled.lean`),
+`default` among them; `setup` registers more with `defineTheme`
+(`Editor/Setup.lean`). `themeNames` lists each name once, in the order it
+was first registered, and is what the loop is told for the command that
+loads a theme (`registered`). Which theme is in force is not the registry's
+to say: it is the reload reducer's state (`Editor/Config/Reload.lean`).
+
+A `setup` that defines a theme name twice, or names the theme in force
+twice (`useTheme`), is refused (`Registrations.problem?`). Naming a theme
+nobody registered is not refused here: the name is looked up at install.
 
 ## Compiled commands
 
@@ -201,6 +219,13 @@ structure ExEntry where
   binding : Ex.Binding
   deriving DecidableEq, Repr
 
+/-- A theme entry of the registry: a named theme and who registered it. -/
+structure ThemeEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The theme. -/
+  named : NamedTheme
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -209,7 +234,7 @@ structure FaceEntry where
   definition : FaceDefinition
 
 /-- The editor's table of commands, of jobs, of key bindings, of modes, of
-ex bindings and of faces, oldest entry first. -/
+ex bindings, of faces and of themes, oldest entry first. -/
 structure Registry where
   /-- The command entries. -/
   entries : Array Entry := #[]
@@ -223,6 +248,8 @@ structure Registry where
   ex : Array ExEntry := #[]
   /-- The face entries: the definitions each owner made, apart too. -/
   faces : Array FaceEntry := #[]
+  /-- The theme entries. -/
+  themes : Array ThemeEntry := #[]
 
 namespace Registry
 
@@ -274,6 +301,26 @@ def replaceFaces (registry : Registry) (owner : Owner) (definitions : Array Face
 to a theme, where a later definition of a name is over an earlier one. -/
 def definitions (registry : Registry) : Array FaceDefinition :=
   registry.faces.map (·.definition)
+
+/-- `registry` with every theme entry of `owner` removed and `themes` added
+as its theme entries, in their order. -/
+def replaceThemes (registry : Registry) (owner : Owner) (themes : Array NamedTheme) : Registry :=
+  { registry with
+    themes :=
+      registry.themes.filter (·.owner != owner) ++ themes.map fun named => { owner, named } }
+
+/-- The theme called `name`: the latest entry of that name. -/
+def theme? (registry : Registry) (name : String) : Option NamedTheme :=
+  (registry.themes.findRev? (·.named.name == name)).map (·.named)
+
+/-- The names themes are registered under, each once, in the order they
+were first registered: a name two owners register is at the place of its
+first entry. -/
+def themeNames (registry : Registry) : Array String :=
+  registry.themes.foldl
+    (fun names entry =>
+      if names.contains entry.named.name then names else names.push entry.named.name)
+    #[]
 
 /-- The job entry `name` starts: the latest one of that name. -/
 def findJob? (registry : Registry) (name : String) : Option JobEntry :=
@@ -367,14 +414,15 @@ def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState
 its lineage, root first, whose on-enter actions run when the mode becomes a
 buffer's major mode; whether a job is registered under a name, for a
 command to start; and the ex binding of an ex name (`ex?`) and the ex
-names that are bound (`exNames`), for the ex line. Which command a name stands for, for a command run inside another,
+names that are bound (`exNames`), for the ex line; and the names themes
+are registered under (`themeNames`), for the command that loads one. Which command a name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
 another"). -/
 def registered (registry : Registry) : Loop.Registered :=
   { entering := fun name => (registry.mode? name).map fun _ => (registry.lineage name).reverse
     jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex?
-    exNames := registry.exNames }
+    exNames := registry.exNames, themeNames := registry.themeNames }
 
 end Registry
 
@@ -394,8 +442,18 @@ structure Registrations where
   ex : Array Ex.Binding := #[]
   /-- The faces, in the order they were set. -/
   faces : Array FaceDefinition := #[]
+  /-- The themes, in the order they were defined. -/
+  themes : Array NamedTheme := #[]
+  /-- The theme names `setup` named as the one in force (`useTheme`), in
+order: more than one is refused (`problem?`), so a `setup` that is
+accepted names at most one (`theme`). -/
+  namedThemes : Array String := #[]
 
 namespace Registrations
+
+/-- The theme a `setup` named as the one in force, if it named one. -/
+def theme (collected : Registrations) : Option String :=
+  collected.namedThemes[0]?
 
 /-- The handler of the setup port that collects: its answer to each request,
 and what has been registered after it. -/
@@ -418,6 +476,9 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .ex binding, collected => ((), { collected with ex := collected.ex.push binding })
   | .face name attributes, collected =>
     ((), { collected with faces := collected.faces.push { name, face := attributes } })
+  | .theme named, collected => ((), { collected with themes := collected.themes.push named })
+  | .useTheme name, collected =>
+    ((), { collected with namedThemes := collected.namedThemes.push name })
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -429,7 +490,8 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 
 /-- What is wrong with what was collected, if anything: a store declared
 twice, a command name or a job name registered twice, a face set twice, a
-key sequence bound twice, a binding of no keys, an ex name bound twice, a
+theme defined twice, a theme named twice (by its first two names), a key
+sequence bound twice, a binding of no keys, an ex name bound twice, a
 command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named.
@@ -455,6 +517,10 @@ def problem? (collected : Registrations) : Option String := do
     return s!"the job `{name}` is registered twice"
   if let some name := repeated? (collected.faces.map (·.name.name)) then
     return s!"the face `{name}` is set twice"
+  if let some name := repeated? (collected.themes.map (·.name)) then
+    return s!"the theme `{name}` is defined twice"
+  if let first :: second :: _ := collected.namedThemes.toList then
+    return s!"the theme is named twice: `{first}`, then `{second}`"
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command
