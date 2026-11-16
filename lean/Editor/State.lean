@@ -917,6 +917,9 @@ structure EditorState where
   /-- The jobs commands asked to be started, in order, which the loop has
   not yet handed to its host. -/
   starts : Array JobStart := #[]
+  /-- The keys of the jobs commands asked to be cancelled, in order, which
+  the loop has not yet handed to its host. -/
+  cancels : Array String := #[]
   /-- The prompt that is open, if one is: its view is a window of `windows`
   that is not in the frame's tree. -/
   prompt : Option Prompt := none

@@ -920,6 +920,15 @@ transaction through. Where those come from is open.
     and a cancel ends the job, finished and not delivered or not, by
     `Jobs.cancel`, which takes it out of the table, so its command never
     runs. Before this only removing an owner or shutdown cancelled a job.
+  - **a command may key a job and cancel one** too: `startJob name
+    arguments (key := some key)` starts the job under a key, so it ends the
+    running job of that key first, and `cancelJob key` asks for the job of
+    a key to be ended. The cancels are kept in the state with the starts
+    (`EditorState.cancels`) and handed back in `Loop.Stepped.cancels`,
+    ahead of the loop's own; a command that is refused or interrupted
+    cancels nothing. `:!` runs its child under one key a workspace, and
+    `C-g` cancels it by that key ([keymaps-and-modes.md](keymaps-and-modes.md),
+    "The ex command line");
   
   An owner other than the registering one (a buffer or a view, whose jobs
   end with it) is not built. On the models the loop's driver

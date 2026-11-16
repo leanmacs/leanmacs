@@ -90,6 +90,13 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   does not judge whether the editor may quit: the command that asks
   checks first (`quit`, `Editor/Api.lean`), since that needs the text
   store, and the loop decides when the editor leaves.
+- **A job is started by one request, and cancelled by another.**
+  `startJob` keeps the start, with its name, its arguments and its key if
+  it has one, in the state (`EditorState.starts`), and `cancelJob` keeps a
+  key (`EditorState.cancels`), until the loop hands them to its host once
+  the command has run to its end (`Editor/Loop.lean`, "Jobs from
+  commands"). A start of a key cancels the running job of that key, and a
+  cancel ends the job of its key; the host keeps the keys.
 - **A reload of the config is asked for by one request**, `reload`,
   which sets a flag of the state (`EditorState.reload`) until the loop
   hands it to its host, as `starts` holds the jobs a command asked for
@@ -197,8 +204,12 @@ inductive StateRequest where
   | «show» (view : ViewId) (buffer : BufferId) (scroll selection : MarkerId)
   /-- Put `text` in the echo area. -/
   | message (text : String)
-  /-- Start the job registered under `name`, with `arguments`. -/
-  | startJob (name : String) (arguments : List Argument)
+  /-- Start the job registered under `name`, with `arguments`, under the key
+  `key` if it has one. -/
+  | startJob (name : String) (arguments : List Argument) (key : Option String := none)
+  /-- Cancel the job of the key `key`, if there is one, once the asking
+  command has run to its end. -/
+  | cancelJob (key : String)
   /-- Have the buffer `id` hold the file at `path`, whose stamp is `stamp`,
   with `ending` as the buffer's line ending. -/
   |
@@ -308,6 +319,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .show .. => Except LayoutRefusal Unit
   | .message _ => Unit
   | .startJob .. => Except JobRefusal Unit
+  | .cancelJob _ => Unit
   | .attachFile .. => Except BufferRefusal Unit
   | .beginSave .. => Except BufferRefusal Unit
   | .endSave .. => Except BufferRefusal Unit
@@ -375,8 +387,9 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .focus view, state => state.focusWindow view
   | .show view buffer scroll selection, state => state.showBuffer view buffer scroll selection
   | .message text, state => ((), { state with echo := text })
-  | .startJob name arguments, state =>
-    (.ok (), { state with starts := state.starts.push { name, arguments } })
+  | .startJob name arguments key, state =>
+    (.ok (), { state with starts := state.starts.push { name, arguments, key } })
+  | .cancelJob key, state => ((), { state with cancels := state.cancels.push key })
   | .attachFile id path stamp ending, state => state.attachFile id path stamp ending
   | .beginSave id snapshot saved, state => state.beginSave id snapshot saved
   | .endSave id snapshot stamp, state => state.endSave id snapshot stamp

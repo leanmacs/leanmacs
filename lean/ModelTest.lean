@@ -7881,9 +7881,10 @@ def stateRequests : List StateRequest :=
     .split ⟨9⟩ .rows (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩, .removeWindow ⟨9⟩, .focus ⟨1⟩,
     .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1),
     .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1), .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi",
-    .startJob "count" [.nat 1], .attachFile ⟨2⟩ notePath noteStamp .crlf,
-    .attachFile ⟨9⟩ notePath noteStamp .lf, .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩,
-    .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none,
+    .startJob "count" [.nat 1], .startJob "count" [.nat 1] (some "k"), .cancelJob "k",
+    .attachFile ⟨2⟩ notePath noteStamp .crlf, .attachFile ⟨9⟩ notePath noteStamp .lf,
+    .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩, .endSave ⟨0⟩ ⟨4⟩ (some noteStamp),
+    .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"), .setCandidates #["one", "two"],
@@ -8181,6 +8182,20 @@ def stateRequestChecks : List Check :=
                 #[{ name := "count", arguments := [.nat 3] },
                   { name := "load", arguments := [.str "a", .bool true] }] &&
               { two with starts := #[] } == state },
+    { name :=
+        "a request to start a job with a key keeps the key with the start, and a request to cancel a key is appended to the state's cancels, in order, and changes nothing else"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (started, one) := state.handle (.startJob "count" [.nat 3] (some "k"))
+            let ((), two) := one.handle (.cancelJob "k")
+            let ((), three) := two.handle (.cancelJob "j")
+            replied started == .inr () && state.cancels == #[] &&
+              one.starts == #[{ name := "count", arguments := [.nat 3], key := some "k" }] &&
+              three.cancels == #["k", "j"] &&
+              { three with cancels := #[] } == one },
     { name :=
         "attaching a file to a buffer sets its path, its stamp and its line ending, with no save in flight, and leaves the rest of the buffer and the other buffers; the buffer is then found by that path and by no other"
       run :=
@@ -14903,7 +14918,10 @@ and is then refused; `none` (`n`) starts `double` with no argument; `bad`
 `load` with `note.txt`, `adopt` (`s`) starts `adopt` with 0, `save` (`w`)
 takes a snapshot of its buffer's text and starts `save` with its index, and
 `lose` (`t`) starts `lose`, and `build` (`e`) starts `build`, which runs
-`/bin/true` in `/p/d`. -/
+`/bin/true` in `/p/d`. `keyed` (`k`) starts `double` with 21 under the key
+`k`, `cancel` (`x`) cancels the key `k`, `cancelFails` (`y`) cancels it
+and is then refused, and `cancelAfterRead` (`z`) reads its buffer's text
+and then cancels it. -/
 def driverKeys : Loop.Keys TestScheme.scheme :=
   let starts (name : String) (arguments : List Argument := []) : Dispatched := fun _ => do
     discard <| startJob name arguments
@@ -14912,7 +14930,9 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
     [("C-c a", invoke "ask"), ("C-c m", invoke "missing"), ("C-c f", invoke "fail"),
       ("C-c n", invoke "none"), ("C-c b", invoke "bad"), ("C-c c", invoke "chain"),
       ("C-c l", invoke "load"), ("C-c s", invoke "adopt"), ("C-c w", invoke "save"),
-      ("C-c t", invoke "lose"), ("C-c e", invoke "build")]
+      ("C-c t", invoke "lose"), ("C-c e", invoke "build"), ("C-c k", invoke "keyed"),
+      ("C-c x", invoke "cancel"), ("C-c y", invoke "cancelFails"),
+      ("C-c z", invoke "cancelAfterRead")]
     [("ask", fun _ => do
         message "asked"
         discard <| startJob "double" [.nat 21]
@@ -14928,7 +14948,20 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
         let taken ← call.target.buffer.text.snapshot
         discard <| startJob "save" [.nat taken.index]
         return none),
-      ("lose", starts "lose"), ("build", starts "build")]
+      ("lose", starts "lose"), ("build", starts "build"),
+      ("keyed", fun _ => do
+        discard <| startJob "double" [.nat 21] (key := some "k")
+        return none),
+      ("cancel", fun _ => do
+        cancelJob "k"
+        return none),
+      ("cancelFails", failingAfter fun _ => cancelJob "k"),
+      ("cancelAfterRead", fun call => do
+        -- A read of the text is a guarded request, which an interrupt ends:
+        -- a command of state requests alone cannot be interrupted.
+        discard <| call.target.buffer.text.read
+        cancelJob "k"
+        return none)]
 
 /-- A driver over the initial state, with the commands and the jobs of the
 driver checks; `none` if making the state was refused. -/
@@ -15068,6 +15101,57 @@ def driverChecks : List Check :=
               echoOf finished == some "job 1 bad: refused: bad range" &&
               finished.model.display.scenes.size == typed.model.display.scenes.size + 1 &&
               driverText after == some "abc" },
+    { name :=
+        "a command that cancels a key ends the pending job of that key: the step hands the key back, the job is no longer pending, and finishing it delivers nothing"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (asked, steps) := fedTo driver (presses "C-c k")
+            let (cancelled, cancelSteps) := fedTo asked (presses "C-c x")
+            let (finished, delivered) := cancelled.finish 1
+            started steps == #[{ name := "double", arguments := [.nat 21], key := some "k" }] &&
+              asked.pending.map (·.id) == #[1] &&
+              cancelSteps.flatMap (fun step => (step.map (·.cancels)).getD #[]) == #["k"] &&
+              cancelled.loop.state.cancels.isEmpty &&
+              cancelled.pending.isEmpty &&
+              delivered.isNone &&
+              driverText finished == some "" },
+    { name :=
+        "a command that cancels a key and is then refused, or is interrupted, cancels nothing: the job of that key is still pending, and the refused one's job is delivered when it finishes"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c k")
+            let (refused, refusedSteps) := fedTo asked (presses "C-c y")
+            let flagged := { asked with model := { asked.model with watch := { arrived := 1 } } }
+            let (interrupted, interruptedSteps) := fedTo flagged (presses "C-c z")
+            let (finished, _) := refused.finish 1
+            let cancels (steps : Array (Option (Loop.Stepped TestScheme.scheme))) :=
+              steps.flatMap fun step => (step.map (·.cancels)).getD #[]
+            cancels refusedSteps == #[] && refused.pending.map (·.id) == #[1] &&
+              refused.loop.state.cancels.isEmpty &&
+              echoOf refused == some "cancelFails: refused: bad range" &&
+              cancels interruptedSteps == #[] &&
+              interrupted.pending.map (·.id) == #[1] &&
+              echoOf interrupted == some "cancelAfterRead: interrupted" &&
+              driverText finished == some "[42]" },
+    { name :=
+        "a command that starts a job of a key while one of that key is pending cancels the first: only the second is pending, finishing the first delivers nothing, and the second's command is delivered"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (first, _) := fedTo driver (presses "C-c k")
+            let (second, _) := fedTo first (presses "C-c k")
+            let (gone, nothing) := second.finish 1
+            let (finished, _) := gone.finish 2
+            second.pending.map (·.id) == #[2] && nothing.isNone && driverText gone == some "" &&
+              driverText finished == some "[42]" },
     { name :=
         "a delivered command may itself start a job: the delivery hands the start back, the job gets the next id, and its result is delivered in its turn; finishing an id that names no job started changes nothing"
       run :=

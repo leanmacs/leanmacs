@@ -133,9 +133,11 @@ from the next command.
   reply to that request.
 - **Starting a job** (`StateRequest.startJob`) is refused with `noSuchJob`
   for a name no job is registered under (`Loop.Registered.jobs`), with the
-  state as it was. Otherwise the start is kept in the state, for the loop
-  to hand to its host once the command has run to its end
-  (`Editor/Loop.lean`, "Jobs from commands").
+  state as it was. Otherwise the start is kept in the state, with its key
+  if it has one, for the loop to hand to its host once the command has run
+  to its end (`Editor/Loop.lean`, "Jobs from commands"). A cancel
+  (`StateRequest.cancelJob`) is the handler's: its key is kept the same
+  way, whether or not a job of that key is running.
 - **Asking for an ex binding** (`StateRequest.ex`) is answered the binding
   the registry has for the ex name (`Loop.Registered.ex`): the command the
   name runs and what it takes, or `none` for a name nobody bound. The
@@ -320,9 +322,9 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           | .error error =>
             pure (.error error)
       | (reply, state) => dispatched registered state (next reply)
-  | state, .step (.state (.startJob name arguments)) next =>
+  | state, .step (.state (.startJob name arguments key)) next =>
     if registered.jobs name then
-      let (reply, state) := state.handle (.startJob name arguments)
+      let (reply, state) := state.handle (.startJob name arguments key)
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))

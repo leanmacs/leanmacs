@@ -471,6 +471,13 @@ arrived before it (`Editor/Loop.lean`, "Jobs from commands").
 - **The job is started once the command has run to its end**, for whoever
   registered it. A command that is refused or interrupted after asking
   starts no job.
+- **A job may be started under a key** (`startJob name arguments (key :=
+  some key)`): starting it cancels the running job of that key, so a key
+  has at most one job. `cancelJob key` asks for the job of that key to be
+  cancelled, once the command has run to its end: it never runs its
+  command, even one that has finished and not been delivered. A command
+  that is refused or interrupted after asking cancels nothing. It is how
+  `:!` keeps one run a workspace and `C-g` ends it (`Editor/Shell.lean`).
 
 Pinned by `ModelTest.driverChecks`.
 
@@ -662,11 +669,20 @@ def setScrollMargin (rows : Nat) : EditorM Unit :=
   EditorState.ask (.setScrollMargin rows)
 
 /-- Asks for the job registered under `name` to be started with
-`arguments`, once this command has run to its end. Its result comes back
-later, as the command its handler makes. Refused with `noSuchJob` for a
-name no job is registered under. -/
-def startJob (name : String) (arguments : List Argument := []) : EditorM (Except JobRefusal Unit) :=
-  EditorState.ask (.startJob name arguments)
+`arguments`, once this command has run to its end, under the key `key` if
+it is given: the running job of that key is then cancelled first. Its
+result comes back later, as the command its handler makes. Refused with
+`noSuchJob` for a name no job is registered under. -/
+def startJob (name : String) (arguments : List Argument := []) (key : Option String := none) :
+    EditorM (Except JobRefusal Unit) :=
+  EditorState.ask (.startJob name arguments key)
+
+/-- Asks for the job of the key `key` to be cancelled, once this command has
+run to its end: it is ended, even one that has finished and not been
+delivered, so its command never runs. A key no job has cancels nothing. It
+is never refused. -/
+def cancelJob (key : String) : EditorM Unit :=
+  EditorState.ask (.cancelJob key)
 
 /-- The ex binding of the ex name `name`: the command a line of that name
 runs, and what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). `none`
