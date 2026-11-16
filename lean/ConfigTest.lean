@@ -423,6 +423,9 @@ structure Stage (σ : Type) where
   threads : IO.Ref (Array UInt64)
   /-- The clock the host's jobs wait on, and the loop times a command on. -/
   clock : Job.FakeClock
+  /-- The watch service the host's jobs watch through: a fake over a model
+  whose one directory is the made-up `/watched`. -/
+  watches : Job.FakeFileWatches
   /-- Every entry the host has logged, oldest first. -/
   log : IO.Ref (Array String)
 
@@ -465,6 +468,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
     | none =>
       Job.Completions.new
   let clock ← Job.FakeClock.new completions
+  let watches ← Job.FakeFileWatches.new completions { directories := #["/watched"] }
   let requests ← context.ids.modifyGet fun next => (next, next + 3)
   return {
       collaborators :=
@@ -472,11 +476,12 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           emit := fun line => do
             threads.modify (·.push (← IO.getTID))
             output.modify (·.push line),
-          services := { completions, timers := clock.timers }, published := ← Snapshots.new,
-          held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1, jobs := requests + 2,
-          commands := compiled.commands, compiledJobs := compiled.jobs,
-          bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
-          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter,
+          services := { completions, timers := clock.timers, fileWatches := watches.fileWatches }
+          published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
+          wakeups := requests + 1, jobs := requests + 2, commands := compiled.commands,
+          compiledJobs := compiled.jobs, bindings := compiled.bindings, modes := compiled.modes,
+          ex := compiled.ex, log := fun entry => log.modify (·.push entry),
+          slowAfter := compiled.slowAfter,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
             match compiled.major with
@@ -484,7 +489,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
               return { loop with state := (loop.state.setMajorMode ⟨0⟩ name).2 }
             | none =>
               return loop },
-      output, threads, clock, log }
+      output, threads, clock, watches, log }
 
 /-- A host running for one check: the headless loop on the real queue and the
 real text binding, over a config directory the check owns. -/
@@ -499,6 +504,9 @@ structure Session where
   threads : IO.Ref (Array UInt64)
   /-- The clock the host's jobs wait on, which the check moves. -/
   clock : Job.FakeClock
+  /-- The watch service the host's jobs watch through, which the check
+  tells of changes. -/
+  watches : Job.FakeFileWatches
   /-- Every entry the host has logged, oldest first. -/
   log : IO.Ref (Array String)
 
@@ -573,7 +581,7 @@ def withHostOver (context : Context) (files : List (String × String))
         (fun host stage =>
           check
             { host, directory, output := stage.output, threads := stage.threads,
-              clock := stage.clock, log := stage.log })
+              clock := stage.clock, watches := stage.watches, log := stage.log })
         compiled
 
 /-- Runs `check` against a host started on a fresh temporary directory
@@ -3088,7 +3096,7 @@ def withFileHost (context : Context) (opens : List (String × System.FilePath))
     onStage stage fun host stage =>
         check
           { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
-            log := stage.log }
+            watches := stage.watches, log := stage.log }
 
 /-- Runs the command called `name` through the host and waits for the jobs
 it started: whether the wait settled. -/
@@ -3658,10 +3666,89 @@ def faceChecks (context : Context) : List Check :=
                 throw (IO.userError s!"before the reload: {before}; after it: {after}")
               return lines.any (·.startsWith "reload 1: installed") }]
 
+/-- A chunk whose `setup` registers `greet` and the job `follow`, which
+watches the made-up file `/watched/f`, waits for its next delivery, and
+finishes with a command that makes a text holding `version`, the config's. -/
+def followChunk (version : String) : String :=
+  "def follow : Unit → JobM String := fun _ => do
+  let .ok watch ← FileWatch.start (.file \"/watched/f\") { window := 0, bound := 8 }
+    | throw \"the watch was refused\"
+  let .ok _ ← FileWatch.next watch | throw \"the read was refused\"
+  return \"" ++
+    version ++
+    "\"
+
+def setup : SetupM Unit := do
+  command \"greet\" greet
+  job \"follow\" follow fun version => discard <| createText version
+"
+
+/-- A config of two chunks: `greet`, and a `setup` that registers it and the
+job `follow` of version `v1`. -/
+def followConfig : List (String × String) :=
+  [("10-greet.lean", greetChunk "v1"), ("20-setup.lean", followChunk "v1")]
+
+/-- The checks of a config's watches across a reload, through the headless
+host over the fake watch service: after a reload installs, only the watches
+the new config made deliver; a rejected reload leaves the old one's
+watching. -/
+def watchReloadChecks (context : Context) : List Check :=
+  [{  name :=
+        "after a reload installs, only the watches the new config made deliver: the old config's job is cancelled before the reload is reported, its watch ends, and the new config's job is told of the change and says the new version"
+      run :=
+        withHost context followConfig fun session => do
+          session.ask [.reload]
+          session.ask [.spawn "follow"]
+          unless ← eventually (return (← session.watches.watching) == 1) do
+            return false
+          let firstWatch := ((← session.watches.started)[0]?.map (·.1.toNat)).getD 0
+          session.write "20-setup.lean" (followChunk "v2")
+          session.ask [.reload]
+          let oldEnded ←
+            eventually do
+                return (← session.watches.watching) == 0 &&
+                    (← session.watches.ended) == #[firstWatch]
+          let afterReload ← session.output.get
+          session.ask [.spawn "follow"]
+          unless ← eventually (return (← session.watches.watching) == 1) do
+            return false
+          session.watches.change "/watched/f" #[.written]
+          let joined ← session.host.join patience
+          session.ask [.show]
+          let lines ← session.output.get
+          let later := lines.extract afterReload.size lines.size
+          return oldEnded && joined == .settled &&
+              afterReload ==
+                #["reload 1: installed, 2 chunks, 1 commands", "spawn follow: job 1",
+                  "job 1 follow: cancelled", "reload 2: installed, 2 chunks, 1 commands"] &&
+              later.contains "job 2 follow: ok" &&
+              later.contains "text 1: \"v2\"" &&
+              !later.any (·.startsWith "job 1") },
+    { name :=
+        "a rejected reload leaves the old config's watch watching: its job is told of the change and says the old version"
+      run :=
+        withHost context followConfig fun session => do
+          session.ask [.reload]
+          session.ask [.spawn "follow"]
+          unless ← eventually (return (← session.watches.watching) == 1) do
+            return false
+          session.write "10-greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
+          session.ask [.reload]
+          let stillWatching :=
+            (← session.watches.watching) == 1 && (← session.watches.ended).isEmpty
+          session.watches.change "/watched/f" #[.written]
+          let joined ← session.host.join patience
+          session.ask [.show]
+          let lines ← session.lines
+          return stillWatching && joined == .settled && lines.contains "reload 2: rejected" &&
+              lines.contains "job 1 follow: ok" &&
+              lines.contains "text 1: \"v1\"" }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
+    watchReloadChecks context ++
     agreementChecks () ++
     scriptChecks context ++
     dispatchChecks context ++
