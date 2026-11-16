@@ -17,7 +17,9 @@
 //! 4. the glyphs of each text row;
 //! 5. the underlines and the strike-throughs of each text row;
 //! 6. its status row, the same way, over the status row's own background
-//!    across the view;
+//!    across the view, with the box of each of its fields (its padding
+//!    and its text) filled in the field's colour where that is not the
+//!    row's, under its runs' backgrounds;
 //! 7. its cursors.
 //!
 //! Nothing is drawn outside a view: the device clears the target first.
@@ -114,9 +116,10 @@ pub fn thickness(scale: f32) -> u32 {
 /// start, and the glyph images it pins.
 #[derive(Debug, Default)]
 pub struct RowQuads {
-    /// The background of each run, in order across the row: its left
-    /// edge, its width and its colour. Its height is the row's, which is
-    /// set when the row is placed.
+    /// The box of each field of a status row and then the background of
+    /// each run, in order across the row: its left edge, its width and its
+    /// colour. Its height is the row's, which is set when the row is
+    /// placed.
     backgrounds: Vec<Quad>,
     /// The glyphs.
     glyphs: Vec<Quad>,
@@ -425,6 +428,15 @@ fn build_row(
             u: slot.x,
             v: slot.y,
         });
+    }
+    // A status row's boxes, under its runs' backgrounds: the padding of
+    // each field, which has no glyph to carry a run, in its colour.
+    for status_box in row.boxes {
+        let (left, right) = (pixel(status_box.x), pixel(status_box.x + status_box.width));
+        let across = (right - left).max(0) as u32;
+        built
+            .backgrounds
+            .push(Quad::fill(left, 0, across, 0, status_box.background));
     }
     let baseline = pixel(row.baseline);
     for span in &spans {

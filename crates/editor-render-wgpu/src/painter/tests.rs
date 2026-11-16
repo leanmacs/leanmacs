@@ -13,7 +13,9 @@ use std::sync::Arc;
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Paint, Underline, UnderlineStyle};
 use editor_layout::frame::{Area, CursorBox, Frame, FrameRow, ViewFrame};
-use editor_layout::scene::{Cursor, CursorShape, Decoration, Rect, Scene, StatusField, ViewId};
+use editor_layout::scene::{
+    Cursor, CursorShape, Decoration, Rect, Scene, Side, StatusField, ViewId,
+};
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Glyph, ResolvedFontId, VisualLine};
 use editor_render::port::Target;
@@ -436,6 +438,55 @@ fn a_view_is_drawn_back_to_front() {
     assert_eq!(drawn, glyphs + status.line.glyphs.len());
 }
 
+#[test]
+fn a_status_rows_boxes_are_filled_in_their_colour() {
+    let rect = Rect {
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 64,
+    };
+    let mut scene = Scene::of_text("ab", rect);
+    let mut faces = theme();
+    faces.push(FaceDef {
+        name: "badge".to_owned(),
+        face: Face {
+            background: Some(GREEN),
+            ..Face::default()
+        },
+    });
+    scene.faces = Some(faces);
+    // A badge padded 3 on the left, in a colour unlike the row's, and a
+    // field padded 2 on the right in the row's own.
+    scene.views[0].status = vec![
+        StatusField {
+            text: "ab".to_owned(),
+            face: "badge".to_owned(),
+            side: Side::Left,
+            padding: 3,
+        },
+        StatusField {
+            text: "c".to_owned(),
+            face: "mode-line".to_owned(),
+            side: Side::Right,
+            padding: 2,
+        },
+    ];
+    let laid = Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene);
+    let status = laid.views[0].status.as_ref().expect("a status row");
+    let mut painter = painter();
+    painter.paint(&laid, target(1.0));
+    // The badge's box, its padding and its text, across exactly the box
+    // and down the row; then its run's background over its glyphs.
+    let badge = status.boxes[0];
+    assert_eq!((badge.x, badge.width, badge.background), (0.0, 26.0, GREEN));
+    let y = status.y as i32;
+    assert_eq!(fills(&painter, GREEN), vec![(0, y, 26, 16), (3, y, 20, 16)]);
+    // The field in the row's colour adds nothing to the row's background.
+    assert_eq!(status.boxes[1].background, GREY);
+    assert_eq!(fills(&painter, GREY), vec![(0, y, 200, 16)]);
+}
+
 /// Where the second view of [`side_by_side`] is.
 const SECOND: (i32, i32) = (150, 90);
 
@@ -483,10 +534,16 @@ fn every_view_of_a_frame_is_drawn_from_its_own_top_left() {
         quads.iter().copied().chain(moved).collect()
     };
     // The marked runs are one of the text and one of the status row, so
-    // each of their parts is two quads a view.
+    // each of their parts is two quads a view; their backgrounds are three,
+    // with the marked status field's box, under its run's.
     let parts = [
         ("the view's background", QuadKind::Fill, WHITE, 1),
-        ("the marked runs' backgrounds", QuadKind::Fill, YELLOW, 2),
+        (
+            "the marked runs' backgrounds and the marked field's box",
+            QuadKind::Fill,
+            YELLOW,
+            3,
+        ),
         (
             "the selected run's background and the selection's area",
             QuadKind::Fill,
