@@ -1189,17 +1189,19 @@ structure AskedRun where
   asked : Option (Array Editor.Ffi.WindowAsked)
 
 /-- Runs the scripted window as `runScripted` does, but once its sample has
-been pulled asks it `requests` in order, pulls one more event, and reads what
-the window was asked, before closing it. -/
-def runScriptedAsking (requests : List Editor.Ffi.WindowRequest) : IO AskedRun := do
+been pulled runs `ask`, which asks the window things, pulls the `changes`
+events the requests make the window report (one for each change of
+fullscreen), and reads what the window was asked, before closing it. -/
+def runScriptedWhile (ask : IO Unit) (changes : Nat := 1) : IO AskedRun := do
   let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun .scripted true)
   let mut events := #[]
   for _ in [0:(windowSample true).length] do
     let some event ← pull .editor | break
     events := events.push event
-  for request in requests do
-    Editor.Ffi.windowRequest .scripted request
+  ask
   let after ← pull .editor
+  for _ in [1:changes] do
+    discard <| pull .editor
   let asked ← Editor.Ffi.windowAsked .scripted
   Editor.Ffi.windowClose .scripted
   let result ←
@@ -1209,6 +1211,13 @@ def runScriptedAsking (requests : List Editor.Ffi.WindowRequest) : IO AskedRun :
       pure none
   return { ran := { events := events.toList, stamped := true, waited := true, result }, after,
            asked }
+
+/-- Runs the scripted window as `runScriptedWhile` does, asking it
+`requests` in order through the library, which change fullscreen once. -/
+def runScriptedAsking (requests : List Editor.Ffi.WindowRequest) : IO AskedRun :=
+  runScriptedWhile do
+    for request in requests do
+      Editor.Ffi.windowRequest .scripted request
 
 /-- The requests in `asked`, without the titles: a title is the presenter's,
 sent when the window opens if a scene bound to it named one. -/
@@ -1336,6 +1345,24 @@ def windowChecks (_ : Unit) : List Check :=
         return isWindowSample true ran.ran.events &&
             (ran.asked.map requestsOf) == some #[.enterFullscreen, .minimise] &&
             resized &&
+            ran.ran.result matches some (.ok _) },
+    { name :=
+        "a frame request asked of the real display binding made over the scripted platform, directly and through the window mode's host display, is what the scripted window was asked, in order"
+      run := do
+        let table ← Editor.Snapshots.new
+        let display ← Editor.Ffi.Display.newCells 8 16
+        let real ←
+          Editor.RealDisplay.over display table.reader Editor.Theme.builtin (platform :=
+              some .scripted)
+        let hosted ← Editor.Window.hostDisplay display .scripted table.reader
+        -- Entering and leaving fullscreen each change it: two resizes.
+        let ran ←
+          runScriptedWhile (changes := 2) do
+              discard <| (Editor.Display.askFrame .enterFullscreen).runReal real
+              hosted.handle (.frame .leaveFullscreen)
+              hosted.handle (.frame .minimise)
+        return (ran.asked.map requestsOf) ==
+              some #[.enterFullscreen, .leaveFullscreen, .minimise] &&
             ran.ran.result matches some (.ok _) },
     { name :=
         "a request to a window that is not running is not recorded, and the real platform records nothing"

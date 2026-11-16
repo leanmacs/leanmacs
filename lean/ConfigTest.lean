@@ -35,6 +35,9 @@ fakes. The checks here pin what only real collaborators can show:
   result on the editor thread, a reload that installs cancels the old
   config's jobs and a rejected one does not, and how each ending of a job is
   reported;
+- `shippedChecks`: what the executable's hosts are handed as compiled code
+  (`Headless.shippedOver`): the registry they start with binds `C-s-f` to
+  `toggle-fullscreen` and `s-m` to `minimise-window`, both compiled;
 - `scriptChecks`: the headless mode's script and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command
@@ -3658,11 +3661,35 @@ def faceChecks (context : Context) : List Check :=
                 throw (IO.userError s!"before the reload: {before}; after it: {after}")
               return lines.any (·.startsWith "reload 1: installed") }]
 
+/-- The checks of what the executable's hosts are handed as compiled code
+(`Headless.shippedOver`, which `Headless.shipped` makes them with), on the
+registry a host starts with (`Headless.compiled`) and the test scheme's
+keymap of its bindings. Its services are a fake clock's over a table of
+waits of its own, which no pump reads: nothing here starts a job. -/
+def shippedChecks (_ : Unit) : List Check :=
+  [{  name :=
+        "the executable's hosts start with C-s-f bound to toggle-fullscreen and s-m to minimise-window, both registered for the owner compiled"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let bound (text : String) : Option Invocation :=
+          (registry.keymap TestScheme.scheme).find? (keysOf text)
+        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        return bound "C-s-f" == some { command := "toggle-fullscreen" } &&
+            bound "s-m" == some { command := "minimise-window" } &&
+            compiled "toggle-fullscreen" &&
+            compiled "minimise-window" }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
     agreementChecks () ++
+    shippedChecks () ++
     scriptChecks context ++
     dispatchChecks context ++
     hostLoopChecks context ++

@@ -1893,15 +1893,35 @@ def drawnDisplay (snapshots : SnapshotReader) : IO Host.Display := do
   display.present
   Host.Display.real (← RealDisplay.over display snapshots Theme.builtin)
 
+/-- The collaborators the executable's hosts are made of, over the jobs'
+`services`, the table of snapshots `published` and what jobs hold `held`:
+the real elaborator over the toolchain in `sysroot` and the editor's
+`.olean` files in `oleanDir`, the config directory `configDir` as the
+source, `emit` as the output and stderr as the log, and, as its compiled
+ones, the file commands with their jobs, the minibuffer's commands with its
+mode, evil's commands, the ex line's commands with the ex names that ship,
+and the frame's commands with their bindings. Its display is the recorder
+and its clipboard its own, as a host's are by default.
+
+It is apart from `shipped`, which makes what it is over, so that what the
+hosts are handed as compiled code can be read with no pump started
+(`ConfigTest.shippedChecks`). -/
+def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit)
+    (services : Job.Services) (published : Snapshots) (held : Job.HeldSnapshots) :
+    Collaborators Config.Elaborate.State Vim.Default.scheme :=
+  { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
+    source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
+    wakeups := 2, jobs := 3
+    commands :=
+      Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++
+        FrameCommands.commands
+    bindings := FrameCommands.bindings
+    compiledJobs := Files.jobs
+    modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln }
+
 /-- The collaborators the executable's hosts are made of, the headless
-mode's and the window mode's: the real elaborator over the toolchain in
-`sysroot` and the editor's `.olean` files in `oleanDir`, the config
-directory `configDir` as the source, `emit` as the output and stderr as the
-log, the library's timer service and file service for the jobs, and, as its
-compiled ones, the file commands with their jobs, the minibuffer's commands
-with its mode, evil's commands and the ex line's commands with the ex names
-that ship. Its display is the recorder and its clipboard its own, as a
-host's are by default.
+mode's and the window mode's: `shippedOver` the library's timer service and
+file service for the jobs.
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
@@ -1915,19 +1935,10 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
   -- the file service reads the one and keeps its loads in the other.
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
-  return {
-      elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
-      source := Config.Directory.source configDir, emit,
-      services :=
-        { completions, timers := Job.realTimers completions,
-          files := Job.realFiles completions published.reader held },
-      published, held, requests := 1, wakeups := 2, jobs := 3
-      commands :=
-        Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++
-          FrameCommands.commands
-      bindings := FrameCommands.bindings
-      compiledJobs := Files.jobs
-      modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln }
+  return shippedOver sysroot oleanDir configDir emit
+      { completions, timers := Job.realTimers completions,
+        files := Job.realFiles completions published.reader held }
+      published held
 
 /-- The headless mode of the executable, handed the command line after
 `headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>

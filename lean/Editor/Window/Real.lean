@@ -124,6 +124,15 @@ def Start.request : Start → Headless.Request
   | .say text => .say text
   | .reload => .reload
 
+/-- The window mode's display over the snapshots `snapshots`: the host's
+display over the real binding over `display`, in the built-in theme, which
+sends the requests of the window to the window of `platform`. Pinned on the
+scripted platform by `FfiTest.windowChecks`. -/
+def hostDisplay (display : Ffi.Display) (platform : Ffi.Platform) (snapshots : SnapshotReader) :
+    IO Headless.Host.Display := do
+  Headless.Host.Display.real
+      (← RealDisplay.over display snapshots Theme.builtin (platform := some platform))
+
 /-- Runs the editor in a window of `platform`, on `options.file` when one
 was given, drawn from `display` and with `clipboard` as its clipboard, and
 returns once the window has closed: the host is started, and what
@@ -141,9 +150,7 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
     Headless.shipped (options.sysroot.getD "") options.oleans (options.config.getD "") IO.eprintln
   let collaborators :=
     { shipped with
-      display := fun snapshots => do
-        Headless.Host.Display.real
-            (← RealDisplay.over display snapshots Theme.builtin (platform := some platform))
+      display := hostDisplay display platform
       clipboard := pure clipboard }
   display.present
   let host ← Headless.start collaborators
