@@ -54,7 +54,7 @@ use std::sync::Arc;
 use editor_text::{Edit, Patch, Revision, Snapshot};
 
 use crate::port::{Capture, Syntax};
-use crate::query::captures_in;
+use crate::query::{captures_in, positions};
 use crate::session::Parsed;
 
 /// A face table refused: it does not have one entry for each of the
@@ -258,29 +258,35 @@ pub fn carry(patch: &Patch, bytes: Range<usize>) -> Vec<Range<usize>> {
 }
 
 /// What a text is drawn with for one snapshot: the tree delivered last, the
-/// highlighter, and the patch from the tree's revision to the snapshot's
-/// when they differ ([`crate::Session::highlights`]). It is fixed once
-/// made.
+/// highlighter, the snapshot, and the patch from the tree's revision to the
+/// snapshot's when they differ ([`crate::Session::highlights`]). It is
+/// fixed once made.
 pub struct Highlights<S: Syntax> {
     /// The tree delivered, with its snapshot.
     parsed: Arc<Parsed<S::Tree>>,
     /// The highlighter.
     highlighter: Arc<Highlighter<S::Query>>,
+    /// The snapshot it was made for, whose positions a range asked of it
+    /// must be.
+    snapshot: Snapshot,
     /// From the tree's revision to the snapshot's; none when they are one.
     patch: Option<Patch>,
 }
 
 impl<S: Syntax> Highlights<S> {
-    /// The highlights of `parsed` by `highlighter`, carried through
-    /// `patch` when there is one.
+    /// The highlights of `parsed` by `highlighter` for `snapshot`, carried
+    /// through `patch`, from the tree's revision to the snapshot's, when
+    /// there is one.
     pub(crate) fn new(
         parsed: Arc<Parsed<S::Tree>>,
         highlighter: Arc<Highlighter<S::Query>>,
+        snapshot: Snapshot,
         patch: Option<Patch>,
     ) -> Self {
         Self {
             parsed,
             highlighter,
+            snapshot,
             patch,
         }
     }
@@ -300,8 +306,13 @@ impl<S: Syntax> Highlights<S> {
     /// rule: `bytes` mapped back to the tree's text ([`back`]), the query's
     /// captures there drawn by the rule ([`spans`]), each carried forward
     /// ([`carry`]), and cut. Nothing for a range that is not two positions
-    /// in order.
+    /// of the snapshot in order: checked on the snapshot itself, since
+    /// [`back`] maps an end inside text put in since the tree to a position
+    /// of the tree's text.
     pub fn spans(&self, syntax: &S, bytes: Range<usize>, out: &mut Vec<HighlightSpan>) {
+        let Ok(bytes) = positions(&self.snapshot, bytes) else {
+            return;
+        };
         let asked = match &self.patch {
             Some(patch) => back(patch, bytes.clone()),
             None => bytes.clone(),
@@ -527,5 +538,76 @@ mod tests {
         assert_eq!(carry(&edited, 0..9), [0..2, 4..7]);
         assert_eq!(back(&edited, 4..7), 2..5);
         assert_eq!(back(&edited, 2..4), 2..2);
+    }
+
+    /// The highlights by `highlighter` of `text` as `edits` leave it, each
+    /// a range of the text as it is then and what replaces it, drawn from
+    /// the tree of `text` before them: carried through their patch, or,
+    /// with no edits, at the tree's own revision.
+    fn highlights(
+        highlighter: Highlighter<ParensQuery>,
+        text: &str,
+        edits: &[(Range<usize>, &str)],
+    ) -> Highlights<Parens> {
+        let mut text = Text::from(text);
+        let before = text.snapshot();
+        let tree = Parens.parse(&mut ParensParser, &before, None);
+        for (range, with) in edits {
+            text.replace(range.clone(), with).unwrap();
+        }
+        let parsed = Arc::new(Parsed {
+            revision: before.revision(),
+            snapshot: before,
+            tree,
+        });
+        let patch = (!edits.is_empty()).then(|| text.changes_since(Revision::new(0)).unwrap());
+        Highlights::new(parsed, Arc::new(highlighter), text.snapshot(), patch)
+    }
+
+    /// The spans `highlights` adds for `bytes`.
+    fn asked(highlights: &Highlights<Parens>, bytes: Range<usize>) -> Vec<Range<usize>> {
+        let mut out = Vec::new();
+        highlights.spans(&Parens, bytes, &mut out);
+        out.into_iter().map(|span| span.bytes).collect()
+    }
+
+    /// A highlighter of each list and each atom.
+    fn lists_and_atoms() -> Highlighter<ParensQuery> {
+        highlighter("list @list\natom @atom", &[Some("l"), Some("a")])
+    }
+
+    #[test]
+    fn a_range_not_two_positions_in_order_draws_nothing_at_the_trees_own_revision() {
+        // `(a é)`: the `é` is bytes 3..5.
+        let unedited = highlights(lists_and_atoms(), "(a é)", &[]);
+
+        assert_eq!(asked(&unedited, 0..6), [0..6, 1..2, 3..5]);
+        assert_eq!(asked(&unedited, 0..4), Vec::<Range<usize>>::new());
+        assert_eq!(asked(&unedited, 4..6), Vec::<Range<usize>>::new());
+        assert_eq!(
+            asked(&unedited, Range { start: 5, end: 1 }),
+            Vec::<Range<usize>>::new()
+        );
+    }
+
+    #[test]
+    fn a_range_not_two_positions_in_order_draws_nothing_carried_through_a_patch() {
+        // `(ab)` with `é` put in at 2: `(aéb)`, the `é` bytes 2..4. The
+        // end 3, inside it, maps back to the insert's old end, a position
+        // of the tree's text, so only the snapshot's own text can refuse
+        // it.
+        let carried = highlights(lists_and_atoms(), "(ab)", &[(2..2, "é")]);
+
+        assert_eq!(asked(&carried, 0..2), [0..2, 1..2]);
+        assert_eq!(asked(&carried, 0..3), Vec::<Range<usize>>::new());
+        assert_eq!(asked(&carried, 3..6), Vec::<Range<usize>>::new());
+        assert_eq!(
+            asked(&carried, Range { start: 4, end: 2 }),
+            Vec::<Range<usize>>::new()
+        );
+        assert_eq!(
+            asked(&carried, Range { start: 6, end: 0 }),
+            Vec::<Range<usize>>::new()
+        );
     }
 }

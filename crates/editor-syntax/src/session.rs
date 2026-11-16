@@ -336,7 +336,7 @@ impl<S: Syntax> Session<S> {
         };
         let revision = snapshot.revision();
         if parsed.revision == revision {
-            return Some(Highlights::new(parsed, highlighter, None));
+            return Some(Highlights::new(parsed, highlighter, snapshot.clone(), None));
         }
         if parsed.revision > revision {
             return None;
@@ -346,7 +346,7 @@ impl<S: Syntax> Session<S> {
             .patch
             .filter(|patch| patch.from == parsed.revision && patch.to == revision)?;
         (latest.snapshot.revision() == revision)
-            .then(|| Highlights::new(parsed, highlighter, Some(patch)))
+            .then(|| Highlights::new(parsed, highlighter, latest.snapshot, Some(patch)))
     }
 
     /// The captures of `query`, compiled for `grammar`, in `range` of
