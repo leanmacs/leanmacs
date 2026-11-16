@@ -176,6 +176,7 @@ pub fn scene_of(text: &str, selected: Range<usize>) -> Scene {
     shown.status = vec![StatusField {
         text: "frame.png  1:8".to_owned(),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     scene
 }

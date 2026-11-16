@@ -1431,6 +1431,7 @@ fn scene(size: Resize, family: Option<&str>) -> Scene {
     scene.views[0].status = vec![StatusField {
         text: format!("window  {} by {}", size.width, size.height),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     scene
 }
@@ -2739,6 +2740,7 @@ mod tests {
             line: line_in(fonts),
             runs: Vec::new(),
             background: white,
+            boxes: Vec::new(),
             hash: 0,
         });
         let fonts = sizes

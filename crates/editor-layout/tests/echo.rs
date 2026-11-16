@@ -66,6 +66,7 @@ fn window(id: u64, rect: Rect) -> View {
         status: vec![StatusField {
             text: "normal".to_owned(),
             face: "mode-line".to_owned(),
+            ..StatusField::default()
         }],
         ..View::default()
     }

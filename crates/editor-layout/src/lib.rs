@@ -45,7 +45,8 @@
 //!   selection an area for each stretch of a row it covers), the paint
 //!   each run, cursor and view resolves to,
 //!   content hashes that cover paint and that a cursor move leaves alone,
-//!   the status row at a view's bottom, exactly as tall as
+//!   the status row at a view's bottom, its fields on their sides, each
+//!   padded in a box of its face's background, exactly as tall as
 //!   [`Layout::heights`] says, and the text rows that fit above it, which
 //!   are the rows query's at the height that remains (`tests/heights.rs`),
 //!   decorations asked for the rows shown only, the shaper's

@@ -179,12 +179,15 @@ fn scene() -> Scene {
                     StatusField {
                         text: "fixture.rs".to_owned(),
                         face: "mode-line".to_owned(),
+                        ..StatusField::default()
                     },
                     StatusField {
                         text: " 1:8".to_owned(),
                         face: "position".to_owned(),
+                        ..StatusField::default()
                     },
                 ],
+                status_face: None,
             },
             View {
                 id: ViewId(2),
@@ -203,6 +206,7 @@ fn scene() -> Scene {
                 },
                 decorations: vec![],
                 status: vec![],
+                status_face: None,
             },
         ],
         focused: Some(ViewId(1)),

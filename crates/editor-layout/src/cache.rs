@@ -41,9 +41,12 @@
 //! shaped at 28 points at scale 1 is the row of 14 points at scale 2.
 //!
 //! **A view's status row is kept by view**, not by text
-//! (`StatusKept`): its fields are the scene's own text. It is shaped
-//! again when its text, its font runs or the shaper's generation change,
-//! and dropped when a scene does not name its view. It is no segment of a
+//! (`StatusKept`): its fields are the scene's own text. Each field is a
+//! line of its own (`FieldKept`), found again by its text and its font,
+//! wherever it is in the row: a field is shaped again when its text or its
+//! font change, every field when the shaper's generation changes, and the
+//! whole row is dropped when a scene does not name its view. So a
+//! line:col that changes shapes that field alone. It is no segment of a
 //! text, so the counters below do not count it; a test bounds it by the
 //! bytes the fake shaper was asked to shape.
 //!
@@ -109,17 +112,24 @@ pub(crate) struct TextState<L> {
 /// What layout keeps, by text.
 pub(crate) type Texts<L> = HashMap<TextKey, TextState<L>>;
 
-/// What layout keeps of a view's status row: its shaped line, and what it
-/// was shaped from, so that it is shaped again only when one of those
-/// changes.
+/// What layout keeps of a view's status row: each field's shaped line, and
+/// what it was shaped from, so that a field is shaped again only when its
+/// text, its font or the shaper's generation change.
 pub(crate) struct StatusKept {
-    /// The text: the view's status fields, one after another.
-    pub text: String,
-    /// The font runs it was shaped with.
-    pub runs: Vec<FontRun>,
-    /// The shaper's generation it was shaped under.
+    /// The shaper's generation its lines were shaped under.
     pub generation: u64,
-    /// The line, unbroken.
+    /// One line per field shaped, in the row's order.
+    pub fields: Vec<FieldKept>,
+}
+
+/// What layout keeps of one status field.
+pub(crate) struct FieldKept {
+    /// The text it was shaped from, a tab, a return and a line feed made
+    /// spaces.
+    pub text: String,
+    /// The font run it was shaped with.
+    pub runs: Vec<FontRun>,
+    /// The line, unbroken, its clusters bytes of `text`.
     pub line: Arc<VisualLine>,
 }
 

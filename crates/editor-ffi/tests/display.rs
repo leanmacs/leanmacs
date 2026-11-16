@@ -328,7 +328,9 @@ fn scene_directly() -> Scene {
             status: vec![StatusField {
                 text: "NORMAL".to_owned(),
                 face: "mode".to_owned(),
+                ..StatusField::default()
             }],
+            status_face: None,
         }],
         focused: Some(ViewId(3)),
         echo: "hello".to_owned(),
@@ -614,6 +616,7 @@ fn faces_defined_through_c_are_the_faces_of_the_heights_and_of_a_frame_published
     directly.views[0].status = vec![StatusField {
         text: "NORMAL".to_owned(),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     assert_eq!(frame_text(display), layout.frame(&directly).describe());
     // Words that spell no definitions are refused, and change nothing.

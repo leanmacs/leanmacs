@@ -78,6 +78,7 @@ fn scene(frame_height: u32, rect: Rect, anchor: usize) -> Scene {
             status: vec![StatusField {
                 text: "normal".to_owned(),
                 face: "mode-line".to_owned(),
+                ..StatusField::default()
             }],
             ..View::default()
         }],

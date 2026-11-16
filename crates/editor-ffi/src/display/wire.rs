@@ -567,8 +567,10 @@ impl WireScene {
                         .map(|(text, face)| StatusField {
                             text: text.clone(),
                             face: face.clone(),
+                            ..StatusField::default()
                         })
                         .collect(),
+                    status_face: None,
                 }
             })
             .collect();

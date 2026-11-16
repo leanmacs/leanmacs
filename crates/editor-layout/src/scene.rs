@@ -15,7 +15,9 @@
 //! What is laid out of it: each view's text across its `rect`, from its
 //! scroll anchor, with its selections, cursors and decorations, each run
 //! in the font its faces resolve to; and a view's `status` as one row at
-//! the bottom of its `rect`, above which its text has what is left. What
+//! the bottom of its `rect`, above which its text has what is left, with
+//! each field on its side and padded, the row in the view's
+//! `status_face` over the mode line's. What
 //! it carries and lays out nothing of: the scene's `echo`, `pending`,
 //! `preedit` and `focused`, which no phase of the display pipeline draws
 //! yet.
@@ -103,13 +105,30 @@ pub struct Decoration {
     pub face: String,
 }
 
+/// Which end of a view's status row a field is drawn from
+/// ([`frame`](crate::frame), "The mode line").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Side {
+    /// From the row's start, after the left fields before it.
+    #[default]
+    Left,
+    /// Ending at the row's end, with the right fields after it.
+    Right,
+}
+
 /// One field of a view's status line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StatusField {
     /// What it says.
     pub text: String,
     /// The name of the face it takes.
     pub face: String,
+    /// The side of the row it is drawn on.
+    pub side: Side,
+    /// The space before and after its text, in whole points, which its
+    /// face's background fills. Layout multiplies it by its scale as it
+    /// does a face's lengths ([`face`](crate::face), "Units").
+    pub padding: u32,
 }
 
 /// Which text: a key the binding gives each text, unique in the process.
@@ -182,6 +201,10 @@ pub struct View {
     pub decorations: Vec<Decoration>,
     /// Its status line, field by field.
     pub status: Vec<StatusField>,
+    /// The face of its status row, over the mode line's and under every
+    /// field's, which gives the row its background: an unselected
+    /// window's `mode-line.inactive`, and `None` for a selected one.
+    pub status_face: Option<String>,
 }
 
 /// Everything the display shows, as published after a command.

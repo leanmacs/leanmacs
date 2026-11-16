@@ -102,6 +102,7 @@ fn four_rows(rect: Rect) -> Scene {
     view.status = vec![StatusField {
         text: "status".to_owned(),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     scene
 }

@@ -371,6 +371,7 @@ fn dressed_scene() -> Scene {
     shown.status = vec![StatusField {
         text: "st".to_owned(),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     scene
 }
@@ -447,6 +448,7 @@ fn side_by_side() -> Frame {
     scene.views[0].status.push(StatusField {
         text: "!".to_owned(),
         face: "mark".to_owned(),
+        ..StatusField::default()
     });
     let laid = Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene);
     let mut first = laid.views[0].clone();

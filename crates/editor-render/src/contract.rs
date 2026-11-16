@@ -94,6 +94,7 @@ fn scene(text: &str) -> Scene {
     scene.views[0].status = vec![StatusField {
         text: "status".to_owned(),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     scene
 }

@@ -88,6 +88,7 @@ fn dressed() -> Frame {
     scene.views[0].status = vec![StatusField {
         text: "st".to_owned(),
         face: "mode-line".to_owned(),
+        ..StatusField::default()
     }];
     Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene)
 }
