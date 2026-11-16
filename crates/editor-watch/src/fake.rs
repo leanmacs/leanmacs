@@ -45,6 +45,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
+use crate::contract::Ground;
 use crate::{Depth, Kind, Notice, Refusal, RefusalKind, Sink, Watch};
 
 /// The rules a flawed fake breaks, each a rule of the port.
@@ -54,8 +55,9 @@ use crate::{Depth, Kind, Notice, Refusal, RefusalKind, Sink, Watch};
     reason = "each flaw is one rule broken, set on its own"
 )]
 pub struct Flaws {
-    /// A registration misses the first notice after `watch` returns: it is
-    /// not live when `watch` returns.
+    /// Now and then a registration is not live when `watch` returns: the
+    /// twentieth the fake makes misses every notice of the first path it
+    /// is told of, until it is told of another.
     pub live_late: bool,
     /// A creation is not told.
     pub misses_creation: bool,
@@ -83,6 +85,15 @@ pub struct Flaws {
     /// them.
     pub accepts_anything: bool,
 }
+
+/// The serial of the registration that is not live when `watch` returns,
+/// with [`Flaws::live_late`].
+const LATE_SERIAL: u64 = 20;
+
+/// How long the contract waits, on the fake, for what should happen at
+/// once. The fake tells its notices before its ground returns, so only a
+/// flawed fake, or a service that breaks a rule, takes this long.
+const FAKE_DEADLINE: Duration = Duration::from_secs(2);
 
 /// What the fake was asked.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -117,8 +128,9 @@ struct Live {
     sink: Sink,
     /// Its gate.
     gate: Gate,
-    /// Whether it has yet to miss its first notice ([`Flaws::live_late`]).
-    late: bool,
+    /// Whether it is not yet live ([`Flaws::live_late`]), and the first
+    /// path it was told of, whose notices it misses until another comes.
+    late: Option<Option<PathBuf>>,
     /// The directories under it when it was made
     /// ([`Flaws::no_new_subdirectories`]).
     known: BTreeSet<PathBuf>,
@@ -275,9 +287,12 @@ impl FakeWatch {
                 if !live.covers(&path, flaws) {
                     continue;
                 }
-                if live.late {
-                    live.late = false;
-                    continue;
+                if let Some(first) = &mut live.late {
+                    let first = first.get_or_insert_with(|| path.clone());
+                    if *first == path {
+                        continue;
+                    }
+                    live.late = None;
                 }
                 if lost {
                     continue;
@@ -482,7 +497,7 @@ impl Watch for FakeWatch {
                 .collect();
             state.serial += 1;
             let serial = state.serial;
-            let late = state.flaws.live_late;
+            let late = (state.flaws.live_late && serial == LATE_SERIAL).then_some(None);
             state.live.push(Live {
                 serial,
                 given: directory.to_path_buf(),
@@ -593,6 +608,36 @@ impl FakeGround {
             state.links.push((link.to_path_buf(), to));
         });
         self.fake.notice(link, Kind::Created);
+    }
+}
+
+impl Ground for FakeGround {
+    fn write(&self, path: &Path, bytes: &[u8]) {
+        Self::write(self, path, bytes);
+    }
+
+    fn write_times(&self, path: &Path, times: usize) {
+        Self::write_times(self, path, times);
+    }
+
+    fn make_dir(&self, path: &Path) {
+        Self::make_dir(self, path);
+    }
+
+    fn rename(&self, from: &Path, to: &Path) {
+        Self::rename(self, from, to);
+    }
+
+    fn remove(&self, path: &Path) {
+        Self::remove(self, path);
+    }
+
+    fn link(&self, link: &Path, to: &Path) {
+        Self::link(self, link, to);
+    }
+
+    fn deadline(&self) -> Duration {
+        FAKE_DEADLINE
     }
 }
 
@@ -875,20 +920,34 @@ mod tests {
     }
 
     #[test]
-    fn a_flawed_fake_breaks_its_rule() {
+    fn a_late_fake_s_twentieth_registration_misses_its_first_path_until_another_comes() {
         let fake = FakeWatch::flawed(Flaws {
             live_late: true,
             ..Flaws::default()
         });
         fake.ground().make_dir(Path::new("/w"));
+        for _ in 1..20 {
+            let (sink, notices) = sink();
+            let registration = fake
+                .watch(Path::new("/w"), Depth::Entries, sink)
+                .expect("watched");
+            fake.notice("/w/a", Kind::Written);
+            drop(registration);
+            assert_eq!(told(&notices), [notice("/w/a", Kind::Written)]);
+        }
         let (sink, notices) = sink();
-        let _registration = fake
+        let _twentieth = fake
             .watch(Path::new("/w"), Depth::Entries, sink)
             .expect("watched");
 
         fake.notice("/w/a", Kind::Written);
+        fake.notice("/w/a", Kind::Created);
         fake.notice("/w/b", Kind::Written);
+        fake.notice("/w/a", Kind::Written);
 
-        assert_eq!(told(&notices), [notice("/w/b", Kind::Written)]);
+        assert_eq!(
+            told(&notices),
+            [notice("/w/b", Kind::Written), notice("/w/a", Kind::Written)]
+        );
     }
 }

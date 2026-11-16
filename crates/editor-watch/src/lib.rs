@@ -4,8 +4,8 @@
 //! [`Watch`] is the port: watch a directory, its entries or its whole tree
 //! ([`Depth`]), and have each change inside it told to a [`Sink`] as a
 //! [`Notice`]. The crate defines it, publishes a fake of it
-//! (`fake::FakeWatch`) and the contract every implementation keeps
-//! (`contract::check`); the real adapter, over `notify`, is another crate
+//! ([`fake::FakeWatch`]) and the contract every implementation keeps
+//! ([`contract::check`]); the real adapter, over `notify`, is another crate
 //! (`editor-watch-notify`). Above the port, [`batch`] is the coalescing
 //! rule, pure, and `service::Service` is what the editor asks: a watch on
 //! a file or a directory, owned under an id of the caller's, whose changes
@@ -47,13 +47,14 @@
 //!
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
-//! | Another kind of change | A variant of [`Kind`], its bit in [`batch::Kinds`] | A property of `contract`, the fake's ground making it, and the adapter's mapping |
+//! | Another kind of change | A variant of [`Kind`], its bit in [`batch::Kinds`] | A property of [`contract`], the fake's ground making it, and the adapter's mapping |
 //! | Another failure the editor decides on | A variant of [`RefusalKind`] | The property that asks for it |
-//! | A rule of the service (what a delivery holds, what cancelling means) | `service::Service`, or [`batch`] for what a batch holds | The service's or the batch's unit tests, on the fake, and a service property of `contract` where a real file system must show it |
-//! | Another way for a test to set the fake up | A method of `fake::FakeWatch` | The fake's tests |
+//! | A rule of the service (what a delivery holds, what cancelling means) | `service::Service`, or [`batch`] for what a batch holds | The service's or the batch's unit tests, on the fake, and a service property of [`contract`] where a real file system must show it |
+//! | Another way for a test to set the fake up | A method of [`fake::FakeWatch`] | The fake's tests |
 
 pub mod batch;
 pub mod clock;
+pub mod contract;
 pub mod fake;
 
 use std::path::{Component, Path, PathBuf};
@@ -148,7 +149,7 @@ pub enum RefusalKind {
 }
 
 /// Watching, as far as the editor needs it. The module docs have the rules;
-/// `contract::check` holds an implementation to them.
+/// [`contract::check`] holds an implementation to them.
 ///
 /// It is `Send + Sync`: the service registers on a thread of each start's.
 pub trait Watch: Send + Sync + 'static {
