@@ -2283,6 +2283,20 @@ def quotedBracketAnswers : List (String × Bracket × Bool × Nat × Option Nat)
     -- break is the row's end.
     ("(\")\"\r\n\")\")", .round, true, 0, some 9)]
 
+/-- The texts the walk that passes over quoted brackets is swept over at
+every position: those of `quotedBracketAnswers`, and texts that put the
+quote rule's branches side by side, met from every offset in both
+directions. They hold a bracket inside double quotes, `')'` and `'\)'`,
+`'\''`, an odd number of quotes in a row, an escaped quote, an escaped
+backslash before a quote, rows that end in a backslash, one of them before a
+carriage return and a line feed, quoted characters at a row's start, and
+characters of two bytes. -/
+def quotedBracketTexts : List String :=
+  (quotedBracketAnswers.map (·.1)).eraseDups ++
+    ["(a \"b)\" ')' '\\)' c)", "[x \" (y) \\\" z]\n{p \"q\\\n} r\" }\n('\\'' \")\" ')",
+      "(\"a\\\r\n)\" b)\r\n)", "{é \"}ü\" '}' \"\"} \"\\\\\" }",
+      "x ')' (\"\\\n\"(\" ] [\n\"]\" ) '\\('", "')' ('\\(' a)\n'\\)' b)"]
+
 /-- A case of the quoted string: the text, the quote, the offset, and the
 answer. -/
 def quoteAnswers : List (String × Quote × Nat × Option Extent) :=
@@ -2334,28 +2348,35 @@ def pairProperties : List Property :=
               (← snapshot.unmatched bracket (!forward) forward false true offset) == answer
         return held },
     { name :=
-        "from every position the bracket walk answers a bracket of the kind and side sought, of the escapedness asked, strictly on the side of the position it walks to"
+        "from every position, over texts with and without quotes, the bracket walk answers a bracket of the kind and side sought, of the escapedness asked, strictly on the side of the position it walks to, and the same from the text and from its snapshot"
       holds := do
-        let text ← createText bracketText
         let mut held := true
-        for offset in
-          (List.range (bracketText.utf8ByteSize + 1)).filter fun offset =>
-            (String.Pos.Raw.mk offset).IsValid bracketText do
-          for bracket in [Bracket.round, .square, .curly] do
-            for (opening, forward, escaped, skipQuoted) in
-              [(false, true, false, false), (true, false, false, false), (true, true, false, false),
-                (false, false, false, false), (false, true, true, false),
-                (true, false, true, false), (false, true, false, true),
-                (true, false, false, true)] do
-              if let some found←
-                  text.unmatched bracket opening forward escaped skipQuoted offset then
-                let char ← text.slice found (found + 1)
-                let sought := if opening then bracket.opening else bracket.closing
-                let before ← text.slice (found - min found 2) found
-                let isEscaped := before.endsWith "\\" && !before.endsWith "\\\\"
-                held :=
-                  held && char == sought.toString && isEscaped == escaped &&
-                    if forward then found > offset else found < offset
+        for contents in bracketText :: quotedBracketTexts do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          for offset in
+            (List.range (contents.utf8ByteSize + 1)).filter fun offset =>
+              (String.Pos.Raw.mk offset).IsValid contents do
+            for bracket in [Bracket.round, .square, .curly] do
+              for opening in [false, true] do
+                for forward in [false, true] do
+                  for escaped in [false, true] do
+                    for skipQuoted in [false, true] do
+                      let answer ← text.unmatched bracket opening forward escaped skipQuoted offset
+                      held :=
+                        held &&
+                          (←
+                              snapshot.unmatched bracket opening forward escaped skipQuoted
+                                  offset) ==
+                            answer
+                      if let some found := answer then
+                        let char ← text.slice found (found + 1)
+                        let sought := if opening then bracket.opening else bracket.closing
+                        let before ← text.slice (found - min found 2) found
+                        let isEscaped := before.endsWith "\\" && !before.endsWith "\\\\"
+                        held :=
+                          held && char == sought.toString && isEscaped == escaped &&
+                            if forward then found > offset else found < offset
         return held },
     { name :=
         "the quoted string round a position is what a table written out by hand says: before the first quote, on either quote, between two strings, past an escaped quote, of each kind, and none when a quote is missing"

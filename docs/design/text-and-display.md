@@ -548,7 +548,11 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   boundary a bracket and a quote are tags, and each answers with a status
   of found, not found or refused. The contract holds the model and the
   library to two tables written out by hand and a property from every
-  position of a text (`TextContract.pairProperties`). What a key makes of
+  position of texts with and without quotes
+  (`TextContract.pairProperties`); since the quote rule is ported twice,
+  `contract-test` also compares the library's answer with the model's at
+  every position of those texts, for every question the walk can be asked
+  (`ContractTest.pairChecks`). What a key makes of
   them is evil's: `%` (`matching-bracket`) and the sixteen text objects
   ([keymaps-and-modes.md](keymaps-and-modes.md), "Text objects as
   built"); the word objects need no pair and are composed in Lean.

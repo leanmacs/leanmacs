@@ -652,7 +652,10 @@ operation of the API makes of the library is answered the same by the model
 and by the binding. It also
 checks what only the real binding
 shows: the binding's table is the only holder of its documents and
-snapshots, and releasing one frees it at once. It
+snapshots, and releasing one frees it at once. It compares the binding's
+bracket walk with the text model's at every position of texts with quotes,
+for every kind, side, direction and escapedness, with quoted brackets
+passed over and not (`pairChecks`), since the quote rule is ported to both. It
 runs the job interface's contract the same way, against the job runner over
 the library's timer service, and checks what only the real service shows:
 jobs in real waits hold no thread, cancelling a job takes its timer out of

@@ -20543,6 +20543,34 @@ def evilObjectChecks : List Check :=
         unless wrong.isEmpty do
           throw (IO.userError ("; ".intercalate wrong))
         return true },
+    { name :=
+        "an object that is not there leaves the selection as the visual state had it: in v the view stays in visual and nothing is said; in V, where the object would make the selection charwise, the view stays in visual-line, as Vim 9.1.1752 does, and the give-up's sentence is said"
+      run := do
+        let visual := (vimDefaultReport "v").status[0]?
+        let visualLine := (vimDefaultReport "V").status[0]?
+        -- What a give-up of the select command says.
+        let gaveUp (object : Vocabulary.TextObject) :=
+          s!"{Vim.selectObjectCommand}: {Evil.noObjectHere object.name}"
+        let wrong :=
+          [("a|b", "v", "i (", visual, ""), ("a|b", "v", "a [", visual, ""),
+                ("a|b", "v", "i \"", visual, ""),
+                ("a|b", "V", "i (", visualLine, gaveUp Evil.innerParen),
+                ("a|b", "V", "a {", visualLine, gaveUp Evil.aBrace),
+                ("a|b", "V", "i '", visualLine, gaveUp Evil.innerSingleQuote)].filterMap
+            fun (fixture, state, object, shown, echo) =>
+            let before := evilSelected fixture state
+            let typed := state ++ " " ++ object
+            let got := evilSelected fixture typed
+            let seen := (evilScene fixture typed).bind (·.status[0]?)
+            let echoed :=
+              (evilDriver fixture).map fun driver => (evilFed driver typed).loop.state.echo
+            if before.isSome && got == before && seen == shown && echoed == some echo then none
+            else
+              some
+                s!"{typed} from {repr fixture} left {repr got} (before {repr before}), in {repr seen}, echo {repr echoed}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong))
+        return true },
     { name := "the visual table is complete: every text object the default tables name has a row"
       run :=
         pure <|

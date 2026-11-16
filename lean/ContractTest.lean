@@ -44,6 +44,10 @@ library.
   that releasing one frees it at once, and that the read half of its
   published table of snapshots finds what a command took and nothing a
   command released (`failures`, `releaseFrees`, `readerFinds`).
+- The binding's bracket walk against the text model's, at every position of
+  texts with quotes and for every question the walk can be asked
+  (`pairChecks`): the quote rule is ported to both, and the contract's tables
+  pin it only at the cases they name.
 - The cases of the undo tree (`Editor/UndoTree/Cases.lean`), which is plain
   Lean over the text port, through the same binding and in the same run, so
   the count of live documents covers the texts they make. `model-test` runs
@@ -989,6 +993,79 @@ def checkFailures (checks : List Check) : IO (List String) :=
     catch error =>
       return some s!"{check.name} ({error})"
 
+/-- The answers of the bracket walk over `contents` at every position, for
+each kind, side, direction, escapedness and whether quoted brackets are
+passed over, in that order: the question asked and the answer. -/
+def unmatchedEverywhere (contents : String)
+    (answer : Bracket → Bool → Bool → Bool → Bool → Nat → IO (Option Nat)) :
+    IO (Array (String × Option Nat)) := do
+  let mut answers := #[]
+  for offset in
+    (List.range (contents.utf8ByteSize + 1)).filter fun offset =>
+      (String.Pos.Raw.mk offset).IsValid contents do
+    for bracket in [Bracket.round, .square, .curly] do
+      for opening in [false, true] do
+        for forward in [false, true] do
+          for escaped in [false, true] do
+            for skipQuoted in [false, true] do
+              let question :=
+                s!"{repr contents} {bracket.opening} opening {opening} forward {forward} escaped {escaped} skipQuoted {skipQuoted} from {offset}"
+              answers :=
+                answers.push (question, ← answer bracket opening forward escaped skipQuoted offset)
+  return answers
+
+/-- What only a run against both shows: that the real binding's bracket walk
+and the model's agree at every position of texts with quotes. The contract's
+tables pin the quote rule at the cases they name, and its every-position
+property only what any answer must be, so two ports of the rule could
+disagree at an offset no table names; this check compares them there. A
+disagreement fails the check with the first question the two answer
+differently. -/
+def pairChecks : List Check :=
+  [{  name :=
+        "at every position of texts with quotes, for each kind, side, direction, escapedness and whether quoted brackets are passed over, the real bracket walk answers what the text model does"
+      run := do
+        for contents in TextContract.bracketText :: TextContract.quotedBracketTexts do
+          let model ←
+            unmatchedEverywhere contents fun bracket opening forward escaped skipQuoted offset =>
+                match
+                  TextModel.unmatched? contents bracket opening forward escaped skipQuoted
+                    offset with
+                | .ok found => pure found
+                | .error error => throw (IO.userError s!"the model refused: {repr error}")
+          let (real, _) ←
+            (do
+                    let text ← createText contents
+                    let mut found := #[]
+                    for offset in [0:contents.utf8ByteSize + 1] do
+                      if (String.Pos.Raw.mk offset).IsValid contents then
+                        for bracket in [Bracket.round, .square, .curly] do
+                          for opening in [false, true] do
+                            for forward in [false, true] do
+                              for escaped in [false, true] do
+                                for skipQuoted in [false, true] do
+                                  found :=
+                                    found.push
+                                      (←
+                                        text.unmatched bracket opening forward escaped skipQuoted
+                                            offset)
+                    return found : TextM (Array (Option Nat))).runReal
+                (← RealTexts.new)
+          let real ←
+            match real with
+            | .ok found =>
+              pure found
+            | .error error =>
+              throw (IO.userError s!"the binding refused: {repr error}")
+          if real.size != model.size then
+            return false
+          for ((question, expected), got) in model.toList.zip real.toList do
+            if expected != got then
+              throw
+                  (IO.userError
+                    s!"{question}: the model answers {repr expected}, the binding {repr got}")
+        return true }]
+
 /-- Plays `case` on the real text binding and the library's file service, on
 real files, and says what went wrong; `none` when the case held.
 
@@ -1443,6 +1520,8 @@ def main : IO UInt32 := do
   let cases := Editor.UndoTreeCases.cases
   let adoptProperties := Editor.TextContract.adoptProperties
   let textFailed ← ContractTest.failures (properties ++ cases) adoptProperties
+  let pairChecks := ContractTest.pairChecks
+  let pairCheckFailed ← ContractTest.checkFailures pairChecks
   let jobFailed ← ContractTest.jobFailures services
   let fileFailed ← ContractTest.fileFailures services held
   let processFailed ← ContractTest.processFailures services
@@ -1476,7 +1555,8 @@ def main : IO UInt32 := do
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
   let failed :=
-    textFailed.map (s!"the real text binding: {·}") ++ jobFailed ++ fileFailed ++ processFailed ++
+    textFailed.map (s!"the real text binding: {·}") ++ pairCheckFailed ++ jobFailed ++ fileFailed ++
+      processFailed ++
       processCheckFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
@@ -1500,6 +1580,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0
