@@ -228,6 +228,11 @@ structure FakeFiles.State where
   takeHold : Option (IO.Promise Unit) := none
   /-- How many takes have arrived at the hold. -/
   takesHeld : Nat := 0
+  /-- The diff waits that were started and have been neither taken nor
+  withdrawn. -/
+  diffsPending : Array UInt64 := #[]
+  /-- Every diff ever started, each with its wait's id, oldest first. -/
+  diffsStarted : Array (UInt64 × DiffRequest) := #[]
 
 /-- The fake of the file port (`Job.Files`, `Editor/Job/Runner.lean`): the
 pure model of files (`Editor/File/Model.lean`) behind a reference. It is
@@ -369,6 +374,49 @@ def release (files : FakeFiles) (snapshot : JobSnapshotId) : BaseIO Unit :=
 /-- The service as the port the runner is given. -/
 def files (files : FakeFiles) : Files :=
   { start := files.start, take := files.take, cancel := files.cancel, release := files.release }
+
+/-- Starts the diff `request` as the wait `id`, and completes the wait unless
+completions are held, as a file request's is. -/
+def startDiff (files : FakeFiles) (id : UInt64) (request : DiffRequest) : BaseIO Unit := do
+  let held ←
+    files.state.modifyGet fun state =>
+        let state :=
+          { state with
+            diffsPending := state.diffsPending.push id
+            diffsStarted := state.diffsStarted.push (id, request) }
+        if state.holding then (true, { state with parked := state.parked.push id })
+        else (false, state)
+  unless held do
+    files.completions.finish id .completed
+
+/-- The model's answer to the diff `request`, started as the wait `id`, over
+the snapshots the model holds when it is taken. A request that is not
+pending is refused as failed. -/
+def takeDiff (files : FakeFiles) (id : UInt64) (request : DiffRequest) : BaseIO request.Reply :=
+  files.state.modifyGet fun state =>
+    if state.diffsPending.contains id then
+      (state.model.diff request, { state with diffsPending := state.diffsPending.erase id })
+    else (request.refused (.failed "the request is not pending"), state)
+
+/-- Withdraws the diff wait `id`, if its request is pending. -/
+def cancelDiff (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
+  files.state.modify fun state =>
+    if state.diffsPending.contains id then
+      { state with
+        diffsPending := state.diffsPending.erase id
+        parked := state.parked.filter (· != id)
+        withdrawn := state.withdrawn.push id }
+    else state
+
+/-- The fake of the diff port (`Job.Diffs`): the model of a line diff over
+the snapshots this file service's model holds, so a job's load and its diff
+see one table, as the library's two services do. -/
+def diffs (files : FakeFiles) : Diffs :=
+  { start := files.startDiff, take := files.takeDiff, cancel := files.cancelDiff }
+
+/-- Every diff ever started, each with its wait's id, oldest first. -/
+def diffsStarted (files : FakeFiles) : BaseIO (Array (UInt64 × DiffRequest)) :=
+  return (← files.state.get).diffsStarted
 
 /-- The model as it is now. -/
 def model (files : FakeFiles) : BaseIO FileModel :=

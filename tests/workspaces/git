@@ -1,0 +1,48 @@
+#!/bin/sh
+# Stands for `git` in contract-test's workspace checks
+# (lean/ContractTest.lean, workspaceChecks and workspaceFailures). It answers
+# exactly the two command lines the workspace finder runs
+# (lean/Editor/Workspace.lean, `Git.revParseArguments` and
+# `Git.originArguments`) from files in the directory it runs in, or in the
+# nearest ancestor that has one: `fixture-git` holds the three lines
+# rev-parse prints, and `fixture-origin` the URL of `origin`. Outside every
+# such directory rev-parse exits 128, and a directory with no
+# `fixture-origin` has no `origin`, exit 2, as git does. Shell builtins only,
+# so it runs whatever PATH it is given.
+
+# Moves to the nearest directory, this one or an ancestor, that holds
+# `fixture-git`; fails at the root.
+nearest() {
+  while [ ! -f fixture-git ]; do
+    if [ "$(pwd -P)" = / ]; then
+      return 1
+    fi
+    cd .. || return 1
+  done
+}
+
+if [ "$#" -eq 6 ] && [ "$1" = rev-parse ] && [ "$2" = --path-format=absolute ] &&
+  [ "$3" = --show-toplevel ] && [ "$4" = --git-common-dir ] && [ "$5" = --abbrev-ref ] &&
+  [ "$6" = HEAD ]; then
+  if ! nearest; then
+    printf 'fatal: not a git repository (or any of the parent directories): .git\n' >&2
+    exit 128
+  fi
+  while IFS= read -r line; do
+    printf '%s\n' "$line"
+  done <fixture-git
+  exit 0
+fi
+
+if [ "$#" -eq 3 ] && [ "$1" = remote ] && [ "$2" = get-url ] && [ "$3" = origin ]; then
+  if ! nearest || [ ! -f fixture-origin ]; then
+    printf "error: No such remote 'origin'\n" >&2
+    exit 2
+  fi
+  IFS= read -r url <fixture-origin
+  printf '%s\n' "$url"
+  exit 0
+fi
+
+printf 'git fixture: expected the arguments of rev-parse or of remote get-url origin, got: %s\n' "$*" >&2
+exit 2

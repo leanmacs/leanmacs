@@ -529,6 +529,33 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   three line motions; `first-line` and `last-line` a row motion or the
   offset of a point, then the first non-blank. The previous end of a word
   has no default key yet (`ge`, `gE`).
+- **Pairs** (built by daily-driver-floor phase 4). Two more questions of
+  the text port, beside the motions, answer what Vim's `%` and its block
+  and quote objects need (the rules are in `lean/Editor/Text.lean`,
+  "Pairs"): the bracket a walk leaves unbalanced (`unmatched`: a kind of
+  bracket, which side is sought, a direction and an escapedness; strictly
+  after or before the position; the brackets of the other side raise the
+  depth; a bracket after an odd number of backslashes is escaped, and
+  only the escapedness asked is counted; quotes are characters like any
+  other, or, when asked, brackets Vim's default `cpoptions` guesses are
+  quoted are passed over, by its guess a line at a time), and the quoted
+  string round a position, in its row
+  (`quoted`, Vim 9.1's `current_quote` with a backslash escaping the
+  character after it). Each answers none where there is nothing, and is
+  refused from an offset that is not a position. In the library they are
+  two methods of a snapshot in the private module `pair`, which walk the
+  rope by characters and build nothing, as a motion does; across the
+  boundary a bracket and a quote are tags, and each answers with a status
+  of found, not found or refused. The contract holds the model and the
+  library to two tables written out by hand and a property from every
+  position of texts with and without quotes
+  (`TextContract.pairProperties`); since the quote rule is ported twice,
+  `contract-test` also compares the library's answer with the model's at
+  every position of those texts, for every question the walk can be asked
+  (`ContractTest.pairChecks`). What a key makes of
+  them is evil's: `%` (`matching-bracket`) and the sixteen text objects
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "Text objects as
+  built"); the word objects need no pair and are composed in Lean.
 - Why this rule for a word character. The pure Lean model answers every
   question of the port without the Rust library, so a character's class has
   to be a rule both sides can state in a line. Rust's
@@ -872,6 +899,15 @@ origin, and its edits.
   its own origin: `insert` and `delete` are still `unattributed`. One
   origin for the user is all the editor needs until something else edits a
   text; the rest of the table is open ("The table of origins", below).
+- A reload from disk is recorded with 2, `Origin.disk` (decided 2026-11-16,
+  by the daily-driver floor's phase 5). It is applied as an edit script
+  (`TextId.applyScript`, `lean/Editor/Text.lean`): the line diff of the
+  buffer's snapshot and the file's, made off the editor thread
+  (`rust-library.md`, "Diff, as built for reload"), applied as one
+  transaction with no selection, so anchors and the cursor move through its
+  changed ranges by bias, the log has one entry and the undo history one
+  step. It is refused when the text has moved past the revision the script
+  was made for.
 
 **Pulled patches.**
 
@@ -1003,6 +1039,16 @@ face it has, ends on positions), which the syntax service's adapter in
 delivered, carried through the edits since (`docs/design/rust-library.md`,
 "Highlights, as built").
 
+**The decorations a scene carries** have one source built: the matches of
+the last search, in the face `search-match` (`lean/Editor/Loop.lean`,
+"Decorations"). Each view but the minibuffer's asks its snapshot the
+matches of the pattern from the start of its scroll anchor's row through
+as many text rows as it has display rows, and one more, which covers every
+visible row however the rows wrap; the loop reads them after the follow
+has placed the anchor. An empty match is not drawn, and a pattern the
+syntax refuses draws nothing. They are always drawn, where Vim's default is
+`nohlsearch`, and `:nohlsearch` is not built.
+
 **A face** sets any of nine attributes and leaves the rest unset: a family,
 a size, a weight, a slant, a foreground, a background, an underline (a
 style and a colour), strike-through and a line height. It is the same nine
@@ -1102,28 +1148,32 @@ face's paint, the paper's colour on the paper, and is not seen: so each
 state the shipped scheme has gets its cursor face in every shipped theme,
 and a state config registers needs config to define its own. Config sets a
 face in `setup`, `face "name" { … }`; a name is set once in a `setup`.
+Among the vocabulary's faces, `search-match` is what the matches of the
+last search are drawn in (below, "Decorations"), and `mode-line.changed`
+the mark of a buffer whose file a check found changed on disk.
 
 **The face vocabulary** (`lean/Editor/Face/Vocabulary.lean`) is the list of
 face names a shipped theme defines, each with a sentence of what is drawn
 in it and by whom: layout's four; `cursor`, and `cursor.<state>` for each
 state of the shipped Vim scheme; the mode line's (theming phase 5):
 `mode-line.state.<state>`, the badge, for each state of the shipped Vim
-scheme, `mode-line.buffer`, `mode-line.modified`, `mode-line.secondary`
-for the directory, the major mode, line:col and the position, and
-`mode-line.inactive` for every field and the row of a window that is not
-selected; and the minibuffer's (`minibuffer.prompt`,
-`minibuffer.candidate`, `minibuffer.chosen`). The status fields' faces of
-before (`status.state`, `status.name`, `status.modified`) were replaced by
-these, not kept as aliases: a config that defined them defines faces
-nothing draws. Faces are declared there ahead of the features that draw
-them, so the shipped themes colour them before those land: `syntax.` and
-each top-level name of
-tree-sitter's common highlight captures (`syntax.keyword`,
-`syntax.comment`, …; a dotted capture with no mapping of its own is drawn
-in its first component's face by `Highlight.faceOf`,
+scheme, `mode-line.buffer`, `mode-line.modified`, `mode-line.changed` for
+a file changed on disk, `mode-line.secondary` for the directory, the major
+mode, line:col and the position, and `mode-line.inactive` for every field
+and the row of a window that is not selected; the minibuffer's
+(`minibuffer.prompt`, `minibuffer.candidate`, `minibuffer.chosen`); and
+`search-match`, the matches of the last search. The status fields' faces
+of before (`status.state`, `status.name`, `status.modified`, and
+`status.changed` of the daily-driver roadmap) were replaced by these, not
+kept as aliases: a config that defined them defines faces nothing draws.
+Faces are declared there ahead of the features that draw them, so the
+shipped themes colour them before those land: `syntax.` and each
+top-level name of tree-sitter's common highlight captures
+(`syntax.keyword`, `syntax.comment`, …; a dotted capture with no mapping
+of its own is drawn in its first component's face by `Highlight.faceOf`,
 `lean/Editor/Highlight.lean`, whose shipped default is computed from the
-vocabulary's syntax captures); `diff.added`, `diff.removed`, `diff.changed`,
-`gutter`, `search-match`, `review-unexamined` and `block-header`. A feature
+vocabulary's syntax captures); `diff.added`, `diff.removed`,
+`diff.changed`, `gutter`, `review-unexamined` and `block-header`. A feature
 that draws a face not listed adds it to the vocabulary and to the palette
 mapping, and so to every shipped theme.
 
@@ -1668,8 +1718,9 @@ decided 2026-11-13 by its phase 2):
 - Once a frame exists, a scene is published after every event the loop
   handles, whether the event changed the state or not: an input event, a
   driver's request, a reload's install, a job's command, any of which may
-  have edited a text a view shows. A close request and a quit end the loop
-  and publish nothing.
+  have edited a text a view shows. A queue's quit ends the loop and
+  publishes nothing. A window's close request is a quit by `q`'s rule: it
+  publishes a scene, and ends the loop only once the editor can leave.
 - Before the scene is made, each buffer's undo tree is told its text's
   revision and its group is closed, so what one event edited is one step of
   the history. **But for a buffer in an insert session** (built by the
@@ -1732,7 +1783,8 @@ decided 2026-11-13 by its phase 2):
   each side (`modeLine`) or in the default order. Shipped, on the left:
   the state badge (the scheme's field, `NORMAL` in
   `mode-line.state.normal` under the Vim scheme, padded 8 points), the
-  buffer's name, `●` while the buffer is modified and the directory its
+  buffer's name, `●` while the buffer is modified, `[changed on disk]`
+  while a check has found its file changed on disk, and the directory its
   file was opened in; on the right, ending at the row's end: the major
   mode, line:col and the position (`All`, `Top`, `Bot` or a percentage,
   from the cursor's row as lualine's `progress`, not from the rows shown
@@ -2855,10 +2907,10 @@ frame journal and the renderer's counters.
   beside the text or a record written when a commit is made, is for review
   to decide.
 - **The table of origins.** An origin is a number whose meaning is Lean's.
-  Two are fixed: 0, `unattributed`, and 1, `user`, the user's own edits
-  ("The edit log", as built). The rest of the table, from numbers to
-  commands, agent sessions and tool calls, formatters and a reload from
-  disk, arrives with the things that produce those edits.
+  Three are fixed: 0, `unattributed`; 1, `user`, the user's own edits; and
+  2, `disk`, a reload from disk ("The edit log", as built). The rest of the
+  table, from numbers to commands, agent sessions and tool calls and
+  formatters, arrives with the things that produce those edits.
 - **Rebasing a stale transaction.** A transaction built for an older
   revision is refused by its length. The log keeps no text, so it cannot
   supply the change sets to rebase through. The kept inverses do not settle

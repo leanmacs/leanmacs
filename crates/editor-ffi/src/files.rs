@@ -1388,6 +1388,14 @@ mod tests {
             reference.directory("/dir");
             let expected = FileResult::from(file::stamp(&reference, Path::new(path)));
             assert_eq!(said(&answer), said(&expected), "{path}");
+            assert!(
+                rig.files
+                    .fs()
+                    .calls()
+                    .iter()
+                    .all(|call| call.op() == editor_text::fs::Op::Stat),
+                "{path}"
+            );
             answers.push(said(&answer));
             rig.stop();
         }

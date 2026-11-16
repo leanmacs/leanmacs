@@ -113,7 +113,15 @@ refusals in `InverseRefusal`); and a run in and a refusal as a `Bool`
 and of a call that keeps nothing in the library: a pattern and candidates
 in, and the indices of the candidates the pattern matches out, best first,
 as words (`fuzzyRank`), whose one caller is the fuzzy matching interface's
-real binding (`Editor/Fuzzy/Real.lean`). A length or an offset in words is a `UInt64`, and the
+real binding (`Editor/Fuzzy/Real.lean`). A search of a snapshot is the
+example of words out that are a sentence when the call refuses: the pattern
+as a string and scalars in, and words out with a status, whose bytes are the
+sentence in UTF-8 for a pattern the syntax refuses (`Snapshot.search`,
+`Snapshot.matches`, whose one caller is the text port's real binding). The
+two reads of a pair take a bracket or a quote as a tag, which a private
+encoder here writes, and answer an option of an option: none for a
+refusal, and inside it none for nothing found (`Snapshot.unmatched`,
+`Snapshot.quoted`). A length or an offset in words is a `UInt64`, and the
 largest one is a number no text accepts: a caller with a number no word
 holds sends that, so the library refuses it and nothing is cut down. Tests:
 the `find` and event checks of `ffi-test` (`FfiTest.dataChecks`), its
@@ -865,6 +873,60 @@ def Document.apply (document : Document) (transaction : Transaction) (origin : U
     return .error .badSelection
   | status =>
     throw (IO.userError s!"the library could not read a transaction's words (status {status})")
+
+/-- One step of an edit script, as the library takes it and a diff gives it
+back (`crates/editor-ffi/src/diffs.rs`). -/
+inductive ScriptStep where
+  /-- Keep the next `count` bytes. -/
+  | retain (count : UInt64)
+  /-- Remove the next `count` bytes. -/
+  | delete (count : UInt64)
+  /-- Put in the `count` bytes of the new text from `start`. -/
+  | insert (start count : UInt64)
+  deriving DecidableEq, Repr
+
+/-- Why the library refused an edit script. -/
+inductive ScriptRefusal where
+  /-- The text has moved past the revision the script was made for. -/
+  | moved
+  /-- The steps do not walk the whole of the text and of the source, or one
+  starts or stops inside a character of either. -/
+  | badChange
+  deriving DecidableEq, Repr
+
+/-- An edit script as it crosses: the count of steps, then a kind (0 a
+retain, 1 a delete, 2 an insert) and two numbers for each. -/
+private def scriptWords (script : Array ScriptStep) : ByteArray :=
+  script.foldl
+    (fun words step =>
+      match step with
+      | .retain count => pushWord (pushWord (pushWord words 0) count) 0
+      | .delete count => pushWord (pushWord (pushWord words 1) count) 0
+      | .insert start count => pushWord (pushWord (pushWord words 2) start) count)
+    (pushWord ByteArray.empty script.size.toUInt64)
+
+/-- `Document.applyScript` as it crosses: the script as words. -/
+@[extern "editor_glue_document_apply_script"]
+private opaque Document.applyScriptRaw (document : @& Document) (base : UInt64)
+    (source : @& Snapshot) (words : @& ByteArray) (origin : UInt64) : IO RawApplied
+
+/-- Applies the edit script `script` to the document as one transaction,
+taking what it puts in from `source` and recording `origin` as who made the
+edit, unless the document's revision is not `base`; and returns the revision
+it produced. A refused script changes nothing: the revision is looked at
+first, under the document's lock, then whether the steps fit. -/
+def Document.applyScript (document : Document) (base : UInt64) (source : Snapshot)
+    (script : Array ScriptStep) (origin : UInt64) : IO (Except ScriptRefusal UInt64) := do
+  let raw ← document.applyScriptRaw base source (scriptWords script) origin
+  match raw.status with
+  | 0 =>
+    return .ok raw.revision
+  | 1 =>
+    return .error .badChange
+  | 4 =>
+    return .error .moved
+  | status =>
+    throw (IO.userError s!"the library could not apply an edit script (status {status})")
 
 /-- A range of one text, as byte offsets and as points with their columns in
 bytes. -/
@@ -1799,6 +1861,58 @@ have not been taken, together. A readout for tests, which use it to see that
 a cancel left nothing behind. -/
 @[extern "editor_glue_files_pending"]
 opaque filesPending : IO UInt64
+
+/-- Asks the library's diff service for the line diff of what `old` and
+`new` hold, with its engine asked about at most `limit` lines a side, as the
+request `id`, and returns whether it was accepted. It returns at once, and
+the library keeps its own hold on both texts. The completion is a
+`completion` event on the completion queue, from the library source 5, whose
+code is `id`; there is none if the request is cancelled first. The script is
+then taken with `diffsTake`. `false`, with nothing started, if `id` is in use
+or the service could not start its thread. -/
+@[extern "editor_glue_diffs_start"]
+opaque diffsStart (id : UInt64) (old new : @& Snapshot) (limit : UInt64) : IO Bool
+
+/-- `diffsTake` before its words are decoded. -/
+@[extern "editor_glue_diffs_take"]
+private opaque diffsTakeRaw (id : UInt64) : IO (Option ByteArray)
+
+/-- The edit script `bytes` spell: the count of steps, then a kind and two
+numbers for each (`crates/editor-ffi/src/diffs.rs`, "How a script
+crosses"). An error, with what was wrong, for words that spell none. It is
+public for `FfiTest`. -/
+def ScriptStep.decode (bytes : ByteArray) : Except String (Array ScriptStep) := do
+  let some words := wordsOf? bytes | throw "its words are not whole words"
+  let some count := words[0]? | throw "it has no count"
+  unless words.size == 1 + 3 * count.toNat do
+    throw s!"{count} steps are not {words.size - 1} words"
+  (Array.range count.toNat).mapM fun index =>
+      match words[1 + 3 * index]!, words[2 + 3 * index]!, words[3 + 3 * index]! with
+      | 0, count, 0 => pure (.retain count)
+      | 1, count, 0 => pure (.delete count)
+      | 2, start, count => pure (.insert start count)
+      | kind, _, _ => throw s!"the step kind {kind} is no step"
+
+/-- Hands over the script of the diff request `id`, once. `none` when the
+service keeps no script for `id`. It throws if the library sends words these
+bindings cannot read. -/
+def diffsTake (id : UInt64) : IO (Option (Array ScriptStep)) := do
+  let some bytes ← diffsTakeRaw id | return none
+  match ScriptStep.decode bytes with
+  | .ok script =>
+    return some script
+  | .error reason =>
+    throw (IO.userError s!"the library's edit script could not be read: {reason}")
+
+/-- Cancels the diff request `id`, and returns whether there was anything to
+cancel. Safe for an id that is unknown. -/
+@[extern "editor_glue_diffs_cancel"]
+opaque diffsCancel (id : UInt64) : IO Bool
+
+/-- How many diff requests are waiting or being worked, and how many scripts
+have not been taken, together. A readout for tests. -/
+@[extern "editor_glue_diffs_pending"]
+opaque diffsPending : IO UInt64
 
 /-- Which of the library's platforms runs the window. -/
 inductive Platform where
@@ -2806,6 +2920,168 @@ def fuzzyRank (pattern : String) (candidates : Array String) : IO (Array Nat) :=
     return ranking
   | none =>
     throw (IO.userError "the library's words do not spell a fuzzy ranking")
+
+/-- A kind of bracket of the library (`crates/editor-text`, `Bracket`). -/
+inductive Bracket where
+  /-- `(` and `)`. -/
+  | round
+  /-- `[` and `]`. -/
+  | square
+  /-- `{` and `}`. -/
+  | curly
+  deriving DecidableEq, Repr
+
+/-- A kind of quote of the library (`crates/editor-text`, `Quote`). -/
+inductive Quote where
+  /-- `"`. -/
+  | double
+  /-- `'`. -/
+  | single
+  /-- `` ` ``. -/
+  | back
+  deriving DecidableEq, Repr
+
+/-- A bracket as it crosses: its tag. The table of tags is in the module docs
+of `crates/editor-ffi/src/pair.rs`, which checks the tag. -/
+private def Bracket.tag : Bracket → UInt8
+  | .round => 0
+  | .square => 1
+  | .curly => 2
+
+/-- A quote as it crosses: its tag, from the same table. -/
+private def Quote.tag : Quote → UInt8
+  | .double => 0
+  | .single => 1
+  | .back => 2
+
+/-- `Snapshot.unmatched` as it crosses: the bracket as a tag, four flags and
+the offset in, and `none` for a refusal, `some none` for no such bracket and
+`some (some at)` for the bracket found. -/
+@[extern "editor_glue_snapshot_unmatched"]
+private opaque Snapshot.unmatchedRaw (snapshot : @& Snapshot) (tag : UInt8)
+    (opening forward escaped skipQuoted : Bool) (offset : USize) : IO (Option (Option UInt64))
+
+/-- `Snapshot.quoted` as it crosses: the quote as a tag and the offset in, and
+`none` for a refusal, `some none` for no string and `some (some range)` for
+the string found. -/
+@[extern "editor_glue_snapshot_quoted"]
+private opaque Snapshot.quotedRaw (snapshot : @& Snapshot) (tag : UInt8) (offset : USize) :
+    IO (Option (Option ByteRange))
+
+/-- The bracket of the kind `bracket` that the walk from the byte offset
+`offset` of the snapshot leaves unbalanced: an opening one when `opening`,
+strictly after the offset when `forward` and before it otherwise, counting
+only the brackets whose escapedness is `escaped`, and passing over those Vim
+guesses are quoted when `skipQuoted`. The rule is the library's
+(`crates/editor-text`; `Editor/Text.lean`, "Pairs"). `none` unless the offset
+is a position of the text; `some none` when there is no such bracket. -/
+def Snapshot.unmatched (snapshot : Snapshot) (bracket : Bracket)
+    (opening forward escaped skipQuoted : Bool) (offset : USize) : IO (Option (Option UInt64)) :=
+  snapshot.unmatchedRaw bracket.tag opening forward escaped skipQuoted offset
+
+/-- The quoted string of `quote` round the byte offset `offset` of the
+snapshot, in its row, from its opening quote's start to its closing quote's
+end, by the library's rule. `none` unless the offset is a position of the
+text; `some none` when a quote is missing. -/
+def Snapshot.quoted (snapshot : Snapshot) (quote : Quote) (offset : USize) :
+    IO (Option (Option ByteRange)) :=
+  snapshot.quotedRaw quote.tag offset
+
+/-- What a search of a snapshot answers (`Snapshot.search`). -/
+inductive SearchAnswer where
+  /-- The match, and whether the search wrapped round the text to find it. -/
+  | found (range : ByteRange) (wrapped : Bool)
+  /-- The text has no match. -/
+  | notFound
+  /-- The pattern is none the syntax takes, for `reason`. -/
+  | invalid (reason : String)
+  /-- The offset is not a position of the text. -/
+  | badPosition
+  deriving DecidableEq, Repr
+
+/-- What the matches in a range of a snapshot answer (`Snapshot.matches`). -/
+inductive MatchesAnswer where
+  /-- The matches, in order. -/
+  | ranges (all : Array ByteRange)
+  /-- The pattern is none the syntax takes, for `reason`. -/
+  | invalid (reason : String)
+  /-- The range is not two positions of the text in order. -/
+  | badRange
+  deriving DecidableEq, Repr
+
+/-- `Snapshot.search` as it crosses: the pattern, the direction and the
+offset in, and words out. The status is 0 answered, with the words a
+presence (1 found, 0 not), the match's two offsets and whether it wrapped;
+1 for an offset that is not a position, with no words; and 2 for a pattern
+the syntax refuses, with the words the bytes of the sentence that says
+why, in UTF-8, and not words. -/
+@[extern "editor_glue_snapshot_search"]
+private opaque Snapshot.searchRaw (snapshot : @& Snapshot) (pattern : @& String) (forward : Bool)
+    (offset : USize) : IO RawWords
+
+/-- `Snapshot.matches` as it crosses: the pattern and the range in, and
+words out. The status is 0 answered, with the words the count of matches
+and then the two offsets of each; 1 for a range that is not two positions in
+order; and 2 for a pattern the syntax refuses, as for `searchRaw`. -/
+@[extern "editor_glue_snapshot_matches"]
+private opaque Snapshot.matchesRaw (snapshot : @& Snapshot) (pattern : @& String)
+    (start stop : USize) : IO RawWords
+
+/-- The sentence a status of 2 carries in its bytes. Bytes that are not
+UTF-8 mean the library is wrong, which is an `IO` error. -/
+private def reasonOf (bytes : ByteArray) : IO String :=
+  match String.fromUTF8? bytes with
+  | some reason => return reason
+  | none => throw (IO.userError "the library's reason for refusing a pattern is not UTF-8")
+
+/-- The match of `pattern` a search of the snapshot's text from `offset`
+answers, forward when `forward` and back otherwise: the rule is the
+library's (`crates/editor-search`; `Editor/Text.lean`, "Search"). The call
+keeps nothing in the library: the pattern is compiled for it. A status or
+words the library cannot have answered are an `IO` error. -/
+def Snapshot.search (snapshot : Snapshot) (pattern : String) (forward : Bool) (offset : USize) :
+    IO SearchAnswer := do
+  let raw ← snapshot.searchRaw pattern forward offset
+  match raw.status with
+  | 0 =>
+    match wordsOf? raw.words with
+    | some #[0, 0, 0, 0] =>
+      return .notFound
+    | some #[1, start, stop, wrapped] =>
+      return .found ⟨start, stop⟩ (wrapped != 0)
+    | _ =>
+      throw (IO.userError "the library's words do not spell a search's answer")
+  | 1 =>
+    return .badPosition
+  | 2 =>
+    return .invalid (← reasonOf raw.words)
+  | _ =>
+    throw (IO.userError "the library answered a search with a status it has none of")
+
+/-- The matches of `pattern` in the snapshot's text that start from `start`
+up to `stop`, in order, as `search` answers one. -/
+def Snapshot.matches (snapshot : Snapshot) (pattern : String) (start stop : USize) :
+    IO MatchesAnswer := do
+  let raw ← snapshot.matchesRaw pattern start stop
+  match raw.status with
+  | 0 =>
+    let ranges? : Option (Array ByteRange) := do
+      let words ← wordsOf? raw.words
+      let count ← words[0]?
+      guard (words.size == 1 + 2 * count.toNat)
+      return (Array.range count.toNat).map fun index =>
+          ⟨words[1 + 2 * index]!, words[2 + 2 * index]!⟩
+    match ranges? with
+    | some all =>
+      return .ranges all
+    | none =>
+      throw (IO.userError "the library's words do not spell the matches in a range")
+  | 1 =>
+    return .badRange
+  | 2 =>
+    return .invalid (← reasonOf raw.words)
+  | _ =>
+    throw (IO.userError "the library answered the matches in a range with a status it has none of")
 
 /-- The type behind `SyntaxQuery`. It is opaque, so the only way to get a
 query is `SyntaxQuery.new`. -/

@@ -1,0 +1,12 @@
+The fixtures of contract-test's workspace checks (lean/ContractTest.lean,
+workspaceChecks and workspaceFailures), which `mise run ffi-test` hands
+contract-test as its second argument. It must stay executable (mode 100755).
+
+- git: stands for git. It answers exactly the two command lines the
+  workspace finder runs (lean/Editor/Workspace.lean): `rev-parse
+  --path-format=absolute --show-toplevel --git-common-dir --abbrev-ref
+  HEAD` prints the three lines of the file `fixture-git` in the nearest
+  directory, the one it runs in or an ancestor, that holds one, and exits
+  128 when none does; `remote get-url origin` prints the line of
+  `fixture-origin` there, and exits 2 when there is none. Any other command
+  line exits 2 with a message. Shell builtins only.

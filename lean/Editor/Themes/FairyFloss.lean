@@ -100,6 +100,7 @@ a later definition's set attributes are over an earlier one's
 | `mode-line.state.minibuffer` | background on mint, bold | the same | Not covered: shared mapping kept |
 | `mode-line.buffer` | foreground, bold | the same | Not covered: shared mapping kept |
 | `mode-line.modified` | fg peach | the same | Not covered: shared mapping kept |
+| `mode-line.changed` | fg removed | the same | Not covered: shared mapping kept |
 | `mode-line.secondary` | fg lavender | the same | Not covered: shared mapping kept |
 | `minibuffer.prompt` | mint, bold | the same | Not covered: shared mapping kept |
 | `minibuffer.candidate` | fg lavender | the same | Not covered: shared mapping kept |

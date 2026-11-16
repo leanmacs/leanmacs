@@ -29,7 +29,7 @@ registers, undo and dot repeat, on the editor API:
 | Defining a mode from `setup`, and its refusals | `lean/Editor/Setup.lean` (`defineMode`), `lean/Editor/Config/Registry.lean` (`Registrations.problem?`) |
 | A buffer's major and minor modes, and the state operations that set them | `lean/Editor/State.lean` |
 | The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
-| The minibuffer's mode and its five commands (accept, cancel, the next and the previous candidate, and delete backward), and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
+| The minibuffer's mode and its six commands (accept, cancel, the next and the previous candidate, delete backward, and delete to the input's start), and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
 | The frame's commands (`toggle-fullscreen`, `minimise-window`) and their compiled bindings `C-s-f` and `s-m` | `lean/Editor/FrameCommands.lean`, `lean/Editor/FrameCommands/Compiled.lean` |
 | The Vim state of the minibuffer's view, and its default keys | `lean/Editor/InputScheme/Vim.lean` (`States.minibuffer`, `State.openMinibuffer`), `lean/Editor/InputScheme/Vim/Default.lean` (`minibufferCommands`) |
 | What a scheme reports of a view, and the contract's property that a key that yields nothing leaves it as it was | `lean/Editor/InputScheme.lean` (`InputScheme.Report`, `report`), `lean/Editor/InputScheme/Contract.lean` (`quietKeyKeepsReport`) |
@@ -38,7 +38,7 @@ registers, undo and dot repeat, on the editor API:
 | A window's wanted column | `lean/Editor/State.lean` (`Window.wanted`), `lean/Editor/Api.lean` (`ViewId.setWanted`) |
 | The vocabulary's motion record, with how an operator takes a motion, and its operator record | `lean/Editor/Vocabulary.lean` |
 | Evil: where a cursor rests, the move command, entering a state, the keys that begin an insert, the two that open a line, typed text | `lean/Editor/Evil.lean` |
-| Evil's fifteen motions and their table | `lean/Editor/Evil/Motions.lean` |
+| Evil's twenty-seven motions and their table | `lean/Editor/Evil/Motions.lean` |
 | Evil's three operators and their table, what an operator takes, the operate command, and `x` | `lean/Editor/Evil/Operators.lean` |
 | Evil's registers: the unnamed one and the clipboard's, storing, fetching, and `p` and `P` | `lean/Editor/Evil/Registers.lean` |
 | Evil's undo and redo | `lean/Editor/Evil/Undo.lean` |
@@ -66,8 +66,8 @@ reached through a port defined here, with a model and a contract; the
 adapter to a window system's clipboard is the display pipeline's, and a
 host with no window keeps a clipboard of its own ("Registers"). One
 mode ships, the minibuffer's ("The minibuffer"); the others are built and
-tested with the modes their tests define. Of the vocabulary, motions and
-operators are built; text objects are a proposal from a design discussion.
+tested with the modes their tests define. Of the vocabulary, motions,
+operators and the text objects that need no syntax tree are built.
 Nothing is measured. The one settled input is the
 priority:
 Vim-style editing is the scheme that ships and is polished; other schemes
@@ -212,7 +212,23 @@ structure InputScheme where
   tuned       : List (String × List Key × Binding) := []
   -- what a scheme says of one view ("What a scheme reports of a view")
   report      : State → ViewId → InputScheme.Report := fun _ _ => {}
+  -- notices, each the state once something happened
+  closeView      : ViewId → State → State := fun _ s => s
+  openMinibuffer : ViewId → State → State := fun _ s => s
+  committed      : ViewId → String → State → State := fun _ _ s => s
+  -- the answer to a prompt the scheme asked for, and what it completes
+  answered : ViewId → String → State → State × Option Invocation := fun _ _ s => (s, none)
 ```
+
+- **`answered` is how a scheme is answered.** A key whose edit needs a text
+  typed in the minibuffer (Vim's `/`) yields `minibuffer-ask`, which opens
+  a prompt whose continuation is the reserved name
+  `InputScheme.answerName`. When it is accepted, `Loop.invoke` hands the
+  answer to the scheme instead of looking a command up (`Loop.answer`),
+  and runs what the scheme yields as it runs a key's invocation, keeping
+  or restoring the scheme's state at rest. A scheme that asks nothing
+  yields nothing, which the scheme contract holds every scheme to
+  (`unaskedAnswerYieldsNothing`); the test scheme keeps the default.
 
 - **`command` is what a key bound to a command name is bound to** under the
   scheme. Config and compiled code bind a key sequence to a command's name
@@ -449,8 +465,9 @@ scheme.
 
 ### Vocabulary
 
-Status: motions and operators are built (`lean/Editor/Vocabulary.lean`);
-text objects are a proposal.
+Status: motions, operators and text objects are built
+(`lean/Editor/Vocabulary.lean`; the objects that ship are in "Text objects
+as built").
 
 Motions, operators and text objects are data in the core, separate from
 any keymap. The grammar belongs to a scheme; the vocabulary belongs to
@@ -515,7 +532,7 @@ structure Vocabulary.Motion where
   it did not move: `l` at a line's last character answers the line break,
   which normal state's resting rule brings back. Only the command knows
   where the cursor came to rest.
-- **The table is compiled** (`Evil.motions`, fifteen entries under the
+- **The table is compiled** (`Evil.motions`, twenty-seven entries under the
   names the default tables bind; "Motions as built"). The move command is
   a function of the table it looks names up in (`Evil.move motions`), so
   the caller supplies the vocabulary. A name with no entry says
@@ -659,12 +676,16 @@ structure Operator where
   enters  : Option String := none   -- the Vim state the view is in after it
 
 structure Command where
-  name    : String                  -- the command's name, as the registry names it
-  changes : Bool := false
-  enters  : Option String := none
+  name     : String                  -- the command's name, as the registry names it
+  changes  : Bool := false
+  enters   : Option String := none
+  typed    : Option String := none   -- what it adds to the last change's typed text
+  restarts : Option String := none   -- the command the last change restarts as after it
 
 inductive Bound where
   | motion     (name : String)
+  | charMotion (name : String)      -- a motion that takes the character the next key names
+  | promptMotion (name label : String) -- a motion that takes a text typed in the minibuffer
   | operator   (operator : Operator)
   | textObject (name : String)
   | command    (command : Command)
@@ -684,6 +705,16 @@ inductive Bound where
   a keymap, and `c` enters insert state the same way.
 - **A motion needs only its name.** How an operator takes it is the
   vocabulary's, read when the edit runs.
+- **`promptMotion`** is a motion that takes a text typed in the
+  minibuffer: `/` and `?` ("Motions that ask", under the last change).
+- **`charMotion`** is a motion that takes the character the next key names
+  as its argument: `f`, `t`, `F` and `T`. The key is kept as typed, so it is
+  pending alone, and it folds the count being typed as an operator does.
+  The next key is read before counts and keymaps, as the key after the
+  register prefix is: a key that prints names the character, a digit
+  included, and `TAB` names a tab. It completes the move, or the operator
+  waiting over the motion, with that argument. Any other key resets the
+  edit begun, as `f<Escape>` does in Vim.
 - **`register`** is the key that begins a register's name (`"`). See
   Registers.
 - **`repeat`** is the repeat key (`.`). It is a part of speech and not a
@@ -696,21 +727,25 @@ inductive Bound where
 
 ```lean
 inductive Over where
-  | motion (name : String) | textObject (name : String) | lines | selection
+  | motion (name : String) (argument : Option String := none)
+  | textObject (name : String) | lines | selection
 
 inductive Edit where
-  | move    (motion : String) (count : Option Nat)
+  | move    (motion : String) (count : Option Nat) (argument : Option String := none)
   | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
   | run     (command : Command) (count : Option Nat) (register : Option String)
-  | replay  (change : Edit) (inserted : Option String)   -- the last change, and its typed text
+  | replay  (change : Edit) (inserted : Option String)   -- the last change, and its typed text, editing keys' marks in it
 ```
 
 The rules of the grammar:
 
 - A motion alone is a `move`. After an operator it is the operator's
   target.
-- A text object after an operator is its target. With no operator waiting
-  it is dropped, and the input is reset.
+- A text object after an operator is its target. With no operator waiting,
+  in a state where operators act on the selection, it is `Edit.select`,
+  which sets the selection to the object and enters the state the record
+  names for an object (`StateRecord.objectEnters`); elsewhere it is
+  dropped, and the input is reset.
 - The operator that is waiting, typed again, acts on lines (`Over.lines`):
   `dd`.
 - A different operator, a command or the register prefix while an operator
@@ -724,10 +759,17 @@ scheme's one rule for it:
 
 | Edit | Invocation |
 |---|---|
-| `move m c` | `move`, with `[.str m, .nat c]` |
-| `operate o over c r` | `operate`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""` |
+| `move m c a` | `move`, with `[.str m, .nat c]`, or `[.str m, .str a, .nat c]` when the motion has an argument |
+| `operate o over c r` | `operate`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""`. A motion's argument, when it has one, is a string right after its name: `[.str o.name, .str "motion", .str m, .str a, .nat c, .str r]` |
 | `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
 | `replay change inserted` | `repeat`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
+
+**A motion's argument, when it has one, is the string right after the
+motion's name.** So the register stays the last argument of the `operate`
+layout, which is the one thing dot repeat reads of a layout ("The last
+change"), and a move and an operation over a motion carry the argument in
+the same place. The move and operate commands read both layouts: a string
+after the name is the argument, and a number the count.
 
 The three command names are constants of the scheme (`Vim.moveCommand`,
 `Vim.operateCommand`, `Vim.repeatCommand`), and so is the name typed text
@@ -867,6 +909,12 @@ here (`lean/Editor/Evil/Compiled.lean`), and all four are built.
   That it extends the selection is the command's, when the edit runs: the
   move command keeps the range's anchor where the scheme reports the view
   as selecting, and moves the head alone.
+- A text object in a visual state is the edit `select o count`
+  (`Edit.select`), which compiles to `select-object` and is never the last
+  change. The command sets the selection to the object, charwise, and the
+  view enters the state the record names for an object
+  (`StateRecord.objectEnters`): `visual-line` names `visual`, so `V i w`
+  is in `v` ("Text objects as built").
 
 **How entering and leaving a visual state changes the selection.**
 Decided 2026-11-14 and built, by the command loop's phase 11
@@ -1021,7 +1069,14 @@ state.
 
 For a key for a view whose Vim state has the record `record`, the walk runs
 over `maps view ++ record.keymaps`: the active keymaps passed to `step`
-first, in their own order, then the state's.
+first, in their own order, then the state's. **While an operator waits it
+runs over `maps view ++ record.pending`** when the record has pending
+keymaps (`StateRecord.pending`, Vim's Operator-pending mode), and over the
+state's own otherwise. Normal state's pending keymaps are its own without
+`normalCommands` and with `objects` first, so `i` and `a`, which begin an
+insert alone, begin a text object after an operator; every other command
+key resets there as an unbound key does, which is what it did as a
+command.
 
 - **The active keymaps are the specific ones** (the view's modes, the
   user's config) and the state's are the scheme's defaults. A specific
@@ -1050,6 +1105,40 @@ first, in their own order, then the state's.
   `.mode`, so they follow the same rule. A binding from config's `bindKey`
   is not a mode's and still holds in every state.
 
+### Motions that ask
+
+Status: built, by the daily-driver floor's phase 3
+(`lean/Editor/InputScheme/Vim.lean`, "Motions that ask"; pinned by
+`vimGrammarChecks` and `evilSearchChecks`).
+
+`/` and `?` are `Bound.promptMotion`: their argument is a pattern typed in
+the minibuffer, and a prompt is answered later, so the edit cannot complete
+at the key.
+
+1. **At the key** the grammar records the edit that waits
+   (`State.asking`: the view, the motion, the operator waiting, the count
+   and the register typed), resets the edit begun so the minibuffer's keys
+   parse afresh, and yields `minibuffer-ask` with the label (`/` or `?`).
+   Nothing is the last change and no state is entered.
+2. **`minibuffer-ask`** opens a prompt with that label whose continuation is
+   the reserved name `InputScheme.answerName`.
+3. **On accept** the loop hands the answer to the scheme
+   (`InputScheme.answered`), which completes the waiting edit with the
+   answer as the motion's argument, by the rule a key completes one by
+   (`State.finish`, for the asking view). So `c/foo RET` enters insert
+   state, `.` after `d/foo RET` replays `d/foo` with `foo` (Vim's redo
+   buffer holds `d/foo\r`), and a count and a register typed before `/`
+   are kept.
+4. **Cancel.** `<Escape>` in the minibuffer closes it with no answer. The
+   edit waiting is dropped at the next key for a view other than the
+   minibuffer's, which the scheme is told when the prompt opens
+   (`openMinibuffer`). It is not dropped when the minibuffer's view closes:
+   the accept command closes it one step before the answer arrives. A
+   reset keeps it. So `d/<Escape>` changes nothing and is no change, as in
+   Vim.
+
+In the minibuffer `/` is typed text, as any key that prints is there.
+
 ### The last change
 
 `lastChange : Option Edit` in the scheme's state is the last edit that
@@ -1071,6 +1160,18 @@ for). Typed text is no edit, so the change alone would not hold it.
   other edit that changes text sets both to none.
 - Text typed in the recording view is added. Text typed in another view,
   the minibuffer's included, is not.
+- **A command that changes no text adds what its binding says**
+  (`Command.typed`), run in the recording view: insert state's
+  `<Backspace>`, `RET` and `TAB` add the backspace character, a line feed
+  and a tab, so the replay runs them again ("Insert state").
+- **A command can restart the last change** (`Command.restarts`, insert
+  state's arrow keys): run in the recording view, it leaves a restart
+  waiting (`State.restart`), the command it names as a change that enters
+  the view's Vim state, with no count. The next text added in the recording
+  view makes that the last change, with that text alone kept for it. Ending
+  the recording drops the restart, so with nothing typed after the key the
+  last change is as it was. This is Vim's `stop_arrow`, which starts the
+  redo again as `i` at the first key after an arrow key.
 - **A committed text is typed text here too.** No key printed it, so the
   scheme's `step` never sees it: the scheme interface has a notice,
   `committed`, which the loop makes of both states of the scheme it keeps
@@ -1133,7 +1234,9 @@ for). Typed text is no edit, so the change alone would not hold it.
 - **A change with an insert session** is three things in one command: the
   change, told of an exclusive selection that no motion extends, which is
   all a command that begins an insert reads of insert state's report; the
-  typed text, inserted at the bar when it is not empty; and `Evil.enter`
+  typed text, replayed at the bar as it was typed (a backspace character
+  deletes the cell before the bar, a line feed breaks the line with the
+  buffer's line ending, and the rest is inserted); and `Evil.enter`
   with the call's own report, which is normal state's and steps the head
   back as `<Escape>` does.
 - **It is one command in normal state**, so it is one step of the history
@@ -1393,6 +1496,16 @@ shows it, in the scheme's state after the key.
   the buffer in a session, and the group is closed: one node for
   everything typed. Nothing is set by the command that begins an insert,
   and nothing is cleared by the one that ends it.
+- **An arrow key in insert state starts a new undo step, as in Vim 9.1**
+  (`:help ins-special-special`: "the changes (inserted or deleted
+  characters) before and after these keys can be undone separately"). The
+  command closes the buffer's group after a move that moved
+  (`BufferId.closeGroup`, which `lean/Editor/Api.lean`'s "Undo" names as
+  how a command sets a boundary inside a session itself), so what was
+  edited before the key and after it are undone separately. A move that
+  fails, left at a line's start or up on the first line, does not break
+  the step, as Vim beeps without one. Backspace, Enter and Tab join the
+  session's step ("Insert state").
 - **An insert that begins with an edit is one step with no further
   rule**: `o` and `O` (a line break, then typed text) and `c` (a deletion,
   then typed text), because the view is in insert state when the scene
@@ -1449,7 +1562,8 @@ report says the view takes text** (`InputScheme.Report.takesText`,
 Status: built, by the command loop's phase 11 (`lean/Editor/Evil.lean`;
 pinned by `evilInsertChecks`).
 
-Four commands place the bar, and one inserts typed text.
+Four commands place the bar, one inserts typed text, and seven named keys
+edit or move inside the session.
 
 | Key | Command | Where the insert begins |
 |---|---|---|
@@ -1477,19 +1591,60 @@ Four commands place the bar, and one inserts typed text.
   redo").
 - **Not built: a count before `i a I A o O`.** Vim repeats the inserted
   text. The six commands ignore their count and their register.
-- **Not built: any other key in insert state.** `RET`, `<Backspace>`,
-  `<Tab>` and the arrow keys are named keys, which print nothing
-  (`Key.printed?`), and do nothing there (the open questions).
+
+The editing keys are named keys, which print nothing (`Key.printed?`), so
+each is a row of `insertCommands` (`Evil.deleteBackward`, `Evil.newline`,
+`Evil.insertTab`, `Evil.insertMove`; Daily-driver floor phase 1). Each
+follows Vim 9.1 with its default options:
+
+| Key | Command | Behaviour, as Vim 9.1 documents it |
+|---|---|---|
+| `<Backspace>` | `insert-delete-backward` | Deletes the character before the bar; a carriage return and line feed, or a character of several bytes, goes whole. At a line's start it joins the line to the one above, and it deletes past where the insert began: `i_<BS>` under `backspace=indent,eol,start`, Vim 9.1's default. At the text's start it deletes nothing |
+| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent`, and indentation waits for syntax |
+| `TAB` | `insert-tab` | Inserts a tab character: Vim's defaults `noexpandtab` and `softtabstop=0` |
+| `<ArrowLeft>` | `insert-left` | One cell back, no further than the line's start (`whichwrap=b,s`: no wrap) |
+| `<ArrowRight>` | `insert-right` | One cell on, no further than where the line's content ends |
+| `<ArrowUp>` | `insert-up` | A line up, at the wanted column, clamped to a shorter line and kept through it; nothing on the first line |
+| `<ArrowDown>` | `insert-down` | A line down, the same; nothing on the last line |
+
+- **Built: `<Backspace>`, `RET`, `TAB`, `<ArrowLeft>`, `<ArrowRight>`,
+  `<ArrowUp>` and `<ArrowDown>` in insert state.**
+- **An arrow key that moves starts a new undo step** ("Insert sessions");
+  the other three join the session's step.
+- **Each is bound as a command that changes no text for the grammar**, so
+  it is not the last change and keeps the recording of the session's typed
+  text ("The last change").
+- **Dot repeat replays them as Vim 9.1's does** ("The last change", "Dot
+  repeat as built"). `<Backspace>`, `RET` and `TAB` are kept in the
+  session's typed text, in the order typed (`Command.typed`: the backspace
+  character, a line feed and a tab), and `.` runs them again, so it makes
+  the session's result: after `i x <BS> y <Esc>` it inserts `y`, a
+  `<Backspace>` past where the insert began deletes there too, and `RET`
+  breaks the line with the buffer's line ending. An arrow key that moved
+  restarts the last change as `i` once something is typed after it, with
+  the text typed from there on (`Command.restarts`), as
+  `ins-special-special` says: "only the last change can be redone and
+  always behaves like an 'i' command". Vim restarts at the first key typed
+  after the arrow key, not at the arrow key, so with nothing typed after it
+  the change is as it was. An arrow key that did not move gives its command
+  up (`cannotMove`, said in the echo area where Vim beeps), so the loop puts
+  the scheme back in its state from before the key and nothing restarts,
+  as Vim's beep restarts nothing.
+- **Not built: the other keys of Vim's insert state**: `C-w`, `C-u`,
+  `C-o`, `C-r`, `<Home>` and `<End>` do nothing there (the open
+  questions).
 
 ### Motions as built
 
 Status: built, by the command loop's phase 11
 (`lean/Editor/Evil/Motions.lean`; pinned by `evilMotionChecks`).
 
-Fifteen motions are vocabulary entries, each composed from the text
-port's motion primitives ([text-and-display.md](text-and-display.md),
-"Motion primitives"). What a count means, and what a motion does when it
-cannot go the whole way, is Vim's:
+Twenty-eight motions are vocabulary entries. Fifteen are composed from the
+text port's motion primitives ([text-and-display.md](text-and-display.md),
+"Motion primitives"), the six character finds walk the line's content
+in Lean, the six searches ask the text port's `search`, and `%` its
+`unmatched`. What a count means, and what a motion does when it cannot go the
+whole way, is Vim's:
 
 | Key | Motion | Composed from | Count |
 |---|---|---|---|
@@ -1500,6 +1655,90 @@ cannot go the whole way, is Vim's:
 | `^` | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
 | `$` | `line-end` | `rowsDown (count - 1)`, then `lineEnd` | The end of the line `count - 1` lines below. With fewer lines below it goes to the last line's end. On the last line with a count above 1 it does not move, which is Vim's failed motion |
 | `g g`, `G` | `first-line`, `last-line` | `offsetOf` of the row's start, then `lineFirstNonBlank` | The line number, from 1, stopped at the last line. With none: the first line, and the last |
+| `f`, `F` | `find-forward`, `find-backward` | The line's content (`slice` from `lineStart` to `lineEnd`), walked from the cursor | The `count`th occurrence of the character after the cursor (before it, for `F`). With fewer in the line it does not move, and fails |
+| `t`, `T` | `till-forward`, `till-backward` | The same, then one cell back towards the cursor | As `f` and `F`. With the character right beside the cursor it does not move, and does not fail (Vim's `searchc`) |
+| `;`, `,` | `find-again`, `find-again-reverse` | The last find (`EditorState.lastFind`), as it was, and for `,` in the other direction | As the find it runs. With no last find it fails where it is |
+| `/{pat}RET`, `?{pat}RET` | `search-forward`, `search-backward` | The text port's `search` ([text-and-display.md](text-and-display.md); the rule is in `lean/Editor/Text.lean`, "Search") | The `count`th match, each step from the last. Every step must find one, and one that wraps still counts |
+| `n`, `N` | `search-next`, `search-previous` | The same, of the last search (`EditorState.lastSearch`), in its direction and in the other | As above |
+| `*`, `#` | `word-search-forward`, `word-search-backward` | The same, of the word under the cursor as a whole word, searched from the word's start | As above |
+| `%` | `matching-bracket` | The first of `( [ { } ] )` on the line at or after the cursor, then the text port's `unmatched` walk to its partner, counting only brackets of its escapedness (`lean/Editor/Text.lean`, "Pairs") | With a count, Vim's `N%`: the first non-blank of the line `(N * lines + 99) / 100`, taken as whole lines. A count above 100 fails |
+
+**`%`** (`:help %`): with no bracket on the line at or after the cursor,
+and with no partner, it fails where it is and says nothing, as Vim only
+beeps; an operator over it gives up. It is inclusive. A bracket after an
+odd number of backslashes is escaped and matches only an escaped one,
+which is Vim's rule without `cpo-M`. A bracket Vim guesses is quoted is
+passed over, as under Vim's default `cpoptions` (without `cpo-%`): the
+guess is made a line at a time, and reads the line's double quotes only
+when there is an even number of them (`lean/Editor/Text.lean`, "Pairs").
+One departure from Vim's default `cpoptions`, recorded and pinned by a row
+that shows the editor's behaviour: `/* */` and `#if`, `#else`, `#endif`
+are not matched, being a syntax tree's or a plugin's.
+
+**The searches** (`:help /`, `:help n`, `:help star`), under Vim's default
+options (`cpoptions` with `c`, `wrapscan`, `magic`, `noignorecase`):
+
+- **The user types Vim's syntax**, a subset of it under `magic`, not the
+  regex library's ([rust-library.md](rust-library.md), "Search, as
+  built"), so `foo(` and `a|b` are literal, as in Vim.
+- **Each step starts at the head, and a match that starts there is passed
+  over**, so `/abab` in `|abababab` goes to `abab|abab`.
+- **A search that wraps says so**: `search hit BOTTOM, continuing at TOP`
+  forward, `search hit TOP, continuing at BOTTOM` back, as Vim warns. With
+  no match it fails where it is and says `E486: Pattern not found: {pat}`;
+  `n` and `N` with no last search say `E35: No previous regular
+  expression`; `*` and `#` with no word in the line say `E348: No string
+  under cursor`. A motion says these through `Vocabulary.To.said`, and the
+  move command says them; under an operator a failure gives the command
+  up with it, as `operate: E486: Pattern not found: x`.
+- **An empty pattern is the last search's pattern**, in the new
+  direction (`:help last-pattern`). With no last search it is E35.
+- **The last search is remembered as data** (`Vocabulary.To.search`,
+  `EditorState.lastSearch`), pattern and direction, also when the search
+  fails, as Vim keeps the pattern. `N` does not change the direction, and
+  `n` after `#` goes back. A search under an operator that fails gives the
+  command up, which rolls it back, a recorded departure as for the finds.
+- **`*` and `#`** search for the first of: the keyword under the cursor,
+  the first keyword after it in the line, the run of punctuation under the
+  cursor, the first such run after it. A keyword is a run of word
+  characters, the text's class (as for `w`), not Vim's `iskeyword` table,
+  a recorded departure beyond ASCII. The pattern is the word with
+  `\ / . * $ ^ ~ [` escaped, with `\<` before it when it starts with a
+  word character and `\>` after it when it ends with one, as Vim's
+  `nv_ident` builds it. The search starts from the word's start, as Vim
+  moves the cursor there first, so `*` passes over the word under the
+  cursor; an operator still takes from the cursor, as Vim's `oap->start`
+  is set when the operator key is typed.
+- **Under an operator every search is exclusive**, so the two rules for an
+  exclusive motion that ends in column 1 apply: `d*` from a line's start to
+  the next line's start deletes the line, line-wise.
+- **Not built**: search offsets (`/foo/e`), search history, `incsearch`,
+  the jump list, `ignorecase` and `smartcase`.
+
+**The character finds** (`:help f`, `:help t`, `:help ;`):
+
+- **They never leave the line.** A character on the next line is not
+  found.
+- **The character is the motion's argument** (`Vocabulary.From.argument`),
+  the text the next key printed (`Bound.charMotion`, "What a key is bound
+  to"). Run with none, by its name, by config or by a sweep, a find fails
+  where it is.
+- **The find is remembered as data.** `f`, `t`, `F` and `T` hand back the
+  find they made (`Vocabulary.To.find`), also when they fail, and the move
+  and operate commands keep it (`setLastFind`), as Vim keeps the character
+  even when the motion fails. It is global, as Vim's is. `;` and `,` hand
+  back none, so `,` does not change the direction kept: `f x , ;` goes
+  back and then forward again.
+- **A till repeated with a count of 1 passes over the character beside the
+  cursor**: Vim's default `cpoptions` has no `;`, so `t x ;` right before
+  an `x` goes on to the next `x` (`searchc` sets `stop = FALSE`). With a
+  count, as `2;`, the first step does stop at it.
+- **Under an operator** `f` and `t` are inclusive and `F` and `T`
+  exclusive; `;` and `,` take the reach of the motion they run, so `d,`
+  after `t` is exclusive. `dtx` in `|ax` deletes the `a`.
+- **A recorded departure**: a find under an operator that fails gives the
+  command up, which rolls back what it kept, so `dfz` on a line with no
+  `z` leaves the last find as it was, where Vim keeps `z`.
 
 - **The last line** (`Evil.lastLine`) is the last row a cursor may rest
   in outside insert state. It is the row before the empty last row of a
@@ -1677,6 +1916,69 @@ its owner:
   last row after an insert** ("Where a cursor rests").
 - **A count before `i a I A` is ignored** ("Insert state"). Vim repeats
   the insert.
+
+### Text objects as built
+
+Status: built, by daily-driver-floor phase 4
+(`lean/Editor/Evil/Objects.lean`, over the text port's two pair questions,
+`lean/Editor/Text.lean`, "Pairs"; pinned by `evilObjectChecks`).
+
+Sixteen text objects are vocabulary entries (`Vocabulary.TextObject`): a
+name and a function from where it is asked (`Within`: the head, the count
+and, in a visual state, the anchor) to what it covers (`Span`: a start, a
+stop and a reach, Vim's own end and inclusiveness), or none. Each is a
+literal port of Vim 9.1's `textobject.c`:
+
+| Keys | Objects | Composed from | Count | Rule |
+|---|---|---|---|---|
+| `iw`, `iW` | `inner-word`, `inner-bigword` | Vim's cursor steps (`inc`, `dec`, `incl`, `decl`) and word walks (`fwd_word`, `end_word`, `bck_word`, `bckend_word`, `back_in_line`) over the text port, a cell's class by the text's word class | Each further count adds one word or one run of blanks | The word or the run of blanks under the cursor (`current_word`) |
+| `aw`, `aW` | `a-word`, `a-bigword` | The same | Each further count adds a word and its blanks | The word and the blanks after it, or before it when none are after and they are no indent; on blanks, the blanks and the word after |
+| `i"`, `i'`, `` i` `` | `inner-double-quote`, `inner-single-quote`, `inner-backquote` | The text port's `quoted` | 2 or more takes the quotes and no blanks | The quoted string round the cursor in its line, without its quotes (`current_quote`) |
+| `a"`, `a'`, `` a` `` | `a-double-quote`, `a-single-quote`, `a-backquote` | `quoted`, and the line's cells for the blanks | Ignored | With its quotes and the blanks after it, or before it, indent included, when none are after |
+| `i(` `i)` `ib`, `i[` `i]`, `i{` `i}` `iB` | `inner-paren`, `inner-bracket`, `inner-brace` | The text port's `unmatched`: back to the `count`th unmatched opening bracket, or, with none round the cursor, forward to the `count`th next one, and forward to its partner | The `count`th pair out | Between the brackets; from the line after an opening bracket that ends its line; when the closing bracket is at or before its line's first non-blank, up to the start of the line after the last that has content, so an operator takes whole lines (`current_block`) |
+| `a(` `a)` `ab`, `a[` `a]`, `a{` `a}` `aB` | `a-paren`, `a-bracket`, `a-brace` | The same | The same | The pair with both brackets |
+
+- **Under an operator** an object is taken as a motion's target is, from
+  the span's start with the span's reach (`Editor/Evil/Operators.lean`, "A
+  text object under an operator"): Vim's exclusive-linewise rule and Vi's
+  rule for a deletion over lines apply, as Vim applies them, so `d i {`
+  over lines is line-wise and `d a w` of a word alone on its line takes the
+  line. An object that covers no cell first moves the cursor to its start,
+  as `d i (` on `f|()` leaves `f(|)`. An object that is not there gives
+  the command up, nothing taken.
+- **In a visual state** (`v`, `V`) an object's keys are `Edit.select`,
+  which runs `select-object`: the selection becomes one charwise range,
+  from the span's start to its head, and `V` enters `v`, as Vim's objects
+  make a line-wise selection characterwise. A selection of one cell is the
+  object under the cursor. A wider one is extended from its head: a word
+  object by one more, backward when the head is before the anchor; a block
+  object from the selection's low end, and by the next pair out when the
+  block found is no bigger. An object that is not there leaves the
+  selection and says nothing, as Vim beeps; after `V` the command gives up
+  so the view stays in `visual-line`.
+- **Blocks search forward** with no pair round the cursor, for every kind,
+  and across lines: Vim 9.1's `:help ib` ("If the cursor is not inside a
+  () block, then find the next `(`"), which the installed Vim 9.1.1752
+  does for `[` and `{` too. An escaped bracket is passed over (`cpo`
+  without `M`), and an empty inner block is none in a visual state.
+- **Quoted brackets are passed over on the way to a block's closing
+  bracket** and not on the way back to its opening one, as Vim 9.1's
+  `current_block` walks back with `cpo` set to `%` and forward with the
+  default `cpo`: in `(a "b|)" c)`, `d i (` takes `a "b)" c`. A visual
+  selection extended to the next pair out walks both ways with the
+  default `cpo`, as Vim's does.
+- **Dot repeat** replays an operator over an object by name, from where
+  the cursor is then, with a count typed before `.` in place of the
+  change's.
+- **Recorded departures**, each pinned by a row that shows the editor's
+  behaviour:
+  - A quote object over a visual selection wider than one cell is not
+    built (Vim's "another string is included"): there is none, and the
+    selection is as it was.
+  - Word classes beyond ASCII are the text's word class as it stands.
+  - `i<` `a<`, `it` `at`, `is` `as` and `ip` `ap` are not built; the
+    syntax-aware objects are rdm:roadmap/syntax-tree-sitter phase 3's,
+    and reuse this vocabulary's shape.
 
 ### Operators as built
 
@@ -2035,11 +2337,13 @@ Which names have something behind them:
 
 | Names | State |
 |---|---|
-| The fifteen motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
+| The twenty-eight motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
 | `self-insert`, which no table names: typed text | Built and registered |
-| `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward` | Built and registered (`Minibuffer.commands`) |
+| `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
+| `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
 | The operators (`delete`, `change`, `yank`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
+| The sixteen text objects of `objects` | Built: entries of `Evil.objects`, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
 | `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
@@ -2049,13 +2353,15 @@ Which names have something behind them:
 
 | Table | Keys |
 |---|---|
-| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line |
+| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward, `%` matching-bracket |
+| `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
 | `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
-| `insertCommands` | `<Escape>` normal (enters normal) |
+| `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `RET` insert-newline, `TAB` insert-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down (each enters no state, and none is a change dot repeat replays) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
-| `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does (each enters no state, and none is a change dot repeat replays) |
+| `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
+| `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
 
 The run tables (`StateRecord.runs`), which say what a command name is
 completed as in a state, for a key bound to the name and a menu item that
@@ -2066,7 +2372,6 @@ names it ("So a command enters no state: a key does"):
 | `normalRuns` | `clipboard-paste` as `"+P`; `select-all` as itself, entering `visual-line` |
 | `insertRuns` | `select-all` as in normal state |
 | `visualRuns`, of both visual states | `clipboard-copy` as `"+y`, `clipboard-cut` as `"+d`, `clipboard-paste` as the operator `replace` from `+`, each over the selection, and `select-all` as in normal state |
-| `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
 |---|---|---|---|---|
@@ -2078,7 +2383,8 @@ names it ("So a command enters no state: a key does"):
 
 **The scroll keys are in normal state and the two visual states**, and not
 in `insert` or `minibuffer`: there `C-d` and `C-u` are Vim's editing keys,
-which are not built, and `z` is text. `z` begins three sequences and is
+and `z` is text. `C-u` is built in `minibuffer`, where it deletes to the
+input's start; `C-d` is built in neither, nor `C-u` in `insert`. `z` begins three sequences and is
 bound to nothing itself, so in those three states it is a prefix: a `z`
 followed by a key that completes none of them runs nothing. None of the
 four control keys is the interrupt key, `C-g`.
@@ -2495,9 +2801,15 @@ own.**
 - **The default registry has a fifth state, `minibuffer`**: typing is
   text (so a digit is text too), the cursor is a bar, and its one keymap
   (`Vim.Default.minibufferCommands`) binds `RET` to `minibuffer-accept`
-  and `<Escape>` to `minibuffer-cancel`, and four keys to the commands
-  that move through a prompt's candidates. This is Vim's own command-line
-  mode.
+  and `<Escape>` to `minibuffer-cancel`, four keys to the commands
+  that move through a prompt's candidates, and the editing keys: `<Backspace>`
+  to `minibuffer-delete-backward`, `<ArrowLeft>` and `<ArrowRight>` to the
+  motions `left` and `right` (Vim's `c_<Left>` and `c_<Right>`), which stop
+  at the input's start and its end, and `C-u` to
+  `minibuffer-delete-to-start` (Vim's `c_CTRL-U`), which deletes from the
+  bar to the input's start, keeps what is after it, and never cancels the
+  prompt. This is Vim's own command-line mode. The one editing key of
+  Vim's command line not built is `C-w`.
 - **Why a state of its own and not `insert`.** In `insert`, `<Escape>`
   enters normal state and `RET` is bound to nothing, so answering would
   take `<Escape>` and then a key of normal state.
@@ -2612,6 +2924,11 @@ that name, so the key opens the line.
 - **Set aside: a leading colon or a count.** Neither is dropped: `:w`
   typed on the ex line is the unknown name `:w`.
 
+**The ex line's editing keys are the minibuffer's.** It is a prompt, so it
+is typed in the minibuffer's view, in the Vim state `minibuffer`, and
+`<Backspace>`, `<ArrowLeft>`, `<ArrowRight>` and `C-u` edit it as they edit
+any prompt ("The minibuffer"; pinned on both by `evilInsertChecks`).
+
 **The ex line's candidates are the ex names that are bound** (built by the
 command loop's phase 14; "A prompt's candidates", under "The minibuffer").
 
@@ -2621,7 +2938,7 @@ command loop's phase 14; "A prompt's candidates", under "The minibuffer").
   registry as it is when the line is asked for.
 - So while a name is typed the scene lists the names it matches, a key of
   the minibuffer chooses one, and accepting runs the chosen name. With the
-  names that ship, `e` lists `e` and then `reload`.
+  names that ship, `e` lists `e`, then `e!` and then `reload`.
 - **The typed line is the pattern, whole.** A line with an argument
   matches no name, so nothing is listed, and accepting runs the line as
   typed. A name is completed; an argument is not.
@@ -2704,10 +3021,15 @@ command an ex name runs is a step of its own.**
 | Ex name | Command | Takes | What it does |
 |---|---|---|---|
 | `w` | `save-buffer` | Nothing | Saves the buffer of the window the line was asked from |
-| `e` | `open-file` | Text | Opens the path the rest of the line is. With no argument, asks for one, by `open-file`'s own rule |
+| `w!` | `save-buffer`, with `true` first | Nothing | Saves it whatever the file on disk now is: "write mine over theirs" |
+| `e` | `edit-file` | Text | Opens the path the rest of the line is. With no argument, reloads the window's file (`reload-buffer`), refused while the buffer has unsaved changes; on a buffer with no file it asks for a path, by `open-file`'s own rule |
+| `e!` | `edit-file`, with `true` first | Text | As `e`, but with no argument the reload discards unsaved changes as one step `u` undoes: "take theirs" |
 | `q` | `quit` | Nothing | Quits the editor |
 | `wq` | `save-and-quit` | Nothing | Starts the save, and quits once it has ended |
 | `reload` | `reload-config` | Nothing | Reloads the config |
+| `b` | `switch-buffer` | Text | Shows the buffer the rest of the line names, exactly or by fuzzy match. With no argument, asks with the open buffers as candidates, by `switch-buffer`'s own rule |
+| `ls` | `list-buffers` | Nothing | Shows the buffer list, a text view of the open buffers, most recently used first, with `+` for unsaved changes |
+| `bd` | `close-buffer` | Text | Closes the buffer the rest of the line names, or the window's own: refused for a buffer of a file with unsaved changes and for a buffer with a save in flight, and every window that showed it shows the most recently used buffer left |
 
 Where they differ from Vim:
 
@@ -2717,15 +3039,32 @@ Where they differ from Vim:
   while a buffer that holds a file has unsaved changes.
 - **`q` quits the editor, not the current window.** No shipped command
   splits a window.
-- **`e` with no argument asks for a path.** Vim reads the current file
-  again, which is not built.
+- **`e` with no argument reloads as one edit.** Vim reads the current
+  file again and loses the undo history; here the file's text comes in as
+  one edit made from a line diff, so the cursor and the marks stay where
+  the diff kept the text, and `u` takes the reload back. On a buffer with
+  no file it asks for a path.
+- **`e!` and `w!` are names of their own**, bound with a fixed argument;
+  `!` is not parsed.
 - **`w` takes no file name.** Saving under another name is not built.
 - **`reload` is no Vim command.**
+- **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
+  matches more than one buffer.
+- **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it
+  cannot be saved.
+- **`bd` refuses a buffer with a save in flight**, until the save is
+  delivered: the save may yet be refused, and the buffer then holds the
+  only copy of the edits. `q` waits for such a save instead.
+- **The buffer left after the last `bd` is `scratch`**, empty and with no
+  file, the name the initial buffer has. Vim calls it `[No Name]`.
+- **A buffer's cursor is not given back.** A window shown a buffer again,
+  by `b` or after a `bd`, has its cursor at the buffer's start; Vim gives
+  back where the cursor last was in that buffer.
 
 Pinned by `ModelTest.exLineChecks` (the parser and the binding),
 `registryChecks`, `setupChecks` and `reloadChecks` (ex bindings by owner,
-from `setup`, and across an install), `exChecks` (the ex line and the five
-names, on the loop's driver over the editor's models and the model of
+from `setup`, and across an install), `exChecks` (the ex line and the
+first five names, and `bufferCommandChecks` the last three, on the loop's driver over the editor's models and the model of
 files, with the test scheme), `ConfigTest.exChecks` and
 `ConfigTest.exScriptChecks` (through the headless host, with the real
 elaborator and the library's file service), the fixture
@@ -2817,7 +3156,7 @@ The Vim scheme is checked the same way, by six lists:
 | `vimRegistryChecks` | The registry of Vim states: looking a state up, and registering one |
 | `vimGrammarChecks` | Which keymaps a key is looked up in; moves, operators and their targets, the doubled operator, counts, registers, resets, and the pending keys |
 | `vimStateChecks` | Which Vim state a view is in and how one is entered; what the scheme reports of a view in a state; typed text; an operator over the selection; the last change; the state the minibuffer's view is put in when the scheme is told of it, and what the notice keeps |
-| `vimDefaultChecks` | The default states and bindings, through what each default key parses to and what the scheme reports after it, the minibuffer's state among them |
+| `vimDefaultChecks` | The default states and bindings, through what each default key parses to and what the scheme reports after it, the minibuffer's state among them; that each editing key of insert state runs a command of its own and keeps the view in insert state and the last change; that `<Backspace>`, `RET` and `TAB` are kept in the session's recording and that an arrow key restarts the last change as `i` once something is typed after it; the minibuffer state's `<ArrowLeft>`, `<ArrowRight>` and `C-u`; and that every command name of the insert and minibuffer tables is registered |
 | `vimContractChecks` | The scheme contract holds of the Vim scheme, over the checks' registry and over the default states, and is reported for a registry that names no state for the minibuffer |
 
 - **The grammar's checks run on a registry and keymaps written in the
@@ -2841,7 +3180,7 @@ keys are pressed against a text:
 | `evilRestChecks` | Where a cursor rests under each rule, from every position of a few small texts, on the text model; the rule a report gives |
 | `evilMotionChecks` | Each motion's key, with and without a count, in a text with the cursor written into it ("Keys against the model"); the wanted column, by keys and by a command that calls the move command twice; the display column `j` and `k` aim for, by rows of Vim's results with a tab and with wide characters (`displayColumnRows`), in a frame of 0 by 0, and by what `down` asks of the ports; a motion written in a check that asks the display; a sweep of every motion of the table from every resting position; that every default motion key has an entry |
 | `evilStateChecks` | `v`, `V` and `<Escape>`: the selection the scene shows, its shape and what it covers; the scene's cursor and status field in each state; and, by `Evil.enter` called with a report written by hand, a state that keeps both ends entered from an exclusive selection, which no default key does: where the anchor rests, and that the head steps back |
-| `evilInsertChecks` | `i a I A`, typed text and `<Escape>`; that a session is one step of the history, by an undo request; a key typed into a prompt; a committed text in normal state and in a session |
+| `evilInsertChecks` | `i a I A`, typed text and `<Escape>`; that a session is one step of the history, by an undo request; `<Backspace>`, `RET` (in a buffer of each line ending), `TAB` and the four arrow keys in insert state, by rows of Vim's results, and that an arrow key that moves starts a new step and one that fails does not; a key typed into a prompt; `<Backspace>`, `<ArrowLeft>`, `<ArrowRight>` and `C-u` in a prompt, each in the minibuffer and on the ex line; a committed text in normal state and in a session |
 
 - **The first runs on the text model alone; the other three on the loop's
   driver over the editor's models** (`Loop.Driver`), under the Vim scheme
@@ -3155,10 +3494,10 @@ every build). The second is proved on the text model
   of a text that ends in a line feed is a place a normal-state cursor may
   rest, which removes the consequence after an insert and makes `G` on a
   file land one row below Vim's.
-- **Insert state binds `<Escape>` and nothing else** ("Insert state").
-  `RET` (the API has `insertLineBreak`, and nothing calls it),
-  `<Backspace>`, `<Tab>` and the arrow keys do nothing there. `o` and `x`
-  are built without them; they are a task of their own.
+- **Insert state's other editing keys** ("Insert state"). `<Backspace>`,
+  `RET`, `TAB` and the arrow keys are built; `C-w`, `C-u`, `C-o`, `C-r`,
+  `<Home>` and `<End>` are not. Dot repeat replays the built keys as Vim
+  does.
 - **A count before `i a I A o O` is ignored.** Vim repeats the insert.
   Dot repeat is built and replays a session's text, so the repeat is now
   a matter of running that replay `count - 1` times when the session
@@ -3182,8 +3521,8 @@ every build). The second is proved on the text model
   ([concurrency.md](concurrency.md), "Prompts"). No command that ships is
   one; a config that binds a store's command as changing text would need
   the replay to carry the write.
-- **`p` and `P` in a visual state, named registers, and text objects**
-  are not built.
+- **`p` and `P` in a visual state and named registers** are not built.
+  Text objects are ("Text objects as built").
 - **A put that ends in a cell of more than one character** carries the
   start of its last character as the cursor after, and places the cursor
   on the cell's start, so a redo of it lands inside the cell.
@@ -3272,11 +3611,9 @@ every build). The second is proved on the text model
   placement, and one state request. Nothing is measured. If typing or a
   held `j` is slow, the resting rule can become one question of the port,
   which is a change to the Rust library.
-- **Text objects on `i` and `a`.** Vim's text objects begin with `i` or `a`
-  (`diw`, `da(`). The default normal state binds both keys as commands, and
-  a bound sequence is never also a prefix, so they cannot also begin a text
-  object after an operator. The grammar accepts a text object after an
-  operator; which keys the default ones are on is not decided.
+- **Text objects on `i` and `a`** are settled: while an operator waits,
+  normal state walks its pending keymaps, which hold the objects and not
+  its commands ("Which keymaps a key is looked up in").
 - **The `kbd` macro.** Macros need the `Lean` package at elaboration time,
   and importing it at runtime is what the memory figures in
   [lean-runtime.md](lean-runtime.md) argue against. Not measured, and not

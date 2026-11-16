@@ -396,7 +396,10 @@ pub fn load(fs: &dyn Fs, path: &Path, limit: u64) -> Result<Loaded, LoadError> {
 /// nothing is there: one stat, and nothing of the file is read. A path that
 /// is not absolute is refused before the file system is asked
 /// ([`LoadError::Relative`]), and what is not a file is
-/// [`LoadError::NotAFile`]. A link is followed.
+/// [`LoadError::NotAFile`]. A link is followed. It is what a check for a
+/// change on disk compares with the stamp the last load or save answered: a
+/// rewrite within the file system's timestamp granularity that keeps the
+/// length is not seen, as a save's check does not see one.
 pub fn stamp(fs: &dyn Fs, path: &Path) -> Result<Option<Stamp>, LoadError> {
     if !path.is_absolute() {
         return Err(LoadError::Relative);
@@ -1352,6 +1355,18 @@ mod tests {
             assert!(saved.is_ok(), "{name}: {saved:?}");
             assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES), "{name}");
         }
+    }
+
+    #[test]
+    fn a_stamp_answers_the_stamp_a_load_answered_and_after_a_save_the_saves() {
+        let fs = fake_with(OLD);
+        let loaded = loaded(&fs);
+        assert_eq!(stamp(&fs, Path::new(PATH)), Ok(Some(loaded.stamp)));
+        fs.set_now(LATER);
+        let saved = save_new(&fs, PATH, Expect::Unchanged(loaded.stamp)).unwrap();
+        let after = stamp(&fs, Path::new(PATH));
+        assert_eq!(after, Ok(Some(saved)));
+        assert_ne!(after, Ok(Some(loaded.stamp)));
     }
 
     #[test]

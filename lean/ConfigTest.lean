@@ -38,14 +38,16 @@ fakes. The checks here pin what only real collaborators can show:
   reported;
 - `shippedChecks`: what the executable's hosts are handed as compiled code
   (`Headless.shippedOver`): the registry they start with binds `C-s-f` to
-  `toggle-fullscreen` and `s-m` to `minimise-window`, both compiled;
+  `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, all
+  compiled, and registers the buffer commands with the ex names `b`, `ls`
+  and `bd` bound to them;
 - `scriptChecks`: the headless mode's script and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command
   once the frame exists, the scene whose echo is the refusal once a command
   has released the focused buffer's text, the line the host prints for a
-  program of the loop that is refused, and a window's close request ending
-  the loop;
+  program of the loop that is refused, and a window's close request with
+  nothing unsaved ending the loop;
 - `dispatchChecks`: keys through the host, with the test scheme and
   compiled commands and bindings written here: a compiled binding runs its
   command, a command that fails is rolled back and says so, the interrupt
@@ -1515,7 +1517,8 @@ def setup : SetupM Unit := do
 /-- The status line the host prints for the view `view`, selected, of a
 buffer called `name`, modified or not, opened from `file` or from none, of
 which the test scheme reports nothing, with its cursor at `cursor` (a row
-and a column in cells) in a text of `lines` rows: what the host prints
+and a column in cells) in a text of `lines` rows, and with its file found
+changed on disk by a check when `changed`: what the host prints
 (`Headless.statusLine`) of the fields the shipped mode line gives such a
 view (`ModeLine.standard`). So a check that compares a host's whole output
 repeats neither the mode line's faces and texts nor the host's form. Each
@@ -1524,14 +1527,25 @@ text has, since the line:col and the position segments read them. The
 scratch buffer is the default: the loop's frame is made with it, and its
 name is the editor state's to choose. -/
 def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := false)
-    (cursor : Point := ⟨0, 0⟩) (lines : Nat := 1) (file : Option System.FilePath := none) :
-    String :=
+    (cursor : Point := ⟨0, 0⟩) (lines : Nat := 1) (file : Option System.FilePath := none)
+    (changed : Bool := false) : String :=
   let saved := UndoTree.new ⟨0⟩ 0
+  -- A file whose change on disk a check found has the changed mark,
+  -- whatever its stamps; with no path given, it has none to show.
+  let path := if changed then some (file.getD "") else file
   let buffer : Buffer :=
     { name, text := ⟨0⟩, history := if modified then saved.record 1 else saved
       file :=
-        file.map fun path => { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 } } }
+        path.map fun path =>
+          { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 }
+            changed := if changed then some { found := none, told := true } else none } }
   Headless.statusLine ⟨view⟩ (ModeLine.standard.fields { buffer, cursor := some cursor, lines })
+
+/-- Whether `output` has a line that says a job registered under `name`
+ended ok, whatever its id: the loop's own checks of files shift the ids of
+the jobs a command starts. -/
+def endedOk (output : Array String) (name : String) : Bool :=
+  output.any fun line => line.startsWith "job " && line.endsWith s!" {name}: ok"
 
 /-- A scene of one focused view, number 2, of the snapshot 5, 64 pixels
 across and 48 down in a frame 64 down: what `Headless.Running.agreement` is asked
@@ -1968,7 +1982,7 @@ def scriptChecks (context : Context) : List Check :=
         return refused == none && printed == #["loop: refused: no such text"] &&
             kept == some "made before the refusal" &&
             (← stage.output.get) == printed },
-    { name := "a window's close request ends the host's loop"
+    { name := "a window's close request with nothing unsaved ends the host's loop"
       run := do
         let stage ← Stage.new context context.elaborator { chunks := pure #[] }
         let host ← Headless.start stage.collaborators
@@ -3106,7 +3120,7 @@ def setup : SetupM Unit := do
 /-- A chunk whose `setup` registers three commands that are given their
 call, over the tables the editor ships, each named by the chunk and none
 restated: `delete-word` moves to the line's start (`Evil.move`) and runs
-evil's operate command (`Evil.operate Evil.operators Evil.motions`) with
+evil's operate command (`Evil.operate Evil.operators Evil.motions Evil.objects`) with
 the arguments the Vim scheme compiles `d w` to; `again` hands evil's repeat
 command (`Evil.repeat`) that same change, as the scheme's repeat key would,
 which the repeat command has the registry's operate command run; and `back`
@@ -3119,7 +3133,7 @@ def operatorsChunk : String :=
 def setup : SetupM Unit := do
   commandWith \"delete-word\" fun call => do
     Evil.move Evil.motions { call with arguments := [.str Evil.lineStart.name] }
-    Evil.operate Evil.operators Evil.motions { call with arguments := deleteWord }
+    Evil.operate Evil.operators Evil.motions Evil.objects { call with arguments := deleteWord }
   commandWith \"again\" fun call =>
     Evil.repeat
       { call with
@@ -3142,10 +3156,12 @@ def eraseWord : List Argument :=
   [.str erase.name, .str \"motion\", .str Evil.wordForward.name, .nat 0, .str \"\"]
 
 def setup : SetupM Unit := do
-  commandWith Vim.operateCommand (Evil.operate (Evil.operators.push erase) Evil.motions)
+  commandWith Vim.operateCommand
+    (Evil.operate (Evil.operators.push erase) Evil.motions Evil.objects)
   commandWith \"erase-word\" fun call => do
     Evil.move Evil.motions { call with arguments := [.str Evil.lineStart.name] }
-    Evil.operate (Evil.operators.push erase) Evil.motions { call with arguments := eraseWord }
+    Evil.operate (Evil.operators.push erase) Evil.motions Evil.objects
+      { call with arguments := eraseWord }
   commandWith \"again\" fun call =>
     Evil.repeat
       { call with
@@ -3242,21 +3258,27 @@ def setup : SetupM Unit := do
 
 /-- A stage for a host whose jobs reach real files: one over the real
 elaborator and `source`, with what `compiled` hands it, whose services have
-the library's file service, over the table of waits the file checks share
+the library's file service, its diff service and its watch service, as the
+executable wires them, over the table of waits the file checks share
 (`Context.fileWaits`), which the one completion pump runs over. Its clock is
-still a fake one. -/
+still a fake one: the watch service coalesces on the library's own. -/
 def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Compiled := {}) :
     IO (Stage Config.Elaborate.State) := do
   let completions ← context.fileWaits
   let stage ← Stage.new context context.elaborator source compiled (some completions)
   let collaborators := stage.collaborators
+  let refusedDiffs ← Job.RefusedDiffs.new
+  let watches ← Job.RealWatches.new
   return { stage with
       collaborators :=
         { collaborators with
           services :=
             { collaborators.services with
-              files :=
-                Job.realFiles completions collaborators.published.reader collaborators.held } } }
+              fileWatches := Job.realFileWatches completions watches
+              files := Job.realFiles completions collaborators.published.reader collaborators.held
+              diffs :=
+                Job.realDiffs completions collaborators.published.reader collaborators.held
+                  refusedDiffs } } }
 
 /-- A compiled command called `name`, written for the file checks, that runs
 the compiled open command with `path` as its argument: the driver's `run`
@@ -3285,13 +3307,14 @@ for each name and path of `opens`, a command of that name that opens that
 path (`opening`). Stops the host: `false` if the check did not hold or the
 host did not stop. -/
 def withFileHost (context : Context) (opens : List (String × System.FilePath))
-    (check : Session → IO Bool) : IO Bool :=
+    (check : Session → IO Bool) (extra : Array Config.Registration := #[]) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
           { commands :=
               Files.commands ++ Minibuffer.commands ++
-                (opens.map fun (name, path) => opening name path).toArray
+                (opens.map fun (name, path) => opening name path).toArray ++
+                extra
             jobs := Files.jobs
             modes := Minibuffer.modes }
     onStage stage fun host stage =>
@@ -3329,9 +3352,10 @@ def noteText : String :=
 /-- The status line of view 0 on `noteText` opened from `path`, called
 `note.txt`, its cursor on the first row at `column`: two rows, the empty one
 after the final line break not counted (`statusOf`). -/
-def noteStatus (path : System.FilePath) (modified : Bool := false) (column : Nat := 0) : String :=
+def noteStatus (path : System.FilePath) (modified : Bool := false) (column : Nat := 0)
+    (changed : Bool := false) : String :=
   statusOf (name := "note.txt") (modified := modified) (cursor := ⟨0, column⟩) (lines := 2) (file :=
-    some path)
+    some path) (changed := changed)
 
 /-- The checks of files through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue, the real text binding and the
@@ -3410,6 +3434,10 @@ def fileChecks (context : Context) : List Check :=
                 return false
               unless ← Event.post (.commit "x") do
                 return false
+              -- The commit was the buffer's first edit, which starts a check
+              -- of its file: its lines are printed before the scene is asked.
+              unless (← session.host.join patience) == .settled do
+                return false
               let (_, edited) ← session.viewsAndStatus
               let saved ← session.ran Files.saveName
               let (echo, lines) ← session.viewsAndStatus
@@ -3417,7 +3445,7 @@ def fileChecks (context : Context) : List Check :=
                   edited ==
                     #[viewLine ("x" ++ noteText) 1,
                       noteStatus path (modified := true) (column := 1)] &&
-                  (← session.output.get).contains s!"job 2 {Files.saveJob}: ok" &&
+                  endedOk (← session.output.get) Files.saveJob &&
                   (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
                   echo == (Files.wrote path).quote &&
                   lines == #[viewLine ("x" ++ noteText) 1, noteStatus path (column := 1)] },
@@ -3476,10 +3504,13 @@ def fileChecks (context : Context) : List Check :=
                 return false
               let saved ← session.ran Files.saveName
               let (echo, lines) ← session.viewsAndStatus
+              -- The commit was the buffer's first edit, which starts a check:
+              -- it finds the file changed, so the status line has the
+              -- changed field too.
               return saved && (← IO.FS.readBinFile path) == other &&
                   lines ==
                     #[viewLine ("x" ++ noteText) 1,
-                      noteStatus path (modified := true) (column := 1)] &&
+                      noteStatus path (modified := true) (column := 1) (changed := true)] &&
                   echo == (Files.notSaved path (.changed (some found))).quote },
     { name :=
         "the open command on a path with no file: the echo area says the refusal, and the focused view still shows the buffer it showed, with its text, its cursor and its name"
@@ -3519,6 +3550,127 @@ def fileChecks (context : Context) : List Check :=
                     #[s!"job 1 {Files.loadJob}: started", s!"job 1 {Files.loadJob}: ok"] &&
                   echo == "".quote &&
                   lines == #[viewLine noteText 0, noteStatus path] }]
+
+/-- A compiled command called `name`, written for the reload checks, that
+puts the cursor of the window it is called with at the byte `offset`, in the
+shape the window's selection has. -/
+def placing (name : String) (offset : Nat) : Config.Registration :=
+  { name
+    action :=
+      .call fun call => do
+        let current ← call.target.selection
+        call.target.select
+            { current with
+              ranges := #[⟨offset, offset⟩], primary := 0 } }
+
+/-- The checks of reloading a buffer from its file (`Files.reload`,
+`Editor/Files.lean`) through the headless host, on real files, with the
+library's file and diff services. -/
+def reloadChecks (context : Context) : List Check :=
+  [{  name :=
+        "criterion 1: a file rewritten behind its buffer is reloaded by e: the reload job ends ok, show prints the new text, the scene's view shows it with the cursor on the same character of the unchanged second row, and the status line has neither the modified field nor any other"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          let (old, new) := ("one\ntwo\nthree\n", "one, and more\ntwo\nthree\n")
+          IO.FS.writeBinFile path old.toUTF8
+          withFileHost context [("open-note", path)] (extra := #[placing "cursor" 6]) fun session =>
+              do
+              unless ← session.ran "open-note" do
+                return false
+              -- Row 1, column 2: the "o" of "two".
+              session.ask [.run "cursor"]
+              let (_, placed) ← session.viewsAndStatus
+              IO.FS.writeBinFile path new.toUTF8
+              let reloaded ← session.ran Files.editName
+              let (echo, lines) ← session.viewsAndStatus
+              session.ask [.show]
+              let output ← session.output.get
+              -- The first line grew by ten bytes, so the "o" is at 16: on
+              -- row 1, column 2, of three rows, before and after.
+              let status :=
+                statusOf (name := "note.txt") (cursor := ⟨1, 2⟩) (lines := 3) (file := some path)
+              return reloaded && placed == #[viewLine old 6, status] &&
+                  output.contains s!"job 2 {Files.reloadJob}: ok" &&
+                  output.contains s!"text 1: {new.quote}" &&
+                  echo == "".quote &&
+                  lines == #[viewLine new 16, status] }]
+
+/-- Rewrites the file at `path` with `text` from another process, as agents
+and editors write: a temporary file beside it, renamed over it. Waits for
+the process to exit; whether it exited with 0. -/
+def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
+  let child ←
+    IO.Process.output
+        { cmd := "/bin/sh"
+          args :=
+            #["-c", "printf '%s' \"$2\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"", "sh", path.toString,
+              text] }
+  return child.exitCode == 0
+
+/-- Polls the scene every 10 ms, with `settle` and no fixed sleep as the
+assertion, until `done` holds of its view and status lines or `bound`
+milliseconds have passed: how long it took, and the lines it last saw. -/
+def Session.within (session : Session) (bound : Nat) (done : Array String → Bool) :
+    IO (Option Nat × Array String) := do
+  let start ← IO.monoMsNow
+  let mut lines := #[]
+  repeat
+    let (_, seen) ← session.viewsAndStatus
+    lines := seen
+    let took := (← IO.monoMsNow) - start
+    if done seen then
+      return (some took, lines)
+    if took > bound then
+      break
+    IO.sleep 10
+  return (none, lines)
+
+/-- The checks of auto-reload through the headless host on real files, with
+the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
+and 10. Measured on 2026-11-16 on macOS (FSEvents), over six runs: the
+rewrite was shown 66 to 83 ms after the other process exited, a median of
+about 80 ms, and the edited buffer marked in 78 to 84 ms; the 50 ms
+coalescing window is most of it. The bound is a second, and every wait is
+polled, never a fixed sleep. -/
+def autoReloadChecks (context : Context) : List Check :=
+  [{  name :=
+        "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown within a second; once the buffer is edited, another rewrite leaves its text and marks its status line within a second"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          let (old, new, again) := ("one\ntwo\n", "one\ntwo\nthree\n", "rewritten again\n")
+          IO.FS.writeBinFile path old.toUTF8
+          withFileHost context [("open-note", path)] fun session => do
+              unless ← session.ran "open-note" do
+                return false
+              -- With no argument the command toggles: off, so on.
+              session.ask [.run Files.autoReloadName]
+              let armed ←
+                eventually do
+                    return (← session.output.get).any fun line =>
+                        line.startsWith "job " && line.endsWith s!" {Files.followJob}: started"
+              unless armed do
+                return false
+              unless ← rewriteFromOutside path new do
+                return false
+              let (shown, saw) ← session.within 1000 (·.contains (viewLine new 0))
+              unless shown.isSome do
+                throw (IO.userError s!"the rewrite was not shown within a second: {saw}")
+              unless ← Event.post (.commit "x") do
+                return false
+              unless ← rewriteFromOutside path again do
+                return false
+              let edited := "x" ++ new
+              let (marked, last) ←
+                session.within 1000 fun lines =>
+                    lines ==
+                      #[viewLine edited 1,
+                        statusOf (name := "note.txt") (modified := true) (cursor := ⟨0, 1⟩)
+                          (lines := 3) (file := some path) (changed := true)]
+              unless marked.isSome do
+                throw (IO.userError s!"the edited buffer was not marked within a second: {last}")
+              return (← IO.FS.readBinFile path) == again.toUTF8 }]
 
 /-- The directives of one ex line of a script: the ex command run by its
 name, which asks, `line` committed into the minibuffer, and the accept
@@ -3577,7 +3729,7 @@ def exScriptChecks (context : Context) : List Check :=
                   exLineDirectives "q" ++
                   [.request .show])
           return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              output.contains s!"job 2 {Files.saveJob}: ok" &&
+              endedOk output Files.saveJob &&
               !listed output },
     { name :=
         "criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run"
@@ -3590,7 +3742,7 @@ def exScriptChecks (context : Context) : List Check :=
                 (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "wq" ++
                   [.join, .request .show])
           return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              output.contains s!"job 2 {Files.saveJob}: ok" &&
+              endedOk output Files.saveJob &&
               !listed output },
     { name :=
         "a script whose q is refused, for a file's buffer that was edited, runs its later lines: the show line prints the commands, the script has no failure, and the file is as it was"
@@ -4116,7 +4268,7 @@ keymap of its bindings. Its services are a fake clock's over a table of
 waits of its own, which no pump reads: nothing here starts a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
-        "the executable's hosts start with C-s-f bound to toggle-fullscreen and s-m to minimise-window, both registered for the owner compiled"
+        "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, each registered for the owner compiled; with switch-buffer, list-buffers and close-buffer registered for it, and the ex names b, ls and bd bound to them"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -4127,10 +4279,17 @@ def shippedChecks (_ : Unit) : List Check :=
         let bound (text : String) : Option Invocation :=
           (registry.keymap TestScheme.scheme).find? (keysOf text)
         let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        let ex (name : String) : Option String := (registry.ex? name).map (·.command)
         return bound "C-s-f" == some { command := "toggle-fullscreen" } &&
             bound "s-m" == some { command := "minimise-window" } &&
+            bound "s-q" == some { command := Ex.quitName } &&
             compiled "toggle-fullscreen" &&
-            compiled "minimise-window" },
+            compiled "minimise-window" &&
+            compiled Ex.quitName &&
+            [Buffers.switchName, Buffers.listName, Buffers.closeName].all compiled &&
+            ex "b" == some Buffers.switchName &&
+            ex "ls" == some Buffers.listName &&
+            ex "bd" == some Buffers.closeName },
     { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
       run := do
@@ -4333,6 +4492,8 @@ def checks (context : Context) : List Check :=
     themeChecks context ++
     environmentHostChecks context ++
     fileChecks context ++
+    reloadChecks context ++
+    autoReloadChecks context ++
     exScriptChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that

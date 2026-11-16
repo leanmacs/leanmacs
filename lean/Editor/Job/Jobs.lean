@@ -79,6 +79,18 @@ def removeOwner (jobs : Jobs) (owner : Config.Owner) : BaseIO (Array (Entry Hand
     entry.handle.settle
   return (removed, { jobs with table })
 
+/-- Cancels the job `id`: takes it out of the table, cancels it and releases
+what it holds, as `removeOwner` does for each of an owner's jobs. A job that
+had finished and was waiting for the editor thread has no entry after this,
+so `finish` finds nothing and its command never runs. Nothing for an id
+that is not in the table. -/
+def cancel (jobs : Jobs) (id : Nat) : BaseIO Jobs := do
+  let (entry?, table) := jobs.table.take id
+  if let some entry := entry? then
+    entry.handle.cancel
+    entry.handle.settle
+  return { jobs with table }
+
 /-- Cancels every job in the table and releases what each holds: for a
 runtime that is ending, which will deal with no more results. -/
 def cancelAll (jobs : Jobs) : BaseIO Unit := do

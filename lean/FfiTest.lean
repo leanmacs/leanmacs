@@ -2737,6 +2737,93 @@ def displayScenario (fixture : String) : IO UInt8 := do
       "ffi-test display: the published frame is the fixture, the scene comes back as sent, and three moves land on the frame's next row"
   return 0
 
+/-- The search of `text` for `pattern` from `offset`, forward when `forward`,
+on a snapshot of a document the library holds. -/
+def searched (text pattern : String) (forward : Bool := true) (offset : Nat := 0) :
+    IO Editor.Ffi.SearchAnswer := do
+  let document ← Editor.Ffi.Document.new text
+  (← document.snapshot).search pattern forward offset.toUSize
+
+/-- The matches of `pattern` in all of `text`, as offsets. -/
+def matched (text pattern : String) : IO (Option (List (Nat × Nat))) := do
+  let document ← Editor.Ffi.Document.new text
+  match ← (← document.snapshot).matches pattern 0 text.utf8ByteSize.toUSize with
+  | .ranges all =>
+    return some (all.toList.map fun range => (range.start.toNat, range.stop.toNat))
+  | _ =>
+    return none
+
+/-- What the library answers of the pattern syntax only it reads: the model
+answers literal patterns alone (`Editor/Text/Model.lean`), so these are
+checked on the real binding and nowhere else (`docs/design/rust-library.md`,
+"Search, as built"). -/
+def searchChecks (_ : Unit) : List Check :=
+  [{  name := "a search crosses: the match, and whether it wrapped, both ways"
+      run := do
+        return (← searched "a foo foo" "foo") == .found ⟨2, 5⟩ false &&
+            (← searched "a foo foo" "foo" true 6) == .found ⟨2, 5⟩ true &&
+            (← searched "a foo foo" "foo" false 6) == .found ⟨2, 5⟩ false &&
+            (← searched "abc" "x") == .notFound },
+    { name := "`.` is any character but a line feed, and `*` repeats greedily"
+      run := do
+        return (← matched "a.b axb a\nb" "a.b") == some [(0, 3), (4, 7)] &&
+            (← matched "baaac" "a*c") == some [(1, 5)] &&
+            (← matched "x*y" "x\\*y") == some [(0, 3)] },
+    { name := "a collection, negated or not, and a negated one never takes a line feed"
+      run := do
+        return (← matched "cat cot cut" "c[ao]t") == some [(0, 3), (4, 7)] &&
+            (← matched "cat cot c\nt" "c[^a]t") == some [(4, 7)] },
+    { name := "`\\|` is an alternative, the leftmost match winning"
+      run := return (← matched "bar foo baz" "foo\\|bar") == some [(0, 3), (4, 7)] },
+    { name := "`^` and `$` hold at each row's start and end"
+      run := do
+        return (← matched "ab\nab\nxab" "^ab") == some [(0, 2), (3, 5)] &&
+            (← matched "ab\nab\nabx" "ab$") == some [(0, 2), (3, 5)] },
+    { name := "a pattern of characters outside ASCII crosses whole, and its offsets are bytes"
+      run := return (← searched "日本 日本語" "日本語") == .found ⟨7, 16⟩ false },
+    { name :=
+        "a pattern the syntax refuses is answered with Vim's sentence: `~` with E33, an unmatched `\\(` with E54"
+      run := do
+        return (← searched "abc" "a~") ==
+              .invalid "E33: No previous substitute regular expression" &&
+            (← searched "abc" "\\(a") == .invalid "E54: Unmatched \\(" },
+    { name := "an offset that is not a position is refused, and a range that is not two in order"
+      run := do
+        let document ← Editor.Ffi.Document.new "héllo"
+        let snapshot ← document.snapshot
+        return (← snapshot.search "l" true 2) == .badPosition &&
+            (← snapshot.matches "l" 3 1) == .badRange &&
+            (← snapshot.matches "l" 0 99) == .badRange }]
+
+/-- The checks of the two reads of a pair as they cross: each tag reaches the
+kind it names, the three flags reach the walk, a string's two offsets come
+back in order, and nothing found and a refusal are told apart. What the
+walks answer is the library's rule, which the text contract pins on both
+sides (`TextContract.pairProperties`). -/
+def pairChecks (_ : Unit) : List Check :=
+  [{  name := "each bracket's tag reaches its kind, and the flags reach the walk"
+      run := do
+        let document ← Editor.Ffi.Document.new "([{a}]) \\(b\\)"
+        let snapshot ← document.snapshot
+        let quoted ← (← Editor.Ffi.Document.new "(a \")\" b)").snapshot
+        return (← snapshot.unmatched .round false true false false 0) == some (some 6) &&
+            (← snapshot.unmatched .square false true false false 1) == some (some 5) &&
+            (← snapshot.unmatched .curly true false false false 4) == some (some 2) &&
+            (← snapshot.unmatched .round true true false false 1) == some none &&
+            (← snapshot.unmatched .round false true true false 9) == some (some 12) &&
+            (← snapshot.unmatched .round false true false false 99) == none &&
+            (← quoted.unmatched .round false true false false 0) == some (some 4) &&
+            (← quoted.unmatched .round false true false true 0) == some (some 8) },
+    { name := "each quote's tag reaches its kind, and a string comes back as its two offsets"
+      run := do
+        let document ← Editor.Ffi.Document.new "\"a\" 'b' `c`"
+        let snapshot ← document.snapshot
+        return (← snapshot.quoted .double 1) == some (some ⟨0, 3⟩) &&
+            (← snapshot.quoted .single 5) == some (some ⟨4, 7⟩) &&
+            (← snapshot.quoted .back 9) == some (some ⟨8, 11⟩) &&
+            (← snapshot.quoted .double 9) == some none &&
+            (← snapshot.quoted .double 99) == none }]
+
 /-! ## Theme pictures
 
 Pictures the library's CPU renderer draws of a display's frame
@@ -3638,6 +3725,8 @@ def checks (_ : Unit) : List Check :=
     interruptChecks () ++
     fuzzyChecks () ++
     syntaxChecks () ++
+    searchChecks () ++
+    pairChecks () ++
     pictureChecks () ++
     themePicturesChecks () ++
     paddingChecks () ++

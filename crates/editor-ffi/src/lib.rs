@@ -131,11 +131,16 @@
 //! pattern and candidates in, and the indices of the candidates the
 //! pattern matches out, best first, as words
 //! ([`fuzzy::editor_ffi_fuzzy_rank`], with its one refusal in
-//! [`fuzzy::FuzzyStatus`]). In words, a
+//! [`fuzzy::FuzzyStatus`]). A search of a snapshot is another call that
+//! keeps nothing, and the example of an answer that is a sentence when the
+//! call refuses: a pattern and scalars in, and words out, or the bytes of
+//! the reason a pattern is refused ([`search::editor_ffi_snapshot_search`],
+//! [`search::editor_ffi_snapshot_matches`], with their statuses in
+//! [`search::SearchStatus`]; `tests/search.rs`). In words, a
 //! length or an offset the other side cannot hold is sent as the largest it
 //! can, which no text accepts, so it too is refused and never cut down.
 //! Tests: the unit tests in `text.rs`, `document.rs`, `snapshot.rs`,
-//! `motion.rs`, `words.rs`, `transaction.rs`, `log.rs`, `marker.rs`,
+//! `motion.rs`, `pair.rs`, `words.rs`, `transaction.rs`, `log.rs`, `marker.rs`,
 //! `inverse.rs` and `fuzzy.rs`, and, for a scene's words, in
 //! `display/wire.rs`;
 //! the tag tests in `events.rs`;
@@ -184,8 +189,9 @@
 //!
 //! A service is work the library does for a Lean job that takes time: a
 //! timer ([`timers`]), a load or a save of a file ([`files`]), a
-//! command run to its end ([`processes`]), and a watch on a file or a
-//! directory ([`watches`]). A job that waits must not hold a thread, so a request to
+//! command run to its end ([`processes`]), a watch on a file or a
+//! directory ([`watches`]), and a line diff of two snapshots ([`diffs`]).
+//! A job that waits must not hold a thread, so a request to
 //! a service is never a blocking call. Every service follows these rules:
 //!
 //! - **The caller names the request.** `start` takes an id the caller
@@ -323,6 +329,24 @@
 //! and by the contract on real files (`editor-watch-notify`'s
 //! `tests/contract.rs`). On the Lean side: the watch checks of `ffi-test`,
 //! and `contract-test`'s watch properties.
+//!
+//! Fifth example: the diff service ([`diffs`]). Its port is
+//! `editor-diff`'s [`editor_diff::LineDiff`], with
+//! [`editor_diff::fake::Lcs`] published for tests and the real adapter in a
+//! crate of its own (`editor-diff-imara`), which only the process's instance
+//! names. What a script is lives beside the port
+//! ([`editor_diff::script`]); the service decides only which request is
+//! worked when and what cancelling means, on a thread of its own so a long
+//! diff holds up no load. A start takes two snapshot handles
+//! ([`diffs::editor_ffi_diffs_start`]); the script is taken by its id once
+//! its completion has arrived ([`diffs::editor_ffi_diffs_take`]), as words.
+//! A document applies one ([`transaction::editor_ffi_document_apply_script`]).
+//!
+//! Tests: the unit tests of `diffs.rs`, on the port's fake (the order, a
+//! script taken once, cancelling, the limit reaching the script, and a
+//! script's words), and of `transaction.rs` for applying a script. On the
+//! Lean side: `contract-test`'s diff properties, which run the real engine
+//! through the service on real files.
 //!
 //! ## The syntax service
 //!
@@ -514,6 +538,7 @@
 
 pub mod clipboard;
 pub mod counter;
+pub mod diffs;
 pub mod display;
 pub mod document;
 pub mod events;
@@ -526,8 +551,10 @@ pub mod main_thread;
 pub mod marker;
 mod menu;
 pub mod motion;
+pub mod pair;
 pub mod processes;
 pub mod render;
+pub mod search;
 pub mod snapshot;
 pub mod syntax;
 pub mod text;

@@ -65,6 +65,7 @@ dark names, and `+` marks a definition appended after the shared ones
 | `mode-line.state.minibuffer` | base03 on cyan, bold | base03 on cyan, bold | lualine.nvim has no such mode; the shared mapping is kept, and the minibuffer's view draws no badge |
 | `mode-line.buffer` | base1, bold | base1, bold | Emacs `mode-line-buffer-id` base1, bold |
 | `mode-line.modified` | fg orange | fg orange | Neither theme has one. The shared mapping is kept |
+| `mode-line.changed` | fg red | fg red | Neither theme has one. The shared mapping is kept |
 | `mode-line.secondary` | fg base01 | fg base01 | The specification's "base01 secondary content" |
 | `minibuffer.prompt` | cyan, bold | + fg blue (bold kept) | Emacs `minibuffer-prompt` blue |
 | `minibuffer.candidate` | fg base01 | + fg base1 | Vim's wildmenu draws the other candidates in `StatusLine`, the status-line text (base1) |

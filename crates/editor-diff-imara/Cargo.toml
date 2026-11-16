@@ -1,0 +1,36 @@
+[package]
+name = "editor-diff-imara"
+version = "0.1.0"
+description = "The line diff port's real adapter, over imara-diff"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The line diff port, its fake, its contract and the core that strips,
+# bounds and trims. This crate implements the port, and its test
+# `tests/contract.rs` runs the contract on the adapter.
+editor-diff = { path = "../editor-diff" }
+# The line matcher: the histogram diff (patience's least-common-line
+# variant, ported from git) over interned lines, which falls back on
+# Myers's algorithm with git's heuristics for lines that repeat a lot, so
+# its time stays near linear; Helix and gitoxide diff with it. Kept behind
+# the port: no imara-diff type is public here, and `deny.toml` lets no
+# other crate depend on it. Pinned exactly; 0.2.0, released on 2025-06-14,
+# was the newest release on 2026-11-16. Its licence is Apache-2.0, and it
+# is used unmodified. It brings `hashbrown` (0.15, for its interner) and
+# `memchr`.
+#
+# Its one feature, `unified_diff`, on by default, prints a unified diff;
+# it is off, since the adapter prints nothing.
+#
+# Looked at on 2026-11-16 and set aside:
+#
+# - `similar` 2: Myers and patience over any sequence, with a deadline.
+#   It would do; imara-diff's own published benchmarks put its histogram
+#   ahead of `similar` on line diffs of real files (not measured here), and
+#   Helix, whose rope editor this one follows, uses imara-diff.
+# - `gix-imara-diff`: gitoxide's modified copy of this library, which
+#   tracks gitoxide's needs and not a diff port's.
+# - Our own Myers: an engine is what the library is for.
+imara-diff = { version = "=0.2.0", default-features = false }

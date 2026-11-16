@@ -1,0 +1,64 @@
+[package]
+name = "editor-search-regex"
+version = "0.1.0"
+description = "The search engine port's real adapter, over regex-cursor"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The engine port, its fake, its contract, the pattern tree and the rule
+# of which match a search answers. This crate implements the port, and its
+# test `tests/contract.rs` runs the contract on the adapter.
+editor-search = { path = "../editor-search" }
+# The regex engines: what a sequence of a pattern matches, searched over a
+# text held in pieces through a cursor, so a rope's chunks are searched
+# where they lie and no text is copied. It is a fork of `regex-automata`'s
+# engines (the meta regex, its lazy DFA and its PikeVM) behind a `Cursor`
+# trait that hands the engine one chunk at a time and moves forward and
+# back; Helix searches its rope with it. Kept behind the port: no
+# regex-cursor type is public here, and `deny.toml` lets no other crate
+# depend on it. Pinned exactly; 0.1.5 was the newest release on
+# 2026-11-16. Its licence is MIT OR Apache-2.0, and it is used unmodified.
+# It brings `regex-automata` (0.4.18 in the lock, which brings
+# `aho-corasick`), `memchr` and `log`.
+#
+# Its features. It has two, both on by default. `perf-inline` is on: it
+# marks the engines' hot functions inline, as `regex-automata`'s feature
+# of that name does, and changes no answer. `ropey` is off: it brings
+# ropey 1.x and a cursor over its rope, and `deny.toml` lets only
+# `editor-text` name ropey; the adapter writes its own cursor over the
+# pieces it is handed (`src/lib.rs`, `PiecesCursor`).
+#
+# Probed on 2026-11-16, in a scratch crate with these features, against
+# `regex-automata 0.4.18` and `regex-syntax 0.8.11`: a regex built from a
+# `Hir` found a literal across a chunk boundary, and a match that ends at
+# a row's end (`Look::EndLF`).
+#
+# Looked at on 2026-11-16 and set aside:
+#
+# - `regex` 1.13 and `regex-automata` alone: each searches one contiguous
+#   `&str`, so a search would copy the rope, or each row of it, and a
+#   backward search over a large file would copy it all.
+# - `fancy-regex`: backtracking and look-around, which could state `\<`
+#   and `\>` with the text's own word class anywhere in a pattern; but it
+#   searches a contiguous haystack too, and its backtracking has no
+#   linear-time bound.
+# - `pcre2` and `onig`: C libraries, which add a C build.
+# - Our own engine: an engine is what the library is for.
+#
+# Its bug, seen on 2026-11-16: 0.1.5 can panic (an overflow in
+# `Input::get_chunk_end`) when a search's span ends inside a chunk that is
+# not the haystack's last. The adapter's cursor shows the library no text
+# past the span's end, which changes no answer (`src/lib.rs`, "A search,
+# and the library's bug").
+regex-cursor = { version = "=0.1.5", default-features = false, features = ["perf-inline"] }
+# The regex syntax's tree, `Hir`, which the adapter builds from the
+# pattern tree of `editor-search`, so no pattern string in the library's
+# syntax is ever made and no pattern is parsed twice. The version
+# regex-cursor's engines are built against; pinned exactly to the one the
+# lock resolves, 0.8.11 on 2026-11-16. MIT OR Apache-2.0. Its default
+# features are left on: regex-cursor depends on it with them, so asking
+# for fewer here would change nothing in the build. The adapter uses none
+# of them: it builds classes from ranges and parses nothing.
+regex-syntax = "=0.8.11"

@@ -615,7 +615,7 @@ def classOf (kind : WordKind) (c : Char) : WordClass :=
   else
     match kind with
     | .bigWord => .word
-    | .word => if c.isAlphanum || c == '_' || c.val ≥ 0x80 then .word else .punctuation
+    | .word => if wordCharacter c then .word else .punctuation
 
 /-- Every cell of `text` with its class for words of `kind`, in order: the
 cells of each row's content, and then the row's line break, when it has one,
@@ -694,6 +694,365 @@ def motion? (text : String) (motion : Motion) (offset : Nat) : Option Nat :=
     | .rowsDown count column =>
       some (atColumn (rows[min (point.row + count) (rows.size - 1)]?.getD row) column)
 
+/-- A literal pattern, as the model reads one: the characters it finds, and
+whether a word must start where they start (`\<`) and end where they end
+(`\>`). -/
+structure Literal where
+  /-- Whether `\<` begins the pattern. -/
+  wordStart : Bool
+  /-- The characters, unescaped. -/
+  chars : List Char
+  /-- Whether `\>` ends the pattern. -/
+  wordEnd : Bool
+
+/-- The characters a literal pattern writes with a backslash before them,
+and that are not literal without one. -/
+def specials : List Char :=
+  ['\\', '.', '*', '[', '~', '^', '$']
+
+/-- `pattern` as a literal ("Search", in the rules of the port): every
+character is literal, none of `specials` and no line feed, or a backslash
+before one of `specials`, `/` or `]`, with an optional `\<` first and `\>`
+last; `none` for any other pattern and for the empty one. -/
+def literalOf (pattern : String) : Option Literal :=
+  let chars := pattern.toList
+  let (wordStart, chars) :=
+    match chars with
+    | '\\' :: '<' :: rest => (true, rest)
+    | _ => (false, chars)
+  let (wordEnd, chars) :=
+    match chars.reverse with
+    | '>' :: '\\' :: rest => (true, rest.reverse)
+    | _ => (false, chars)
+  let rec unescape : List Char → Option (List Char)
+    | [] => some []
+    | '\\' :: c :: rest =>
+      if specials.contains c || c == '/' || c == ']' then (unescape rest).map (c :: ·) else none
+    | c :: rest => if specials.contains c || c == '\n' then none else (unescape rest).map (c :: ·)
+  match unescape chars with
+  | some found => if found.isEmpty then none else some { wordStart, chars := found, wordEnd }
+  | none => none
+
+/-- What the model answers for a pattern that is not literal: it matches
+literal patterns only. -/
+def notLiteral : String :=
+  "the text model matches literal patterns only"
+
+/-- Every match of `literal` in `text`, in order, as the walk of the rules
+of the port finds them: from the text's start, the next occurrence that
+meets the word assertions is a match and the walk goes on from its end; an
+occurrence that does not meet them is passed over, and the walk goes on one
+character after its start. -/
+def literalMatches (text : String) (literal : Literal) : Array Extent :=
+  Id.run do
+    let chars := text.toList.toArray
+    let offsets :=
+      (chars.foldl (fun (acc : Array Nat × Nat) c => (acc.1.push acc.2, acc.2 + c.utf8Size))
+          (#[], 0)).1
+    let length := text.utf8ByteSize
+    let word (index : Nat) : Bool := (chars[index]?.map wordCharacter).getD false
+    let width := literal.chars.length
+    let mut found := #[]
+    let mut index := 0
+    while index + width ≤ chars.size do
+      let here := (chars.extract index (index + width)).toList == literal.chars
+      let starts := !literal.wordStart || word index && (index == 0 || !word (index - 1))
+      let ends := !literal.wordEnd || word (index + width - 1) && !word (index + width)
+      if here && starts && ends then
+        found := found.push ⟨offsets[index]!, (offsets[index + width]?).getD length⟩
+        index := index + width
+      else
+        index := index + 1
+    return found
+
+/-- Whether `offset` is a position of `text`: a character boundary within
+it. -/
+def isPosition (text : String) (offset : Nat) : Bool :=
+  (String.Pos.Raw.mk offset).IsValid text
+
+/-- The model's answer to a search of `text` for `pattern` from `offset`
+("Search", in the rules of the port), for a literal pattern. -/
+def search (text : String) (pattern : String) (forward : Bool) (offset : Nat) :
+    Except TextError Searched :=
+  if !isPosition text offset then .error .badPosition
+  else
+    match literalOf pattern with
+    | none => .ok (.invalid notLiteral)
+    | some literal =>
+      let all := literalMatches text literal
+      let found (extent : Extent) (wrapped : Bool) : Searched :=
+        .found extent.start extent.stop wrapped
+      if forward then
+        match all.find? (·.start > offset), all[0]? with
+        | some extent, _ => .ok (found extent false)
+        | none, some first => .ok (found first true)
+        | none, none => .ok .notFound
+      else
+        match (all.filter (·.start < offset)).back?, all.back? with
+        | some extent, _ => .ok (found extent false)
+        | none, some last => .ok (found last true)
+        | none, none => .ok .notFound
+
+/-- The model's answer to the matches of `pattern` in `text` that start from
+`start` up to `stop`, for a literal pattern. -/
+def matchesIn (text : String) (pattern : String) (start stop : Nat) : Except TextError Matched :=
+  if !(isPosition text start && isPosition text stop && start ≤ stop) then .error .badRange
+  else
+    match literalOf pattern with
+    | none => .ok (.invalid notLiteral)
+    | some literal =>
+      .ok
+        (.ranges
+          ((literalMatches text literal).filter fun extent =>
+            start ≤ extent.start && extent.start < stop))
+
+/-- The characters of `text`, each with the byte offset it starts pos. -/
+def charsAt (text : String) : Array (Nat × Char) :=
+  (text.toList.foldl
+      (fun (chars, walked) char => (chars.push (walked, char), walked + char.utf8Size)) (#[], 0)).1
+
+/-- The byte at `here` of `bytes` as a number, or 0, Vim's NUL, at or past
+`stop`, where a row's content ends. -/
+def byteIn (bytes : ByteArray) (stop here : Nat) : Nat :=
+  if here < stop then bytes[here]!.toNat else 0
+
+/-- How many backslashes stand right before `here` of `bytes`, after the
+offset `start` a row starts at. -/
+def backslashesBefore (bytes : ByteArray) (start here : Nat) : Nat :=
+  Id.run do
+    let mut run := here
+    while run > start && bytes[run - 1]! == 92 do
+      run := run - 1
+    return here - run
+
+/-- How long the character is whose first byte is `byte`, in bytes. -/
+def leadWidth (byte : Nat) : Nat :=
+  if byte < 0x80 then 1 else if byte < 0xE0 then 2 else if byte < 0xF0 then 3 else 4
+
+/-- Vim 9.1's count of the double quotes of the row of `bytes` from `start`
+to `stop` (`do_quotes`, in `findmatchlimit`): whether it is even, and
+whether an even number stands before the offset `looked` at, which is true
+when the count passes over that offset (`at_start`). A double quote is
+counted unless a backslash escapes it or a single quote is on each side of
+it. -/
+def rowQuotes (bytes : ByteArray) (start stop looked : Nat) : Bool × Bool :=
+  Id.run do
+    let mut count := 0
+    let mut evenAtStart := true
+    let mut walked := start
+    while walked < stop do
+      if walked == looked then
+        evenAtStart := count % 2 == 0
+      let byte := byteIn bytes stop walked
+      if
+          byte == 34 &&
+            (walked == start || byteIn bytes stop (walked - 1) != 39 ||
+              byteIn bytes stop (walked + 1) != 39) then
+        count := count + 1
+      if byte == 92 && byteIn bytes stop (walked + 1) != 0 then
+        walked := walked + 1
+      walked := walked + 1
+    return (count % 2 == 0, evenAtStart)
+
+/-- The model's answer to the bracket a walk leaves unbalanced ("Pairs", in
+the rules of the port): Vim 9.1's `findmatchlimit`, over the bytes of
+`text` a row here a time, from `offset`, or from where its row's content ends
+when `offset` is in the line break. -/
+def unmatched? (text : String) (bracket : Bracket) (opening forward escaped skipQuoted : Bool)
+    (offset : Nat) : Except TextError (Option Nat) :=
+  if !isPosition text offset then .error .badPosition
+  else
+    let bytes := text.toUTF8
+    let rows := (rowsOf text).map fun row => (row.start, row.content)
+    let (sought, other) :=
+      if opening then (bracket.opening.toNat, bracket.closing.toNat)
+      else (bracket.closing.toNat, bracket.opening.toNat)
+    .ok <|
+      Id.run do
+        let mut row := (rows.findIdx? (·.1 > offset)).getD rows.size - 1
+        let mut start := rows[row]!.1
+        let mut stop := rows[row]!.2
+        let mut here := min offset stop
+        -- Vim's `do_quotes` (counted, and read), `inquote` and
+        -- `start_in_quotes`.
+        let mut counted := false
+        let mut read := false
+        let mut inside := false
+        let mut started : Option Bool := none
+        let mut depth := 0
+        while true do
+          let mut entered := false
+          if forward then
+            if here == stop then
+              if row + 1 ≥ rows.size then
+                return none
+              row := row + 1
+              start := rows[row]!.1
+              stop := rows[row]!.2
+              here := start
+              entered := true
+            else
+              here := here + leadWidth bytes[here]!.toNat
+          else if here == start then
+            if row == 0 then
+              return none
+            row := row - 1
+            start := rows[row]!.1
+            stop := rows[row]!.2
+            here := stop
+            entered := true
+          else
+            here := here - 1
+            while bytes[here]! &&& 0xC0 == 0x80 do
+              here := here - 1
+          if skipQuoted && (entered || !counted) then
+            counted := true
+            let (even, evenAtStart) :=
+              rowQuotes bytes start stop (if forward then here else here + 1)
+            read := even
+            if !even then
+              inside := false
+              -- A string that goes on across this row's line break.
+              if byteIn bytes stop (stop - 1) == 92 then
+                read := true
+                if started.isNone then
+                  inside := true
+                  started := some true
+                else if !forward then
+                  inside := true
+              -- And one that goes on across the line break before it.
+              if row > 0 then
+                let (aboveStart, aboveStop) := rows[row - 1]!
+                if aboveStop > aboveStart && byteIn bytes aboveStop (aboveStop - 1) == 92 then
+                  read := true
+                  if started.isNone then
+                    inside := evenAtStart
+                    if inside then
+                      started := some true
+                  else if forward then
+                    inside := true
+          if started.isNone then
+            started := some false
+          if here == stop then
+            if skipQuoted && (here == start || byteIn bytes stop (here - 1) != 92) then
+              inside := false
+              started := some false
+            continue
+          let byte := bytes[here]!.toNat
+          if skipQuoted then
+            if byte == 34 then
+              if read && backslashesBefore bytes start here % 2 == 0 then
+                inside := !inside
+                started := some false
+              continue
+            -- 'x' and '\x' are passed over.
+            if byte == 39 then
+              if forward then
+                if byteIn bytes stop (here + 1) != 0 then
+                  if
+                      byteIn bytes stop (here + 1) == 92 && byteIn bytes stop (here + 2) != 0 &&
+                        byteIn bytes stop (here + 3) == 39 then
+                    here := here + 3
+                    continue
+                  else if byteIn bytes stop (here + 2) == 39 then
+                    here := here + 2
+                    continue
+              else if here - start > 1 then
+                if byteIn bytes stop (here - 2) == 39 then
+                  here := here - 2
+                  continue
+                else if
+                  byteIn bytes stop (here - 2) == 92 && here - start > 2 &&
+                    byteIn bytes stop (here - 3) == 39 then
+                  here := here - 3
+                  continue
+          if
+              (!inside || started == some true) && (byte == sought || byte == other) &&
+                (backslashesBefore bytes start here % 2 == 1) == escaped then
+            if byte == other then
+              depth := depth + 1
+            else if depth == 0 then
+              return some here
+            else
+              depth := depth - 1
+        return none
+
+/-- The first quote `quote` among `line`, the characters of a row's content,
+at or after the index `first`, passing over each character a backslash
+escapes when `escapes` (Vim's `find_next_quote`). -/
+def nextQuote (line : Array (Nat × Char)) (quote : Char) (first : Nat) (escapes : Bool) :
+    Option Nat :=
+  Id.run do
+    let mut index := first
+    while index < line.size do
+      let char := line[index]!.2
+      if escapes && char == '\\' then
+        index := index + 2
+      else if char == quote then
+        return some index
+      else
+        index := index + 1
+    return none
+
+/-- The nearest quote `quote` among `line` before the index `first` that is
+not escaped, or 0 when there is none (Vim's `find_prev_quote`): a character
+after an odd number of backslashes is passed over with them. -/
+def previousQuote (line : Array (Nat × Char)) (quote : Char) (first : Nat) : Nat :=
+  Id.run do
+    let mut index := first
+    while index > 0 do
+      index := index - 1
+      let run := ((line.extract 0 index).toList.reverse.takeWhile (·.2 == '\\')).length
+      if run % 2 == 1 then
+        index := index - run
+      else if line[index]!.2 == quote then
+        break
+    return index
+
+/-- The model's answer to the quoted string round `offset` ("Pairs", in the
+rules of the port): Vim's walk over the characters of `offset`'s row. -/
+def quoted? (text : String) (quote : Quote) (offset : Nat) : Except TextError (Option Extent) :=
+  if !isPosition text offset then .error .badPosition
+  else
+    let chars := charsAt text
+    -- The row: from after the last line feed before the offset to the next
+    -- line feed, without a carriage return right before it.
+    let start :=
+      ((chars.filter fun (pos, char) => char == '\n' && pos < offset).back?.map (·.1 + 1)).getD 0
+    let feed := (chars.find? fun (pos, char) => char == '\n' && pos ≥ start).map (·.1)
+    let row := chars.filter fun (pos, _) => pos ≥ start && feed.all (pos < ·)
+    let line := if feed.isSome && (row.back?.map (·.2)) == some '\r' then row.pop else row
+    let cursor := (line.findIdx? (·.1 ≥ offset)).getD line.size
+    let q := quote.char
+    let extent (opening closing : Nat) : Extent := ⟨line[opening]!.1, line[closing]!.1 + 1⟩
+    let found : Option Extent :=
+      if (line[cursor]?.map (·.2)) == some q then
+        -- The pairs from the row's start, until one holds the cursor.
+        let rec pairs (first : Nat) (fuel : Nat) : Option Extent :=
+          match fuel with
+          | 0 => none
+          | fuel + 1 => do
+            let opening ← nextQuote line q first false
+            if opening > cursor then
+              none
+            else
+              let closing ← nextQuote line q (opening + 1) true
+              if cursor ≤ closing then
+                some (extent opening closing)
+              else
+                pairs (closing + 1) fuel
+        pairs 0 (line.size + 1)
+      else do
+        let before := previousQuote line q cursor
+        let opening ←
+          if (line[before]?.map (·.2)) == some q then
+            some before
+          else
+            nextQuote line q before false
+        let closing ← nextQuote line q (opening + 1) true
+        some (extent opening closing)
+    .ok found
+
 /-- The model's answer to `query` about `content`. -/
 def answer (content : TextContent) : (query : TextQuery) → Except TextError query.Answer
   | .revision => .ok content.revision
@@ -724,6 +1083,11 @@ def answer (content : TextContent) : (query : TextQuery) → Except TextError qu
     match motion? content.contents motion offset with
     | some position => .ok position
     | none => .error .badPosition
+  | .search pattern forward offset => search content.contents pattern forward offset
+  | .matches pattern start stop => matchesIn content.contents pattern start stop
+  | .unmatched bracket opening forward escaped skipQuoted offset =>
+    unmatched? content.contents bracket opening forward escaped skipQuoted offset
+  | .quoted quote offset => quoted? content.contents quote offset
 
 end TextModel
 
@@ -1185,6 +1549,52 @@ def adopt (model : TextModel) (snapshot : JobSnapshotId) :
         snapshotOf := (padded model.snapshotOf model.snapshots.size).push none })
   | none => (.error .noSuchSnapshot, model)
 
+/-- The changes that apply `script` to a text, taking what it puts in from
+`source`: `none` when the steps do not walk the whole of `source`, an insert
+does not start where the walk is, or a step starts or stops at an offset that
+is not a position of it. Whether the changes fit the text is `apply`'s to
+say. -/
+def scriptChanges (script : Diff.Script) (source : String) : Option (Array Change) := do
+  let mut offset := 0
+  let mut changes := #[]
+  for step in script do
+    match step with
+    | .retain count =>
+      offset := offset + count
+      changes := changes.push (.retain count)
+    | .delete count =>
+      changes := changes.push (.delete count)
+    | .insert start count =>
+      unless start == offset do
+        none
+      changes := changes.push (.insert (← slice source start (start + count)))
+      offset := start + count
+    unless isPosition source offset do
+      none
+  unless offset == source.utf8ByteSize do
+    none
+  return changes
+
+/-- The model's answer to applying `script` to the text `id`, taking what it
+puts in from `source`, with `origin` as who made the edit, unless its
+revision is not `base`; and the model after it. The refusals are looked for
+in the order the port gives. An accepted script is the transaction of its
+changes with no selection, so it goes through `apply` and is one edit like
+any other. -/
+def applyScript (model : TextModel) (id : TextId) (base : Nat) (source : TextSource)
+    (script : Diff.Script) (origin : Origin) : Except TextError Nat × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    if content.revision != base then (.error .moved, model)
+    else
+      match model.lookup source with
+      | .error refusal => (.error refusal, model)
+      | .ok taken =>
+        match scriptChanges script taken.contents with
+        | none => (.error .badChange, model)
+        | some changes => model.apply id { changes } origin
+
 /-- The model's answer to each request, and the model after it. -/
 def handle : (request : TextRequest) → TextModel → request.Reply × TextModel
   | .create initial, model => model.made initial
@@ -1224,6 +1634,8 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
   | .dropInverses id first last, model => model.dropInverses id first last
   | .copy source, model => model.copy source
   | .adopt snapshot, model => model.adopt snapshot
+  | .applyScript id base source script origin, model =>
+    model.applyScript id base source script origin
 
 end TextModel
 

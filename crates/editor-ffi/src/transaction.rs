@@ -18,6 +18,7 @@
 //! are the text's rules, pinned by `editor-text`'s own tests. This module
 //! reads the words and forwards.
 
+use editor_diff::Step;
 use editor_text::{
     ApplyError, ChangeSet, Origin, Revision, Selection, SelectionRange, Shape, Transaction,
 };
@@ -187,6 +188,9 @@ pub enum ApplyStatus {
     BadSelection = 2,
     /// Refused: the words could not be read.
     Unreadable = 3,
+    /// Refused: an edit script was made for a revision the text has moved
+    /// past ([`Document::apply_script`]).
+    Moved = 4,
 }
 
 /// The result of applying a transaction: one record, filled in one call.
@@ -275,6 +279,139 @@ pub unsafe extern "C" fn editor_ffi_document_apply(
     let applied = unsafe { &*document }.apply_words(words, inserted, origin);
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(applied) };
+}
+
+/// The edit script `words` spell, in the layout a diff's script crosses
+/// back to Lean in ([`crate::diffs`], "How a script crosses"): the count of
+/// steps, then a kind (0 a retain, 1 a delete, 2 an insert) and two
+/// numbers for each. `None` when they cannot be read, or a kind is
+/// unknown, or a retain or a delete has a second number that is not 0.
+pub fn decode_script(words: &[u8]) -> Option<Vec<Step>> {
+    let mut reader = Reader::new(words)?;
+    let mut steps = Vec::new();
+    for _ in 0..reader.count(3)? {
+        let (kind, first, second) = (reader.word()?, reader.size()?, reader.size()?);
+        steps.push(match (kind, second) {
+            (0, 0) => Step::Retain(first),
+            (1, 0) => Step::Delete(first),
+            (2, count) => Step::Insert {
+                start: first,
+                count,
+            },
+            _ => return None,
+        });
+    }
+    reader.finish()?;
+    Some(steps)
+}
+
+/// The change set that applies `steps` to a text, taking what it puts in
+/// from `source`: `None` when the steps do not walk the whole of `source`,
+/// an insert does not start where its walk is, or a step starts or stops
+/// inside a character of it. Whether the change set fits the text, at its
+/// character boundaries, is the text's to say. It copies the bytes it puts
+/// in from rope to rope, a piece at a time, and searches nothing.
+fn script_changes(steps: &[Step], source: &editor_text::Snapshot) -> Option<ChangeSet> {
+    let mut changes = ChangeSet::new();
+    let mut at = 0usize;
+    for step in steps {
+        match *step {
+            Step::Retain(count) => {
+                at = at.checked_add(count)?;
+                changes.retain(count);
+            }
+            Step::Delete(count) => changes.delete(count),
+            Step::Insert { start, count } => {
+                if start != at {
+                    return None;
+                }
+                let stop = start.checked_add(count)?;
+                for piece in source.chunks_in(start..stop)? {
+                    changes.insert(piece);
+                }
+                at = stop;
+            }
+        }
+        if !source.is_char_boundary(at) {
+            return None;
+        }
+    }
+    (at == source.len()).then_some(changes)
+}
+
+impl Document {
+    /// Applies the edit script `steps` as one transaction with no
+    /// selection, taking what it puts in from `source` and recording
+    /// `origin` as who made the edit, unless the text has moved past the
+    /// revision `base`. Refused, changing nothing, with
+    /// [`ApplyStatus::Moved`] when the text's revision is not `base`, and
+    /// then with [`ApplyStatus::BadChange`] when the steps do not walk the
+    /// whole of the text and of `source`, at character boundaries.
+    pub fn apply_script(
+        &self,
+        base: u64,
+        source: &editor_text::Snapshot,
+        steps: &[Step],
+        origin: Origin,
+    ) -> Result<Revision, ApplyStatus> {
+        let mut text = self.lock();
+        if text.current().revision().get() != base {
+            return Err(ApplyStatus::Moved);
+        }
+        let changes = script_changes(steps, source).ok_or(ApplyStatus::BadChange)?;
+        text.apply(&Transaction::new(changes), origin)
+            .map_err(|refused| match refused {
+                ApplyError::BadChange => ApplyStatus::BadChange,
+                ApplyError::BadSelection => ApplyStatus::BadSelection,
+            })
+    }
+}
+
+/// [`Document::apply_script`] for C: applies to `document` the script
+/// spelled by the `words_len` bytes at `words` ([`decode_script`]),
+/// taking what it puts in from `source`, with `origin`, unless the text's
+/// revision is not `base`, and fills `out`. Words that cannot be read are
+/// [`ApplyStatus::Unreadable`], looked for after the revision.
+///
+/// # Safety
+///
+/// `document` is a document handle and `source` a snapshot handle this
+/// library handed out and has not taken back; `words` points to
+/// `words_len` readable bytes; and `out` points to a writable
+/// [`RawApplied`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_document_apply_script(
+    document: *const Document,
+    base: u64,
+    source: *const crate::snapshot::Snapshot,
+    words: *const u8,
+    words_len: usize,
+    origin: u64,
+    out: *mut RawApplied,
+) {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let words = unsafe { crate::words::borrow(words, words_len) };
+    // SAFETY: the caller guarantees `document` and `source` are live.
+    let (document, source) = unsafe { (&*document, (*source).text()) };
+    let applied = if document.lock().current().revision().get() != base {
+        Err(ApplyStatus::Moved)
+    } else {
+        decode_script(words)
+            .ok_or(ApplyStatus::Unreadable)
+            .and_then(|steps| document.apply_script(base, source, &steps, Origin::new(origin)))
+    };
+    let raw = match applied {
+        Ok(revision) => RawApplied {
+            status: ApplyStatus::Applied as u64,
+            revision: revision.get(),
+        },
+        Err(status) => RawApplied {
+            status: status as u64,
+            revision: 0,
+        },
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
 }
 
 #[cfg(test)]
@@ -641,5 +778,105 @@ mod tests {
         });
 
         assert_eq!(document.read(), "é".repeat(THREADS * EDITS));
+    }
+
+    /// The snapshot of a text holding `text`.
+    fn source(text: &str) -> editor_text::Snapshot {
+        editor_text::Text::from(text).snapshot()
+    }
+
+    #[test]
+    fn a_script_is_applied_as_one_transaction_taking_its_inserts_from_the_source() {
+        let document = Document::new("one\ntwo\n");
+        let steps = [
+            Step::Retain(6),
+            Step::Delete(1),
+            Step::Insert { start: 6, count: 3 },
+            Step::Retain(1),
+        ];
+        let revision = document
+            .apply_script(0, &source("one\ntwéx\n"), &steps, Origin::new(2))
+            .unwrap();
+        assert_eq!(revision.get(), 1);
+        assert_eq!(document.read(), "one\ntwéx\n");
+    }
+
+    #[test]
+    fn a_script_for_a_revision_the_text_has_moved_past_is_refused() {
+        let document = Document::new("ab");
+        document.replace(0, 0, "x");
+        assert_eq!(
+            document.apply_script(0, &source("ab"), &[Step::Retain(2)], Origin::new(2)),
+            Err(ApplyStatus::Moved)
+        );
+        assert_eq!(document.read(), "xab");
+    }
+
+    #[test]
+    fn a_script_that_does_not_walk_both_texts_whole_at_boundaries_is_refused() {
+        let document = Document::new("é\n");
+        let refused = |steps: &[Step], from: &str| {
+            document.apply_script(0, &source(from), steps, Origin::new(2))
+        };
+        // Short of the source, and of the text.
+        assert_eq!(
+            refused(&[Step::Retain(3)], "é\nx"),
+            Err(ApplyStatus::BadChange)
+        );
+        assert_eq!(
+            refused(&[Step::Retain(2)], "é\n"),
+            Err(ApplyStatus::BadChange)
+        );
+        // An insert inside a character of the source, and a delete inside
+        // one of the text.
+        assert_eq!(
+            refused(
+                &[
+                    Step::Retain(1),
+                    Step::Delete(1),
+                    Step::Insert { start: 1, count: 1 },
+                    Step::Retain(1)
+                ],
+                "è\n"
+            ),
+            Err(ApplyStatus::BadChange)
+        );
+        // An insert that does not start where the walk of the source is.
+        assert_eq!(
+            refused(
+                &[Step::Insert { start: 1, count: 1 }, Step::Retain(3)],
+                "xé\n"
+            ),
+            Err(ApplyStatus::BadChange)
+        );
+        assert_eq!(document.read(), "é\n");
+        assert_eq!(document.snapshot().revision().get(), 0);
+        // A retain that stops inside a character of the source.
+        let plain = Document::new("abc");
+        assert_eq!(
+            plain.apply_script(
+                0,
+                &source("é"),
+                &[Step::Retain(1), Step::Delete(1), Step::Retain(1)],
+                Origin::new(2)
+            ),
+            Err(ApplyStatus::BadChange)
+        );
+    }
+
+    #[test]
+    fn a_scripts_words_decode_to_its_steps() {
+        let steps = vec![
+            Step::Retain(4),
+            Step::Delete(2),
+            Step::Insert { start: 4, count: 3 },
+        ];
+        assert_eq!(
+            decode_script(&crate::diffs::script_words(&steps)),
+            Some(steps)
+        );
+        assert_eq!(decode_script(&buffer(&[1, 0, 4, 9])), None);
+        assert_eq!(decode_script(&buffer(&[1, 7, 4, 0])), None);
+        assert_eq!(decode_script(&buffer(&[2, 0, 4, 0])), None);
     }
 }

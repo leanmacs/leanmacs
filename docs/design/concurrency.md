@@ -23,7 +23,7 @@ process, its runtime is the only one that schedules editor code.
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
 | **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
 | **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
-| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The syntax worker is built: one thread named `syntax`, started by `editor-ffi` at the first attach and blocked with no deadline while it has nothing to parse, which reparses each attached document from snapshots and the edit log's patches and holds no editor state. A result is tagged with the revision it parsed and handed out only if no newer revision has been told by then; a stale one is never delivered, and is only the base of the next reparse (`rust-library.md`, "Syntax, as built"). Highlight queries do not run on the worker: they run at frame time, on the thread that lays the frame out (the editor thread, in Lean's publish), over the rows shown only, from the tree delivered last, carried through the edits since; no lock is nested on that path, and none of it waits for a parse (`rust-library.md`, "Highlights, as built"). Diff is not built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
+| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The syntax worker is built: one thread named `syntax`, started by `editor-ffi` at the first attach and blocked with no deadline while it has nothing to parse, which reparses each attached document from snapshots and the edit log's patches and holds no editor state. A result is tagged with the revision it parsed and handed out only if no newer revision has been told by then; a stale one is never delivered, and is only the base of the next reparse (`rust-library.md`, "Syntax, as built"). Highlight queries do not run on the worker: they run at frame time, on the thread that lays the frame out (the editor thread, in Lean's publish), over the rows shown only, from the tree delivered last, carried through the edits since; no lock is nested on that path, and none of it waits for a parse (`rust-library.md`, "Highlights, as built"). The diff is built: the diff service, `editor-diff-imara`'s line diff of two snapshots on a thread of its own (`editor-diffs`), answering a job's `diff` request through the completion queue, so a long diff holds up neither a load nor the editor thread, which only applies the script it answers. Fuzzy matching over long lists is not built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
 
 Rust never calls Lean. The main thread and the services push events onto a
 queue, and the editor thread pulls them with a blocking call. Measured in
@@ -532,8 +532,8 @@ command cannot end the process.
 - **The step says stop.** Every step that publishes a scene says stop
   when the state it left leaves, and to go on otherwise. The scene is
   published first, so a quitting command's scene is the last one. A step
-  that says stop already ends a host's loop, as a window's close request
-  does: nothing new crosses to the host. The executable's `main` then
+  that says stop already ends a host's loop: nothing new crosses to the
+  host. The executable's `main` then
   quits the queues and exits, as it does at the end of a script.
 - **A quit that cannot go ahead is withdrawn when the scene is made.**
   After the histories were told their texts' revisions, so that "unsaved"
@@ -550,8 +550,20 @@ command cannot end the process.
 - **Set aside: a one-shot output of the step**, like the jobs to start. A
   quit that waits for a save must outlive the command that asked, so it
   is state.
-- **Not changed: a window's close request** stops the loop whatever is
-  unsaved. The rule here could be applied there; it is not this phase's.
+- **A window's close request is a quit by `q`'s rule.** The loop runs the
+  quit rule itself for it (`Ex.closeRequested`), as it runs a delivered
+  command: guarded, rolled back, and followed by a scene, with the echo
+  area not cleared first. So it is refused, with `quit: <name> has unsaved
+  changes` in the bottom row and the loop running, while a buffer that
+  holds a file has unsaved changes; it waits for a save in flight; and it
+  is withdrawn by a save that is refused. With nothing unsaved its step
+  publishes one scene, the last, and says stop, and the host closes the
+  window once that scene is drawn. Command-Q is the key `s-q`, bound to
+  the command `quit`, so it follows the same rule; on macOS the
+  application menu's Quit takes the chord first, and it reaches the loop
+  as the system's quit (below), which runs `quit` too. The loop runs the
+  rule and not the command registered as `quit`, so a host handed no ex
+  command still closes its window.
 
 **The system's quit is put through `quit`** (decided and built
 2026-11-15, the macOS integration roadmap's phase 3:
@@ -641,8 +653,10 @@ waits for a save in flight.**
 - **Set aside: quitting at once.** The host cancels its jobs when its
   loop ends, the save among them.
 - **A quit that waits can wait for ever**, if a save's job never ends.
-  The editor goes on answering, and a window's close request still ends
-  it.
+  The editor goes on answering, and a window's close request waits as `q`
+  does, so the close button no longer ends it either: the way out is the
+  system's force quit. That is the price of the close button following
+  the rule.
 
 **`save-and-quit` is one command: it starts the save, and asks to quit
 only if the save started.**
@@ -801,6 +815,14 @@ and changes on disk:
   from its first change has passed. A `next` of a watch the job does not
   hold is `noSuchWatch`, answered at once. A watch does not outlive its
   job.
+- **A line diff is a request a job awaits** (`lean/Editor/Diff.lean`):
+  `Diff.lines` diffs two snapshots, named as a save names its source, under
+  a line limit that is the editor's policy, a wait like a load's completed
+  by the library's diff service, and replies with an edit script, byte
+  counts and ranges and never text, or a refusal as a value. A command
+  applies the script (`TextId.applyScript`) in time linear in its steps and
+  the bytes it puts in, refused if the text has moved past the revision the
+  script was made for.
 - **No request carries a promise.** A request is plain data; how a wait is
   completed is the runner's business. A snapshot of editor state arrives as
   a further request of this port, each with a reply type, a
@@ -883,7 +905,21 @@ transaction through. Where those come from is open.
   - the host starts each, for the owner that registered it, and the result
     comes back as above, through the queue's wake-up. Events queued before
     the wake-up are handled before it, by the queue's order, so a job's
-    result never lands in the middle of what the user typed meanwhile.
+    result never lands in the middle of what the user typed meanwhile;
+  - **the loop starts jobs of its own** too, handed back with the step's
+    the same way: after each publish it starts one `check-files` for the
+    file buffers that are due a check for a change on disk, as the frame
+    gains the focus, as a buffer is switched to and at a buffer's first edit
+    (`lean/Editor/Loop.lean`, "Files that changed on disk"), where that job
+    is registered. It is one stat a file, and no watch. Under auto-reload,
+    which is off by default, it also starts a `follow-file` job for each
+    file buffer, keyed by the buffer (`JobStart.key`), and hands back the
+    keys of follows to end (`Loop.Stepped.cancels`);
+  - **a keyed job is cancelled by its key**: the host keeps a map from key
+    to job id, starting a job of a key cancels the running one of that key,
+    and a cancel ends the job, finished and not delivered or not, by
+    `Jobs.cancel`, which takes it out of the table, so its command never
+    runs. Before this only removing an owner or shutdown cancelled a job.
   
   An owner other than the registering one (a buffer or a view, whose jobs
   end with it) is not built. On the models the loop's driver
@@ -988,6 +1024,7 @@ prompt's candidates by its phase 14 ("Candidates", below).
 | The listing, made before each scene from what the fuzzy matcher answers | `lean/Editor/Loop.lean` ("Prompts": `Loop.listed`), `lean/Editor/Fuzzy.lean` |
 | `minibuffer-next`, `minibuffer-previous` and the roles the mode fills with them | `lean/Editor/Minibuffer.lean` |
 | The ex names as the ex line's candidates | `lean/Editor/Ex.lean` (`exCommand`), `lean/Editor/Api.lean` (`exNames`) |
+| An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `lean/Editor/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
 
 Pinned on the models by `ModelTest.stateChecks` and `stateRequestChecks`
 (the state's operations), `promptChecks` (the loop, its host on the
@@ -1000,6 +1037,16 @@ host over the real library and the real elaborator by
 `ConfigTest.promptChecks`; and on the executable by the fixtures
 `tests/headless/prompt` and, for candidates with the library's matcher,
 `tests/headless/candidates`.
+
+**An answer can be the input scheme's.** A key whose edit needs a text
+typed in the minibuffer, as Vim's `/` needs its pattern, cannot complete at
+the key, and the grammar has no command to name as a continuation: the
+edit is the scheme's. So the scheme yields `minibuffer-ask`, which opens a
+prompt whose continuation is the reserved name `InputScheme.answerName`;
+`Loop.invoke`, the one entry every host already runs an answer through,
+hands that answer to the scheme (`InputScheme.answered`) and runs the
+invocation the scheme yields for it as it runs a key's. No host changes,
+and no command can be registered under the reserved name.
 
 A command can need a string from the user: a file name, an ex command. It
 cannot wait for one. A command may not block, and while a command runs no

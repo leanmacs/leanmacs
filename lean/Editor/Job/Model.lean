@@ -27,6 +27,9 @@ here.
   there, so whoever plays a command, a job and the job's command hands the
   snapshots across as values: the published ones in, and what the job held
   out.
+- A diff request is answered by the model of the files (`FileModel.diff`),
+  which holds the snapshots it names, with the model of a line diff
+  (`Editor/Diff/Model.lean`). It moves no clock and changes nothing.
 - A process request is answered by the model of the processes the job runs
   (`JobModel.processes`, `Editor/Process/Model.lean`), which is part of this
   model. A scripted run moves the clock on by the time it takes, as a wait
@@ -101,6 +104,7 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     (reply,
       { model with
         fileWatches, now })
+  | .diff request, model => (model.files.diff request, model)
   | .environment request, model =>
     let (reply, environments, said) := model.environments.handle request
     (reply,
@@ -136,6 +140,45 @@ def run {α : Type} : Program jobPort α → JobModel → Option α × JobModel
         if instant ≤ after.now then (none, { after with now := instant }.ended)
         else run (next reply) after
       | none => run (next reply) after
+
+/-- How a run that may park ended: with its value, or `none` if it was
+cancelled, and the model after its last request; or parked, at a `next` of
+the watch `watch` that nothing recorded can answer yet, with the model as it
+then was and the rest of the program. -/
+inductive Ran (α : Type) where
+  /-- It ended. -/
+  | ended (value : Option α) (model : JobModel)
+  /-- It is parked at a `next` of `watch`. -/
+  |
+  parked (watch : Nat) (model : JobModel)
+    (resume : Except FileWatchError (Array FileWatch.Change) → Program jobPort α)
+
+/-- Runs `program` as `run` does, but parks it at a `next` of a watch that has
+nothing recorded, when no cancel is due: what a driver that holds a waiting
+job needs (`Loop.Driver.touch`, `Editor/Loop/Driver.lean`). Parked, no
+watch is ended: the job has not ended. -/
+def runParking {α : Type} : Program jobPort α → JobModel → Ran α
+  | .done value, model => .ended (if model.cancelled then none else some value) model.ended
+  | .step request next, model =>
+    if model.cancelled then .ended none model.ended
+    else
+      let waiting : Option Nat :=
+        match request with
+        | .fileWatch (.next watch) =>
+          match model.fileWatches.watches.find? (·.id == watch.number) with
+          | some found =>
+            if found.opened.isNone && model.cancelAt.isNone then some found.id else none
+          | none => none
+        | _ => none
+      match request, next, waiting with
+      | .fileWatch (.next _), next, some watch => .parked watch model next
+      | request, next, _ =>
+        let (reply, after) := handle request model
+        match model.cancelAt with
+        | some instant =>
+          if instant ≤ after.now then .ended none { after with now := instant }.ended
+          else runParking (next reply) after
+        | none => runParking (next reply) after
 
 end JobModel
 

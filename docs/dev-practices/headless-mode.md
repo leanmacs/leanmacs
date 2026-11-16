@@ -170,6 +170,9 @@ with no config and `show` lists them before config's
 |---|---|
 | `open-file` | Opens the file at the path that is its first argument in the window it is called with: it starts the job `load-file`, and when the file is loaded a buffer of its text, called by its base name, is shown there. A path a buffer already holds is shown at once. A file that is not there, or is refused for another reason, is said in the echo area, `cannot open <path>: <why>`, and the window shows what it showed. With no path it asks for one, with the prompt `Open file: `, and opens the answer. |
 | `save-buffer` | Saves the buffer of the window it is called with to its file: it starts the job `save-file`, and when the file is written the echo area says `wrote <path>` and the buffer is no longer modified. A file that changed on disk since it was loaded is left as it is, and the echo area says `cannot save <path>: <why>`. With `true` as its first argument it writes whatever is on disk. |
+| `reload-buffer` | Reloads the buffer of the window it is called with from its file: it starts the job `reload-file`, which loads the file and diffs it against the buffer's text off the editor thread, and the buffer then takes the file's text as one edit, with the cursor kept on the lines the diff kept, not modified, which one undo takes back. It is refused while the buffer has unsaved changes, saying `<name> has unsaved changes; :e! discards them`, unless its first argument is `true`. A text edited while the file loaded is reloaded once more, and then left, saying `<path> was edited while it reloaded; :e reloads it`. |
+| `auto-reload-mode` | Turns auto-reload on with `true` first, off with `false`, and toggles it with neither, saying `auto-reload on` or `auto-reload off`. With it on, a job `follow-file` watches each file buffer's file, and another program's change reloads a buffer with no unsaved changes, or marks one with them `[changed on disk]` in face `mode-line.changed`, the mode line's `changed` segment. Off by default; config's `autoReload` in `setup` decides until a command does. |
+| `edit-file` | What the ex names `e` and `e!` run: a leading `true` is the force; a path opens it as `open-file` does; with none it reloads the window's buffer as `reload-buffer` does when that has a file, and otherwise asks for a path. |
 
 `run <name>` hands a command no argument, so a script cannot give
 `open-file` its path that way. Config's own command calls the operation
@@ -293,13 +296,29 @@ prompt labelled `:`, whose answer is run as a named ex command.
 | `save-and-quit` | Saves the buffer of the window it is called with, as `save-buffer` does, and asks the editor to quit if the save started. The quit waits for the save. |
 | `reload-config` | Asks for the config to be reloaded, as the `reload` directive does. It says nothing: the reload's report is printed. |
 
+And it ships the buffer commands, compiled in (`lean/Editor/Buffers.lean`),
+which the ex names `b`, `ls` and `bd` run.
+
+| Command | Does |
+|---|---|
+| `switch-buffer` | Shows another open buffer in the window it is called with: the buffer of exactly the name that is its first argument, or else the best fuzzy match of the open buffers' names. With no string it asks, with a prompt labelled `Buffer: ` whose candidates are the open buffers' names, most recently used first and the window's own buffer last. Nothing matching says `switch-buffer: no buffer matches <text>`. |
+| `list-buffers` | Shows a buffer called `buffer-list` (`buffer-list<2>` and so on where another buffer, such as a file's, has that name), with no file, whose text lists the open buffers, most recently used first: `+` for one with unsaved changes, its name, and its path for a buffer with a file. A later list replaces the text. |
+| `close-buffer` | Closes the buffer its first argument names, or the window's buffer: every window that showed it shows the most recently used buffer left, and closing the last leaves an empty `scratch`. It is refused while the buffer holds a file and has unsaved changes, and says `close-buffer: <name> has unsaved changes`; and while a save of the buffer is in flight, saying `close-buffer: <name> is being saved; try again when it is written`. |
+
 | Ex name | Runs | Takes |
 |---|---|---|
 | `w` | `save-buffer` | Nothing |
-| `e <path>` | `open-file` | The rest of the line, whole, as the path. With none it asks for one |
+| `w!` | `save-buffer` with `true` | Nothing: writes the buffer over whatever the file on disk is |
+| `e <path>` | `edit-file` | The rest of the line, whole, as the path. With none it reloads the window's file, refused while the buffer has unsaved changes; on a buffer with no file it asks for a path |
+| `e! <path>` | `edit-file` with `true` | As `e`, but with none the reload discards unsaved changes, as one step `u` undoes |
+| `autoread` | `auto-reload-mode` with `true` | Nothing: turns auto-reload on |
+| `noautoread` | `auto-reload-mode` with `false` | Nothing: turns it off, ending every follow job |
 | `q` | `quit` | Nothing |
 | `wq` | `save-and-quit` | Nothing |
 | `reload` | `reload-config` | Nothing |
+| `b <buffer>` | `switch-buffer` | The rest of the line, the buffer's name or a pattern. With none it asks for one |
+| `ls` | `list-buffers` | Nothing |
+| `bd <buffer>` | `close-buffer` | The rest of the line, a buffer's name. With none it closes the window's buffer |
 
 - A line is its first word and the rest. White space round the line and
   after the name is dropped; the rest is one argument, spaces included.
@@ -367,7 +386,7 @@ are skipped.
 | `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop steps the key through its input scheme, and runs the command a completed sequence is bound to. |
 | `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors where the view takes typed text: under the Vim scheme, in insert state and in the minibuffer. In normal state it is dropped. A `commit` with no text is refused. |
 | `resize <width> <height>` | Sends a resize of the frame to that many physical pixels across and down, at a scale of 1, the same way as `key`. The next scene's frame has that size and its views are laid out in it. Anything but two numbers is refused. Until a script resizes, the frame is 0 by 0, no view shows a row, and nothing scrolls (above). |
-| `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds, and after each view its status line: the mode line's left fields, then ` \| ` and its right ones, each with its face, its text and its padding. Under the default order that is the view's Vim state as a badge, its buffer's name, a modified mark while the buffer is modified and the directory its file was opened in, then its line:col and its position. While a prompt is open the minibuffer's view is printed after the windows', with the prompt text as its status line. |
+| `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds, then, for a view that has any, a line `decorations <view>: <face> <start>..<stop> ...` (the matches of the last search, in `search-match`), and after each view its status line: the mode line's left fields, then ` \| ` and its right ones, each with its face, its text and its padding. Under the default order that is the view's Vim state as a badge, its buffer's name, a modified mark while the buffer is modified, a changed mark while a check has found its file changed on disk, and the directory its file was opened in, then its line:col and its position. While a prompt is open the minibuffer's view is printed after the windows', with the prompt text as its status line. |
 
 With the fixture the gate uses (`tests/headless`):
 
@@ -377,12 +396,12 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config load-theme greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window load-theme greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config load-theme greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window load-theme greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -390,10 +409,13 @@ text 2: "counted 42"
 
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
-`minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`,
-`minibuffer-previous`, evil's twenty-nine, from `move` to
-`select-all`, the ex line's four, from `ex` to
-`reload-config`, the frame's two, and `load-theme`, are
+`edit-file`, `reload-buffer` and `auto-reload-mode`, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`,
+`minibuffer-previous`, `minibuffer-delete-backward`,
+`minibuffer-delete-to-start` and `minibuffer-ask`, evil's thirty-seven,
+from `move` to `select-all`, the ex line's four, from `ex` to
+`reload-config`, the three buffer commands, from `switch-buffer` to
+`close-buffer`, the frame's two, `toggle-fullscreen` and
+`minimise-window`, and `load-theme`, are
 the commands the editor ships, compiled in: `show` lists them before
 config's.
 
@@ -565,7 +587,10 @@ directory and loads none of it: it has no `reload`. So every command its
 keys run is one the editor ships. It presses `i`, which begins an insert,
 then the five keys of `hello`, each typed text; `<Escape>`, which returns
 to normal state with the cursor on the last character typed; and `0`,
-which is a motion there. Its output must be exactly
+which is a motion there. It goes on to search with `/`, `n` and `N`, to
+type a pair of brackets after the text and go back over it with `%`, and
+to delete inside it with `d i (`, so the library's bracket walk answers
+both. Its output must be exactly
 `tests/headless/evil-expected`:
 
 ```console
@@ -899,10 +924,12 @@ every event the editor handles is followed by one scene, published to a
 recorder that stands in for the window's display: a window event, a
 request, a reload that installs, a job's command. `published` counts them,
 so the second `scene` of the third script, seven events after the first,
-shows that the reload and the job were each followed by one. A window's
-close request ends the loop, and so does a command that quits the editor
-(`quit`, `save-and-quit`), once no buffer that holds a file has unsaved
-changes and no save is in flight. The editor then cancels the jobs that
+shows that the reload and the job were each followed by one. A command
+that quits the editor (`quit`, `save-and-quit`) ends the loop once no
+buffer that holds a file has unsaved changes and no save is in flight, and
+a window's close request is a quit by the same rule: while a buffer that
+holds a file has unsaved changes it is refused, with `quit: <name> has
+unsaved changes` in the echo area, and the loop goes on. The editor then cancels the jobs that
 are left and prints nothing more, and the lines of the script after the
 quit are not run: a `settle` or a `join` that was waiting ends at once,
 and is no failure.
@@ -984,7 +1011,9 @@ mode-line.inactive` for a window that is not selected. Under the default
 mode line (`Editor/ModeLine.lean`) the left side is the badge of the
 view's Vim state (`NORMAL` in `mode-line.state.normal`), the buffer's name
 in `mode-line.buffer`, while the buffer is modified `●` in
-`mode-line.modified`, and the directory its file was opened in; the right
+`mode-line.modified`, while a check has found its file changed on disk
+`[changed on disk]` in `mode-line.changed`, and the directory its file was
+opened in; the right
 side its major mode, the cursor's line:col and its position, each in
 `mode-line.secondary`. A segment with nothing to say has no field: a
 buffer that is not modified has no mark, and the scratch buffer no

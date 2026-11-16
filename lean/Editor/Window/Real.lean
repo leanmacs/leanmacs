@@ -247,7 +247,8 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
   let host ← Headless.start collaborators
   for start in options.starts plan said do
     host.send start.request
-  -- The loop ends by itself, on `:q` or a close request: the window is then
+  -- The loop ends by itself, once `:q` or a close request can leave (one
+  -- refused for unsaved changes leaves the loop running): the window is then
   -- closed, once what was published last is drawn.
   let closer ← IO.asTask (prio := .dedicated) (closeOnceEnded platform host.thread shutdown)
   -- The title bar is chosen as the window opens, so config loaded at start

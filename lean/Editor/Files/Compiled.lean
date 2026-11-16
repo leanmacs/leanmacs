@@ -23,12 +23,22 @@ for the owner `compiled` when its loop starts, before any config
     (`Files.saveCommand`), forced when its first argument is `true`. Its
     other arguments are ignored: an input scheme hands a command a key is
     bound to a count and a register.
-  - The ex names `e` and `w` are bound to these two
-    (`Editor/Ex/Compiled.lean`): `e` hands `open-file` the rest of its
-    line as the path, and `w` takes nothing, so `save-buffer` is never
-    handed a string it would ignore.
-- **`Files.jobs`**: `load-file`, under the editor's limit (`Files.limit`),
-  and `save-file`. Each is started by its command with an order as its
+  - `edit-file` (`Files.editCommand`) is what the ex names `e` and `e!`
+    run: a leading `true` is the force; a path opens it, as `open-file`
+    does; with no path it reloads the window's buffer when that has a
+    file, and otherwise asks for a path with the open prompt.
+  - `reload-buffer` reloads the window's buffer from its file
+    (`Files.reloadCommand`), forced when its first argument is `true`: a
+    name for keys and config, as Emacs's `revert-buffer` is.
+  - The ex names `e`, `e!`, `w` and `w!` are bound to these
+    (`Editor/Ex/Compiled.lean`): `e` hands `edit-file` the rest of its
+    line as the path, `e!` the same after `true`, and `w` and `w!` take
+    nothing, so `save-buffer` is never handed a string it would ignore.
+- **`Files.jobs`**: `load-file` and `reload-file`, under the editor's limit
+  (`Files.limit`), `save-file`, and `check-files`, which the loop itself
+  starts to check file buffers for a change on disk, one stat a file
+  (`Editor/Loop.lean`, "Files that changed on disk"): a host that is not
+  handed it checks nothing. Each is started by its command with an order as its
   arguments. They are compiled jobs, so a reload does not cancel one: a
   save that was started is ended.
 
@@ -45,12 +55,17 @@ namespace Editor.Files
 /-- The file commands, as a host registers them for the owner `compiled`. -/
 def commands : Array Config.Registration :=
   #[{ name := openName, action := .call openCommand },
-    { name := saveName, action := .call saveCommand }]
+    { name := saveName, action := .call saveCommand },
+    { name := editName, action := .call editCommand },
+    { name := reloadName, action := .call reloadCommand },
+    { name := autoReloadName, action := .call autoReloadCommand }]
 
 /-- The jobs the file commands start, as a host registers them for the
-owner `compiled`: the load job, under the editor's limit, and the save
-job. -/
+owner `compiled`: the load job and the reload job, under the editor's limit,
+and the save job. -/
 def jobs : Array Config.JobRegistration :=
-  #[{ name := loadJob, work := loadWork limit }, { name := saveJob, work := saveWork }]
+  #[{ name := loadJob, work := loadWork limit }, { name := saveJob, work := saveWork },
+    { name := reloadJob, work := reloadWork limit }, { name := checkJob, work := checkWork },
+    { name := followJob, work := followWork }]
 
 end Editor.Files

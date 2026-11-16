@@ -35,7 +35,9 @@ fails to load, and a reload does not replace them.
 - **`minibuffer-delete-backward`** (`deleteBackwardName`,
   `deleteBackwardCommand`) edits the open prompt's minibuffer ("Deleting
   backward", below).
-- **With no prompt open** each of the five says `notOpen` in the echo area
+- **`minibuffer-delete-to-start`** (`deleteToStartName`,
+  `deleteToStartCommand`) edits it too ("Deleting to the start", below).
+- **With no prompt open** each of the six says `notOpen` in the echo area
   and does nothing else. Any can be bound in the global keymap or run by
   its name, so it can run in any view.
 - **The mode** (`mode`) is the major mode the minibuffer's buffer is made
@@ -68,6 +70,19 @@ whichever view it was run from:
   binds the key is Vim's. Emacs's `DEL` on an empty minibuffer does
   nothing; a scheme that wants that binds another command.
 
+## Deleting to the start
+
+`minibuffer-delete-to-start` acts on the minibuffer of the open prompt,
+whichever view it was run from:
+
+- **It deletes from the input's start to the bar**: what is before the
+  head of the primary range of the minibuffer's selection, as one
+  transaction made by the user, with the bar left at the start. What is
+  after the bar is kept. This is Vim 9.1's `c_CTRL-U`.
+- **With the bar at the start** it deletes nothing.
+- **It never cancels the prompt**, even on an empty minibuffer, unlike
+  `minibuffer-delete-backward`.
+
 Nothing here inserts typed text: the command a key that prints runs is the
 scheme's self-insert. Under the Vim scheme that is evil's
 (`Evil.selfInsert`, `Editor/Evil.lean`), the same command as in insert
@@ -81,6 +96,15 @@ loop runs the command with the focused window, which is the minibuffer's.
 | A command that acts on the open prompt | Here, with its name, over an operation of `Editor/Api.lean`; its registration in `Editor/Minibuffer/Compiled.lean` |
 | A key every scheme should have in the minibuffer | A role the mode fills |
 | A key one scheme has in the minibuffer | That scheme's own table |
+
+## Asking for the input scheme
+
+`minibuffer-ask` (`askCommand`) is what an input scheme yields when a key
+needs a text typed in the minibuffer before its edit is complete, as Vim's
+`/` needs its pattern (`Editor/InputScheme/Vim.lean`, "Motions that ask").
+It opens a prompt with the label it is handed and the reserved continuation
+`InputScheme.answerName`, so the accepted answer is handed to the scheme
+(`Editor/Loop.lean`, "Prompts") and no command runs under that name.
 
 Pinned by `ModelTest.promptChecks`, on the models and the test scheme, and
 the two commands that move through the candidates by
@@ -110,6 +134,35 @@ def previousName : String :=
 /-- The name the command that deletes backward is registered under. -/
 def deleteBackwardName : String :=
   "minibuffer-delete-backward"
+
+/-- The name the command that deletes to the input's start is registered
+under. -/
+def deleteToStartName : String :=
+  "minibuffer-delete-to-start"
+
+/-- The name the command that asks for the input scheme is registered
+under. -/
+def askName : String :=
+  "minibuffer-ask"
+
+/-- What the command that asks for the input scheme says in the echo area
+when the prompt is refused: its name, then why. -/
+def notAsking (refusal : PromptRefusal) : String :=
+  s!"{askName}: {refusal.describe}"
+
+/-- The command that asks for the input scheme, as it is called ("Asking for
+the input scheme", in the module docs): opens a prompt labelled with its
+first argument, a string, or none, whose continuation is the reserved name
+`InputScheme.answerName`, so the answer goes to the scheme. Where the
+prompt is refused, because one is open, it says so in the echo area
+(`notAsking`). -/
+def askCommand (call : Call) : EditorM Unit := do
+  let label :=
+    match call.arguments with
+    | .str label :: _ => label
+    | _ => ""
+  if let .error refusal← prompt label { command := InputScheme.answerName } then
+    message (notAsking refusal)
 
 /-- What the accept command and the cancel command say in the echo area when
 no prompt is open. -/
@@ -162,6 +215,19 @@ def deleteBackwardCommand (_ : Call) : EditorM Unit := do
   -- At the text's start the cell before is none: the extent is empty.
   let start ← text.motion .previousCell range.head
   minibuffer.replaceExtents selection #[⟨start, range.head⟩] ""
+
+/-- The command that deletes to the input's start, as it is called
+("Deleting to the start", in the module docs): what is before the head of
+the minibuffer's selection's primary range is deleted, and what is after it
+kept, as Vim's `c_CTRL-U` does. It never cancels the prompt, even on an
+empty minibuffer. With no prompt open it says so in the echo area. -/
+def deleteToStartCommand (_ : Call) : EditorM Unit := do
+  let state ← editorState
+  let some asked := state.prompt | message notOpen
+  let some minibuffer := state.target? asked.view | message notOpen
+  let selection ← minibuffer.selection
+  let some range := selection.ranges[selection.primary]? | return
+  minibuffer.replaceExtents selection #[⟨0, range.head⟩] ""
 
 /-- The minibuffer's mode: the major mode the minibuffer's buffer is made
 with. It fills the role `activate` with the accept command, the role `quit`

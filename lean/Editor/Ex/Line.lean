@@ -28,22 +28,27 @@ ex command's (`Editor/Ex.lean`).
 
 Vim's rule, a run of letters and then the rest (`w!`, `e#`, `w>>file`),
 is not built: `!`, ranges and `#` are not, and a name config registers may
-hold what is no letter. The phase that builds `!` replaces the rule here.
+hold what is no letter. `w!` and `e!` ship as names of their own, each
+bound with a fixed argument (`Editor/Ex/Compiled.lean`). The phase that
+builds `!` replaces the rule here.
 
 ## The binding
 
 An ex name is bound to a command's name (`Ex.Binding`), as a key sequence
 is: it is no second kind of program. The binding says what the name takes
-after it (`Ex.Takes`): nothing, or text.
+after it (`Ex.Takes`): nothing, or text; and it may carry arguments of its
+own (`Binding.arguments`), which the command is always handed first: that
+is how `e!` hands `edit-file` its force.
 
 `Binding.invocation?` is the invocation a line of the binding's name runs:
 
-- with no argument, the command with no arguments, whatever the binding
-  takes;
+- with no argument, the command with the binding's own arguments alone,
+  whatever the binding takes;
 - with an argument and a binding that takes text, the command with the
-  argument as its first argument, a string. That is where a prompt's
-  answer goes (`prompt`, `Editor/Api.lean`), so a command that asks for a
-  string when it is given none is an ex command as it stands;
+  binding's own arguments and then the line's argument, a string. That is
+  where a prompt's answer goes (`prompt`, `Editor/Api.lean`), so a command
+  that asks for a string when it is given none is an ex command as it
+  stands;
 - with an argument and a binding that takes nothing, `none`: the line is
   refused before anything runs, and the command is never handed a string
   it would ignore.
@@ -105,15 +110,20 @@ structure Binding where
   command : String
   /-- What the ex name takes after it. -/
   takes : Takes := .nothing
+  /-- The arguments the command is always handed, before the line's own:
+  how `e!` hands `edit-file` its force. -/
+  arguments : List Argument := []
   deriving DecidableEq, Repr
 
 /-- The invocation a line of this binding's name with `argument` runs; `none`
-for an argument the binding does not take. -/
+for an argument the binding does not take. The binding's own arguments come
+first. -/
 def Binding.invocation? (binding : Binding) : Option String → Option Invocation
-  | none => some { command := binding.command }
+  | none => some { command := binding.command, arguments := binding.arguments }
   | some argument =>
     match binding.takes with
     | .nothing => none
-    | .text => some { command := binding.command, arguments := [.str argument] }
+    | .text =>
+      some { command := binding.command, arguments := binding.arguments ++ [.str argument] }
 
 end Editor.Ex

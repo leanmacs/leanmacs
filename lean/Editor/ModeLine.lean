@@ -26,6 +26,7 @@ In the default order (`ModeLine.Order.standard`):
 | Left | `state` | The scheme's reported fields, the badge (`NORMAL`), when the window is selected | the scheme's (`mode-line.state.<state>` under the Vim scheme) |
 | Left | `buffer` | The buffer's name | `mode-line.buffer` |
 | Left | `modified` | `●` while the buffer is modified | `mode-line.modified` |
+| Left | `changed` | `[changed on disk]` while a check has found the buffer's file changed on disk, or gone (`Editor/Loop.lean`, "Files that changed on disk") | `mode-line.changed` |
 | Left | `directory` | The opened path's parent, as written | `mode-line.secondary` |
 | Right | `major-mode` | The buffer's major mode | `mode-line.secondary` |
 | Right | `line-column` | `row:column` of the cursor, each from 1, the column in the text's cells (`ColumnUnit.cells`) | `mode-line.secondary` |
@@ -36,7 +37,8 @@ with no file, or whose path's parent is absent, empty or `.`;
 `major-mode` for a buffer with none, which at present is every buffer
 opened from a file, since opening a file sets no major mode; `line-column`
 and `position` for a window whose cursor could not be read; `modified` for
-a buffer that is not modified. Buffers have no read-only state yet, so
+a buffer that is not modified; `changed` for a buffer whose file no check
+has found changed. Buffers have no read-only state yet, so
 there is no read-only mark; the feature that adds read-only buffers adds a
 segment for it.
 
@@ -143,6 +145,14 @@ def secondaryFace : FaceName :=
 def modifiedMark : String :=
   "●"
 
+/-- The face of the mark that says the buffer's file changed on disk. -/
+def changedFace : FaceName :=
+  ⟨"mode-line.changed"⟩
+
+/-- What the mark that says the buffer's file changed on disk says. -/
+def changedMark : String :=
+  "[changed on disk]"
+
 /-- The padding of the badge, in points each side of its text. -/
 def badgePadding : Nat :=
   8
@@ -189,6 +199,13 @@ def modified : Segment where
   name := "modified"
   fields context := if context.buffer.isModified then #[field modifiedMark modifiedFace] else #[]
 
+/-- The `changed` segment: the mark while a check has found the buffer's
+file changed on disk, or gone (`FileInfo.changed`). -/
+def changed : Segment where
+  name := "changed"
+  fields context :=
+    if (context.buffer.file.bind (·.changed)).isSome then #[field changedMark changedFace] else #[]
+
 /-- The `directory` segment: the directory the buffer's file was opened in,
 as written (`directoryOf`). -/
 def directory : Segment where
@@ -225,13 +242,13 @@ def position : Segment where
 
 /-- The shipped segments, in the default order (`Order.standard`). -/
 def shipped : Array Segment :=
-  #[state, buffer, modified, directory, majorMode, lineColumn, position]
+  #[state, buffer, modified, changed, directory, majorMode, lineColumn, position]
 
-/-- The default listing: the badge, the buffer's name, the modified mark and
-the directory on the left; the major mode, line:col and the position on the
-right. -/
+/-- The default listing: the badge, the buffer's name, the modified mark,
+the changed mark and the directory on the left; the major mode, line:col
+and the position on the right. -/
 def Order.standard : Order where
-  left := #["state", "buffer", "modified", "directory"]
+  left := #["state", "buffer", "modified", "changed", "directory"]
   right := #["major-mode", "line-column", "position"]
 
 /-- The mode line `order` names, each name the segment `segment?` finds for

@@ -2119,6 +2119,417 @@ def motionProperties : List Property :=
           refusedWith .noSuchSnapshot (discard <| (SnapshotId.mk 99).motion .nextCell 99)
         return alike && kept && moved && noText && noSnapshot }]
 
+/-- A case of a search: the text, the pattern, the direction, the offset
+searched from, and what is answered. -/
+def searchAnswers : List (String × String × Bool × Nat × Searched) :=
+  [ -- Forward from before a match, at its start and inside it.
+    ("a foo b foo", "foo", true, 0, .found 2 5 false),
+    ("a foo b foo", "foo", true, 2, .found 8 11 false),
+    ("a foo b foo", "foo", true, 3, .found 8 11 false),
+    -- `cpo-c`: the walk goes on from a match's end.
+    ("abababab", "abab", true, 0, .found 4 8 false),
+    ("abababab", "abab", true, 1, .found 4 8 false),
+    -- The first match after the cursor on the same row, and across rows.
+    ("xfoo foo\nfoo", "foo", true, 1, .found 5 8 false),
+    ("foo\nbar foo", "foo", true, 0, .found 8 11 false),
+    -- Wrapping, both ways, and the only match at the cursor itself.
+    ("foo bar", "foo", true, 4, .found 0 3 true), ("bar foo", "foo", false, 2, .found 4 7 true),
+    ("foo", "foo", true, 0, .found 0 3 true), ("foo", "foo", false, 0, .found 0 3 true),
+    -- Backward: strictly before, so a match at the offset is not taken.
+    ("foo foo foo", "foo", false, 8, .found 4 7 false),
+    ("foo foo foo", "foo", false, 9, .found 8 11 false),
+    ("foo\nfoo", "foo", false, 4, .found 0 3 false),
+    -- Not found, and the empty text.
+    ("abc", "x", true, 0, .notFound), ("", "x", true, 0, .notFound), ("", "x", false, 0, .notFound),
+    -- Whole words, by the text's class: a character from U+0080 up is one.
+    ("food foo", "\\<foo\\>", true, 0, .found 5 8 false),
+    ("_foo foo", "\\<foo\\>", true, 0, .found 5 8 false),
+    ("foo_ foo", "\\<foo\\>", true, 1, .found 5 8 false),
+    ("éfoo foo", "\\<foo\\>", true, 0, .found 6 9 false),
+    ("xfoo foox", "\\<foo", true, 0, .found 5 8 false),
+    ("xfoo foox", "foo\\>", true, 0, .found 1 4 false),
+    -- Escaped specials are literal.
+    ("axb a.b", "a\\.b", true, 0, .found 4 7 false),
+    -- Case is kept.
+    ("Foo foo", "foo", true, 0, .found 4 7 false),
+    -- Offsets are bytes, and a pattern may hold characters of several.
+    ("héllo héllo", "héllo", true, 0, .found 7 13 false),
+    -- A carriage return is a character of its row.
+    ("a\r\nfoo\r\n", "foo", true, 0, .found 3 6 false),
+    ("ab\r\nab", "b\r", true, 0, .found 1 3 false)]
+
+/-- A case of the matches in a range: the text, the pattern, the range, and
+the matches answered. -/
+def matchesAnswers : List (String × String × Nat × Nat × Array Extent) :=
+  [("foo bar foo", "foo", 0, 11, #[⟨0, 3⟩, ⟨8, 11⟩]),
+    -- The walk from the row's start decides, not the range's start.
+    ("aaaa", "aa", 1, 4, #[⟨2, 4⟩]), ("aaaa", "aa", 0, 4, #[⟨0, 2⟩, ⟨2, 4⟩]),
+    -- A match that starts before the range's end and ends after it is one.
+    ("foo bar foo", "foo", 0, 9, #[⟨0, 3⟩, ⟨8, 11⟩]), ("foo bar foo", "foo", 1, 8, #[]),
+    ("foo\nfoo\nfoo", "foo", 4, 11, #[⟨4, 7⟩, ⟨8, 11⟩]), ("food foo", "\\<foo\\>", 0, 8, #[⟨5, 8⟩]),
+    ("", "x", 0, 0, #[])]
+
+/-- The properties of the two search questions ("Search", in the rules of
+the port), all of literal patterns, which both the model and the library
+answer. -/
+def searchProperties : List Property :=
+  [{  name :=
+        "a search answers, for a literal pattern, the match the rule of the port says: forward the first that starts after the offset and back the last that starts before it, walking each row from its start, wrapping to the text's first or last, case kept, words by the text's class"
+      holds := do
+        let mut held := true
+        for (contents, pattern, forward, offset, answer) in searchAnswers do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          held :=
+            held && (← text.search pattern forward offset) == answer &&
+              (← snapshot.search pattern forward offset) == answer
+        return held },
+    { name :=
+        "the matches of a literal pattern in a range are the text's matches that start in it, in order, found by the walk from the row's start"
+      holds := do
+        let mut held := true
+        for (contents, pattern, start, stop, all) in matchesAnswers do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          held :=
+            held && (← text.matches pattern start stop) == .ranges all &&
+              (← snapshot.matches pattern start stop) == .ranges all
+        return held },
+    { name :=
+        "a search is refused with badPosition for an offset that is not a position, and the matches with badRange for a range that is not two positions in order"
+      holds := do
+        let text ← createText "héllo"
+        let inside ← refusedWith .badPosition (discard <| text.search "l" true 2)
+        let past ← refusedWith .badPosition (discard <| text.search "l" false 9)
+        let reversed ← refusedWith .badRange (discard <| text.matches "l" 3 1)
+        let split ← refusedWith .badRange (discard <| text.matches "l" 0 2)
+        let beyond ← refusedWith .badRange (discard <| text.matches "l" 0 9)
+        return inside && past && reversed && split && beyond }]
+
+/-- The text the bracket walk's cases are of: nested brackets of the three
+kinds, an escaped pair, a row that ends in a carriage return and a line
+feed, a character of two bytes and a pair across rows.
+
+| Offset | Holds |
+|---|---|
+| 0 to 12 | `(a [b {c} d] `: `(` at 0, `[` at 3, `{` at 6, `}` at 8, `]` at 11 |
+| 13 to 17 | `\\(e\\)`: an escaped `(` at 14 and an escaped `)` at 17 |
+| 18, 19 | A carriage return and a line feed |
+| 20 to 23 | ` é)`: `é` at 21, two bytes, and `)` at 23 |
+| 24 to 27 | A line feed, `{` at 25, a line feed, `}` at 27 |
+-/
+def bracketText : String :=
+  "(a [b {c} d] \\(e\\)\r\n é)\n{\n}"
+
+/-- A case of the bracket walk over `bracketText`: the kind, whether an
+opening bracket is sought, whether the walk goes forward, whether escaped
+brackets are counted, the offset walked from, and the answer. -/
+def bracketAnswers : List (Bracket × Bool × Bool × Bool × Nat × Option Nat) :=
+  [ -- A closing bracket forward passes the other kinds and the escaped pair,
+    -- across a row that ends in a carriage return and a line feed.
+    (.round, false, true, false, 0, some 23), (.round, false, true, false, 14, some 23),
+    -- An opening bracket back, from its partner and from inside a
+    -- character of two bytes' row.
+    (.round, true, false, false, 23, some 0), (.round, true, false, false, 21, some 0),
+    -- Escaped brackets only.
+    (.round, false, true, true, 15, some 17), (.round, true, false, true, 17, some 14),
+    (.round, true, false, true, 15, some 14), (.round, true, false, true, 23, none),
+    -- The other kinds, nested, and a pair across rows.
+    (.square, false, true, false, 3, some 11), (.square, true, false, false, 10, some 3),
+    (.square, true, false, false, 7, some 3), (.curly, false, true, false, 6, some 8),
+    (.curly, false, true, false, 25, some 27), (.curly, true, false, false, 27, some 25),
+    (.curly, true, false, false, 26, some 25), (.curly, true, false, false, 9, none),
+    -- An opening bracket forward: a closing one met first raises the depth.
+    (.curly, true, true, false, 9, some 25), (.round, true, true, false, 1, none),
+    -- Nothing further at either end.
+    (.round, false, true, false, 28, none), (.round, true, false, false, 0, none)]
+
+/-- A case of the bracket walk that passes over quoted brackets, of brackets
+that are not escaped: the text, the kind, whether the walk goes forward to
+a closing bracket or back to an opening one, the offset walked from, and
+the answer, which is what the installed Vim 9.1.1752 answers with
+`-Nu NONE`, by `])` and `[(` (`]}` and `[{` for braces). -/
+def quotedBracketAnswers : List (String × Bracket × Bool × Nat × Option Nat) :=
+  [ -- Inside double quotes, from outside, both ways, through characters of
+    -- two bytes.
+    ("(a \"b)\" c)", .round, true, 0, some 9), ("(a \")\" b)", .round, false, 8, some 0),
+    ("{a \"}\" b}", .curly, true, 0, some 8), ("[a \"]\" b]", .square, true, 0, some 8),
+    ("(é \"ü)\" ö)", .round, true, 0, some 12),
+    -- From the opening quote and from inside a string, the strings are read
+    -- from where the walk starts.
+    ("(a \"b)\" c)", .round, true, 3, some 5), ("(a \")\" b)", .round, false, 4, none),
+    ("\"(a)\"", .round, true, 1, some 3), ("\"(a)\"", .round, false, 3, some 1),
+    -- An odd number of quotes: none is read.
+    ("x \" (a \"b)\" c)", .round, true, 4, some 9),
+    -- Escaped quotes are not counted and start no string; an escaped
+    -- backslash escapes nothing.
+    ("(a \\\"b)\" c)", .round, true, 0, some 6), ("(a \\\"b) \\\" c)", .round, false, 12, none),
+    ("(\"a\\\\\" b) \")\"", .round, true, 0, some 8),
+    -- A double quote between single quotes is not counted, and single-quoted
+    -- characters are passed over.
+    ("(a '\"' \")\" b)", .round, true, 0, some 12), ("(a ')' b)", .round, true, 0, some 8),
+    ("(a ')' b)", .round, false, 8, some 0), ("(a '\\)' b)", .round, true, 0, some 9),
+    ("(a '\\)' b)", .round, false, 9, some 0), ("('(' x)", .round, true, 0, some 6),
+    -- Each row's quotes are its own, and a row's end ends a string.
+    ("{\n  \"}\"\n}", .curly, true, 0, some 8), ("{\n  \"}\"\n}", .curly, false, 8, some 0),
+    ("\" ( \"x\n)", .round, true, 2, some 7), ("\" ( \"x\n)", .round, false, 7, none),
+    -- A backslash at a row's end carries a string across the line break.
+    ("(a \"b\\\nc) d\" e)", .round, true, 0, some 14),
+    ("(a \"b\\\nc) d\" e)", .round, true, 3, some 8),
+    ("(a \"b\\\nc) d\" e)", .round, false, 8, some 0),
+    ("(a \"b\\\nc) d\" e)", .round, false, 9, none),
+    ("(a \"b\\\n c)\" d)", .round, true, 0, some 13),
+    -- In a row that ends in a carriage return and a line feed, the line
+    -- break is the row's end.
+    ("(\")\"\r\n\")\")", .round, true, 0, some 9)]
+
+/-- The texts the walk that passes over quoted brackets is swept over at
+every position: those of `quotedBracketAnswers`, and texts that put the
+quote rule's branches side by side, met from every offset in both
+directions. They hold a bracket inside double quotes, `')'` and `'\)'`,
+`'\''`, an odd number of quotes in a row, an escaped quote, an escaped
+backslash before a quote, rows that end in a backslash, one of them before a
+carriage return and a line feed, quoted characters at a row's start, and
+characters of two bytes. -/
+def quotedBracketTexts : List String :=
+  (quotedBracketAnswers.map (·.1)).eraseDups ++
+    ["(a \"b)\" ')' '\\)' c)", "[x \" (y) \\\" z]\n{p \"q\\\n} r\" }\n('\\'' \")\" ')",
+      "(\"a\\\r\n)\" b)\r\n)", "{é \"}ü\" '}' \"\"} \"\\\\\" }",
+      "x ')' (\"\\\n\"(\" ] [\n\"]\" ) '\\('", "')' ('\\(' a)\n'\\)' b)"]
+
+/-- A case of the quoted string: the text, the quote, the offset, and the
+answer. -/
+def quoteAnswers : List (String × Quote × Nat × Option Extent) :=
+  [ -- Before the first quote, inside, on the opening quote and on the
+    -- closing one.
+    ("x = \"ab\" y", .double, 0, some ⟨4, 8⟩), ("x = \"ab\" y", .double, 5, some ⟨4, 8⟩),
+    ("x = \"ab\" y", .double, 4, some ⟨4, 8⟩), ("x = \"ab\" y", .double, 7, some ⟨4, 8⟩),
+    -- Between two strings: the closing quote before and the opening one
+    -- after.
+    ("\"a\" x \"b\"", .double, 4, some ⟨2, 7⟩),
+    -- On a quote, the pairs from the row's start.
+    ("\"a\" \"b\"", .double, 4, some ⟨4, 7⟩), ("\"a\" \"", .double, 4, none),
+    -- An escaped quote closes nothing, and opens when it is the row's first.
+    ("\"a\\\"b\"", .double, 4, some ⟨0, 6⟩), ("\\\"x y \"a\"", .double, 3, some ⟨1, 7⟩),
+    -- A missing quote, a row with no quote, and the empty text.
+    ("a \"b", .double, 0, none), ("x \"ab\" y", .double, 7, none), ("ab", .double, 1, none),
+    ("", .double, 0, none),
+    -- Each kind, and a row after another, whose offsets are the text's.
+    ("'a' `b`", .single, 1, some ⟨0, 3⟩), ("'a' `b`", .back, 5, some ⟨4, 7⟩),
+    ("'a'", .double, 1, none), ("\"a\"\n\"b\"", .double, 5, some ⟨4, 7⟩),
+    -- A row that ends in a carriage return and a line feed, and a character
+    -- of two bytes.
+    ("\"a\"\r\nb", .double, 1, some ⟨0, 3⟩), ("\"a\"\r\nb", .double, 4, none),
+    ("é\"x\"", .double, 3, some ⟨2, 5⟩)]
+
+/-- The properties of the two questions of pairs ("Pairs", in the rules of
+the port). -/
+def pairProperties : List Property :=
+  [{  name :=
+        "the bracket walk answers what a table written out by hand says, for each kind, both sides, both directions and both escapednesses, across rows and through characters of several bytes"
+      holds := do
+        let text ← createText bracketText
+        let snapshot ← text.snapshot
+        let mut held := true
+        for (bracket, opening, forward, escaped, offset, answer) in bracketAnswers do
+          held :=
+            held && (← text.unmatched bracket opening forward escaped false offset) == answer &&
+              (← snapshot.unmatched bracket opening forward escaped false offset) == answer
+        return held },
+    { name :=
+        "the walk that passes over quoted brackets answers what Vim 9.1's default cpoptions does, as a table written out by hand says: inside double quotes from outside and from inside, an odd number of quotes, escaped quotes, a quote between single quotes, single-quoted characters, quotes in other rows and a string carried across a line break by a backslash"
+      holds := do
+        let mut held := true
+        for (contents, bracket, forward, offset, answer) in quotedBracketAnswers do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          held :=
+            held && (← text.unmatched bracket (!forward) forward false true offset) == answer &&
+              (← snapshot.unmatched bracket (!forward) forward false true offset) == answer
+        return held },
+    { name :=
+        "from every position, over texts with and without quotes, the bracket walk answers a bracket of the kind and side sought, of the escapedness asked, strictly on the side of the position it walks to, and the same from the text and from its snapshot"
+      holds := do
+        let mut held := true
+        for contents in bracketText :: quotedBracketTexts do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          for offset in
+            (List.range (contents.utf8ByteSize + 1)).filter fun offset =>
+              (String.Pos.Raw.mk offset).IsValid contents do
+            for bracket in [Bracket.round, .square, .curly] do
+              for opening in [false, true] do
+                for forward in [false, true] do
+                  for escaped in [false, true] do
+                    for skipQuoted in [false, true] do
+                      let answer ← text.unmatched bracket opening forward escaped skipQuoted offset
+                      held :=
+                        held &&
+                          (←
+                              snapshot.unmatched bracket opening forward escaped skipQuoted
+                                  offset) ==
+                            answer
+                      if let some found := answer then
+                        let char ← text.slice found (found + 1)
+                        let sought := if opening then bracket.opening else bracket.closing
+                        let before ← text.slice (found - min found 2) found
+                        let isEscaped := before.endsWith "\\" && !before.endsWith "\\\\"
+                        held :=
+                          held && char == sought.toString && isEscaped == escaped &&
+                            if forward then found > offset else found < offset
+        return held },
+    { name :=
+        "the quoted string round a position is what a table written out by hand says: before the first quote, on either quote, between two strings, past an escaped quote, of each kind, and none when a quote is missing"
+      holds := do
+        let mut held := true
+        for (contents, quote, offset, answer) in quoteAnswers do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          held :=
+            held && (← text.quoted quote offset) == answer &&
+              (← snapshot.quoted quote offset) == answer
+        return held },
+    { name :=
+        "neither walk reads past what it says: a quoted string never leaves its row, and the bracket walk never answers the position it starts from"
+      holds := do
+        let across ← createText "\"a\nb\""
+        let pair ← createText "(a)"
+        return (← across.quoted .double 1) == none && (← across.quoted .double 3) == none &&
+            (← pair.unmatched .round false true false false 0) == some 2 &&
+            (← pair.unmatched .round false true false false 2) == none &&
+            (← pair.unmatched .round true false false false 0) == none &&
+            (← pair.unmatched .round true false false false 2) == some 0 },
+    { name :=
+        "both walks are refused with badPosition inside a character of several bytes and past the end"
+      holds := do
+        let text ← createText "(é)"
+        let inside ←
+          refusedWith .badPosition (discard <| text.unmatched .round false true false true 2)
+        let past ←
+          refusedWith .badPosition (discard <| text.unmatched .round true false false false 5)
+        let quoteInside ← refusedWith .badPosition (discard <| text.quoted .double 2)
+        let quotePast ← refusedWith .badPosition (discard <| text.quoted .double 5)
+        return inside && past && quoteInside && quotePast }]
+
+/-- Applies `script` to `text` from `base`, taking its inserts from `source`,
+by `Origin.disk`, and returns whether it was refused with `error`. -/
+def scriptRefusedWith (error : TextError) (text : TextId) (base : Nat) (source : TextSource)
+    (script : Diff.Script) : TextM Bool :=
+  refusedWith error (discard <| text.applyScript base source script .disk)
+
+/-- "a", the escape of the byte `0x80` (U+10DC80, four bytes), and "b"; and the
+same with the escape of `0x81`. -/
+def escapedPair : String × String :=
+  (("a".push (Char.ofNat 0x10DC80)).push 'b', ("a".push (Char.ofNat 0x10DC81)).push 'b')
+
+/-- The properties of applying an edit script (`TextId.applyScript`), over
+scripts written out by hand. In `"one\ntwéx\nthree\n"` "é" is the bytes 6 and
+7, so the script puts in "éx", the bytes 6 to 8, for the "o" at 6. -/
+def scriptProperties : List Property :=
+  [{  name :=
+        "an edit script gives what Diff.Script.run gives, as one revision and one entry of the log, and what it put in is traced to that revision and its origin"
+      holds := do
+        let (old, new) := ("one\ntwo\nthree\n", "one\ntwéx\nthree\n")
+        let script : Diff.Script := #[.retain 6, .delete 1, .insert 6 3, .retain 7]
+        let text ← createText old
+        let source ← createText new
+        let revision ← text.applyScript 0 (.text source) script .disk
+        let read ← text.read
+        let patch ← text.changesSince 0
+        let trace ← text.trace 6 9
+        return Diff.Script.run old new script == some read && read == new && revision == 1 &&
+            (← text.revision) == 1 &&
+            patch.edits.size == 1 &&
+            trace == #[⟨6, 9, .entry 1 .disk⟩] },
+    { name := "the inverse of an edit script's revision brings the old text back"
+      holds := do
+        let text ← createText "one\ntwo\nthree\n"
+        let source ← createText "one\ntwéx\nthree\n"
+        discard <|
+            text.applyScript 0 (.text source) #[.retain 6, .delete 1, .insert 6 3, .retain 7] .disk
+        discard <| text.applyInverse 1 1
+        return (← text.read) == "one\ntwo\nthree\n" && (← text.revision) == 2 },
+    { name :=
+        "a marker inside a retain keeps its distance from that retain's start, and one in a replaced range goes by its bias"
+      holds := do
+        let text ← createText "abc\ndef\n"
+        let source ← createText "aXYc\ndef\n"
+        let inRetain ← text.mark (anchorAt 5 .after)
+        let first ← text.mark (anchorAt 0 .before)
+        let replaced ← text.mark (anchorAt 1 .after)
+        discard <|
+            text.applyScript 0 (.text source) #[.retain 1, .delete 1, .insert 1 2, .retain 6] .disk
+        return (← text.marker inRetain) == anchorAt 6 .after &&
+            (← text.marker first) == anchorAt 0 .before &&
+            (← text.marker replaced) == anchorAt 3 .after },
+    { name :=
+        "an edit script whose base is not the text's revision is refused with moved, before its source is looked at, and changes nothing"
+      holds := do
+        let text ← createText "ab"
+        let source ← createText "ab"
+        text.insert 0 "x"
+        let moved ← scriptRefusedWith .moved text 0 (.text source) #[.retain 2]
+        let snapshot ← text.snapshot
+        snapshot.release
+        let beforeSource ← scriptRefusedWith .moved text 0 (.snapshot snapshot) #[.retain 3]
+        let noText ← scriptRefusedWith .noSuchText ⟨99⟩ 0 (.text source) #[.retain 2]
+        return moved && beforeSource && noText && (← text.read) == "xab" &&
+            (← text.revision) == 1 },
+    { name :=
+        "an edit script too short or too long for the text or for its source is refused with badChange and changes nothing"
+      holds := do
+        let text ← createText "ab"
+        let same ← createText "ab"
+        let longer ← createText "abc"
+        let short ← scriptRefusedWith .badChange text 0 (.text same) #[.retain 1]
+        let long ← scriptRefusedWith .badChange text 0 (.text same) #[.retain 3]
+        let shortOfSource ← scriptRefusedWith .badChange text 0 (.text longer) #[.retain 2]
+        let insertElsewhere ←
+          scriptRefusedWith .badChange text 0 (.text longer) #[.insert 1 1, .retain 2]
+        return short && long && shortOfSource && insertElsewhere && (← text.read) == "ab" &&
+            (← text.revision) == 0 },
+    { name :=
+        "an edit script with a step inside a character of the text or of its source is refused with badChange, an escape as one character"
+      holds := do
+        let text ← createText "é\n"
+        let other ← createText "è\n"
+        -- "é" is C3 A9 and "è" C3 A8: a step after their first byte.
+        let lastByte ←
+          scriptRefusedWith .badChange text 0 (.text other)
+              #[.retain 1, .delete 1, .insert 1 1, .retain 1]
+        let plain ← createText "abc"
+        let accent ← createText "é"
+        let inSource ←
+          scriptRefusedWith .badChange plain 0 (.text accent) #[.retain 1, .delete 1, .retain 1]
+        let (escapedOld, escapedNew) := escapedPair
+        let escapes ← createText escapedOld
+        let changed ← createText escapedNew
+        let insideEscape ←
+          scriptRefusedWith .badChange escapes 0 (.text changed)
+              #[.retain 4, .delete 1, .insert 4 1, .retain 1]
+        let whole ←
+          escapes.applyScript 0 (.text changed) #[.retain 1, .delete 4, .insert 1 4, .retain 1]
+              .disk
+        return lastByte && inSource && insideEscape && whole == 1 && (← text.read) == "é\n" &&
+            (← plain.read) == "abc" &&
+            (← escapes.read) == escapedNew },
+    { name := "an edit script whose source is a released snapshot is refused and changes nothing"
+      holds := do
+        let text ← createText "ab"
+        let source ← createText "ab"
+        let snapshot ← source.snapshot
+        snapshot.release
+        let refused ← scriptRefusedWith .noSuchSnapshot text 0 (.snapshot snapshot) #[.retain 2]
+        let fromSnapshot ← source.snapshot
+        let applied ← text.applyScript 0 (.snapshot fromSnapshot) #[.retain 2] .disk
+        return refused && applied == 1 && (← text.read) == "ab" },
+    { name := "an edit script of one retain still makes a revision"
+      holds := do
+        let text ← createText "ab"
+        let source ← createText "ab"
+        let revision ← text.applyScript 0 (.text source) #[.retain 2] .disk
+        return revision == 1 && (← text.read) == "ab" }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
@@ -2131,7 +2542,10 @@ def properties : List Property :=
     inverseProperties ++
     copyProperties ++
     readProperties ++
-    motionProperties
+    motionProperties ++
+    searchProperties ++
+    pairProperties ++
+    scriptProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property

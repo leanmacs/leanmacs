@@ -1,5 +1,5 @@
-import Editor.Command
 import Editor.Scroll
+import Editor.Store
 
 /-!
 # The editor API
@@ -38,6 +38,12 @@ nothing in it.
   by the loop once the command has run to its end (`Editor/Loop.lean`,
   "What a finished command gave up"), so a command that fails afterwards
   is rolled back whole.
+- `BufferId.rename id name` gives a buffer another name; a name another
+  buffer has is refused (`nameTaken`).
+- `BufferId.hasUnsavedChanges id` is whether a buffer has unsaved changes
+  (`Buffer.unsavedAt`), by a copy of its undo tree told the revision its
+  text is at, so an edit made earlier in the same command counts. `quit`,
+  `list-buffers` and `close-buffer` all ask it (`Editor/Buffers.lean`).
 - `BufferId.text` is the buffer's text. Reading a buffer is the text
   port's reads on it (`TextId.read`, `rowContent`, `slice`, `byteLength`
   and the rest of `Editor/Text.lean`): there is no read request of the
@@ -349,6 +355,17 @@ own requests have left.
   `ModelTest.apiStateChecks`, and the rollback by
   `ModelTest.dispatchRollbackChecks`.
 
+`setLastFind find` keeps the last character find, which `;` and `,` repeat
+(`Editor/State.lean`, "The last find"), in place of the one there was. It
+is set as a register is: never refused, editor state that a command which
+does not run to its end leaves as it was, and no request of the library.
+A command reads it from the state (`EditorState.lastFind` on
+`editorState`). Pinned through evil's character finds by
+`ModelTest.evilFindChecks`. `setLastSearch search` keeps the last search
+the same way (`Editor/State.lean`, "The last search"), which `n` and `N`
+repeat and the loop draws the matches of; pinned through evil's searches
+by `ModelTest.evilSearchChecks`.
+
 ## Ex bindings
 
 `exBinding name` asks which command the ex name `name` is bound to, and
@@ -554,6 +571,32 @@ here:
 The three state requests ask the library nothing, and are pinned once, on
 the models (`ModelTest.stateRequestChecks`, `ModelTest.fileCommandChecks`).
 
+## Workspaces
+
+Which workspace and which project a buffer belongs to, and the stores each
+keeps (`Editor/Workspace.lean`, `docs/design/projects.md`). Each operation
+is one read of the state or one state request (`Editor/State.lean`,
+"Workspaces").
+
+- `BufferId.workspace?` is the buffer's workspace and its project, read from
+  its buffer-local value (`Workspace.bufferLocal`), or `none`.
+- `BufferId.inheritWorkspace id source` gives a buffer the workspace of the
+  buffer it was made from; a source with none gives none.
+- `BufferId.workingDirectory` is where a command run for a buffer runs: its
+  workspace's root on this machine, its workspace's location when that is
+  elsewhere, the directory of its file when it has no workspace, or none.
+- `Workspace.register` makes a workspace that is not on this machine, for
+  a remote agent session or a later remote adapter; a local location is
+  refused, since local workspaces are found.
+- `Workspace.setValue` and `Project.setValue` set a value of a workspace's
+  or a project's store by name; `Workspace.set` and `Project.set` set the
+  value of a `Store` (`Editor/Store.lean`) there, by its encoding, and
+  `Workspace.Table.get` and `getOfProject` read one back, its initial value
+  where none was set. The typed operations are here, not beside the table,
+  because the stores' module is downstream of the editor state.
+
+Pinned by `ModelTest.workspaceStateChecks`.
+
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
 binding.
@@ -599,6 +642,18 @@ def breakOff {α : Type} (reason : String) : EditorM α := do
 request of the library. -/
 def setRegister (name : String) (register : Register) : EditorM Unit :=
   EditorState.ask (.setRegister name register)
+
+/-- Keeps `find` as the last character find, which `;` and `,` repeat
+(`Editor/State.lean`, "The last find"). It is never refused, and makes no
+request of the library. -/
+def setLastFind (find : Find) : EditorM Unit :=
+  EditorState.ask (.setLastFind find)
+
+/-- Keeps `search` as the last search, which `n` and `N` repeat
+(`Editor/State.lean`, "The last search"). It is never refused, and makes no
+request of the library. -/
+def setLastSearch (search : Search) : EditorM Unit :=
+  EditorState.ask (.setLastSearch search)
 
 /-- Keeps `rows` rows between every view's cursor's row and the first and
 the last row it shows, from the next scene on ("Scrolling", in the module
@@ -652,6 +707,19 @@ command that does not run to its end has nothing run after it. -/
 def invoke (invocation : Invocation) : EditorM Unit :=
   EditorState.ask (.invoke invocation)
 
+/-- Whether the buffer `id` has unsaved changes (`Buffer.unsavedAt`): it
+holds a file, and its text is in another state than the one last saved and
+than the one a save in flight writes, by a copy of its undo tree told the
+revision its text is at, so an edit made earlier in the same command
+counts. A buffer with no file has none, and its text is not asked. Refused
+with `noSuchBuffer` for a buffer there is none of. -/
+def BufferId.hasUnsavedChanges (id : BufferId) : EditorM (Except BufferRefusal Bool) := do
+  let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+  -- A buffer with no file never has: it cannot be saved.
+  if buffer.file.isNone then
+    return .ok false
+  return .ok (buffer.unsavedAt (← buffer.history.sync))
+
 /-- Why the editor was not asked to quit. -/
 inductive QuitRefusal where
   /-- The buffer called `name`, which holds a file, has unsaved changes. -/
@@ -663,12 +731,11 @@ nothing asked, with `unsaved` and the name of the first buffer that holds a
 file and has unsaved changes, by its history once told the revision its
 text is at, so an edit made earlier in the same command counts. -/
 def quit : EditorM (Except QuitRefusal Unit) := do
-  for slot in (← editorState).buffers do
-    let some buffer := slot | continue
-    -- A buffer with no file never blocks, and its text is not asked.
-    if buffer.file.isSome then
-      if buffer.unsavedAt (← buffer.history.sync) then
-        return .error (.unsaved buffer.name)
+  let state ← editorState
+  for index in List.range state.buffers.size do
+    let some buffer := state.buffer? ⟨index⟩ | continue
+    if let .ok true← (⟨index⟩ : BufferId).hasUnsavedChanges then
+      return .error (.unsaved buffer.name)
   return .ok (← EditorState.ask .quit)
 
 /-- Asks for the config to be reloaded, once this command has run to its
@@ -804,6 +871,12 @@ is none of, and with `shown` while a window shows it. -/
 def remove (id : BufferId) : EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.removeBuffer id)
 
+/-- Gives the buffer `id` the name `name`; its own name changes nothing.
+Refused with `noSuchBuffer` for a buffer there is none of, and with
+`nameTaken` for a name another buffer has. -/
+def rename (id : BufferId) (name : String) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.renameBuffer id name)
+
 /-- Has the buffer `id` hold the file at `path`, whose stamp is `stamp`,
 with `ending` as the buffer's line ending. Refused with `noSuchBuffer` for a
 buffer there is none of, and with `fileOpen` for a path another buffer
@@ -832,6 +905,19 @@ the buffer that writes `snapshot` is in flight. -/
 def endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp) :
     EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.endSave id snapshot stamp)
+
+/-- Records what a check of the buffer `id`'s file found, if its stamp is
+still `stamp` (`EditorState.markChanged`): the mark is cleared when `found` is
+`stamp`, and otherwise holds `found`, `none` for a file that is gone, told
+or not. Refused with `noSuchBuffer` for a buffer there is none of. -/
+def markChanged (id : BufferId) (stamp : File.Stamp) (found : Option File.Stamp) (told : Bool) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.markChanged id stamp found told)
+
+/-- Marks the change on disk of the buffer `id`'s file as told, so its next
+edit lands. Refused with `noSuchBuffer` for a buffer there is none of. -/
+def tellChanged (id : BufferId) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.tellChanged id)
 
 /-- Replaces the bytes of the buffer `id`'s text from `start` up to, not
 including, `stop` with `s` (`TextId.replaceRange`). Refused with
@@ -1192,5 +1278,98 @@ def setMajorMode (view : ViewId) (name : String) : EditorM (Except ModeRefusal B
   EditorState.ask (.setMajorMode view name)
 
 end ViewId
+
+/-! ## Workspaces -/
+
+namespace BufferId
+
+/-- The workspace of the buffer `id` and its project, or `none` when it has
+none ("Workspaces", in the module docs). -/
+def workspace? (id : BufferId) : EditorM (Option (Workspace × Project)) :=
+  return (← editorState).workspaceOf? id
+
+/-- Gives the buffer `id` the workspace of the buffer `source`, the one it
+was made from: its buffer-local value. A source with none gives none, and
+changes nothing. Refused with `noSuchBuffer` for a buffer `id` there is none
+of. -/
+def inheritWorkspace (id source : BufferId) : EditorM (Except BufferRefusal Unit) := do
+  match (← editorState).value? source Workspace.bufferLocal with
+  | some value =>
+    id.setValue Workspace.bufferLocal value
+  | none =>
+    return .ok ()
+
+/-- Where a command run for the buffer `id` runs: its workspace's root on
+this machine, its workspace's location when that is elsewhere, the
+directory of its file when it has no workspace, or none. -/
+def workingDirectory (id : BufferId) : EditorM Workspace.WorkingDirectory := do
+  let state ← editorState
+  match state.workspaceOf? id with
+  | some (workspace, _) =>
+    match workspace.location with
+    | .local root =>
+      return .workspace root
+    | location =>
+      return .elsewhere location
+  | none =>
+    match ((state.buffer? id).bind (·.file)).bind (·.path.parent) with
+    | some directory =>
+      return .fileDirectory directory
+    | none =>
+      return .none
+
+end BufferId
+
+namespace Workspace
+
+/-- Registers a workspace at `location`, not on this machine, of the project
+of `remote`, with `branch` checked out if it is given. Refused with `local`
+for a local location: those are found. -/
+def register (location : Location) (remote : String) (branch : Option String := none) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  EditorState.ask (.registerWorkspace location remote branch)
+
+/-- Has the workspace at `location` keep `value` under `name`. Refused with
+`noSuchWorkspace` when there is none. -/
+def setValue (location : Location) (name : String) (value : Value) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  EditorState.ask (.setWorkspaceValue location name value)
+
+/-- Has the workspace at `location` keep `value` as the value of `store`, by
+the store's encoding. Refused with `noSuchWorkspace` when there is none. -/
+def set {α : Type} (store : Store α) (location : Location) (value : α) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  setValue location store.name (store.encode value)
+
+/-- The value of `store` in the workspace at `location`: what its cell
+decodes to, or the store's initial value when it has no cell or one the
+store does not decode. -/
+def Table.get {α : Type} (table : Table) (store : Store α) (location : Location) : α :=
+  ((table.workspaceValue? location store.name).bind store.decode).getD store.initial
+
+/-- The value of `store` in the project of `identity`: what its cell
+decodes to, or the store's initial value when it has no cell or one the
+store does not decode. -/
+def Table.getOfProject {α : Type} (table : Table) (store : Store α) (identity : Project.Identity) :
+    α :=
+  ((table.projectValue? identity store.name).bind store.decode).getD store.initial
+
+end Workspace
+
+namespace Project
+
+/-- Has the project of `identity` keep `value` under `name`. Refused with
+`noSuchProject` when there is none. -/
+def setValue (identity : Project.Identity) (name : String) (value : Value) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  EditorState.ask (.setProjectValue identity name value)
+
+/-- Has the project of `identity` keep `value` as the value of `store`, by
+the store's encoding. Refused with `noSuchProject` when there is none. -/
+def set {α : Type} (store : Store α) (identity : Project.Identity) (value : α) :
+    EditorM (Except WorkspaceRefusal Unit) :=
+  setValue identity store.name (store.encode value)
+
+end Project
 
 end Editor

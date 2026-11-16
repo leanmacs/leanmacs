@@ -19,9 +19,11 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
 
 | Edit | Invocation |
 |---|---|
-| `move m c` | `moveCommand`, with `[.str m, .nat c]` |
-| `operate o over c r` | `operateCommand`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""` |
+| `move m c a` | `moveCommand`, with `[.str m, .nat c]`, or `[.str m, .str a, .nat c]` when the motion has an argument |
+| `operate o over c r` | `operateCommand`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""`. A motion's argument, when it has one, is a string right after its name: `[.str o.name, .str "motion", .str m, .str a, .nat c, .str r]` |
 | `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
+| `select obj c` | `selectObjectCommand` (`select-object`), with `[.str obj, .nat c]` |
+| A motion that asks | `askCommand` (`minibuffer-ask`), with `[.str label]`; the edit is compiled when the answer comes ("Motions that ask") |
 | `replay change inserted` | `repeatCommand`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
 
 - **Every part of speech is named by its vocabulary name**, a `String`, so
@@ -29,6 +31,10 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
 - **An absent count is `.nat 0`** and an absent register `.str ""`: an
   invocation's arguments have no optional kind, and a typed count is never
   0. In an edit they stay optional, since no count is not a count of 1.
+- **A motion's argument, when it has one, is the string right after the
+  motion's name**, in a move and over a motion, so the register stays the
+  last argument of an operator's layout, which dot repeat reads
+  (`Editor/Evil/Repeat.lean`).
 - **An operator and a command carry what the grammar cannot look up**:
   whether an edit with it changes text (`Edit.changes`) and which Vim state
   the view is in afterwards (`Edit.enters`).
@@ -41,7 +47,12 @@ is `parse` with the edit compiled, and `scheme` packages it as an
 
 - **A key is walked through the active keymaps, then the Vim state's**
   (`Keymap.walk` over `maps view ++ record.keymaps`, with `record` the
-  record of the Vim state the key's view is in). The active keymaps are the
+  record of the Vim state the key's view is in). **While an operator
+  waits, a state's pending keymaps are walked in place of its own**
+  (`StateRecord.pending`, Vim's Operator-pending mode), when it has any:
+  so a key a state binds to a command alone, such as normal state's `i`,
+  can begin a text object after an operator. A state with none walks its
+  own keymaps while an operator waits, as before. The active keymaps are the
   specific ones, so a binding of theirs replaces a default, and it holds in
   every Vim state, except a mode's where typing is text ("Mode keys"
   below). It is one walk, so prefixes merge across the two lists,
@@ -52,12 +63,17 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   bound to `Bound.command` of that name, which changes no text and enters
   no state, unless the run table of the view's Vim state has an entry for
   the name ("Vim states" below).
-- **An operator waits for its target** (`State.operator`). There is no
-  keymap for the wait: the motion that moves when typed alone is the
+- **An operator waits for its target** (`State.operator`). The wait has
+  no keymap of its own: the motion that moves when typed alone is the
   operator's target when typed after it, so a motion bound once, in any
-  keymap, works with every operator.
+  keymap, works with every operator, unless a state's pending keymaps
+  leave it out.
 - **A text object after an operator is its target.** With no operator
-  waiting it resets.
+  waiting, in a state where operators act on the selection, it completes
+  `Edit.select` with the count typed, which sets the selection to the
+  object, enters the state the record names for it
+  (`StateRecord.objectEnters`), and is never the last change; elsewhere
+  it resets.
 - **The operator that is waiting, typed again, acts on lines**
   (`Over.lines`), and that edit always has a count, 1 when none was typed:
   the doubled operator counts lines. It is the same operator when it has
@@ -94,6 +110,44 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   any key, so it can be bound to a motion. Digits are not bound in a
   keymap: the rule for `0` needs the count typed so far, which a keymap
   does not see.
+
+## Motions that take a character
+
+`f`, `t`, `F` and `T` are bound to `Bound.charMotion`: the motion waits for
+the key after it, which names the character it finds.
+
+- **The key is kept as typed** (`State.awaitsChar`), so it is pending
+  alone, and it folds the count being typed into the multiplier, as an
+  operator does: `2f` then `x` is a count of 2, and so is `d2fx`.
+- **The next key is read before counts and keymaps**, as the key after the
+  register prefix is: a key that prints names the character, a digit
+  included, so `f1` finds a `1`; `TAB` names a tab (`Key.character?`).
+  It completes `Edit.move name count (some char)`, or, with an operator
+  waiting, the operator over `.motion name (some char)`.
+- **Any other key resets the edit begun**: `f` then `<Escape>` does
+  nothing and leaves nothing pending, as in Vim.
+
+## Motions that ask
+
+`/` and `?` are bound to `Bound.promptMotion`: the motion's argument is a
+text typed in the minibuffer, so the edit cannot complete at the key.
+
+- **At the key** the edit that waits is recorded (`State.asking`, an
+  `Asking`: the view, the motion, the operator waiting, the count and the
+  register), the edit begun is reset so that the minibuffer's keys parse
+  afresh, and the key yields `askCommand` with the prompt's label
+  (`Parsed.ask`). Nothing becomes the last change and no state is
+  entered.
+- **The answer** (`State.answered`, the scheme's `InputScheme.answered`)
+  completes the waiting edit with the answer as the motion's argument, for
+  the view it is for, by `State.finish`, as a key completes one: an
+  operator's edit is the last change and enters the operator's state. A
+  second answer, and one with nothing waiting, yields nothing.
+- **The edit waits while keys are typed in the minibuffer's view**, which
+  the scheme is told when the prompt opens (`State.openMinibuffer` sets
+  `Asking.minibuffer`), and when that view closes: the accept command
+  closes it a step before the answer comes. A key for any other view drops
+  it, as after the prompt was cancelled. A reset keeps it.
 
 ## Registers
 
@@ -208,9 +262,20 @@ for), since typed text is no edit and a replay of the change needs it:
 - Text typed in the recording view is added to `inserted`
   (`State.typedText`). Text typed in another view, the minibuffer's
   included, is not.
+- A command that changes no text, run in the recording view, adds what its
+  binding says it adds (`Command.typed`), as typed text is added: insert
+  state's `<Backspace>`, `RET` and `TAB` add `backspaceTyped`,
+  `lineBreakTyped` and a tab, which the repeat runs again.
+- A command that restarts the last change (`Command.restarts`, insert
+  state's arrow keys), run in the recording view, leaves a restart waiting
+  (`State.restart`): the command it names, as a change that enters the Vim
+  state the view is in, with no count and no register. The next text added
+  in the recording view makes it the last change, with that text alone kept
+  for it; ending the recording drops it. This is Vim 9.1's restart of the
+  redo as `i` at the first key after an arrow key (`ins-special-special`).
 - An edit that enters a state for the recording view, and that view being
   closed, end the recording. What was kept stays.
-- A reset keeps both, as it keeps the last change.
+- A reset keeps both and the waiting restart, as it keeps the last change.
 - A command that does not run to its end is not the last change and its
   typed text is not kept, with no rule here: the loop puts the scheme back
   in its state at rest (`Editor/Loop.lean`).
@@ -244,6 +309,11 @@ the text store, and the scheme holds only which Vim state the view is in.
   operator names, or the initial state when it names none.
 - **A motion in such a state is the same move as anywhere.** That it
   extends the selection is the command's, when the edit runs.
+- **A text object in such a state sets the selection** (`Edit.select`):
+  the command sets it to the object, and the view enters the state the
+  record names for an object (`StateRecord.objectEnters`), when it names
+  one, as `visual-line` names `visual`. A register named before it is
+  dropped.
 
 ## Mode keys
 
@@ -274,6 +344,7 @@ config's `bindKey`, holds in every state.
 | A new target of an operator | A variant of `Over`, and its row in `Edit.compile` |
 | A new fact about an operator or a command that the grammar needs | A field of `Operator` or of `Command` |
 | A new fact about a Vim state | A field of `StateRecord` |
+| A key read only after an operator | A row of a keymap in the state's `StateRecord.pending`, with the keys of its own keymaps an operator still takes |
 | A command name that runs as another edit in a state | An entry of that state's run table (`StateRecord.runs`) |
 | A new fact about a Vim state that the loop, the scene or a command reads | A field of `StateRecord`, and how `State.report` reads it into the report |
 | A new part of speech | A variant of `Bound`, and its case in `State.reached` |
@@ -308,13 +379,45 @@ structure Command where
   changes : Bool := false
   /-- The Vim state the view is in after it runs, if it names one. -/
   enters : Option String := none
+  /-- What running it in the insert session the last change began adds to
+  the text kept for that change, as typed text is added, so that the repeat
+  replays it: insert state's editing keys say so (`backspaceTyped`,
+  `lineBreakTyped`, a tab). None for a command that adds nothing. Read only
+  of a command that changes no text. -/
+  typed : Option String := none
+  /-- The name of the command the last change restarts as once something
+  is added to its text after this command ran in the session it began, with
+  the text from there on: an arrow key of insert state's, which restarts
+  it as `i` (Vim 9.1's `ins-special-special`). Read only of a command that
+  changes no text. -/
+  restarts : Option String := none
   deriving DecidableEq, Repr
+
+/-- What `<Backspace>` in an insert session adds to the text kept for the
+last change (`Command.typed`): the backspace character, U+0008, which no
+key prints. The repeat deletes the cell before the bar for it
+(`Editor/Evil/Repeat.lean`). -/
+def backspaceTyped : String :=
+  "\x08"
+
+/-- What `RET` in an insert session adds to the text kept for the last
+change: a line feed. The repeat breaks the line there with the buffer's own
+line ending. -/
+def lineBreakTyped : String :=
+  "\n"
 
 /-- What a key sequence is bound to in the Vim scheme's keymaps: a part of
 speech, named by its vocabulary name. -/
 inductive Bound where
   /-- The motion of this vocabulary name. -/
   | motion (name : String)
+  /-- The motion of this vocabulary name, which takes the character the next
+  key names as its argument: `f`, `t`, `F` and `T`. -/
+  | charMotion (name : String)
+  /-- The motion of this vocabulary name, which takes as its argument a text
+  typed in the minibuffer, asked for with a prompt labelled `label`: `/`
+  and `?`. -/
+  | promptMotion (name label : String)
   /-- An operator. -/
   | operator (operator : Operator)
   /-- The text object of this vocabulary name. -/
@@ -338,8 +441,9 @@ def Bound.isMode : Bound → Bool
 
 /-- What an operator acts on. -/
 inductive Over where
-  /-- What the motion of this vocabulary name covers. -/
-  | motion (name : String)
+  /-- What the motion of this vocabulary name covers, given `argument` when
+  it takes one. -/
+  | motion (name : String) (argument : Option String := none)
   /-- The text object of this vocabulary name. -/
   | textObject (name : String)
   /-- Whole lines: the operator's key typed twice. -/
@@ -351,8 +455,8 @@ inductive Over where
 /-- What a key sequence parses to. A count is absent when no digit was
 typed, and a register when none was named. -/
 inductive Edit where
-  /-- Move by a motion. -/
-  | move (motion : String) (count : Option Nat)
+  /-- Move by a motion, given `argument` when it takes one. -/
+  | move (motion : String) (count : Option Nat) (argument : Option String := none)
   /-- Apply an operator to a target. -/
   | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
   /-- Run a command. -/
@@ -360,6 +464,8 @@ inductive Edit where
   /-- Replay `change`, the last change, with `inserted`, the text typed in
   the insert session it began, or none when it began none. -/
   | replay (change : Edit) (inserted : Option String)
+  /-- Set a visual selection to the text object of this vocabulary name. -/
+  | select (object : String) (count : Option Nat)
   deriving DecidableEq, Repr
 
 /-- The name of the command a replay compiles to. -/
@@ -374,6 +480,10 @@ def moveCommand : String :=
 def operateCommand : String :=
   "operate"
 
+/-- The name of the command a text object in a visual state compiles to. -/
+def selectObjectCommand : String :=
+  "select-object"
+
 namespace Edit
 
 /-- Whether the edit changes text: its operator's or its command's word for
@@ -383,6 +493,7 @@ def changes : Edit → Bool
   | .operate operator .. => operator.changes
   | .run command .. => command.changes
   | .replay .. => false
+  | .select .. => false
 
 /-- The Vim state the view is in after the edit, if its operator or its
 command names one. -/
@@ -391,28 +502,32 @@ def enters : Edit → Option String
   | .operate operator .. => operator.enters
   | .run command .. => command.enters
   | .replay .. => none
+  | .select .. => none
 
 /-- The edit with `count` as its count: a replay is left as it is. -/
 def withCount (count : Nat) : Edit → Edit
-  | .move motion _ => .move motion (some count)
+  | .move motion _ argument => .move motion (some count) argument
   | .operate operator over _ register => .operate operator over (some count) register
   | .run command _ register => .run command (some count) register
   | .replay change inserted => .replay change inserted
+  | .select object _ => .select object (some count)
 
 /-- The invocation the edit compiles to (the table in the module docs). -/
 def compile : Edit → Invocation
-  | .move motion count =>
-    { command := moveCommand, arguments := [.str motion, .nat (count.getD 0)] }
+  | .move motion count argument =>
+    { command := moveCommand
+      arguments := [.str motion] ++ argument.toList.map .str ++ [.nat (count.getD 0)] }
   | .operate operator over count register =>
-    let (kind, name) :=
+    let (kind, name, argument) :=
       match over with
-      | .motion name => ("motion", name)
-      | .textObject name => ("text-object", name)
-      | .lines => ("lines", "")
-      | .selection => ("selection", "")
+      | .motion name argument => ("motion", name, argument)
+      | .textObject name => ("text-object", name, none)
+      | .lines => ("lines", "", none)
+      | .selection => ("selection", "", none)
     { command := operateCommand
       arguments :=
-        [.str operator.name, .str kind, .str name, .nat (count.getD 0), .str (register.getD "")] }
+        [.str operator.name, .str kind, .str name] ++ argument.toList.map .str ++
+          [.nat (count.getD 0), .str (register.getD "")] }
   | .run command count register =>
     { command := command.name, arguments := [.nat (count.getD 0), .str (register.getD "")] }
   | .replay change inserted =>
@@ -421,6 +536,8 @@ def compile : Edit → Invocation
       arguments :=
         [.bool inserted.isSome, .str (inserted.getD ""), .str compiled.command] ++
           compiled.arguments }
+  | .select object count =>
+    { command := selectObjectCommand, arguments := [.str object, .nat (count.getD 0)] }
 
 end Edit
 
@@ -442,11 +559,44 @@ structure StateRecord where
   operatesOnSelection : Bool := false
   /-- The shape the view's selection has in the state. -/
   shape : Shape := .inclusive
+  /-- The keymaps walked, after the active ones, in place of `keymaps` while
+  an operator waits: Vim's Operator-pending mode. With none, `keymaps` are
+  walked then too. -/
+  pending : List (Keymap Bound) := []
+  /-- The Vim state a view enters when a text object sets its selection in
+  this state, if one: `visual-line` names `visual`, as an object makes a
+  line-wise selection character-wise. -/
+  objectEnters : Option String := none
   /-- The run table: in the state, a command of the first name, reached by
   a key bound to that name alone in any keymap or named by a menu item, is
   completed as the edit beside it ("Vim states", in the module docs). -/
   runs : List (String × Edit) := []
   deriving Repr
+
+/-- An edit that waits for the answer to a prompt ("Motions that ask", in
+the module docs): the motion that takes the answer as its argument, and
+what was typed before its key. -/
+structure Asking where
+  /-- The view the edit is for. -/
+  view : ViewId
+  /-- The motion's vocabulary name. -/
+  motion : String
+  /-- The operator that waits for the motion, if one was typed. -/
+  operator : Option Operator := none
+  /-- The count typed, if one was. -/
+  count : Option Nat := none
+  /-- The register named, if one was. -/
+  register : Option String := none
+  /-- The view of the minibuffer the prompt opened, once the scheme is told
+  of it. -/
+  minibuffer : Option ViewId := none
+  deriving DecidableEq, Repr
+
+/-- The name of the command a motion that asks yields, to open its prompt:
+the minibuffer's (`Editor/Minibuffer.lean`, "Asking for the input
+scheme"). -/
+def askCommand : String :=
+  "minibuffer-ask"
 
 /-- The registry of Vim states the scheme is built over: an open set, with
 one state that a view is in before any key. -/
@@ -494,6 +644,9 @@ structure State where
   /-- Whether the register prefix was the last key, so that the next key
   names the register. -/
   awaitsRegister : Bool := false
+  /-- The motion that waits for the character the next key names, if a key
+  bound to one was the last key (`Bound.charMotion`). -/
+  awaitsChar : Option String := none
   /-- The operator waiting for its target, if one was typed. -/
   operator : Option Operator := none
   /-- The keymap prefix walked so far, within the edit begun. -/
@@ -507,6 +660,14 @@ structure State where
   /-- The view whose typed text is being added to `inserted`: the view of
   the last change, while it is in the session that change began. -/
   recording : Option ViewId := none
+  /-- The change the last change is restarted as once something is added
+  to its text: set by a command that restarts it (`Command.restarts`), and
+  dropped when the recording ends. -/
+  restart : Option Edit := none
+  /-- The edit that waits for a prompt's answer, if a motion that asks was
+  typed and the answer has not come ("Motions that ask", in the module
+  docs). -/
+  asking : Option Asking := none
   deriving DecidableEq, Repr
 
 /-- The record of the Vim state `view` is in: the registry's record of the
@@ -577,6 +738,14 @@ private def State.countDigit? (state : State) (key : Key) : Option Nat :=
   if state.walked.isEmpty then (digit? key).filter fun digit => digit != 0 || state.digits.isSome
   else none
 
+/-- The character `key` names as a find's argument: the text it prints, or a
+tab for `TAB` with no modifier held. -/
+def Key.character? (key : Key) : Option String :=
+  match key.printed? with
+  | some text => some text
+  | none =>
+    if key.chord.logical == .named .tab && key.chord.modifiers == {} then some "\t" else none
+
 /-- What one key parses to. -/
 inductive Parsed where
   /-- Nothing yet, or nothing at all: the key went on with an edit, or
@@ -586,25 +755,39 @@ inductive Parsed where
   | edit (edit : Edit)
   /-- The key is typed text: this is what it prints. -/
   | text (text : String)
+  /-- The key asks for a text typed in the minibuffer, with a prompt
+  labelled `label`: the edit waits for the answer (`State.asking`). -/
+  | ask (label : String)
   deriving DecidableEq, Repr
 
 /-- The state with the edit begun dropped. A reset keeps which Vim state
 each view is in, the last change and the text typed in the session it
-began, with the view that text is being kept for, and nothing else. -/
+began, with the view that text is being kept for and the change it is
+restarted as, and nothing else. -/
 private def State.reset (state : State) : State :=
   { current := state.current, lastChange := state.lastChange, inserted := state.inserted
-    recording := state.recording }
+    recording := state.recording, restart := state.restart, asking := state.asking }
 
 /-- The state with the typed text of `view` no longer kept, when `view` is
-the view it is being kept for. The text kept so far stays. -/
+the view it is being kept for. The text kept so far stays, and no restart
+waits. -/
 private def State.endRecording (state : State) (view : ViewId) : State :=
-  if state.recording == some view then { state with recording := none } else state
+  if state.recording == some view then
+    { state with
+      recording := none, restart := none }
+  else state
 
-/-- The state once `text` was typed in `view`: the text is added to what is
-kept for the last change when `view` is the view it is being kept for, and
-the state is as it was otherwise. -/
+/-- The state once `text` was typed in `view`: when `view` is the view it is
+being kept for, the text is added to what is kept for the last change, or,
+when a restart waits, the last change is the change it restarts as, with
+the text alone kept for it; the state is as it was otherwise. -/
 def State.typedText (state : State) (view : ViewId) (text : String) : State :=
-  if state.recording == some view then { state with inserted := state.inserted.map (· ++ text) }
+  if state.recording == some view then
+    match state.restart with
+    | some change =>
+      { state with
+        lastChange := some change, inserted := some text, restart := none }
+    | none => { state with inserted := state.inserted.map (· ++ text) }
   else state
 
 /-- The state once `view` is closed: without the Vim state kept for it, and
@@ -630,6 +813,9 @@ does not have is the initial state. With none named, the state is as it
 was. The edit begun and the last change are the scheme's, not the view's,
 and stay. -/
 def State.openMinibuffer (states : States) (view : ViewId) (state : State) : State :=
+  -- An edit that waits for a prompt's answer waits while keys are typed in
+  -- the minibuffer's view.
+  let state := { state with asking := state.asking.map ({ · with minibuffer := some view }) }
   match states.minibuffer with
   | some name => state.enter states view name
   | none => state
@@ -658,6 +844,23 @@ private def State.finish (states : States) (view : ViewId) (state : State) (edit
   match enters with
   | some name => (next.enter states view name, .edit edit)
   | none => (next, .edit edit)
+
+/-- The state once `command`, which a key for `view` ran, completed its
+edit: when it changes no text and `view` is the view whose typed text is
+kept, what it adds (`Command.typed`) is added as typed text is, and a
+command that restarts the last change (`Command.restarts`) leaves the
+change it restarts as waiting: its command, which changes text and enters
+the Vim state the view is in, with no count and no register. -/
+private def State.ran (states : States) (view : ViewId) (command : Command) (state : State) :
+    State :=
+  if command.changes || state.recording != some view then state
+  else
+    let state := (command.typed.map (state.typedText view)).getD state
+    match command.restarts with
+    | some name =>
+      let enters := some (state.stateOf states view)
+      { state with restart := some (.run { name, changes := true, enters } none none) }
+    | none => state
 
 /-- The edit begun, completed as `edit` for `view` (`State.finish`): an edit
 over the selection, in a state where operators act on it, ends the
@@ -689,11 +892,26 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
     | some operator =>
       state.finish states view (.operate operator (.motion name) state.count state.register)
     | none => state.finish states view (.move name state.count)
+  | .promptMotion name label =>
+    -- The edit cannot complete at the key: its argument is typed in the
+    -- minibuffer, and the keys typed there must parse afresh.
+    let asking : Asking :=
+      { view, motion := name, operator := state.operator, count := state.count
+        register := state.register }
+    ({ state.reset with asking := some asking }, .ask label)
+  | .charMotion name =>
+    ({ state with
+        typed, multiplier := state.count, digits := none, awaitsChar := some name, walked := [] },
+      .nothing)
   | .textObject name =>
     match state.operator with
     | some operator =>
       state.finish states view (.operate operator (.textObject name) state.count state.register)
-    | none => (state.reset, .nothing)
+    | none =>
+      let record := state.record states view
+      if record.operatesOnSelection then
+        state.finish states view (.select name state.count) record.objectEnters
+      else (state.reset, .nothing)
   | .operator operator =>
     match state.operator with
     | some waiting =>
@@ -717,7 +935,9 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
       -- a register typed before the key is dropped.
       match state.runOf states view command.name with
       | some edit => state.complete states view edit
-      | none => state.finish states view (.run command state.count state.register)
+      | none =>
+        let (next, parsed) := state.finish states view (.run command state.count state.register)
+        (next.ran states view command, parsed)
   | .register =>
     if state.operator.isSome || state.register.isSome then (state.reset, .nothing)
     else
@@ -738,41 +958,60 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
 /-- One key of the grammar, a key for `view`: the state it leaves, and what
 it parsed to (the rules in the module docs). A digit of a count is taken
 first, where typing is not text; any other key is walked through the
-active keymaps of `view` and then the keymaps of the view's Vim state. An
+active keymaps of `view` and then the keymaps of the view's Vim state, its
+pending keymaps while an operator waits when it has any. An
 unbound key is text when the view's state inserts text, the key prints and
 no edit is begun, and otherwise resets. -/
 def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId) (state : State)
     (key : Key) : State × Parsed :=
+  -- A key for a view other than the minibuffer's: the prompt was cancelled,
+  -- and the edit that waited for its answer is dropped.
+  let state :=
+    if state.asking.any (·.minibuffer != some view) then { state with asking := none } else state
   let record := state.record states view
   let typed := state.typed ++ [key.chord]
-  if state.awaitsRegister then
-    match key.printed? with
-    | some name =>
-      ({ state with
-          typed, register := some name, awaitsRegister := false },
-        .nothing)
+  if let some name := state.awaitsChar then
+    match Key.character? key with
+    | some char =>
+      match state.operator with
+      | some operator =>
+        state.finish states view
+          (.operate operator (.motion name (some char)) state.count state.register)
+      | none => state.finish states view (.move name state.count (some char))
     | none => (state.reset, .nothing)
   else
-    match if record.insertsText then none else state.countDigit? key with
-    | some digit =>
-      ({ state with
-          typed, digits := some (state.digits.getD 0 * 10 + digit) },
-        .nothing)
-    | none =>
-      let active := if record.insertsText then (maps view).map (·.filter (!·.isMode)) else maps view
-      match Keymap.walk (active ++ record.keymaps) state.walked key with
-      | (_, some binding) => state.reached states view typed binding
-      | (walked, none) =>
-        if !walked.isEmpty then
-          ({ state with
-              typed, walked },
-            .nothing)
-        else
-          if record.insertsText && state.typed.isEmpty then
-            match key.printed? with
-            | some text => (state.typedText view text, .text text)
-            | none => (state, .nothing)
-          else (state.reset, .nothing)
+    if state.awaitsRegister then
+      match key.printed? with
+      | some name =>
+        ({ state with
+            typed, register := some name, awaitsRegister := false },
+          .nothing)
+      | none => (state.reset, .nothing)
+    else
+      match if record.insertsText then none else state.countDigit? key with
+      | some digit =>
+        ({ state with
+            typed, digits := some (state.digits.getD 0 * 10 + digit) },
+          .nothing)
+      | none =>
+        let active :=
+          if record.insertsText then (maps view).map (·.filter (!·.isMode)) else maps view
+        let own :=
+          if state.operator.isSome && !record.pending.isEmpty then record.pending
+          else record.keymaps
+        match Keymap.walk (active ++ own) state.walked key with
+        | (_, some binding) => state.reached states view typed binding
+        | (walked, none) =>
+          if !walked.isEmpty then
+            ({ state with
+                typed, walked },
+              .nothing)
+          else
+            if record.insertsText && state.typed.isEmpty then
+              match key.printed? with
+              | some text => (state.typedText view text, .text text)
+              | none => (state, .nothing)
+            else (state.reset, .nothing)
 
 /-- The name of the command typed text runs. -/
 def selfInsertCommand : String :=
@@ -791,6 +1030,26 @@ def step (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewI
   | (next, .nothing) => (next, none)
   | (next, .edit edit) => (next, some edit.compile)
   | (next, .text text) => (next, some (selfInsert text))
+  | (next, .ask label) => (next, some { command := askCommand, arguments := [.str label] })
+
+/-- The state once `answer` came to the prompt the scheme asked for, and the
+invocation it completes ("Motions that ask", in the module docs): the edit
+that waited, with the answer as its motion's argument, completed for the
+view it is for as a key completes one (`State.finish`). With no edit
+waiting the state is as it was and nothing is yielded. -/
+def State.answered (states : States) (_ : ViewId) (answer : String) (state : State) :
+    State × Option Invocation :=
+  match state.asking with
+  | none => (state, none)
+  | some asking =>
+    let state := { state with asking := none }
+    let edit : Edit :=
+      match asking.operator with
+      | some operator =>
+        .operate operator (.motion asking.motion (some answer)) asking.count asking.register
+      | none => .move asking.motion asking.count (some answer)
+    let (next, _) := state.finish states asking.view edit
+    (next, some edit.compile)
 
 /-- What a menu item's `invocation` for `view` is, from `state`: when it has
 no arguments and the run table of the view's Vim state has an entry for its
@@ -835,11 +1094,14 @@ def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
     roles := modes.roles
     leader := modes.leader
     modeCommand := fun name => .mode (.command { name })
-    defaults := states.initial.keymaps ++ states.others.flatMap (·.keymaps)
+    defaults :=
+      states.initial.keymaps ++ states.initial.pending ++
+        states.others.flatMap fun record => record.keymaps ++ record.pending
     tuned := modes.tuned.map fun (name, keys, bound) => (name, keys, .mode bound)
     closeView := State.closeView
     openMinibuffer := State.openMinibuffer states
     committed := fun view text state => state.typedText view text
+    answered := State.answered states
     invoked := State.invoked states }
 
 end Editor.Vim

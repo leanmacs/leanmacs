@@ -128,12 +128,21 @@ completed, and withdraw a wait or end a watch. It has a fake over the pure
 model of watches (`FakeFileWatches`, `Editor/Job/Fake.lean`) and a real
 implementation over the library's watch service (`Editor/Job/Real.lean`).
 
+`Diffs` is the diff port, beside them: start a diff request
+(`Editor/Diff.lean`) as a wait, take its reply once the wait has completed,
+and withdraw a wait. A diff names its sources as a save does, so one that
+names a snapshot the job does not hold is answered `noSuchSnapshot` at once,
+with nothing started. It has a fake over the pure model of files
+(`FakeFiles.diffs`, `Editor/Job/Fake.lean`) and a real implementation over
+the library's diff service (`Editor/Job/Real.lean`). A runner that is given
+none has `Diffs.absent`.
+
 `Environments` is the port of the environments a host's jobs share, which
 answers at once and registers no wait (`Environments.inherited`, the
 default, and `sharedEnvironments`, state behind a reference).
 
 `Services` is what a runner is given: the table, the clock, the files, the
-processes, the file watches and the environments. A runner that is given no file service has `Files.absent`,
+processes, the file watches, the diffs and the environments. A runner that is given no file service has `Files.absent`,
 and one that is given no process service has `Processes.absent`, each of
 which refuses every request as failed, at once: an error as a value, and
 the job goes on; one that is given no watch service has
@@ -317,6 +326,25 @@ def FileWatches.absent (completions : Completions) : FileWatches where
   take _ request := pure (request.refused (.failed "this runner has no file-watch service"))
   cancel _ := pure ()
 
+/-- The diff port: what the runner's diff waits are made of. -/
+structure Diffs where
+  /-- Asks for `request` to be worked as the wait `id`, and for the wait to
+  be completed when it has been. It returns at once and never blocks. -/
+  start : (id : UInt64) → (request : DiffRequest) → BaseIO Unit
+  /-- The reply to `request`, which was started as the wait `id` and has
+  completed. It is asked once, on the job's thread. -/
+  take : (id : UInt64) → (request : DiffRequest) → BaseIO request.Reply
+  /-- Withdraws the wait `id`: the service will not complete it, and keeps
+  nothing of it. Safe for any id, a timer's included. -/
+  cancel : (id : UInt64) → BaseIO Unit
+
+/-- No diff service: every request completes at once, refused as failed,
+through the table `completions`. -/
+def Diffs.absent (completions : Completions) : Diffs where
+  start id _ := completions.finish id .completed
+  take _ request := pure (request.refused (.failed "this runner has no diff service"))
+  cancel _ := pure ()
+
 /-- The environments port: what a job's environment requests are answered
 by, at once (`Editor/Process/Environment.lean`). -/
 structure Environments where
@@ -359,6 +387,8 @@ structure Services where
   /-- The file watches. A runner that is given none has
   `FileWatches.absent`. -/
   fileWatches : FileWatches := FileWatches.absent completions
+  /-- The diffs. A runner that is given none has `Diffs.absent`. -/
+  diffs : Diffs := Diffs.absent completions
   /-- The environments its jobs share. A runner that is given none has
   `Environments.inherited`. -/
   environments : Environments := Environments.inherited
@@ -420,6 +450,7 @@ def withdraw (handle : Handle) (id : UInt64) : BaseIO Unit := do
   handle.services.files.cancel id
   handle.services.processes.cancel id
   handle.services.fileWatches.cancel id
+  handle.services.diffs.cancel id
   handle.services.completions.finish id .cancelled
 
 /-- Cancels the job: sets its token, and withdraws the wait it is in, if it
@@ -580,6 +611,16 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.fileWatches.start id (.next watch)
     return .later id wait (handle.services.fileWatches.take id (.next watch))
+  | .diff (.lines old new limit) => do
+    -- A snapshot a job holds is named for that job and for no other, as a
+    -- save's source is.
+    for source in [old, new] do
+      if let .held snapshot := source then
+        unless (← handle.held.get).contains snapshot do
+          return .now (.error .noSuchSnapshot)
+    let (id, wait) ← handle.services.completions.register
+    handle.services.diffs.start id (.lines old new limit)
+    return .later id wait (handle.services.diffs.take id (.lines old new limit))
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.

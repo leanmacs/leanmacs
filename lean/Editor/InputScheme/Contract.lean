@@ -48,6 +48,10 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   unreachable, and no check of one mode can see it.
 - `modeCommandRuns`: as `namedCommandRuns`, for `scheme.modeCommand`, what
   a key a mode binds (a role, a suffix) is bound to.
+- `unaskedAnswerYieldsNothing`: an answer to a scheme that asks nothing
+  (`InputScheme.answered`), from its initial state and after each strict
+  prefix of a complete input, yields nothing and leaves what is pending as
+  it was.
 - `minibufferTakesText`: once the scheme is told that the view is the
   minibuffer's (`InputScheme.openMinibuffer`), a key that prints and that
   nothing binds (`printable`), typed for that view, yields an invocation
@@ -251,6 +255,18 @@ def quietKeyKeepsReport : Property :=
           subject.scheme.report (subject.feed (typed ++ [subject.unbound])).1 subject.view ==
             before }
 
+/-- An answer to a scheme that asks nothing yields nothing and leaves what is
+pending as it was (`InputScheme.answered`): from the scheme's initial state
+and after each strict prefix of a complete input, none of which asks. -/
+def unaskedAnswerYieldsNothing : Property :=
+  { name :=
+      "an answer to a scheme that is asking nothing yields nothing and leaves what is pending as it was"
+    holds := fun subject =>
+      subject.allPrefixes fun _ typed =>
+        let state := (subject.feed typed).1
+        let (answered, yielded) := subject.scheme.answered subject.view "x" state
+        yielded.isNone && subject.scheme.pending answered == subject.scheme.pending state }
+
 /-- A menu item's invocation of `namedCommand`, a name no scheme knows, from
 the initial state (`InputScheme.invoked`), comes back as it was, and the
 scheme's report of the subject's view is as it was. -/
@@ -268,7 +284,7 @@ def invokedKeepsUnknown : Property :=
 def properties : List Property :=
   [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
     namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns, minibufferTakesText,
-    quietKeyKeepsReport, invokedKeepsUnknown]
+    quietKeyKeepsReport, unaskedAnswerYieldsNothing, invokedKeepsUnknown]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/

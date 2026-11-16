@@ -210,6 +210,20 @@ A relative path is refused, and so is a second `processEnvironment` in one
 `setup`. A reload that installs takes the setting, and drops every
 directory's cached environment.
 
+Config declares a workspace root with `workspace`, for a directory that is
+not a repository, or to split one, with the name of the project it belongs
+to if it gives one (`Editor/Workspace.lean`):
+
+```lean
+def setup : SetupM Unit := do
+  workspace "/Users/me/notes"
+  workspace "/Users/me/src/mono/tools" (some "tools")
+```
+
+A root that is not absolute is refused, and so is one root declared twice.
+A reload that installs takes the roots, and bumps the config generation, so
+the next file opened asks its directory's workspace again.
+
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
 over, so the type does not refer to itself. A job's handler is carried the
@@ -278,6 +292,11 @@ inductive SetupRequest where
   /-- Choose where a child's environment comes from
   (`Editor/Process/Environment.lean`). -/
   | processEnvironment (setting : Process.Setting)
+  /-- Set auto-reload on or off (`Editor/Loop.lean`, "Auto-reload"). -/
+  | autoReload (on : Bool)
+  /-- Declare `root`, an absolute path, a workspace root, of the project
+  called `project` when one is given (`Editor/Workspace.lean`). -/
+  | workspace (root : System.FilePath) (project : Option String)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -297,6 +316,8 @@ def SetupRequest.Reply : SetupRequest → Type
   | .framePadding _ => Unit
   | .titleBar _ => Unit
   | .processEnvironment _ => Unit
+  | .autoReload _ => Unit
+  | .workspace .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -476,5 +497,29 @@ def processEnvironment (setting : Process.Setting) : SetupM Unit := do
     unless path.isAbsolute do
       throw (relativeMise path)
   ExceptT.lift (Program.request (port := setupPort) (.processEnvironment setting))
+
+/-- Turns auto-reload on, or with `false` off. With it on, a follow job
+watches each file buffer's file, and a change on disk reloads a buffer with
+no unsaved changes, or marks one with them (`Editor/Loop.lean`,
+"Auto-reload"). It is off when config says nothing, and a command's choice
+(`auto-reload-mode`, the ex names `autoread` and `noautoread`) decides over
+it until the editor stops. A second call in one `setup` is refused, as a
+second face of one name is. -/
+def autoReload (on : Bool := true) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.autoReload on))
+
+/-- The message a workspace root is refused with when it is not absolute. -/
+def relativeWorkspace (root : System.FilePath) : String :=
+  s!"a workspace root must be absolute: {root}"
+
+/-- Declares `root` a workspace root, of the project called `project` when
+one is given, which then identifies it; otherwise the root is its own
+project. A file under the root belongs to its workspace whatever git says,
+the deepest root winning (`Editor/Workspace.lean`). Refuses the `setup` for
+a root that is not absolute, and for a root declared twice. -/
+def workspace (root : System.FilePath) (project : Option String := none) : SetupM Unit := do
+  unless root.isAbsolute do
+    throw (relativeWorkspace root)
+  ExceptT.lift (Program.request (port := setupPort) (.workspace root project))
 
 end Editor

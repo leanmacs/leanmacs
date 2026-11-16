@@ -106,6 +106,25 @@ structure Loop.Driver.Pending where
   /-- The snapshots its loads made, which it holds until its command has
   run; none for a job that did not finish. -/
   held : Array JobSnapshotId := #[]
+  /-- The key it was started with, if any (`JobStart.key`). -/
+  key : Option String := none
+
+/-- A job the driver holds waiting: parked at a `next` of one of its watches
+that nothing recorded can answer yet (`JobModel.runParking`). -/
+structure Loop.Driver.Parked where
+  /-- The job's id. -/
+  id : Nat
+  /-- The name it was started under. -/
+  name : String
+  /-- The key it was started with, if any. -/
+  key : Option String := none
+  /-- The watch it waits on. -/
+  watch : Nat
+  /-- Its own watches: a job sees only its own. -/
+  watches : Array FileWatchModel.Watch
+  /-- The rest of the job, given the reply to its `next`. -/
+  resume :
+    Except FileWatchError (Array FileWatch.Change) → Program jobPort (Except String (EditorM Unit))
 
 /-- The command loop on the editor's models, with the jobs its commands
 start run on the job model, for a loop that runs the input scheme
@@ -125,6 +144,8 @@ structure Loop.Driver (scheme : InputScheme) where
   registered : String → Option (List Argument → Work) := fun _ => none
   /-- The jobs started and not delivered, oldest first. -/
   pending : Array Loop.Driver.Pending := #[]
+  /-- The jobs held waiting at a watch, oldest first. -/
+  parked : Array Loop.Driver.Parked := #[]
   /-- The id the next job started gets. -/
   next : Nat := 1
   /-- Whether a step the driver took in said stop (`Loop.Next.stop`): a
@@ -173,12 +194,94 @@ def handing (driver : Loop.Driver scheme) (arrived : Array (JobSnapshotId × Tex
     Loop.Driver scheme :=
   { driver with model := { driver.model with texts := { driver.model.texts with arrived } } }
 
+/-- The driver once the job `id`, called `name`, has run `program` on the
+job model from where the driver's is, seeing only its own watches: kept as
+not delivered when it ended, and as parked when it waits at a watch with
+nothing recorded. What its environments said is said in the echo area, in
+order, as the host says it (`Running.said`). The watches' ids come from the
+one shared counter. -/
+def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option String)
+    (program : Program jobPort (Except String (EditorM Unit)))
+    (own : Array FileWatchModel.Watch := #[]) : Loop.Driver scheme :=
+  let files := { driver.jobs.files with snapshots := driver.model.texts.snapshots }
+  let shared := driver.jobs.fileWatches
+  let start :=
+    { driver.jobs with
+      files, fileWatches := { shared with watches := own } }
+  let saidBy (jobs : JobModel) : Loop scheme :=
+    let said := jobs.reported.extract driver.jobs.reported.size jobs.reported.size
+    said.foldl (fun loop text => { loop with state := { loop.state with echo := text } })
+      driver.loop
+  match JobModel.runParking program start with
+  | .ended value jobs =>
+    let driver := { driver with loop := saidBy jobs }
+    let outcome : Job.Outcome (EditorM Unit) :=
+      match value with
+      | some (.ok command) => .finished command
+      | some (.error message) => .failed message
+      | none => .cancelled
+    let loaded : Array JobSnapshotId :=
+      (Array.range (jobs.files.held.size - files.held.size)).map (⟨files.held.size + ·⟩)
+    let finished := outcome matches .finished _
+    let jobs := { jobs with fileWatches := { jobs.fileWatches with watches := #[] } }
+    { driver with
+      jobs := if finished then jobs else releasing jobs loaded
+      pending :=
+        driver.pending.push { id, name, outcome, held := if finished then loaded else #[], key } }
+  | .parked watch jobs resume =>
+    { driver with
+      loop := saidBy jobs
+      jobs := { jobs with fileWatches := { jobs.fileWatches with watches := #[] } }
+      parked :=
+        driver.parked.push { id, name, key, watch, watches := jobs.fileWatches.watches, resume } }
+
+/-- Ends the job of `key`, parked or finished and not delivered: its command
+never runs, and a parked job's watches are recorded as ended. Nothing for a
+key no such job has. -/
+def cancel (driver : Loop.Driver scheme) (key : String) : Loop.Driver scheme :=
+  let ending := driver.parked.filter (·.key == some key)
+  let shared := driver.jobs.fileWatches
+  { driver with
+    parked := driver.parked.filter (·.key != some key)
+    pending := driver.pending.filter (·.key != some key)
+    jobs :=
+      { driver.jobs with
+        fileWatches :=
+          { shared with ended := shared.ended ++ ending.flatMap (·.watches.map (·.id)) } } }
+
+/-- How many watches the parked jobs hold open. -/
+def openWatches (driver : Loop.Driver scheme) : Nat :=
+  driver.parked.foldl (fun count job => count + job.watches.size) 0
+
+/-- The driver once `changes` happened on disk: each is recorded in every
+parked job's watches, and each job whose watch now has a delivery is resumed
+with it, on the job clock, and then ends or parks again as a started job
+does. -/
+def touch (driver : Loop.Driver scheme) (changes : Array (System.FilePath × FileWatch.Kind)) :
+    Loop.Driver scheme :=
+  let jobs := driver.parked
+  let driver := { driver with parked := #[] }
+  jobs.foldl
+    (fun driver job =>
+      let shared := driver.jobs.fileWatches
+      let watches :=
+        ({ shared with watches := job.watches } : FileWatchModel).touch changes driver.jobs.now
+      let due := watches.watches.any fun watch => watch.id == job.watch && watch.opened.isSome
+      if !due then
+        { driver with parked := driver.parked.push { job with watches := watches.watches } }
+      else
+        let (reply, answered, now) := watches.handle driver.jobs.now none (.next ⟨job.watch⟩)
+        let driver := { driver with jobs := { driver.jobs with now } }
+        driver.ranOn job.id job.name job.key (job.resume reply) answered.watches)
+    driver
+
 /-- The driver once each of `starts` is started: the job registered under
 its name, applied to its arguments, is run on the job model, and what it
-ended with is kept as not delivered, under the next id, and what its
-environments said is said in the echo area. A start whose name
-no job is registered under is passed over: the loop refused it when the
-command asked.
+ended with is kept as not delivered, under the next id, or the job is held
+parked at a watch; either way what its environments said is said in the
+echo area. A start of a key first cancels the job of that key. A start
+whose name no job is registered under is passed over: the loop refused it
+when the command asked.
 
 The job reads the text model's snapshots as the published ones. What its
 loads made is kept with it when it finished, and released otherwise
@@ -189,25 +292,13 @@ def started (driver : Loop.Driver scheme) (starts : Array JobStart) : Loop.Drive
       match driver.registered start.name with
       | none => driver
       | some work =>
-        let files := { driver.jobs.files with snapshots := driver.model.texts.snapshots }
-        let (outcome, jobs) := (work start.arguments ()).runModel { driver.jobs with files }
-        let loaded : Array JobSnapshotId :=
-          (Array.range (jobs.files.held.size - files.held.size)).map (⟨files.held.size + ·⟩)
-        let finished := outcome matches .finished _
-        -- What the job's environments said is said in the echo area, in
-        -- order, as the host says it (`Running.said`).
-        let said := jobs.reported.extract driver.jobs.reported.size jobs.reported.size
-        let loop :=
-          said.foldl (fun loop text => { loop with state := { loop.state with echo := text } })
-            driver.loop
-        { driver with
-          loop
-          jobs := if finished then jobs else releasing jobs loaded
-          pending :=
-            driver.pending.push
-              { id := driver.next, name := start.name, outcome
-                held := if finished then loaded else #[] }
-          next := driver.next + 1 })
+        let driver :=
+          match start.key with
+          | some key => driver.cancel key
+          | none => driver
+        let id := driver.next
+        ({ driver with next := driver.next + 1 } : Loop.Driver scheme).ranOn id start.name start.key
+          (work start.arguments ()).run)
     driver
 
 /-- Takes in `stepped`, a step the driver's loop took, which left the models
@@ -225,11 +316,12 @@ code is not a design driver"). -/
 partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
     (model : EditorModel) : Loop.Driver scheme :=
   let driver :=
-    ({ driver with
-          loop := stepped.loop, model
-          stopped := driver.stopped || stepped.next == Loop.Next.stop
-          reloads := driver.reloads + if stepped.reload then 1 else 0
-          themes := driver.themes ++ stepped.theme.toArray }).started
+    (stepped.cancels.foldl Loop.Driver.cancel
+          { driver with
+            loop := stepped.loop, model
+            stopped := driver.stopped || stepped.next == Loop.Next.stop
+            reloads := driver.reloads + if stepped.reload then 1 else 0
+            themes := driver.themes ++ stepped.theme.toArray }).started
       stepped.starts
   stepped.answered.foldl
     (fun driver invocation =>

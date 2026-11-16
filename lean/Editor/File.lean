@@ -58,8 +58,21 @@ names a snapshot.
   stamp a load or the last save answered, no file, or whatever is there. A
   save that finds something else is refused with `changed` and what is there
   now, and writes nothing over the file. The caller may ask again with
-  `whatever`, which is the override, or load again. A change is noticed when
-  a save is asked for, and not before: nothing watches a file.
+  `whatever`, which is the override, or load again.
+- **A stat** (`File.stat`, `Editor/Job.lean`) is a stamp request read as a
+  load would be: what a check for a change on disk compares with the stamp
+  a buffer recorded. Nothing there is refused with `notFound`, so it is
+  refused as a load is, in the same order: `relativePath`, `notFound`,
+  `notAFile` for a directory. A stat after a load answers the load's stamp,
+  and after a save the save's.
+- **What notices a change.** A save notices one when it is asked for, and
+  the staleness check, one stat a file buffer, when the loop asks for one:
+  as the frame gains the focus, as a buffer is switched to, and at a
+  buffer's first edit (`Editor/Loop.lean`, "Files that changed on disk").
+  Nothing watches a file unless auto-reload is on, which is off by default
+  (`Editor/Loop.lean`, "Auto-reload"). A rewrite within the file system's timestamp
+  granularity that keeps the size is seen by neither: that is the
+  library's limit, pinned there (`crates/editor-text`, `file`).
 - **A save never leaves a half-written file**: the library writes a
   temporary file beside the file and renames it. A save into a directory
   that is not there is refused with `notFound`.

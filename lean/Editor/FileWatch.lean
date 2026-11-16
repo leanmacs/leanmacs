@@ -56,6 +56,12 @@ for a change.
   reload installs, so config's watches are replaced, never piled up.
 - **Errors are values.** A reply is an `Except FileWatchError`, which the
   job matches on, or throws `FileWatchError.describe` of.
+- **Its first compiled user is auto-reload**, which is off by default: the
+  job `follow-file` (`Files.followWork`, `Editor/Files.lean`) watches one
+  file buffer's file while the mode is on, and the loop ends it, by its
+  key, when the mode is turned off or the buffer closed
+  (`Editor/Loop.lean`, "Auto-reload"). With the mode off compiled code
+  opens no watch; a config's own job may still start one.
 
 ## Where an addition goes
 

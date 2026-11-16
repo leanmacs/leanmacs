@@ -120,7 +120,7 @@ use crate::{text, words};
 
 /// The syntax service's id, as the source of the events it reports: the
 /// library's, numbered after the other services'.
-pub const SERVICE: u64 = 5;
+pub const SERVICE: u64 = 6;
 
 /// The real syntax's session of one document.
 type SyntaxSession = Session<TreeSitter>;

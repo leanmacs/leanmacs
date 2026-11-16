@@ -1,3 +1,4 @@
+import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Config.Directory
 import Editor.Config.Display
@@ -23,6 +24,7 @@ import Editor.Text.Real
 import Editor.Themes.Compiled
 import Editor.Watch.Real
 import Editor.Window
+import Editor.Workspace.Compiled
 
 /-!
 # The headless host
@@ -132,10 +134,12 @@ as before, so reload and job completion work as they did.
 - **A window event goes to the loop** (`Running.input`): `Loop.take`, run
   against the library with the recorder as the display, handles it and
   publishes a scene. A key press is still printed with its identity, as the
-  host's own output. A close request ends the loop, as the driver's `stop`
-  does, and so does any step that says stop: a command asked the editor
-  to quit and it can leave (`Editor/Loop.lean`, "Quit"). A window event
-  that cannot be read is ignored.
+  host's own output. Any step that says stop ends the loop, as the
+  driver's `stop` does: a command asked the editor to quit and it can
+  leave (`Editor/Loop.lean`, "Quit"). A close request is a quit by `q`'s
+  rule: it ends the loop once the editor can leave, and while a buffer that
+  holds a file has unsaved changes the loop goes on, with the refusal in
+  the echo area. A window event that cannot be read is ignored.
 - **A key press is dispatched.** The loop steps it through the host's
   scheme and runs the command it yields (`Editor/Loop.lean`, "Running an
   invocation"). What the keys are looked up in is made for each window
@@ -177,13 +181,21 @@ as before, so reload and job completion work as they did.
   that ship (`Ex.commands`, `Ex.bindings`, `Editor/Ex/Compiled.lean`):
   `ex`, which opens the ex line and runs its answer, `quit`,
   `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`,
-  `wq` and `reload`. The Vim scheme's default table binds `:` to the name
+  `wq`, `reload`, `b`, `ls` and `bd`, the last three bound to the buffer
+  commands it is handed (`Buffers.commands`,
+  `Editor/Buffers/Compiled.lean`): `switch-buffer`, `list-buffers` and
+  `close-buffer`. The Vim scheme's default table binds `:` to the name
   `ex`, so that key opens the ex line. And it is handed the command that
   loads a theme and the themes that ship (`Themes.commands`,
   `Themes.shipped`, `Editor/Themes/Compiled.lean`): `load-theme`, and the
-  theme `default`, the built-in one. It is handed no key binding: the
-  Vim scheme's keys are its states' own keymaps. Every default key names
-  a command the host is handed.
+  theme `default`, the built-in one. And it is handed the workspace
+  command and the job that finds a file's workspace (`Workspace.commands`,
+  `Workspace.jobs`, `Editor/Workspace/Compiled.lean`): `workspace-current`,
+  and `find-workspace`, which a file's open starts for its directory when
+  no answer is cached, so a script that opens a file has that job too. The ex line is handed no key
+  binding: the Vim scheme's keys are its states' own keymaps. The frame's
+  bindings bind `s-q` to `quit`. Every default key names a command the host
+  is handed.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run
@@ -960,6 +972,9 @@ structure Running (σ : Type) (scheme : InputScheme) where
   /-- What the host has to say in the echo area once the frame is made: a
   reload's error said before there was a frame (`said`). -/
   unsaid : Option String := none
+  /-- The jobs started with a key, by their key: the id each runs as
+  (`JobStart.key`). -/
+  keyed : Array (String × Nat) := #[]
 
 namespace Running
 
@@ -1050,6 +1065,14 @@ def startJob (collaborators : Collaborators σ scheme) (running : Running σ sch
       fun _ => pure ()
   let (id, jobs) ← running.jobs.start owner name work wake
   return (some id, { running with jobs })
+
+/-- Cancels the job started with `key`, if one is running or has finished and
+not been delivered (`Job.Jobs.cancel`), and forgets the key. -/
+def cancelKeyed (running : Running σ scheme) (key : String) : IO (Running σ scheme) := do
+  let some (_, id) := running.keyed.find? (·.1 == key) | return running
+  let jobs ← running.jobs.cancel id
+  return { running with
+      jobs, keyed := running.keyed.filter (·.1 != key) }
 
 /-- Starts the job registered under `name`, with no arguments, as the driver
 asks, and prints its id. -/
@@ -1188,13 +1211,21 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
     { running with
       frame := some stepped.loop, stepped := true, config := running.config.written stepped.write
       stopped := running.stopped || stepped.next == .stop }
+  -- A cancel ends the job of its key, finished and not delivered or not.
+  for key in stepped.cancels do
+    running ← running.cancelKeyed key
   for start in stepped.starts do
+    -- Starting a job of a key cancels the running job of that key.
+    if let some key := start.key then
+      running ← running.cancelKeyed key
     let (id?, started) ← running.startJob collaborators start.name start.arguments
     running := started
     -- The loop refused a name no job is registered under when the command
     -- asked, from the registry as it is in this event: one is found.
     if let some id := id? then
       collaborators.emit s!"job {id} {start.name}: started"
+      if let some key := start.key then
+        running := { running with keyed := running.keyed.push (key, id) }
   if stepped.reload then
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested
@@ -1222,7 +1253,10 @@ asks the window for the paper's appearance), makes the frame if there is
 none, and has the editor loop take the
 event (`Loop.take`), which lowers the interrupt flag for an interrupt key,
 steps the event, runs the command a key yields and publishes a scene. What
-the step handed back is taken in (`took`). A close request ends the loop.
+the step handed back is taken in (`took`). A close request is a quit by
+`q`'s rule: it ends the loop once the editor can leave, and otherwise the
+loop goes on with the refusal in the echo area (`Editor/Loop.lean`,
+"Quit").
 
 Making the frame and the step are each printed when refused (`attempt`):
 after a refused step the frame stays as it was. With no frame made the event
@@ -1287,8 +1321,11 @@ mode with a syntax attaches and highlights through the host's binding. -/
 def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
     IO (Running σ scheme) := do
   let (result, jobs) ← running.jobs.finish id
-  let running := { running with jobs }
-  let some (entry, outcome) := result | return running
+  let some (entry, outcome) := result | return { running with jobs }
+  -- A keyed job that ended has no key any more.
+  let running :=
+    { running with
+      jobs, keyed := running.keyed.filter (·.2 != id) }
   let label := s!"job {entry.id} {entry.name}"
   match outcome with
   | .finished command =>
@@ -1318,10 +1355,11 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
     return running
 
 /-- A scene as `scene` prints it, read from the text store as it is now: its
-frame, then each view, its snapshot's text and its markers' offsets, and
-after each view's line its status line (`statusLine`). `published` is how
-many scenes have been published, and `theme` the name of the theme the
-scene was drawn in. -/
+frame, then each view, its snapshot's text and its markers' offsets, then,
+for a view that has any, its decorations, each its face and its range
+(`decorations <view>: <face> <start>..<stop> ...`), and its status line
+(`statusLine`). `published` is how many scenes have been published, and
+`theme` the name of the theme the scene was drawn in. -/
 def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array String) := do
   let focused :=
     match scene.focused with
@@ -1342,9 +1380,16 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
               (selection.ranges.map fun range => s!"{range.anchor}..{range.head}").toList
     let rect := view.rect
     lines :=
-      (lines.push
-            s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}, padding {view.padding.across} {view.padding.down}{if view.padding.top == 0 then "" else s!" top {view.padding.top}"}").push
-        (statusLine view.id view.status view.statusFace)
+      lines.push
+        s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}, padding {view.padding.across} {view.padding.down}{if view.padding.top == 0 then "" else s!" top {view.padding.top}"}"
+    -- Only a view that has decorations has the line, so a scene with none
+    -- prints as it did before there were any.
+    unless view.decorations.isEmpty do
+      let spans :=
+        view.decorations.map fun decoration =>
+          s!"{decoration.face.name} {decoration.start}..{decoration.stop}"
+      lines := lines.push s!"decorations {view.id.index}: {" ".intercalate spans.toList}"
+    lines := lines.push (statusLine view.id view.status view.statusFace)
   return lines
 
 /-- Prints the last scene published, or that there is none. -/
@@ -2086,8 +2131,9 @@ the real elaborator over the toolchain in `sysroot` and the editor's
 source, `emit` as the output and stderr as the log, and, as its compiled
 ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
-the frame's commands with their bindings, the command that loads a theme
-with the themes that ship, and the menu bar (`Menu.standard`) with its
+the buffer commands, the frame's commands with their bindings, the command that loads a theme
+with the themes that ship, the workspace command with the job that finds a
+file's workspace, and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
 
@@ -2101,11 +2147,12 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
     wakeups := 2, jobs := 3, environment := 4
     commands :=
-      Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++
+      Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
         FrameCommands.commands ++
-        Themes.commands
+        Themes.commands ++
+        Workspace.commands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
-    compiledJobs := Files.jobs
+    compiledJobs := Files.jobs ++ Workspace.jobs
     modes := Minibuffer.modes, ex := Ex.bindings, themes := Themes.shipped
     segments := ModeLine.shipped, log := IO.eprintln }
 
@@ -2120,8 +2167,8 @@ def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64)
 
 /-- The collaborators the executable's hosts are made of, the headless
 mode's and the window mode's: `shippedOver` the library's timer service,
-file service, process service and watch service for the jobs, and the
-environments they share for the mode `host` (`reportedEnvironments`).
+file service, process service, watch service and diff service for the
+jobs, and the environments they share for the mode `host` (`reportedEnvironments`).
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
@@ -2138,6 +2185,7 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
   let refused ← Job.RefusedRuns.new
   let timed ← Job.TimedRuns.new
   let watches ← Job.RealWatches.new
+  let refusedDiffs ← Job.RefusedDiffs.new
   let timers := Job.realTimers completions
   let environments ← IO.mkRef ({ host } : Process.Environments)
   return shippedOver sysroot oleanDir configDir emit
@@ -2145,6 +2193,7 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
         files := Job.realFiles completions published.reader held
         processes := Job.realProcesses completions refused timers timed
         fileWatches := Job.realFileWatches completions watches
+        diffs := Job.realDiffs completions published.reader held refusedDiffs
         environments := reportedEnvironments environments 4 } published held
 
 /-- The headless mode of the executable, handed the command line after

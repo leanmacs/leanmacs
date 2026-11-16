@@ -4,7 +4,7 @@ import Editor.File
 import Editor.Invocation
 import Editor.Scene
 import Editor.UndoTree
-import Editor.Value
+import Editor.Workspace
 
 /-!
 # The editor state
@@ -195,6 +195,32 @@ A register is a text a command set aside, to put back later
   end leaves them as they were.** The clipboard is not here: it is
   outside the editor, behind a port of its own.
 
+## The last search
+
+The last search (`Search`, `EditorState.lastSearch`) is what `n` and `N`
+repeat and what an empty pattern reuses: the pattern as it was typed, and
+whether it went forward. It is kept for the whole editor, as Vim keeps it,
+and set and kept as the last find is (below): `setLastSearch` sets it, a
+motion hands it back as data (`Vocabulary.To.search`), the command that ran
+the motion keeps it, and a command that does not run to its end leaves it
+as it was. The loop reads it too, for the matches it draws.
+
+## The last find
+
+The last character find (`Find`, `EditorState.lastFind`) is what Vim's `;`
+and `,` repeat: the character an `f`, `t`, `F` or `T` looked for, and which
+of the four it was (`docs/design/keymaps-and-modes.md`, "Motions as
+built"). It is kept for the whole editor, as Vim keeps it and as the
+registers are kept.
+
+- **The state starts with none**, and `setLastFind` sets it in place of
+  the one it had. It is never refused.
+- **A motion does not set it**: a motion changes nothing. It hands the
+  find back as data (`Vocabulary.To.find`), and the command that ran it
+  keeps it (`Editor/Evil.lean`, `Editor/Evil/Operators.lean`).
+- **It is a field of the state, so a command that does not run to its end
+  leaves it as it was.**
+
 ## The scroll margin
 
 The scroll margin is how many rows a view keeps between its cursor's row
@@ -312,6 +338,38 @@ A prompt is a request for one string, with a text to show beside the input
   over another text.
 - `setValue` sets a buffer-local value under a name, in place of the one
   the name had; `value?` reads one.
+- `renameBuffer` gives a buffer another name. It refuses `noSuchBuffer`,
+  and `nameTaken` for a name another buffer has; a buffer renamed to its
+  own name is as it was. It is there for one rule: the buffer left after
+  the last one is closed is called `scratchName`, the name the initial
+  buffer has, which is free only once the closed buffer is removed, and a
+  shown buffer cannot be removed (`Editor/Buffers.lean`, "Close").
+- `scratchName` is the editor's one name for its empty buffer with no file:
+  the initial state's, and the one left after the last buffer is closed.
+
+### Most recently used
+
+The state keeps the open buffers in the order they were last used
+(`EditorState.recent`, most recent first, each once), so that a closed
+buffer's windows show the one used before it, and a switch lists the
+buffers in that order.
+
+- **The operations that already exist keep it**, so no command keeps it
+  by hand: `showBuffer` puts the shown buffer first; `focusWindow` puts
+  the focused window's buffer first, unless it is the minibuffer's;
+  `addBuffer` puts the new buffer last, so a buffer that was made and never
+  shown is still in the order; `removeBuffer` takes the buffer out.
+  `openPrompt` and `closePrompt` leave it: the minibuffer's buffer is never
+  in it.
+- **`mostRecent except`** is the first buffer of the order that is open
+  and is neither `except` nor the minibuffer's, and failing that the first
+  such buffer in the order of the slots, so a state built by hand with no
+  order still has an answer. `none` when no other buffer is open.
+- **`openBuffers`** is every open buffer but the minibuffer's in that same
+  order: the order first, then the rest by slot. The buffer list and the
+  switch prompt read it (`Editor/Buffers.lean`).
+- `wellFormed` asks that every buffer of the order is open, and that none
+  is there twice.
 
 ## A buffer's file
 
@@ -339,8 +397,25 @@ A prompt is a request for one string, with a text to show beside the input
   and `fileOpen`, with the buffer that holds it, for a path another buffer
   holds, so that `findFile` has one answer, as `nameTaken` gives
   `findBuffer` one. Attaching the path a buffer holds to that buffer again
-  replaces its stamp. It leaves the history: a buffer made over loaded
-  text has a new tree, which is saved at its root.
+  replaces its stamp, and clears the changed-on-disk mark. It leaves the
+  history: a buffer made over loaded text has a new tree, which is saved at
+  its root.
+- **A buffer keeps what a check found of its file** (`Buffer.File.changed`,
+  a `Buffer.Changed`): the file's stamp now, the last one found, or `none`
+  for a file that is gone, and whether the user was told. A check is one
+  stat, asked for by the loop (`Editor/Loop.lean`, "Files that changed on
+  disk"); nothing watches a file.
+  - `markChanged id stamp found told` records a check's result. `stamp` is
+    the stamp the buffer recorded when the stat was asked for, and the
+    request applies only while the buffer's stamp is still that one, so a
+    result a save or a reload has overtaken is dropped. It clears the mark
+    when `found = some stamp`; otherwise it sets it, in place of the
+    `found` of a buffer already marked, told when `told` is or when the
+    mark was already told of that same `found`.
+  - `tellChanged id` marks the user as told: an edit is refused only while
+    `told` is false (`untold?`, `Editor/Command/Dispatch.lean`, "The first
+    edit after a change on disk").
+  - `attachFile` and `endSave` with a stamp clear it.
 - `freeName` is a name no buffer has, for a new buffer that would be
   called `name`: the name itself, or the name followed by `<2>`, `<3>` and
   so on, the first that is free. Two files with one base name are two
@@ -459,6 +534,27 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
   are answered from where no loop runs the command
   (`Editor/Command/Model.lean`).
 
+## Workspaces
+
+The state keeps the workspaces and the projects of the session
+(`EditorState.workspaces`, a `Workspace.Table`, `Editor/Workspace.lean`):
+each workspace and each project with a store of values by name, and each
+directory's answer from the finder, stamped with the config generation it
+was found under. Both stores live as long as the session; a reload of config
+leaves them.
+
+- **A buffer's workspace is a buffer-local value** (`Workspace.bufferLocal`):
+  its location, encoded (`Location.encode`). `workspaceOf?` reads it and
+  looks the workspace and its project up in the table; a buffer with no
+  such value, or one whose workspace is not in the table, has none.
+- `recordWorkspace` takes in what the finder answered for a directory: the
+  workspace is added, or, found again, keeps its root, its project and its
+  store and takes the new branch; the directory's answer is cached.
+- `registerWorkspace` adds a workspace that is made, not found, for a
+  location that is not on this machine; it refuses `local`.
+- `setWorkspaceValue` and `setProjectValue` set a value in a workspace's or
+  a project's store; they refuse `noSuchWorkspace` and `noSuchProject`.
+
 ## Where a new field goes
 
 | What it belongs to | Where |
@@ -466,7 +562,8 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
 | One buffer (its line ending, its modes) | A field of `Buffer` |
 | The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
-| The whole editor (registers, the scroll margin, the pending key prefix) | A field of `EditorState` |
+| The whole editor (registers, the scroll margin, the pending key prefix, the order buffers were used in) | A field of `EditorState` |
+| One checkout or one codebase (compilation state, command history) | A value in a workspace's or a project's store (`Workspace.Table`) |
 | The open prompt (what completes it, what it has shown) | A field of `Prompt` |
 | What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
 
@@ -494,6 +591,18 @@ structure Buffer.Saving where
   state : UndoTree.State
   deriving DecidableEq, Repr
 
+/-- What a check found of a buffer's file that is not the file the buffer
+holds: the file changed on disk ("A buffer's file", in the module docs). -/
+structure Buffer.Changed where
+  /-- The stamp the file has now, the last one found; `none` when the file
+  is gone. -/
+  found : Option File.Stamp
+  /-- Whether the user was told, by a refused first edit or by the echo
+  area of a check that found the buffer modified. An edit is refused only
+  while this is false. -/
+  told : Bool
+  deriving DecidableEq, Repr
+
 /-- The file a buffer shows: where it is, and what the next save of it
 expects to find there. -/
 structure Buffer.File where
@@ -504,6 +613,9 @@ structure Buffer.File where
   stamp : File.Stamp
   /-- The save of the buffer that is in flight, if one is. -/
   saving : Option Buffer.Saving := none
+  /-- The file changed on disk, if a check found so since the last load or
+  save; `none` otherwise. -/
+  changed : Option Buffer.Changed := none
   deriving DecidableEq, Repr
 
 /-- A buffer: a text and what the editor keeps about it. -/
@@ -643,7 +755,30 @@ structure JobStart where
   name : String
   /-- What the job is started with, in order. -/
   arguments : List Argument := []
+  /-- The key a host keeps the job under, if it has one: starting a job of a
+  key cancels the running job of that key, and a cancel of the key ends it
+  (`Loop.Stepped.cancels`). -/
+  key : Option String := none
   deriving DecidableEq, Repr
+
+/-- A file buffer the loop follows for auto-reload: a `follow-file` job of
+the key `Following.key` is armed for it ("Auto-reload", `Editor/Loop.lean`). -/
+structure Following where
+  /-- The buffer. -/
+  buffer : BufferId
+  /-- The path its watch is on. -/
+  path : System.FilePath
+  /-- The buffer's stamp when it was armed: a load, a reload or a save that
+  changes it arms the follow again, so its order's stamp is the buffer's. -/
+  stamp : File.Stamp
+  /-- Whether its watch was refused: it is not armed again until the mode is
+  turned off and on. -/
+  refused : Bool := false
+  deriving DecidableEq, Repr
+
+/-- The key a host keeps the follow job of `buffer` under. -/
+def Following.keyOf (buffer : BufferId) : String :=
+  s!"follow {buffer.index}"
 
 /-- The candidates of an open prompt, and what the prompt has shown of
 them ("Prompts", in the module docs). It is plain data. -/
@@ -742,6 +877,27 @@ structure Register where
   linewise : Bool := false
   deriving DecidableEq, Repr
 
+/-- A search, as `n` and `N` repeat it ("The last search", in the module
+docs). -/
+structure Search where
+  /-- The pattern, as it was typed. -/
+  pattern : String
+  /-- Whether it went forward, as `/` and `*` do. -/
+  forward : Bool
+  deriving DecidableEq, Repr
+
+/-- A character find, as `;` and `,` repeat it ("The last find", in the
+module docs). -/
+structure Find where
+  /-- The character looked for, as the key that named it printed it. -/
+  char : String
+  /-- Whether it looked forward, as `f` and `t` do. -/
+  forward : Bool
+  /-- Whether it stopped one cell short of the character, as `t` and `T`
+  do. -/
+  till : Bool
+  deriving DecidableEq, Repr
+
 /-- Everything the editor is showing and editing. -/
 structure EditorState where
   /-- The buffers, one a slot; a `BufferId` is an index here, and the slot of
@@ -785,6 +941,12 @@ structure EditorState where
   /-- The registers, each under its name, in the order each name was first
   set ("Registers", in the module docs). No name is here twice. -/
   registers : Array (String × Register) := #[]
+  /-- The last character find, if one was made ("The last find", in the
+  module docs). -/
+  lastFind : Option Find := none
+  /-- The last search, if one was made ("The last search", in the module
+  docs). -/
+  lastSearch : Option Search := none
   /-- How many rows every view keeps between its cursor's row and the first
   and the last row it shows ("The scroll margin", in the module docs). -/
   scrollMargin : Nat := 0
@@ -799,6 +961,20 @@ structure EditorState where
   views", in the module docs). A publish sets it from what it is handed
   (`Loop.publish`), as it sets `heights`; 0 before the first. -/
   padding : Nat := 0
+  /-- The open buffers in the order they were last used, most recent first,
+  each once, without the minibuffer's ("Most recently used", in the module
+  docs). -/
+  recent : Array BufferId := #[]
+  /-- Whether a command chose auto-reload on or off (`Files.autoReloadName`):
+  `none` until one does, and then config's setting no longer decides. It
+  lasts until the editor stops; a reload of config leaves it. -/
+  autoReload : Option Bool := none
+  /-- The file buffers the loop follows for auto-reload, each with its path
+  and whether its watch was refused (`Editor/Loop.lean`, "Auto-reload"). -/
+  following : Array Following := #[]
+  /-- The workspaces and projects of the session, with their stores, and
+  each directory's cached answer ("Workspaces", in the module docs). -/
+  workspaces : Workspace.Table := {}
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -1111,7 +1287,8 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
 window is among them, the tree has one minibuffer leaf, the views' ids are
 distinct and are exactly the windows' ids, and each window's buffer
 exists. And whether an open prompt's choice, if it has one, is an index of
-its listing. -/
+its listing, and whether every buffer of the order they were used in
+(`recent`) is open and is there once. -/
 def wellFormed (state : EditorState) : Bool :=
   let ids := state.views
   ids.contains state.frame.focused && state.frame.tree.minibuffers == 1 &&
@@ -1119,9 +1296,22 @@ def wellFormed (state : EditorState) : Bool :=
     ids.size == state.windows.size &&
     ids.all (fun id => (state.window? id).isSome) &&
     (state.windows.all fun window => (state.buffer? window.buffer).isSome) &&
-    state.prompt.all fun asked => asked.candidates.chosen.all (· < asked.candidates.listed.size)
+    (state.prompt.all fun asked =>
+      asked.candidates.chosen.all (· < asked.candidates.listed.size)) &&
+    state.recent.all (fun id => (state.buffer? id).isSome) &&
+    state.recent.toList.eraseDups.length == state.recent.size
 
-/-- A buffer called `scratch` over a new empty text, and one window on it,
+/-- The name the editor gives its empty buffer with no file: the initial
+state's buffer's, and the one left after the last buffer is closed
+(`Editor/Buffers.lean`, "Close"). -/
+def scratchName : String :=
+  "scratch"
+
+/-- `recent` with `id` first, and nowhere else. -/
+def Recent.touch (recent : Array BufferId) (id : BufferId) : Array BufferId :=
+  #[id] ++ recent.filter (· != id)
+
+/-- A buffer called `scratch` (`scratchName`) over a new empty text, and one window on it,
 focused, in a frame of `size` with the minibuffer's place below it. The
 window's scroll anchor is at 0, and its selection one cursor at 0 of the
 shape `shape`, exclusive unless the caller says another. -/
@@ -1131,9 +1321,10 @@ def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := d
   let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩], shape })
   let history ← UndoTree.over text
   return {
-      buffers := #[some { name := "scratch", text, history }]
+      buffers := #[some { name := scratchName, text, history }]
       windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
-      frame := { size, tree := .split .rows (.window ⟨0⟩) .minibuffer, focused := ⟨0⟩ } }
+      frame := { size, tree := .split .rows (.window ⟨0⟩) .minibuffer, focused := ⟨0⟩ }
+      recent := #[⟨0⟩] }
 
 /-- Removes the window `id` from the frame: its sibling takes the place of
 the split that held both, and the window is handed back, its markers the
@@ -1165,11 +1356,20 @@ def removeWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Wind
   | false, _, _ => (.error (.noSuchWindow id), state)
 
 /-- Focuses the window `id`: a window of the tree, or the minibuffer's while
-a prompt is open. Refused, with the state unchanged, with `noSuchWindow`
+a prompt is open. Its buffer is then the most recently used, unless it is
+the minibuffer's. Refused, with the state unchanged, with `noSuchWindow`
 for any other. -/
 def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
   if state.views.contains id then
-    (.ok (), { state with frame := { state.frame with focused := id } })
+    let recent :=
+      match state.window? id with
+      | some window =>
+        if state.minibufferBuffer? == some window.buffer then state.recent
+        else Recent.touch state.recent window.buffer
+      | none => state.recent
+    (.ok (),
+      { state with
+        frame := { state.frame with focused := id }, recent })
   else (.error (.noSuchWindow id), state)
 
 /-- Has the window `id` keep `wanted` as its wanted column, or none. Any
@@ -1265,6 +1465,28 @@ protected def none : EditorState :=
   { buffers := #[], windows := #[],
     frame := { size := ⟨0, 0⟩, tree := .minibuffer, focused := ⟨0⟩ } }
 
+/-- The first buffer of the order buffers were used in (`recent`) that is
+open and is neither `except` nor the minibuffer's, and failing that the
+first such buffer in the order of the slots; `none` when no other buffer is
+open ("Most recently used", in the module docs). -/
+def mostRecent (state : EditorState) (except : BufferId) : Option BufferId :=
+  let other (id : BufferId) : Bool :=
+    id != except && (state.buffer? id).isSome && state.minibufferBuffer? != some id
+  match state.recent.find? other with
+  | some id => some id
+  | none => ((List.range state.buffers.size).map (⟨·⟩)).find? other
+
+/-- The open buffers but the minibuffer's: those of the order they were used
+in (`recent`) first, in that order, and then the rest in the order of the
+slots ("Most recently used", in the module docs). -/
+def openBuffers (state : EditorState) : Array BufferId :=
+  let open? (id : BufferId) : Bool :=
+    (state.buffer? id).isSome && state.minibufferBuffer? != some id
+  let first := state.recent.filter open?
+  first ++
+    ((List.range state.buffers.size).map (⟨·⟩) |>.filter fun id =>
+        open? id && !first.contains id).toArray
+
 /-- The buffer called `name`, if there is one. Names are unique among the
 buffers a request added (`addBuffer`), so there is at most one. -/
 def findBuffer (state : EditorState) (name : String) : Option BufferId :=
@@ -1359,13 +1581,75 @@ def endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp)
                 file :=
                   some
                     { file with
-                      stamp, saving := none }
+                      stamp, saving := none, changed := none }
                 history := buffer.history.markSaved saving.state }
             | none => { buffer with file := some { file with saving := none } }
           -- A save that was refused wrote nothing: a quit that waited for
           -- it is withdrawn ("Quit", in the module docs).
           let state := if stamp.isNone then { state with quitting := false } else state
           changeBuffer id (fun _ => ((), ended)) state
+
+/-- Records what a check of the buffer `id`'s file found ("A buffer's file",
+in the module docs): `found` is the file's stamp now, `none` for a file that
+is gone, and `told` whether the user was told. It applies only while the
+buffer holds a file whose stamp is still `stamp`, the one recorded when the
+check was asked for, so a result a save or a reload has overtaken changes
+nothing. With `found = some stamp` the mark is cleared; otherwise the mark
+holds `found`, in place of what it held, and is told when `told` is, or when
+it was told already of that same `found`. Refused only with `noSuchBuffer`;
+a buffer with no file or another stamp is left as it is. -/
+def markChanged (id : BufferId) (stamp : File.Stamp) (found : Option File.Stamp) (told : Bool)
+    (state : EditorState) : Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id with
+  | none => (.error (.noSuchBuffer id), state)
+  | some buffer =>
+    match buffer.file with
+    | some file =>
+      if file.stamp != stamp then (.ok (), state)
+      else
+        let changed : Option Buffer.Changed :=
+          if found == some stamp then none
+          else
+            let already := file.changed.any fun was => was.found == found && was.told
+            some { found, told := told || already }
+        changeBuffer id (fun buffer => ((), { buffer with file := some { file with changed } }))
+          state
+    | none => (.ok (), state)
+
+/-- Marks the change on disk of the buffer `id`'s file as told: the next edit
+lands ("A buffer's file", in the module docs). A buffer whose file is not
+marked is left as it is. Refused only with `noSuchBuffer`. -/
+def tellChanged (id : BufferId) (state : EditorState) : Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id with
+  | none => (.error (.noSuchBuffer id), state)
+  | some buffer =>
+    match buffer.file with
+    | some file =>
+      match file.changed with
+      | some changed =>
+        changeBuffer id
+          (fun buffer =>
+            ((),
+              { buffer with
+                file := some { file with changed := some { changed with told := true } } }))
+          state
+      | none => (.ok (), state)
+    | none => (.ok (), state)
+
+/-- The buffer over the text `text` whose file changed on disk and the user
+was not yet told of it, with the file's path and what was found, `none` for
+a file that is gone: what refuses the first edit of that text. -/
+def untold? (state : EditorState) (text : TextId) :
+    Option (BufferId × System.FilePath × Option File.Stamp) :=
+  (List.range state.buffers.size).findSome? fun index =>
+    match state.buffer? ⟨index⟩ with
+    | some buffer =>
+      if buffer.text != text then none
+      else
+        match buffer.file with
+        | some { path, changed := some { found, told := false }, .. } => some (⟨index⟩, path, found)
+        | _ => none
+    | none => none
 
 /-- The register kept under `name`, if one was set under it. -/
 def register? (state : EditorState) (name : String) : Option Register :=
@@ -1382,6 +1666,18 @@ def setRegister (name : String) (register : Register) (state : EditorState) : Ed
         state.registers.map fun entry => if entry.1 == name then (name, register) else entry
       else state.registers.push (name, register) }
 
+/-- `state` with `find` as its last character find, in place of the one it
+had ("The last find", in the module docs). Nothing else changes, and it is
+never refused. -/
+def setLastFind (find : Find) (state : EditorState) : EditorState :=
+  { state with lastFind := some find }
+
+/-- `state` with `search` as its last search, in place of the one it had
+("The last search", in the module docs). Nothing else changes, and it is
+never refused. -/
+def setLastSearch (search : Search) (state : EditorState) : EditorState :=
+  { state with lastSearch := some search }
+
 /-- `state` with `rows` as its scroll margin, in place of the one it had
 ("The scroll margin", in the module docs). Nothing else changes, and it is
 never refused. -/
@@ -1393,8 +1689,50 @@ def value? (state : EditorState) (id : BufferId) (name : String) : Option Value 
   let buffer ← state.buffer? id
   (← buffer.locals.find? (·.1 == name)).2
 
+/-- The workspace of the buffer `id`, and its project, as the table has
+them: the workspace at the location its buffer-local value names
+("Workspaces", in the module docs). -/
+def workspaceOf? (state : EditorState) (id : BufferId) : Option (Workspace × Project) := do
+  let location ← Location.decode? (← state.value? id Workspace.bufferLocal)
+  let workspace ← state.workspaces.workspace? location
+  return (workspace, (← state.workspaces.project? workspace.project.identity))
+
+/-- `state` once the finder answered `found` for `directory` under the config
+generation `generation` (`Workspace.Table.record`). Never refused. -/
+def recordWorkspace (directory : System.FilePath) (generation : Nat)
+    (found : Option Workspace.Found) (state : EditorState) : EditorState :=
+  { state with workspaces := state.workspaces.record directory generation found }
+
+/-- `state` with the result of `change` on its table, or the refusal with
+the state as it was. -/
+def changeWorkspaces (change : Workspace.Table → Except WorkspaceRefusal Workspace.Table)
+    (state : EditorState) : Except WorkspaceRefusal Unit × EditorState :=
+  match change state.workspaces with
+  | .ok workspaces => (.ok (), { state with workspaces })
+  | .error refusal => (.error refusal, state)
+
+/-- Registers a workspace at `location`, not on this machine, of the project
+of `remote`, with `branch` checked out if it is given
+(`Workspace.Table.register`). Refused with `local` for a local location. -/
+def registerWorkspace (location : Location) (remote : String) (branch : Option String)
+    (state : EditorState) : Except WorkspaceRefusal Unit × EditorState :=
+  state.changeWorkspaces (·.register location remote branch)
+
+/-- Has the workspace at `location` keep `value` under `name`. Refused with
+`noSuchWorkspace` when there is none. -/
+def setWorkspaceValue (location : Location) (name : String) (value : Value) (state : EditorState) :
+    Except WorkspaceRefusal Unit × EditorState :=
+  state.changeWorkspaces (·.setWorkspaceValue location name value)
+
+/-- Has the project of `identity` keep `value` under `name`. Refused with
+`noSuchProject` when there is none. -/
+def setProjectValue (identity : Project.Identity) (name : String) (value : Value)
+    (state : EditorState) : Except WorkspaceRefusal Unit × EditorState :=
+  state.changeWorkspaces (·.setProjectValue identity name value)
+
 /-- Adds a buffer called `name` over `text`, whose history is `history`, in
-the next slot, and hands back its id. Refused, with the state unchanged,
+the next slot, and hands back its id. It is the least recently used buffer
+(`recent`). Refused, with the state unchanged,
 with `nameTaken` for a name a buffer already has, and with `notItsHistory`
 for a history over another text. -/
 def addBuffer (name : String) (text : TextId) (history : UndoTree) (state : EditorState) :
@@ -1404,17 +1742,36 @@ def addBuffer (name : String) (text : TextId) (history : UndoTree) (state : Edit
     if history.text != text then (.error .notItsHistory, state)
     else
       (.ok ⟨state.buffers.size⟩,
-        { state with buffers := state.buffers.push (some { name, text, history }) })
+        { state with
+          buffers := state.buffers.push (some { name, text, history })
+          recent := state.recent.push ⟨state.buffers.size⟩ })
 
-/-- Removes the buffer `id`: its slot is empty from then on, and its id is
-never used again. Its text is the caller's to release. Refused, with the
+/-- Removes the buffer `id`: its slot is empty from then on, its id is never
+used again, and it leaves the order buffers were used in (`recent`). Its
+text is the caller's to release. Refused, with the
 state unchanged, with `noSuchBuffer` for a buffer there is none of, and
 with `shown`, and the first such view, while a window shows it. -/
 def removeBuffer (id : BufferId) (state : EditorState) : Except BufferRefusal Unit × EditorState :=
   match state.buffer? id, state.windows.find? (·.buffer == id) with
   | none, _ => (.error (.noSuchBuffer id), state)
   | some _, some window => (.error (.shown window.id), state)
-  | some _, none => (.ok (), { state with buffers := state.buffers.set! id.index none })
+  | some _, none =>
+    (.ok (),
+      { state with
+        buffers := state.buffers.set! id.index none
+        recent := state.recent.filter (· != id) })
+
+/-- Gives the buffer `id` the name `name`. Renaming a buffer to its own name
+changes nothing. Refused, with the state unchanged, with `noSuchBuffer` for
+a buffer there is none of, and with `nameTaken` for a name another buffer
+has. -/
+def renameBuffer (id : BufferId) (name : String) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id, state.findBuffer name with
+  | none, _ => (.error (.noSuchBuffer id), state)
+  | some _, some holder =>
+    if holder == id then (.ok (), state) else (.error (.nameTaken name), state)
+  | some _, none => changeBuffer id (fun buffer => ((), { buffer with name })) state
 
 /-- Makes `history` the undo tree of the buffer `id`. Refused, with the
 state unchanged, with `noSuchBuffer` for a buffer there is none of, and
@@ -1473,7 +1830,8 @@ def splitWindow (id : ViewId) (axis : Axis) (scroll selection : MarkerId) (state
 
 /-- Has the window `id` show the buffer `buffer`, with `scroll` and
 `selection` as its markers, and no wanted column: an offset of one text
-means nothing in another. Refused, with the state unchanged, with
+means nothing in another. The buffer is then the most recently used
+(`recent`). Refused, with the state unchanged, with
 `ofMinibuffer`, and the minibuffer's view, for the minibuffer's window and
 for the minibuffer's buffer in another window, with `noSuchWindow` for a
 window not in the tree, with `noSuchBuffer` for a buffer there is none of,
@@ -1507,7 +1865,8 @@ where
                   if window.id == id then
                     { window with
                       buffer, scroll, selection, wanted := none }
-                  else window })
+                  else window
+              recent := Recent.touch state.recent buffer })
 
 /-- Opens a prompt, asked from the focused view: a buffer in the next slot
 over `text`, whose history is `history`, with the minibuffer's mode

@@ -1,4 +1,5 @@
 import Editor.Api.Cases
+import Editor.Buffers.Compiled
 import Editor.Clipboard.Contract
 import Editor.Clipboard.Model
 import Editor.Command.Append
@@ -56,6 +57,8 @@ import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
 import Editor.WindowCheck
+import Editor.Workspace.Compiled
+import Editor.Workspace.Contract
 
 /-!
 # The model tests
@@ -441,11 +444,15 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   (`OperatorRow`, `operatorRows`) says the text, the cursor, the register
   and whether it is line-wise, whether the view is left in insert state,
   and whether the command gave up. `operatorTable` is every operator over
-  every motion in five situations; beside it are the special cases, the
-  calls of the operate command that give up, and that an operator is one
-  step of the history. `operatorSweep` presses every default operator key
-  with every default motion key from every resting position of a few
-  texts;
+  every motion that takes no argument in five situations; beside it are the
+  special cases, the calls of the operate command that give up, and that an
+  operator is one step of the history. `operatorSweep` presses every default
+  operator key with every default motion key from every resting position of
+  a few texts, a motion that takes a character with one;
+- `evilFindChecks`: `f`, `t`, `F`, `T`, `;` and `,` (`Editor/Evil/Motions.lean`)
+  as moves (`findRows`) and under each operator (`findOperatorRows`, which
+  `findOperatorPairs` holds to the default tables), and the last find they
+  keep;
 - `evilSelectionChecks`: the operators over a `v` and a `V` selection, by
   the same rows, and that the operator's key leaves one cursor;
 - `evilRegisterChecks`: `x`, the registers a yank and a deletion set, the
@@ -459,7 +466,8 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   Vim, which leaves the cursor at the start of the changed text;
 - `evilRepeatChecks`: `.` after a change of each kind (`repeatRows`), a
   count before it, a change with an insert session and its typed and
-  committed text, and what is not repeated;
+  committed text, the editing keys of insert state in a session
+  (`insertKeysRepeatRows`), and what is not repeated;
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
   item (`clipRan`), in each Vim state, on the clipboard model.
@@ -1019,7 +1027,11 @@ service. -/
 def Rig.withFiles (model : FileModel) : BaseIO (Rig × Job.FakeFiles) := do
   let rig ← Rig.new
   let files ← Job.FakeFiles.new rig.services.completions model
-  return ({ rig with services := { rig.services with files := files.files } }, files)
+  return ({ rig with
+        services :=
+          { rig.services with
+            files := files.files, diffs := files.diffs } },
+      files)
 
 /-- Runs a file property's job against the job port's model, over the model
 of its files: how the job ended, and the files afterwards. -/
@@ -1037,12 +1049,13 @@ def runFilesOnFake (property : JobContract.FileProperty) :
   let outcome ← runOnFake (property.holds fileRoot) (some rig)
   return (outcome, filesIn (← files.model))
 
-/-- The names of the job port's file properties that do not hold of the job
-model, and of those that do not hold of the runner over the fake of the file
-service. -/
+/-- The names of the job port's file and diff properties that do not hold of
+the job model, and of those that do not hold of the runner over the fake of
+the file service, whose model answers a diff. -/
 def fileFailures : IO (List String) := do
-  let onModel ← JobContract.fileFailures runFilesOnModel JobContract.fileProperties
-  let onFake ← JobContract.fileFailures runFilesOnFake JobContract.fileProperties
+  let properties := JobContract.fileProperties ++ JobContract.diffProperties
+  let onModel ← JobContract.fileFailures runFilesOnModel properties
+  let onFake ← JobContract.fileFailures runFilesOnFake properties
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake file service: {·}")
 
@@ -2548,6 +2561,21 @@ def setupChecks : List Check :=
           face "keyword" (coloured 1)
         pure (refusal twice == some "the face `keyword` is set twice" && refusal shared == none) },
     { name :=
+        "a setup that sets auto-reload twice is refused; once is collected, and it is off when the setup says nothing"
+      run :=
+        let twice : SetupM Unit := do
+          autoReload
+          autoReload false
+        let once : SetupM Unit := autoReload
+        pure
+          (refusal twice == some Config.Registrations.autoReloadTwice && refusal once == none &&
+            (match Config.Registrations.ofSetup once with
+            | .ok collected => collected.autoReload == #[true]
+            | .error _ => false) &&
+            match Config.Registrations.ofSetup (pure ()) with
+            | .ok collected => collected.autoReload.isEmpty
+            | .error _ => false) },
+    { name :=
         "a setup's themes are collected in the order it defined them, each with its definitions, with the theme it names; a setup that defines and names none has none"
       run :=
         let setup : SetupM Unit := do
@@ -2662,7 +2690,30 @@ def setupChecks : List Check :=
         pure
           (refusal (processEnvironment (.mise (some "bin/mise"))) ==
               some "the path to mise must be absolute: bin/mise" &&
-            refusal twice == some "the process environment is set twice") }]
+            refusal twice == some "the process environment is set twice") },
+    { name :=
+        "a setup's workspace roots are collected in the order it declared them, each with the project it names, if any; a setup that declares none collects none"
+      run :=
+        let setup : SetupM Unit := do
+          workspace "/r/tools" (some "tools")
+          workspace "/notes"
+        pure
+          (match Config.Registrations.ofSetup setup,
+            Config.Registrations.ofSetup (command "first" (makes "1")) with
+          | .ok collected, .ok bare =>
+            collected.workspaceRoots ==
+                #[{ root := "/r/tools", project := some "tools" }, { root := "/notes" }] &&
+              bare.workspaceRoots.isEmpty
+          | _, _ => false) },
+    { name :=
+        "a setup that declares a workspace root that is not absolute, or one root twice, is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          workspace "/r/tools" (some "tools")
+          workspace "/r/tools/"
+        pure
+          (refusal (workspace "tools") == some (relativeWorkspace "tools") &&
+            refusal twice == some (Config.Registrations.workspaceTwice "/r/tools")) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -3700,6 +3751,20 @@ def reloadChecks : List Check :=
             loaded.registry.environment == some .inherited &&
             kept.registry.environment == some .inherited &&
             bare.registry.environment == none) },
+    { name :=
+        "an installed reload puts config's workspace roots in the registry, which tells the loop of them with the config generation; every install bumps the generation, a rejected reload changes neither, and with nothing installed the generation is 0"
+      run :=
+        let roots : Array Workspace.ConfigRoot := #[{ root := "/r/tools", project := some "tools" }]
+        let (loaded, _) :=
+          reduce [.requested, .finished (accepted ["a"] (workspace "/r/tools" (some "tools")))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let told (state : Config.State Elaborated) : Array Workspace.ConfigRoot × Nat :=
+          let registered := state.registry.registered
+          (registered.workspaceRoots, registered.generation)
+        pure
+          (told (reduce []).1 == (#[], 0) && told loaded == (roots, 1) && told kept == (roots, 1) &&
+            told bare == (#[], 2)) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -5014,14 +5079,14 @@ def modeLineChecks : List Check :=
             unknown == #["nope", "gone"] &&
             ModeLine.unknown "nope" == "no segment is registered as `nope`") },
     { name :=
-        "the default order is the badge, buffer, modified mark and directory on the left, and major mode, line:col and position on the right"
+        "the default order is the badge, buffer, modified mark, changed mark and directory on the left, and major mode, line:col and position on the right"
       run :=
         pure
           (ModeLine.Order.standard ==
-              { left := #["state", "buffer", "modified", "directory"]
+              { left := #["state", "buffer", "modified", "changed", "directory"]
                 right := #["major-mode", "line-column", "position"] } &&
             ModeLine.shipped.map (·.name) ==
-              #["state", "buffer", "modified", "directory", "major-mode", "line-column",
+              #["state", "buffer", "modified", "changed", "directory", "major-mode", "line-column",
                 "position"] &&
             ModeLine.standard.left.map (·.name) == ModeLine.Order.standard.left &&
             ModeLine.standard.right.map (·.name) == ModeLine.Order.standard.right) }]
@@ -5038,6 +5103,16 @@ def faceChecks : List Check :=
         pure
           (names[0]? == some ⟨"default"⟩ && names.size == Face.vocabularyNames.size &&
             Face.vocabularyNames.all names.contains) },
+    { name :=
+        "the built-in search-match face sets a background that is not the default face's, and a foreground"
+      run :=
+        let face := (Theme.builtin.find? (·.name == ⟨"search-match"⟩)).map (·.face)
+        let paper := (Theme.builtin.find? (·.name == ⟨"default"⟩)).bind (·.face.background)
+        pure
+          (match face with
+          | some face =>
+            face.background.isSome && face.background != paper && face.foreground.isSome
+          | none => false) },
     { name := "the built-in default face sets every attribute, and no other built-in face does"
       run :=
         let complete (face : Face) : Bool :=
@@ -7033,7 +7108,11 @@ def spoilings : List (String × (EditorState → EditorState)) :=
           asking.prompt.map
             ({ · with
               candidates :=
-                { all := #["a"], listedFor := some "", listed := #["a"], chosen := some 1 } }) })]
+                { all := #["a"], listedFor := some "", listed := #["a"], chosen := some 1 } }) }),
+    ("with an order of use that names a buffer there is none of", fun state =>
+      { state with recent := state.recent.push ⟨5⟩ }),
+    ("with an order of use that names one buffer twice", fun state =>
+      { state with recent := state.recent ++ state.recent })]
 
 /-- `state` with a prompt asked for from its focused view, and the reply: the
 label `Name: `, the continuation `asked`, and a minibuffer over the text
@@ -7104,6 +7183,54 @@ def stateChecks : List Check :=
               state.echo == "" &&
               state.preedit == none },
     { name :=
+        "the order buffers were used in: the initial state's is its one buffer; focusing a window puts its buffer first, adding a buffer puts it last, showing a buffer puts it first, removing one takes it out; opening a prompt, focusing the minibuffer and closing the prompt leave it as it was; each state is well formed"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, focused) := state.focusWindow ⟨1⟩
+            let (_, added) := focused.addBuffer "third" ⟨2⟩ (UndoTree.new ⟨2⟩ 0)
+            let (_, shown) := added.showBuffer ⟨0⟩ ⟨2⟩ ⟨⟨2⟩, 0⟩ ⟨⟨2⟩, 1⟩
+            let (_, removed) := shown.removeBuffer ⟨0⟩
+            let (_, asking) := prompted removed
+            let (_, back) := asking.focusWindow ⟨1⟩
+            let (_, again) := back.focusWindow (asking.minibufferView?.getD ⟨9⟩)
+            let (_, closed) := again.closePrompt none
+            state.recent == #[⟨0⟩] && focused.recent == #[⟨1⟩, ⟨0⟩] &&
+              added.recent == #[⟨1⟩, ⟨0⟩, ⟨2⟩] &&
+              shown.recent == #[⟨2⟩, ⟨1⟩, ⟨0⟩] &&
+              removed.recent == #[⟨2⟩, ⟨1⟩] &&
+              asking.recent == removed.recent &&
+              asking.minibufferView?.isSome &&
+              back.recent == #[⟨1⟩, ⟨2⟩] &&
+              again.recent == back.recent &&
+              again.frame.focused == asking.frame.focused &&
+              closed.recent == back.recent &&
+              [state, focused, added, shown, removed, asking, back, again, closed].all
+                (·.wellFormed) },
+    { name :=
+        "the most recently used buffer but one is the first of the order that is open and is neither it nor the minibuffer's, and with no order the first such buffer by slot; none when no other buffer is open; the open buffers are the order's, then the rest by slot, without the minibuffer's"
+      run :=
+        pure <|
+          match onTextModel twoBuffers, onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | some state, some alone =>
+            let (_, added) := state.addBuffer "third" ⟨2⟩ (UndoTree.new ⟨2⟩ 0)
+            let (_, asking) := prompted { added with recent := #[⟨2⟩, ⟨0⟩] }
+            let unordered := { asking with recent := #[] }
+            let (_, lonely) := prompted alone
+            asking.mostRecent ⟨2⟩ == some ⟨0⟩ && asking.mostRecent ⟨0⟩ == some ⟨2⟩ &&
+              unordered.mostRecent ⟨0⟩ == some ⟨1⟩ &&
+              unordered.mostRecent ⟨1⟩ == some ⟨0⟩ &&
+              alone.mostRecent ⟨0⟩ == none &&
+              lonely.minibufferBuffer? == some ⟨1⟩ &&
+              lonely.mostRecent ⟨0⟩ == none &&
+              { lonely with recent := #[] }.mostRecent ⟨0⟩ == none &&
+              asking.minibufferBuffer? == some ⟨3⟩ &&
+              asking.openBuffers == #[⟨2⟩, ⟨0⟩, ⟨1⟩] &&
+              unordered.openBuffers == #[⟨0⟩, ⟨1⟩, ⟨2⟩]
+          | _, _ => false },
+    { name :=
         "the initial state's buffer has no file, and its line ending is a line feed; no path finds a buffer"
       run :=
         pure <|
@@ -7134,7 +7261,7 @@ def stateChecks : List Check :=
               (named ["other<2>", "other<3>"]).freeName "other" == "other<4>" &&
               (named ["other<2>"]).freeName "other<2>" == "other<2><2>" },
     { name :=
-        "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the tree, a prompt whose choice is past its listing; and the same prompt with a choice in its listing is well formed"
+        "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the tree, a prompt whose choice is past its listing, an order of use that names a removed buffer or one buffer twice; and the same prompt with a choice in its listing is well formed"
       run := do
         let some state := onTextModel threeWindows | return false
         -- A failure names the spoiled states that were taken for well formed.
@@ -7925,6 +8052,25 @@ def stateRequestChecks : List Check :=
               replied taken == .inl (.nameTaken "other") &&
               same == state &&
               replied astray == .inl .notItsHistory &&
+              still == state },
+    { name :=
+        "renaming a buffer gives it the name, which then finds it; its own name changes nothing; a name another buffer has is refused with nameTaken, and a buffer there is none of with noSuchBuffer, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (renamed, after) := state.handle (.renameBuffer ⟨1⟩ "renamed")
+            let (own, same) := state.handle (.renameBuffer ⟨1⟩ "other")
+            let (taken, kept) := state.handle (.renameBuffer ⟨1⟩ EditorState.scratchName)
+            let (absent, still) := state.handle (.renameBuffer ⟨9⟩ "x")
+            replied renamed == .inr () && after.findBuffer "renamed" == some ⟨1⟩ &&
+              after.findBuffer "other" == none &&
+              replied own == .inr () &&
+              same == state &&
+              replied taken == .inl (.nameTaken EditorState.scratchName) &&
+              kept == state &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
               still == state },
     { name :=
         "removing a buffer empties its slot, and its id is not given to the next buffer; a buffer a window shows is refused with shown and that view, and one there is none of with noSuchBuffer, each with the state as it was"
@@ -8737,11 +8883,12 @@ def loopChecks : List Check :=
               nexts == #[.continue] &&
               model.display.scenes.size == 1
           | (.error _, _) => false },
-    { name := "a close request and a quit say stop and publish nothing"
+    { name :=
+        "a queue's quit says stop and publishes nothing; a close request on a state with nothing unsaved publishes one scene and says stop"
       run :=
         pure <|
           (match looped threeWindows [.closeRequested] with
-            | some ((_, nexts), scenes, _) => nexts == #[.stop] && scenes.isEmpty
+            | some ((_, nexts), scenes, _) => nexts == #[.stop] && scenes.size == 1
             | none => false) &&
             match looped threeWindows [.quit] with
             | some ((_, nexts), scenes, _) => nexts == #[.stop] && scenes.isEmpty
@@ -9602,7 +9749,20 @@ def exLineChecks : List Check :=
         pure
           (binding.invocation? (some "my notes.txt") ==
               some { command := "edit", arguments := [.str "my notes.txt"] } &&
-            binding.invocation? none == some { command := "edit" }) }]
+            binding.invocation? none == some { command := "edit" }) },
+    { name :=
+        "an ex binding's own arguments come before the line's, with an argument and without; one that takes nothing still refuses an argument"
+      run :=
+        let forced : Ex.Binding :=
+          { name := "e!", command := "edit", takes := .text, arguments := [.bool true] }
+        let write : Ex.Binding := { name := "w!", command := "write", arguments := [.bool true] }
+        pure
+          (forced.invocation? (some "a b") ==
+              some { command := "edit", arguments := [.bool true, .str "a b"] } &&
+            forced.invocation? none == some { command := "edit", arguments := [.bool true] } &&
+            write.invocation? none == some { command := "write", arguments := [.bool true] } &&
+            write.invocation? (some "x") == none &&
+            (Ex.parse "e! /tmp/a").map (·.name) == some "e!") }]
 
 /-- The key strings the scheme fixtures are written with. -/
 def schemeKeyStrings : List String :=
@@ -12097,6 +12257,15 @@ def schemeContractChecks : List Check :=
       run :=
         let names := SchemeContract.properties.map (·.name)
         pure (!names.isEmpty && names.eraseDups.length == names.length) },
+    { name :=
+        "the scheme contract reports a scheme that yields an invocation for an answer it did not ask for, for that property alone"
+      run :=
+        let answering : InputScheme :=
+          { TestScheme.scheme with
+            answered := fun _ answer state => (state, some { command := answer }) }
+        pure
+          (failsOnly (subjectOf answering schemeMaps)
+            [SchemeContract.unaskedAnswerYieldsNothing]) },
     { name := "the scheme contract holds of the test scheme"
       run := pure (SchemeContract.failures (subjectOf TestScheme.scheme schemeMaps) == []) },
     { name :=
@@ -12263,6 +12432,22 @@ def vimEditChecks : List Check :=
           ((Vim.Edit.run { name := "put-after" } (some 2) (some "+")).compile ==
             { command := "put-after", arguments := [.nat 2, .str "+"] }) },
     { name :=
+        "a motion's argument compiles to a string right after the motion's name, in a move and over a motion, so the register stays the last argument; a count put in its place keeps the argument"
+      run :=
+        let over := Vim.Edit.operate vimDelete (.motion "find" (some "x")) (some 3) (some "a")
+        pure
+          ((Vim.Edit.move "find" (some 2) (some "x")).compile ==
+              { command := "move", arguments := [.str "find", .str "x", .nat 2] } &&
+            over.compile ==
+              { command := "operate"
+                arguments :=
+                  [.str "delete", .str "motion", .str "find", .str "x", .nat 3, .str "a"] } &&
+            over.compile.arguments.getLast? == some (.str "a") &&
+            (Vim.Edit.move "find" none (some "x")).withCount 4 ==
+              .move "find" (some 4) (some "x") &&
+            over.withCount 5 ==
+              .operate vimDelete (.motion "find" (some "x")) (some 5) (some "a")) },
+    { name :=
         "an edit with no count compiles to a count of 0, and one with no register to the empty register name"
       run :=
         pure
@@ -12289,6 +12474,17 @@ def vimEditChecks : List Check :=
             .run { name := "redo" } none none, .run undo (some 2) none, .run undo none (some "a")]
         let compiled := edits.map (·.compile)
         pure (compiled.eraseDups.length == edits.length) },
+    { name :=
+        "a selection by a text object compiles to the select command with the object's name and the count, changes no text, names no state, and takes a count as a move does"
+      run :=
+        pure
+          ((Vim.Edit.select "thing" (some 2)).compile ==
+              { command := Vim.selectObjectCommand, arguments := [.str "thing", .nat 2] } &&
+            (Vim.Edit.select "thing" none).compile ==
+              { command := Vim.selectObjectCommand, arguments := [.str "thing", .nat 0] } &&
+            !(Vim.Edit.select "thing" none).changes &&
+            (Vim.Edit.select "thing" none).enters == none &&
+            (Vim.Edit.select "thing" none).withCount 3 == .select "thing" (some 3)) },
     { name :=
         "whether an edit changes text is its operator's or its command's word for it, and a move changes none"
       run :=
@@ -12585,6 +12781,89 @@ def vimGrammarChecks : List Check :=
           ((vimFed "u").2 == [some { command := "undo", arguments := [.nat 0, .str ""] }] &&
             (vimParsed "u").2 == [.edit (.run { name := "undo" } none none)]) },
     { name :=
+        "a key bound to a motion that takes a character is pending alone; the key after it names the character, a digit and TAB included, and completes the move, or the operator waiting over the motion with that argument, with the counts multiplied; any other key resets"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) := [vimKeymap [("f", .charMotion "find")]]
+        let move (char : String) (count : Nat) : Invocation :=
+          { command := "move", arguments := [.str "find", .str char, .nat count] }
+        let (escaped, escapedYields) := vimFed "f <Escape>" active
+        pure
+          (vimPending "f" active == keys "f" && vimPending "2 f" active == keys "2 f" &&
+            vimPending "f x" active == [] &&
+            (vimFed "f x" active).2 == [none, some (move "x" 0)] &&
+            (vimParsed "f x" active).2 == [.nothing, .edit (.move "find" none (some "x"))] &&
+            (vimFed "2 f 3" active).2.getLast? == some (some (move "3" 2)) &&
+            (vimFed "f TAB" active).2.getLast? == some (some (move "\t" 0)) &&
+            (vimFed "d 2 f x" active).2.getLast? ==
+              some
+                (some
+                  { command := "operate"
+                    arguments :=
+                      [.str "delete", .str "motion", .str "find", .str "x", .nat 2, .str ""] }) &&
+            (vimFed "2 d 3 f x" active).2.getLast? ==
+              some
+                (some
+                  { command := "operate"
+                    arguments :=
+                      [.str "delete", .str "motion", .str "find", .str "x", .nat 6, .str ""] }) &&
+            escapedYields == [none, none] &&
+            decide (escaped = vimInit) &&
+            (vimFed "f <Escape> w" active).2.getLast? == some (some (vimMove "word"))) },
+    { name :=
+        "a key bound to a motion that asks yields the command that opens its prompt, with the label, and resets the edit begun: nothing is pending, nothing is the last change, and the edit waits with the operator, the count and the register typed before it"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("/", .promptMotion "search" "/")]]
+        let (asked, yields) := vimFed "/" active
+        let (operated, _) := vimFed "\" a 2 d 3 /" active
+        pure
+          (yields == [some { command := Vim.askCommand, arguments := [.str "/"] }] &&
+            asked.asking == some { view := ⟨0⟩, motion := "search" } &&
+            asked.typed == [] &&
+            asked.lastChange == none &&
+            vimPending "/" active == [] &&
+            operated.asking ==
+              some
+                { view := ⟨0⟩, motion := "search", operator := some vimDelete, count := some 6
+                  register := some "a" }) },
+    { name :=
+        "the answer completes the edit that waits, with the answer as the motion's argument: a move with the count, and an operator over the motion with the count and the register, which is the last change; a second answer yields nothing"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("/", .promptMotion "search" "/")]]
+        let (asked, _) := vimFed "2 /" active
+        let (moved, move) := Vim.State.answered vimStates ⟨0⟩ "foo" asked
+        let (operated, operate) :=
+          Vim.State.answered vimStates ⟨0⟩ "x" (vimFed "\" a d 3 /" active).1
+        let (again, nothing) := Vim.State.answered vimStates ⟨0⟩ "y" moved
+        pure
+          (move == some { command := "move", arguments := [.str "search", .str "foo", .nat 2] } &&
+            moved.asking == none &&
+            moved.lastChange == none &&
+            operate ==
+              some
+                { command := "operate"
+                  arguments :=
+                    [.str "delete", .str "motion", .str "search", .str "x", .nat 3, .str "a"] } &&
+            operated.lastChange ==
+              some (.operate vimDelete (.motion "search" (some "x")) (some 3) (some "a")) &&
+            nothing == none &&
+            decide (again = moved)) },
+    { name :=
+        "the edit that waits for an answer is kept while keys are typed in the minibuffer's view and when that view closes, and dropped at the next key for another view, as after the prompt is cancelled"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("/", .promptMotion "search" "/")]]
+        let (asked, _) := vimFed "/" active
+        let opened := Vim.State.openMinibuffer vimStates ⟨5⟩ asked
+        let (typed, _) := vimFedFrom opened "x y" active ⟨5⟩
+        let closed := Vim.State.closeView ⟨5⟩ typed
+        let (dropped, _) := vimFedFrom closed "w" active ⟨0⟩
+        pure
+          (opened.asking.map (·.minibuffer) == some (some ⟨5⟩) && typed.asking.isSome &&
+            closed.asking.isSome &&
+            dropped.asking == none) },
+    { name :=
         "the Vim scheme reports the keys typed of an edit begun as pending, and none before a key and after the edit completes"
       run :=
         pure
@@ -12671,6 +12950,26 @@ def vimGrammarChecks : List Check :=
             commandYields == [none, none] &&
             decide (command = vimInit) &&
             (vimFed "d c w").2 == [none, none, some (vimMove "word")]) },
+    { name :=
+        "while an operator waits, a state with pending keymaps walks them in place of its own: a key its own keymaps bind to a command is a text object there after an operator, and the command alone; a key only its own bind resets after an operator; the state's keymaps hold for the rest; and a state with none walks its own"
+      run :=
+        let states :=
+          vimStates.register
+            { vimStates.initial with
+              pending :=
+                [vimKeymap
+                    [("i", .textObject "inside"), ("d", .operator vimDelete),
+                      ("w", .motion "word")]] }
+        pure
+          ((vimFed "d i" (states := states)).2 ==
+              [none, some (vimOperate "delete" "text-object" "inside")] &&
+            (vimFed "i" (states := states)).2 == (vimFed "i").2 &&
+            (vimFed "d w" (states := states)).2 ==
+              [none, some (vimOperate "delete" "motion" "word")] &&
+            (vimFed "d x" (states := states)).2 == [none, none] &&
+            (vimFed "d d" (states := states)).2 ==
+              [none, some (vimOperate "delete" "lines" "" 1)] &&
+            (vimFed "d i").2 == [none, none]) },
     { name :=
         "a text object after an operator is the operator's target, and a text object with no operator yields nothing and resets"
       run :=
@@ -13512,17 +13811,63 @@ def vimDefaultSubject : SchemeContract.Subject :=
 the grammar, by what the default keys parse to, and restate no table: a
 check names a key, and no vocabulary or command name. -/
 def vimDefaultChecks : List Check :=
-  [{  name := "every row of each default table binds its keys, and no table is empty"
+  [{  name :=
+        "after an operator's key, i or a and the key after it are a text object, the operator's target: i alone still runs the command that enters insert, d i <Escape> and d i x reset and leave nothing pending, the counts of 2 d 3 i w multiply, a register named before the operator is kept, and d z t still yields nothing and leaves nothing pending"
+      run :=
+        let objectOver (text : String) : Option (String × Option Nat × Option String) :=
+          match vimDefaultEdit text with
+          | some (.operate _ (.textObject name) count register) => some (name, count, register)
+          | _ => none
+        let resets (text : String) : Bool :=
+          (vimDefault text).2.getLast? == some .nothing && (vimDefault text).1.typed == []
+        pure
+          ((objectOver "d i w").isSome && (objectOver "c a (").isSome &&
+            (objectOver "y i \"").isSome &&
+            (vimDefaultCommand "i").bind (·.enters) == some (vimDefaultRecord "i").name &&
+            (vimDefaultRecord "i").insertsText &&
+            resets "d i <Escape>" &&
+            resets "d i x" &&
+            resets "d z t" &&
+            (objectOver "2 d 3 i w").map (·.2.1) == some (some 6) &&
+            (objectOver "\" a d a w").map (·.2.2) == some (some "a")) },
+    { name :=
+        "each alias of a block object after an operator yields what its primary key yields: i ) and i b as i (, a ) and a b as a (, i ] as i [, a ] as a [, i } and i B as i {, a } and a B as a {"
+      run :=
+        let aliases :=
+          [("i )", "i ("), ("i b", "i ("), ("a )", "a ("), ("a b", "a ("), ("i ]", "i ["),
+            ("a ]", "a ["), ("i }", "i {"), ("i B", "i {"), ("a }", "a {"), ("a B", "a {")]
+        pure <|
+          aliases.all fun (alias, primary) =>
+            (vimDefaultEdit s!"d {alias}").isSome &&
+              vimDefaultEdit s!"d {alias}" == vimDefaultEdit s!"d {primary}" &&
+              vimDefaultEdit s!"d {alias}" != vimDefaultEdit "d i w" },
+    { name :=
+        "in a visual state a text object's keys select it: v i w yields an edit that is not the last change and leaves the view in v's state, v 2 i w carries the count, a register named before it is dropped, and V a ( leaves the view in v's state"
+      run :=
+        let selects (text : String) : Option (Option Nat) :=
+          match vimDefaultEdit text with
+          | some (.select _ count) => some count
+          | _ => none
+        pure
+          (selects "v i w" == some none && (vimDefault "v i w").1.lastChange == none &&
+            (vimDefaultRecord "v i w").name == (vimDefaultRecord "v").name &&
+            selects "v 2 i w" == some (some 2) &&
+            selects "v \" a i w" == some none &&
+            (vimDefault "v \" a i w").1.register == none &&
+            selects "V a (" == some none &&
+            (vimDefaultRecord "V a (").name == (vimDefaultRecord "v").name &&
+            (vimDefaultRecord "V").name != (vimDefaultRecord "v").name) },
+    { name := "every row of each default table binds its keys, and no table is empty"
       run :=
         pure <|
-          [Vim.Default.motions, Vim.Default.operators, Vim.Default.normalCommands,
-                Vim.Default.insertCommands, Vim.Default.visualCommands,
+          [Vim.Default.motions, Vim.Default.operators, Vim.Default.objects,
+                Vim.Default.normalCommands, Vim.Default.insertCommands, Vim.Default.visualCommands,
                 Vim.Default.visualLineCommands, Vim.Default.minibufferCommands,
                 Vim.Default.scrollCommands].all
             fun table =>
             !table.isEmpty && (Vim.Default.keymap table).bindings.length == table.length },
     { name :=
-        "each of the default keys C-d C-u C-f C-b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; a count typed before one is that command's count; after an operator's key each yields nothing and drops the operator; and in the state i enters and in the minibuffer's state none runs a command"
+        "each of the default keys C-d C-u C-f C-b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; a count typed before one is that command's count; after an operator's key each yields nothing and drops the operator; in the state i enters none runs a command; and in the minibuffer's state C-d C-f C-b run none and C-u runs the minibuffer's command that deletes to the input's start"
       run :=
         let scrollKeys := ["C-d", "C-u", "C-f", "C-b"]
         let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ Vim.Default.scheme.init
@@ -13546,8 +13891,68 @@ def vimDefaultChecks : List Check :=
                 vimDefaultEdit s!"d {text} w" == vimDefaultEdit "w" &&
                 (vimDefaultEdit "w").isSome &&
                 runsNone (vimDefault s!"i {text}").2 &&
-                runsNone
-                  (vimParsedFrom told text (view := ⟨5⟩) (states := Vim.Default.states)).2) },
+                let inMinibuffer :=
+                  (vimParsedFrom told text (view := ⟨5⟩) (states := Vim.Default.states)).2
+                if text == "C-u" then
+                  match inMinibuffer.getLast? with
+                  | some (.edit (.run command none none)) =>
+                    command.name == Minibuffer.deleteToStartName
+                  | _ => false
+                else runsNone inMinibuffer) },
+    { name :=
+        "in the minibuffer's state <ArrowLeft> and <ArrowRight> yield a move by the motions left and right, with no count"
+      run :=
+        let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ Vim.Default.scheme.init
+        let moved (text : String) : Option Vim.Edit :=
+          match
+            (vimParsedFrom told text (view := ⟨5⟩) (states := Vim.Default.states)).2.getLast? with
+          | some (.edit edit) => some edit
+          | _ => none
+        pure
+          (moved "<ArrowLeft>" == some (.move "left" none) &&
+            moved "<ArrowRight>" == some (.move "right" none)) },
+    { name :=
+        "each of the default keys <Backspace> RET TAB <ArrowLeft> <ArrowRight> <ArrowUp> <ArrowDown>, after i, runs a command of its own that leaves the view in the state i enters and does not replace the last change"
+      run :=
+        let editingKeys :=
+          ["<Backspace>", "RET", "TAB", "<ArrowLeft>", "<ArrowRight>", "<ArrowUp>", "<ArrowDown>"]
+        pure
+          (vimDefaultCommands (editingKeys.map (s!"i {·}")) &&
+            editingKeys.all fun text =>
+              (vimDefault s!"i {text}").1.current == (vimDefault "i").1.current &&
+                (vimDefault s!"i {text}").1.lastChange == (vimDefault "i").1.lastChange) },
+    { name :=
+        "<Backspace>, RET and TAB in a session are kept with its typed text, in the order typed, for a repeat: <Backspace> as the backspace character, RET as a line feed and TAB as a tab"
+      run :=
+        pure
+          ((vimDefault "i x <Backspace> y").1.inserted == some "x\x08y" &&
+            (vimDefault "i x RET y").1.inserted == some "x\ny" &&
+            (vimDefault "i x TAB y").1.inserted == some "x\ty" &&
+            (vimDefault "c w <Backspace> <Backspace> y").1.inserted == some "\x08\x08y" &&
+            (vimDefault "c w <Backspace>").1.lastChange == (vimDefault "c w").1.lastChange) },
+    { name :=
+        "an arrow key in a session restarts the last change as i once something is typed after it, as Vim 9.1's ins-special-special says: the text kept is what was typed since; with nothing typed after it the last change and its text stay as they were"
+      run :=
+        let arrows := ["<ArrowLeft>", "<ArrowRight>", "<ArrowUp>", "<ArrowDown>"]
+        pure
+          (arrows.all fun arrow =>
+            (vimDefault s!"i x {arrow} y").1.inserted == some "y" &&
+              (vimDefault s!"A x {arrow} y").1.lastChange == (vimDefault "i").1.lastChange &&
+              (vimDefault s!"c w x {arrow} y z").1.inserted == some "yz" &&
+              (vimDefault s!"c w x {arrow} <Backspace>").1.inserted == some "\x08" &&
+              (vimDefault s!"c w x {arrow} RET").1.lastChange == (vimDefault "i").1.lastChange &&
+              (vimDefault s!"c w x {arrow}").1.inserted == some "x" &&
+              (vimDefault s!"c w x {arrow} <Escape>").1.lastChange ==
+                (vimDefault "c w").1.lastChange &&
+              (vimDefault s!"c w x {arrow} <Escape> y").1.inserted == some "x") },
+    { name :=
+        "every command a key of insert state's table or of the minibuffer's state's table runs is registered under its name by evil's commands or the minibuffer's"
+      run :=
+        let registered := (Evil.commands ++ Minibuffer.commands).map (·.name)
+        pure
+          ((Vim.Default.insertCommands ++ Vim.Default.minibufferCommands).all fun
+            | (_, .command command) => registered.contains command.name
+            | _ => true) },
     { name :=
         "each of the default key sequences z t, z z and z b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; z alone yields nothing and is pending; and in the state i enters and in the minibuffer's state z is typed text"
       run :=
@@ -15704,13 +16109,15 @@ def promptModeChecks : List Check :=
               closed accepted ⟨1⟩ &&
               accepted.loop.state.windows.map (·.id) == #[⟨1⟩] },
     { name :=
-        "the minibuffer's commands are registered under their five names, each another; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
+        "the minibuffer's commands are registered under their seven names, each another, the one that asks for the input scheme under the name the Vim scheme yields; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
           (Minibuffer.commands.map (·.name) ==
               #[Minibuffer.acceptName, Minibuffer.cancelName, Minibuffer.nextName,
-                Minibuffer.previousName, Minibuffer.deleteBackwardName] &&
-            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 5 &&
+                Minibuffer.previousName, Minibuffer.deleteBackwardName,
+                Minibuffer.deleteToStartName, Minibuffer.askName] &&
+            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 7 &&
+            Minibuffer.askName == Vim.askCommand &&
             Minibuffer.modes.map (·.name) == #[Prompt.mode] &&
             Minibuffer.modes.map (·.roles) ==
               #[[(Role.activate, Minibuffer.acceptName), (Role.quit, Minibuffer.cancelName),
@@ -16359,14 +16766,25 @@ def echoOf (driver : TestDriver) : Option String :=
   driver.model.display.scenes.back?.map (·.echo)
 
 /-- The buffer's fields of the status line of the view `view` in the last
-scene `driver`'s display recorded: those in the faces of the buffer's name
-and of the modified mark (`ModeLine.buffer`, `ModeLine.modified`), which is
-what the file checks read. The other segments are `modeLineChecks`'s. -/
+scene `driver`'s display recorded: those in the faces of the buffer's name,
+of the modified mark and of the changed mark (`ModeLine.buffer`,
+`ModeLine.modified`, `ModeLine.changed`), which is what the file checks
+read. The other segments are `modeLineChecks`'s. -/
 def statusOf (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array StatusField) :=
   driver.model.display.scenes.back?.bind fun scene =>
     (scene.views.find? (·.id == view)).map fun view =>
       view.status.filter fun field =>
-        field.face == ModeLine.bufferFace || field.face == ModeLine.modifiedFace
+        field.face == ModeLine.bufferFace || field.face == ModeLine.modifiedFace ||
+          field.face == ModeLine.changedFace
+
+/-- Whether the status line of the view `view` in the last scene `driver`'s
+display recorded, a view that is not selected, names the buffer `name`: the
+`buffer` segment's field, in `ModeLine.inactiveFace`, as every field of such
+a view is (`statusOf` reads a selected view's). -/
+def inactiveNames (driver : TestDriver) (view : ViewId) (name : String) : Bool :=
+  driver.model.display.scenes.back?.any fun scene =>
+    (scene.views.find? (·.id == view)).any fun view =>
+      view.status.contains { ModeLine.field name ModeLine.inactiveFace with side := .left }
 
 /-- The buffer's fields of the status line of a selected view of a buffer
 called `name` that is not modified: the name alone, in its face. -/
@@ -17388,7 +17806,7 @@ def fileCommandChecks : List Check :=
               saved.loop.state.buffers == removed.loop.state.buffers &&
               saved.loop.state.wellFormed },
     { name :=
-        "the file commands and their jobs as compiled code registers them: the open command and the save command are registered under their names and the load job and the save job under theirs, the open command with a path opens the file and the save command saves the buffer, and the open command with no path starts nothing and asks for one"
+        "the file commands and their jobs as compiled code registers them: the open, save, edit and reload commands are registered under their names and the load, save and reload jobs under theirs, the open command with a path opens the file and the save command saves the buffer, and the open command with no path starts nothing and asks for one"
       run :=
         pure <|
           match compiledDriver with
@@ -17400,9 +17818,15 @@ def fileCommandChecks : List Check :=
             let (asked, _) := fedTo driver (presses "C-o n")
             let (opened, _) := asked.finish 1
             let (saving, _) := fedTo opened ([.commit "x"] ++ presses "C-o w")
-            let (saved, _) := saving.finish 2
-            Files.commands.map (·.name) == #[Files.openName, Files.saveName] &&
-              Files.jobs.map (·.name) == #[Files.loadJob, Files.saveJob] &&
+            -- The first edit starts a check of the file too: the save is
+            -- found by its name.
+            let saveId := ((saving.pending.find? (·.name == Files.saveJob)).map (·.id)).getD 0
+            let (saved, _) := saving.finish saveId
+            Files.commands.map (·.name) ==
+                #[Files.openName, Files.saveName, Files.editName, Files.reloadName,
+                  Files.autoReloadName] &&
+              Files.jobs.map (·.name) ==
+                #[Files.loadJob, Files.saveJob, Files.reloadJob, Files.checkJob, Files.followJob] &&
               started steps == #[] &&
               bare.pending.isEmpty &&
               bare.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
@@ -17599,6 +18023,63 @@ def dispatchQuitChecks : List Check :=
               !saved.stopped &&
               next last == #[some .continue, some .stop] &&
               left.stopped },
+    { name :=
+        "a close request while a file's buffer has unsaved changes: the step says continue and publishes one scene, whose echo area has the quit command's refusal, the state is not asked to quit, and the next key's command runs"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (edited, _) := fedTo driver [.commit "x"]
+            let (refused, steps) := fedTo edited [.closeRequested]
+            let (after, _) := fedTo refused (presses "C-l o")
+            next steps == #[some .continue] &&
+              refused.model.display.scenes.size == edited.model.display.scenes.size + 1 &&
+              echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              !refused.loop.state.quitting &&
+              !refused.stopped &&
+              promptEcho after == "other" },
+    { name :=
+        "a close request with nothing unsaved publishes one scene, the last, and says stop, and the driver has stopped"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (left, steps) := fedTo driver [.closeRequested]
+            next steps == #[some .stop] && left.stopped &&
+              left.model.display.scenes.size == driver.model.display.scenes.size + 1 },
+    { name :=
+        "a close request while a save is in flight says continue, and the delivery of the save's result says stop"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (asked, steps) :=
+              fedTo driver ([.commit "x"] ++ presses "C-o w" ++ [.closeRequested])
+            let (left, delivered) := asked.finish 2
+            steps.back?.join.map (·.next) == some .continue && asked.loop.state.quitting &&
+              !asked.stopped &&
+              delivered.map (·.next) == some .stop &&
+              left.stopped },
+    { name :=
+        "a close request while a save is in flight that is then refused, the file having changed behind the editor: the delivery says continue, the driver has not stopped, and the echo area has the save's refusal"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let changed := rewritten driver path JobContract.otherFile
+            let (asked, steps) :=
+              fedTo changed ([.commit "x"] ++ presses "C-o w" ++ [.closeRequested])
+            let (refused, delivered) := asked.finish 2
+            steps.back?.join.map (·.next) == some .continue && asked.loop.state.quitting &&
+              delivered.map (·.next) == some .continue &&
+              !refused.stopped &&
+              !refused.loop.state.quitting &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
     { name :=
         "the driver records that a step said stop when the step was one it ran for an invocation a command asked for: the fed step says continue and the driver has stopped"
       run :=
@@ -18318,7 +18799,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then reload, and no other; the prompt the name e then asks for a path with has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread and reload, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -18327,9 +18808,918 @@ def exChecks : List Check :=
             let (typed, _) := fedTo driver (presses "C-e e e")
             let (opening, _) := fedTo typed (presses "C-e t C-e y")
             candidatesOf typed == some (exListed "e" none Ex.bindings) &&
-              (candidatesOf typed).map (·.listed) == some #["e", "reload"] &&
+              (candidatesOf typed).map (·.listed) ==
+                some #["e", "e!", "autoread", "noautoread", "reload"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
+
+/-- The commands compiled code registers for files, the minibuffer and the ex
+line, each under its name, and `undo` and `redo`, which move one step of the
+history of the buffer of the window they are called with. -/
+def reloadCommands : List (String × Dispatched) :=
+  let compiled : List (String × Dispatched) :=
+    (Ex.commands ++ Minibuffer.commands ++ Files.commands ++ Buffers.commands).toList.filterMap
+      fun (registration : Config.Registration) =>
+      match registration.action with
+      | .call run =>
+        let dispatched : Dispatched := fun call => do
+          run call
+          return none
+        some (registration.name, dispatched)
+      | _ => none
+  compiled ++
+    [("undo", fun call => do
+        discard <| call.target.window.buffer.undo
+        return none),
+      ("redo", fun call => do
+        discard <| call.target.window.buffer.redo
+        return none),
+      ("type-x", fun call => do
+        Loop.insert call.target "x"
+        return none)]
+
+/-- A driver of the reload checks: the commands of `reloadCommands`, every job
+compiled code registers for files (`Files.jobs`), the ex names that ship, and
+the files of the file command checks. `C-o n` opens `note.txt`, `C-o r` runs
+the reload command, `C-o R` the forced reload, `C-o u` undoes and `C-o U`
+redoes; `C-e e` opens the ex line and `C-e y` accepts it. -/
+def reloadDriver : Option TestDriver :=
+  let keys : Loop.Keys TestScheme.scheme :=
+    {
+      dispatchKeys
+        [("C-o n", opens (inFiles "note.txt")), ("C-o l", opens (inFiles "lf.txt")),
+          ("C-o x", invoke "type-x"), ("C-o r", invoke Files.reloadName),
+          ("C-o R", { command := Files.reloadName, arguments := [.bool true] }),
+          ("C-o u", invoke "undo"), ("C-o U", invoke "redo"), ("C-e e", invoke Ex.name),
+          ("C-e y", invoke Minibuffer.acceptName)]
+        reloadCommands with
+      registered :=
+        { ex := fun name => Ex.bindings.findRev? (·.name == name)
+          exNames := exNamesOf Ex.bindings } }
+  (Loop.Driver.over keys (fun name => (Files.jobs.find? (·.name == name)).map (·.work))
+        (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := { files := commandFiles } }
+
+/-- The text another program writes over `note.txt` in the reload checks:
+a new first line before what was there. -/
+def reloadedText : String :=
+  "a new first line\n" ++ FileCases.noteText
+
+/-- `reloadedText` as the file's bytes. -/
+def reloadedBytes : ByteArray :=
+  "a new first line\n".toUTF8 ++ FileCases.noteBytes
+
+/-- The id of the job of `driver` started under `name` and not yet
+delivered, the latest if there are several. -/
+def pendingOf (driver : TestDriver) (name : String) : Option Nat :=
+  ((driver.pending.filter (·.name == name)).back?).map (·.id)
+
+/-- Finishes the job of `driver` started under `name` and not yet delivered;
+`driver` as it was when there is none. -/
+def finishNamed (driver : TestDriver) (name : String) : TestDriver :=
+  match pendingOf driver name with
+  | some id => (driver.finish id).1
+  | none => driver
+
+/-- `reloadDriver` with `note.txt` open in view 0, its load finished, and
+then `note.txt` rewritten by another program with `reloadedBytes`. -/
+def noteRewritten : Option TestDriver :=
+  reloadDriver.map fun driver =>
+    rewritten (finishNamed (fedTo driver (presses "C-o n")).1 Files.loadJob) (inFiles "note.txt")
+      reloadedBytes
+
+/-- Whether some piece of the whole text of the buffer `driver`'s view 0
+shows was written by an edit of origin `origin`. -/
+def tracedTo (driver : TestDriver) (origin : Origin) : Bool :=
+  match showing driver with
+  | none => false
+  | some shown =>
+    match shown.text with
+    | none => false
+    | some text =>
+      match ((shown.buffer.text.trace 0 text.utf8ByteSize).runModel driver.model.texts).1 with
+      | .ok pieces =>
+        pieces.any fun piece =>
+          match piece.author with
+          | .entry _ by_ => by_ == origin
+          | .earlier _ => false
+      | .error _ => false
+
+/-- The checks of reloading a buffer from its file (`Files.reload`,
+`Files.reloaded`, `Editor/Files.lean`), on the loop's driver over the
+editor's models and the model of files, with the commands and the jobs
+compiled code registers. -/
+def fileReloadChecks : List Check :=
+  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
+  [{  name :=
+        "one undo after a reload is the text from before it: the reload shows the file's new text, not modified, as one step over the opened root traced to the disk origin, and one undo brings the old text back, modified"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (asked, _) := fedTo rewritten (presses "C-o r")
+            let reloaded := finishNamed asked Files.reloadJob
+            let (undone, _) := fedTo reloaded (presses "C-o u")
+            (pendingOf asked Files.reloadJob).isSome && textOf reloaded == some reloadedText &&
+              statusOf reloaded == some (named "note.txt") &&
+              (showing reloaded).map (·.buffer.history.nodes.size) == some 2 &&
+              tracedTo reloaded Origin.disk &&
+              (heldFile reloaded).map (·.stamp) == stampOf reloaded (inFiles "note.txt") &&
+              textOf undone == some FileCases.noteText &&
+              statusOf undone == some (namedModified "note.txt") },
+    { name :=
+        "a reload of a buffer with unsaved edits changes nothing and says why: no reload job is started, the text is the edited text, and the echo area names :e!; edits made while the file loaded refuse it the same way when it is delivered"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (edited, _) := fedTo rewritten [.commit "x"]
+            let (refused, _) := fedTo edited (presses "C-o r")
+            let (asked, _) := fedTo rewritten (presses "C-o r")
+            let (late, _) := fedTo asked [.commit "x"]
+            let lateRefused := finishNamed late Files.reloadJob
+            (pendingOf refused Files.reloadJob).isNone &&
+              textOf refused == some ("x" ++ FileCases.noteText) &&
+              echoOf refused == some (Files.notReloading "note.txt") &&
+              textOf lateRefused == some ("x" ++ FileCases.noteText) &&
+              echoOf lateRefused == some (Files.notReloading "note.txt") &&
+              (pendingOf lateRefused Files.reloadJob).isNone },
+    { name :=
+        "a forced reload takes the file's text as one step: after it the buffer is not modified, one undo brings the edited text back, modified, and one redo the file's text again; the ex line e! does the same"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (edited, _) := fedTo rewritten [.commit "x"]
+            let forced := finishNamed (fedTo edited (presses "C-o R")).1 Files.reloadJob
+            let (undone, _) := fedTo forced (presses "C-o u")
+            let (redone, _) := fedTo undone (presses "C-o U")
+            let byEx := finishNamed (fedTo edited (exLine "e!")).1 Files.reloadJob
+            textOf forced == some reloadedText && statusOf forced == some (named "note.txt") &&
+              textOf undone == some ("x" ++ FileCases.noteText) &&
+              statusOf undone == some (namedModified "note.txt") &&
+              textOf redone == some reloadedText &&
+              textOf byEx == some reloadedText &&
+              (showing byEx).map (·.buffer.isModified) == some false },
+    { name :=
+        "a forced reload whose text moves while it loads applies nothing and starts one more reload, which reloads; if the text moves again the echo area says it was overtaken and the edited text stays"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (asked, _) := fedTo rewritten (presses "C-o R")
+            let (moved, _) := fedTo asked [.commit "x"]
+            let retried := finishNamed moved Files.reloadJob
+            let settled := finishNamed retried Files.reloadJob
+            let (movedAgain, _) := fedTo retried [.commit "y"]
+            let overtaken := finishNamed movedAgain Files.reloadJob
+            textOf retried == textOf moved && (pendingOf retried Files.reloadJob).isSome &&
+              pendingOf retried Files.reloadJob != pendingOf moved Files.reloadJob &&
+              textOf settled == some reloadedText &&
+              echoOf overtaken == some (Files.reloadOvertaken (inFiles "note.txt")) &&
+              textOf overtaken == textOf movedAgain &&
+              (pendingOf overtaken Files.reloadJob).isNone },
+    { name :=
+        "the ex line e with no argument reloads the window's buffer, and on the scratch buffer, which has no file, still asks for a path; a reload of a buffer with no file says so"
+      run :=
+        pure <|
+          match noteRewritten, reloadDriver with
+          | some rewritten, some fresh =>
+            let byEx := finishNamed (fedTo rewritten (exLine "e")).1 Files.reloadJob
+            let (asking, _) := fedTo fresh (exLine "e")
+            let (noFile, _) := fedTo fresh (presses "C-o r")
+            textOf byEx == some reloadedText &&
+              asking.loop.state.prompt.map (·.label) == some Files.openPrompt &&
+              echoOf noFile == some (Files.noReloadFile "scratch") &&
+              (pendingOf noFile Files.reloadJob).isNone
+          | _, _ => false }]
+
+/-- The mode line's field that says a buffer's file changed on disk: the
+`changed` segment's (`ModeLine.changed`). -/
+def changedField : StatusField :=
+  ModeLine.field ModeLine.changedMark ModeLine.changedFace
+
+/-- `driver` once the file at `path` is gone. -/
+def removed (driver : TestDriver) (path : System.FilePath) : TestDriver :=
+  { driver with
+    jobs :=
+      { driver.jobs with
+        files :=
+          { driver.jobs.files with files := driver.jobs.files.files.filter (·.path != path) } } }
+
+/-- `driver` after the frame lost the keyboard focus and gained it again, and
+the check that started finished. -/
+def focusChecked (driver : TestDriver) : TestDriver :=
+  finishNamed (fedTo driver [.focus false, .focus true]).1 Files.checkJob
+
+/-- The checks of the staleness check (`Files.checkWork`, `Loop.fileJobs`,
+`Editor/Loop.lean`, "Files that changed on disk"), with auto-reload off, on
+the loop's driver over the editor's models and the model of files, with the
+commands and the jobs compiled code registers. -/
+def stalenessChecks : List Check :=
+  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
+  let note := inFiles "note.txt"
+  [{  name :=
+        "criterion 5: the first edit to a buffer whose file changed is refused and the next lands: after a check started by the focus coming back, the first edit leaves the text, says the file changed and names :e, with no modified field, and the second edit lands"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let checked := focusChecked rewritten
+            let (refused, _) := fedTo checked (presses "C-o x")
+            let (landed, _) := fedTo refused (presses "C-o x")
+            textOf refused == some FileCases.noteText &&
+              echoOf refused == some (Files.changedOnDisk note) &&
+              statusOf refused == some (named "note.txt" ++ #[changedField]) &&
+              textOf landed == some ("x" ++ FileCases.noteText) &&
+              statusOf landed == some (namedModified "note.txt" ++ #[changedField]) },
+    { name :=
+        "a committed text after a change on disk is dropped the same way, and the next commit lands"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (refused, _) := fedTo (focusChecked rewritten) [.commit "a"]
+            let (landed, _) := fedTo refused [.commit "b"]
+            textOf refused == some FileCases.noteText &&
+              echoOf refused == some (Files.changedOnDisk note) &&
+              textOf landed == some ("b" ++ FileCases.noteText) },
+    { name :=
+        "the first edit of an unmodified file buffer starts a check: the edit lands, and once the check is finished the buffer is marked and the echo area gives both resolutions"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (edited, _) := fedTo rewritten (presses "C-o x")
+            let checked := finishNamed edited Files.checkJob
+            textOf edited == some ("x" ++ FileCases.noteText) &&
+              (pendingOf edited Files.checkJob).isSome &&
+              statusOf checked == some (namedModified "note.txt" ++ #[changedField]) &&
+              echoOf checked == some (Files.changedUnderEdits note) },
+    { name :=
+        "a file that is gone is marked: the first edit is refused saying :w! writes it again, and the next lands"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let checked := focusChecked (removed rewritten note)
+            let (refused, _) := fedTo checked (presses "C-o x")
+            let (landed, _) := fedTo refused (presses "C-o x")
+            ((heldFile checked).bind (·.changed)).map (·.found) == some none &&
+              echoOf refused == some (Files.goneFromDisk note) &&
+              textOf refused == some FileCases.noteText &&
+              textOf landed == some ("x" ++ FileCases.noteText) },
+    { name :=
+        "criterion 6: switching to a buffer whose file changed marks its status line and leaves its text; switching to one whose file did not change adds no field; and the focus coming back marks every changed buffer"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (both, _) := fedTo rewritten (presses "C-o l")
+            let both := finishNamed both Files.loadJob
+            let (switched, _) := fedTo both (exLine "b note.txt")
+            let switched := finishNamed switched Files.checkJob
+            let (back, _) := fedTo switched (exLine "b lf.txt")
+            let back := finishNamed back Files.checkJob
+            let focused := focusChecked both
+            let noteOf (driver : TestDriver) : Option Bool :=
+              (driver.loop.state.buffer? ⟨1⟩).bind (·.file.map (·.changed.isSome))
+            let lfOf (driver : TestDriver) : Option Bool :=
+              (driver.loop.state.buffer? ⟨2⟩).bind (·.file.map (·.changed.isSome))
+            (showing switched).map (·.buffer.name) == some "note.txt" &&
+              statusOf switched == some (named "note.txt" ++ #[changedField]) &&
+              textOf switched == some FileCases.noteText &&
+              statusOf back == some (named "lf.txt") &&
+              noteOf focused == some true &&
+              lfOf focused == some false },
+    { name :=
+        "with no check job registered nothing is checked: the focus coming back and a first edit start nothing"
+      run :=
+        pure <|
+          match noteOpen with
+          | none => false
+          | some opened =>
+            let rewritten := rewritten opened (inFiles "note.txt") reloadedBytes
+            let (stepped, steps) := fedTo rewritten [.focus false, .focus true, .commit "x"]
+            (steps.all fun step => (step.map (·.starts.isEmpty)).getD false) &&
+              stepped.pending.isEmpty },
+    { name :=
+        "the save criterion, with no check run: a save of a buffer whose file changed on disk writes nothing and says so, both with no check job registered and with the check the first edit started still unfinished; the file keeps the other program's bytes"
+      run :=
+        pure <|
+          match noteOpen, noteRewritten with
+          | some unchecked, some behind =>
+            -- No check job is registered here: the first edit starts none.
+            let changed := rewritten unchecked note reloadedBytes
+            let (saving, _) := fedTo changed ([.commit "x"] ++ presses "C-o w")
+            let refused := finishNamed saving Files.saveJob
+            -- The check the first edit starts is left unfinished.
+            let (pending, _) := fedTo behind [.commit "x"]
+            let (asked, _) := fedTo pending (exLine "w")
+            let held := finishNamed asked Files.saveJob
+            (pendingOf saving Files.checkJob).isNone && (pendingOf saving Files.saveJob).isSome &&
+              bytesOf refused note == some reloadedBytes &&
+              echoOf refused == some (Files.notSaved note (.changed (stampOf changed note))) &&
+              (pendingOf pending Files.checkJob).isSome &&
+              (pendingOf held Files.checkJob).isSome &&
+              (heldFile held).bind (·.changed) == none &&
+              (pendingOf asked Files.saveJob).isSome &&
+              bytesOf held note == some reloadedBytes &&
+              echoOf held == some (Files.notSaved note (.changed (stampOf behind note))) &&
+              textOf held == some ("x" ++ FileCases.noteText)
+          | _, _ => false },
+    { name :=
+        "the mark's state requests: a result for another stamp changes nothing, one for the buffer's stamp marks it, one that finds that stamp clears it, telling sets told, and a save that wrote the file clears it"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let state := rewritten.loop.state
+            match (heldFile rewritten) with
+            | none => false
+            | some file =>
+              let other : File.Stamp := { file.stamp with size := file.stamp.size + 1 }
+              let changedOf (state : EditorState) :=
+                (state.buffer? ⟨1⟩).bind (·.file.bind (·.changed))
+              let (_, stale) := state.markChanged ⟨1⟩ other (some other) false
+              let (_, marked) := state.markChanged ⟨1⟩ file.stamp (some other) false
+              let (_, cleared) := marked.markChanged ⟨1⟩ file.stamp (some file.stamp) false
+              let (_, told) := marked.tellChanged ⟨1⟩
+              let (_, began) := told.beginSave ⟨1⟩ ⟨0⟩ ⟨0⟩
+              let (_, saved) := began.endSave ⟨1⟩ ⟨0⟩ (some other)
+              let text := ((state.buffer? ⟨1⟩).map (·.text)).getD ⟨0⟩
+              changedOf stale == none &&
+                changedOf marked == some { found := some other, told := false } &&
+                changedOf cleared == none &&
+                changedOf told == some { found := some other, told := true } &&
+                (marked.untold? text).isSome &&
+                (told.untold? text).isNone &&
+                changedOf saved == none }]
+
+/-- `reloadDriver` whose watches may be made in `fileRoot`, with `note.txt`
+open in view 0 and its load finished. -/
+def watchedNote : Option TestDriver :=
+  reloadDriver.map fun driver =>
+    let driver :=
+      { driver with
+        jobs :=
+          { driver.jobs with
+            fileWatches := { driver.jobs.fileWatches with directories := #[fileRoot] } } }
+    finishNamed (fedTo driver (presses "C-o n")).1 Files.loadJob
+
+/-- The starts every step of `steps` handed back, by name. -/
+def startNames (steps : Array (Option (Loop.Stepped TestScheme.scheme))) : Array String :=
+  steps.flatMap fun step => ((step.map (·.starts)).getD #[]).map (·.name)
+
+/-- The checks of auto-reload (`Editor/Loop.lean`, "Auto-reload"), on the
+loop's driver over the editor's models, the model of files and the model of
+watches, whose waiting jobs it holds parked (`Loop.Driver.touch`). -/
+def autoReloadChecks : List Check :=
+  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
+  let note := inFiles "note.txt"
+  [{  name :=
+        "criterion 7: with auto-reload off no file buffer has a watch open: through opening two files, switching, the focus going and coming, an edit, a reload, closing one and a change on disk, no follow job is started, none is parked, and the watch model started none; with autoread two are open, bd ends one and noautoread the other"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let (two, s1) := fedTo opened (presses "C-o l")
+            let two := finishNamed two Files.loadJob
+            let (switched, s2) := fedTo two (exLine "b note.txt")
+            let (focused, s3) :=
+              fedTo (finishNamed switched Files.checkJob) [.focus false, .focus true]
+            let (edited, s4) := fedTo (finishNamed focused Files.checkJob) (presses "C-o x")
+            let (reloading, s5) := fedTo (finishNamed edited Files.checkJob) (presses "C-o R")
+            let (closed, s6) := fedTo (finishNamed reloading Files.reloadJob) (exLine "bd lf.txt")
+            let touched := (rewritten closed note reloadedBytes).touch #[(note, .written)]
+            let steps := s1 ++ s2 ++ s3 ++ s4 ++ s5 ++ s6
+            let (on, _) := fedTo two (exLine "autoread")
+            let (one, _) := fedTo on (exLine "bd lf.txt")
+            let (off, _) := fedTo one (exLine "noautoread")
+            !(startNames steps).contains Files.followJob &&
+              [two, switched, focused, edited, reloading, closed, touched].all
+                (fun driver =>
+                  driver.openWatches == 0 && driver.jobs.fileWatches.next == 1 &&
+                    driver.jobs.fileWatches.ended.isEmpty) &&
+              on.openWatches == 2 &&
+              one.openWatches == 1 &&
+              off.openWatches == 0 &&
+              off.jobs.fileWatches.ended.size == 2 },
+    { name :=
+        "criterion 8: with auto-reload on, an injected change shows the file's new text: one watch is parked, the change resumes it, its follow finishes and reloads, and the buffer then holds the new text with no modified or changed field, and a watch parked again"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let (on, _) := fedTo opened (exLine "autoread")
+            let changed := (rewritten on note reloadedBytes).touch #[(note, .written)]
+            let followed := finishNamed changed Files.followJob
+            let reloaded := finishNamed followed Files.reloadJob
+            -- After the reload the follow is on the new stamp: a later
+            -- change to the buffer, now edited, marks it.
+            let (edited, _) := fedTo reloaded (presses "C-o x")
+            let edited := finishNamed edited Files.checkJob
+            let again := rewritten edited note ("again\n".toUTF8 ++ reloadedBytes)
+            let marked := finishNamed (again.touch #[(note, .written)]) Files.followJob
+            on.openWatches == 1 && (pendingOf changed Files.followJob).isSome &&
+              (pendingOf followed Files.reloadJob).isSome &&
+              textOf reloaded == some reloadedText &&
+              statusOf reloaded == some (named "note.txt") &&
+              reloaded.openWatches == 1 &&
+              statusOf marked == some (namedModified "note.txt" ++ #[changedField]) &&
+              marked.openWatches == 1 },
+    { name :=
+        "a deleted file is marked and waited on: no reload, the text kept, the changed field with nothing found, one watch parked and a further step starts no follow; the file put back is reloaded"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let (on, _) := fedTo opened (exLine "autoread")
+            let gone := finishNamed ((removed on note).touch #[(note, .removed)]) Files.followJob
+            let (later, steps) := fedTo gone [.preedit ""]
+            let back :=
+              finishNamed ((rewritten later note reloadedBytes).touch #[(note, .created)])
+                Files.followJob
+            let reloaded := finishNamed back Files.reloadJob
+            (pendingOf gone Files.reloadJob).isNone && textOf gone == some FileCases.noteText &&
+              statusOf gone == some (named "note.txt" ++ #[changedField]) &&
+              ((heldFile gone).bind (·.changed)).map (·.found) == some none &&
+              gone.openWatches == 1 &&
+              !(startNames steps).contains Files.followJob &&
+              textOf reloaded == some reloadedText &&
+              statusOf reloaded == some (named "note.txt") },
+    { name :=
+        "criterion 10 on the model: a modified buffer keeps its text and is marked, the follow armed again on what was found, so a touch with no further change starts nothing; two changes leave one parked watch, the mark on the second stamp"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let (on, _) := fedTo opened (exLine "autoread")
+            let (edited, _) := fedTo on (presses "C-o x")
+            let edited := finishNamed edited Files.checkJob
+            let first := rewritten edited note reloadedBytes
+            let marked := finishNamed (first.touch #[(note, .written)]) Files.followJob
+            let quiet := marked.touch #[(note, .written)]
+            let second := rewritten quiet note ("again\n".toUTF8 ++ reloadedBytes)
+            let twice := finishNamed (second.touch #[(note, .written)]) Files.followJob
+            let (later, steps) := fedTo twice [.preedit ""]
+            textOf marked == some ("x" ++ FileCases.noteText) &&
+              (pendingOf marked Files.reloadJob).isNone &&
+              statusOf marked == some (namedModified "note.txt" ++ #[changedField]) &&
+              (pendingOf quiet Files.followJob).isNone &&
+              quiet.openWatches == 1 &&
+              ((heldFile twice).bind (·.changed)).map (·.found) == some (stampOf twice note) &&
+              twice.openWatches == 1 &&
+              (pendingOf twice Files.followJob).isNone &&
+              !(startNames steps).contains Files.followJob &&
+              later.openWatches == 1 },
+    { name :=
+        "a refused watch is said in words and says how to retry: the echo area has the refusal's sentence, not its constructor, and that auto-reload is off for the buffer until noautoread then autoread, which starts a follow again"
+      run :=
+        pure <|
+          -- No directory may be watched here, so the follow's watch is
+          -- refused.
+          match reloadDriver with
+          | none => false
+          | some fresh =>
+            let opened := finishNamed (fedTo fresh (presses "C-o n")).1 Files.loadJob
+            let (on, _) := fedTo opened (exLine "autoread")
+            let refused := finishNamed on Files.followJob
+            let (later, steps) := fedTo refused [.preedit ""]
+            let (off, _) := fedTo later (exLine "noautoread")
+            let (retried, _) := fedTo off (exLine "autoread")
+            let error : FileWatchError := .notFound s!"cannot watch {note}: {fileRoot} is not there"
+            (pendingOf on Files.followJob).isSome &&
+              echoOf refused == some (Files.notFollowing note error.describe) &&
+              (echoOf refused).map (·.endsWith Files.followRetry) == some true &&
+              !((echoOf refused).getD "").contains "FileWatchError" &&
+              !(startNames steps).contains Files.followJob &&
+              (pendingOf retried Files.followJob).isSome },
+    { name :=
+        "config's setting decides while no command has: under it the next step arms the watches, and noautoread then wins over it"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let configured :=
+              { opened with
+                keys :=
+                  { opened.keys with
+                    registered := { opened.keys.registered with autoReload := true } } }
+            let (armed, _) := fedTo configured [.preedit ""]
+            let (off, _) := fedTo armed (exLine "noautoread")
+            armed.openWatches == 1 && off.openWatches == 0 }]
+
+/-- What a step of the buffer command checks is handed. The commands are the
+ones compiled code registers for files, the minibuffer, the buffers and the
+ex line (`Files.commands`, `Minibuffer.commands`, `Buffers.commands`,
+`Ex.commands`), each under the name it is registered under, told of the ex
+names that ship (`Ex.bindings`), and two written here: `split`, which
+splits the window it is called with and leaves the focus, and
+`edit-then-close`, which inserts `x` at its window's cursors and then runs
+`close-buffer` inside itself, so the edit and the close are one command.
+
+One keymap, the same for every view: `C-e e` runs the ex command, `C-e y`
+and `C-e t` the minibuffer's accept command and its command that moves to
+the next candidate, `C-b b` runs `switch-buffer` with the arguments the Vim
+scheme gives a command a key is bound to, a count and a register, `C-b n`
+runs it with `note.txt`, `C-b s` runs `split`, `C-b x` runs
+`edit-then-close`, `C-b d` runs `close-buffer` with no argument and `C-b m`
+runs it with the name the minibuffer's buffer has (`Prompt.bufferName`). -/
+def bufferKeys : Loop.Keys TestScheme.scheme :=
+  let registrations := Files.commands ++ Minibuffer.commands ++ Buffers.commands ++ Ex.commands
+  let compiled : List (String × Dispatched) :=
+    registrations.toList.filterMap fun registration =>
+      match registration.action with
+      | .call run =>
+        some
+          (registration.name, fun call => do
+            run call
+            return none)
+      | _ => none
+  let written : List (String × Dispatched) :=
+    [("split", fun call => do
+        discard <| call.target.window.id.split .rows
+        return none),
+      ("edit-then-close", fun call => do
+        discard <| call.target.window.id.insertAtSelections "x"
+        discard <| runCommand Buffers.closeName { call with arguments := [] }
+        return none)]
+  {
+    dispatchKeys
+      [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName),
+        ("C-e t", invoke Minibuffer.nextName),
+        ("C-b b", { command := Buffers.switchName, arguments := [.nat 0, .str ""] }),
+        ("C-b n", { command := Buffers.switchName, arguments := [.str "note.txt"] }),
+        ("C-b s", invoke "split"), ("C-b x", invoke "edit-then-close"),
+        ("C-b d", invoke Buffers.closeName),
+        ("C-b m", { command := Buffers.closeName, arguments := [.str Prompt.bufferName] })]
+      (compiled ++ written) with
+    registered :=
+      { ex := fun name => Ex.bindings.findRev? (·.name == name),
+        exNames := exNamesOf Ex.bindings } }
+
+/-- A driver of the buffer command checks over the initial state, with the
+file commands' jobs and the files of the file command checks; `none` if
+making the state was refused. -/
+def buffersDriver : Option TestDriver :=
+  (Loop.Driver.over bufferKeys fileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := { files := commandFiles } }
+
+/-- `driver` with `note.txt`, `crlf.txt` and `lf.txt` opened in view 0, in
+that order, each by the ex line `e` and its path, and each load finished
+before the next: the loads are jobs 1, 2 and 3. The open buffers are then
+`scratch`, `note.txt`, `crlf.txt` and `lf.txt`, and `lf.txt` is the most
+recently used. -/
+def threeOpen (driver : TestDriver) : TestDriver :=
+  [("note.txt", 1), ("crlf.txt", 2), ("lf.txt", 3)].foldl
+    (fun driver (name, job) => ((fedTo driver (exLine s!"e {inFiles name}")).1.finish job).1) driver
+
+/-- `buffersDriver` with `threeOpen`'s three files open. -/
+def buffersOpen : Option TestDriver :=
+  buffersDriver.map threeOpen
+
+/-- The name of the buffer view `view` of `driver` shows. -/
+def shownName (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option String :=
+  (showing driver view).map (·.buffer.name)
+
+/-- The buffer called `name` in `driver`'s state. -/
+def bufferNamed (driver : TestDriver) (name : String) : Option BufferId :=
+  driver.loop.state.findBuffer name
+
+/-- The checks of the buffer commands (`Editor/Buffers.lean`,
+`Editor/Buffers/Compiled.lean`) and the ex names `b`, `ls` and `bd`, on the
+loop's driver over the editor's models, the model of files and the test
+scheme. Each message is read from the function that makes it, and an order
+the fuzzy matcher decides is computed with its model. -/
+def bufferCommandChecks : List Check :=
+  [{  name :=
+        "b with no argument opens a prompt labelled with the switch prompt's label, whose continuation is switch-buffer, and whose candidates are the open buffers' names, most recently used first and the asking window's buffer last, without the minibuffer's; called with a count and a register, as a key under the Vim scheme calls it, it asks the same"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let asked (events : List Event) : Bool :=
+              let (asking, _) := fedTo opened events
+              let state := asking.loop.state
+              let minibuffer := (state.minibufferBuffer?.bind state.buffer?).map (·.name)
+              state.prompt.map (fun asked => (asked.label, asked.continuation)) ==
+                  some (Buffers.switchPrompt, { command := Buffers.switchName }) &&
+                (candidatesOf asking).map (·.all) ==
+                  some #["crlf.txt", "note.txt", "scratch", "lf.txt"] &&
+                minibuffer.isSome &&
+                !((candidatesOf asking).any fun candidates =>
+                    minibuffer.any candidates.all.contains)
+            asked (exLine "b") && asked (presses "C-b b") },
+    { name :=
+        "a pattern typed after b and accepted with nothing chosen shows the best match in the window: its status line names it and it is the most recently used; where more than one buffer matches, the one the fuzzy model ranks first"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (switched, _) := fedTo opened (exLine "b nte")
+            let state := opened.loop.state
+            let names := state.openBuffers.filterMap fun id => (state.buffer? id).map (·.name)
+            let best := (FuzzyModel.rank "txt" names)[0]?.bind (names[·]?)
+            let (several, _) := fedTo opened (exLine "b txt")
+            shownName switched == some "note.txt" && statusOf switched == some (named "note.txt") &&
+              switched.loop.state.recent[0]? == bufferNamed switched "note.txt" &&
+              switched.loop.state.prompt == none &&
+              best.isSome &&
+              shownName several == best },
+    { name :=
+        "a candidate chosen with the minibuffer's next command and accepted is the buffer shown"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (chosen, _) := fedTo opened (exLine "b" ++ presses "C-e t")
+            let (switched, _) := fedTo chosen (presses "C-e y")
+            let expected := (candidatesOf chosen).bind (·.listed[0]?)
+            expected.isSome && (candidatesOf chosen).bind (·.chosen) == some 0 &&
+              shownName switched == expected &&
+              switched.loop.state.prompt == none },
+    { name :=
+        "b with an exact name switches with no prompt; b with a pattern nothing matches leaves the window as it was and says so by the switch command's message"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (exact, _) := fedTo opened (exLine "b scratch")
+            let (missed, _) := fedTo opened (exLine "b zzz")
+            shownName exact == some "scratch" && exact.loop.state.prompt == none &&
+              shownName missed == some "lf.txt" &&
+              promptEcho missed == Buffers.noMatch "zzz" &&
+              missed.loop.state.wellFormed },
+    { name :=
+        "switch-buffer called with a name from the minibuffer's view shows the buffer in the window the prompt was asked from, and the prompt stays open"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (asking, _) := fedTo opened (presses "C-e e")
+            let (switched, _) := fedTo asking (presses "C-b n")
+            asking.loop.state.minibufferView? == some asking.loop.state.frame.focused &&
+              shownName switched == some "note.txt" &&
+              switched.loop.state.prompt.isSome &&
+              switched.loop.state.wellFormed },
+    { name :=
+        "ls shows, in the window it was called in, a buffer called buffer-list with no file, whose text is one line per open buffer, most recently used first, + for unsaved changes and the path of a buffer with a file; the minibuffer and the list itself are not in it, and the modified scratch buffer, which holds no file, has no +"
+      run :=
+        pure <|
+          match buffersDriver with
+          | none => false
+          | some driver =>
+            let opened := threeOpen (fedTo driver [.commit "typed"]).1
+            let (listed, _) := fedTo opened (exLine "b note.txt" ++ [.commit "x"] ++ exLine "ls")
+            let path (name : String) : String := (inFiles name).toString
+            let expected :=
+              s!"+ note.txt  {path "note.txt"}\n  lf.txt  {path "lf.txt"}\n  crlf.txt  {path "crlf.txt"}\n  scratch\n"
+            ((showing listed).map fun shown => (shown.buffer.name, shown.buffer.file.isNone)) ==
+                some (Buffers.listBuffer, true) &&
+              (showing listed).bind (·.text) == some expected &&
+              listed.loop.state.wellFormed },
+    { name :=
+        "ls again replaces the list's text and makes no second buffer: after note.txt is saved its line has no +"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (first, _) := fedTo opened (exLine "b note.txt" ++ [.commit "x"] ++ exLine "ls")
+            let (saved, _) := fedTo first (exLine "b note.txt" ++ exLine "w")
+            let (saved, _) := saved.finish 4
+            let (again, _) := fedTo saved (exLine "ls")
+            let path (name : String) : String := (inFiles name).toString
+            let expected :=
+              s!"  note.txt  {path "note.txt"}\n  lf.txt  {path "lf.txt"}\n  crlf.txt  {path "crlf.txt"}\n  scratch\n"
+            bufferNamed first Buffers.listBuffer != none &&
+              bufferNamed again Buffers.listBuffer == bufferNamed first Buffers.listBuffer &&
+              shownName again == some Buffers.listBuffer &&
+              (showing again).bind (·.text) == some expected &&
+              (again.loop.state.buffers.filter
+                    (·.any (·.name.startsWith Buffers.listBuffer))).size ==
+                1 },
+    { name :=
+        "ls with a file called buffer-list open leaves that buffer's text as it was and unmodified, lists it, and shows the list in a buffer of its own with no file, under a free name; ls again makes no third"
+      run :=
+        pure <|
+          match buffersDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles Buffers.listBuffer
+            let contents := "kept\n"
+            let withFile := rewritten driver path contents.toUTF8
+            let (opened, _) := fedTo withFile (exLine s!"e {path}")
+            let (opened, _) := opened.finish 1
+            let (listed, _) := fedTo opened (exLine "ls")
+            let (again, _) := fedTo listed (exLine "ls")
+            let (back, _) := fedTo again (exLine s!"b {Buffers.listBuffer}")
+            let expected := s!"  {Buffers.listBuffer}  {path}\n  scratch\n"
+            let state := again.loop.state
+            (showing opened).bind (·.text) == some contents &&
+              ((showing listed).map fun shown => (shown.buffer.file.isNone, shown.text)) ==
+                some (true, some expected) &&
+              shownName listed == some (opened.loop.state.freeName Buffers.listBuffer) &&
+              (showing again).bind (·.text) == some expected &&
+              state.openBuffers.size == 3 &&
+              state.findFile path == bufferNamed opened Buffers.listBuffer &&
+              (heldFile back).map (·.path) == some path &&
+              (showing back).bind (·.text) == some contents &&
+              (showing back).map (·.buffer.isModified) == some false &&
+              state.wellFormed },
+    { name :=
+        "bd closes an unmodified file buffer shown in two windows: it is gone, no buffer holds its file, both windows show crlf.txt, the buffer used before it, and their status lines name it, the order of use lacks it, the state is well formed, and its text is released; a second bd falls back to note.txt"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (split, _) := fedTo opened (presses "C-b s")
+            let before := split.loop.state
+            let other := (before.frame.tree.windows.filter (· != ⟨0⟩))[0]?.getD ⟨0⟩
+            let closed := bufferNamed split "lf.txt"
+            let text := (closed.bind before.buffer?).map (·.text)
+            let (after, _) := fedTo split (exLine "bd")
+            let state := after.loop.state
+            let (second, _) := fedTo after (exLine "bd")
+            other != ⟨0⟩ && shownName split other == some "lf.txt" && closed.isSome &&
+              (closed.bind state.buffer?).isNone &&
+              state.findFile (inFiles "lf.txt") == none &&
+              shownName after == some "crlf.txt" &&
+              shownName after other == some "crlf.txt" &&
+              (closed.bind before.mostRecent) == bufferNamed after "crlf.txt" &&
+              statusOf after == some (named "crlf.txt") &&
+              inactiveNames after other "crlf.txt" &&
+              closed.all (!state.recent.contains ·) &&
+              state.wellFormed &&
+              (text.bind fun text => (after.model.texts.texts[text.index]?).join).isNone &&
+              text.isSome &&
+              shownName second == some "note.txt" &&
+              shownName second other == some "note.txt" &&
+              second.loop.state.wellFormed },
+    { name :=
+        "bd with a name closes the named buffer, not the window's; bd with a name no buffer has says so by the close command's message and closes nothing"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (named', _) := fedTo opened (exLine "bd note.txt")
+            let (missed, _) := fedTo opened (exLine "bd nope")
+            bufferNamed named' "note.txt" == none && shownName named' == some "lf.txt" &&
+              named'.loop.state.wellFormed &&
+              promptEcho missed == Buffers.noBuffer "nope" &&
+              missed.loop.state.openBuffers == opened.loop.state.openBuffers },
+    { name :=
+        "a modified buffer with no file closes, by q's rule: bd on the scratch buffer with text typed in it closes it and the window shows the buffer used before it"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (closed, _) := fedTo opened (exLine "b scratch" ++ [.commit "typed"] ++ exLine "bd")
+            bufferNamed closed "scratch" == none && shownName closed == some "lf.txt" &&
+              closed.loop.state.wellFormed },
+    { name :=
+        "bd on a buffer with a save in flight leaves it open and shown, with its text, and the echo area says why by the close command's message; once the save is delivered and says the file was written, bd closes it"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (saving, _) := fedTo opened ([.commit "x"] ++ exLine "w")
+            let (refused, _) := fedTo saving (exLine "bd")
+            let (delivered, _) := refused.finish 4
+            let (closed, _) := fedTo delivered (exLine "bd")
+            (heldFile saving).bind (·.saving) != none &&
+              refused.loop.state.findFile (inFiles "lf.txt") != none &&
+              shownName refused == some "lf.txt" &&
+              (showing refused).bind (·.text) == (showing saving).bind (·.text) &&
+              echoOf refused == some (Buffers.beingSaved "lf.txt") &&
+              refused.loop.state.wellFormed &&
+              echoOf delivered == some (Files.wrote (inFiles "lf.txt")) &&
+              closed.loop.state.findFile (inFiles "lf.txt") == none &&
+              shownName closed == some "crlf.txt" },
+    { name :=
+        "bd on a buffer whose save in flight is then refused, the file having changed behind the editor: the buffer is still open and shown, with its edit, and still modified, and the echo area has the save's refusal"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "lf.txt"
+            let changed := rewritten opened path JobContract.otherFile
+            let (saving, _) := fedTo changed ([.commit "x"] ++ exLine "w")
+            let (closing, _) := fedTo saving (exLine "bd")
+            let (refused, _) := closing.finish 4
+            refused.loop.state.findFile path != none && shownName refused == some "lf.txt" &&
+              (showing refused).bind (·.text) == (showing saving).bind (·.text) &&
+              ((showing saving).bind (·.text)).any (·.startsWith "x") &&
+              (showing refused).map (·.buffer.isModified) == some true &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              refused.loop.state.wellFormed },
+    { name :=
+        "close-buffer run from the minibuffer's view, and run with the name of the minibuffer's buffer, closes nothing and says so by the close command's message; the prompt stays open and the state is well formed"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (asking, _) := fedTo opened (presses "C-e e")
+            let minibuffer := asking.loop.state.minibufferBuffer?
+            [presses "C-b d", presses "C-b m"].all fun keys =>
+              let (refused, _) := fedTo asking keys
+              let state := refused.loop.state
+              (minibuffer.bind asking.loop.state.buffer?).map (·.name) == some Prompt.bufferName &&
+                promptEcho refused == Buffers.ofMinibuffer &&
+                state.openBuffers == asking.loop.state.openBuffers &&
+                state.minibufferBuffer? == minibuffer &&
+                state.prompt == asking.loop.state.prompt &&
+                state.wellFormed },
+    { name :=
+        "switch-buffer with no buffer named while a prompt is open asks for none: the echo area says the prompt's refusal by the switch command's message, and the open prompt is as it was"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (asking, _) := fedTo opened (presses "C-e e")
+            let (refused, _) := fedTo asking (presses "C-b b")
+            match asking.loop.state.minibufferView? with
+            | none => false
+            | some view =>
+              promptEcho refused == Buffers.notAsking (.alreadyOpen view) &&
+                refused.loop.state.prompt == asking.loop.state.prompt &&
+                refused.loop.state.minibufferView? == some view &&
+                refused.loop.state.wellFormed },
+    { name :=
+        "bd on the only buffer, the initial scratch with text typed in it: the window shows a buffer called scratch with no file, whose text is empty; the old slot is empty, one buffer is open, and the state is well formed"
+      run :=
+        pure <|
+          match buffersDriver with
+          | none => false
+          | some driver =>
+            let (closed, _) := fedTo driver ([.commit "typed"] ++ exLine "bd")
+            let state := closed.loop.state
+            driverText driver == some "" &&
+              ((showing closed).map fun shown =>
+                  (shown.buffer.name, shown.buffer.file.isNone, shown.text, shown.id != ⟨0⟩)) ==
+                some (EditorState.scratchName, true, some "", true) &&
+              state.buffers[0]? == some none &&
+              state.openBuffers.size == 1 &&
+              state.wellFormed },
+    { name :=
+        "bd on each of threeOpen's buffers in turn leaves, after the last, an empty buffer called scratch with no file, the one open buffer"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (closed, _) :=
+              fedTo opened (exLine "bd" ++ exLine "bd" ++ exLine "bd" ++ exLine "bd")
+            let state := closed.loop.state
+            ((showing closed).map fun shown =>
+                  (shown.buffer.name, shown.buffer.file.isNone, shown.text)) ==
+                some (EditorState.scratchName, true, some "") &&
+              state.openBuffers.size == 1 &&
+              ["note.txt", "crlf.txt", "lf.txt"].all (bufferNamed closed · == none) &&
+              state.wellFormed },
+    { name :=
+        "bd on note.txt with an edit committed leaves the buffer open and shown, with the edit, and the echo area says why by the close command's message; and so when the edit and the close are one command"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let text := "x" ++ FileCases.noteText
+            let (refused, _) := fedTo opened (exLine "b note.txt" ++ [.commit "x"] ++ exLine "bd")
+            let (onePass, _) := fedTo opened (exLine "b note.txt" ++ presses "C-b x")
+            [refused, onePass].all fun driver =>
+              bufferNamed driver "note.txt" != none && shownName driver == some "note.txt" &&
+                (showing driver).bind (·.text) == some text &&
+                echoOf driver == some (Buffers.notClosing "note.txt") &&
+                driver.loop.state.wellFormed }]
 
 /-- The command `other` of the theme command's checks: it says `other`. -/
 def saysOther : Dispatched := fun _ => do
@@ -18592,15 +19982,17 @@ abbrev EvilDriver :=
 
 /-- What a step of the evil checks is handed: no active keymaps, so that a
 key is looked up in the keymaps of its view's Vim state alone, and the
-commands compiled code registers for evil (`Evil.commands`) and those of
-`more`, each under the name it is registered under, then `commands`. A
+commands compiled code registers for evil (`Evil.commands`) and for the
+minibuffer (`Minibuffer.commands`), as the executable registers both, so
+that `/` and `?` ask and are answered, and those of `more`, each under the
+name it is registered under, then `commands`. A
 command of `more` runs in place of one of evil's of the same name, as the
 registry's latest entry of a name does. -/
 def evilHanded (more : Array Config.Registration := #[])
     (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
   {
     command? := fun name =>
-      match (Evil.commands ++ more).findRev? (·.name == name) with
+      match (Evil.commands ++ Minibuffer.commands ++ more).findRev? (·.name == name) with
       | some { action := .call run, .. } =>
         some fun call => do
           run call
@@ -18699,12 +20091,13 @@ def restsWell (contents : String) (head : Nat) : Bool :=
         !((char == '\n' || char == '\r' && after == some '\n') && before.isSome &&
             before != some '\n')
 
-/-- The texts every motion is swept over: those of the resting rule's
-checks, and one with a run of punctuation beside a word, a run of blanks,
-an empty line, a line that begins with a tab, and a last line with no line
-feed. -/
+/-- The texts every motion, operator and text object is swept over: those
+of the resting rule's checks, one with a run of punctuation beside a word, a
+run of blanks, an empty line, a line that begins with a tab, and a last line
+with no line feed, and one with brackets of each kind nested, quotes of two
+kinds, an escaped pair and an indented `{ }` block over lines. -/
 def sweepTexts : List String :=
-  restings.map (·.1) ++ ["foo.bar  x\n\n\tab\nend"]
+  restings.map (·.1) ++ ["foo.bar  x\n\n\tab\nend", "f(a [b] \"c\" 'd' \\(e\\))\n  {\n x\n }"]
 
 /-- The counts every motion is swept with, as a move's invocation carries
 one: 0, which is no count, a count of 1, a count inside most of the texts,
@@ -18968,6 +20361,33 @@ def keptFrom (fixture : String) (head : Nat) : Option Window.Wanted :=
   | .inr moved => some { column := .goal moved.goal, head }
   | .inl _ => none
 
+/-- The rows of the oracle table for `%` as a move, each run through Vim
+9.1.1752 headless: the keys, the text before with the cursor as a bar, and
+the text after. The rows after the counts pass over brackets Vim guesses
+are quoted: inside a pair of double quotes, from outside and from inside,
+in a line with an odd number of quotes, past escaped quotes, across lines
+and in single quotes, and a first bracket inside quotes that has no
+partner. The last row is the recorded departure, which shows the editor's
+behaviour: `/* */` is not matched. -/
+def percentRows : List (String × String × String) :=
+  [("%", "|(a [b] c)", "(a [b] c|)"), ("%", "(a [b] c|)", "|(a [b] c)"),
+    ("%", "(a |[b] c)", "(a [b|] c)"), ("%", "a\n|{\n b\n}", "a\n{\n b\n|}"),
+    ("%", "a\n{\n b\n|}", "a\n|{\n b\n}"), ("%", "|x (a)", "x (a|)"), ("%", "|x\n(a)", "|x\n(a)"),
+    ("%", "|(a", "|(a"), ("%", "|\\(a\\)", "\\(a\\|)"), ("%", "|(a \\) b)", "(a \\) b|)"),
+    ("%", "(a \\|) b)", "(a \\|) b)"), ("%", "|\\\\(a)", "\\\\(a|)"),
+    ("5 0 %", "|a\nb\nc\nd\n  e\nf\ng\nh\ni\nj\n", "a\nb\nc\nd\n  |e\nf\ng\nh\ni\nj\n"),
+    ("1 %", "a\nb\nc\nd\ne\nf\ng\nh\ni\n|j\n", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n"),
+    ("1 0 0 %", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", "a\nb\nc\nd\ne\nf\ng\nh\ni\n|j\n"),
+    ("1 0 1 %", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", "|a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n"),
+    ("9 9 %", "|a\nb\nc\nd\ne\nf\ng\nh\ni\n  j\n", "a\nb\nc\nd\ne\nf\ng\nh\ni\n  |j\n"),
+    ("%", "|(a \")\" b)", "(a \")\" b|)"), ("%", "(a \")\" b|)", "|(a \")\" b)"),
+    ("%", "(a \"|)\" b)", "(a \"|)\" b)"), ("%", "\"(a|)\"", "\"|(a)\""),
+    ("%", "x \" |(a \"b)\" c)", "x \" (a \"b|)\" c)"),
+    ("%", "|(a \\\"b) \\\" c)", "(a \\\"b|) \\\" c)"),
+    ("%", "(a \\\"b) \\\" c|)", "(a \\\"b) \\\" c|)"), ("%", "|{\n  \"}\"\n}", "{\n  \"}\"\n|}"),
+    ("%", "{\n  \"|}\"\n}", "|{\n  \"}\"\n}"), ("%", "|(a ')' b)", "(a ')' b|)"),
+    ("%", "|x \"(\" (a)", "|x \"(\" (a)"), ("%", "|/* x */", "|/* x */")]
+
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
 ships with the commands compiled code registers for evil: a motion's key
@@ -18975,6 +20395,9 @@ is pressed in a text with the cursor written into it, and each expected
 text is written by hand from Vim's documented behaviour, case by case. -/
 def evilMotionChecks : List Check :=
   [{  name :=
+        "% goes from the first bracket of the line at or after the cursor to its partner, across lines, both ways, counting only brackets of its escapedness, and does not move with no bracket on the line or no partner; N% goes to the first non-blank of the line N percent into the text, and above 100 does not move; brackets Vim guesses are quoted are passed over, as its default cpoptions has it; /* */ is not matched, a recorded departure"
+      run := evilRows percentRows },
+    { name :=
         "h and l move by cells and stay on the line: with no count one cell, with a count that many, as far as the line allows; neither leaves an empty line, the empty text or the line of a text that is one line feed, and l does not go onto the line break"
       run := evilRows leftRightRows },
     { name :=
@@ -19002,15 +20425,26 @@ def evilMotionChecks : List Check :=
         "from the last character of the text, with a final line feed and with none, every motion key leaves the cursor where Vim's does, with a count as with none: a motion that would leave the text does not move, and the cursor is never past the last character"
       run := evilRows (lastCharacterRows "" ++ lastCharacterRows "\n") },
     { name :=
-        "every key the default tables bind to a motion has a motion of its name in the vocabulary: pressed in a text of three lines, none says anything in the echo area"
+        "every key the default tables bind to a motion has a motion of its name in the vocabulary: pressed in a text of three lines, a motion that takes a character with one, none says it has no such motion, and none but the searches says anything in the echo area (a search says its warning or its error: n and N with no last search, and * on the one occurrence of its word)"
       run := do
         let said :=
-          Vim.Default.motions.filterMap fun (typed, _) =>
+          Vim.Default.motions.filterMap fun (typed, bound) =>
+            let typed :=
+              match bound with
+              | .charMotion _ => typed ++ " a"
+              | .promptMotion .. => typed ++ " e f RET"
+              | _ => typed
+            let name :=
+              match bound with
+              | .motion name | .charMotion name | .promptMotion name _ => name
+              | _ => ""
+            let searches := name.startsWith "search" || name.startsWith "word-search"
             match evilDriver "ab cd\ne|f gh\nij kl" with
             | none => some s!"{typed}: no driver"
             | some driver =>
               let echo := (evilFed driver typed).loop.state.echo
-              if echo.isEmpty then none else some s!"{typed} said {repr echo}"
+              if echo.isEmpty || searches && echo != Evil.noSuchMotion name then none
+              else some s!"{typed} said {repr echo}"
         unless said.isEmpty do
           throw (IO.userError ("; ".intercalate said))
         return !Vim.Default.motions.isEmpty },
@@ -19177,14 +20611,18 @@ def evilMotionChecks : List Check :=
           throw (IO.userError s!"the echo area says {repr echo}")
         return echo != Evil.noSuchMotion "" && evilShown ran == "a|bc" },
     { name :=
-        "the move command called with a motion's name and no count after it moves with no count: every motion of the vocabulary, from the middle of a text of three lines, leaves the cursor where it leaves it when the count is 0, which is how a key with no count calls it, and says nothing; by the name of the motion one cell on it goes where l does"
+        "the move command called with a motion's name and no count after it moves with no count: every motion of the vocabulary, from the middle of a text of three lines, leaves the cursor where it leaves it when the count is 0, which is how a key with no count calls it, and says the same, which is nothing but for the searches; by the name of the motion one cell on it goes where l does"
       run := do
         let here := "ab cd\ne|f gh\nij kl"
         let wrong :=
           Evil.motions.toList.filterMap fun motion =>
             let alone := evilMoved here [.str motion.name]
             let counted := evilMoved here [.str motion.name, .nat 0]
-            if alone.isSome && alone == counted && alone.map (·.2) == some "" then none
+            -- A search says its warning or its error, the same with no count
+            -- and with the count 0; every other motion says nothing.
+            let searches := motion.name.startsWith "search" || motion.name.startsWith "word-search"
+            if alone.isSome && alone == counted && (searches || alone.map (·.2) == some "") then
+              none
             else some s!"{motion.name} alone left {repr alone}, and with the count 0 {repr counted}"
         unless wrong.isEmpty do
           throw (IO.userError ("; ".intercalate wrong))
@@ -19286,6 +20724,13 @@ def evilLooks (typed : String) : Cursor × Array StatusField :=
   (report.cursor,
     report.status.map ({ · with padding := ModeLine.badgePadding }) ++
       #[ModeLine.field "scratch" ModeLine.bufferFace])
+
+/-- The badge a scene's mode line shows first for a selected view in the
+Vim state view 0 is in after the keys `typed` under the grammar alone: the
+default scheme's first reported field, padded as the `state` segment pads
+it. -/
+def evilBadge (typed : String) : Option StatusField :=
+  (vimDefaultReport typed).status[0]?.map ({ · with padding := ModeLine.badgePadding })
 
 /-- The modified mark, as the mode line of a selected view draws it. -/
 def evilMark : StatusField :=
@@ -19482,6 +20927,103 @@ def countedInsertRows : List (String × String × String) :=
   [("3 i X <Escape>", "ab|c", "ab|Xc"), ("3 a X <Escape>", "a|bc", "ab|Xc"),
     ("2 I X <Escape>", "  ab|c", "  |Xabc"), ("2 A X <Escape>", "a|bc", "abc|X")]
 
+/-- The rows of the oracle table for `<Backspace>` in insert state, Vim
+9.1's `i_<BS>` under its default `backspace=indent,eol,start`: the
+character before the bar goes, a character of two bytes whole; at a line's
+start the line break before it, a carriage return and line feed whole, so
+the line is joined to the one above; at the text's start nothing; and past
+where the insert began. -/
+def insertBackspaceRows : List (String × String × String) :=
+  [("i <Backspace> <Escape>", "ab|c", "|ac"), ("i <Backspace> <Escape>", "ab\n|cd", "a|bcd"),
+    ("i <Backspace> <Escape>", "ab\r\n|cd", "a|bcd"), ("i <Backspace> <Escape>", "|abc", "|abc"),
+    ("i <Backspace> <Escape>", "aé|b", "|ab"),
+    ("a x <Backspace> <Backspace> <Escape>", "a|bc", "|ac")]
+
+/-- The rows of the oracle table for `RET` in insert state: the line is
+broken at the bar, with no indent, and the bar is at the new line's
+start. -/
+def insertEnterRows : List (String × String × String) :=
+  [("i RET <Escape>", "ab|c", "ab\n|c"), ("A RET x <Escape>", "a|b", "ab\n|x"),
+    ("i RET <Escape>", "  a|b", "  a\n|b")]
+
+/-- The rows of the oracle table for `TAB` in insert state: a tab character
+at the bar, Vim 9.1's default under `noexpandtab` and `softtabstop=0`. -/
+def insertTabRows : List (String × String × String) :=
+  [("i TAB <Escape>", "a|b", "a|\tb"), ("i TAB x <Escape>", "|a", "\t|xa")]
+
+/-- The rows of the oracle table for `<ArrowLeft>` and `<ArrowRight>` in
+insert state: one cell left or right, and no further than the line's start
+or where its content ends, so neither wraps (Vim 9.1's default
+`whichwrap=b,s`). -/
+def insertSideRows : List (String × String × String) :=
+  [("i <ArrowLeft> X <Escape>", "ab|c", "a|Xbc"),
+    ("i <ArrowLeft> X <Escape>", "ab\n|cd", "ab\n|Xcd"),
+    ("i <ArrowRight> X <Escape>", "a|bc", "ab|Xc"),
+    ("i <ArrowRight> <ArrowRight> X <Escape>", "a|b\ncd", "ab|X\ncd")]
+
+/-- The rows of the oracle table for `<ArrowUp>` and `<ArrowDown>` in insert
+state: a line up or down, with the column clamped to a shorter line and
+kept through one, and nothing on the first line up or the last line
+down. -/
+def insertVerticalRows : List (String × String × String) :=
+  [("A <ArrowUp> X <Escape>", "ab\nabc|d", "ab|X\nabcd"),
+    ("A <ArrowUp> <ArrowUp>", "abcd\nx\nabc|d", "abcd|\nx\nabcd"),
+    ("i <ArrowUp> X <Escape>", "a|b\ncd", "a|Xb\ncd"),
+    ("A <ArrowDown> X <Escape>", "abc|d\nab", "abcd\nab|X"),
+    ("A <ArrowDown> <ArrowDown>", "abc|d\nx\nabcd", "abcd\nx\nabcd|"),
+    ("i <ArrowDown> X <Escape>", "ab\nc|d", "ab\nc|Xd")]
+
+/-- Whether the keys `typed`, pressed from the fixture `fixture`, leave
+`text` and the steps of the history an arrow key's rule says: when `moves`
+the history has gained two nodes, and two undo requests give first
+`between` and then the fixture's text; otherwise it has gained one, and one
+undo request gives the fixture's text. -/
+def arrowStep (fixture typed text between : String) (moves : Bool) : Bool :=
+  match evilDriver fixture with
+  | none => false
+  | some driver =>
+    let typed := evilFed driver typed
+    let original := (barred fixture).1
+    let nodes := ((evilHistory driver).map (·.1)).getD 0
+    evilText typed == some text &&
+      if moves then
+        evilHistory typed == some (nodes + 2, false) &&
+          evilText (evilUndone typed) == some between &&
+          evilText (evilUndone (evilUndone typed)) == some original
+      else
+        evilHistory typed == some (nodes + 1, false) && evilText (evilUndone typed) == some original
+
+/-- The prompts the checks of a prompt's editing keys run in, each from the
+fixture `a|bc` with the prompt opened and nothing typed: the minibuffer of
+a prompt a command opened, whose continuation `greet` says `hello` and the
+answer, and the ex line, opened with `:`, whose continuation is the ex
+command, which says that a name is no ex command. Each with the name of
+its continuation's command, and what the echo area says once the answer is
+accepted. -/
+def evilPrompts : List (Option EvilDriver × String × (String → String)) :=
+  let ask : Dispatched := fun _ => do
+    discard <| prompt "Name: " { command := "greet" }
+    return none
+  let greet : Dispatched := fun call => do
+    message s!"hello {" ".intercalate (call.arguments.map argumentText)}"
+    return none
+  let asked :=
+    (evilDriver "a|bc" (evilHanded Minibuffer.commands [("ask", ask), ("greet", greet)])).map
+      fun driver => (driver.stepped (driver.loop.runNamed driver.handed "ask")).1
+  let ex :=
+    (evilDriver "a|bc" (evilHanded (Ex.commands ++ Minibuffer.commands))).map (evilFed · ":")
+  [(asked, "greet", fun answer => s!"hello {answer}"), (ex, Ex.name, Ex.unknown)]
+
+/-- Whether `check` holds of each prompt of `evilPrompts`, each opened as
+its continuation says, with the asking view left as it was. -/
+def evilPromptsHold (check : EvilDriver → (String → String) → Bool) : Bool :=
+  evilPrompts.all fun
+    | (some asking, command, answered) =>
+      asking.loop.state.prompt.map (·.continuation.command) == some command &&
+        evilShown asking == "a|bc" &&
+        check asking answered
+    | (none, _, _) => false
+
 /-- The checks of evil's insert state (`Editor/Evil.lean`) on the loop's
 driver over the editor's models, under the Vim scheme that ships with
 evil's commands: the keys that begin an insert, typed text, and `<Escape>`,
@@ -19496,6 +21038,62 @@ def evilInsertChecks : List Check :=
     { name :=
         "a count typed before i, a, I or A changes nothing: the text typed is inserted once, where the key with no count inserts it"
       run := evilRows countedInsertRows },
+    { name :=
+        "<Backspace> in insert state deletes the character before the bar, a character of two bytes whole; at a line's start it joins the line to the one above, a carriage return and line feed whole; at the text's start it deletes nothing; it deletes past where the insert began; and it is one step of the history with the text typed around it"
+      run := do
+        let rows ← evilRows insertBackspaceRows
+        let step :=
+          match evilDriver "a|b" with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "i x <Backspace> y <Escape>"
+            evilText typed == some "ayb" && evilHistory typed == some (2, false) &&
+              evilText (evilUndone typed) == some "ab"
+        return rows && step },
+    { name :=
+        "RET in insert state breaks the line at the bar with the buffer's line ending, a line feed or, in a buffer whose lines end in a carriage return and line feed, that, with no indent; and it is one step of the history with the text typed around it"
+      run := do
+        let rows ← evilRows insertEnterRows
+        let crlf :=
+          let start : TextM EditorState := do
+            let state ← evilState "abc" 2
+            return { state with
+                buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) }
+          match (Loop.Driver.over evilHanded (fun _ => none) start editorModel).toOption with
+          | none => false
+          | some driver => evilShown (evilFed driver "i RET") == "ab\r\n|c"
+        let step :=
+          match evilDriver "a|b" with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "i x RET y <Escape>"
+            evilText typed == some "ax\nyb" && evilHistory typed == some (2, false) &&
+              evilText (evilUndone typed) == some "ab"
+        return rows && crlf && step },
+    { name :=
+        "TAB in insert state inserts a tab character at the bar, and is one step of the history with the text typed around it"
+      run := do
+        let rows ← evilRows insertTabRows
+        return rows && arrowStep "a|b" "i x TAB y <Escape>" "ax\tyb" "" false },
+    { name :=
+        "<ArrowLeft> and <ArrowRight> in insert state move the bar one cell, and stop at the line's start and where its content ends: neither wraps"
+      run := evilRows insertSideRows },
+    { name :=
+        "<ArrowUp> and <ArrowDown> in insert state move the bar a line, with the column clamped to a shorter line and kept through one, and move nothing on the first line up and on the last line down"
+      run := evilRows insertVerticalRows },
+    { name :=
+        "an arrow key in insert state that moves starts a new step of the history, as in Vim 9.1: what was typed before it and after it are undone separately; one that fails, <ArrowLeft> at a line's start, <ArrowRight> where its content ends, <ArrowUp> on the first line and <ArrowDown> on the last, does not break the session's step"
+      run :=
+        pure <|
+          arrowStep "a|b" "i x <ArrowLeft> y <Escape>" "ayxb" "axb" true &&
+            arrowStep "a|bc" "i x <ArrowRight> y <Escape>" "axbyc" "axbc" true &&
+            arrowStep "ab\na|b" "i x <ArrowUp> y <Escape>" "aby\naxb" "ab\naxb" true &&
+            arrowStep "a|b\nab" "i x <ArrowDown> y <Escape>" "axb\naby" "axb\nab" true &&
+            arrowStep "ab\n|cd" "i <ArrowLeft> x <Escape>" "ab\nxcd" "" false &&
+            arrowStep "ab|c" "i RET <ArrowLeft> x <Escape>" "ab\nxc" "" false &&
+            arrowStep "a|b" "A x <ArrowRight> y <Escape>" "abxy" "" false &&
+            arrowStep "a|b\ncd" "i x <ArrowUp> y <Escape>" "axyb\ncd" "" false &&
+            arrowStep "ab\nc|d" "i x <ArrowDown> y <Escape>" "ab\ncxyd" "" false },
     { name :=
         "i, typed text and <Escape>: the text is inserted at the cursor, the history has gained one node for the whole session and none inside it, one undo request gives the text from before the session, and a second finds nothing to undo"
       run :=
@@ -19618,6 +21216,58 @@ def evilInsertChecks : List Check :=
               closed.loop.state.echo == "" &&
               evilShown closed == "a|bc" },
     { name :=
+        "<ArrowLeft>, typed while a prompt is open, the minibuffer's and the ex line's, moves the minibuffer's bar one character back, and no further than the input's start; text typed then is inserted there, and RET accepts the whole input; the asking view is as it was"
+      run :=
+        pure <|
+          evilPromptsHold fun asking answered =>
+            let moved := evilFed asking "A d a <ArrowLeft> <ArrowLeft>"
+            let answer := evilFed moved "x RET"
+            let atStart := evilFed moved "<ArrowLeft> <ArrowLeft>"
+            evilShown moved ⟨1⟩ == "A|da" && evilShown moved == "a|bc" &&
+              evilShown atStart ⟨1⟩ == "|Ada" &&
+              atStart.loop.state.prompt.isSome &&
+              answer.loop.state.prompt.isNone &&
+              answer.loop.state.echo == answered "Axda" &&
+              evilShown answer == "a|bc" },
+    { name :=
+        "<ArrowRight>, typed while a prompt is open, the minibuffer's and the ex line's, moves the minibuffer's bar one character on, and no further than the input's end; text typed then is inserted there, and RET accepts the whole input"
+      run :=
+        pure <|
+          evilPromptsHold fun asking answered =>
+            let back := evilFed asking "A d a <ArrowLeft> <ArrowLeft>"
+            let moved := evilFed back "<ArrowRight>"
+            let atEnd := evilFed back "<ArrowRight> <ArrowRight> <ArrowRight>"
+            let answer := evilFed moved "y RET"
+            evilShown moved ⟨1⟩ == "Ad|a" && evilShown atEnd ⟨1⟩ == "Ada|" &&
+              atEnd.loop.state.prompt.isSome &&
+              answer.loop.state.echo == answered "Adya" &&
+              evilShown answer == "a|bc" },
+    { name :=
+        "C-u, typed while a prompt is open, the minibuffer's and the ex line's, deletes from the minibuffer's bar to the input's start and keeps what is after the bar, and RET accepts what is left; with the bar at the start it deletes nothing; on an empty minibuffer it leaves the prompt open, unlike <Backspace>; its command run by name with no prompt open says so in the echo area"
+      run :=
+        pure <|
+          let held :=
+            evilPromptsHold fun asking answered =>
+              let cleared := evilFed asking "A d a <ArrowLeft> C-u"
+              let answer := evilFed cleared "RET"
+              let atStart := evilFed asking "A d a <ArrowLeft> <ArrowLeft> <ArrowLeft> C-u"
+              let empty := evilFed asking "C-u"
+              evilShown cleared ⟨1⟩ == "|a" && cleared.loop.state.prompt.isSome &&
+                answer.loop.state.prompt.isNone &&
+                answer.loop.state.echo == answered "a" &&
+                evilShown atStart ⟨1⟩ == "|Ada" &&
+                evilShown empty ⟨1⟩ == "|" &&
+                empty.loop.state.prompt.isSome &&
+                evilShown cleared == "a|bc"
+          let unasked :=
+            match evilDriver "a|bc" (evilHanded Minibuffer.commands) with
+            | none => false
+            | some driver =>
+              let (ran, _) :=
+                driver.stepped (driver.loop.runNamed driver.handed Minibuffer.deleteToStartName)
+              ran.loop.state.echo == Minibuffer.notOpen && evilShown ran == "a|bc"
+          held && unasked },
+    { name :=
         "the command typed text runs, called with no string as its first argument, inserts nothing and says so in the echo area"
       run :=
         pure <|
@@ -19731,6 +21381,9 @@ structure OperatorRow where
   /-- Whether the command gave up or broke off: something is said in the
   echo area, which is no refusal. -/
   gaveUp : Bool := false
+  /-- What the echo area says when the command did not give up: nothing,
+  unless a motion said something, as a search says its warning. -/
+  echo : String := ""
 
 namespace OperatorRow
 
@@ -19764,7 +21417,7 @@ def wrong (row : OperatorRow) : Option String :=
       let saidSo := !left.echo.isEmpty && (left.echo.splitOn "refused").length == 1
       if
           left.shown == row.after && left.register == row.register && left.insert == row.insert &&
-            (if row.gaveUp then saidSo else left.echo.isEmpty) then
+            (if row.gaveUp then saidSo else left.echo == row.echo) then
         none
       else some s!"{row.keys} from {repr row.before} left {repr left}"
 
@@ -20063,18 +21716,84 @@ def lineMotionRows : List OperatorRow :=
     .inserts bareEndText "c G" "ab cd\n|" (linewise "  ef gh\n"),
     .rests bareEndText "y G" "ab cd\n  |ef gh" (linewise "  ef gh\n")]
 
-/-- The rows of the operator × motion table, in the order the motions were
-built. -/
-def operatorTable : List OperatorRow :=
-  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows ++ wordForwardRows ++
-    changeWordRows ++
-    lineMotionRows
-
 /-- The five situations of the operator × motion table: the text and the
 cursor of each, and whether its rows have a count. -/
 def operatorSituations : List (String × Bool) :=
   [(plainText, false), (plainText, true), (emptyLineText, false), (endText, false),
     (bareEndText, false)]
+
+/-- The oracle table's rows for each operator over `;` and `,` in its five
+situations. In each nothing was found before the keys, so there is no last
+find to repeat: Vim fails the motion and cancels the operator, and the
+command gives up in every one. What they take after a find is
+`findOperatorRows`. -/
+def findAgainTableRows : List OperatorRow :=
+  operatorSituations.flatMap fun (before, counted) =>
+    ["d", "c", "y"].flatMap fun operator =>
+      [";", ","].map fun motion =>
+        .givesUp before
+          (" ".intercalate ([operator] ++ (if counted then ["2"] else []) ++ [motion]))
+
+/-- The oracle table's rows for each operator over `n` and `N` in its five
+situations: no search was made before the keys, so there is none to repeat
+(`E35`), and the command gives up in every one. -/
+def searchAgainTableRows : List OperatorRow :=
+  operatorSituations.flatMap fun (before, counted) =>
+    ["d", "c", "y"].flatMap fun operator =>
+      ["n", "N"].map fun motion =>
+        .givesUp before
+          (" ".intercalate ([operator] ++ (if counted then ["2"] else []) ++ [motion]))
+
+/-- The oracle table's rows for each operator over `*` and `#` in its five
+situations, each written by hand from Vim 9.1. In the first two the word
+under the cursor, `gh`, is the only occurrence, at the cursor: the search
+wraps back to it, says so, and the operator takes no cell. On the empty
+line there is no word (`E348`). On the buffer's last character the word
+starts one cell before the cursor, where the search comes back to, and the
+operator takes that cell. -/
+def starTableRows : List OperatorRow :=
+  let warned (row : OperatorRow) (forward : Bool) : OperatorRow :=
+    { row with echo := Evil.wrapWarning forward }
+  [("*", true), ("#", false)].flatMap fun (motion, forward) =>
+    let keys (operator : String) (counted : Bool := false) :=
+      " ".intercalate ([operator] ++ (if counted then ["2"] else []) ++ [motion])
+    [false, true].flatMap
+        (fun counted =>
+          [warned (.rests plainText (keys "d" counted) plainText asItWas) forward,
+            warned (.inserts plainText (keys "c" counted) plainText asItWas) forward,
+            warned (.rests plainText (keys "y" counted) plainText (charwise "")) forward]) ++
+      [.givesUp emptyLineText (keys "d"), .givesUp emptyLineText (keys "c"),
+        .givesUp emptyLineText (keys "y"),
+        warned (.rests endText (keys "d") "ab cd\n  ef |h\n" (charwise "g")) forward,
+        warned (.inserts endText (keys "c") "ab cd\n  ef |h\n" (charwise "g")) forward,
+        warned (.rests endText (keys "y") "ab cd\n  ef |gh\n" (charwise "g")) forward,
+        warned (.rests bareEndText (keys "d") "ab cd\n  ef |h" (charwise "g")) forward,
+        warned (.inserts bareEndText (keys "c") "ab cd\n  ef |h" (charwise "g")) forward,
+        warned (.rests bareEndText (keys "y") "ab cd\n  ef |gh" (charwise "g")) forward]
+
+/-- The oracle table's rows for each operator over `%` in its five
+situations, each run through Vim 9.1.1752 headless. With no count no line
+of the situations has a bracket at or after the cursor, so Vim fails the
+motion and cancels the operator. With a count of 2, `N%` goes to the line
+`(2 * 5 + 99) / 100`, the first, and is taken as whole lines. -/
+def percentTableRows : List OperatorRow :=
+  [plainText, emptyLineText, endText, bareEndText].flatMap
+      (fun before => ["d", "c", "y"].map fun operator => .givesUp before s!"{operator} %") ++
+    [.rests plainText "d 2 %" "|mn\nop\n" (linewise "ab\ncd\n  ef gh.ij kl\n"),
+      .inserts plainText "c 2 %" "|\nmn\nop\n" (linewise "ab\ncd\n  ef gh.ij kl\n"),
+      .rests plainText "y 2 %" "|ab\ncd\n  ef gh.ij kl\nmn\nop\n"
+        (linewise "ab\ncd\n  ef gh.ij kl\n")]
+
+/-- The rows of the operator × motion table, in the order the motions were
+built. -/
+def operatorTable : List OperatorRow :=
+  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows ++ wordForwardRows ++
+    changeWordRows ++
+    lineMotionRows ++
+    findAgainTableRows ++
+    searchAgainTableRows ++
+    starTableRows ++
+    percentTableRows
 
 /-- The pairs of an operator's key and a motion's key that the rows of
 `operatorTable` have for the situation of the text `before`, with a count
@@ -20089,11 +21808,65 @@ def operatorPairs (before : String) (counted : Bool) : List (String × String) :
       | [] => none
     else none
 
+/-- The motion keys of the default tables that are a motion alone, with no
+argument to type after them: those bound to `Bound.motion`. A key bound to a
+motion that takes a character (`Bound.charMotion`) is no motion until its
+character is typed, so the table of five fixed situations has no row for
+it; its rows, each with a character, are `findOperatorRows`, and
+`findOperatorPairs` holds them to the default tables. -/
+def bareMotionKeys : List String :=
+  Vim.Default.motions.filterMap fun (key, bound) =>
+    match bound with
+    | .motion _ => some key
+    | _ => none
+
+/-- The motion keys of the default tables that take the character the next
+key names (`Bound.charMotion`). -/
+def charMotionKeys : List String :=
+  Vim.Default.motions.filterMap fun (key, bound) =>
+    match bound with
+    | .charMotion _ => some key
+    | _ => none
+
 /-- Every pair of an operator's key and a motion's key of the default
-tables (`Vim.Default.operators`, `Vim.Default.motions`). -/
+tables (`Vim.Default.operators`, `Vim.Default.motions`) whose motion is a
+motion alone (`bareMotionKeys`). -/
 def defaultPairs : List (String × String) :=
   Vim.Default.operators.flatMap fun (operator, _) =>
-    Vim.Default.motions.map fun (motion, _) => (operator, motion)
+    bareMotionKeys.map fun motion => (operator, motion)
+
+/-- What is wrong, if anything, with the keys `typed`, which end with the
+operator `operator` acting, pressed from the byte offset `position` of a
+text holding `contents` (the rules `operatorSweep` lists): a refusal said, a
+cursor where normal state lets none rest after an operator that enters no
+state, a text an operator that changes none changed, and a change `u` does
+not give back with the cursor where it was. -/
+def sweptWrong (contents : String) (position : Nat) (operator : Vim.Operator) (typed : String) :
+    Option String :=
+  let what := s!"{typed} at {position} of {repr contents}"
+  match
+    (Loop.Driver.over evilHanded (fun _ => none) (evilState contents position)
+        editorModel).toOption with
+  | none => some s!"{what}: no driver"
+  | some driver =>
+    let after := evilFed driver typed
+    let text := evilText after
+    let head :=
+      (evilSelection after).bind fun selection => selection.ranges[selection.primary]?.map (·.head)
+    let refused := (after.loop.state.echo.splitOn "refused").length != 1
+    let rests :=
+      operator.enters.isSome ||
+        match text, head with
+        | some text, some head => restsWell text head
+        | _, _ => false
+    let kept := operator.changes || text == some contents
+    let ended := if operator.enters.isSome then evilFed after "<Escape>" else after
+    let undone :=
+      text == some contents || evilShown (evilFed ended "u") == withBar contents position
+    if !refused && rests && kept && undone then none
+    else
+      some
+        s!"{what}: left {repr (evilShown after)}, echo {repr after.loop.state.echo}, undone to {repr (evilShown (evilFed ended "u"))}"
 
 /-- What is wrong, if anything, with each operator key of the default tables
 pressed with each motion key, with no count and with a count of 2, from
@@ -20103,40 +21876,29 @@ enters no state the cursor is where normal state lets one rest; an operator
 that changes no text leaves the text; and when the text changed, `u`, after
 `<Escape>` for an operator that enters a state, gives the text back and
 puts the cursor where it was. It reads the tables, so it covers a key added
-later. -/
+later. A motion key that takes a character (`Bound.charMotion`) is pressed
+with `a` after it, a character every text but the empty one holds, so the
+sweep runs the find and does not leave the operator waiting; a motion key
+that asks (`Bound.promptMotion`, `/` and `?`) is answered with the pattern
+`a` and `RET`, through the minibuffer, whose commands the evil checks are
+handed (`evilHanded`). -/
 def operatorSweep (contents : String) : List String :=
   ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap fun position =>
     Vim.Default.operators.flatMap fun (operatorKey, bound) =>
       match bound with
       | .operator operator =>
-        Vim.Default.motions.flatMap fun (motionKey, _) =>
+        Vim.Default.motions.flatMap fun (motionKey, motion) =>
+          -- A motion that takes a character is given one the sweep's texts
+          -- hold, so that it is a motion and not an operator left waiting.
+          let motionKey :=
+            match motion with
+            | .charMotion _ => motionKey ++ " a"
+            -- A motion that asks is answered with a pattern the texts hold.
+            | .promptMotion .. => motionKey ++ " a RET"
+            | _ => motionKey
           [false, true].filterMap fun counted =>
-            let typed := (if counted then "2 " else "") ++ operatorKey ++ " " ++ motionKey
-            let what := s!"{typed} at {position} of {repr contents}"
-            match
-              (Loop.Driver.over evilHanded (fun _ => none) (evilState contents position)
-                  editorModel).toOption with
-            | none => some s!"{what}: no driver"
-            | some driver =>
-              let after := evilFed driver typed
-              let text := evilText after
-              let head :=
-                (evilSelection after).bind fun selection =>
-                  selection.ranges[selection.primary]?.map (·.head)
-              let refused := (after.loop.state.echo.splitOn "refused").length != 1
-              let rests :=
-                operator.enters.isSome ||
-                  match text, head with
-                  | some text, some head => restsWell text head
-                  | _, _ => false
-              let kept := operator.changes || text == some contents
-              let ended := if operator.enters.isSome then evilFed after "<Escape>" else after
-              let undone :=
-                text == some contents || evilShown (evilFed ended "u") == withBar contents position
-              if !refused && rests && kept && undone then none
-              else
-                some
-                  s!"{what}: left {repr (evilShown after)}, echo {repr after.loop.state.echo}, undone to {repr (evilShown (evilFed ended "u"))}"
+            sweptWrong contents position operator
+              ((if counted then "2 " else "") ++ operatorKey ++ " " ++ motionKey)
       | _ => []
 
 /-- Whether `left` is what a command that gave up with `reason` leaves: the
@@ -20149,6 +21911,604 @@ def evilGaveUp (left : Option EvilEdited) (shown reason : String) : Bool :=
       left.shown == shown && left.register == none && !left.insert && left.echo.endsWith reason &&
         (left.echo.splitOn "refused").length == 1
     | none => false
+
+/-- The rows of the oracle table for `f`, `t`, `F`, `T`, `;` and `,` under an
+operator, each written by hand from Vim 9.1's `:help f` and `:help ;`: `f`
+and `t` are inclusive and `F` and `T` exclusive, `;` and `,` take the reach
+of the motion they run, a till with a count of 1 repeated by `;` or `,`
+passes over the character beside the cursor, and a find with nowhere to go
+cancels the operator. -/
+def findOperatorRows : List OperatorRow :=
+  [.rests "|abcabc" "d f c" "|abc" (charwise "abc"),
+    .rests "|abcabc" "d t c" "|cabc" (charwise "ab"),
+    .rests "abcab|c" "d F a" "abc|c" (charwise "ab"),
+    .rests "abcab|c" "d T a" "abca|c" (charwise "b"),
+    .rests "|abcabc" "d 2 f c" "|" (charwise "abcabc"),
+    .rests "|abcabc" "2 d t c" "|c" (charwise "abcab"),
+    .rests "|abcabcabc" "f c d ;" "ab|abc" (charwise "cabc"),
+    .rests "|abcabc" "f c ; d ," "ab|c" (charwise "cab"),
+    .rests "|abcabc" "t c d ;" "a|c" (charwise "bcab"),
+    .rests "|abcabc" "t c ; d ," "abc|bc" (charwise "a"),
+    .rests "abcab|c" "F a d ;" "|abc" (charwise "abc"),
+    .rests "a|bcabc" "F a d ," "|bc" (charwise "abca"),
+    .rests "abcab|c" "T a d ;" "a|bc" (charwise "bca"),
+    .rests "abcab|ca" "T a d ," "abca|a" (charwise "bc"),
+    .inserts "|abcabc" "c f c" "|abc" (charwise "abc"),
+    .inserts "abcab|c" "c F a" "abc|c" (charwise "ab"),
+    .rests "|abcabc" "y t c" "|abcabc" (charwise "ab"),
+    .rests "ab|cabc" "y T a" "a|bcabc" (charwise "b"), .rests "|ax" "d t x" "|x" (charwise "a"),
+    .inserts "|ax" "c t x" "|x" (charwise "a"), .rests "|abcabc" "y f c" "|abcabc" (charwise "abc"),
+    .rests "abcab|c" "y F a" "abc|abc" (charwise "ab"),
+    .inserts "abcab|c" "c T a" "abca|c" (charwise "b"), .givesUp "|abc" "d f z",
+    .givesUp "|abc" "d F a", .givesUp "|ab\nz" "d t z", .givesUp "|abc" "d ;",
+    .givesUp "|abc" "y ,", .givesUp "|abcabc" "d 3 f c"]
+
+/-- The pairs of an operator's key and a motion's key that take a character
+the rows of `findOperatorRows` have, with the keys typed before the
+operator left out: the operator's key, and the motion's key after it. -/
+def findOperatorPairs : List (String × String) :=
+  findOperatorRows.filterMap fun row =>
+    match ((row.keys.splitOn " ").filter (· != "2")).reverse with
+    | _ :: motion :: operator :: _ =>
+      if charMotionKeys.contains motion then some (operator, motion) else none
+    | _ => none
+
+/-- The rows of the oracle table for `f`, `t`, `F`, `T`, `;` and `,` as
+moves, each written by hand from Vim 9.1's `:help f`, `:help t` and
+`:help ;`: the keys, the text before with the cursor as a bar, and the text
+after. -/
+def findRows : List (String × String × String) :=
+  [("f c", "|abcabc", "ab|cabc"), ("1 f c", "|abcabc", "ab|cabc"), ("2 f c", "|abcabc", "abcab|c"),
+    ("f c", "ab|cabc", "abcab|c"), ("3 f c", "|abcabc", "|abcabc"), ("f z", "|abc", "|abc"),
+    ("f x", "|ab\nx", "|ab\nx"), ("f x", "|ab\r\nx", "|ab\r\nx"), ("F a", "abca|bc", "abc|abc"),
+    ("2 F a", "abcab|c", "|abcabc"), ("F a", "|abc", "|abc"), ("F x", "x\na|b", "x\na|b"),
+    ("t c", "|abcabc", "a|bcabc"), ("2 t c", "|abcabc", "abca|bc"), ("t x", "|ax", "|ax"),
+    ("t z", "|abc", "|abc"), ("t x", "|ab\nx", "|ab\nx"), ("T a", "abcab|c", "abca|bc"),
+    ("2 T a", "abcab|c", "a|bcabc"), ("T x", "x|a", "x|a"), ("T x", "x\na|b", "x\na|b"),
+    ("f c ;", "|abcabc", "abcab|c"), ("f c ; ,", "|abcabc", "ab|cabc"),
+    ("f c 2 ;", "|abcabcabc", "abcabcab|c"), ("F a ;", "abcab|c", "|abcabc"),
+    ("F a ,", "a|bcabc", "abc|abc"), ("t c ;", "|abcabc", "abca|bc"),
+    ("t x ;", "|axbxcx", "ax|bxcx"), ("t x 2 ;", "|axbxcx", "ax|bxcx"),
+    ("t x 3 ;", "|axbxcx", "axbx|cx"), ("T x ,", "x|axbx", "xax|bx"), ("T x ;", "xaxb|x", "x|axbx"),
+    ("f c ; ; ,", "|abcabcabc", "abcab|cabc"), (";", "|abc", "|abc"), (",", "|abc", "|abc"),
+    ("f z ;", "|abz", "ab|z"), ("2 f é", "|aébé", "aéb|é"), ("f é", "|aébé", "a|ébé"),
+    ("f 1", "|a1b1", "a|1b1"), ("2 f 1", "|a1b1", "a1b|1"), ("f TAB", "|a\tb", "a|\tb"),
+    ("f <Escape> l", "|abc", "a|bc"), ("v f c d", "|abcabc", "|abc"),
+    ("v t c d", "|abcabc", "|cabc"), ("v F a d", "abcab|c", "ab|c")]
+
+/-- The checks of evil's character finds (`Editor/Evil/Motions.lean`), on the
+loop's driver over the editor's models, under the Vim scheme that ships
+with evil's commands. -/
+def evilFindChecks : List Check :=
+  [{  name :=
+        "f, t, F and T move within the line to the character their next key names, with and without a count, and not when the line has fewer; t and T stop one cell short and do not move with the character beside the cursor; ; and , repeat the last find, , in the other direction, and a till repeated with a count of 1 passes over the character beside the cursor; a character of several bytes, a digit and TAB are characters; f then <Escape> does nothing; and in a visual state a find extends the selection"
+      run := evilRows findRows },
+    { name :=
+        "an operator over f, t, F, T, ; and , takes the range Vim 9.1 documents: f and t through the cell they lead to, F and T up to it, ; and , as the motion they run, and a find with nowhere to go gives the operator up"
+      run := operatorRows findOperatorRows },
+    { name :=
+        "every operator key of the default tables with every motion key that takes a character has a row of findOperatorRows"
+      run :=
+        pure <|
+          !charMotionKeys.isEmpty &&
+            Vim.Default.operators.all fun (operator, _) =>
+              charMotionKeys.all fun motion => findOperatorPairs.contains (operator, motion) },
+    { name :=
+        "a find is kept as the last find, also when it fails, and ; and , keep it as it was, its direction included; a find under an operator that gives up is rolled back with the command"
+      run :=
+        let lastFind (fixture typed : String) : Option (Option Find) :=
+          (evilDriver fixture).map fun driver => (evilFed driver typed).loop.state.lastFind
+        pure
+          (lastFind "|abc" "" == some none &&
+            lastFind "|abc" "f c" == some (some { char := "c", forward := true, till := false }) &&
+            lastFind "|abc" "T z" == some (some { char := "z", forward := false, till := true }) &&
+            lastFind "|abcabc" "f c ; ," ==
+              some (some { char := "c", forward := true, till := false }) &&
+            lastFind "|abc" "d f z" == some none &&
+            lastFind "|abc" "d f c" ==
+              some (some { char := "c", forward := true, till := false })) },
+    { name :=
+        "the move command runs a find with its argument after the motion's name, before the count"
+      run :=
+        pure <|
+          match evilDriver "|abcabc" with
+          | none => false
+          | some driver =>
+            let ran (arguments : List Argument) : String :=
+              evilShown
+                (driver.stepped
+                    (driver.loop.invoke driver.handed { command := Vim.moveCommand, arguments })).1
+            ran [.str "find-forward", .str "c", .nat 2] == "abcab|c" &&
+              ran [.str "find-forward", .str "c"] == "ab|cabc" &&
+              ran [.str "find-forward", .nat 1] == "|abcabc" &&
+              ran [.str "find-again", .nat 0] == "|abcabc" },
+    { name :=
+        "the operate command takes a motion's argument after the motion's name, before the count and the register"
+      run :=
+        pure
+          ((evilOperated "|abcabc"
+                    [.str "delete", .str "motion", .str "find-forward", .str "c", .nat 2,
+                      .str ""]).map
+                (·.shown) ==
+              some "|" &&
+            (evilOperated "|abcabc"
+                    [.str "delete", .str "motion", .str "till-forward", .str "c", .nat 0,
+                      .str ""]).map
+                (·.shown) ==
+              some "|cabc") }]
+
+/-- `driver` with the move command run by the motion `name` with `pattern`
+as its argument and the count `count`, as an invocation no key yielded. -/
+def evilSearchedBy (driver : EvilDriver) (name pattern : String) (count : Nat := 0) : EvilDriver :=
+  (driver.stepped
+      (driver.loop.invoke driver.handed
+        { command := Vim.moveCommand, arguments := [.str name, .str pattern, .nat count] })).1
+
+/-- One row of the search checks: the text before with the cursor as a bar,
+the keys pressed first, the searches run then by invocation (a motion's
+name, its pattern and a count), the keys pressed after them, and what is
+left: the text with a bar at the cursor, and what the echo area says. -/
+structure SearchRow where
+  /-- The text before, with the cursor as a bar. -/
+  before : String
+  /-- The keys pressed first. -/
+  first : String := ""
+  /-- The searches run by invocation, in order. -/
+  searches : List (String × String × Nat) := []
+  /-- The keys pressed after them. -/
+  keys : String := ""
+  /-- The text after, with a bar at the cursor. -/
+  after : String
+  /-- What the echo area says after. -/
+  echo : String := ""
+
+/-- What is wrong with each of `rows`, if anything. -/
+def searchRows (rows : List SearchRow) : IO Bool := do
+  let wrong :=
+    rows.filterMap fun row =>
+      match evilDriver row.before with
+      | none => some s!"no driver for {repr row.before}"
+      | some driver =>
+        let driver := evilFed driver row.first
+        let driver :=
+          row.searches.foldl
+            (fun driver (name, pattern, count) => evilSearchedBy driver name pattern count) driver
+        let driver := evilFed driver row.keys
+        let left := (evilShown driver, driver.loop.state.echo)
+        if left == (row.after, row.echo) then none
+        else
+          some
+            s!"{row.first} {repr row.searches} {row.keys} from {repr row.before} left {repr left}"
+  unless wrong.isEmpty do
+    throw (IO.userError ("; ".intercalate wrong))
+  return true
+
+/-- The search motions' rows as moves, each written by hand from Vim 9.1's
+`:help /`, `:help n` and `:help star` under its default options: `/` and
+`?` by invocation, with their patterns, and `n`, `N`, `*` and `#` by key. -/
+def searchMoveRows : List SearchRow :=
+  let forward (pattern : String) (count : Nat := 0) := ("search-forward", pattern, count)
+  let backward (pattern : String) (count : Nat := 0) := ("search-backward", pattern, count)
+  let bottom := Evil.wrapWarning true
+  let top := Evil.wrapWarning false
+  [ -- From before a match, at its start and inside it.
+    { before := "|x foo foo", searches := [forward "foo"], after := "x |foo foo" },
+    { before := "x |foo foo", searches := [forward "foo"], after := "x foo |foo" },
+    { before := "x f|oo foo", searches := [forward "foo"], after := "x foo |foo" },
+    -- `cpo-c`, across lines, and a count.
+    { before := "|abababab", searches := [forward "abab"], after := "abab|abab" },
+    { before := "a|b\nfoo", searches := [forward "foo"], after := "ab\n|foo" },
+    { before := "|foo foo foo foo", searches := [forward "foo" 3], after := "foo foo foo |foo" },
+    -- Wrapping, the only match at the cursor, and no match.
+    { before := "foo |foo", searches := [forward "foo"], after := "|foo foo", echo := bottom },
+    { before := "|foo", searches := [forward "foo"], after := "|foo", echo := bottom },
+    { before := "|abc", searches := [forward "x"], after := "|abc",
+      echo := Evil.patternNotFound "x" },
+    -- Backward, strictly before the cursor, and wrapping.
+    { before := "foo foo |foo", searches := [backward "foo"], after := "foo |foo foo" },
+    { before := "foo f|oo", searches := [backward "foo"], after := "foo |foo" },
+    { before := "|foo foo", searches := [backward "foo"], after := "foo |foo", echo := top },
+    -- `n` and `N` after `/` and after `?`, with counts.
+    { before := "|x foo foo foo", searches := [forward "foo"], keys := "n",
+      after := "x foo |foo foo" },
+    { before := "|x foo foo foo", searches := [forward "foo"], keys := "2 n",
+      after := "x foo foo |foo" },
+    { before := "|x foo foo foo", searches := [forward "foo"], keys := "N",
+      after := "x foo foo |foo", echo := top },
+    { before := "foo foo fo|o", searches := [backward "foo"], keys := "n",
+      after := "foo |foo foo" },
+    { before := "foo foo foo fo|o", searches := [backward "foo"], keys := "2 N",
+      after := "foo |foo foo foo", echo := bottom },
+    -- `N` does not change the direction kept.
+    { before := "foo foo fo|o", searches := [backward "foo"], keys := "N n",
+      after := "foo foo |foo", echo := top },
+    -- The empty pattern is the last search's, in the new direction.
+    { before := "|x foo foo", searches := [forward "foo", forward ""], after := "x foo |foo" },
+    { before := "|x foo foo", searches := [forward "foo", forward "foo", backward ""],
+      after := "x |foo foo" },
+    { before := "|abc", searches := [forward ""], after := "|abc", echo := Evil.noPreviousPattern },
+    { before := "|abc", keys := "n", after := "|abc", echo := Evil.noPreviousPattern },
+    { before := "|abc", keys := "N", after := "|abc", echo := Evil.noPreviousPattern },
+    -- An escaped special, a pattern of several bytes, and a carriage return.
+    { before := "|axb a.b", searches := [forward "a\\.b"], after := "axb |a.b" },
+    { before := "|é x é", searches := [forward "é"], after := "é x |é" },
+    { before := "|a\r\nfoo", searches := [forward "foo"], after := "a\r\n|foo" },
+    -- In a visual state a search extends the selection.
+    { before := "|abcxdef", first := "v", searches := [forward "x"], keys := "d", after := "|def" },
+    -- `*` on a word's start, inside it and on its last character.
+    { before := "|foo bar foo", keys := "*", after := "foo bar |foo" },
+    { before := "f|oo bar foo", keys := "*", after := "foo bar |foo" },
+    { before := "fo|o bar foo", keys := "*", after := "foo bar |foo" },
+    -- On a blank before a word: the first keyword after the cursor.
+    { before := "foo| bar x bar", keys := "*", after := "foo bar x |bar" },
+    -- Whole words only, and a word outside ASCII.
+    { before := "|foo food foo_bar foo", keys := "*", after := "foo food foo_bar |foo" },
+    { before := "|héllo x héllo", keys := "*", after := "héllo x |héllo" },
+    -- Punctuation with no keyword after it: a literal, with no boundaries.
+    { before := "|+= +=", keys := "*", after := "+= |+=" },
+    { before := "| += +=", keys := "*", after := " += |+=" },
+    -- No word in the line.
+    { before := "a\n|  \nb", keys := "*", after := "a\n|  \nb", echo := Evil.noStringUnderCursor },
+    { before := "a\n|\nb", keys := "#", after := "a\n|\nb", echo := Evil.noStringUnderCursor },
+    -- The only occurrence: the cursor goes to the word's start, with the
+    -- warning.
+    { before := "x f|oo y", keys := "*", after := "x |foo y", echo := bottom },
+    { before := "x f|oo y", keys := "#", after := "x |foo y", echo := top },
+    { before := "|foo foo foo", keys := "2 *", after := "foo foo |foo" },
+    -- `#` mirrored.
+    { before := "foo bar |foo", keys := "#", after := "|foo bar foo" },
+    { before := "foo bar f|oo", keys := "#", after := "|foo bar foo" },
+    { before := "foo foo |foo", keys := "2 #", after := "|foo foo foo" },
+    -- `n` after `*` keeps the whole word, `n` after `#` goes back, and `N`.
+    { before := "|foo x foo food foo", keys := "* n", after := "foo x foo food |foo" },
+    { before := "foo x foo x f|oo", keys := "# n", after := "|foo x foo x foo" },
+    { before := "|foo x foo x foo", keys := "* N", after := "|foo x foo x foo" },
+    -- `/` and `?` by key, through the minibuffer.
+    { before := "|x foo foo", keys := "/ f o o RET", after := "x |foo foo" },
+    { before := "x |foo foo", keys := "/ f o o RET", after := "x foo |foo" },
+    { before := "x f|oo foo", keys := "/ f o o RET", after := "x foo |foo" },
+    { before := "|abababab", keys := "/ a b a b RET", after := "abab|abab" },
+    { before := "a|b\nfoo", keys := "/ f o o RET", after := "ab\n|foo" },
+    { before := "|foo foo foo foo", keys := "3 / f o o RET", after := "foo foo foo |foo" },
+    { before := "foo |foo", keys := "/ f o o RET", after := "|foo foo", echo := bottom },
+    { before := "|foo", keys := "/ f o o RET", after := "|foo", echo := bottom },
+    { before := "|abc", keys := "/ x RET", after := "|abc", echo := Evil.patternNotFound "x" },
+    -- The failed search is kept, so `n` repeats it, and says E486, not E35.
+    { before := "|abc", keys := "/ z RET n", after := "|abc", echo := Evil.patternNotFound "z" },
+    { before := "foo foo |foo", keys := "? f o o RET", after := "foo |foo foo" },
+    { before := "|foo foo", keys := "? f o o RET", after := "foo |foo", echo := top },
+    { before := "|x foo foo foo", keys := "/ f o o RET n", after := "x foo |foo foo" },
+    { before := "|x foo foo foo", keys := "/ f o o RET 2 n", after := "x foo foo |foo" },
+    { before := "foo foo fo|o", keys := "? f o o RET n", after := "foo |foo foo" },
+    { before := "x|ax", keys := "? x RET N n", after := "|xax" },
+    { before := "|x foo foo", keys := "/ f o o RET / RET", after := "x foo |foo" },
+    { before := "|x foo foo", keys := "/ f o o RET / RET ? RET", after := "x |foo foo" },
+    { before := "|abc", keys := "/ RET", after := "|abc", echo := Evil.noPreviousPattern },
+    { before := "|axb a.b", keys := "/ a \\ . b RET", after := "axb |a.b" },
+    { before := "|é x é", keys := "/ é RET", after := "é x |é" },
+    { before := "|a\r\nfoo", keys := "/ f o o RET", after := "a\r\n|foo" },
+    { before := "|abcxdef", keys := "v / x RET d", after := "|def" },
+    -- A cancelled prompt leaves nothing waiting: the next key is a key.
+    { before := "|abc abc", keys := "/ b <Escape> l", after := "a|bc abc" },
+    { before := "|abc abc", keys := "d / b <Escape> l", after := "a|bc abc" }]
+
+/-- The rows of the oracle table for the operators over `n`, `N`, `*` and
+`#`, each written by hand from Vim 9.1: each is exclusive, an operator
+takes what lies from the cursor where the key was typed to where the search
+leads, also when it wrapped and so leads back, and `*` takes from the
+cursor, not from the word's start, which is where its search begins. The
+two rules for an exclusive motion that ends in column 1 apply. -/
+def searchOperatorRows : List OperatorRow :=
+  [.rests "|foo x foo y foo" "* 0 d n" "|foo y foo" (charwise "foo x "),
+    .rests "|foo x foo y foo" "* * d N" "foo x |foo" (charwise "foo y "),
+    { (OperatorRow.rests "|foo x foo y foo" "# d N" "|foo" (charwise "foo x foo y ")) with
+      echo := Evil.wrapWarning true },
+    .rests "f|oo x foo" "d *" "f|foo" (charwise "oo x "),
+    .rests "foo x f|oo" "d #" "|oo" (charwise "foo x f"),
+    .rests "|foo x foo x foo" "* 0 y n" "|foo x foo x foo" (charwise "foo x "),
+    .inserts "|foo x foo" "c *" "|foo" (charwise "foo x "),
+    .rests "|foo x foo x foo" "* 0 d 2 n" "|foo" (charwise "foo x foo x "),
+    -- The column-1 rules: from the line's first non-blank, whole lines;
+    -- from after it, up to the line before's end.
+    .rests "|foo\nfoo" "d *" "|foo" (linewise "foo\n"),
+    .rests "x |foo\nfoo" "d *" "x| \nfoo" (charwise "foo"), .givesUp "|abc" "d n",
+    .givesUp "|abc" "c N", .givesUp "a\n|  \nb" "d *",
+    -- `/` and `?` through the minibuffer.
+    .rests "|foo bar" "d / b a r RET" "|bar" (charwise "foo "),
+    .rests "foo bar f|oo" "d ? b a r RET" "foo |oo" (charwise "bar f"),
+    .rests "|foo bar" "y / b a r RET" "|foo bar" (charwise "foo "),
+    .inserts "|abcxdef" "c / x RET" "|xdef" (charwise "abc"),
+    .rests "|foo bar foo bar" "d 2 / b a r RET" "|bar" (charwise "foo bar foo "),
+    .rests "|foo\nbar" "d / b a r RET" "|bar" (linewise "foo\n"),
+    .rests "x|foo\nbar" "d / b a r RET" "|x\nbar" (charwise "foo"),
+    .rests "foo\n|bar" "d ? f o o RET" "|bar" (linewise "foo\n"),
+    .rests "foo bar f|oo" "y ? b a r RET" "foo |bar foo" (charwise "bar f"),
+    .givesUp "|abc" "d / z RET", .givesUp "|abc" "c ? z RET", .givesUp "|abc" "d / RET"]
+
+/-- The pairs of an operator's key and a motion's key that asks that the
+rows of `searchOperatorRows` have, with the keys typed before the operator
+left out. -/
+def searchOperatorPairs : List (String × String) :=
+  let asking : List String :=
+    Vim.Default.motions.filterMap fun (key, bound) =>
+      match bound with
+      | .promptMotion .. => some key
+      | _ => none
+  searchOperatorRows.filterMap fun row =>
+    match (row.keys.splitOn " ").filter (· != "2") with
+    | operator :: motion :: _ => if asking.contains motion then some (operator, motion) else none
+    | _ => none
+
+/-- The checks of evil's searches (`Editor/Evil/Motions.lean`), on the loop's
+driver over the editor's models, under the Vim scheme that ships with
+evil's commands, the text model answering the searches of literal
+patterns. -/
+def evilSearchChecks : List Check :=
+  [{  name :=
+        "/ and ? (by invocation and by key, through the minibuffer), n, N, * and # move as Vim 9.1 documents for a literal pattern: from before, at and inside a match, cpo-c, across lines, with counts, wrapping with Vim's warning, not found with E486, n with no last search with E35, N keeping the direction, the empty pattern the last one, whole words for * and #, from the word's start, and a visual selection extended"
+      run := searchRows searchMoveRows },
+    { name :=
+        "an operator over /, ?, n, N, * and # takes the range Vim 9.1 documents: exclusive, from the cursor to where the search leads, also back over a wrap, with the rules for an exclusive motion that ends in column 1, and a search with nowhere to go gives the operator up with E486, E35 or E348"
+      run := do
+        let rows ← operatorRows searchOperatorRows
+        return rows &&
+            evilGaveUp (evilEdited "|abc" "d / z RET") "|abc" (Evil.patternNotFound "z") &&
+            evilGaveUp (evilEdited "|abc" "d n") "|abc" Evil.noPreviousPattern &&
+            evilGaveUp (evilEdited "a\n|  \nb" "d *") "a\n|  \nb" Evil.noStringUnderCursor },
+    { name :=
+        "every operator key of the default tables with / and ?, the motion keys that ask, has a row of searchOperatorRows"
+      run :=
+        pure <|
+          Vim.Default.operators.all fun (operator, _) =>
+            ["/", "?"].all fun motion => searchOperatorPairs.contains (operator, motion) },
+    { name :=
+        "an answer for the input scheme is handed to the scheme and no command of the reserved name is looked up: with nothing asked, a command registered under it does not run; after / it completes the search"
+      run :=
+        let reserved : Dispatched := fun _ => do
+          message "the reserved name ran"
+          return none
+        pure <|
+          match evilDriver "|x foo" (evilHanded #[] [(InputScheme.answerName, reserved)]) with
+          | none => false
+          | some driver =>
+            let answer (driver : EvilDriver) : EvilDriver :=
+              (driver.stepped
+                  (driver.loop.invoke driver.handed
+                    { command := InputScheme.answerName, arguments := [.str "foo"] })).1
+            let unasked := answer driver
+            -- The prompt was closed without an answer, and no key came
+            -- since: an answer that comes now completes the edit.
+            let asked := answer (evilFed driver "/ <Escape>")
+            unasked.loop.state.echo.isEmpty && evilShown unasked == "|x foo" &&
+              asked.loop.state.echo.isEmpty &&
+              evilShown asked == "x |foo" },
+    { name :=
+        "a search is kept as the last search, pattern and direction: * keeps the whole word, escaped, and # keeps it going back; n and N keep it as it was; a search that fails as a move is kept, as Vim keeps the pattern; a search under an operator that gives up is rolled back with the command, so the last search is the one from before it"
+      run :=
+        let last (fixture typed : String) : Option (Option Search) :=
+          (evilDriver fixture).map fun driver => (evilFed driver typed).loop.state.lastSearch
+        pure
+          (last "|foo" "" == some none &&
+            last "|foo foo" "*" == some (some { pattern := "\\<foo\\>", forward := true }) &&
+            last "|foo foo" "#" == some (some { pattern := "\\<foo\\>", forward := false }) &&
+            last "|foo foo" "* N" == some (some { pattern := "\\<foo\\>", forward := true }) &&
+            last "|.* .*" "*" == some (some { pattern := "\\.\\*", forward := true }) &&
+            last "|a.b" "*" == some (some { pattern := "\\<a\\>", forward := true }) &&
+            last "|$^ $^" "*" == some (some { pattern := "\\$\\^", forward := true }) &&
+            last "a\n|  \nb" "d *" == some none &&
+            -- A failed move keeps its pattern: the motion hands it back.
+            last "|abc" "/ z RET" == some (some { pattern := "z", forward := true }) &&
+            last "|abc" "? z RET" == some (some { pattern := "z", forward := false }) &&
+            -- An operator's give-up rolls the pattern it set back, to none
+            -- and to the one kept before it.
+            last "|abc" "d / z RET" == some none &&
+            last "|foo foo" "* d / z RET" ==
+              some (some { pattern := "\\<foo\\>", forward := true }) &&
+            last "|foo foo" "/ f RET d ? z RET" ==
+              some (some { pattern := "f", forward := true }) &&
+            (evilDriver "|x foo").map
+                (fun driver =>
+                  (evilSearchedBy driver "search-backward" "foo").loop.state.lastSearch) ==
+              some (some { pattern := "foo", forward := false })) }]
+
+/-- The text of the decoration checks: a hundred rows of `foo` and the row's
+number, more than a view of the decoration checks' frame shows
+(`decorationState`), but for row 10, which holds two matches, and row 50,
+whose word is `food`. -/
+def decoratedText : String :=
+  String.join <|
+    (List.range 100).map fun row =>
+      if row == 10 then "foo foo 10\n" else if row == 50 then "food 50\n" else s!"foo {row}\n"
+
+/-- A text whose rows are longer than the decoration checks' frame is wide:
+sixty rows of `foo` and a blank, fifty times each, two hundred cells, so
+every row wraps, and the view shows fewer rows than it is high. -/
+def wrappingText : String :=
+  String.join
+    ((List.range 60).map fun _ => String.join ((List.range 50).map fun _ => "foo ") ++ "\n")
+
+/-- A state of the decoration checks: `evilState` of `contents`, with the
+cursor at 0, in a frame of 80 by 40, where a row of the display model is
+one high and a cell one wide, so a view shows a few dozen rows. -/
+def decorationState (contents : String) : TextM EditorState := do
+  let state ← evilState contents 0
+  return { state with frame := { state.frame with size := ⟨80, 40⟩ } }
+
+/-- A driver of the decoration checks over `decorationState`. -/
+def decorationDriver (contents : String) : Option EvilDriver :=
+  (Loop.Driver.over evilHanded (fun _ => none) (decorationState contents) editorModel).toOption
+
+/-- The matches of `needle` in `contents`, found by hand, row by row: from
+each row's start, each occurrence, and the walk goes on from its end. With
+`whole`, an occurrence that does not start and end a word is passed over
+and the walk goes on one character after its start. Byte offsets, with the
+row each starts in. -/
+def naiveMatches (contents needle : String) (whole : Bool := false) : List (Nat × Nat × Nat) :=
+  Id.run do
+    let chars := contents.toList.toArray
+    let offsets :=
+      (chars.foldl (fun (acc : Array Nat × Nat) c => (acc.1.push acc.2, acc.2 + c.utf8Size))
+          (#[], 0)).1
+    let width := needle.length
+    let word (index : Nat) : Bool := (chars[index]?.map wordCharacter).getD false
+    let mut found := #[]
+    let mut index := 0
+    let mut row := 0
+    let mut rowAt := #[]
+    for char in chars do
+      rowAt := rowAt.push row
+      if char == '\n' then
+        row := row + 1
+    while index + width ≤ chars.size do
+      let here := (chars.extract index (index + width)).toList == needle.toList
+      let bounded :=
+        !whole ||
+          (word index && (index == 0 || !word (index - 1)) && word (index + width - 1) &&
+            !word (index + width))
+      if here && bounded then
+        found :=
+          found.push
+            (rowAt[index]!, offsets[index]!, (offsets[index + width]?).getD contents.utf8ByteSize)
+        index := index + width
+      else
+        index := index + 1
+    return found.toList
+
+/-- What is wrong, if anything, with the decorations of the view `view` in
+the last scene `driver` published, for the matches of `needle` in
+`contents`: every match that starts in a row from the view's anchor's
+through `height / heights.text` rows on is decorated, and every
+decoration is in `search-match` and is a match that starts in a row
+through one more, which is what the loop reads (`Loop.decorationsOf`). -/
+def decorationsWrong (driver : EvilDriver) (contents needle : String) (whole : Bool := false)
+    (view : ViewId := ⟨0⟩) : Option String := do
+  let some scene := driver.model.display.scenes.back? | some "no scene"
+  let some shown := scene.views.find? (·.id == view) | some "no view"
+  let some target := driver.loop.state.target? view | some "no window"
+  let anchor :=
+    match (target.buffer.text.marker target.window.scroll).runModel driver.model.texts with
+    | (.ok (.anchor anchor), _) => some anchor.offset
+    | _ => none
+  let some anchor := anchor | some "no anchor"
+  let rowOf (offset : Nat) : Nat :=
+    ((contents.toList.foldl
+        (fun (acc : Nat × Nat) c =>
+          if acc.1 < offset then (acc.1 + c.utf8Size, acc.2 + if c == '\n' then 1 else 0) else acc)
+        (0, 0)).2)
+  let first := rowOf anchor
+  let rows := shown.rect.height / max 1 driver.loop.state.heights.text
+  let all := naiveMatches contents needle whole
+  let visible := all.filter fun (row, _, _) => first ≤ row && row ≤ first + rows
+  let reachable := all.filter fun (row, _, _) => first ≤ row && row ≤ first + rows + 1
+  let drawn := shown.decorations.toList.map fun decoration => (decoration.start, decoration.stop)
+  if visible.isEmpty then
+    some "no match is visible"
+  else if !visible.all fun (_, start, stop) => drawn.contains (start, stop) then
+    some s!"a visible match is not decorated: {repr drawn}"
+  else if !shown.decorations.all (·.face == Loop.searchMatchFace) then
+    some "a decoration is in another face"
+  else if
+    !drawn.all fun range =>
+        (reachable.map fun (_, start, stop) => (start, stop)).contains range then
+    some s!"a decoration is no match the loop reads: {repr drawn}"
+  else
+    none
+
+/-- The decorations of the view `view` in the last scene `driver`
+published. -/
+def decorationsOfScene (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option (Array Decoration) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map (·.decorations)
+
+/-- A state of the decoration checks: `evilState` of `contents`, with a
+second window on the same buffer below the first, whose anchor is at the
+byte offset `second`. -/
+def twoViewState (contents : String) (second : Nat) : TextM EditorState := do
+  let state ← decorationState contents
+  let some buffer := state.buffers[0]?.join | throw .noSuchText
+  let scroll ← buffer.text.mark (.anchor { offset := second, bias := .before })
+  let selection ←
+    buffer.text.mark (.selection { ranges := #[⟨second, second⟩], shape := .inclusive })
+  return {
+      state with
+      windows := state.windows.push { id := ⟨1⟩, buffer := ⟨0⟩, scroll, selection }
+      nextView := 2
+      frame :=
+        { state.frame with
+          tree := .split .rows (.split .rows (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer } }
+
+/-- The checks of the decorations of a view (`Editor/Loop.lean`,
+"Decorations"): the matches of the last search, in `search-match`, on the
+loop's driver over the editor's models and the display recorder, under the
+Vim scheme that ships. -/
+def searchDecorationChecks : List Check :=
+  let fed (fixture typed : String) : Option EvilDriver :=
+    (decorationDriver (barred fixture).1).map (evilFed · typed)
+  [{  name :=
+        "after / f o o RET every match in the rows the view shows is drawn in search-match, and every decoration is a match of the rows the loop reads, food among none"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "/ f o o RET" with
+          | none => false
+          | some driver => decorationsWrong driver decoratedText "foo" == none },
+    { name := "after C-f the decorations follow the rows the view shows from its new anchor"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "/ f o o RET C-f",
+            fed ("|" ++ decoratedText) "/ f o o RET" with
+          | some paged, some first =>
+            decorationsWrong paged decoratedText "foo" == none &&
+              decorationsOfScene paged != decorationsOfScene first
+          | _, _ => false },
+    { name :=
+        "in rows that wrap, every match the view shows is decorated, and every decoration is a match"
+      run :=
+        pure <|
+          match fed ("|" ++ wrappingText) "/ f o o RET" with
+          | none => false
+          | some driver => decorationsWrong driver wrappingText "foo" == none },
+    { name := "a second view of the buffer has the decorations of its own rows by the same rule"
+      run :=
+        pure <|
+          match
+            (Loop.Driver.over evilHanded (fun _ => none) (twoViewState decoratedText 300)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let driver := evilFed driver "/ f o o RET"
+            decorationsWrong driver decoratedText "foo" == none &&
+              decorationsWrong driver decoratedText "foo" (view := ⟨1⟩) == none &&
+              decorationsOfScene driver ⟨1⟩ != decorationsOfScene driver ⟨0⟩ },
+    { name :=
+        "the minibuffer's view has no decorations while the prompt is open, and with no search no view has any"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "/ f o o RET / f", fed ("|" ++ decoratedText) "l" with
+          | some asking, some unsearched =>
+            let minibuffer := asking.loop.state.prompt.map (·.view)
+            (asking.model.display.scenes.back?.map fun scene =>
+                  scene.views.all fun view =>
+                    some view.id != minibuffer || view.decorations.isEmpty) ==
+                some true &&
+              minibuffer.isSome &&
+              (unsearched.model.display.scenes.back?.map fun scene =>
+                  scene.views.all (·.decorations.isEmpty)) ==
+                some true
+          | _, _ => false },
+    { name := "after * on foo, food is not decorated: the pattern is the whole word"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "*" with
+          | none => false
+          | some driver => decorationsWrong driver decoratedText "foo" (whole := true) == none },
+    { name := "a pattern with no match, and one the syntax refuses, draws nothing"
+      run :=
+        pure <|
+          match fed ("|" ++ decoratedText) "/ x y z RET",
+            fed ("|" ++ decoratedText) "/ \\ ( RET" with
+          | some missing, some refused =>
+            decorationsOfScene missing == some #[] && decorationsOfScene refused == some #[]
+          | _, _ => false }]
 
 /-- The checks of evil's operators (`Editor/Evil/Operators.lean`) on the
 loop's driver over the editor's models, under the Vim scheme that ships
@@ -20164,7 +22524,7 @@ def evilOperatorChecks : List Check :=
         "each operator over each motion, in five situations (no count, a count of 2, on an empty line, on the buffer's last character with and without a final line feed), leaves the text, the cursor and the unnamed register Vim leaves"
       run := operatorRows operatorTable },
     { name :=
-        "the table is complete: in each of its five situations, the pairs of an operator's key and a motion's key its rows have are exactly those of the default tables, each once"
+        "the table is complete: in each of its five situations, the pairs of an operator's key and a motion's key its rows have are exactly those of the default tables whose motion takes no argument, each once (the motions that take a character are held to the default tables by findOperatorPairs)"
       run :=
         pure <|
           !defaultPairs.isEmpty &&
@@ -20462,7 +22822,7 @@ def evilOperatorChecks : List Check :=
                 [.str Evil.yank.name, .str "motion", .str Evil.right.name, .nat 2, .str ""] ==
               some ⟨"a|bc", charwise "bc", false, ""⟩ },
     { name :=
-        "operate gives up, with the sentence its function makes and nothing changed, when it names an operator no entry has, a motion no entry has, a text object, a kind there is none of, and when its arguments are not an operator's"
+        "operate gives up, with the sentence its function makes and nothing changed, when it names an operator no entry has, a motion no entry has, a text object no entry has, a text object that is not there, a kind there is none of, and when its arguments are not an operator's"
       run :=
         pure <|
           let operated (arguments : List Argument) := evilOperated "a|bc" arguments
@@ -20473,7 +22833,12 @@ def evilOperatorChecks : List Check :=
               "a|bc" (Evil.noSuchMotion "nowhere") &&
             evilGaveUp
               (operated [.str Evil.delete.name, .str "text-object", .str "word", .nat 0, .str ""])
-              "a|bc" Evil.noTextObject &&
+              "a|bc" (Evil.noSuchObject "word") &&
+            evilGaveUp
+              (operated
+                [.str Evil.delete.name, .str "text-object", .str Evil.innerParen.name, .nat 0,
+                  .str ""])
+              "a|bc" (Evil.noObjectHere Evil.innerParen.name) &&
             evilGaveUp (operated [.str Evil.delete.name, .str "sideways", .str "", .nat 0, .str ""])
               "a|bc" Evil.noOperatorNamed &&
             evilGaveUp (operated []) "a|bc" Evil.noOperatorNamed &&
@@ -20552,6 +22917,414 @@ def evilSelectionChecks : List Check :=
         operatorRows
           [.rests "foo |bar baz" "v w 3 d" "foo |az" (charwise "bar b"),
             .rests "abc\nd|ef\nghi" "V 2 y" "abc\n|def\nghi" (linewise "def\n")] }]
+
+/-- The oracle table's rows for each operator over each text object, each
+run through Vim 9.1.1752 headless (`vim -Nu NONE -es`), with what an insert
+leaves read off a marker typed in it: every default operator over every
+object name, then the rules of `:help text-objects` and Vim 9.1's
+`textobject.c` one by one. Two rows differ from Vim's own report and are the
+editor's: a deletion of every line leaves the empty text, where Vim keeps
+one empty line, and an empty object is no give-up, as Vim's own no-op is no
+error. The last rows are the blocks' quoted brackets: the walk to the
+closing bracket passes over those Vim guesses are quoted, with the cursor
+inside the string and outside it, in a line with an odd number of quotes,
+past an escaped quote, across lines and for each kind, and the walk back
+to the opening one does not, so a single-quoted closing bracket before the
+cursor leaves no block. -/
+def objectOperatorRows : List OperatorRow :=
+  [.rests "foo b|ar baz" "d i w" "foo | baz" (charwise "bar"),
+    .inserts "foo b|ar baz" "c i w" "foo | baz" (charwise "bar"),
+    .rests "foo b|ar baz" "y i w" "foo |bar baz" (charwise "bar"),
+    .rests "foo b|ar baz" "d a w" "foo |baz" (charwise "bar "),
+    .inserts "foo b|ar baz" "c a w" "foo |baz" (charwise "bar "),
+    .rests "foo b|ar baz" "y a w" "foo |bar baz" (charwise "bar "),
+    .rests "foo b|a.r baz" "d i W" "foo | baz" (charwise "ba.r"),
+    .inserts "foo b|a.r baz" "c i W" "foo | baz" (charwise "ba.r"),
+    .rests "foo b|a.r baz" "y i W" "foo |ba.r baz" (charwise "ba.r"),
+    .rests "foo b|a.r baz" "d a W" "foo |baz" (charwise "ba.r "),
+    .inserts "foo b|a.r baz" "c a W" "foo |baz" (charwise "ba.r "),
+    .rests "foo b|a.r baz" "y a W" "foo |ba.r baz" (charwise "ba.r "),
+    .rests "x = \"a|b c\" y" "d i \"" "x = \"|\" y" (charwise "ab c"),
+    .inserts "x = \"a|b c\" y" "c i \"" "x = \"|\" y" (charwise "ab c"),
+    .rests "x = \"a|b c\" y" "y i \"" "x = \"|ab c\" y" (charwise "ab c"),
+    .rests "x = \"a|b c\" y" "d a \"" "x = |y" (charwise "\"ab c\" "),
+    .inserts "x = \"a|b c\" y" "c a \"" "x = |y" (charwise "\"ab c\" "),
+    .rests "x = \"a|b c\" y" "y a \"" "x = |\"ab c\" y" (charwise "\"ab c\" "),
+    .rests "x = 'a|b c' y" "d i '" "x = '|' y" (charwise "ab c"),
+    .inserts "x = 'a|b c' y" "c i '" "x = '|' y" (charwise "ab c"),
+    .rests "x = 'a|b c' y" "y i '" "x = '|ab c' y" (charwise "ab c"),
+    .rests "x = 'a|b c' y" "d a '" "x = |y" (charwise "'ab c' "),
+    .inserts "x = 'a|b c' y" "c a '" "x = |y" (charwise "'ab c' "),
+    .rests "x = 'a|b c' y" "y a '" "x = |'ab c' y" (charwise "'ab c' "),
+    .rests "x = `a|b c` y" "d i `" "x = `|` y" (charwise "ab c"),
+    .inserts "x = `a|b c` y" "c i `" "x = `|` y" (charwise "ab c"),
+    .rests "x = `a|b c` y" "y i `" "x = `|ab c` y" (charwise "ab c"),
+    .rests "x = `a|b c` y" "d a `" "x = |y" (charwise "`ab c` "),
+    .inserts "x = `a|b c` y" "c a `" "x = |y" (charwise "`ab c` "),
+    .rests "x = `a|b c` y" "y a `" "x = |`ab c` y" (charwise "`ab c` "),
+    .rests "f(a, |b)" "d i (" "f(|)" (charwise "a, b"),
+    .inserts "f(a, |b)" "c i (" "f(|)" (charwise "a, b"),
+    .rests "f(a, |b)" "y i (" "f(|a, b)" (charwise "a, b"),
+    .rests "f(a, |b)" "d a (" "|f" (charwise "(a, b)"),
+    .inserts "f(a, |b)" "c a (" "f|" (charwise "(a, b)"),
+    .rests "f(a, |b)" "y a (" "f|(a, b)" (charwise "(a, b)"),
+    .rests "x [a |b] y" "d i [" "x [|] y" (charwise "a b"),
+    .inserts "x [a |b] y" "c i [" "x [|] y" (charwise "a b"),
+    .rests "x [a |b] y" "y i [" "x [|a b] y" (charwise "a b"),
+    .rests "x [a |b] y" "d a [" "x | y" (charwise "[a b]"),
+    .inserts "x [a |b] y" "c a [" "x | y" (charwise "[a b]"),
+    .rests "x [a |b] y" "y a [" "x |[a b] y" (charwise "[a b]"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "d i {" "if x {\n|}\n" (linewise "  ab\n  cd\n"),
+    .inserts "if x {\n  a|b\n  cd\n}\n" "c i {" "if x {\n|\n}\n" (linewise "  ab\n  cd\n"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "y i {" "if x {\n|  ab\n  cd\n}\n" (linewise "  ab\n  cd\n"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "d a {" "if x| \n" (charwise "{\n  ab\n  cd\n}"),
+    .inserts "if x {\n  a|b\n  cd\n}\n" "c a {" "if x |\n" (charwise "{\n  ab\n  cd\n}"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "y a {" "if x |{\n  ab\n  cd\n}\n"
+      (charwise "{\n  ab\n  cd\n}"),
+    .rests "foo b|ar" "d a w" "fo|o" (charwise " bar"),
+    .rests "foo|  bar" "d i w" "foo|bar" (charwise "  "),
+    .rests "foo|  bar" "d a w" "fo|o" (charwise "  bar"),
+    .rests "|ab cd ef" "d 3 i w" "| ef" (charwise "ab cd"),
+    .rests "|ab cd ef" "d 2 a w" "|ef" (charwise "ab cd "),
+    .rests "foo b|a.r baz" "d i w" "foo |.r baz" (charwise "ba"),
+    .rests "  |foo bar" "d a w" "  |bar" (charwise "foo "),
+    .rests "  foo b|ar" "d a w" "  fo|o" (charwise " bar"),
+    .rests "ab c|d\nef gh" "d 3 i w" "ab |gh" (charwise "cd\nef "),
+    .rests "ab c|d\nef gh" "d 2 a w" "ab |gh" (charwise "cd\nef "),
+    .rests "|ab\n\ncd" "d 2 i w" "|cd" (linewise "ab\n\n"),
+    .rests "ab|  \n\ncd" "d a w" "a|b\ncd" (charwise "  \n"),
+    .rests "ab\n|\ncd" "d a w" "|ab" (linewise "\ncd\n"),
+    .rests "ab\n|\ncd" "d i w" "ab\n|\ncd" asItWas,
+    .rests "ab\n|\ncd" "y i w" "ab\n|\ncd" (charwise ""),
+    .inserts "ab\n|\ncd" "c i w" "ab\n|\ncd" (charwise ""),
+    .rests "ab c|d." "d 2 a w" "a|b" (charwise " cd."), .givesUp "ab c|d" "d 2 a w",
+    .inserts "foo b|ar baz" "c a w" "foo |baz" (charwise "bar "),
+    .rests "foo b|ar baz" "2 d a w" "fo|o" (charwise " bar baz"),
+    .rests "x = \"a|b c\"" "d a \"" "x |=" (charwise " \"ab c\""),
+    .rests "|x = \"ab\" y" "d i \"" "x = \"|\" y" (charwise "ab"),
+    .rests "x = \"ab|\" y" "d i \"" "x = \"|\" y" (charwise "ab"),
+    .rests "\"a\" |x \"b\"" "d i \"" "\"a\"|\"b\"" (charwise " x "),
+    .rests "x = \"a|b c\" y" "d 2 i \"" "x = | y" (charwise "\"ab c\""),
+    .rests "x = \"a|b c\" y" "y 2 i \"" "x = |\"ab c\" y" (charwise "\"ab c\""),
+    .rests "x \"a\\\"|b\" y" "d i \"" "x \"|\" y" (charwise "a\\\"b"),
+    .rests "x \\\"a|b\" y" "d i \"" "x \\\"|\" y" (charwise "ab"),
+    .inserts "x = \"|\" y" "c i \"" "x = \"|\" y" asItWas,
+    .rests "x = \"|\" y" "d i \"" "x = \"|\" y" asItWas, .givesUp "a|b" "d i \"",
+    .givesUp "x \"ab\" |y" "d i \"",
+    .rests "x = \"a|b c\" y" "d 3 a \"" "x = |y" (charwise "\"ab c\" "),
+    .rests "\"a\" \"b|\"" "d i \"" "\"a\" \"|\"" (charwise "b"),
+    .rests "x \"a|b\" \ty" "d a \"" "x |y" (charwise "\"ab\" \t"),
+    .rests "  \"a|b\"" "d a \"" "|" (charwise "  \"ab\""),
+    .rests "f|(a, b)" "d i (" "f(|)" (charwise "a, b"),
+    .rests "f(a, b|)" "d i (" "f(|)" (charwise "a, b"),
+    .rests "f(a, (b|), c)" "d 2 i (" "f(|)" (charwise "a, (b), c"),
+    .rests "|f(a)" "d i (" "f(|)" (charwise "a"),
+    .rests "|x ((a))" "d 2 i (" "x ((|))" (charwise "a"), .givesUp "|x) (a)" "d i (",
+    .givesUp "(|x) (a)" "d 2 i (", .rests "f(a \\( |b)" "d i (" "f(|)" (charwise "a \\( b"),
+    .givesUp "\\(a |b\\)" "d i (", .rests "f|()" "d i (" "f(|)" asItWas,
+    .rests "f|()" "y i (" "f(|)" (charwise ""), .inserts "f|()" "c i (" "f(|)" asItWas,
+    .rests "{ a\n  b|\n}" "d i {" "|{\n}" (charwise " a\n  b"),
+    .rests "if x {\n  a|b\n}\n" "d a {" "if x| \n" (charwise "{\n  ab\n}"),
+    .rests "  |  {\n  a\n  }\n" "d i {" "    {\n  |}\n" (linewise "  a\n"),
+    .rests "  |  {\n  a\n  }\n" "d a {" "|" (linewise "    {\n  a\n  }\n"),
+    .rests "{a {b |c} d}" "d 2 i {" "{|}" (charwise "a {b c} d"),
+    .rests "|x {a}" "d i {" "x {|}" (charwise "a"),
+    .rests "|x\n(a)" "d i (" "x\n(|)" (charwise "a"),
+    .rests "|x (a\n)" "d i (" "x |(\n)" (charwise "a"), .rests "|{\n}" "d i {" "{\n|}" asItWas,
+    .rests "|{\n}" "y i {" "{\n|}" (charwise ""), .rests "|{\n\n}" "d i {" "{\n|}" (linewise "\n"),
+    .rests "|{\n  \n}" "d i {" "{\n|  \n}" asItWas,
+    .rests "|{\n a\n  \n}" "d i {" "{\n | \n}" (linewise " a\n"),
+    .rests "if x {\n  a|b\n  cd\n}\n" "y i {" "if x {\n|  ab\n  cd\n}\n" (linewise "  ab\n  cd\n"),
+    .rests "f(a, |b)" "d i )" "f(|)" (charwise "a, b"),
+    .rests "f(a, |b)" "d i b" "f(|)" (charwise "a, b"),
+    .rests "f(a, |b)" "d a )" "|f" (charwise "(a, b)"),
+    .rests "f(a, |b)" "d a b" "|f" (charwise "(a, b)"),
+    .rests "x [a |b] y" "d i ]" "x [|] y" (charwise "a b"),
+    .rests "x [a |b] y" "d a ]" "x | y" (charwise "[a b]"),
+    .rests "{a |b}" "d i }" "{|}" (charwise "a b"), .rests "{a |b}" "d i B" "{|}" (charwise "a b"),
+    .rests "{a |b}" "d a }" "|" (charwise "{a b}"), .rests "{a |b}" "d a B" "|" (charwise "{a b}"),
+    .rests "(a [b|) c]" "d i [" "(a [|]" (charwise "b) c"),
+    .rests "(a \"b|)\" c)" "d i (" "(|)" (charwise "a \"b)\" c"),
+    .rests "(a \"b|)\" c)" "d a (" "|" (charwise "(a \"b)\" c)"),
+    .inserts "(a \"b|)\" c)" "c i (" "(|)" (charwise "a \"b)\" c"),
+    .rests "\"(|a)\"" "d i (" "\"(|)\"" (charwise "a"),
+    .rests "x \" (a \"b|)\" c)" "d i (" "x \" (|)\" c)" (charwise "a \"b"),
+    .rests "(a \\\"b|)\" c)" "d i (" "(|)\" c)" (charwise "a \\\"b"),
+    .rests "{\n  a|\n  \"}\"\n}" "d i {" "{\n|}" (linewise "  a\n  \"}\"\n"),
+    .rests "{a \"|}\" b}" "d i {" "{|}" (charwise "a \"}\" b"),
+    .rests "[a \"|]\" b]" "d i [" "[|]" (charwise "a \"]\" b"),
+    .rests "x|(a ')' b)" "d i (" "x(|)" (charwise "a ')' b"), .givesUp "(a ')' |b)" "d i ("]
+
+/-- The rows of the oracle table for `%` under an operator, each run through
+Vim 9.1.1752 headless: inclusive, from the cursor, a bracket after the
+cursor on the line included, across lines, and a line with no bracket. -/
+def percentOperatorRows : List OperatorRow :=
+  [.rests "|(a) b" "d %" "| b" (charwise "(a)"), .rests "|x (a) b" "d %" "| b" (charwise "x (a)"),
+    .givesUp "|ab" "d %", .inserts "|(a\nb) c" "c %" "| c" (charwise "(a\nb)"),
+    .rests "|(a\nb) c" "y %" "|(a\nb) c" (charwise "(a\nb)")]
+
+/-- The name the default `objects` table binds the key string `key` to, if it
+binds one. -/
+def objectNamed (key : String) : Option String :=
+  Vim.Default.objects.findSome? fun (text, bound) =>
+    match bound with
+    | .textObject name => if text == key then some name else none
+    | _ => none
+
+/-- Every name the default `objects` table binds a key to, once each. -/
+def objectNames : List String :=
+  (Vim.Default.objects.filterMap fun (_, bound) =>
+      match bound with
+      | .textObject name => some name
+      | _ => none).eraseDups
+
+/-- The pairs of an operator's key and a text object's name that the rows of
+`objectOperatorRows` have, with the counts left out. -/
+def objectOperatorPairs : List (String × String) :=
+  objectOperatorRows.filterMap fun row =>
+    match (row.keys.splitOn " ").filter (fun token => !token.all Char.isDigit) with
+    | operator :: rest => (objectNamed (" ".intercalate rest)).map (operator, ·)
+    | [] => none
+
+/-- The rows of the oracle table for the text objects in a visual state, each
+run through Vim 9.1.1752 headless and read off its marks: the text and the
+cursor, the keys, the selection's one range as an anchor and a head, and
+the text it covers. A block's closing bracket is found past quoted ones,
+and a selection extended to the next pair out passes over a quoted opening
+bracket too. Each word, WORD and block object has rows over a selection
+made wider forward by a motion or an object, and over one made wider
+backward, its head before its anchor, where a block's search starts from
+the head and one no bigger than the selection is the next one out; Vim
+leaves such a block's selection forward. The last four are an object that is not there, where
+the selection is as it was, and the recorded departure of a quote object
+over a selection wider than one cell, which is left as it was too. -/
+def objectSelectionRows : List (String × String × List (Nat × Nat) × List String) :=
+  [("foo b|ar baz", "v i w", [(4, 6)], ["bar"]), ("foo b|ar baz", "v a w", [(4, 7)], ["bar "]),
+    ("foo b|a.r baz", "v i W", [(4, 7)], ["ba.r"]), ("foo b|a.r baz", "v a W", [(4, 8)], ["ba.r "]),
+    ("a|  b", "v i w", [(1, 2)], ["  "]), ("a|  b", "v a w", [(1, 3)], ["  b"]),
+    ("foo b|ar baz", "v 3 i w", [(4, 10)], ["bar baz"]),
+    ("foo |bar baz", "v i w i w", [(4, 7)], ["bar "]),
+    ("foo |bar baz", "v a w a w", [(4, 10)], ["bar baz"]),
+    ("foo b|ar baz", "v b i w", [(5, 3)], [" ba"]),
+    ("foo bar b|az", "v h a w", [(9, 4)], ["bar ba"]), ("ab\n|\ncd", "v i w", [(3, 3)], ["\n"]),
+    ("ab\n|\ncd", "v a w", [(3, 5)], ["\ncd"]), ("|ab\n\ncd", "v 2 i w", [(0, 4)], ["ab\n\nc"]),
+    ("x = \"a|b c\" y", "v i \"", [(5, 8)], ["ab c"]),
+    ("x = \"a|b c\" y", "v a \"", [(4, 10)], ["\"ab c\" "]),
+    ("|x = \"ab\" y", "v i \"", [(5, 6)], ["ab"]),
+    ("x = \"a|b c\" y", "v 2 i \"", [(4, 9)], ["\"ab c\""]),
+    ("x \"|\" y", "v i \"", [(3, 2)], ["\"\""]), ("x 'a|b' y", "v i '", [(3, 4)], ["ab"]),
+    ("x 'a|b' y", "v a '", [(2, 6)], ["'ab' "]), ("x `a|b` y", "v i `", [(3, 4)], ["ab"]),
+    ("x `a|b` y", "v a `", [(2, 6)], ["`ab` "]), ("f(a, |b)", "v i (", [(2, 5)], ["a, b"]),
+    ("f(a, |b)", "v a (", [(1, 6)], ["(a, b)"]), ("g(f(a|b))", "v i ( i (", [(2, 6)], ["f(ab)"]),
+    ("g(f(|a))", "v i ( a (", [(3, 5)], ["(a)"]), ("g(f(|a))", "v a ( a (", [(1, 6)], ["(f(a))"]),
+    ("|x (a)", "v i (", [(3, 3)], ["a"]), ("{\n  a|b\n}", "v i {", [(2, 6)], ["  ab\n"]),
+    ("x {\n  a|b\n  }", "v i {", [(4, 8)], ["  ab\n"]), ("x{\n  |}", "v i {", [(3, 2)], ["\n "]),
+    ("x [a |b] y", "v i [", [(3, 5)], ["a b"]), ("x [a |b] y", "v a [", [(2, 6)], ["[a b]"]),
+    ("{a |b}", "v i {", [(1, 3)], ["a b"]), ("{a |b}", "v a {", [(0, 4)], ["{a b}"]),
+    ("f(a|b)", "v l i (", [(2, 3)], ["ab"]), ("f(a|b)", "v l a (", [(1, 4)], ["(ab)"]),
+    ("(a \"b|)\" c)", "v i (", [(1, 8)], ["a \"b)\" c"]),
+    ("(x \"(\" (|ab) y)", "v i ( i (", [(1, 12)], ["x \"(\" (ab) y"]),
+    ("foo b|a.r baz", "v l i W", [(5, 7)], ["a.r"]),
+    ("foo |a.r baz", "v i W i W", [(4, 7)], ["a.r "]),
+    ("foo b|a.r baz", "v l a W", [(5, 8)], ["a.r "]),
+    ("foo b.a|r baz", "v b i W", [(7, 4)], ["b.ar"]),
+    ("foo b.r b|a.z", "v h a W", [(9, 4)], ["b.r ba"]),
+    ("foo b.r b|a.z", "v h i W", [(9, 7)], [" ba"]), ("x [a |bc] y", "v l i [", [(3, 6)], ["a bc"]),
+    ("[x[a|b]]", "v i [ i [", [(1, 5)], ["x[ab]"]),
+    ("x [a |bc] y", "v l a [", [(2, 7)], ["[a bc]"]), ("{a |bc}", "v l i {", [(1, 4)], ["a bc"]),
+    ("{x{a|b}}", "v i { i {", [(1, 5)], ["x{ab}"]), ("{a |bc}", "v l a {", [(0, 5)], ["{a bc}"]),
+    ("{\n  {\n    a|b\n  }\n}", "v i { i {", [(2, 16)], ["  {\n    ab\n  }\n"]),
+    ("{\n  a|b\n  cd\n}", "v j i {", [(2, 11)], ["  ab\n  cd\n"]),
+    ("x {\n  a|b\n  cd\n  }", "v j i {", [(4, 13)], ["  ab\n  cd\n"]),
+    ("f(ab c|d)", "v h i (", [(2, 6)], ["ab cd"]), ("g(f(a|b))", "v h i (", [(2, 6)], ["f(ab)"]),
+    ("f(ab c|d)", "v h a (", [(1, 7)], ["(ab cd)"]), ("g(f(a|b))", "v h a (", [(3, 6)], ["(ab)"]),
+    ("x [ab c|d] y", "v h i [", [(3, 7)], ["ab cd"]), ("[x[a|b]]", "v h i [", [(1, 5)], ["x[ab]"]),
+    ("x [ab c|d] y", "v b a [", [(2, 8)], ["[ab cd]"]),
+    ("{ab c|d}", "v h i {", [(1, 5)], ["ab cd"]), ("{x{a|b}}", "v h i {", [(1, 5)], ["x{ab}"]),
+    ("{ab c|d}", "v b a {", [(0, 6)], ["{ab cd}"]), ("{x{a|b}}", "v h a {", [(2, 5)], ["{ab}"]),
+    ("{\n  {\n    ab|c\n  }\n}", "v k i {", [(2, 17)], ["  {\n    abc\n  }\n"]),
+    ("g(f(ab|))", "v h h h a (", [(1, 7)], ["(f(ab))"]),
+    ("[x[ab|]]", "v h h h a [", [(0, 6)], ["[x[ab]]"]),
+    ("{x{ab|}}", "v h h h a {", [(0, 6)], ["{x{ab}}"]),
+    ("g(f(|ab))", "v l l l a (", [(3, 6)], ["(ab)"]),
+    ("g(f(ab|))", "v h h h i (", [(2, 6)], ["f(ab)"]),
+    ("g(f(|ab))", "v l l l i (", [(2, 6)], ["f(ab)"]),
+    ("foo b|a.r baz", "v b a W", [(5, 0)], ["foo ba"]),
+    ("foo b|ar baz", "V i w", [(4, 6)], ["bar"]), ("f(|a)", "V i (", [(2, 2)], ["a"]),
+    ("f(|a)", "V a b", [(1, 3)], ["(a)"]), ("a|b", "v i (", [(1, 1)], ["b"]),
+    ("f|()", "v i (", [(1, 1)], ["("]), ("|{\n}", "v i {", [(0, 0)], ["{"]),
+    ("x = \"a|b c\" y", "v l i \"", [(6, 7)], ["b "])]
+
+/-- What is wrong, if anything, with each of `v` and `V` followed by each key
+of the default `objects` table, with no count and with a count of 2, from
+every position of a text holding `contents` where a normal-state cursor may
+rest: the echo area says no refusal, the selection is one range with both
+ends at positions of the text, and the view is in `visual`, or, where the
+object is not there after `V`, in the state it was in, with the give-up's
+sentence said. -/
+def visualObjectSweep (contents : String) : List String :=
+  let visual := evilBadge "v"
+  let visualLine := evilBadge "V"
+  ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap fun position =>
+    ["v", "V"].flatMap fun state =>
+      Vim.Default.objects.flatMap fun (objectKey, bound) =>
+        let name :=
+          match bound with
+          | .textObject name => name
+          | _ => ""
+        [false, true].filterMap fun counted =>
+          let typed := state ++ (if counted then " 2 " else " ") ++ objectKey
+          let what := s!"{typed} at {position} of {repr contents}"
+          match
+            (Loop.Driver.over evilHanded (fun _ => none) (evilState contents position)
+                editorModel).toOption with
+          | none => some s!"{what}: no driver"
+          | some driver =>
+            let after := evilFed driver typed
+            let refused := (after.loop.state.echo.splitOn "refused").length != 1
+            let atPositions :=
+              match evilSelection after with
+              | some { ranges := #[range], .. } =>
+                [range.anchor, range.head].all fun end_ =>
+                  end_ ≤ contents.utf8ByteSize && (String.Pos.Raw.mk end_).IsValid contents
+              | _ => false
+            let seen := (evilSeen after).bind (·.status[0]?)
+            let kept :=
+              seen == visual ||
+                state == "V" && seen == visualLine &&
+                  after.loop.state.echo.endsWith (Evil.noObjectHere name)
+            if !refused && atPositions && kept then none
+            else
+              some s!"{what}: left {repr (evilSelection after)}, echo {repr after.loop.state.echo}"
+
+/-- The checks of evil's text objects (`Editor/Evil/Objects.lean`), by key,
+on the loop's driver over the editor's models, under the Vim scheme that
+ships: what each operator takes over each object and what each object
+selects in a visual state, against Vim 9.1's rows, `%` under an operator,
+the tables' completeness, and two sweeps. -/
+def evilObjectChecks : List Check :=
+  [{  name :=
+        "an operator over each text object takes the range Vim 9.1 documents: the words and WORDs with their blanks and counts, the quoted strings and their blanks, the blocks with an escaped bracket passed over, a block found forward with none round the cursor, an empty block, and i{ over lines as whole lines; the text, the cursor, the register and the insert state are Vim's"
+      run := operatorRows objectOperatorRows },
+    { name :=
+        "% under an operator takes from the cursor through the partner of the first bracket of the line at or after it, across lines, and gives up on a line with no bracket; v % extends the selection to the partner, as Vim 9.1.1752 does"
+      run := do
+        let held ← operatorRows percentOperatorRows
+        return held &&
+            evilSelected "x |(a [b] c)" "v %" == some ([(2, 10)], .inclusive, ["(a [b] c)"]) &&
+            evilSelected "|x (a)" "v %" == some ([(0, 4)], .inclusive, ["x (a)"]) },
+    { name :=
+        "the object table is complete: every operator key of the default tables has a row over every text object the default tables name"
+      run :=
+        pure <|
+          !objectNames.isEmpty &&
+            Vim.Default.operators.all fun (operator, _) =>
+              objectNames.all fun name => objectOperatorPairs.contains (operator, name) },
+    { name :=
+        "in v and V each text object sets the selection Vim 9.1 documents: one range, inclusive, covering the object, with the view in visual; a selection wider than one cell is extended from its head, a block one out when it is no bigger; an object that is not there leaves the selection as it was, and so does a quote object over a wider selection, a recorded departure"
+      run := do
+        let visual := evilBadge "v"
+        let wrong :=
+          objectSelectionRows.filterMap fun (fixture, typed, ranges, covered) =>
+            let got := evilSelected fixture typed
+            let state := (evilScene fixture typed).bind (·.status[0]?)
+            if got == some (ranges, .inclusive, covered) && state == visual then none
+            else some s!"{typed} from {repr fixture} left {repr got}, in {repr state}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong))
+        return true },
+    { name :=
+        "an object that is not there leaves the selection as the visual state had it: in v the view stays in visual and nothing is said; in V, where the object would make the selection charwise, the view stays in visual-line, as Vim 9.1.1752 does, and the give-up's sentence is said"
+      run := do
+        let visual := evilBadge "v"
+        let visualLine := evilBadge "V"
+        -- What a give-up of the select command says.
+        let gaveUp (object : Vocabulary.TextObject) :=
+          s!"{Vim.selectObjectCommand}: {Evil.noObjectHere object.name}"
+        let wrong :=
+          [("a|b", "v", "i (", visual, ""), ("a|b", "v", "a [", visual, ""),
+                ("a|b", "v", "i \"", visual, ""),
+                ("a|b", "V", "i (", visualLine, gaveUp Evil.innerParen),
+                ("a|b", "V", "a {", visualLine, gaveUp Evil.aBrace),
+                ("a|b", "V", "i '", visualLine, gaveUp Evil.innerSingleQuote)].filterMap
+            fun (fixture, state, object, shown, echo) =>
+            let before := evilSelected fixture state
+            let typed := state ++ " " ++ object
+            let got := evilSelected fixture typed
+            let seen := (evilScene fixture typed).bind (·.status[0]?)
+            let echoed :=
+              (evilDriver fixture).map fun driver => (evilFed driver typed).loop.state.echo
+            if before.isSome && got == before && seen == shown && echoed == some echo then none
+            else
+              some
+                s!"{typed} from {repr fixture} left {repr got} (before {repr before}), in {repr seen}, echo {repr echoed}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong))
+        return true },
+    { name := "the visual table is complete: every text object the default tables name has a row"
+      run :=
+        pure <|
+          objectNames.all fun name =>
+            objectSelectionRows.any fun (_, typed, _, _) =>
+              let tokens := (typed.splitOn " ").filter (fun token => !token.all Char.isDigit)
+              (objectNamed (" ".intercalate (tokens.drop (tokens.length - 2)))) == some name },
+    { name :=
+        "the visual table covers wider selections: each of iw aw iW aW i( a( i[ a[ i{ a{ has a row over a selection a motion or an object made wider than one cell, and a row over one a backward motion made, its head before its anchor"
+      run :=
+        pure <|
+          ["i w", "a w", "i W", "a W", "i (", "a (", "i [", "a [", "i {", "a {"].all fun key =>
+            -- The keys of each row of `key`, between the visual state's key
+            -- and the object, with any count left out.
+            let widened :=
+              objectSelectionRows.filterMap fun (_, typed, _, _) =>
+                let tokens := typed.splitOn " "
+                if tokens.drop (tokens.length - 2) == key.splitOn " " then
+                  some
+                    (((tokens.drop 1).take (tokens.length - 3)).filter fun token =>
+                      !token.all Char.isDigit)
+                else none
+            widened.any (!·.isEmpty) &&
+              widened.any fun keys => keys.contains "h" || keys.contains "b" },
+    { name :=
+        "a sweep of every default operator key over every default text object key, with no count and with a count of 2, from every position a cursor may rest at in a few texts: nothing is refused, after an operator that enters no state the cursor is where normal state lets one rest, a yank leaves the text, and u gives back a text that changed, with the cursor where it was"
+      run := do
+        let wrong :=
+          sweepTexts.flatMap fun contents =>
+            ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap
+              fun position =>
+              Vim.Default.operators.flatMap fun (operatorKey, bound) =>
+                match bound with
+                | .operator operator =>
+                  Vim.Default.objects.flatMap fun (objectKey, _) =>
+                    [false, true].filterMap fun counted =>
+                      sweptWrong contents position operator
+                        ((if counted then "2 " else "") ++ operatorKey ++ " " ++ objectKey)
+                | _ => []
+        unless wrong.isEmpty do
+          throw
+              (IO.userError s!"{wrong.length} cases, the first: {"; ".intercalate (wrong.take 5)}")
+        return true },
+    { name :=
+        "a sweep of v and V followed by every default text object key, with no count and with a count of 2, from every position a cursor may rest at in a few texts: nothing is refused, the selection is one range with both ends at positions, and the view is in visual"
+      run := do
+        let wrong := sweepTexts.flatMap visualObjectSweep
+        unless wrong.isEmpty do
+          throw
+              (IO.userError s!"{wrong.length} cases, the first: {"; ".intercalate (wrong.take 5)}")
+        return true },
+    { name :=
+        "the select command sets the selection by its call: an object no entry has and arguments that are not a name and a count give up with the sentence their function makes"
+      run :=
+        pure <|
+          let selected (arguments : List Argument) : Option EvilEdited :=
+            (evilRegistered "a|bc").map fun driver =>
+              evilLeft
+                (driver.stepped
+                    (driver.loop.invoke driver.handed
+                      { command := Vim.selectObjectCommand, arguments })).1
+          evilGaveUp (selected [.str "word", .nat 0]) "a|bc" (Evil.noSuchObject "word") &&
+            evilGaveUp (selected []) "a|bc" Evil.noObjectNamed &&
+            evilGaveUp (selected [.str Evil.innerWord.name]) "a|bc" Evil.noObjectNamed }]
 
 /-- The keys the key string `typed` names, pressed from the text and the
 cursor `fixture` says with the unnamed register holding a sentinel, on the
@@ -21009,13 +23782,65 @@ def repeatRows : List (String × String × String) :=
     ("y w P .", "|ab cd", "abab|  ab cd"), ("y y p .", "|ab", "ab\nab\n|ab"),
     ("d w y w .", "|a b c d", "|c d")]
 
+/-- The oracle table's rows for `.` after an insert session that used insert
+state's editing keys, Vim 9.1's results: `<Backspace>`, `RET` and `TAB` are
+replayed as typed, a `<Backspace>` past where the insert began included;
+after an arrow key that moved and a text typed after it the change is `i`
+with that text (`ins-special-special`); an arrow key with nothing typed
+after it, and one that did not move, leave the change as it was. -/
+def insertKeysRepeatRows : List (String × String × String) :=
+  [("i x <Backspace> y <Escape> .", "a|b", "a|yyb"),
+    ("a <Backspace> X <Escape> .", "ab|cd", "ab|Xd"),
+    ("i x RET y <Escape> .", "a|b", "ax\nx\n|yyb"), ("i x TAB y <Escape> .", "a|b", "ax\tx\t|yyb"),
+    ("i x <ArrowLeft> y <Escape> .", "a|b", "a|yyxb"),
+    ("i x <ArrowRight> y <Escape> .", "a|bc", "axb|yyc"),
+    ("i x <ArrowUp> y <Escape> .", "ab\na|b", "ab|yy\naxb"),
+    ("i x <ArrowDown> y <Escape> .", "a|b\nab", "axb\nab|yy"),
+    ("A x <ArrowLeft> y <Escape> 0 .", "a|b", "|yabyx"),
+    ("c w X <ArrowLeft> <Escape> w .", "|foo bar", "X |X"),
+    ("A x <ArrowRight> y <Escape> 0 .", "a|b", "abxyx|y")]
+
 /-- The checks of evil's dot repeat (`Editor/Evil/Repeat.lean`), by key, on
 the loop's driver over the editor's models, under the Vim scheme that ships
 with evil's commands. -/
 def evilRepeatChecks : List Check :=
   [{  name :=
+        ". after an operator over a text object replays it where the cursor is then: c i w with typed text, d a w, d i ( on another pair, d a w with a count that replaces the change's, d 2 i w, and c i \" with typed text in another string, as Vim 9.1.1752 does them"
+      run :=
+        evilRows
+          [("c i w x y <Escape> w .", "|foo bar baz", "xy x|y baz"),
+            ("d a w .", "|a b c d", "|c d"), ("d i ( $ .", "f(|a) g(b)", "f() g(|)"),
+            ("d a w 3 .", "|a b c d e f", "|e f"), ("d 2 i w .", "|a b c d e", "|c d e"),
+            ("c i \" z <Escape> f c .", "\"|ab\" \"cd\"", "\"z\" \"|z\"")] },
+    { name :=
+        ". after an operator over a find replays it with the same character: d f c deletes to the next c again, d t c up to the next c, d ; repeats the last find as it is at the replay, and c f c with typed text makes the same change"
+      run :=
+        evilRows
+          [("d f c .", "|abcabcabc", "|abc"), ("d t c .", "|abcabcab", "|cab"),
+            ("f a d ; .", "|xabxabxab", "x|b"), ("c f c z <Escape> .", "|abcabcab", "|zab")] },
+    { name :=
+        ". after an operator over a search replays it with the search as it is at the replay: d n deletes to the next match of the last search again, and d * to the next occurrence of the word under the cursor"
+      run :=
+        evilRows
+          [("* 0 d n .", "|foo x foo x foo x", "|foo x"), ("d * .", "|a x a x a x", "|a x"),
+            ("d / f o o RET .", "|a foo b foo c foo", "|foo c foo"),
+            ("c / x RET y <Escape> l .", "|abxcdxef", "y|yxef")] },
+    { name :=
         ". replays the last change: after d w it deletes the next word, and after c w, typed text and <Escape> it makes the same change with the same text at the cursor; a count before it replaces the change's and is kept; x, the doubled operator, o, O, i, a, I, A, p and P are replayed, and a yank is not the last change"
       run := evilRows repeatRows },
+    { name :=
+        ". after a session that used <Backspace>, RET or TAB replays them as typed, a <Backspace> past where the insert began included, and RET with the buffer's line ending; after an arrow key that moved and a text typed after it, . is i with that text, as in Vim 9.1; after an arrow key with nothing typed after it, or one that did not move, . replays the change as it was"
+      run := do
+        let rows ← evilRows insertKeysRepeatRows
+        let crlf :=
+          let start : TextM EditorState := do
+            let state ← evilState "abc" 2
+            return { state with
+                buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) }
+          match (Loop.Driver.over evilHanded (fun _ => none) start editorModel).toOption with
+          | none => false
+          | some driver => evilShown (evilFed driver "i RET <Escape> .") == "ab\r\n\r\n|c"
+        return rows && crlf },
     { name :=
         "a replayed change that itself gives up gives the replay up and changes nothing: after d j, G and . on the last line, where j fails, the text, the cursor, the register and the history are as they were, the view is in normal state, and the echo area says why under the repeat command's name; after c j, a text, <Escape> and G, . likewise, with no text inserted and the view left in normal state; and the change is still the last change, which . replays from the first line"
       run :=
@@ -21170,7 +23995,8 @@ def evilRepeatChecks : List Check :=
           let erase : Vocabulary.Operator := { Evil.delete with name := "erase" }
           let more : Array Config.Registration :=
             #[{ name := Vim.operateCommand
-                action := .call (Evil.operate (Evil.operators.push erase) Evil.motions) },
+                action :=
+                  .call (Evil.operate (Evil.operators.push erase) Evil.motions Evil.objects) },
               { name := "delete-char"
                 action :=
                   .call fun call => Evil.deleteChar { call with arguments := [.nat 2, .str ""] } },
@@ -22309,21 +25135,23 @@ def heightChecks : List Check :=
                 | _ => false
             | _ => false }]
 
-/-- The registry of the frame command checks: the frame's commands and their
-bindings, with the menu bar's bindings, registered for the owner
-`compiled`, as a host registers them, and `config` as config's bindings and
-`commands` as config's commands. -/
+/-- The registry of the frame command checks: the frame's commands, and the
+ex line's, whose `quit` the frame's `s-q` names, and the frame's bindings,
+with the menu bar's bindings, registered for the owner `compiled`, as a
+host registers them, and `config` as config's bindings and `commands` as
+config's commands. -/
 def frameRegistry (config : Array Config.KeyBinding := #[])
     (commands : Array Config.Registration := #[]) : Config.Registry :=
-  (((({} : Config.Registry).replace .compiled FrameCommands.commands).replaceBindings .compiled
-            (FrameCommands.bindings ++ Menu.bindings)).replaceBindings
+  (((({} : Config.Registry).replace .compiled
+                (FrameCommands.commands ++ Ex.commands)).replaceBindings
+            .compiled (FrameCommands.bindings ++ Menu.bindings)).replaceBindings
         .config config).replace
     .config commands
 
 /-- What a step of the frame command checks is handed: the active keymaps
 `registry` makes for the test scheme from the loop's state, its plain
-commands, and the menu bar that ships with its key equivalents filled from
-`registry`, as a host's are. -/
+commands and those given their call, and the menu bar that ships with its
+key equivalents filled from `registry`, as a host's are. -/
 def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
   { maps := registry.activeMaps TestScheme.scheme
     command? := fun name =>
@@ -22332,14 +25160,26 @@ def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
         some fun _ => do
           run
           return none
+      | some { registration := { action := .call run, .. }, .. } =>
+        some fun call => do
+          run call
+          return none
       | _ => none
     menu := some (registry.menuOf Menu.standard) }
 
 /-- A driver of the frame command checks over the initial state, with the
-keys of `registry`; `none` if making the state was refused. -/
-def frameDriver (registry : Config.Registry := frameRegistry) : Option TestDriver :=
-  (Loop.Driver.over (frameKeys registry) driverJobs (EditorState.initial ⟨640, 480⟩)
-      editorModel).toOption
+keys of `registry`; `none` if making the state was refused. With `held`
+the scratch buffer holds a file, made up and never loaded, so that an edit
+of it is an unsaved change. -/
+def frameDriver (registry : Config.Registry := frameRegistry) (held : Bool := false) :
+    Option TestDriver :=
+  let start : TextM EditorState := do
+    let state ← EditorState.initial ⟨640, 480⟩
+    if held then
+      return (state.attachFile ⟨0⟩ "/files/note.txt" { seconds := 0, nanoseconds := 0, size := 0 }
+            .lf).2
+    return state
+  (Loop.Driver.over (frameKeys registry) driverJobs start editorModel).toOption
 
 /-- The window's word that it is 640 by 480 at scale 1, in fullscreen or not. -/
 def resizedTo (fullscreen : Bool) : Event :=
@@ -22388,14 +25228,28 @@ def frameCommandChecks : List Check :=
     { name := "s-m runs minimise-window, which asks the display to minimise the window"
       run := pure (framed frameDriver (presses "s-m") == some (#[.minimise], false)) },
     { name :=
-        "the compiled bindings are C-s-f to toggle-fullscreen and s-m to minimise-window, and config's binding of C-s-f is the one that runs while config binds it"
+        "s-q runs quit: with a buffer that holds a file edited, it is refused with the quit command's message and the driver goes on; with nothing unsaved it stops the driver"
+      run :=
+        pure <|
+          match frameDriver (held := true) with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver ([.commit "x"] ++ presses "s-q")
+            let (left, steps) := fedTo driver (presses "s-q")
+            !refused.stopped && !refused.loop.state.quitting &&
+              echoOf refused == some (Ex.notQuitting (.unsaved "scratch")) &&
+              left.stopped &&
+              steps.back?.join.map (·.next) == some .stop },
+    { name :=
+        "the compiled bindings are C-s-f to toggle-fullscreen, s-m to minimise-window and s-q to quit, and config's binding of C-s-f is the one that runs while config binds it"
       run :=
         let rebound :=
           frameRegistry #[{ keys := keys "C-s-f", command := FrameCommands.minimiseName }]
         pure
           (FrameCommands.bindings ==
               #[{ keys := keys "C-s-f", command := FrameCommands.toggleFullscreenName },
-                { keys := keys "s-m", command := FrameCommands.minimiseName }] &&
+                { keys := keys "s-m", command := FrameCommands.minimiseName },
+                { keys := keys "s-q", command := Ex.quitName }] &&
             FrameCommands.toggleFullscreenName == "toggle-fullscreen" &&
             FrameCommands.minimiseName == "minimise-window" &&
             FrameCommands.commands.map (·.name) == #["toggle-fullscreen", "minimise-window"] &&
@@ -23667,6 +26521,512 @@ def environmentLookupChecks : List Check :=
             other.reported ==
               #[Process.failureMessage "/p/d" missing, Process.failureMessage "/p/e" missing]) }]
 
+/-- The checks of projects, workspaces and locations as data
+(`Editor/Workspace.lean`): how an `origin` URL is normalised, how a project
+is identified and named, how a workspace is labelled, what each location can
+do, and a location's round trip through a buffer-local value. -/
+def workspaceDataChecks : List Check :=
+  let origin := "git@github.com:o/r.git"
+  [{  name :=
+        "an origin URL normalises to host/path whatever its form: git@github.com:o/r.git, https://github.com/o/r, ssh://git@github.com/o/r.git and https://github.com/o/r.git/ are one, and so are a host in capitals and an ssh port"
+      run :=
+        pure <|
+          [origin, "https://github.com/o/r", "ssh://git@github.com/o/r.git",
+                  "https://github.com/o/r.git/", "https://GitHub.com/o/r",
+                  "ssh://git@github.com:22/o/r"].map
+              Workspace.normaliseRemote ==
+            List.replicate 6 "github.com/o/r" },
+    { name :=
+        "a project is identified by its normalised origin, else by its common git directory, else by its root, and a name config declares wins; it is named by the origin's last component, else by the common directory's parent's, else by the root's"
+      run :=
+        let byOrigin := Project.of "/x/clone" (some "/x/clone/.git") (some origin) none
+        let byCommon := Project.of "/w" (some "/r/.git") none none
+        let byRoot := Project.of "/m" none none none
+        let declared := Project.of "/r/tools" none none (some "tools")
+        let both := Project.of "/r" (some "/r/.git") (some origin) (some "mine")
+        pure
+          ((byOrigin.identity, byOrigin.name, byOrigin.remote, byOrigin.commonDir) ==
+              (Project.Identity.remote "github.com/o/r", "r", some origin,
+                some ("/x/clone/.git" : System.FilePath)) &&
+            (byCommon.identity, byCommon.name) == (Project.Identity.commonDir "/r/.git", "r") &&
+            (byRoot.identity, byRoot.name) == (Project.Identity.root "/m", "m") &&
+            (declared.identity, declared.name) == (Project.Identity.declared "tools", "tools") &&
+            (both.identity, both.name) == (Project.Identity.declared "mine", "mine")) },
+    { name :=
+        "a workspace is labelled name@branch, and name@ and its root's last component when it is detached or has no branch"
+      run :=
+        let project := Project.of "/r" (some "/r/.git") (some origin) none
+        let onMain : Workspace :=
+          { location := .local "/r", branch := some (.named "main"), project }
+        let detached : Workspace := { location := .local "/w", branch := some .detached, project }
+        let marked : Workspace :=
+          { location := .local "/m", project := Project.of "/m" none none none }
+        pure ([onMain, detached, marked].map Workspace.label == ["r@main", "r@w", "m@m"]) },
+    { name :=
+        "a local location can read files, run commands and watch files; one reachable by a command and one known only by its branch can do none of them"
+      run :=
+        let all : Location.Capabilities :=
+          { readFiles := true, runCommands := true, watchFiles := true }
+        let none : Location.Capabilities :=
+          { readFiles := false, runCommands := false, watchFiles := false }
+        pure
+          ((Location.local "/r").can == all &&
+            (Location.reachable "kube" "pod/dev" "/src").can == none &&
+            (Location.branchOnly origin "agent/x").can == none) },
+    { name :=
+        "a location crosses as a buffer-local value and back, and a value that is no location reads as none"
+      run :=
+        let locations : List Location :=
+          [.local "/r", .reachable "kube" "pod/dev" "/src", .branchOnly origin "agent/x"]
+        pure
+          (locations.all (fun location => Location.decode? location.encode == some location) &&
+            [Value.null, .str "/r", .record [("local", .nat 1)], .record []].all
+              (Location.decode? · == none)) }]
+
+/-- The checks of how the git adapter reads what git prints
+(`Editor/Workspace.lean`, "The git adapter's command lines"). -/
+def workspaceGitChecks : List Check :=
+  let printed (text : String) : ByteArray := text.toUTF8
+  [{  name :=
+        "rev-parse's three lines are the top level, the common directory and the branch; HEAD is a detached checkout, and a common directory that is not absolute is resolved against the directory asked about"
+      run :=
+        pure
+          (Workspace.Git.parseRevParse "/r/src" (printed "/r\n/r/.git\nmain\n") ==
+              some { toplevel := "/r", commonDir := "/r/.git", branch := .named "main" } &&
+            Workspace.Git.parseRevParse "/r" (printed "/r\n.git\nHEAD\n") ==
+              some { toplevel := "/r", commonDir := "/r/.git", branch := .detached }) },
+    { name :=
+        "output that is not three lines, a top level that is not absolute and bytes that are not UTF-8 are no answer"
+      run :=
+        pure
+          ([printed "/r\n/r/.git\n", printed "", printed "r\n/r/.git\nmain\n",
+                printed "/r\n/r/.git\nmain\nextra\n", ByteArray.mk #[0xff, 0x0a]].all
+            (Workspace.Git.parseRevParse "/r" · == none)) },
+    { name := "the origin is the first line git prints, and an empty output is no origin"
+      run :=
+        pure
+          (Workspace.Git.parseOrigin (printed "git@github.com:o/r.git\n") ==
+              some "git@github.com:o/r.git" &&
+            Workspace.Git.parseOrigin (printed "") == none) }]
+
+/-- A store of a number, for the checks of the workspace and project
+stores. -/
+def countStore : Store Nat :=
+  { name := "count", version := 1, initial := 0, encode := .nat
+    decode := fun
+      | .nat n => some n
+      | _ => none }
+
+/-- The checks of the workspaces and projects the editor state keeps
+(`EditorState.workspaces`, `Editor/Workspace.lean`, "The table"), through
+the state requests that change them (`Editor/State/Request.lean`) and the
+editor API (`Editor/Api.lean`, "Workspaces"). -/
+def workspaceStateChecks : List Check :=
+  let origin := "git@github.com:o/r.git"
+  let main :=
+    Workspace.Found.ofGit { toplevel := "/r", commonDir := "/r/.git", branch := .named "main" } none
+  let worktree :=
+    Workspace.Found.ofGit { toplevel := "/w", commonDir := "/r/.git", branch := .named "feature" }
+      none
+  let request (state : EditorState) (request : StateRequest) : EditorState :=
+    (state.handle request).2
+  let recorded : EditorState :=
+    request (request EditorState.none (.recordWorkspace "/r/src" 0 (some main)))
+      (.recordWorkspace "/w/src" 0 (some worktree))
+  let one : BufferId := ⟨1⟩
+  [{  name :=
+        "a workspace registered with a location known only by its branch and one reachable through kube belong to the project of their remote, whichever form it is in, and neither can run commands or read files; registering a local location is refused, with the state as it was"
+      run :=
+        let branchOnly := Location.branchOnly origin "agent/x"
+        let reachable := Location.reachable "kube" "pod/dev" "/src"
+        let (first, state) :=
+          EditorState.none.handle (.registerWorkspace branchOnly origin (some "agent/x"))
+        let (second, state) :=
+          state.handle (.registerWorkspace reachable "https://github.com/o/r" none)
+        let (refused, after) := state.handle (.registerWorkspace (.local "/r") origin none)
+        let table := state.workspaces
+        pure
+          (replied first == .inr () && replied second == .inr () &&
+            [branchOnly, reachable].all
+              (fun location =>
+                ((table.workspace? location).map (·.project.identity)) ==
+                    some (.remote "github.com/o/r") &&
+                  !location.can.runCommands &&
+                  !location.can.readFiles) &&
+            table.projects.size == 1 &&
+            replied refused == .inl .local &&
+            after.workspaces == table) },
+    { name :=
+        "a main checkout and a linked worktree found once each are two workspaces of one project: a value in one's workspace store is not seen from the other's, and one in the project store is seen through both"
+      run :=
+        let mainAt := Location.local "/r"
+        let worktreeAt := Location.local "/w"
+        let (set, state) := recorded.handle (.setWorkspaceValue mainAt "x" (.nat 1))
+        let identity := (state.workspaces.workspace? mainAt).map (·.project.identity)
+        let shared := (state.workspaces.workspace? worktreeAt).map (·.project.identity)
+        match identity with
+        | none => pure false
+        | some identity =>
+          let (told, state) := state.handle (.setProjectValue identity "h" (.str "make"))
+          let table := state.workspaces
+          pure
+            (replied set == .inr () && replied told == .inr () &&
+              table.workspaceValue? mainAt "x" == some (.nat 1) &&
+              table.workspaceValue? worktreeAt "x" == none &&
+              shared == some identity &&
+              table.projectValue? identity "h" == some (.str "make") &&
+              table.workspaces.size == 2 &&
+              table.projects.size == 1) },
+    { name :=
+        "a value for a workspace or a project there is none of is refused, noSuchWorkspace and noSuchProject, with the state as it was"
+      run :=
+        let (noWorkspace, kept) := recorded.handle (.setWorkspaceValue (.local "/z") "x" .null)
+        let (noProject, held) := recorded.handle (.setProjectValue (.root "/z") "x" .null)
+        pure
+          (replied noWorkspace == .inl (.noSuchWorkspace (.local "/z")) &&
+            replied noProject == .inl (.noSuchProject (.root "/z")) &&
+            kept.workspaces == recorded.workspaces &&
+            held.workspaces == recorded.workspaces) },
+    { name :=
+        "a workspace found again keeps its root, its project and its store, and takes the branch it now has"
+      run :=
+        let (_, stored) := recorded.handle (.setWorkspaceValue (.local "/r") "x" (.nat 1))
+        let moved :=
+          Workspace.Found.ofGit
+            { toplevel := "/r", commonDir := "/r/.git", branch := .named "other" } (some origin)
+        let again := request stored (.recordWorkspace "/r/lib" 0 (some moved))
+        let workspace := again.workspaces.workspace? (.local "/r")
+        pure
+          ((workspace.map fun found => (found.branch, found.project.identity)) ==
+              some (some (.named "other"), .commonDir "/r/.git") &&
+            again.workspaces.workspaceValue? (.local "/r") "x" == some (.nat 1) &&
+            again.workspaces.workspaces.size == 2) },
+    { name :=
+        "each directory's answer is cached under the generation it was found under, a directory with no workspace included, and is not an answer under another"
+      run :=
+        let none' := request recorded (.recordWorkspace "/x/" 0 none)
+        let table := none'.workspaces
+        pure
+          (table.cached? "/r/src" 0 == some (some (.local "/r")) &&
+            table.cached? "/r/src" 1 == none &&
+            table.cached? "/x" 0 == some none &&
+            table.cached? "/y" 0 == none) },
+    { name :=
+        "with no loop to answer, the workspace settings are config's defaults under generation 0"
+      run := pure ((EditorState.none.handle .workspaceSettings).1 == ({}, 0)) },
+    { name :=
+        "a dispatched command that asks for the workspace settings is answered config's roots and the config generation the loop was told of"
+      run :=
+        let roots : Array Workspace.ConfigRoot := #[{ root := "/r/tools", project := some "tools" }]
+        let registered : Loop.Registered := { workspaceRoots := roots, generation := 3 }
+        let program : EditorM (Guarded (Workspace.Settings × Nat) × EditorState) := do
+          (EditorState.ask .workspaceSettings).dispatched registered (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => answer == ({ roots }, 3)
+          | _ => false },
+    { name :=
+        "from a command: a buffer whose local value names a workspace has that workspace and its project; one that inherits from it has the same, and its working directory is the workspace's root; a buffer with none has no workspace and no working directory, and a store's value reads as its initial until it is set"
+      run :=
+        pure <|
+          match
+            dispatchedFrom do
+              discard <| EditorState.ask (.recordWorkspace "/r/src" 0 (some main))
+              discard <| one.setValue Workspace.bufferLocal (Location.local "/r").encode
+              let found ← one.workspace?
+              let none' ← (⟨0⟩ : BufferId).workspace?
+              let before := (← editorState).workspaces.get countStore (.local "/r")
+              let set ← Workspace.set countStore (.local "/r") 3
+              let inherited ← (⟨0⟩ : BufferId).inheritWorkspace one
+              return (found, none', before, set, inherited, ← (⟨0⟩ : BufferId).workspace?,
+                  ← (⟨0⟩ : BufferId).workingDirectory) with
+          | some ((found, none', before, set, inherited, after, directory), state) =>
+            (found.map fun (workspace, project) => (workspace.location, project.identity)) ==
+                some (.local "/r", .commonDir "/r/.git") &&
+              none'.isNone &&
+              before == 0 &&
+              replied set == .inr () &&
+              state.workspaces.get countStore (.local "/r") == 3 &&
+              state.workspaces.get countStore (.local "/w") == 0 &&
+              replied inherited == .inr () &&
+              after == found &&
+              directory == .workspace "/r"
+          | none => false },
+    { name :=
+        "from a command: a buffer with no workspace and no file has no working directory, and the API's registration and project values are the state requests'"
+      run :=
+        pure <|
+          match
+            dispatchedFrom do
+              let directory ← (⟨0⟩ : BufferId).workingDirectory
+              let local' ← Workspace.register (.local "/r") origin none
+              let registered ←
+                Workspace.register (.branchOnly origin "agent/x") origin (some "agent/x")
+              let told ← Project.setValue (.remote "github.com/o/r") "h" (.nat 2)
+              let typed ← Project.set countStore (.remote "github.com/o/r") 5
+              let unknown ← Workspace.setValue (.local "/z") "x" .null
+              return (directory, local', registered, told, typed, unknown) with
+          | some ((directory, local', registered, told, typed, unknown), state) =>
+            directory == .none && replied local' == .inl .local && replied registered == .inr () &&
+              replied told == .inr () &&
+              replied typed == .inr () &&
+              replied unknown == .inl (.noSuchWorkspace (.local "/z")) &&
+              state.workspaces.projectValue? (.remote "github.com/o/r") "h" == some (.nat 2) &&
+              state.workspaces.getOfProject countStore (.remote "github.com/o/r") == 5
+          | none => false }]
+
+/-- The `origin` of the repository of the workspace driver checks. -/
+def workspaceOrigin : String :=
+  "git@github.com:o/r.git"
+
+/-- The world of the workspace driver checks: a main checkout at `/r` on
+`main` and a linked worktree of it at `/w` on `feature`, both with
+`workspaceOrigin`; `/x` is in no repository and holds no marker. -/
+def workspaceWorld : Workspace.World :=
+  { repositories :=
+      #[{ toplevel := "/r", commonDir := "/r/.git", origin := some workspaceOrigin },
+        { toplevel := "/w", commonDir := "/r/.git", branch := some "feature"
+          origin := some workspaceOrigin }]
+    markerDirectories := #["/r/.git"], markers := #["/w/.git"] }
+
+/-- The jobs of the workspace driver checks: the find job and the file
+command checks' jobs. -/
+def workspaceJobs (name : String) : Option (List Argument → Work) :=
+  if name == Workspace.findJob then some Workspace.findWork else fileJobs Files.limit name
+
+/-- What a step of the workspace driver checks is handed: `C-o a`, `C-o b`
+and `C-o c` open `a.lean`, `b.lean` and `c.lean` in `/r/src`, `C-o w`
+opens `/w/src/b.lean` and `C-o x` opens `/x/a.txt`; `C-o i` runs
+`workspace-current`; `C-o n` makes a buffer `made` that inherits the
+workspace of the window's buffer, and a buffer `bare` that does not. -/
+def workspaceKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    [("C-o a", opens "/r/src/a.lean"), ("C-o b", opens "/r/src/b.lean"),
+      ("C-o c", opens "/r/src/c.lean"), ("C-o w", opens "/w/src/b.lean"),
+      ("C-o x", opens "/x/a.txt"), ("C-o i", invoke Workspace.currentName),
+      ("C-o n", invoke "inherit")]
+    [(Files.openName, fun call => do
+        Files.openCommand call
+        return none),
+      (Workspace.currentName, fun call => do
+        Workspace.currentCommand call
+        return none),
+      ("inherit", fun call => do
+        if let .ok made← createBuffer "made" then
+          discard <| made.inheritWorkspace call.target.window.buffer
+        discard <| createBuffer "bare"
+        return none)]
+
+/-- A driver with the keys of the workspace driver checks and the jobs
+`registered`, whose jobs meet the processes and the files of
+`workspaceWorld` for its three directories, with the files the keys open;
+`none` if making the state was refused. -/
+def workspaceDriver (registered : String → Option (List Argument → Work) := workspaceJobs) :
+    Option TestDriver :=
+  let model := workspaceWorld.jobModel "git" #["/r/src", "/w/src", "/x"]
+  let files :=
+    [("/r/src/a.lean", "a"), ("/r/src/b.lean", "b"), ("/r/src/c.lean", "c"), ("/w/src/b.lean", "w"),
+          ("/x/a.txt", "x")].foldl
+      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
+  (Loop.Driver.over workspaceKeys registered (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver => { driver with jobs := { model with files } }
+
+/-- `driver` once `keys` are pressed and every job they start, and every job
+those jobs' commands start, is finished, oldest first. -/
+def settledAfter (driver : TestDriver) (keys : String) : TestDriver :=
+  (List.range 8).foldl
+    (fun driver _ =>
+      match driver.pending[0]? with
+      | some job => (driver.finish job.id).1
+      | none => driver)
+    (fedTo driver (presses keys)).1
+
+/-- The workspace of the buffer the view 0 of `driver` shows, and its
+project. -/
+def shownWorkspace (driver : TestDriver) : Option (Workspace × Project) := do
+  driver.loop.state.workspaceOf? (← showing driver).id
+
+/-- The two git commands the finder runs in `directory`. -/
+def gitAsked (directory : System.FilePath) : Array Process.Command :=
+  #[Workspace.Git.revParseCommand "git" directory, Workspace.Git.originCommand "git" directory]
+
+/-- The checks of a buffer's workspace (`Editor/Workspace/Attach.lean`), on
+the loop's driver over the editor's models and the job model of
+`workspaceWorld`. -/
+def workspaceChecks : List Check :=
+  [{  name :=
+        "a file under /r/src opens into a buffer whose workspace has root /r, branch main and location local /r, and whose project is identified by the normalised origin, with the common git directory /r/.git"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            (shownWorkspace opened).map
+                (fun (workspace, project) =>
+                  (workspace.location, workspace.branch, project.identity, project.commonDir,
+                    project.remote)) ==
+              some
+                (.local "/r", some (.named "main"), .remote "github.com/o/r",
+                  some ("/r/.git" : System.FilePath), some workspaceOrigin) },
+    { name :=
+        "a file in the linked worktree /w has workspace root /w and branch feature, of the same project as /r's: two workspaces, each with its own store, and one project, with one store"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let main := settledAfter driver "C-o a"
+            let both := settledAfter main "C-o w"
+            let state := both.loop.state
+            match shownWorkspace main, shownWorkspace both with
+            | some (first, project), some (second, shared) =>
+              let (_, state) := state.handle (.setWorkspaceValue first.location "x" (.nat 1))
+              let (_, state) := state.handle (.setProjectValue project.identity "h" (.nat 2))
+              second.location == .local "/w" && second.branch == some (.named "feature") &&
+                shared == project &&
+                state.workspaces.workspaceValue? second.location "x" == none &&
+                state.workspaces.workspaceValue? first.location "x" == some (.nat 1) &&
+                state.workspaces.projectValue? shared.identity "h" == some (.nat 2) &&
+                state.workspaces.workspaces.size == 2 &&
+                state.workspaces.projects.size == 1
+            | _, _ => false },
+    { name :=
+        "with no adapter answering, a buffer has no workspace, and workspace-current says so, naming the file's directory"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o x"
+            let asked := settledAfter opened "C-o i"
+            (shownWorkspace opened).isNone &&
+              (showing opened).map (·.buffer.name) == some "a.txt" &&
+              echoOf asked == some (Workspace.noWorkspace "/x") },
+    { name :=
+        "two open workspaces of one project are labelled name@branch, and workspace-current in /r's buffer says its label, location, branch and what it can do, its project's name and identity, and the project's other open workspace by label"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let both := settledAfter (settledAfter driver "C-o a") "C-o w"
+            let back := settledAfter both "C-o a"
+            let asked := settledAfter back "C-o i"
+            match showing back, shownWorkspace back, shownWorkspace both with
+            | some shown, some (main, _), some (worktree, _) =>
+              let current := Workspace.current back.loop.state shown.id
+              main.label == "r@main" && worktree.label == "r@feature" &&
+                back.loop.state.workspaces.others main == #[worktree] &&
+                current ==
+                  .workspace
+                    { label := "r@main", location := .local "/r", branch := some (.named "main")
+                      can := (Location.local "/r").can, projectName := "r"
+                      identity := .remote "github.com/o/r", others := #["r@feature"] } &&
+                echoOf asked == some current.text
+            | _, _, _ => false },
+    { name :=
+        "with one open workspace of its project, workspace-current says the buffer's workspace and lists no other"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let asked := settledAfter opened "C-o i"
+            match showing opened with
+            | some shown =>
+              let current := Workspace.current opened.loop.state shown.id
+              current ==
+                  .workspace
+                    { label := "r@main", location := .local "/r", branch := some (.named "main")
+                      can := (Location.local "/r").can, projectName := "r"
+                      identity := .remote "github.com/o/r", others := #[] } &&
+                echoOf asked == some current.text
+            | none => false },
+    { name :=
+        "a second file in the same directory asks git nothing and starts no find job, and has the workspace; once a reload has installed a new generation, the next file asks git again"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let first := settledAfter driver "C-o a"
+            let second := settledAfter first "C-o b"
+            let reloaded :=
+              { second with
+                keys :=
+                  { second.keys with
+                    registered := { second.keys.registered with generation := 1 } } }
+            let third := settledAfter reloaded "C-o c"
+            first.jobs.processes.started == gitAsked "/r/src" &&
+              second.jobs.processes.started == gitAsked "/r/src" &&
+              second.next == first.next + 1 &&
+              (shownWorkspace second).map (·.1.location) == some (.local "/r") &&
+              third.jobs.processes.started == gitAsked "/r/src" ++ gitAsked "/r/src" &&
+              (shownWorkspace third).map (·.1.location) == some (.local "/r") },
+    { name :=
+        "a buffer made from a buffer with a workspace inherits it, and one made without inheriting has none"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let made := settledAfter (settledAfter driver "C-o a") "C-o n"
+            let state := made.loop.state
+            match state.findBuffer "made", state.findBuffer "bare" with
+            | some inherited, some bare =>
+              (state.workspaceOf? inherited).isSome &&
+                state.workspaceOf? inherited == shownWorkspace made &&
+                (state.workspaceOf? bare).isNone
+            | _, _ => false },
+    { name :=
+        "with no find job registered, a file still opens, its buffer has no workspace, and nothing is said"
+      run :=
+        pure <|
+          match workspaceDriver (fileJobs Files.limit) with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            (showing opened).map (·.buffer.name) == some "a.lean" &&
+              (shownWorkspace opened).isNone &&
+              echoOf opened == some "" &&
+              opened.jobs.processes.started.isEmpty },
+    { name :=
+        "a find order crosses as arguments and back, its roots with and without a project, and arguments that are no order read as none; the find job started with them fails"
+      run :=
+        let orders : List Workspace.FindOrder :=
+          [{ buffer := ⟨1⟩, directory := "/r/src", generation := 0 },
+            { buffer := ⟨4⟩, directory := "/a b/é", git := "/usr/bin/git", generation := 7
+              roots := #[{ root := "/r/tools", project := some "tools" }, { root := "/notes" }] }]
+        pure
+          (orders.all
+              (fun order => Workspace.FindOrder.ofArguments? order.arguments == some order) &&
+            [[], [.nat 1, .str "/r"], [.nat 1, .str "/r", .str "git", .nat 0, .str "/t"]].all
+              (Workspace.FindOrder.ofArguments? · == none) &&
+            ((Workspace.findWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
+
+/-- The names of the workspace finder's contract properties
+(`Editor/Workspace/Contract.lean`) that do not hold of the pure model
+(`World.find`), or of the real finder run on the job model of the
+property's world (`World.jobModel`); and, for a property that must not ask
+git, of a run that started a process. -/
+def workspaceFinderFailures : IO (List String) :=
+  pure <|
+    (Workspace.FinderContract.properties "/").flatMap fun property =>
+      let settings := property.settings "git"
+      let directories := property.asked.map (·.1)
+      let byModel := property.asked.map fun (directory, _) => property.world.find settings directory
+      let (outcome, after) :=
+        (property.answers "git").runModel (property.world.jobModel "git" directories)
+      (if byModel == property.expected then []
+        else [s!"the workspace finder's model: {property.name}"]) ++
+        (if outcome == .finished property.expected then []
+        else [s!"the workspace finder on the job model: {property.name}"]) ++
+        if property.asksGit || after.processes.started.isEmpty then []
+        else [s!"the workspace finder on the job model starts no process: {property.name}"]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -23747,6 +27107,10 @@ def checks : List Check :=
     dispatchQuitChecks ++
     systemQuitChecks ++
     exChecks ++
+    fileReloadChecks ++
+    stalenessChecks ++
+    autoReloadChecks ++
+    bufferCommandChecks ++
     themeChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++
@@ -23757,7 +27121,11 @@ def checks : List Check :=
     evilStateChecks ++
     evilInsertChecks ++
     evilOperatorChecks ++
+    evilFindChecks ++
+    evilSearchChecks ++
+    searchDecorationChecks ++
     evilSelectionChecks ++
+    evilObjectChecks ++
     evilRegisterChecks ++
     evilOpenChecks ++
     evilUndoChecks ++
@@ -23766,7 +27134,11 @@ def checks : List Check :=
     frameCommandChecks ++
     titleChecks ++
     menuChecks ++
-    clipboardCommandChecks
+    clipboardCommandChecks ++
+    workspaceDataChecks ++
+    workspaceGitChecks ++
+    workspaceStateChecks ++
+    workspaceChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
@@ -23906,7 +27278,8 @@ def main : IO UInt32 := do
       (← ModelTest.clipboardFailures) ++
       (← ModelTest.fuzzyFailures) ++
       (← ModelTest.syntaxTreeFailures) ++
-      (← ModelTest.apiCaseFailures)
+      (← ModelTest.apiCaseFailures) ++
+      (← ModelTest.workspaceFinderFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -23914,6 +27287,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model"
   (← IO.getStdout).flush
   IO.Process.exit 0

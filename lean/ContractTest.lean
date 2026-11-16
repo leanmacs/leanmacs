@@ -26,6 +26,7 @@ import Editor.Text.Real
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
 import Editor.Watch.Real
+import Editor.Workspace.Contract
 
 /-!
 # The contract checks against the real bindings
@@ -46,6 +47,10 @@ library.
   that releasing one frees it at once, and that the read half of its
   published table of snapshots finds what a command took and nothing a
   command released (`failures`, `releaseFrees`, `readerFinds`).
+- The binding's bracket walk against the text model's, at every position of
+  texts with quotes and for every question the walk can be asked
+  (`pairChecks`): the quote rule is ported to both, and the contract's tables
+  pin it only at the cases they name.
 - The cases of the undo tree (`Editor/UndoTree/Cases.lean`), which is plain
   Lean over the text port, through the same binding and in the same run, so
   the count of live documents covers the texts they make. `model-test` runs
@@ -433,17 +438,21 @@ run: it is about the library's counts, so the port cannot say it. -/
 def fileLeakName : String :=
   "what the jobs of the file properties loaded is released when each job is settled, and no request is left in the file service"
 
-/-- The names of the job port's file properties that do not hold of the
-runner over the library's file service, on real files. `fileLeakName` is
-among them if the library then holds a snapshot more than before, `held`
-still holds one, or the file service has a request or a result left. -/
+/-- The names of the job port's file and diff properties that do not hold of
+the runner over the library's file and diff services, on real files.
+`fileLeakName` is among them if the library then holds a snapshot more than
+before, `held` still holds one, or the file service or the diff service has a
+request or a result left. -/
 def fileFailures (services : Job.Services) (held : Job.HeldSnapshots) : IO (List String) := do
-  let before := (← Ffi.Snapshot.live, ← Ffi.filesPending)
-  let failed ← JobContract.fileFailures (runFilesOnService services) JobContract.fileProperties
+  let pending : IO UInt64 := return (← Ffi.filesPending) + (← Ffi.diffsPending)
+  let before := (← Ffi.Snapshot.live, ← pending)
+  let failed ←
+    JobContract.fileFailures (runFilesOnService services)
+        (JobContract.fileProperties ++ JobContract.diffProperties)
   let freed ←
     eventually do
-        return (← Ffi.Snapshot.live, ← Ffi.filesPending) == before && (← held.size) == 0
-  let after := (← Ffi.Snapshot.live, ← Ffi.filesPending, ← held.size)
+        return (← Ffi.Snapshot.live, ← pending) == before && (← held.size) == 0
+  let after := (← Ffi.Snapshot.live, ← pending, ← held.size)
   return failed.map (s!"the job runner over the file service: {·}") ++
       if freed then []
       else
@@ -1140,6 +1149,79 @@ def checkFailures (checks : List Check) : IO (List String) :=
     catch error =>
       return some s!"{check.name} ({error})"
 
+/-- The answers of the bracket walk over `contents` at every position, for
+each kind, side, direction, escapedness and whether quoted brackets are
+passed over, in that order: the question asked and the answer. -/
+def unmatchedEverywhere (contents : String)
+    (answer : Bracket → Bool → Bool → Bool → Bool → Nat → IO (Option Nat)) :
+    IO (Array (String × Option Nat)) := do
+  let mut answers := #[]
+  for offset in
+    (List.range (contents.utf8ByteSize + 1)).filter fun offset =>
+      (String.Pos.Raw.mk offset).IsValid contents do
+    for bracket in [Bracket.round, .square, .curly] do
+      for opening in [false, true] do
+        for forward in [false, true] do
+          for escaped in [false, true] do
+            for skipQuoted in [false, true] do
+              let question :=
+                s!"{repr contents} {bracket.opening} opening {opening} forward {forward} escaped {escaped} skipQuoted {skipQuoted} from {offset}"
+              answers :=
+                answers.push (question, ← answer bracket opening forward escaped skipQuoted offset)
+  return answers
+
+/-- What only a run against both shows: that the real binding's bracket walk
+and the model's agree at every position of texts with quotes. The contract's
+tables pin the quote rule at the cases they name, and its every-position
+property only what any answer must be, so two ports of the rule could
+disagree at an offset no table names; this check compares them there. A
+disagreement fails the check with the first question the two answer
+differently. -/
+def pairChecks : List Check :=
+  [{  name :=
+        "at every position of texts with quotes, for each kind, side, direction, escapedness and whether quoted brackets are passed over, the real bracket walk answers what the text model does"
+      run := do
+        for contents in TextContract.bracketText :: TextContract.quotedBracketTexts do
+          let model ←
+            unmatchedEverywhere contents fun bracket opening forward escaped skipQuoted offset =>
+                match
+                  TextModel.unmatched? contents bracket opening forward escaped skipQuoted
+                    offset with
+                | .ok found => pure found
+                | .error error => throw (IO.userError s!"the model refused: {repr error}")
+          let (real, _) ←
+            (do
+                    let text ← createText contents
+                    let mut found := #[]
+                    for offset in [0:contents.utf8ByteSize + 1] do
+                      if (String.Pos.Raw.mk offset).IsValid contents then
+                        for bracket in [Bracket.round, .square, .curly] do
+                          for opening in [false, true] do
+                            for forward in [false, true] do
+                              for escaped in [false, true] do
+                                for skipQuoted in [false, true] do
+                                  found :=
+                                    found.push
+                                      (←
+                                        text.unmatched bracket opening forward escaped skipQuoted
+                                            offset)
+                    return found : TextM (Array (Option Nat))).runReal
+                (← RealTexts.new)
+          let real ←
+            match real with
+            | .ok found =>
+              pure found
+            | .error error =>
+              throw (IO.userError s!"the binding refused: {repr error}")
+          if real.size != model.size then
+            return false
+          for ((question, expected), got) in model.toList.zip real.toList do
+            if expected != got then
+              throw
+                  (IO.userError
+                    s!"{question}: the model answers {repr expected}, the binding {repr got}")
+        return true }]
+
 /-- Plays `case` on the real text binding and the library's file service, on
 real files, and says what went wrong; `none` when the case held.
 
@@ -1827,6 +1909,145 @@ def environmentFailures (services : Job.Services) (fixtures : System.FilePath) :
   finally
     IO.FS.removeDirAll directory
 
+/-! ## The workspace finder over the real process and file services -/
+
+/-- A temporary directory of its own for `check`, with its real path, so that
+what the git fixture prints names it as the finder does; removed
+afterwards, whatever happened. -/
+def withBase {α : Type} (check : System.FilePath → IO α) : IO α := do
+  let directory ← IO.FS.createTempDir
+  try
+    check (← IO.FS.realPath directory)
+  finally
+    IO.FS.removeDirAll directory
+
+/-- Writes `content` as the file `path`, with the directories on the way. -/
+def writeMaking (path : System.FilePath) (content : String) : IO Unit := do
+  if let some parent := path.parent then
+    IO.FS.createDirAll parent
+  IO.FS.writeFile path content
+
+/-- Writes the git fixture's file for `repository` in its top level: the
+three lines rev-parse prints there (`tests/workspaces/README`), and its
+`origin`, if it has one. -/
+def writeRepository (repository : Workspace.Repository) : IO Unit := do
+  writeMaking (repository.toplevel / "fixture-git")
+      ((String.fromUTF8? repository.revParsed).getD "")
+  if let some origin := repository.origin then
+    writeMaking (repository.toplevel / "fixture-origin") s!"{origin}\n"
+
+/-- Writes `world` to disk, for the finder's run over the real services: each
+repository's fixture files, each marker file, empty, each marker directory,
+and each directory of `asked`. -/
+def materialize (world : Workspace.World) (asked : Array System.FilePath) : IO Unit := do
+  for repository in world.repositories do
+    writeRepository repository
+  for marker in world.markers do
+    writeMaking marker ""
+  for directory in world.markerDirectories ++ asked do
+    IO.FS.createDirAll directory
+
+/-- The git a property's finder runs over the real services: the fixture
+under `fixtures`, or, in a world with no git, a path under `base` where
+nothing is, which the process service refuses as `notFound`. -/
+def gitOf (world : Workspace.World) (fixtures base : System.FilePath) : String :=
+  if world.git then (fixtures / "git").toString else (base / "no-git").toString
+
+/-- The names of the workspace finder's contract properties
+(`Editor/Workspace/Contract.lean`) that do not hold of `Workspace.find`
+over the library's process and file services, each world written out in a
+temporary directory of its own, with git standing in as the fixture under
+`fixtures` (`tests/workspaces`); and that every child it ran is reaped. -/
+def workspaceFailures (services : Job.Services) (fixtures : System.FilePath) : IO (List String) :=
+  do
+  let before ← Ffi.processesPending
+  let failed ←
+    (Workspace.FinderContract.properties "/").filterMapM fun named =>
+        withBase fun base => do
+          let some property :=
+            (Workspace.FinderContract.properties base).find? (·.name == named.name)
+            | return some named.name
+          materialize property.world (property.asked.map (·.1))
+          let outcome ← runOnTimers services (property.holds (gitOf property.world fixtures base))
+          return if outcome == .finished true then none
+            else some s!"{property.name} ({repr outcome})"
+  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  return failed.map (s!"the workspace finder over the process and file services: {·}") ++
+      if reaped then [] else ["every child the workspace finder ran is reaped"]
+
+/-- Whether `Workspace.find`, with git standing in as the fixture under
+`fixtures`, answers each directory of `asked` with its answer, over
+`services`; and that every child it ran is reaped. -/
+def findsThrough (services : Job.Services) (fixtures : System.FilePath)
+    (asked : List (System.FilePath × Option Workspace.Found)) : IO Bool := do
+  let before ← Ffi.processesPending
+  let outcome ←
+    runOnTimers services do
+        let found ←
+          asked.mapM fun (directory, _) =>
+              Workspace.find { git := (fixtures / "git").toString } directory
+        return found == asked.map (·.2)
+  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  return outcome == .finished true && reaped
+
+/-- The tree of the workspace checks under `base`: a main checkout `main`,
+whose `.git` is a directory, a worktree-shaped `wt`, whose `.git` is a file,
+of the same common directory, each with a `src` directory and the git
+fixture's file, and `plain`, which holds only `Cargo.toml` and a `src`
+directory. -/
+def writeWorkspaceTree (base : System.FilePath) : IO Unit := do
+  IO.FS.createDirAll (base / "main" / ".git")
+  IO.FS.createDirAll (base / "main" / "src")
+  writeMaking (base / "main" / "fixture-git") s!"{base / "main"}\n{base / "main" / ".git"}\nmain\n"
+  writeMaking (base / "wt" / ".git") s!"gitdir: {base / "main" / ".git" / "worktrees" / "wt"}\n"
+  IO.FS.createDirAll (base / "wt" / "src")
+  writeMaking (base / "wt" / "fixture-git") s!"{base / "wt"}\n{base / "main" / ".git"}\nfeature\n"
+  writeMaking (base / "plain" / "Cargo.toml") ""
+  IO.FS.createDirAll (base / "plain" / "src")
+
+/-- What the workspace finder shows over the real process and file
+services, with git standing in as the fixture under `fixtures`
+(`tests/workspaces`): a main checkout and a worktree-shaped directory are
+two workspaces of one project, as the models say. Each check works in a
+temporary directory of its own, which it removes, and none sets a variable
+of the test process or changes its working directory. -/
+def workspaceChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
+  [{  name :=
+        "over the real process and file services, a main checkout and a worktree-shaped directory resolve to two workspaces, with the fixture's branches, of one project identified by the common git directory; a directory with only a marker resolves through it"
+      run :=
+        withBase fun base => do
+          writeWorkspaceTree base
+          let commonDir := base / "main" / ".git"
+          let project : Project :=
+            { identity := .commonDir commonDir, name := "main", commonDir := some commonDir }
+          findsThrough services fixtures
+              [(base / "main" / "src",
+                  some { root := base / "main", branch := some (.named "main"), project }),
+                (base / "wt" / "src",
+                  some { root := base / "wt", branch := some (.named "feature"), project }),
+                (base / "plain" / "src", some (Workspace.Found.ofMarker (base / "plain")))] },
+    { name :=
+        "over the real process and file services, with an origin for each, the main checkout and the worktree-shaped directory share the project of the normalised origin"
+      run :=
+        withBase fun base => do
+          writeWorkspaceTree base
+          let origin := "git@github.com:o/r.git"
+          writeMaking (base / "main" / "fixture-origin") s!"{origin}\n"
+          writeMaking (base / "wt" / "fixture-origin") "https://github.com/o/r\n"
+          let commonDir := base / "main" / ".git"
+          let project (remote : String) : Project :=
+            { identity := .remote "github.com/o/r", name := "r", remote := some remote
+              commonDir := some commonDir }
+          findsThrough services fixtures
+              [(base / "main" / "src",
+                  some
+                    { root := base / "main", branch := some (.named "main"),
+                      project := project origin }),
+                (base / "wt" / "src",
+                  some
+                    { root := base / "wt", branch := some (.named "feature")
+                      project := project "https://github.com/o/r" })] }]
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
@@ -1835,9 +2056,11 @@ timer service, the display interface's against the recorder and the watch
 port's against its real binding, then shuts down: exits 0 when everything
 holds, and 1 after naming on stderr what does not.
 
-Its one argument is the directory of the fixtures a child's environment is
-looked up with (`tests/process-environment`), made absolute here; any other
-command line is status 2, with the usage on stderr.
+Its two arguments are the directory of the fixtures a child's environment
+is looked up with (`tests/process-environment`) and the directory of the
+fixture that stands in for git in the workspace finder's checks
+(`tests/workspaces`), each made absolute here; any other command line is
+status 2, with the usage on stderr.
 
 The pool's threads are learnt first, by warming it, before anything else
 runs: the check that the pump is not one of the pool's tasks compares
@@ -1845,13 +2068,15 @@ against them. Then the completion pump runs on a dedicated task for the rest
 of the run. Shutdown is quit, which must end the pump, then an explicit
 exit: a task that failed a check may still be blocked in the library. -/
 def main (arguments : List String) : IO UInt32 := do
-  -- The fixtures of the environment checks, made absolute here, at the edge.
-  let fixtures ←
+  -- The fixtures of the environment checks and of the workspace checks, made
+  -- absolute here, at the edge.
+  let (fixtures, workspaceFixtures) ←
     match arguments with
-    | [directory] =>
-      IO.FS.realPath directory
+    | [directory, workspaces] =>
+      pure (← IO.FS.realPath directory, ← IO.FS.realPath workspaces)
     | _ =>
-      IO.eprintln "usage: contract-test <the directory of the process-environment fixtures>"
+      IO.eprintln
+          "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures>"
       return 2
   let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
   let completions ← Editor.Job.Completions.new
@@ -1866,7 +2091,9 @@ def main (arguments : List String) : IO UInt32 := do
       processes :=
         Editor.Job.realProcesses completions (← Editor.Job.RefusedRuns.new) timers
           (← Editor.Job.TimedRuns.new)
-      fileWatches := Editor.Job.realFileWatches completions (← Editor.Job.RealWatches.new) }
+      fileWatches := Editor.Job.realFileWatches completions (← Editor.Job.RealWatches.new)
+      diffs :=
+        Editor.Job.realDiffs completions published.reader held (← Editor.Job.RefusedDiffs.new) }
   let pump ← IO.asTask (prio := .dedicated) (Editor.Job.pump completions)
   let properties := Editor.TextContract.properties
   -- The undo tree's cases run through the same binding, so the count of
@@ -1874,6 +2101,8 @@ def main (arguments : List String) : IO UInt32 := do
   let cases := Editor.UndoTreeCases.cases
   let adoptProperties := Editor.TextContract.adoptProperties
   let textFailed ← ContractTest.failures (properties ++ cases) adoptProperties
+  let pairChecks := ContractTest.pairChecks
+  let pairCheckFailed ← ContractTest.checkFailures pairChecks
   let jobFailed ← ContractTest.jobFailures services
   let fileFailed ← ContractTest.fileFailures services held
   let processFailed ← ContractTest.processFailures services
@@ -1881,6 +2110,9 @@ def main (arguments : List String) : IO UInt32 := do
   let processCheckFailed ← ContractTest.checkFailures processChecks
   let environmentChecks := ContractTest.environmentChecks services fixtures
   let environmentFailed ← ContractTest.environmentFailures services fixtures
+  let workspaceFailed ← ContractTest.workspaceFailures services workspaceFixtures
+  let workspaceChecks := ContractTest.workspaceChecks services workspaceFixtures
+  let workspaceCheckFailed ← ContractTest.checkFailures workspaceChecks
   let fileWatchFailed ← ContractTest.fileWatchFailures services
   let fileWatchChecks := ContractTest.fileWatchChecks services
   let fileWatchCheckFailed ← ContractTest.checkFailures fileWatchChecks
@@ -1912,9 +2144,12 @@ def main (arguments : List String) : IO UInt32 := do
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
   let failed :=
-    textFailed.map (s!"the real text binding: {·}") ++ jobFailed ++ fileFailed ++ processFailed ++
+    textFailed.map (s!"the real text binding: {·}") ++ pairCheckFailed ++ jobFailed ++ fileFailed ++
+      processFailed ++
       processCheckFailed ++
       environmentFailed ++
+      workspaceFailed ++
+      workspaceCheckFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
       checkFailed ++
@@ -1939,6 +2174,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

@@ -18,13 +18,14 @@ check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
   `InputScheme.Report`), the shipped Vim scheme's cursor face and mode-line
   badge face of each of its states (`Vim.cursorFace`, `Vim.stateFace`),
   the mode line's faces (`ModeLine.bufferFace`, `ModeLine.modifiedFace`,
-  `ModeLine.secondaryFace`, `ModeLine.inactiveFace`,
-  `Editor/ModeLine.lean`), and the loop's minibuffer fields
-  (`Loop.promptFace`, `Loop.candidateFace`, `Loop.chosenFace`).
+  `ModeLine.changedFace`, `ModeLine.secondaryFace`, `ModeLine.inactiveFace`,
+  `Editor/ModeLine.lean`), the loop's minibuffer fields
+  (`Loop.promptFace`, `Loop.candidateFace`, `Loop.chosenFace`), and the
+  matches of the last search (`Loop.searchMatchFace`).
 - **What is declared ahead.** The faces of features not built yet, so a
   shipped theme colours them before the feature lands: one `syntax.` face
   for each top-level name of tree-sitter's
-  common highlight captures; diff, gutter, search and review faces; and a
+  common highlight captures; diff, gutter and review faces; and a
   block header. A dotted capture such as `keyword.control` or
   `function.builtin` is not a vocabulary face: the rule that draws it in the
   face of its first component is `Highlight.faceOf`'s
@@ -115,6 +116,9 @@ def vocabulary : Array Entry :=
       { name := ⟨"mode-line.modified"⟩
         meaning :=
           "The mark the `modified` segment shows while the buffer is modified (`ModeLine.modifiedFace`)." },
+      { name := ⟨"mode-line.changed"⟩
+        meaning :=
+          "The mark the `changed` segment shows while a check has found the buffer's file changed on disk (`ModeLine.changedFace`)." },
       { name := ⟨"mode-line.secondary"⟩
         meaning :=
           "What recedes in a mode line: the directory, the major mode, line:col and the position (`ModeLine.secondaryFace`)." },
@@ -141,7 +145,8 @@ def vocabulary : Array Entry :=
         meaning :=
           "The gutter beside a view's text, and its line numbers and marks: declared ahead." },
       { name := ⟨"search-match"⟩
-        meaning := "A match of the search in force: drawn by search, declared ahead." },
+        meaning :=
+          "A match of the last search in a view's text, drawn by the loop as a decoration (`Loop.searchMatchFace`)." },
       { name := ⟨"review-unexamined"⟩
         meaning :=
           "Text a review has not examined yet: drawn by the excerpts-and-review roadmap, declared ahead." },

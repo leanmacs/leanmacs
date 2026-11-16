@@ -1,4 +1,5 @@
 import Editor.Api.Theorems
+import Editor.Buffers
 import Editor.Command.Append
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
@@ -61,7 +62,11 @@ and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
 ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The file
 commands come with `Editor/Ex.lean`, whose save-and-quit command calls
-`Files.save`. The frame's commands are here too
+`Files.save`. The buffer commands are here too (`Editor/Buffers.lean`):
+`Buffers.switchCommand`, `Buffers.listCommand` and `Buffers.closeCommand`,
+which switch a window to another buffer, list the open buffers and close
+one; their registrations (`Editor/Buffers/Compiled.lean`) are not
+imported. The frame's commands are here too
 (`Editor/FrameCommands.lean`): `toggle-fullscreen` and `minimise-window`,
 which ask the platform's window through the display; their registrations
 and default bindings (`Editor/FrameCommands/Compiled.lean`) are not
@@ -96,9 +101,11 @@ config's hands it the vocabulary that ships, or that vocabulary with
 motions of its own added (`Evil.move (Evil.motions.push mine)`). The
 operators are here too (`Editor/Evil/Operators.lean`, with the registers
 they set in `Editor/Evil/Registers.lean`): the operate command is a
-function of the operators and the motions it looks names up in
-(`Evil.operate Evil.operators Evil.motions`). That module brings the
-commands and the motions with it. Undo and redo, which place the cursor a
+function of the operators, the motions and the text objects it looks names
+up in (`Evil.operate Evil.operators Evil.motions Evil.objects`), and the
+text objects and their select command are in `Editor/Evil/Objects.lean`.
+That module brings the commands, the motions and the text objects with
+it. Undo and redo, which place the cursor a
 step of the history hands back, are in `Editor/Evil/Undo.lean`, and dot
 repeat, which replays the change the Vim scheme hands it with the command
 the registry holds for the change's name, in `Editor/Evil/Repeat.lean`:
@@ -129,6 +136,19 @@ in faces. A major mode says how its text is parsed and drawn
 (`Mode.SyntaxTree`), and setting it asks the port
 (`Editor/Highlight.lean`, which comes with the loop's dispatch). Its model
 and contract are for tests, and are not imported.
+
+Projects, workspaces and locations are here too (`Editor/Workspace.lean`):
+which codebase and which checkout a buffer belongs to, as plain values,
+and the finder that answers a directory's workspace through config, git
+and marker files (`Editor/Workspace/Finder.lean`, `Workspace.find`), a job
+like any other. A buffer's workspace is attached when its file opens
+(`Editor/Workspace/Attach.lean`, which comes with the file commands and
+brings the data and the finder with it), and
+`workspace-current` says it; their registrations
+(`Editor/Workspace/Compiled.lean`) name the registry and are not
+imported. Its model and its contract
+(`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
+tests, and are not imported.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

@@ -1,3 +1,4 @@
+import Editor.Api
 import Editor.Vocabulary
 
 /-!
@@ -30,6 +31,12 @@ means, and what a motion does when it cannot go the whole way, is Vim's
 | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
 | `line-end` | `rowsDown (count - 1)`, then `lineEnd` | The end of the line `count - 1` lines below. With fewer lines below it goes to the last line's end. On the last line with a count above 1 it does not move, which is Vim's failed motion |
 | `first-line`, `last-line` | `offsetOf` of the row's start, then `lineFirstNonBlank` | The line number, from 1, stopped at the last line. With none: the first line, and the last |
+| `find-forward`, `find-backward`, `till-forward`, `till-backward` | The line's cells (`lineCells`: `slice` from `lineStart` to `lineEnd`), walked from the cursor (`foundIn`) | The `count`th occurrence of the character the argument names. A till stops one cell short, and with the character beside the cursor it does not move |
+| `find-again`, `find-again-reverse` | The last find (`EditorState.lastFind`), and for the second in the other direction | As the find it runs; a till with a count of 1 passes over the character beside the cursor (Vim's `cpo` without `;`) |
+| `search-forward`, `search-backward` | The text port's `search` of the pattern the argument names, or the last search's when it is empty or absent | The `count`th match, each step from the last. Every step must find one |
+| `search-next`, `search-previous` | The same, of the last search (`EditorState.lastSearch`), in its direction and in the other | As above |
+| `word-search-forward`, `word-search-backward` | The same, of the word under the cursor as a whole word (`starWord`, `starPattern`), from the word's start | As above |
+| `matching-bracket` | The first bracket of the line at or after the cursor (`lineCells`), then the text port's `unmatched` walk to its partner, counting only brackets of its escapedness | With a count, Vim's `N%`: the first non-blank of the line `(N * lines + 99) / 100`. A count above 100 fails |
 
 What each says of itself for an operator (`Editor/Vocabulary.lean`,
 "Motions"; what an operator then takes is `Editor/Evil/Operators.lean`):
@@ -45,6 +52,11 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
 | `line-first-non-blank` | exclusive | On a line of blanks only, the line's last blank | Never |
 | `line-end` | inclusive | | With a count above 1 on the last line |
 | `first-line`, `last-line` | lines | | Never |
+| `find-forward`, `till-forward` | inclusive | | With fewer occurrences in the line than the count, and with no argument: where it starts |
+| `find-backward`, `till-backward` | exclusive | | The same |
+| `find-again`, `find-again-reverse` | that of the find it runs: inclusive forward, exclusive back | | As the find it runs, and with no last find |
+| The six searches | exclusive | | With no match (`E486`), a pattern the syntax refuses (its sentence), no last search to repeat (`E35`), and for `*` and `#` no word in the line (`E348`): where it starts, saying why |
+| `matching-bracket` | inclusive | With a count, the line it goes to, as whole lines | With no bracket on the line at or after the cursor, with no partner, and with a count above 100: where it starts, saying nothing |
 
 - **The last line** (`lastLine`) is the last row a cursor may rest in
   outside insert state: the row before the empty last row of a text that
@@ -78,6 +90,28 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
   - **A cursor on a tab counts at the tab's first column**, where Vim's
     counts at its last: the x the display answers for a position is where
     its character starts. A recorded departure.
+- **A find hands back the find it made** (`Vocabulary.To.find`), also
+  when it fails, for its caller to keep as the last find; `;` and `,` read
+  it from the editor state (`editorState`) and hand back none, so the last
+  find is kept as it was, its direction included. A find never leaves the
+  line.
+- **A search hands back the search it made** (`Vocabulary.To.search`), its
+  pattern and direction, also when it fails, for its caller to keep as the
+  last search; `n` and `N` hand back none, so `N` does not change the
+  direction kept. A search that wraps says Vim's warning
+  (`wrapWarning`), and one that fails says why (`Vocabulary.To.said`).
+- **`*` and `#` search from the word's start**, as Vim moves the cursor
+  there first, and an operator still takes from the cursor. The word is
+  the first of: the keyword under the cursor, the first keyword after it
+  in the line, the run of punctuation under the cursor and the first one
+  after it; a keyword is a run of word characters (`wordCharacter`), and
+  punctuation is what is neither that nor a blank, which is Vim's
+  `find_ident_under_cursor` with the text's word class for `iskeyword`.
+- **`%` passes over brackets Vim guesses are quoted**, as Vim's default
+  `cpoptions` does (the text port's `unmatched` with `skipQuoted`). It
+  departs from that default in one way, recorded: it matches the brackets
+  `( [ { } ] )` only, and not `/* */` or `#if`, `#else` and `#endif`,
+  which are syntax's or a plugin's.
 - **What a word is is the text port's** (`Editor/Text.lean`): a run of word
   characters or of punctuation, or the line break of an empty line; a WORD
   is a run of characters that are not blank. It is Vim's on ASCII and not
@@ -364,10 +398,350 @@ def firstLine : Vocabulary.Motion :=
 def lastLineMotion : Vocabulary.Motion :=
   toLine "last-line" true
 
+/-- The cells of the line of `head` in `text`, each with the offset it
+starts at: its characters up to where its content ends, without its line
+break. -/
+def lineCells (text : TextId) (head : Nat) : TextM (Array (Nat × String)) := do
+  let start ← text.motion .lineStart head
+  let line ← text.slice start (← text.motion .lineEnd head)
+  let mut offset := start
+  let mut cells := #[]
+  for char in line.toList do
+    cells := cells.push (offset, char.toString)
+    offset := offset + char.utf8Size
+  return cells
+
+/-- Where `find` leads among `cells`, the cells of a line, from `head`,
+`count` times: the offset of the `count`th cell after `head` (before it,
+going back) that holds the character, or of the cell next to that one on
+the side of `head` for a till; `none` when the line has fewer. With
+`skipNext`, the cell next to `head` is passed over, which is Vim's rule for
+`;` and `,` after a till with a count of 1 (`cpo` without `;`): the cursor
+moves although the character is right beside it. -/
+def foundIn (cells : Array (Nat × String)) (head : Nat) (find : Find) (count : Nat)
+    (skipNext : Bool) : Option Nat :=
+  let indexed := (List.range cells.size).zip cells.toList
+  let ahead :=
+    if find.forward then indexed.filter (·.2.1 > head) else (indexed.filter (·.2.1 < head)).reverse
+  let ahead := if skipNext then ahead.drop 1 else ahead
+  match (ahead.filter (·.2.2 == find.char))[count - 1]? with
+  | none => none
+  | some (index, (offset, _)) =>
+    if !find.till then some offset
+    else
+      if find.forward then (cells[index - 1]?.map (·.1)).filter (· ≥ head)
+      else some ((cells[index + 1]?.map (·.1)).getD head)
+
+/-- How an operator takes a find: through the cell it leads to going
+forward, and up to it going back. -/
+def findReach (find : Find) : Vocabulary.Reach :=
+  if find.forward then .inclusive else .exclusive
+
+/-- Where `find` leads in the line of the head of `origin`, `count` times, 1
+with no count (`foundIn`). It has failed, and stays where it is, when the
+line has fewer. -/
+def findTarget (text : TextId) (origin : Vocabulary.From) (find : Find) (skipNext : Bool) :
+    TextM Vocabulary.To := do
+  let cells ← lineCells text origin.head
+  match foundIn cells origin.head find (origin.count.getD 1) skipNext with
+  | some head =>
+    return { head }
+  | none =>
+    return { head := origin.head, failed := true }
+
+/-- The motion called `name` to the character its argument names, in the
+line: forward when `forward` and back otherwise, onto it, or one cell short
+of it for a till. It hands the find back to be kept as the last one, also
+when it fails. With no argument it fails where it is and hands back none. -/
+def charFind (name : String) (forward till : Bool) : Vocabulary.Motion :=
+  { name
+    reach := if forward then .inclusive else .exclusive
+    target := fun text origin => do
+      let some char := origin.argument | return { head := origin.head, failed := true }
+      let find : Find := { char, forward, till }
+      return { (← findTarget text origin find false) with find := some find } }
+
+/-- To the `count`th character the argument names after the cursor in the
+line. An operator takes the cell there. -/
+def findForward : Vocabulary.Motion :=
+  charFind "find-forward" true false
+
+/-- To the `count`th character the argument names before the cursor in the
+line. -/
+def findBackward : Vocabulary.Motion :=
+  charFind "find-backward" false false
+
+/-- To one cell before the `count`th character the argument names after the
+cursor in the line. An operator takes the cell there. -/
+def tillForward : Vocabulary.Motion :=
+  charFind "till-forward" true true
+
+/-- To one cell after the `count`th character the argument names before the
+cursor in the line. -/
+def tillBackward : Vocabulary.Motion :=
+  charFind "till-backward" false true
+
+/-- The last find, as `;` repeats it, and in the other direction when
+`reverse`, as `,` does: none when no find was made. -/
+def lastFindOf (reverse : Bool) : EditorM (Option Find) := do
+  return (← editorState).lastFind.map fun find =>
+      if reverse then { find with forward := !find.forward } else find
+
+/-- Where the last find leads again, in the other direction when `reverse`,
+taken as the motion it is: a till with a count of 1 passes over the cell
+next to the cursor, as Vim's `;` does under its default `cpo`. It fails
+where it is with no last find, and hands back no find: the last one is
+kept as it was, its direction included. -/
+def findAgainTaken (reverse : Bool) (text : TextId) (origin : Vocabulary.From) :
+    EditorM Vocabulary.Taken := do
+  let some find ←
+    lastFindOf reverse | return { head := origin.head, reach := .exclusive, failed := true }
+  let to ← findTarget text origin find (find.till && origin.count.getD 1 == 1)
+  return { head := to.head, reach := findReach find, failed := to.failed }
+
+/-- The motion called `name` that repeats the last find, in the other
+direction when `reverse`. -/
+def findAgainMotion (name : String) (reverse : Bool) : Vocabulary.Motion :=
+  { name
+    target := fun text origin => do
+      let taken ← findAgainTaken reverse text origin
+      return { head := taken.head, failed := taken.failed }
+    taken := fun _ text origin => findAgainTaken reverse text origin }
+
+/-- Repeats the last find, Vim's `;`. -/
+def findAgain : Vocabulary.Motion :=
+  findAgainMotion "find-again" false
+
+/-- Repeats the last find in the other direction, Vim's `,`. -/
+def findAgainReverse : Vocabulary.Motion :=
+  findAgainMotion "find-again-reverse" true
+
+/-- What the echo area says when a search goes past the text's end, going
+forward, or its start, going back, to find its match: Vim's warnings. -/
+def wrapWarning (forward : Bool) : String :=
+  if forward then "search hit BOTTOM, continuing at TOP" else "search hit TOP, continuing at BOTTOM"
+
+/-- What a search with no match says: Vim's E486. -/
+def patternNotFound (pattern : String) : String :=
+  s!"E486: Pattern not found: {pattern}"
+
+/-- What a search says when there is no last search to repeat: Vim's E35. -/
+def noPreviousPattern : String :=
+  "E35: No previous regular expression"
+
+/-- What `*` and `#` say when the line has no word at or after the cursor:
+Vim's E348. -/
+def noStringUnderCursor : String :=
+  "E348: No string under cursor"
+
+/-- Where `search` leads in `text` from `start`, `count` times, each step from
+where the last one led: the start of each match the text port answers
+(`TextId.search`). Every step must find a match: one that finds none, or a
+pattern the syntax refuses, fails where the motion was, `head`, saying why
+(`patternNotFound`, or the syntax's sentence). A step that wraps still
+counts, and the warning is said (`wrapWarning`). It hands `search` back
+when `keeps`, to be kept as the last search, also when it fails, as Vim
+keeps the pattern. -/
+def searchSteps (text : TextId) (search : Search) (count : Nat) (head start : Nat) (keeps : Bool) :
+    TextM Vocabulary.To := do
+  let kept := if keeps then some search else none
+  let mut reached := start
+  let mut wrapped := false
+  for _ in [0:count] do
+    match ← text.search search.pattern search.forward reached with
+    | .found found _ wraps =>
+      reached := found
+      wrapped := wrapped || wraps
+    | .notFound =>
+      return { head, failed := true, said := some (patternNotFound search.pattern), search := kept }
+    | .invalid reason =>
+      return { head, failed := true, said := some reason, search := kept }
+  return {
+      head := reached, said := if wrapped then some (wrapWarning search.forward) else none
+      search := kept }
+
+/-- The motion called `name` to the next match of the pattern its argument
+names, forward when `forward` and back otherwise, `count` times: Vim's `/`
+and `?`. An empty pattern, and none, is the last search's pattern, in this
+motion's direction (Vim's `:help last-pattern`); with no last search it
+fails where it is (`noPreviousPattern`). It hands back the search it made,
+pattern and direction, to be kept as the last search. -/
+def searchMotion (name : String) (forward : Bool) : Vocabulary.Motion :=
+  { name
+    target := fun text origin => do
+      let pattern? :=
+        match origin.argument with
+        | some typed => if typed.isEmpty then none else some typed
+        | none => none
+      let pattern? := pattern? <|> (← editorState).lastSearch.map (·.pattern)
+      let some pattern :=
+        pattern? | return { head := origin.head, failed := true, said := some noPreviousPattern }
+      searchSteps text { pattern, forward } (origin.count.getD 1) origin.head origin.head true }
+
+/-- To the next match forward, Vim's `/`. -/
+def searchForward : Vocabulary.Motion :=
+  searchMotion "search-forward" true
+
+/-- To the match before, Vim's `?`. -/
+def searchBackward : Vocabulary.Motion :=
+  searchMotion "search-backward" false
+
+/-- The motion called `name` that repeats the last search, in its direction,
+or in the other when `reverse`: Vim's `n` and `N`. It hands back no search,
+so `N` does not change the direction kept. With no last search it fails
+where it is (`noPreviousPattern`). -/
+def searchAgain (name : String) (reverse : Bool) : Vocabulary.Motion :=
+  { name
+    target := fun text origin => do
+      let some last :=
+        (←
+            editorState).lastSearch | return { head := origin.head, failed := true, said := some noPreviousPattern }
+      let search := { last with forward := last.forward != reverse }
+      searchSteps text search (origin.count.getD 1) origin.head origin.head false }
+
+/-- Repeats the last search, Vim's `n`. -/
+def searchNext : Vocabulary.Motion :=
+  searchAgain "search-next" false
+
+/-- Repeats the last search in the other direction, Vim's `N`. -/
+def searchPrevious : Vocabulary.Motion :=
+  searchAgain "search-previous" true
+
+/-- Whether `cell`, a cell of a line's content, is a blank: a space or a tab. -/
+def isBlankCell (cell : String) : Bool :=
+  cell == " " || cell == "\t"
+
+/-- Whether `cell` holds a word character (`wordCharacter`). -/
+def isWordCell (cell : String) : Bool :=
+  cell.toList.all wordCharacter && !cell.isEmpty
+
+/-- The word `*` and `#` search for from `head`, among `cells`, the cells of
+its line, with the offset it starts at: the first of the keyword under the
+cursor, the first keyword after the cursor in the line, the run of
+characters that are neither blanks nor word characters under the cursor,
+and the first such run after it (Vim's `:help star`, with its `iskeyword`
+read as the text's word class). `none` when the line has none of the four
+at or after the cursor. -/
+def starWord (cells : Array (Nat × String)) (head : Nat) : Option (Nat × String) :=
+  let cursor := (cells.findIdx? (·.1 ≥ head)).getD cells.size
+  let punctuation (cell : String) := !isBlankCell cell && !isWordCell cell
+  -- The run of cells `inside` holds round the index `index`.
+  let run (index : Nat) (inside : String → Bool) : Nat × String :=
+    let before := ((cells.extract 0 index).toList.reverse.takeWhile (inside ·.2)).length
+    let first := index - before
+    let cellsOf := (cells.extract first cells.size).toList.takeWhile (inside ·.2)
+    (cells[first]!.1, String.join (cellsOf.map (·.2)))
+  let firstFrom (inside : String → Bool) : Option Nat :=
+    ((List.range (cells.size - cursor)).map (· + cursor)).find? fun index => inside cells[index]!.2
+  match firstFrom isWordCell with
+  | some index => some (run index isWordCell)
+  | none =>
+    match firstFrom punctuation with
+    | some index => some (run index punctuation)
+    | none => none
+
+/-- `word` as a pattern of literal characters: each of `\ / . * $ ^ ~ [`
+written with a backslash before it, with `\<` before it when it starts with
+a word character and `\>` after it when it ends with one. This is the
+pattern Vim's `*` builds (`nv_ident`). -/
+def starPattern (word : String) : String :=
+  let escaped :=
+    String.join
+      (word.toList.map fun char =>
+        if "\\/.*$^~[".toList.contains char then "\\" ++ char.toString else char.toString)
+  let starts := (word.toList.head?.map wordCharacter).getD false
+  let ends := (word.toList.getLast?.map wordCharacter).getD false
+  (if starts then "\\<" else "") ++ escaped ++ if ends then "\\>" else ""
+
+/-- The motion called `name` to the next whole-word occurrence of the word
+under the cursor (`starWord`), forward when `forward` and back otherwise,
+`count` times: Vim's `*` and `#`. The search starts from the word's start,
+as Vim moves the cursor there first, so `*` passes over the word under the
+cursor and `#` finds the occurrence before it; an operator still takes what
+lies from the cursor. It hands back the pattern (`starPattern`) and the
+direction as the last search. With no word it fails where it is
+(`noStringUnderCursor`). -/
+def wordSearch (name : String) (forward : Bool) : Vocabulary.Motion :=
+  { name
+    target := fun text origin => do
+      let cells ← lineCells text origin.head
+      let some (start, word) :=
+        starWord cells
+          origin.head | return { head := origin.head, failed := true, said := some noStringUnderCursor }
+      searchSteps text { pattern := starPattern word, forward } (origin.count.getD 1) origin.head
+          start true }
+
+/-- To the next occurrence of the word under the cursor, Vim's `*`. -/
+def wordSearchForward : Vocabulary.Motion :=
+  wordSearch "word-search-forward" true
+
+/-- To the occurrence before of the word under the cursor, Vim's `#`. -/
+def wordSearchBackward : Vocabulary.Motion :=
+  wordSearch "word-search-backward" false
+
+/-- The kind of bracket `cell` is, and whether it is the opening one, when it
+is one of `( [ { } ] )`. -/
+def bracketOf (cell : String) : Option (Bracket × Bool) :=
+  [Bracket.round, .square, .curly].findSome? fun bracket =>
+    if cell == bracket.opening.toString then some (bracket, true)
+    else if cell == bracket.closing.toString then some (bracket, false) else none
+
+/-- Where `%` leads in `text` from the head of `origin` ("Motions as built"),
+and how an operator takes it. With no count: the first bracket of the line at
+or after the cursor (`lineCells`), and then its partner, by the text port's
+walk (`TextId.unmatched`): forward to the closing bracket from an opening
+one and back to the opening one from a closing one, counting only brackets
+of the first one's escapedness, which is whether an odd number of
+backslashes is right before it. It fails where it is with no bracket on the
+line at or after the cursor, and with no partner. Taken inclusively.
+
+With a count, Vim's `N%`: the first non-blank of the line
+`(N * lines + 99) / 100`, of the text's lines, taken as whole lines. A count
+above 100 fails where it is. -/
+def matchingBracketTaken (text : TextId) (origin : Vocabulary.From) : TextM Vocabulary.Taken := do
+  let failed : Vocabulary.Taken := { head := origin.head, reach := .inclusive, failed := true }
+  match origin.count with
+  | some count =>
+    if count > 100 then
+      return failed
+    let last ← lastLine text
+    let row := min ((count * (last + 1) + 99) / 100 - 1) last
+    return { head := ← text.motion .lineFirstNonBlank (← text.offsetOf ⟨row, 0⟩), reach := .lines }
+  | none =>
+    let cells ← lineCells text origin.head
+    let found :=
+      (List.range cells.size).findSome? fun index =>
+        let (offset, cell) := cells[index]!
+        if offset ≥ origin.head then (bracketOf cell).map fun found => (index, offset, found)
+        else none
+    let some (index, offset, bracket, opening) := found | return failed
+    let backslashes := ((cells.extract 0 index).toList.reverse.takeWhile (·.2 == "\\")).length
+    let partner ← text.unmatched bracket (!opening) opening (backslashes % 2 == 1) true offset
+    match partner with
+    | some head =>
+      return { head, reach := .inclusive }
+    | none =>
+      return failed
+
+/-- To the bracket that matches the first one on the line at or after the
+cursor, Vim's `%`; with a count, to the line that many percent into the
+text (`matchingBracketTaken`). An operator takes it inclusively, or with a
+count as whole lines. -/
+def matchingBracket : Vocabulary.Motion :=
+  { name := "matching-bracket"
+    reach := .inclusive
+    target := fun text origin => do
+      let taken ← matchingBracketTaken text origin
+      return { head := taken.head, failed := taken.failed }
+    taken := fun _ text origin => matchingBracketTaken text origin }
+
 /-- The table the move command looks a motion's name up in: one entry for
 each name the Vim scheme's default tables bind a key to. -/
 def motions : Array Vocabulary.Motion :=
   #[left, down, up, right, wordForward, wordBackward, wordEnd, bigwordForward, bigwordBackward,
-    bigwordEnd, lineStart, lineFirstNonBlank, lineEnd, firstLine, lastLineMotion]
+    bigwordEnd, lineStart, lineFirstNonBlank, lineEnd, firstLine, lastLineMotion, findForward,
+    findBackward, tillForward, tillBackward, findAgain, findAgainReverse, searchForward,
+    searchBackward, searchNext, searchPrevious, wordSearchForward, wordSearchBackward,
+    matchingBracket]
 
 end Editor.Evil

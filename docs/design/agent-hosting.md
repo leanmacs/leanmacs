@@ -184,6 +184,14 @@ request is waiting loses nothing.
   shell three times because project identity was stored in several places
   that had to agree. Here a workspace has one canonical root, set at
   creation; everything else is derived from it.
+- **A session's workspace is a workspace of the editor's**
+  ([projects.md](projects.md)): its location is `local` for a worktree on
+  this machine, or `branchOnly`, the git remote and the branch, for a
+  remote session. A remote session registers its workspace with
+  `Workspace.register` (`StateRequest.registerWorkspace`), which puts it in
+  the project of its remote, beside the local checkouts of the same
+  repository; a location that is not local reports that it cannot read
+  files or run commands.
 
 ## Attention
 
@@ -205,6 +213,50 @@ executes. "Run this phase" is therefore: start an agent session in the right
 worktree with a prompt that invokes the skill, and record the plan item in
 the agent table. See review-and-navigation.md for the rdm client.
 
+## An agent's write under an open buffer
+
+An agent that goes through ACP writes to the buffer through the edit log
+("ACP", above), so it never races the editor. An agent that writes the file
+directly does, and so does any other program. What happens then (decided by
+the daily-driver floor's phase 5):
+
+- **Keep mine, and offer two explicit resolutions.** A buffer with unsaved
+  edits is never touched by a change on disk. The staleness check, one stat
+  as the window gains the focus, as the buffer is switched to and at its
+  first edit, marks it `[changed on disk]` in its status line and says the
+  two resolutions; a buffer with no unsaved edits has its first edit
+  refused once, naming `:e` (`lean/Editor/Loop.lean`, "Files that changed
+  on disk"). A plain save of it is refused, since the file is not the one
+  the buffer loaded (`lean/Editor/File.lean`, "A save says what it expects
+  to find").
+- **`:e!` takes theirs**: the file's text comes in as one edit, of origin
+  `disk`, made from a line diff of the buffer and the file
+  (`lean/Editor/Files.lean`, "Reload"), so `u` brings the buffer's own text
+  back. Taking theirs loses nothing.
+- **`:w!` writes mine over theirs**: the forced save, which expects
+  whatever is on disk.
+- **`:e`** on a buffer with no unsaved edits takes the file's text the same
+  way; with unsaved edits it is refused and says that `:e!` discards them.
+- **A diff of the two**, reviewed hunk by hunk, is the third resolution. It
+  waits for the Diff service's review UI (`rust-library.md`,
+  `review-and-navigation.md`) and is not built.
+
+Why: neither side is ever lost in silence (the file is untouched until
+`:w!`, and the buffer's text stays reachable by undo after `:e!`), and the
+choice stays with the person, which keeps the owner's rule that reloading
+is an explicit action.
+
+**The invariant**: the editor watches no file unless auto-reload is on,
+and it is off by default; the reload is explicit; a config's job may
+watch, as a plugin would (`FileWatch.start` is a job request config can
+use). With auto-reload on (`autoread`, or `autoReload` in `setup`), a
+follow job watches each file buffer's file and a change reloads a buffer
+with no unsaved edits, as Emacs's auto-revert does; a buffer with unsaved
+edits is only marked, and a file that is gone is marked and never reloaded
+(`lean/Editor/Loop.lean`, "Auto-reload"). `ModelTest.autoReloadChecks`
+pins that with the mode off no watch is open; the phase is
+`phase/daily-driver-floor/phase-5-follow-files-on-disk`.
+
 ## Open questions
 
 - **JSON throughput** of the ACP client in Lean under a fast-streaming
@@ -213,8 +265,6 @@ the agent table. See review-and-navigation.md for the rdm client.
 - **A detached supervisor**: should agent processes be children of the
   editor, or of a small separate process that outlives it, as VS Code now
   does? Persisted records plus resume may be enough at first.
-- **Agent writes and unsaved buffers**: when an agent writes a file that has
-  unsaved edits in the editor, who wins and how is the conflict shown?
 - **Context sharing**: how the selection, diagnostics and open files are
   offered to an agent.
 - **Usage and cost**: where it comes from (ACP usage updates, the agent's

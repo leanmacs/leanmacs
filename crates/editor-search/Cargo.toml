@@ -1,0 +1,13 @@
+[package]
+name = "editor-search"
+version = "0.1.0"
+description = "Search within a text: the pattern syntax and its parser, the Engine port with its fake and its contract, and the rule of which match a search answers"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency and no dev-dependency: the port names no regex library,
+# the parser is ours, and the rule of which match a search answers is
+# tested on the port's literal fake and on engines written in its tests.
+# The library that matches is behind the port, in `editor-search-regex`.
+[dependencies]

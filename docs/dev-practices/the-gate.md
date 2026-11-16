@@ -587,10 +587,12 @@ driver does not need it. The tests of the pool pin no size, so they pass
 whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, handed the directory
-`tests/process-environment` as its one argument (the fixtures that stand in
-for mise in the checks of a child's environment, which must stay
-executable), `config-test`, and
+linked against the real library, then `contract-test`, handed two
+directories: `tests/process-environment` (the fixtures that stand in for
+mise in the checks of a child's environment) and `tests/workspaces` (the
+fixture that stands in for git in the workspace finder's checks, which run
+the finder's contract over the real process and file services); each
+fixture must stay executable. Then `config-test`, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must
@@ -714,7 +716,10 @@ operation of the API makes of the library is answered the same by the model
 and by the binding. It also
 checks what only the real binding
 shows: the binding's table is the only holder of its documents and
-snapshots, and releasing one frees it at once. It
+snapshots, and releasing one frees it at once. It compares the binding's
+bracket walk with the text model's at every position of texts with quotes,
+for every kind, side, direction and escapedness, with quoted brackets
+passed over and not (`pairChecks`), since the quote rule is ported to both. It
 runs the job interface's contract the same way, against the job runner over
 the library's timer service, and checks what only the real service shows:
 jobs in real waits hold no thread, cancelling a job takes its timer out of

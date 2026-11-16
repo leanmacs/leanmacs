@@ -37,6 +37,14 @@ looks the motion's name up in, so the caller supplies the vocabulary.
   number, with 0 for none, as the Vim scheme lays a move out
   (`Editor/InputScheme/Vim.lean`, "Edits"). The count may be left out,
   which is no count, so a command of config's calls it with a name alone.
+  A motion's argument, when it has one, is the string right after the
+  name, before the count: `[.str "find-forward", .str "x", .nat 2]`.
+- **It keeps what the motion hands back to be remembered** and says what
+  it hands back to be said: the find it made as the last find
+  (`setLastFind`, `Vocabulary.To.find`) and the search it made as the last
+  search (`setLastSearch`, `Vocabulary.To.search`), also when the motion
+  failed, as Vim keeps them, and its `said` in the echo area: a search's
+  wrap warning or why it failed.
   A name with no entry says `<name>: no such motion` in the echo area and
   moves nothing.
 - **A call that names no motion says so, apart from a name with no
@@ -126,8 +134,11 @@ Insert state is a state whose selection is exclusive: a bar between
 characters. The commands here place the bar and insert at it; that what is
 typed in one session is one step of the history is the loop's
 (`Editor/Loop.lean`, "Insert sessions"), which leaves the buffer's undo
-group open while the scheme reports the view as in a session. Nothing here
-sets or clears a boundary.
+group open while the scheme reports the view as in a session. The one
+command here that sets a boundary inside a session is an arrow key's
+(`insertMove`, "Editing keys"), which sets it itself with
+`BufferId.closeGroup`, as `Editor/Api.lean` ("Undo") says a command that
+wants one does; no other sets or clears one.
 
 - **Four commands begin an insert**, each by moving the head and then
   entering the state ("Entering a state"; `enterAt`), which makes the
@@ -183,9 +194,45 @@ sets or clears a boundary.
   then left with `<Escape>`, the new line is the empty last row, where a
   cursor cannot rest ("Where a cursor rests"), so the cursor rests on the
   line above, where Vim's is on the new line.
-- **Not built: any other key in insert state** than `<Escape>` and the
-  keys that print. `RET`, `<Backspace>`, `<Tab>` and the arrow keys are
-  named keys, which print nothing, and do nothing there.
+
+### Editing keys
+
+The named keys of insert state that edit or move, each a command of its
+call that acts on the primary range of its target's selection and names no
+Vim state. Each follows Vim 9.1 with its default options:
+
+| Key | Command | What it does |
+|---|---|---|
+| `<Backspace>` | `deleteBackward` | Deletes the cell before the bar (`previousCell`, so a carriage return and line feed, or a character of several bytes, goes whole). At a line's start it joins the line to the one above, and it deletes past where the insert began: Vim's `i_<BS>` under `backspace=indent,eol,start`. At the text's start it deletes nothing |
+| `RET` | `newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent` |
+| `TAB` | `insertTab` | Inserts a tab character: Vim's `noexpandtab` and `softtabstop=0` |
+| `<ArrowLeft>`, `<ArrowRight>`, `<ArrowUp>`, `<ArrowDown>` | `insertMove motions` with `left`, `right`, `up`, `down` | The move command by that motion, with no count. Left and right stop at the line's start and where its content ends, so neither wraps (`whichwrap=b,s`); up and down keep the wanted column across short lines |
+
+- **An arrow key that moves starts a new step of the history**, as Vim
+  9.1's `ins-special-special` says: once the head moved, `insertMove` sets
+  the boundary in the buffer's history (`BufferId.closeGroup`), so what was
+  edited before the key and after it are undone separately. A move that
+  fails, left at a line's start or up on the first line, gives the command
+  up (`cannotMove`, said in the echo area where Vim beeps), so it sets no
+  boundary and the loop puts the scheme back as it was before the key.
+  Placing a marker is no edit, so closing the group after the move is the
+  same as before it.
+- **Backspace, Enter and Tab join the session's step.** Their keys are
+  bound as commands that change no text for the grammar, so none becomes
+  the last change.
+- **Dot repeat replays the keys as Vim 9.1's does**
+  (`Editor/InputScheme/Vim.lean`, "The last change";
+  `Editor/Evil/Repeat.lean`). `<Backspace>`, `RET` and `TAB` are kept in
+  the text recorded for the last change, in the order typed, and `.` runs
+  them again: a `<Backspace>` deletes the cell before the bar, past where
+  the insert began too, `RET` breaks the line with the buffer's line ending,
+  and `TAB` inserts a tab. An arrow key that moved restarts the change as
+  `i` once something is typed after it, with the text typed from there on:
+  `ins-special-special`'s "only the last change can be redone and always
+  behaves like an i command". With nothing typed after it, and when it did
+  not move, the change is as it was.
+- **Not built: the other keys of Vim's insert state** (`C-w`, `C-u`,
+  `C-o`, `C-r`, `<Home>`, `<End>`, ...): they do nothing there.
 
 ## Where a cursor rests
 
@@ -312,6 +359,12 @@ motion of (`noSuchMotion`), so it says what the command expects. -/
 def noMotionNamed : String :=
   "move: no motion named (expects a motion's name, then an optional count)"
 
+/-- What the operate command gives up with, or breaks off with, when the
+motion called `name` could not be made, and what an arrow key of insert
+state's gives up with when its move did not move the cursor. -/
+def cannotMove (name : String) : String :=
+  s!"{name} cannot move"
+
 /-- What the command typed text runs says in the echo area when it is called
 with no string to insert. -/
 def noText : String :=
@@ -329,12 +382,16 @@ from the editor state. A call that names no motion (`noMotionNamed`) and a
 name with no motion (`noSuchMotion`) are each said in the echo area, and
 nothing moves. -/
 def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
-  let named : Option (String × Option Nat) :=
-    match call.arguments with
-    | .str name :: .nat count :: _ => some (name, if count == 0 then none else some count)
-    | .str name :: _ => some (name, none)
+  let counted (rest : List Argument) : Option Nat :=
+    match rest with
+    | .nat count :: _ => if count == 0 then none else some count
     | _ => none
-  let some (name, count) := named | message noMotionNamed
+  let named : Option (String × Option String × Option Nat) :=
+    match call.arguments with
+    | .str name :: .str argument :: rest => some (name, some argument, counted rest)
+    | .str name :: rest => some (name, none, counted rest)
+    | _ => none
+  let some (name, argument, count) := named | message noMotionNamed
   let some motion := motions.find? (·.name == name) | message (noSuchMotion name)
   let text := call.target.buffer.text
   let view := call.target.window.id
@@ -346,12 +403,18 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let kept := ((← editorState).window? view).bind (·.wanted)
   -- The kept column holds only while the cursor is where it was kept.
   let wanted := (kept.filter (·.head == range.head)).map (·.column)
-  let raw ← motion.target text { head := range.head, count, wanted }
+  let raw ← motion.target text { head := range.head, count, wanted, argument }
   let head ← rested (restOf call.report) text raw.head
   let anchor := if call.report.selecting then range.anchor else head
   call.target.select { ranges := #[⟨anchor, head⟩], shape := call.report.shape }
   let keeps := if head == range.head then raw.unmoved else raw.wanted
   discard <| view.setWanted (keeps.map fun column => { column, head })
+  if let some find := raw.find then
+    setLastFind find
+  if let some search := raw.search then
+    setLastSearch search
+  if let some said := raw.said then
+    message said
 
 /-- Enters the Vim state the call's report says, with the head first put
 where `place` leads from where it is ("Entering a state", in the module
@@ -468,5 +531,44 @@ def selfInsert (call : Call) : EditorM Unit := do
     call.target.insertAtSelections text
   | _ =>
     message noText
+
+/-- The command `<Backspace>` runs in insert state, as it is called
+("Editing keys", in the module docs): the cell before the head of the
+primary range of the target's selection is deleted, a line break or a
+character of several bytes whole, as one transaction that carries the
+selection before and the cursor after. At the text's start the extent is
+empty and nothing changes. -/
+def deleteBackward (call : Call) : EditorM Unit := do
+  let selection ← call.target.selection
+  let some range := selection.ranges[selection.primary]? | throw .badSelection
+  -- At the text's start the cell before is none: the extent is empty.
+  let start ← call.target.buffer.text.motion .previousCell range.head
+  call.target.replaceExtents selection #[⟨start, range.head⟩] ""
+
+/-- The command `RET` runs in insert state, as it is called: the line is
+broken at the bar with the buffer's own line ending
+(`Target.insertLineBreak`), with no indent. -/
+def newline (call : Call) : EditorM Unit :=
+  call.target.insertLineBreak
+
+/-- The command `TAB` runs in insert state, as it is called: a tab character
+is inserted at the bar. -/
+def insertTab (call : Call) : EditorM Unit :=
+  call.target.insertAtSelections "\t"
+
+/-- The command an arrow key runs in insert state, as it is called ("Editing
+keys", in the module docs): the move command over `motions` by the motion
+`name`, with no count, and then, when the head moved, a boundary in the
+buffer's history, so that what was edited before the key and after it are
+two steps, as in Vim 9.1. A move that fails gives the command up with
+`cannotMove`, so the scheme does not restart the last change for it. -/
+def insertMove (motions : Array Vocabulary.Motion) (name : String) (call : Call) : EditorM Unit :=
+  do
+  let head (selection : Selection) := (selection.ranges[selection.primary]?).map (·.head)
+  let before := head (← call.target.selection)
+  move motions { call with arguments := [.str name, .nat 0] }
+  if head (← call.target.selection) == before then
+    giveUp (cannotMove name)
+  discard <| call.target.window.buffer.closeGroup
 
 end Editor.Evil

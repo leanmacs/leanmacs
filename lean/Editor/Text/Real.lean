@@ -464,6 +464,18 @@ def motionOf : Motion → Ffi.Motion
   | .rowsUp count column => .rowsUp (word count) (word column)
   | .rowsDown count column => .rowsDown (word count) (word column)
 
+/-- The library's kind of bracket for the port's. -/
+def bracketOf : Bracket → Ffi.Bracket
+  | .round => .round
+  | .square => .square
+  | .curly => .curly
+
+/-- The library's kind of quote for the port's. -/
+def quoteOf : Quote → Ffi.Quote
+  | .double => .double
+  | .single => .single
+  | .back => .back
+
 /-- The library's answer to `query` about `snapshot`.
 
 The port's offsets, rows and columns are `Nat` and the library's are machine
@@ -510,6 +522,40 @@ def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextEr
     let some position ←
       snapshot.motion (motionOf motion) offset.toUSize | return .error .badPosition
     return .ok position.toNat
+  | .search pattern forward offset => do
+    unless offset < USize.size do
+      return .error .badPosition
+    match ← snapshot.search pattern forward offset.toUSize with
+    | .found range wrapped =>
+      return .ok (.found range.start.toNat range.stop.toNat wrapped)
+    | .notFound =>
+      return .ok .notFound
+    | .invalid reason =>
+      return .ok (.invalid reason)
+    | .badPosition =>
+      return .error .badPosition
+  | .unmatched bracket opening forward escaped skipQuoted offset => do
+    unless offset < USize.size do
+      return .error .badPosition
+    let some found ←
+      snapshot.unmatched (bracketOf bracket) opening forward escaped skipQuoted
+          offset.toUSize | return .error .badPosition
+    return .ok (found.map (·.toNat))
+  | .quoted quote offset => do
+    unless offset < USize.size do
+      return .error .badPosition
+    let some found ← snapshot.quoted (quoteOf quote) offset.toUSize | return .error .badPosition
+    return .ok (found.map fun range => ⟨range.start.toNat, range.stop.toNat⟩)
+  | .matches pattern start stop => do
+    unless start < USize.size ∧ stop < USize.size do
+      return .error .badRange
+    match ← snapshot.matches pattern start.toUSize stop.toUSize with
+    | .ranges all =>
+      return .ok (.ranges (all.map fun range => ⟨range.start.toNat, range.stop.toNat⟩))
+    | .invalid reason =>
+      return .ok (.invalid reason)
+    | .badRange =>
+      return .error .badRange
 
 /-- The library's snapshot of `source`: the snapshot it names, or a new one
 of the text it names, as the text is now. The refusal when it names nothing,
@@ -534,6 +580,37 @@ def release : TextSource → StateT RealTexts IO (Except TextError Unit)
     if ← (← get).snapshots.release id then
       return .ok ()
     return .error .noSuchSnapshot
+
+/-- The library's form of a step of an edit script. A count or an offset no
+word holds goes as the largest word, which no text is long enough to accept,
+so the library refuses it as a script that does not fit. -/
+def scriptStep : Diff.Step → Ffi.ScriptStep
+  | .retain count => .retain (word count)
+  | .delete count => .delete (word count)
+  | .insert start count => .insert (word start) (word count)
+
+/-- The library's answer to applying `script` to the text `id`, taking what it
+puts in from `source`, unless the text has moved past `base`. The refusals
+come in the port's order: the text, then its revision, read from a snapshot
+of it, then the source, then the library's own, which looks at the revision
+again under the document's lock, so a script is never applied to a text that
+moved in between. A base no word holds is one no text has reached. -/
+def applyScript (id : TextId) (base : Nat) (source : TextSource) (script : Diff.Script)
+    (origin : Origin) : StateT RealTexts IO (Except TextError Nat) := do
+  let some document ← document? id | return .error .noSuchText
+  unless base < UInt64.size ∧ (← (← document.snapshot).info).revision.toNat == base do
+    return .error .moved
+  match ← snapshotOf source with
+  | .error refusal =>
+    return .error refusal
+  | .ok taken =>
+    match ← document.applyScript base.toUInt64 taken (script.map scriptStep) origin.id with
+    | .ok revision =>
+      return .ok revision.toNat
+    | .error .moved =>
+      return .error .moved
+    | .error .badChange =>
+      return .error .badChange
 
 /-- The library's answer to each request. -/
 def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
@@ -579,6 +656,7 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
   | .adopt held => do
     let some (_, snapshot) := (← get).arrived.find? (·.1 == held) | return .error .noSuchSnapshot
     return .ok (← (← get).snapshots.add snapshot)
+  | .applyScript id base source script origin => applyScript id base source script origin
 
 end RealTexts
 

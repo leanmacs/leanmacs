@@ -297,6 +297,16 @@ structure Registry where
   /-- Where a child's environment comes from, as config set it; `none` when
 it did not, which a host reads as `auto`. -/
   environment : Option Process.Setting := none
+  /-- Whether config turns auto-reload on (`autoReload`,
+  `Editor/Setup.lean`): false when it says nothing. -/
+  autoReload : Bool := false
+  /-- The workspace roots config declares (`workspace`, `Editor/Setup.lean`),
+  in the order it declared them. -/
+  workspaceRoots : Array Workspace.ConfigRoot := #[]
+  /-- How many configs have been installed: the config generation a
+  directory's cached workspace was found under (`Editor/Workspace.lean`).
+  0 while only compiled code is registered. -/
+  generation : Nat := 0
 
 namespace Registry
 
@@ -502,14 +512,17 @@ its lineage, root first, whose on-enter actions run when the mode becomes a
 buffer's major mode; whether a job is registered under a name, for a
 command to start; and the ex binding of an ex name (`ex?`) and the ex
 names that are bound (`exNames`), for the ex line; and the names themes
-are registered under (`themeNames`), for the command that loads one. Which command a name stands for, for a command run inside another,
+are registered under (`themeNames`), for the command that loads one; and
+config's workspace roots and the config generation, for the finder. Which command a name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
 another"). -/
 def registered (registry : Registry) : Loop.Registered :=
   { entering := fun name => (registry.mode? name).map fun _ => (registry.lineage name).reverse
     jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex?
-    exNames := registry.exNames, themeNames := registry.themeNames }
+    exNames := registry.exNames, themeNames := registry.themeNames
+    autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
+    generation := registry.generation }
 
 end Registry
 
@@ -551,6 +564,11 @@ accepted names at most one (`theme`). -/
   /-- Each setting of where a child's environment comes from, in the order
 they were made: one at most, in a `setup` that is not refused. -/
   environments : Array Process.Setting := #[]
+  /-- What each `autoReload` of the `setup` said, in order. -/
+  autoReload : Array Bool := #[]
+  /-- The workspace roots the `setup` declared, in order: a root once at
+  most, in a `setup` that is not refused. -/
+  workspaceRoots : Array Workspace.ConfigRoot := #[]
 
 namespace Registrations
 
@@ -604,11 +622,23 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with titleBars := collected.titleBars.push style })
   | .processEnvironment setting, collected =>
     ((), { collected with environments := collected.environments.push setting })
+  | .autoReload on, collected => ((), { collected with autoReload := collected.autoReload.push on })
+  | .workspace root project, collected =>
+    ((), { collected with workspaceRoots := collected.workspaceRoots.push { root, project } })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
 def environment (collected : Registrations) : Option Process.Setting :=
   collected.environments[0]?
+
+/-- What a `setup` that sets auto-reload twice is refused with. -/
+def autoReloadTwice : String :=
+  "auto-reload is set twice"
+
+/-- What a `setup` that declares the workspace root `root` twice is refused
+with. -/
+def workspaceTwice (root : System.FilePath) : String :=
+  s!"the workspace root `{root}` is declared twice"
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -623,8 +653,8 @@ twice, a command name or a job name registered twice, a face set twice, a
 theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
 twice, the title bar chosen twice, a key sequence bound twice, a binding of
-no keys, an ex name bound twice, the process environment set twice, a
-command over a store that is not declared, a mode name defined twice, or a
+no keys, an ex name bound twice, the process environment set twice,
+auto-reload set twice, a workspace root declared twice, a command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named.
 
@@ -663,6 +693,10 @@ def problem? (collected : Registrations) : Option String := do
     return "the title bar is chosen twice"
   if collected.environments.size > 1 then
     return "the process environment is set twice"
+  if collected.autoReload.size > 1 then
+    return autoReloadTwice
+  if let some root := repeated? (collected.workspaceRoots.map (Process.trimmed ·.root)) then
+    return workspaceTwice root
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command

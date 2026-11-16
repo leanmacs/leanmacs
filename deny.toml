@@ -225,6 +225,46 @@
 # fails on each ("crate 'objc2-app-kit = 0.3.2' is explicitly banned",
 # and the same for `objc2-foundation = 0.3.2` and `objc2 = 0.6.5`).
 #
+# For search (2026-11-16, the daily-driver floor's phase 3), whose entries
+# came in the commit that added the search engine port's adapter,
+# `editor-search-regex`. `regex-cursor`: with it added to
+# `editor-search`'s dependencies, it fails ("crate 'regex-cursor = 0.1.5'
+# is explicitly banned"). `regex-syntax`, whose tree the adapter builds:
+# with it added to `editor-search`'s dependencies, it fails the same way
+# ("crate 'regex-syntax = 0.8.11' is explicitly banned"); its wrappers
+# beside the adapter are the third-party crates that depend on it in the
+# resolved graph (`cargo tree --target all -i regex-syntax -e
+# normal,build,dev --depth 1`: regex-cursor, regex-automata, and proptest,
+# which already did), and with the wrapper `regex-cursor` taken out it
+# fails on that edge. `regex-automata`, whose engines regex-cursor forks,
+# with regex-cursor its one wrapper, as `notify-types`'s is notify: with
+# it added to `editor-search-regex`'s dependencies, it fails ("crate
+# 'regex-automata = 0.4.18' is explicitly banned"). `editor-search`, the
+# port's crate, which had no entry while nothing depended on it: with the
+# entry's wrapper naming another crate, it fails on the adapter's edge
+# ("crate 'editor-search = 0.1.0' is explicitly banned"). The adapter
+# itself had no entry while nothing depended on it. Its entry came in the
+# commit in which `editor-ffi` came to depend on it, for the two C
+# functions that search a snapshot: with the entry's wrapper naming
+# another crate, it fails ("crate 'editor-search-regex = 0.1.0' is
+# explicitly banned"); and in that commit `editor-ffi` joined the wrappers
+# of `editor-search`'s entry: with the wrapper not yet there, it fails on
+# that edge ("crate 'editor-search = 0.1.0' is explicitly banned").
+#
+# For the diff of a reload (2026-11-16, the daily-driver floor's phase 5),
+# whose entries came in the commit that added the line diff port's adapter,
+# `editor-diff-imara`, and the diff service of `editor-ffi`. `imara-diff`:
+# with it added to `editor-diff`'s dependencies, it fails ("crate
+# 'imara-diff = 0.2.0' is explicitly banned"). `editor-diff`: with
+# `editor-ffi` taken out of its wrappers, it fails on that edge.
+# `editor-diff-imara`: with its wrapper naming another crate, it fails.
+# `hashbrown` and `foldhash`, which imara-diff brings, have none: many
+# crates of the graph depend on hashbrown.
+#
+# `aho-corasick`,
+# `memchr` and `log`, which the libraries bring, have none: they are
+# reached only through them, or many crates of the graph depend on them.
+#
 # For syntax trees (2026-11-16, the syntax-tree-sitter roadmap's phase 1).
 # The Syntax port's crate, `editor-syntax`, parses snapshots and reparses
 # from the edit log's patches, so it joined the wrappers of `editor-text`'s
@@ -249,14 +289,18 @@
 # 1.13.1' is explicitly banned"); and `regex-syntax`, which was in the graph
 # before, by `proptest`, a dev-dependency of `editor-text`, so `proptest`
 # is a wrapper beside `regex` and `regex-automata` ("crate 'regex-syntax =
-# 0.8.11' is explicitly banned"). `regex-automata`, `aho-corasick` and
-# `memchr` have none: they are reached only through `regex`, as wgpu's
-# internals are through wgpu. `editor-syntax`, the port's crate, got its
-# entry with the adapter its one wrapper: with the wrapper naming another
-# crate, it fails on the adapter's edge ("crate 'editor-syntax = 0.1.0' is
-# explicitly banned"). The adapter joined the wrappers of `editor-text`'s
-# entry: with the wrapper not yet there, it fails on the adapter's edge
-# ("crate 'editor-text = 0.1.0' is explicitly banned").
+# 0.8.11' is explicitly banned"). `aho-corasick` and `memchr` have none:
+# they are reached only through `regex`, as wgpu's internals are through
+# wgpu. `regex-automata` had none on this roadmap's branch, reached only
+# through `regex`; when main was merged in, it brought search's entries for
+# `regex-automata` and `regex-syntax`, and `regex` joined the wrappers of
+# both, as tree-sitter's way to them beside regex-cursor's. `editor-syntax`,
+# the port's crate, got its entry with the adapter its one wrapper: with
+# the wrapper naming another crate, it fails on the adapter's edge
+# ("crate 'editor-syntax = 0.1.0' is explicitly banned"). The adapter
+# joined the wrappers of `editor-text`'s entry: with the wrapper not yet
+# there, it fails on the adapter's edge ("crate 'editor-text = 0.1.0' is
+# explicitly banned").
 #
 # The plain bans of `wasmtime` and `tree-sitter-loader` hold the decision
 # that grammars are compiled in (the adapter's crate docs, "How grammars
@@ -331,7 +375,14 @@ deny = [
   { crate = "tree-sitter-language", wrappers = ["tree-sitter", "tree-sitter-rust", "tree-sitter-json"], reason = "the type a grammar crate hands its language in is between tree-sitter and its grammars: no crate of the workspace names it, the adapter handing each grammar's language straight to tree-sitter" },
   { crate = "streaming-iterator", wrappers = ["tree-sitter"], reason = "tree-sitter's query cursor iterates with it, and the adapter names it only through tree-sitter's re-export: no crate of the workspace depends on it" },
   { crate = "regex", wrappers = ["tree-sitter"], reason = "regular expressions are tree-sitter's, for a query's `#match?` predicates, behind the Syntax port: no crate of the workspace depends on it" },
-  { crate = "regex-syntax", wrappers = ["regex", "regex-automata", "proptest"], reason = "the parser of regular expressions is reached through `regex`, tree-sitter's, and through `proptest`, editor-text's property tests' strategy for strings, by a dev-dependency; no crate of the workspace depends on it" },
   { crate = "wasmtime", reason = "grammars are compiled in (crates/editor-syntax-treesitter, \"How grammars are loaded\"): tree-sitter's `wasm` feature, which loads grammars built as WebAssembly, stays off" },
   { crate = "tree-sitter-loader", reason = "grammars are compiled in (crates/editor-syntax-treesitter, \"How grammars are loaded\"): nothing finds, builds or loads a grammar at run time" },
+  { crate = "regex-cursor", wrappers = ["editor-search-regex"], reason = "the regex library stays behind the search engine port: only its adapter crate may name its types" },
+  { crate = "regex-automata", wrappers = ["regex-cursor", "regex"], reason = "regex-cursor's engines are built on it, and so are regex's, tree-sitter's for a query's `#match?` predicates; it stays behind the search engine port and the Syntax port with them: no crate of the workspace may name it" },
+  { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "regex", "proptest"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, regex, tree-sitter's, and proptest, for its generated strings" },
+  { crate = "editor-search", wrappers = ["editor-search-regex", "editor-ffi"], reason = "the search engine port, the pattern syntax and the rule of which match have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose two C functions ask the rule over the adapter; a third is a decision, so it is made here" },
+  { crate = "editor-search-regex", wrappers = ["editor-ffi"], reason = "the search engine's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
+  { crate = "imara-diff", wrappers = ["editor-diff-imara"], reason = "the diff library stays behind the line diff port: only its adapter crate may name its types" },
+  { crate = "editor-diff", wrappers = ["editor-diff-imara", "editor-ffi"], reason = "the line diff port and the core that makes a script have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose diff service makes a script over the adapter and whose text binding applies one; a third is a decision, so it is made here" },
+  { crate = "editor-diff-imara", wrappers = ["editor-ffi"], reason = "the line diff's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
 ]

@@ -66,7 +66,9 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
 `Theme.builtin`, the theme `default`, is the placeholder palette's theme
 (`Palette.placeholder`, `Palette.theme`): it defines every face of the
 vocabulary (`Face.vocabulary`, `Editor/Face/Vocabulary.lean`), `default`
-first, which sets every attribute. Layout reads four names by itself:
+first, which sets every attribute. Among them is `search-match`, which the
+matches of the last search are drawn in (`Editor/Loop.lean`,
+"Decorations"). Layout reads four names by itself:
 `default`, under every other face; `selection`, which the selections are
 drawn in; `mode-line`, under each field of a view's status line; and
 `echo-area`, the echo in the frame's bottom row. Any other name is whatever
@@ -326,8 +328,8 @@ def Palette.theme (palette : Palette) : Theme :=
       defined "echo-area" { foreground := some palette.strong, verticalPadding := some 3 }] ++
     badges.map (fun (state, accent) => badge state accent) ++
     #[defined "mode-line.buffer" { foreground := some palette.strong, weight := some 700 },
-      ink "mode-line.modified" palette.orange, ink "mode-line.secondary" palette.faint,
-      on "mode-line.inactive" palette.faint palette.raised,
+      ink "mode-line.modified" palette.orange, ink "mode-line.changed" palette.red,
+      ink "mode-line.secondary" palette.faint, on "mode-line.inactive" palette.faint palette.raised,
       defined "minibuffer.prompt" { foreground := some palette.cyan, weight := some 700 },
       ink "minibuffer.candidate" palette.faint, on "minibuffer.chosen" palette.paper palette.cyan,
       ink "syntax.attribute" palette.yellow,

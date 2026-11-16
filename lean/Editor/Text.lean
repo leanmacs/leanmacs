@@ -1,3 +1,4 @@
+import Editor.Diff.Script
 import Editor.Program
 
 /-!
@@ -361,11 +362,126 @@ operations as they are: they are lifted into it.
   each holding what the edit removed, until `dropInverses`. That is
   unbounded, and when to drop is the editor's to decide: its history knows
   which it still needs.
+- **Applying an edit script** (`TextId.applyScript`) is how a reload takes in
+  what a line diff of the buffer and its file answered (`Editor/Diff.lean`):
+  the script (`Diff.Script`, `Editor/Diff/Script.lean`) walks the text and a
+  source, a text or a snapshot, and each insert names a range of the source.
+  It is applied as **one** transaction with no selection: one revision, one
+  entry of the log with the origin it is given, one kept inverse, every
+  marker moved through its changed ranges by the usual bias, and the bytes
+  it puts in traced to that revision and origin. A script of one retain
+  still makes a revision, as an empty transaction does. The text afterwards
+  is what `Diff.Script.run` gives. It is refused, changing nothing, in this
+  order: with `noSuchText`; with `moved` when the text's revision is not the
+  `base` the script was made for, so a script made of an older state is
+  never applied; with the source's own refusal; and with `badChange` when
+  the steps do not walk the whole of the text and of the source, or a step
+  starts or stops at an offset that is not a position of either. Its cost is
+  linear in its steps and in the bytes it puts in, which the library copies
+  from rope to rope: it searches nothing.
 - A refused request changes nothing.
 - A refusal is a `throw` in `TextM`. A command that fails leaves the store
   as it was at the failure: nothing here rolls back the requests it had
   already made. A caller that wants that applies the inverse of the run the
   command made.
+
+### Search
+
+Two questions search a text for a pattern: `search` and `matches`. The
+pattern is a string, as the user typed it, in a subset of Vim's syntax under
+its default `magic` option (`docs/design/rust-library.md`, "Search, as
+built"). The rule of which match is answered is Vim 9.1's under its default
+options (`cpoptions` with `c`, `wrapscan`):
+
+- **The matches of a pattern in a text are found row by row.** In a row,
+  the first match is the leftmost-first match from the row's start; each
+  next one is the leftmost-first match from where the one before it
+  stopped, or one character further when that one was empty; and a row's
+  matches end when no further match starts in the row. A text's matches
+  are its rows' matches, in order. No match contains a line feed.
+- **`\<` and `\>`** hold where a word starts and where a word ends, by the
+  text's word class (`wordCharacter`): the class `w` goes by.
+- **Forward from a position** (`search` with `forward`): the first match
+  whose start is after the position. A match that starts at or before it
+  is passed over, so `abab` in `abababab` from 0 answers 4, which is
+  `cpo-c`. With none, the text's first match, marked `wrapped`.
+- **Backward**: the last match whose start is before the position; with
+  none, the text's last match, wrapped.
+- **No match anywhere**: `notFound`.
+- **Matches in a range** (`matches`): the text's matches whose start is at
+  or after `start` and before `stop`, in order. A match that starts before
+  `stop` and ends after it is one of them.
+- **A pattern the syntax refuses is answered `invalid`**, with the sentence
+  Vim gives where it has one (`E54: Unmatched \(`), and no refusal: the
+  question was asked of a text that is there. The empty pattern is
+  invalid. The model (`Editor/Text/Model.lean`) answers literal patterns
+  only, and calls any other invalid.
+- They are refused with `badPosition` for an offset that is not a position,
+  and `matches` with `badRange` for a range that is not two positions in
+  order.
+
+### Pairs
+
+Two questions find the pairs Vim's `%` and its block and quote objects are
+built on: `unmatched` and `quoted`. Each walks the text from a position, as
+a motion does, and answers `none` where there is nothing to find.
+
+- **The bracket a walk leaves unbalanced** (`unmatched bracket opening
+  forward escaped skipQuoted offset`): walking strictly after `offset`
+  when `forward`, and strictly before it otherwise, the first bracket of
+  the kind
+  `bracket` (`(` `)`, `[` `]`, `{` `}`) and of the side `opening` says, an
+  opening one or a closing one, met at depth 0. Each bracket of the other
+  side the walk meets raises the depth, and each of the side sought met
+  above depth 0 lowers it. So from an opening bracket the closing one
+  forward is its partner, and from inside a pair the opening one back is
+  the pair's.
+- **Escapedness is a filter**: a bracket is escaped when an odd number of
+  backslashes stands right before it in its row, and only brackets whose
+  escapedness is `escaped` are counted; the others are characters like any
+  other.
+- **The walk crosses rows.** It is Vim 9.1's `findmatchlimit` with
+  `cpoptions` not holding `M`. Unless `skipQuoted` it holds `%` too, and
+  quotes are characters like any other, which is how Vim's block objects
+  walk back to their opening bracket.
+- **With `skipQuoted`, brackets Vim guesses are quoted are passed over**,
+  as its default `cpoptions` has it, which is how `%` and the walk to a
+  block's closing bracket go. The guess is made a row at a time, over the
+  row's bytes:
+  - The row's double quotes are counted, but not one a backslash escapes
+    (a backslash escapes the byte after it) and not one with a single quote
+    on each side. With an even count the row's quotes are read; with an
+    odd one they are not, unless the row or the one above it ends in a
+    backslash, which carries a string across the line break.
+  - When they are read, each double quote after an even number of
+    backslashes starts or ends a string, from where the walk starts: the
+    walk starts outside one, and so takes the first quote it meets as one
+    that opens, whatever is before. A row's end with no backslash right
+    before it ends any string. A bracket inside a string is passed over.
+    With an odd count and a backslash at the end of the row or the one
+    above, the walk may start inside a string, by Vim's guess, and then
+    brackets inside strings are counted until it meets a quote that
+    starts or ends one, or a row's end that ends one.
+  - A single quote with one byte and another single quote after it
+    (`'x'`), or a backslash, one byte and a single quote (`'\x'`), is
+    passed over with what it holds going forward; going back, a single
+    quote two bytes before it, or three with a backslash two before, is.
+- **The quoted string round a position** (`quoted quote offset`): a pair of
+  the quote `quote` (`"`, `'`, `` ` ``) in `offset`'s row, from the opening
+  quote's start to the closing quote's end, found by Vim 9.1's
+  `current_quote` for a cursor with no Visual area, where a backslash
+  escapes the character after it (`quoteescape`). The cursor is `offset`,
+  or where the row's content ends when `offset` is past it.
+  - On a quote, the row's pairs are walked from its start: an opening
+    quote is the next quote, escaped or not, and its closing one the next
+    quote after it that is not escaped. The answer is the first pair whose
+    span holds the cursor, and none once an opening quote is past it.
+  - Elsewhere, the opening quote is the nearest quote before the cursor
+    that is not escaped, and with none the row's first quote, escaped or
+    not. The closing quote is the next one after it that is not escaped.
+  - Nothing outside the row is read, and a missing quote is `none`.
+- Both are refused with `badPosition` for an offset that is not a
+  position.
 
 The library keeps a byte of a file that is not valid UTF-8 as one character
 in `U+10DC80..U+10DCFF` (`crates/editor-text`). To this port it is a
@@ -387,6 +503,12 @@ It is not a new question: `motion` carries every one. A change to what a
 word character is is one function in the model (`TextModel.classOf`) and
 one private module in the library, and the contract's tables say whether
 the two still agree.
+
+A new kind of bracket or quote is a constructor of `Bracket` or `Quote`,
+with its character here, its tag in the real binding's encoder
+(`RealTexts.bracketOf`, `RealTexts.quoteOf`, and a tag in the library),
+and its rows in the contract's tables (`TextContract.bracketAnswers`,
+`TextContract.quoteAnswers`). It is not a new question.
 
 A new question about a text's edit log is a constructor of `LogQuery` with
 its case in `LogQuery.Answer`, and an operation here that asks it. It needs
@@ -463,6 +585,8 @@ inductive TextError where
   | noInverse
   /-- The text is not in the state the run ended in. -/
   | notInState
+  /-- An edit script was made for a revision the text has moved past. -/
+  | moved
   deriving DecidableEq, Repr
 
 /-- A refusal in a few words, for the user: what the headless host prints
@@ -479,6 +603,7 @@ def TextError.describe : TextError → String
   | .noSuchMarker => "no such marker"
   | .noInverse => "no inverse"
   | .notInState => "not in state"
+  | .moved => "the text has moved"
 
 /-- The unit a point's column is counted in. -/
 inductive ColumnUnit where
@@ -601,6 +726,71 @@ inductive Motion where
   | rowsDown (count column : Nat)
   deriving DecidableEq, Repr
 
+/-- Whether `char` is a word character, the text's word class: an ASCII
+letter, an ASCII digit, `_`, or any character from U+0080 up. The word
+motions go by it, and so do a search's `\<` and `\>`. -/
+def wordCharacter (char : Char) : Bool :=
+  char.isAlphanum || char == '_' || char.val ≥ 0x80
+
+/-- What a search answers ("Search", in the rules of the port). -/
+inductive Searched where
+  /-- The match from `start` up to `stop`, and whether the search went past
+  the text's end, or its start, to find it. -/
+  | found (start stop : Nat) (wrapped : Bool)
+  /-- The text has no match. -/
+  | notFound
+  /-- The pattern is none the syntax takes, for `reason`. -/
+  | invalid (reason : String)
+  deriving DecidableEq, Repr
+
+/-- What the matches in a range answer. -/
+inductive Matched where
+  /-- The matches, in order. -/
+  | ranges (all : Array Extent)
+  /-- The pattern is none the syntax takes, for `reason`. -/
+  | invalid (reason : String)
+  deriving DecidableEq, Repr
+
+/-- A kind of bracket: a pair of an opening character and a closing one
+("Pairs", in the rules of the port). -/
+inductive Bracket where
+  /-- `(` and `)`. -/
+  | round
+  /-- `[` and `]`. -/
+  | square
+  /-- `{` and `}`. -/
+  | curly
+  deriving DecidableEq, Repr
+
+/-- The opening character of `bracket`. -/
+def Bracket.opening : Bracket → Char
+  | .round => '('
+  | .square => '['
+  | .curly => '{'
+
+/-- The closing character of `bracket`. -/
+def Bracket.closing : Bracket → Char
+  | .round => ')'
+  | .square => ']'
+  | .curly => '}'
+
+/-- A kind of quote: the one character that opens a quoted string and closes
+it ("Pairs", in the rules of the port). -/
+inductive Quote where
+  /-- `"`. -/
+  | double
+  /-- `'`. -/
+  | single
+  /-- `` ` ``. -/
+  | back
+  deriving DecidableEq, Repr
+
+/-- The character of `quote`. -/
+def Quote.char : Quote → Char
+  | .double => '"'
+  | .single => '\''
+  | .back => '`'
+
 /-- A question about a text or a snapshot. A new question is a constructor
 here, not a request. -/
 inductive TextQuery where
@@ -624,6 +814,22 @@ inductive TextQuery where
   | slice (start stop : Nat)
   /-- Where `motion` leads from the byte offset `offset`. -/
   | motion (motion : Motion) (offset : Nat)
+  /-- The match of `pattern` a search from the byte offset `offset` answers,
+  forward when `forward` and back otherwise. -/
+  | search (pattern : String) (forward : Bool) (offset : Nat)
+  /-- The matches of `pattern` that start from the byte offset `start` up to,
+  not including, `stop`. -/
+  | matches (pattern : String) (start stop : Nat)
+  /-- The bracket of the kind `bracket` the walk from the byte offset
+  `offset` leaves unbalanced: an opening one when `opening`, strictly after
+  the offset when `forward` and before it otherwise, counting only the
+  brackets whose escapedness is `escaped` and passing over those Vim
+  guesses are quoted when `skipQuoted` ("Pairs", in the rules of the
+  port). -/
+  | unmatched (bracket : Bracket) (opening forward escaped skipQuoted : Bool) (offset : Nat)
+  /-- The quoted string of the quote `quote` round the byte offset `offset`,
+  in its row, with its two quotes. -/
+  | quoted (quote : Quote) (offset : Nat)
 
 /-- The type of the answer to each question. It is an `abbrev` so that an
 answer's type unfolds where an instance is looked for: with a `def`,
@@ -639,6 +845,10 @@ abbrev TextQuery.Answer : TextQuery → Type
   | .rowContent _ => String
   | .slice .. => String
   | .motion .. => Nat
+  | .search .. => Searched
+  | .matches .. => Matched
+  | .unmatched .. => Option Nat
+  | .quoted .. => Option Extent
 
 /-- Who made an edit: a number the editor chooses and the text store keeps
 with the edit and never reads. What a number stands for is the editor's
@@ -661,6 +871,13 @@ editor's convention, as 0 does for `unattributed`; the rest of the table of
 origins is open (`docs/design/text-and-display.md`, "Origin"). -/
 def Origin.user : Origin :=
   ⟨1⟩
+
+/-- The origin of a reload from disk: the edit a reload of a buffer from its
+file makes, which takes in the text another program wrote
+(`Files.reloaded`, `Editor/Files.lean`). That 2 means this is the editor's
+convention, as 0 and 1 do. -/
+def Origin.disk : Origin :=
+  ⟨2⟩
 
 /-- One step of a transaction's walk over a text, with its length in bytes. -/
 inductive Change where
@@ -859,6 +1076,12 @@ inductive TextRequest where
   /-- Take the snapshot `snapshot`, which a job held and this run was
   handed, into the store. -/
   | adopt (snapshot : JobSnapshotId)
+  /-- Apply the edit script `script` to `text` as one transaction, taking what
+  it puts in from `source`, with `origin` as who made the edit, unless the
+  text has moved past the revision `base`. -/
+  |
+  applyScript (text : TextId) (base : Nat) (source : TextSource) (script : Diff.Script)
+    (origin : Origin)
 
 /-- The type of the reply to each request: the new text's id for `create`,
 and for the others a refusal or the result. -/
@@ -881,6 +1104,7 @@ def TextRequest.Reply : TextRequest → Type
   | .dropInverses .. => Except TextError Unit
   | .copy _ => Except TextError TextId
   | .adopt _ => Except TextError SnapshotId
+  | .applyScript .. => Except TextError Nat
 
 /-- The text port: `TextRequest` and the reply to each request. -/
 abbrev textPort : Port :=
@@ -1055,6 +1279,20 @@ not a job's. -/
 def JobSnapshotId.adopt (snapshot : JobSnapshotId) : TextM SnapshotId :=
   ExceptT.mk (Program.request (port := textPort) (.adopt snapshot))
 
+/-- Applies the edit script `script` to `text` as one transaction with no
+selection, taking what it puts in from `source`, with `origin` as who made
+the edit, and returns the revision it produced: what applying a transaction
+does, the markers moved through its changed ranges by bias and one entry of
+the log ("Applying an edit script", in the rules of the port).
+
+Refused, changing nothing, in this order: with `noSuchText`; with `moved`
+when the text's revision is not `base`; with the source's own refusal; and
+with `badChange` when the steps do not walk the whole of the text and of the
+source, at positions of both. -/
+def TextId.applyScript (text : TextId) (base : Nat) (source : TextSource) (script : Diff.Script)
+    (origin : Origin) : TextM Nat :=
+  ExceptT.mk (Program.request (port := textPort) (.applyScript text base source script origin))
+
 /-- A new text holding what the job's snapshot `snapshot` holds: how a file a
 job loaded becomes a text. It adopts the snapshot, copies it, and releases
 what it adopted, so the store gains the text and no snapshot. Refused as
@@ -1110,6 +1348,37 @@ of the text. Refused with `badPosition` unless `offset` is a position,
 whichever motion it is. -/
 def TextId.motion (text : TextId) (motion : Motion) (offset : Nat) : TextM Nat :=
   (TextSource.text text).ask (.motion motion offset)
+
+/-- The match of `pattern` in `text` a search from `offset` answers, forward
+when `forward` and back otherwise ("Search", in the rules of the port).
+Refused with `badPosition` unless `offset` is a position. -/
+def TextId.search (text : TextId) (pattern : String) (forward : Bool) (offset : Nat) :
+    TextM Searched :=
+  (TextSource.text text).ask (.search pattern forward offset)
+
+/-- The matches of `pattern` in `text` that start from `start` up to, not
+including, `stop`. Refused with `badRange` unless both are positions and
+`start` is not after `stop`. -/
+def TextId.matches (text : TextId) (pattern : String) (start stop : Nat) : TextM Matched :=
+  (TextSource.text text).ask (.matches pattern start stop)
+
+/-- The bracket of the kind `bracket` that the walk from `offset` of `text`
+leaves unbalanced: an opening one when `opening`, strictly after `offset`
+when `forward` and before it otherwise, counting only the brackets whose
+escapedness is `escaped`, and passing over those Vim guesses are quoted
+when `skipQuoted` ("Pairs", in the rules of the port); `none` when there is
+no such bracket. Refused with `badPosition` unless `offset` is a
+position. -/
+def TextId.unmatched (text : TextId) (bracket : Bracket) (opening forward escaped skipQuoted : Bool)
+    (offset : Nat) : TextM (Option Nat) :=
+  (TextSource.text text).ask (.unmatched bracket opening forward escaped skipQuoted offset)
+
+/-- The quoted string of `quote` round `offset` of `text`, in its row, from
+its opening quote's start to its closing quote's end ("Pairs", in the rules
+of the port); `none` when a quote is missing. Refused with `badPosition`
+unless `offset` is a position. -/
+def TextId.quoted (text : TextId) (quote : Quote) (offset : Nat) : TextM (Option Extent) :=
+  (TextSource.text text).ask (.quoted quote offset)
 
 /-- Gives `text` up. Its id is refused from then on; its snapshots still
 read. -/
@@ -1170,6 +1439,30 @@ def SnapshotId.slice (snapshot : SnapshotId) (start stop : Nat) : TextM String :
 `offset` is a position, whichever motion it is. -/
 def SnapshotId.motion (snapshot : SnapshotId) (motion : Motion) (offset : Nat) : TextM Nat :=
   (TextSource.snapshot snapshot).ask (.motion motion offset)
+
+/-- The match of `pattern` in the text `snapshot` holds a search from
+`offset` answers, as `TextId.search`. -/
+def SnapshotId.search (snapshot : SnapshotId) (pattern : String) (forward : Bool) (offset : Nat) :
+    TextM Searched :=
+  (TextSource.snapshot snapshot).ask (.search pattern forward offset)
+
+/-- The matches of `pattern` in the text `snapshot` holds that start from
+`start` up to, not including, `stop`, as `TextId.matches`. -/
+def SnapshotId.matches (snapshot : SnapshotId) (pattern : String) (start stop : Nat) :
+    TextM Matched :=
+  (TextSource.snapshot snapshot).ask (.matches pattern start stop)
+
+/-- The bracket the walk from `offset` of the text `snapshot` holds leaves
+unbalanced, as `TextId.unmatched`. -/
+def SnapshotId.unmatched (snapshot : SnapshotId) (bracket : Bracket)
+    (opening forward escaped skipQuoted : Bool) (offset : Nat) : TextM (Option Nat) :=
+  (TextSource.snapshot snapshot).ask (.unmatched bracket opening forward escaped skipQuoted offset)
+
+/-- The quoted string of `quote` round `offset` of the text `snapshot`
+holds, as `TextId.quoted`. -/
+def SnapshotId.quoted (snapshot : SnapshotId) (quote : Quote) (offset : Nat) :
+    TextM (Option Extent) :=
+  (TextSource.snapshot snapshot).ask (.quoted quote offset)
 
 /-- Gives `snapshot` up. Its id is refused from then on. -/
 def SnapshotId.release (snapshot : SnapshotId) : TextM Unit :=

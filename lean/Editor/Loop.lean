@@ -234,6 +234,14 @@ loop has little of its own to do.
   answer's command would be looked up before that step's write was
   written back. As a step of its own it is like every other command: one
   rollback, one scene, one log entry, one ending.
+- **An answer for the input scheme** is one whose continuation is the
+  reserved name `InputScheme.answerName`: `Loop.invoke` hands it to the
+  scheme (`Loop.answer`, `InputScheme.answered`) and looks no command up.
+  The invocation the scheme yields for it is run as a key's is, with the
+  scheme's report after the answer, and the scheme's state is kept as the
+  state at rest when the command ran to its end, and put back to the state
+  at rest when it did not. This is how Vim's `/` asks for its pattern and
+  then makes its edit (`Editor/InputScheme/Vim.lean`, "Motions that ask").
 - **A command has another run after it the same way** (`invoke`,
   `Editor/Api.lean`): the invocation is recorded in the same field, after
   what is there, with no prompt, and is handed back and run by the host
@@ -336,8 +344,8 @@ request sets a flag of the editor state (`EditorState.quitting`,
   (`EditorState.leaves`: asked to quit, no buffer with unsaved changes, no
   save in flight) and to go on otherwise (`Loop.nextOf`,
   `Stepped.published`). The scene is published first, so the scene of the
-  step that says stop is the last one. A host ends its loop at a stop, as
-  it does for a close request; nothing else crosses to it.
+  step that says stop is the last one. A host ends its loop at a stop,
+  whatever step said it; nothing else crosses to it.
 - **A quit waits for a save in flight.** Asked to quit while a save is in
   flight, the step says to go on, and the editor goes on handling events.
   The step that delivers the save's result finds the buffer saved and says
@@ -358,8 +366,20 @@ request sets a flag of the editor state (`EditorState.quitting`,
 - **A command that asks and does not run to its end has not asked.** The
   flag is editor state, and the loop's state is then the one from before
   the command ("Rollback").
-- **A close request is not this.** It stops the loop whatever is unsaved,
-  and publishes nothing ("What each event does").
+- **A window's close request is a quit by `q`'s rule.** The loop runs the
+  rule itself (`Ex.closeRequested`, `Editor/Ex.lean`, "A window's close
+  request") as it runs a delivered command (`deliver`, labelled
+  `Ex.quitName`): guarded, rolled back and published, with the echo area
+  not cleared first, and saying stop only when the state it left leaves.
+  So a close request while a buffer that holds a file has unsaved changes
+  publishes one scene, with the refusal in the bottom row, and the loop
+  goes on; one with a save in flight waits for the save's delivery; and
+  one with nothing unsaved publishes one scene, the last, and says stop.
+  The loop runs the rule rather than the command registered as `quit`, so
+  a host that registers no ex command still closes, and config's `quit`
+  does not replace the close button's rule.
+- **A queue's quit is not this.** It stops the loop and publishes nothing
+  ("What each event does"): the host must return.
 - **The system's quit is put through `quit`** (`Event.quitRequested`:
   Command-Q, the Dock's Quit, a logout). The step remembers it
   (`EditorState.systemQuit`) and runs the command named `quit`
@@ -370,7 +390,8 @@ request sets a flag of the editor state (`EditorState.quitting`,
   withdrawn, the publish asks the frame `keepRunning` once
   (`EditorState.answerSystemQuit`, `Display.askFrame`), and the system's
   quit is forgotten. While it waits for a save, nothing is asked. A quit
-  typed in the editor asks the frame nothing.
+  typed in the editor asks the frame nothing. Unlike a close request, it
+  runs config's `quit` when config registers one.
 
 Pinned by `ModelTest.systemQuitChecks`.
 
@@ -550,12 +571,13 @@ is queued, and marks that event. What the loop does with the flag is here
 
 | Event | What it does to the state |
 |---|---|
-| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped. Either way it clears the preedit |
+| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped, and so is the first commit into a buffer whose file changed on disk unbeknown to the user ("Files that changed on disk"). Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
 | `resize` | Sets the frame's size, whether the window is in fullscreen (`Frame.fullscreen`), its corner clearance in points (`Frame.corner`), which the bottom row is inset by (`EditorState.bottomInset`), and its top inset in points (`Frame.top`), which the views along the frame's top edge start their text below (`EditorState.topInset`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: Lean handles no scale, and the display lays out at its own |
-| `focus gained` | Sets whether the frame has the keyboard focus |
-| `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
+| `focus gained` | Sets whether the frame has the keyboard focus. A gain starts a check of every file buffer after the publish ("Files that changed on disk") |
+| `closeRequested` | Runs the quit rule (`Ex.closeRequested`) as a delivered command is run (`Loop.deliver`), labelled `quit`: it publishes a scene, and says stop only once the editor leaves ("Quit") |
+| `quit` | Nothing: the step says stop, and publishes nothing |
 | `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
 | `quitRequested` | Remembers that the system asked to quit (`EditorState.systemQuit`) and runs `quit` (`Ex.quitName`) with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The step says stop when the editor leaves; otherwise the publish asks the frame `keepRunning` once ("Quit") |
 | `menu name` | Tells the scheme that a menu item named the command `name`, with no arguments, for the focused view (`InputScheme.invoked`), and runs the invocation it hands back as one no key yielded, in the focused window, with the report of the scheme's state it hands back: guarded, rolled back and published as every command is, and config's command of the name runs in its place. A name no command is registered under says so, as an invocation does. The scheme's states are then as after a key: a command that runs to its end keeps the state handed back, which is the state at rest when nothing is pending, and one that does not puts the scheme back at rest. A scheme that treats no menu item apart hands back the invocation and the state as they were, so the command `name` runs |
@@ -587,7 +609,7 @@ the store; what a command leaves behind is rolled back ("Rollback").
 
 ## After each event
 
-Every event but `closeRequested` and `quit` publishes a scene, whether it
+Every event but `quit` publishes a scene, whether it
 changed the state or not (`Loop.publish`):
 
 1. **The histories.** Each buffer's undo tree is told the revision its text
@@ -605,7 +627,8 @@ changed the state or not (`Loop.publish`):
    whose buffer's text is at the revision it was last shown at keeps the
    same snapshot; otherwise a new snapshot is taken, and views of one
    buffer share it. A view's scroll anchor and selection are its window's
-   markers, and it has no decorations: later phases choose those. Its
+   markers. Its decorations are the matches of the last search
+   ("Decorations", below), read once the follow has placed its anchor. Its
    padding is `EditorState.paddingOf`'s, in points, from the padding the
    step's keys hand the publish (`Loop.Keys.padding`, config's
    `framePadding` or the editor's 8 through the host, and 0 for a loop
@@ -657,8 +680,134 @@ changed the state or not (`Loop.publish`):
 5. **Release** each snapshot the previous scene named that this one does
    not. So a scene's handles are alive while it is the last one published,
    and a real binding resolves them when it is published.
+6. **The checks of files** (`Loop.fileJobs`): the loop compares what the
+   state shows with what it saw at the last publish (`Loop.Seen`) and
+   starts one `check-files` for the files that are due ("Files that
+   changed on disk", below).
 
 Every edit the loop makes for an input event carries `Origin.user`.
+
+## Files that changed on disk
+
+The editor watches no file unless auto-reload is on, and it is off by
+default: what notices that another program changed a buffer's file is a
+check, one stat a file (`Files.checkWork`, `Editor/Files.lean`), which the
+loop asks for at three moments, and a save's own check.
+
+- **When.** After each publish, `Loop.fileJobs` compares the state with
+  `Loop.seen`, what the last publish saw (`Loop.seenOf`: whether the frame
+  had the focus, the buffers shown, modified and open). A file buffer with
+  no save in flight is due (`Loop.dueChecks`) when the frame gained the
+  keyboard focus, every one of them; when it is shown now, was open and no
+  view showed it, which covers a switch, a closed buffer's fallback and an
+  open of a path that is open; and when it is modified now, was open and
+  was not, its first edit. A buffer opened this step is not due: its stamp
+  is a moment old. All that are due go in one `check-files` start, handed
+  back with the step's other starts, and only where that job is
+  registered, so a host with no `Files.jobs` checks nothing.
+- **What the check does.** Its command (`Files.checked`) is made of state
+  requests alone, so it cannot be interrupted or rolled back: for each
+  file it records what the stat found (`BufferId.markChanged`), told when
+  the buffer is modified, and says `Files.changedUnderEdits` for the first
+  modified buffer newly found changed. A file that is gone is `found =
+  none`. Any other refusal of the stat is ignored.
+- **What it shows.** The mode line's `changed` segment gives the field
+  `ModeLine.changedMark`, in the face `ModeLine.changedFace`
+  (`mode-line.changed`), after the modified mark, while the buffer is
+  marked (`Editor/ModeLine.lean`).
+- **The first edit is refused.** A dispatched command whose next request
+  would edit the text of a marked buffer that was not told ends
+  `Guarded.superseded` (`Editor/Command/Dispatch.lean`). It is rolled back
+  as one that gave up is; then the told flag is set on the restored state,
+  so it survives the rollback, and the echo area reads
+  `Files.changedOnDisk`, which names `:e`, or for a file that is gone
+  `Files.goneFromDisk`, which names `:w!`, with no command name before it.
+  A committed text is dropped the same way (`handle`, `inserts`).
+- **The next edit lands**, since the user was told, as Emacs's supersession
+  check lets the next modification through. The mark stays, and a save is
+  still refused until `:w!` or `:e!`.
+- **The gap.** The check is a job, so the refusal acts on what the last
+  check found: a change made while nothing asked for a check is not refused
+  at the first edit, which lands and starts a check, whose result then
+  marks the buffer and says so. Emacs stats synchronously at the first
+  modification; the editor thread never blocks on I/O.
+
+Pinned by `ModelTest.stalenessChecks`.
+
+## Auto-reload
+
+An opt-in mode, off by default: **compiled code opens no file watch unless
+auto-reload is on.** A config's own jobs may still watch, as a plugin would.
+
+- **Whether it is on** is a command's choice (`EditorState.autoReload`, set
+  by `auto-reload-mode`, the ex names `autoread` and `noautoread`), which
+  lasts until the editor stops and survives a reload of config; and
+  otherwise config's setting (`autoReload` in `setup`,
+  `Loop.Registered.autoReload`); and otherwise off. The state request
+  `autoReloadMode` answers it from the dispatcher.
+- **The reconciler** (`Loop.reconcile`, after each publish, in
+  `Loop.fileJobs`) keeps `EditorState.following` in step with what is
+  wanted: every open file buffer with no save in flight, while the mode is
+  on and `follow-file` is registered, and nothing otherwise. A buffer
+  wanted and not followed gets a `follow-file` start of the key
+  `follow <buffer>` (`JobStart.key`); one followed and no longer wanted (the
+  mode off, the buffer closed, its path changed, a save started) gets a
+  cancel of its key (`Loop.Stepped.cancels`). One whose buffer's stamp
+  changed since it was armed (a reload, a save) is armed again, so its
+  order's stamp, which guards `markChanged`, is the buffer's. A rename keeps
+  the watch: the key is the buffer's id. A follow whose watch was refused stays, refused,
+  and is not armed again until the mode is turned off and on.
+- **Keyed jobs.** A host keeps a map from key to job id (`Running.keyed`,
+  `Loop.Driver`): starting a job of a key cancels the running job of that
+  key, and a cancel ends the job of its key, even one that has finished
+  and not been delivered, so its command never runs (`Job.Jobs.cancel`).
+- **The follow job** (`Files.followWork`) starts a watch on the file, with
+  a window of 50 ms and a bound of one path, then stats the file, and
+  waits for the next delivery while the stat answers what its order
+  expected: the last stamp found, which is the buffer's own unless it is
+  marked, or `none` for a gone file. Watching before the stat means a
+  change made before the watch existed is still seen. A stat that answers
+  something else finishes it with `Files.followed`; a refused watch or
+  stat with `Files.unfollowable`, which says so.
+- **`followed`** drops the following, so the reconciler arms it again with
+  the new expected stamp, ignores a stale order, and marks the buffer: an
+  unmodified one untold, reloaded when the file is there (`reload-file`),
+  only marked when it is gone; a modified one told, its text left, its
+  status line showing the mark. A check that finds an unmodified buffer
+  changed under the mode reloads it too.
+- **The model driver holds a waiting job** (`Loop.Driver.parked`,
+  `JobModel.runParking`): `Loop.Driver.touch` records changes in the
+  parked jobs' watches and resumes those with a delivery, and
+  `Loop.Driver.openWatches` is how many watches they hold.
+
+Pinned by `ModelTest.autoReloadChecks` on the models, and by
+`ConfigTest.autoReloadChecks` on real files with the library's watch
+service.
+
+## Decorations
+
+A view's decorations are the one source of them built: the matches of the
+last search (`EditorState.lastSearch`), each in the face `search-match`
+(`searchMatchFace`, defined in the built-in theme, `Editor/Face.lean`).
+
+- **Every view but the minibuffer's** asks its snapshot the matches of the
+  pattern (`SnapshotId.matches`) from the start of its scroll anchor's row
+  to the start of the row `rows + 1` text rows below, or the text's end,
+  where `rows` is the view's height over the height of a text row
+  (`EditorState.heights.text`) plus 1. A view of `n` display rows shows at
+  most `n` text rows from its anchor's, so every visible row is covered,
+  whatever the wrapping; matches just below the fold are drawn too.
+- **It is read after the follow** (step 3 of "After each event"), so the
+  anchor is where the scene shows it from: `/` that moves the cursor off
+  the view draws the matches round where it went.
+- **An empty match draws nothing**, nor does a pattern the syntax refuses,
+  nor a text that refuses.
+- **They sit under the selection** in layout's precedence, so a cursor
+  over a match shows the cursor (`docs/design/text-and-display.md`,
+  "Decorations").
+- **A recorded departure**: Vim 9.1's default is `nohlsearch`; here the
+  matches are always drawn, and `:nohlsearch` is not built. Matches are
+  not drawn while a pattern is typed (`incsearch`).
 
 ## Following the cursor
 
@@ -738,8 +887,11 @@ session is one step of the history
 - **A session's boundary is the state change itself.** The scene published
   after the command of the key that ends the session finds no view of the
   buffer in one, and closes the group: one node for everything edited
-  meanwhile. The loop keeps nothing of its own for a session, and no
-  command sets or clears anything.
+  meanwhile. The loop keeps nothing of its own for a session. A command
+  may still set a boundary inside one itself, with `BufferId.closeGroup`
+  (`Editor/Api.lean`, "Undo"): evil's arrow keys of insert state do, once
+  they moved (`Editor/Evil.lean`, "Editing keys"), so the session is then
+  more than one step.
 - **A session with nothing edited makes no node**: closing a group with
   nothing pending makes none.
 - **A buffer shown in two windows is held while either view is in a
@@ -824,6 +976,20 @@ structure Loop.Shown where
   snapshot : SnapshotId
   deriving DecidableEq, Repr
 
+/-- What the loop saw of the editor state at its last publish, which the
+next one compares its own with to know which files to check for a change
+on disk ("Files that changed on disk", in the module docs). -/
+structure Loop.Seen where
+  /-- Whether the frame had the keyboard focus. -/
+  focused : Bool := false
+  /-- The buffers a window showed. -/
+  shown : Array BufferId := #[]
+  /-- The buffers that were modified. -/
+  modified : Array BufferId := #[]
+  /-- The buffers that were open. -/
+  present : Array BufferId := #[]
+  deriving DecidableEq, Repr
+
 /-- The loop's own state, for a loop that runs the input scheme `scheme`:
 the editor state, the snapshots the last scene named, and the scheme's
 state.
@@ -843,6 +1009,8 @@ structure Loop (scheme : InputScheme) where
   and no command had just failed. It is what the scheme goes back to when
   the invocation a key yields does not run to its end. -/
   atRest : scheme.State := scheme.init
+  /-- What the last publish saw of the editor state. -/
+  seen : Loop.Seen := {}
   /-- The menu bar the scenes name: the one the last step, invocation or
   delivery was handed (`Keys.menu`, `keyedBy`), with its key equivalents
   as the registry's bindings then were; `none` until one is. -/
@@ -966,6 +1134,11 @@ structure Loop.Stepped (scheme : InputScheme) where
   /-- How the command the step ran ended; `none` for a step that ran no
   command. -/
   ended : Option Loop.Ending := none
+  /-- The keys of the jobs the host is to cancel: a cancel ends the job of
+  that key, if there is one, even one that has finished and not yet been
+  delivered, so its command never runs ("Auto-reload", in the module
+  docs). -/
+  cancels : Array String := #[]
 
 namespace EditorState
 
@@ -1120,6 +1293,48 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
             padding := state.paddingOf id }
   return (views, shown, refusal)
 
+/-- The face the matches of the last search are drawn in. -/
+def searchMatchFace : FaceName :=
+  ⟨"search-match"⟩
+
+/-- The decorations of `view` in `state` ("Decorations", in the module docs):
+when there is a last search and the view is not the minibuffer's, each
+match of its pattern that is not empty and starts from the row of the
+view's scroll anchor through `rect.height / heights.text + 1` rows below,
+in `searchMatchFace`, in order. A pattern the syntax refuses, and a text
+that refuses, draw none. -/
+def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration) := do
+  let some search := state.lastSearch | return #[]
+  if state.prompt.map (·.view) == some view.id then
+    return #[]
+  let some target := state.target? view.id | return #[]
+  try
+    let .anchor anchor ← target.buffer.text.marker view.scroll | return #[]
+    let snapshot := view.snapshot
+    let row := (← snapshot.pointOf anchor.offset).row
+    -- A view of `n` display rows shows at most `n` text rows from its
+    -- anchor's, however its rows wrap; one more is drawn, which nothing sees.
+    let rows := view.rect.height / max 1 state.heights.text + 1
+    let start ← snapshot.offsetOf ⟨row, 0⟩
+    let stop ←
+      if row + rows + 1 < (← snapshot.rowCount) then
+        snapshot.offsetOf ⟨row + rows + 1, 0⟩
+      else
+        snapshot.byteLength
+    match ← snapshot.matches search.pattern start stop with
+    | .ranges all =>
+      return (all.filter fun extent => extent.start < extent.stop).map fun extent =>
+          { start := extent.start, stop := extent.stop, face := searchMatchFace }
+    | .invalid _ =>
+      return #[]
+  catch _ =>
+    return #[]
+
+/-- `views` with their decorations (`decorationsOf`), each read with its
+scroll anchor where the follow left it. -/
+def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
+  views.mapM fun view => return { view with decorations := ← decorationsOf state view }
+
 /-- The scene of `state` over `views`: what the state says of the frame, the
 echo area, inset by the bottom row's inset (`EditorState.bottomInset`), and
 the preedit, around the views made of its windows, with `pending` as the
@@ -1239,6 +1454,8 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   -- snapshots the questions of layout need were taken just above. Each is
   -- asked with its height less its bottom row.
   followed state.scrollMargin state.bottomRow views
+  -- The matches are read from where each anchor now is.
+  let views ← decorated state views
   let state := state.refusedBy (unrecorded <|> unlisted <|> unshown)
   Display.publish (scene state views loop.pending loop.menu)
   let mut unreleased := none
@@ -1257,6 +1474,13 @@ and the cursors after, and places the selection at those cursors
 def insert (target : Target) (text : String) : TextM Unit :=
   target.replaceSelections text
 
+/-- What the echo area says when the first edit of the buffer of `path` was
+refused because its file changed on disk, or, with `found = none`, is
+gone. -/
+def supersededSays (path : System.FilePath) : Option File.Stamp → String
+  | some _ => Files.changedOnDisk path
+  | none => Files.goneFromDisk path
+
 /-- What `event` does to `state` ("What each event does", in the module
 docs), `report` being what the scheme says of the focused view: a committed
 text is inserted only where the report says the view takes text. -/
@@ -1273,16 +1497,28 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
   | .commit text => do
     let some target := state.focusedTarget? | return { state with preedit := none }
     if report.takesText then
+      -- The first edit after a change on disk the user was not told of is
+      -- dropped and said, as a command's is refused ("Files that changed on
+      -- disk", in the module docs).
+      if let some (buffer, path, found) := state.untold? target.buffer.text then
+        let (_, told) := state.tellChanged buffer
+        return { told with
+            echo := supersededSays path found, preedit := none }
       insert target text
     return { state with preedit := none }
   | _ => return state
 
 /-- The text `handle` inserts for `event` from `state`, `report` being what
 the scheme says of the focused view: a committed text, where there is a
-focused window and the report says its view takes text. None for any other
-event, and for a commit that is dropped. -/
+focused window, the report says its view takes text, and its buffer's file
+did not change on disk unbeknown to the user. None for any other event, and
+for a commit that is dropped. -/
 def inserts (state : EditorState) (report : InputScheme.Report) : Event → Option String
-  | .commit text => if report.takesText && state.focusedTarget?.isSome then some text else none
+  | .commit text =>
+    match state.focusedTarget? with
+    | some target =>
+      if report.takesText && (state.untold? target.buffer.text).isNone then some text else none
+    | none => none
   | _ => none
 
 /-- Whether the loop steps `event` through its scheme: a key press, a
@@ -1583,6 +1819,14 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     failed reason (.gaveUp reason)
   | .brokeOff reason =>
     stays (said left name reason) (.brokeOff reason) none
+  | .superseded buffer path found =>
+    -- Rolled back as a command that gave up is; the told flag is written
+    -- on the restored state, so it survives the rollback, and the echo
+    -- area has no command name before it.
+    let (state, _) ← kept.restore state left
+    let (_, state) := state.tellChanged buffer
+    let reason := supersededSays path found
+    return { state := { state with echo := reason }, ending := .gaveUp reason, log }
 
 /-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
 an invocation", in the module docs): clears the echo area, looks the
@@ -1655,6 +1899,92 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
   else
     return ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
 
+/-- What `state` shows the loop of itself, for the next publish to compare
+with ("Files that changed on disk", in the module docs). -/
+def seenOf (state : EditorState) : Seen :=
+  let present :=
+    (List.range state.buffers.size).filterMap fun index =>
+      (state.buffer? ⟨index⟩).map fun _ => (⟨index⟩ : BufferId)
+  { focused := state.frame.hasFocus
+    shown := state.windows.map (·.buffer)
+    modified := present.toArray.filter fun id => (state.buffer? id).any (·.isModified)
+    present := present.toArray }
+
+/-- The files of `state` that are due a check, `seen` being what the last
+publish saw ("Files that changed on disk", in the module docs): every file
+buffer with no save in flight, when the frame gained the keyboard focus;
+otherwise one shown now that was open and shown by no view then, and one
+modified now that was open and unmodified then. A buffer opened since is
+not due: its stamp is a moment old. -/
+def dueChecks (seen : Seen) (state : EditorState) : Array Files.Checked :=
+  let now := seenOf state
+  let gained := now.focused && !seen.focused
+  now.present.filterMap fun id => do
+    let buffer ← state.buffer? id
+    let file ← buffer.file
+    if file.saving.isSome then
+      none
+    let switched := now.shown.contains id && !seen.shown.contains id
+    let edited := now.modified.contains id && !seen.modified.contains id
+    if gained || (seen.present.contains id && (switched || edited)) then
+      some { buffer := id, path := file.path, stamp := file.stamp }
+    else
+      none
+
+/-- The reconciler of auto-reload ("Auto-reload", in the module docs): the
+state with what it follows brought in step with what it should follow, the
+follow jobs to start, and the keys of those to cancel. It wants every open
+file buffer with no save in flight while auto-reload is in effect and
+`follow-file` is registered, and nothing otherwise. A refused entry stays,
+and is not armed again, while it is wanted. -/
+def reconcile (state : EditorState) (keys : Keys scheme) :
+    EditorState × Array JobStart × Array String :=
+  let on := state.autoReload.getD keys.registered.autoReload && keys.registered.jobs Files.followJob
+  let wanted : Array (BufferId × Buffer.File) :=
+    if on then
+      (seenOf state).present.filterMap fun id => do
+        let file ← (← state.buffer? id).file
+        if file.saving.isSome then
+          none
+        else
+          some (id, file)
+    else #[]
+  let wants (entry : Following) : Bool :=
+    wanted.any fun (id, file) =>
+      id == entry.buffer && file.path == entry.path && file.stamp == entry.stamp
+  let kept := state.following.filter wants
+  let cancels := (state.following.filter (!wants ·)).map (Following.keyOf ·.buffer)
+  let arming := wanted.filter fun (id, _) => !kept.any (·.buffer == id)
+  let starts : Array JobStart :=
+    arming.map fun (id, file) =>
+      { name := Files.followJob
+        arguments :=
+          Files.FollowOrder.arguments
+            { buffer := id, path := file.path, stamp := file.stamp
+              expected := (file.changed.map (·.found)).getD (some file.stamp) }
+        key := some (Following.keyOf id) }
+  ({ state with
+      following :=
+        kept ++
+          arming.map fun (id, file) => { buffer := id, path := file.path, stamp := file.stamp } },
+    starts, cancels)
+
+/-- The loop after a publish, with what it saw kept, the jobs it starts and
+the keys of those it cancels: one `check-files` holding every file that is
+due (`dueChecks`), where that job is registered; and the follow jobs of
+auto-reload's reconciler (`reconcile`). -/
+def fileJobs (loop : Loop scheme) (keys : Keys scheme) :
+    Loop scheme × Array JobStart × Array String :=
+  let due := dueChecks loop.seen loop.state
+  let checks :=
+    if keys.registered.jobs Files.checkJob && !due.isEmpty then
+      #[{ name := Files.checkJob, arguments := Files.checkArguments due }]
+    else #[]
+  let (state, follows, cancels) := reconcile loop.state keys
+  ({ loop with
+      seen := seenOf loop.state, state },
+    checks ++ follows, cancels)
+
 /-- `loop` with the menu bar `keys` names (`Keys.menu`) as the one its
 scenes name: how a step, an invocation and a delivery start, so that a
 reload's bindings move the menu's shortcuts from the next one. -/
@@ -1662,15 +1992,44 @@ def keyedBy (keys : Keys scheme) (loop : Loop scheme) : Loop scheme :=
   { loop with menu := keys.menu }
 
 /-- `stepped`, a step whose scene is not yet published, once it is
-(`publish`), its views' status lines drawn by `modeLine`: its loop is the
-one the publish left, and it says stop when the editor then leaves
-(`nextOf`) and to go on otherwise. The scene comes first, so the scene of
-the step that says stop is the last one. -/
-def Stepped.published (stepped : Stepped scheme) (modeLine : ModeLine := ModeLine.standard)
-    (padding : Nat := 0) : EditorM (Stepped scheme) := do
-  let loop ← stepped.loop.publish modeLine padding
+(`publish`), its views' status lines drawn by the mode line `keys` names
+and padded by its padding (`Keys.modeLine`, `Keys.padding`): its loop is
+the one the publish left, with the file jobs it starts and cancels
+(`fileJobs`) after the step's own, and it says stop when the editor then
+leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
+scene of the step that says stop is the last one. -/
+def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
+  do
+  let loop ← stepped.loop.publish keys.modeLine keys.padding
+  let (loop, starts, cancels) := loop.fileJobs keys
   return { stepped with
-      loop, next := nextOf loop }
+      loop, next := nextOf loop, starts := stepped.starts ++ starts
+      cancels := stepped.cancels ++ cancels }
+
+/-- Hands the answer `invocation` carries, its first argument, to the input
+scheme, for the focused view (`InputScheme.answered`), and runs the
+invocation the answer completes as `key` runs a key's: told of the scheme's
+report of the focused view after the answer, and keeping the scheme's state
+as its state at rest when the command ran to its end, or going back to the
+state at rest when it did not ("Prompts", in the module docs). An answer
+that completes nothing keeps the scheme's state after it. Then a scene is
+published. No command of the reserved name is looked up. -/
+def answer (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
+    EditorM (Stepped scheme) := do
+  let text :=
+    match invocation.arguments with
+    | .str text :: _ => text
+    | _ => ""
+  let focused := loop.state.frame.focused
+  let (input, yielded) := scheme.answered focused text loop.input
+  let some completed := yielded |
+    return ← ({ loop := { loop with input, atRest := input }, next := .continue } : Stepped scheme).published keys
+  let ran ← run keys loop.state completed [] (scheme.report input focused)
+  let stepped :=
+    if ran.finished then
+      ({ loop with input, atRest := input } : Loop scheme).ranInto ran
+    else ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
+  stepped.published keys
 
 /-- Runs `invocation`, which no key yielded (`run`), and publishes a scene of
 the state after it: the echo area is cleared, the command is looked up, and
@@ -1680,8 +2039,10 @@ scheme's states are left as they are, but for a view the command closed. -/
 def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     EditorM (Stepped scheme) := do
   let loop := loop.keyedBy keys
+  if invocation.command == InputScheme.answerName then
+    return ← loop.answer keys invocation
   let report := scheme.report loop.input loop.state.frame.focused
-  (loop.ranInto (← run keys loop.state invocation [] report)).published keys.modeLine keys.padding
+  (loop.ranInto (← run keys loop.state invocation [] report)).published keys
 
 /-- Runs the command registered under `name` as an invocation with no
 arguments that no key yielded (`invoke`), and publishes a scene of the
@@ -1703,11 +2064,13 @@ def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command 
     dispatch keys loop.state label do
         command
         return none
-  (loop.ranInto ran).published keys.modeLine keys.padding
+  (loop.ranInto ran).published keys
 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on: stop, once the editor leaves ("Quit", in the module
-docs). A close request and a quit stop the loop and publish nothing. A key press is stepped through the scheme, and the invocation it
+docs). A queue's quit stops the loop and publishes nothing; a window's
+close request is a quit by `q`'s rule (`Ex.closeRequested`), run as a
+delivered command is (`deliver`). A key press is stepped through the scheme, and the invocation it
 yields is run (`stepped?`, `key`). A handler that is refused leaves the
 state as it was, with the refusal in the echo area. The step itself is not
 refused: the publish puts a refusal of its own in the echo area too ("When
@@ -1715,10 +2078,15 @@ publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   let loop := loop.keyedBy keys
   if let some pressed := stepped? event then
-    return ← (← loop.key keys pressed).published keys.modeLine keys.padding
+    return ← (← loop.key keys pressed).published keys
   match event with
-  | .closeRequested | .quit =>
+  | .quit =>
     return { loop, next := .stop }
+  | .closeRequested =>
+    -- A quit by `q`'s rule, run as a delivered command is: guarded, rolled
+    -- back and published, with the echo left, and stop once the editor
+    -- leaves.
+    loop.deliver keys Ex.quitName Ex.closeRequested
   | .openFiles (path :: rest) =>
     -- An invocation no key yielded, run as every command is, in the
     -- focused window: config's command of the name runs in its place.
@@ -1742,10 +2110,9 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
                     input, atRest } :
                   Loop scheme).ranInto
               ran).published
-          keys.modeLine keys.padding
+          keys
     else
-      (({ loop with input := loop.atRest } : Loop scheme).ranInto ran).published keys.modeLine
-          keys.padding
+      (({ loop with input := loop.atRest } : Loop scheme).ranInto ran).published keys
   | _ =>
     let focused := loop.state.frame.focused
     let report := scheme.report loop.input focused
@@ -1764,7 +2131,7 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     ({        loop :=
                 { loop with
                   state, input := told loop.input, atRest := told loop.atRest }
-              next := .continue } : Stepped scheme).published keys.modeLine keys.padding
+              next := .continue } : Stepped scheme).published keys
 
 /-- Lowers the interrupt flag for an event taken off the queue when the
 library marked it as a press of the interrupt key (`interrupt`), and for no
