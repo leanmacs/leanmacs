@@ -55,7 +55,7 @@ import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
 import Editor.WindowCheck
-import Editor.Workspace
+import Editor.Workspace.Contract
 
 /-!
 # The model tests
@@ -26211,6 +26211,52 @@ def workspaceDataChecks : List Check :=
             [Value.null, .str "/r", .record [("local", .nat 1)], .record []].all
               (Location.decode? · == none)) }]
 
+/-- The checks of how the git adapter reads what git prints
+(`Editor/Workspace.lean`, "The git adapter's command lines"). -/
+def workspaceGitChecks : List Check :=
+  let printed (text : String) : ByteArray := text.toUTF8
+  [{  name :=
+        "rev-parse's three lines are the top level, the common directory and the branch; HEAD is a detached checkout, and a common directory that is not absolute is resolved against the directory asked about"
+      run :=
+        pure
+          (Workspace.Git.parseRevParse "/r/src" (printed "/r\n/r/.git\nmain\n") ==
+              some { toplevel := "/r", commonDir := "/r/.git", branch := .named "main" } &&
+            Workspace.Git.parseRevParse "/r" (printed "/r\n.git\nHEAD\n") ==
+              some { toplevel := "/r", commonDir := "/r/.git", branch := .detached }) },
+    { name :=
+        "output that is not three lines, a top level that is not absolute and bytes that are not UTF-8 are no answer"
+      run :=
+        pure
+          ([printed "/r\n/r/.git\n", printed "", printed "r\n/r/.git\nmain\n",
+                printed "/r\n/r/.git\nmain\nextra\n", ByteArray.mk #[0xff, 0x0a]].all
+            (Workspace.Git.parseRevParse "/r" · == none)) },
+    { name := "the origin is the first line git prints, and an empty output is no origin"
+      run :=
+        pure
+          (Workspace.Git.parseOrigin (printed "git@github.com:o/r.git\n") ==
+              some "git@github.com:o/r.git" &&
+            Workspace.Git.parseOrigin (printed "") == none) }]
+
+/-- The names of the workspace finder's contract properties
+(`Editor/Workspace/Contract.lean`) that do not hold of the pure model
+(`World.find`), or of the real finder run on the job model of the
+property's world (`World.jobModel`); and, for a property that must not ask
+git, of a run that started a process. -/
+def workspaceFinderFailures : IO (List String) :=
+  pure <|
+    (Workspace.FinderContract.properties "/").flatMap fun property =>
+      let settings := property.settings "git"
+      let directories := property.asked.map (·.1)
+      let byModel := property.asked.map fun (directory, _) => property.world.find settings directory
+      let (outcome, after) :=
+        (property.answers "git").runModel (property.world.jobModel "git" directories)
+      (if byModel == property.expected then []
+        else [s!"the workspace finder's model: {property.name}"]) ++
+        (if outcome == .finished property.expected then []
+          else [s!"the workspace finder on the job model: {property.name}"]) ++
+        if property.asksGit || after.processes.started.isEmpty then []
+        else [s!"the workspace finder on the job model starts no process: {property.name}"]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -26316,7 +26362,8 @@ def checks : List Check :=
     titleChecks ++
     menuChecks ++
     clipboardCommandChecks ++
-    workspaceDataChecks
+    workspaceDataChecks ++
+    workspaceGitChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
@@ -26449,7 +26496,8 @@ def main : IO UInt32 := do
       (← ModelTest.watchFailures) ++
       (← ModelTest.clipboardFailures) ++
       (← ModelTest.fuzzyFailures) ++
-      (← ModelTest.apiCaseFailures)
+      (← ModelTest.apiCaseFailures) ++
+      (← ModelTest.workspaceFinderFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -26457,6 +26505,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model"
   (← IO.getStdout).flush
   IO.Process.exit 0

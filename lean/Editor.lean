@@ -13,7 +13,7 @@ import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
 import Editor.Themes
-import Editor.Workspace
+import Editor.Workspace.Finder
 
 /-!
 # The editor
@@ -130,7 +130,12 @@ and are not imported, as the file commands' and the minibuffer's are not.
 Pinned by `ConfigTest.evilChecks`, on a config the real elaborator loads.
 
 Projects, workspaces and locations are here too (`Editor/Workspace.lean`):
-which codebase and which checkout a buffer belongs to, as plain values.
+which codebase and which checkout a buffer belongs to, as plain values,
+and the finder that answers a directory's workspace through config, git
+and marker files (`Editor/Workspace/Finder.lean`, `Workspace.find`), a job
+like any other. Its model and its contract
+(`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
+tests, and are not imported.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports
