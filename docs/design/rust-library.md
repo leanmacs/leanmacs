@@ -769,7 +769,12 @@ built"):
   separator or a title, an optional key equivalent (a character and the
   port's `Modifiers`) and an action, an editor command by name or a thing
   the system does itself (About, Services, Hide, Hide Others, Show All,
-  Quit). It is a field of the scene, as the title is: Lean publishes it,
+  Quit). The port lists every system action (`System::ALL`). Each crate
+  that gives one a word or a selector of its own (`editor-ffi`'s tag,
+  winit's selector) does it in an exhaustive match, so a new action fails
+  to compile there until it has one, and reads it back by searching that
+  list, which its tests round-trip. The menu bar is a field of the
+  scene, as the title is: Lean publishes it,
   the presenter sends it as a `Request::Menu` only when it changed, and a
   scene that names none leaves it. The winit adapter takes it out of the
   requests once the window has opened, since the menu bar is the

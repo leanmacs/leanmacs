@@ -101,3 +101,41 @@ pub enum System {
     /// Asks the application to quit, as the system does.
     Quit,
 }
+
+impl System {
+    /// Every system action, each once, in the order they are declared: a
+    /// crate that gives each its own word or selector checks the mapping
+    /// over this, so a variant added here cannot cross as another.
+    pub const ALL: [System; 6] = [
+        System::About,
+        System::Services,
+        System::Hide,
+        System::HideOthers,
+        System::ShowAll,
+        System::Quit,
+    ];
+}
+
+#[cfg(test)]
+mod tests {
+    use super::System;
+
+    #[test]
+    fn every_system_action_is_listed_once() {
+        // A new variant fails to compile here until it has an arm; give it
+        // one, count it, and list it in `System::ALL`.
+        let count = |system: System| match system {
+            System::About
+            | System::Services
+            | System::Hide
+            | System::HideOthers
+            | System::ShowAll
+            | System::Quit => 6,
+        };
+        for system in System::ALL {
+            let listed = System::ALL.iter().filter(|&&each| each == system).count();
+            assert_eq!(listed, 1, "{system:?}");
+            assert_eq!(System::ALL.len(), count(system));
+        }
+    }
+}

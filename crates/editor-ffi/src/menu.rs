@@ -42,23 +42,30 @@ pub const ITEM_COMMAND: u64 = 1;
 /// A system item's kind.
 pub const ITEM_SYSTEM: u64 = 2;
 
-/// The system actions in the order of their tags: 0 about, 1 services,
-/// 2 hide, 3 hide others, 4 show all, 5 quit.
-const SYSTEMS: [System; 6] = [
-    System::About,
-    System::Services,
-    System::Hide,
-    System::HideOthers,
-    System::ShowAll,
-    System::Quit,
-];
-
-/// The tag of `system`.
+/// The tag of `system` on the wire: 0 about, 1 services, 2 hide, 3 hide
+/// others, 4 show all, 5 quit.
+///
+/// The match is exhaustive on purpose: the crossing must act on every
+/// variant, since each needs a tag Lean's side (`Display/Real.systemTag`,
+/// `Ffi.askedOf`) agrees on, so a variant added upstream fails to compile
+/// here until it has one. The tags are this crate's, not the enum's order.
 pub fn system_tag(system: System) -> u64 {
-    SYSTEMS
-        .iter()
-        .position(|&each| each == system)
-        .map_or(0, |index| index as u64)
+    match system {
+        System::About => 0,
+        System::Services => 1,
+        System::Hide => 2,
+        System::HideOthers => 3,
+        System::ShowAll => 4,
+        System::Quit => 5,
+    }
+}
+
+/// The system action whose tag is `tag` ([`system_tag`]); `None` for a tag
+/// none has.
+pub fn system_of(tag: u64) -> Option<System> {
+    System::ALL
+        .into_iter()
+        .find(|&system| system_tag(system) == tag)
 }
 
 /// Where the layout is written: words, and texts as the place writes them.
@@ -157,8 +164,32 @@ fn item(source: &mut impl Source) -> Option<Item> {
     let action = if kind == ITEM_COMMAND {
         Action::Command(source.text()?)
     } else {
-        let tag = usize::try_from(source.word()?).ok()?;
-        Action::System(*SYSTEMS.get(tag)?)
+        Action::System(system_of(source.word()?)?)
     };
     Some(Item::Entry { title, key, action })
+}
+
+#[cfg(test)]
+mod tests {
+    use editor_platform::menu::System;
+
+    use super::{system_of, system_tag};
+
+    #[test]
+    fn every_system_action_crosses_as_its_own_tag_and_back() {
+        for system in System::ALL {
+            assert_eq!(system_of(system_tag(system)), Some(system), "{system:?}");
+        }
+        let mut tags: Vec<u64> = System::ALL.into_iter().map(system_tag).collect();
+        tags.sort_unstable();
+        tags.dedup();
+        assert_eq!(tags.len(), System::ALL.len(), "no two share a tag");
+    }
+
+    #[test]
+    fn a_tag_no_system_action_has_reads_as_none() {
+        let past = System::ALL.into_iter().map(system_tag).max().unwrap_or(0) + 1;
+        assert_eq!(system_of(past), None);
+        assert_eq!(system_of(u64::MAX), None);
+    }
 }

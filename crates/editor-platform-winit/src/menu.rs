@@ -145,6 +145,10 @@ pub(crate) struct Entry {
 }
 
 /// The standard selector of `system`; `None` for Services, which has none.
+///
+/// The match is exhaustive on purpose: the adapter must act on every
+/// variant, since each is something AppKit does by its own selector, so a
+/// variant added upstream fails to compile here until it has one.
 pub(crate) fn selector(system: System) -> Option<&'static str> {
     match system {
         System::About => Some("orderFrontStandardAboutPanel:"),
@@ -156,17 +160,12 @@ pub(crate) fn selector(system: System) -> Option<&'static str> {
     }
 }
 
-/// The system action whose standard selector is `action`.
+/// The system action whose standard selector is `action`, of every one
+/// ([`System::ALL`]).
 fn system_of(action: &str) -> Option<System> {
-    [
-        System::About,
-        System::Hide,
-        System::HideOthers,
-        System::ShowAll,
-        System::Quit,
-    ]
-    .into_iter()
-    .find(|&system| selector(system) == Some(action))
+    System::ALL
+        .into_iter()
+        .find(|&system| selector(system) == Some(action))
 }
 
 /// The mask of the modifiers held.
@@ -549,6 +548,21 @@ mod tests {
                 submenu("Empty", None, vec![]),
             ],
         }
+    }
+
+    #[test]
+    fn every_system_action_with_a_selector_is_read_back_from_it() {
+        let mut seen = Vec::new();
+        for system in System::ALL {
+            let Some(action) = selector(system) else {
+                assert_eq!(system, System::Services, "only Services has no selector");
+                continue;
+            };
+            assert_eq!(system_of(action), Some(system), "{system:?}");
+            assert!(!seen.contains(&action), "{system:?} shares {action}");
+            seen.push(action);
+        }
+        assert_eq!(system_of("toggleFullScreen:"), None);
     }
 
     #[test]
