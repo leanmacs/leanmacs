@@ -7,7 +7,7 @@
 //! clock is: tests of this crate and of its users set it and advance it.
 //!
 //! The service's timer thread parks until the earliest batch's deadline or
-//! until it is woken (`service::Service::wake`). A
+//! until it is woken ([`Service::wake`](crate::service::Service::wake)). A
 //! test on a [`ManualClock`] advances the clock, wakes the service, and
 //! then waits for the completion with a deadline: no test sleeps for a
 //! fixed time.

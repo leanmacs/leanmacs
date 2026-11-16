@@ -45,6 +45,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
+use crate::clock::ManualClock;
 use crate::contract::Ground;
 use crate::{Depth, Kind, Notice, Refusal, RefusalKind, Sink, Watch};
 
@@ -93,7 +94,7 @@ const LATE_SERIAL: u64 = 20;
 /// How long the contract waits, on the fake, for what should happen at
 /// once. The fake tells its notices before its ground returns, so only a
 /// flawed fake, or a service that breaks a rule, takes this long.
-const FAKE_DEADLINE: Duration = Duration::from_secs(2);
+const FAKE_DEADLINE: Duration = Duration::from_secs(1);
 
 /// What the fake was asked.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -177,6 +178,8 @@ struct State {
     held: bool,
     /// Whether every drop calls its sink once.
     sinks_on_drop: bool,
+    /// Whether every registration tells its directory's whole tree.
+    whole_trees: bool,
     /// What it was asked.
     record: Record,
 }
@@ -237,6 +240,8 @@ pub struct FakeRegistration {
 pub struct FakeGround {
     /// The fake whose file system it changes.
     fake: FakeWatch,
+    /// The clock [`Ground::let_pass`] advances, if it is on one.
+    clock: Option<ManualClock>,
 }
 
 impl FakeWatch {
@@ -259,6 +264,7 @@ impl FakeWatch {
                     refusals: Vec::new(),
                     held: false,
                     sinks_on_drop: false,
+                    whole_trees: false,
                     record: Record::default(),
                 }),
                 changed: Condvar::new(),
@@ -275,6 +281,7 @@ impl FakeWatch {
             let mut state = self.shared.state();
             let path = state.resolve(path.as_ref());
             let flaws = state.flaws;
+            let whole_trees = state.whole_trees;
             let lost = match kind {
                 Kind::Created => flaws.misses_creation,
                 Kind::Written => flaws.misses_writes,
@@ -284,7 +291,8 @@ impl FakeWatch {
             };
             let mut calls = Vec::new();
             for live in &mut state.live {
-                if !live.covers(&path, flaws) {
+                if !(live.covers(&path, flaws) || whole_trees && path.starts_with(&live.canonical))
+                {
                     continue;
                 }
                 if let Some(first) = &mut live.late {
@@ -357,6 +365,14 @@ impl FakeWatch {
         self.shared.changed.notify_all();
     }
 
+    /// Makes every registration, of either depth, tell what changes
+    /// anywhere under its directory, as FSEvents does underneath: the port
+    /// lets a registration notice more than it covers, and the service's
+    /// filter is the rule.
+    pub fn notice_whole_trees(&self) {
+        self.shared.state().whole_trees = true;
+    }
+
     /// Makes every later drop of a registration call its sink once, with
     /// [`Kind::Missed`] on its directory, before it shuts its gate.
     pub fn call_sinks_on_drop(&self) {
@@ -376,7 +392,10 @@ impl FakeWatch {
 
     /// Its ground: changes to its file system, told as notices.
     pub fn ground(&self) -> FakeGround {
-        FakeGround { fake: self.clone() }
+        FakeGround {
+            fake: self.clone(),
+            clock: None,
+        }
     }
 
     /// Changes the state with `change`, and tells whoever waits on it.
@@ -527,6 +546,15 @@ impl Drop for FakeRegistration {
 }
 
 impl FakeGround {
+    /// The same ground, on `clock`: [`Ground::let_pass`] advances it.
+    #[must_use]
+    pub fn on(self, clock: ManualClock) -> Self {
+        Self {
+            clock: Some(clock),
+            ..self
+        }
+    }
+
     /// Writes `bytes` to the file at `path`: [`Kind::Created`] first if it
     /// was not there, then [`Kind::Written`].
     pub fn write(&self, path: &Path, bytes: &[u8]) {
@@ -636,6 +664,12 @@ impl Ground for FakeGround {
         Self::link(self, link, to);
     }
 
+    fn let_pass(&self, ms: u64) {
+        if let Some(clock) = &self.clock {
+            clock.advance(ms);
+        }
+    }
+
     fn deadline(&self) -> Duration {
         FAKE_DEADLINE
     }
@@ -710,6 +744,21 @@ mod tests {
                 notice("/w/sub", Kind::Created)
             ]
         );
+    }
+
+    #[test]
+    fn a_fake_told_to_tells_an_entries_registration_of_its_whole_tree() {
+        let fake = fake();
+        fake.notice_whole_trees();
+        let (sink, notices) = sink();
+        let _registration = fake
+            .watch(Path::new("/w"), Depth::Entries, sink)
+            .expect("watched");
+
+        fake.notice("/w/sub/deeper/c", Kind::Written);
+        fake.notice("/wx/a", Kind::Written);
+
+        assert_eq!(told(&notices), [notice("/w/sub/deeper/c", Kind::Written)]);
     }
 
     #[test]

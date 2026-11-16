@@ -6,6 +6,33 @@
 //! what is inside its own subdirectory, through the [`Ground`] it is
 //! given.
 //!
+//! The port's properties are [`LIVE_ON_RETURN`] to [`REFUSED`]. The
+//! service's, [`FILE_WRITTEN`] to [`SHUTDOWN`], run [`Service`] over the
+//! watch the check is given, on the clock it is given, so a real adapter
+//! shows them on real files. On a real file system they check that a kind
+//! is *present* in a change, never that the set is exactly something, and
+//! a property reads up to [`READS`] deliveries for the change it looks
+//! for: a platform can carry an earlier change's flag, or split what one
+//! step made across two deliveries. The exact sets are pinned on the fake,
+//! in the service's unit tests. [`COALESCED`] is the exception: it fails if
+//! the path written five times is in more than its first delivery.
+//!
+//! [`COALESCED`] needs the window to pass on the service's clock. The
+//! check is given the clock, and [`Ground::let_pass`] moves it: the fake's
+//! ground advances the [`ManualClock`](crate::clock::ManualClock) it is
+//! on, and the property then wakes the service; a real ground does
+//! nothing, and the property waits for the delivery up to its deadline,
+//! while real time passes. So the property is deterministic on the fake,
+//! and on a real adapter needs only that five writes take less than the
+//! window.
+//!
+//! Seen to bite once by hand, on 2026-11-15, on the fake
+//! (`tests/contract.rs`): with the service's router keeping every entry of
+//! a file watch's directory, [`FILE_IGNORES_SIBLINGS`] alone fails; with
+//! its timer thread never completing a read, [`COALESCED`] alone fails.
+//! Each port property bites on a fake written to break it, in
+//! `tests/contract.rs`.
+//!
 //! # How a property waits
 //!
 //! A sink sends each notice to a channel, and the property waits on it for
@@ -39,6 +66,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use crate::batch::Change;
+use crate::clock::Clock;
+use crate::service::{Coalescing, Service, Target, WatchReply};
 use crate::{Depth, Kind, Notice, RefusalKind, Sink, Watch};
 
 /// What [`check`] needs done that the port has no method for. It is the
@@ -63,6 +93,11 @@ pub trait Ground {
 
     /// Makes `link` a symbolic link to the directory `to`.
     fn link(&self, link: &Path, to: &Path);
+
+    /// Lets `ms` pass on the clock the check was given: a ground on a
+    /// manual clock advances it; a real ground does nothing, real time
+    /// passing by itself while the check waits.
+    fn let_pass(&self, ms: u64);
 
     /// How long the check waits for what should happen at once.
     fn deadline(&self) -> Duration;
@@ -103,8 +138,40 @@ pub const DROPPED_IS_SILENT: &str = "after its drop returns a registration's sin
 /// given as a directory [`RefusalKind::NotADirectory`].
 pub const REFUSED: &str = "a directory not there, or a file, is refused as such";
 
+/// A watch on a file is told when the file is written.
+pub const FILE_WRITTEN: &str = "a file watch is told when the file is written";
+/// A watch on a file is told when another file is renamed over it.
+pub const FILE_RENAMED_OVER: &str = "a file watch is told when a file is renamed over it";
+/// A watch on a file is told when the file is removed.
+pub const FILE_REMOVED: &str = "a file watch is told when the file is removed";
+/// A watch on a file that is not there yet is told of its creation.
+pub const FILE_MADE: &str = "a file watch is told when the file is made";
+/// A watch on a file is told of a write after a rename over the file, an
+/// atomic save.
+pub const FILE_SURVIVES_SAVE: &str = "a file watch is still told after an atomic save";
+/// A watch on a file is told nothing of the files beside it.
+pub const FILE_IGNORES_SIBLINGS: &str = "a file watch is told nothing of its siblings";
+/// A watch on a directory's entries is told each entry created, written,
+/// renamed and removed directly inside it, with its path, and nothing
+/// deeper.
+pub const DIRECTORY_ENTRIES: &str =
+    "a directory watch is told each entry changed directly inside it, and nothing deeper";
+/// A watch on a directory's tree is told of a change two levels down.
+pub const DIRECTORY_TREE: &str = "a tree watch is told of a change in a subdirectory";
+/// With a window of 300 ms and a read pending, five writes to one path
+/// arrive as one delivery holding that path once; and after it, a write to
+/// a sentinel gives a delivery that holds the sentinel and not the first
+/// path.
+pub const COALESCED: &str = "writes within the window arrive as one delivery";
+/// Of two watches on one file, one cancelled: the other is told of a
+/// write, and the cancelled one's pending read is never completed.
+pub const CANCELLED_SILENT: &str = "a cancelled watch's pending read is never completed";
+/// After shutdown a start is refused as shut down, and a pending read is
+/// never completed.
+pub const SHUTDOWN: &str = "after shutdown a start is refused and a pending read never completed";
+
 /// Every property, in the order [`check`] runs them.
-pub const PROPERTIES: [&str; 12] = [
+pub const PROPERTIES: [&str; 23] = [
     LIVE_ON_RETURN,
     CREATED,
     WRITTEN,
@@ -117,7 +184,35 @@ pub const PROPERTIES: [&str; 12] = [
     INDEPENDENT,
     DROPPED_IS_SILENT,
     REFUSED,
+    FILE_WRITTEN,
+    FILE_RENAMED_OVER,
+    FILE_REMOVED,
+    FILE_MADE,
+    FILE_SURVIVES_SAVE,
+    FILE_IGNORES_SIBLINGS,
+    DIRECTORY_ENTRIES,
+    DIRECTORY_TREE,
+    COALESCED,
+    CANCELLED_SILENT,
+    SHUTDOWN,
 ];
+
+/// How many deliveries a service property reads for the change it looks
+/// for, at most.
+pub const READS: usize = 4;
+
+/// The window of [`COALESCED`], in milliseconds.
+const WINDOW: u64 = 300;
+
+/// How many writes [`COALESCED`] makes to its one path.
+const COALESCED_WRITES: usize = 5;
+
+/// The coalescing of every service property but [`COALESCED`]: no window,
+/// and room for every path a property changes.
+const AT_ONCE: Coalescing = Coalescing {
+    window_ms: 0,
+    bound: 100,
+};
 
 /// How many fresh registrations [`LIVE_ON_RETURN`] makes.
 const LIVE_TIMES: usize = 20;
@@ -126,12 +221,23 @@ const AFTER_DROP: usize = 200;
 /// How many times [`TREE_NEW_SUBDIRECTORY`] writes its file, at most.
 const NEW_SUBDIRECTORY_TRIES: u32 = 20;
 
-/// Holds `watch` to the port's rules in fresh subdirectories of `dir`,
-/// which the caller owns and which is there, making every change through
-/// `ground`; and returns the names of the properties that fail, in the
-/// order of [`PROPERTIES`].
-pub fn check<W: Watch + Clone>(watch: W, ground: &impl Ground, dir: &Path) -> Vec<&'static str> {
-    let check = Check { watch, ground, dir };
+/// Holds `watch` to the port's rules, and a [`Service`] over it on `clock`
+/// to the service's, in fresh subdirectories of `dir`, which the caller
+/// owns and which is there, making every change through `ground`; and
+/// returns the names of the properties that fail, in the order of
+/// [`PROPERTIES`].
+pub fn check<W: Watch + Clone, C: Clock + Clone>(
+    watch: W,
+    clock: C,
+    ground: &impl Ground,
+    dir: &Path,
+) -> Vec<&'static str> {
+    let check = Check {
+        watch,
+        clock,
+        ground,
+        dir,
+    };
     let results = [
         (LIVE_ON_RETURN, check.live_on_return()),
         (CREATED, check.created()),
@@ -145,6 +251,17 @@ pub fn check<W: Watch + Clone>(watch: W, ground: &impl Ground, dir: &Path) -> Ve
         (INDEPENDENT, check.independent()),
         (DROPPED_IS_SILENT, check.dropped_is_silent()),
         (REFUSED, check.refused()),
+        (FILE_WRITTEN, check.file_written()),
+        (FILE_RENAMED_OVER, check.file_renamed_over()),
+        (FILE_REMOVED, check.file_removed()),
+        (FILE_MADE, check.file_made()),
+        (FILE_SURVIVES_SAVE, check.file_survives_save()),
+        (FILE_IGNORES_SIBLINGS, check.file_ignores_siblings()),
+        (DIRECTORY_ENTRIES, check.directory_entries()),
+        (DIRECTORY_TREE, check.directory_tree()),
+        (COALESCED, check.coalesced()),
+        (CANCELLED_SILENT, check.cancelled_silent()),
+        (SHUTDOWN, check.shutdown()),
     ];
     results
         .into_iter()
@@ -217,17 +334,120 @@ impl Listener {
     }
 }
 
+/// A service a property runs, and the ids it completes.
+struct Served<W: Watch, C: Clock> {
+    /// The service.
+    service: Service<W, C>,
+    /// The ids it completed, in order.
+    completed: Receiver<u64>,
+    /// Every id received from `completed` and not yet looked for.
+    seen: Vec<u64>,
+    /// The next wait id to use.
+    next_wait: u64,
+}
+
+impl<W: Watch, C: Clock> Served<W, C> {
+    /// Waits for the id `id` to be completed, up to `deadline`, keeping the
+    /// others it receives on the way.
+    fn completed(&mut self, id: u64, deadline: Duration) -> bool {
+        if let Some(index) = self.seen.iter().position(|&seen| seen == id) {
+            self.seen.remove(index);
+            return true;
+        }
+        loop {
+            match self.completed.recv_timeout(deadline) {
+                Ok(seen) if seen == id => return true,
+                Ok(seen) => self.seen.push(seen),
+                Err(_) => return false,
+            }
+        }
+    }
+
+    /// Whether `id` has been completed by now, without waiting.
+    fn ever_completed(&mut self, id: u64) -> bool {
+        self.seen.extend(self.completed.try_iter());
+        self.seen.contains(&id)
+    }
+
+    /// Starts the watch `id` and waits for it to be live.
+    fn started(
+        &mut self,
+        id: u64,
+        target: Target,
+        coalescing: Coalescing,
+        deadline: Duration,
+    ) -> bool {
+        self.service.start(id, target, coalescing)
+            && self.completed(id, deadline)
+            && self.service.take(id) == Some(WatchReply::Started)
+    }
+
+    /// Asks for the next delivery of `watch` and gives its wait id.
+    fn ask(&mut self, watch: u64) -> Option<u64> {
+        let wait = self.next_wait;
+        self.next_wait += 1;
+        self.service.next(watch, wait).then_some(wait)
+    }
+
+    /// Waits for the delivery of `wait` and takes it.
+    fn delivery(&mut self, wait: u64, deadline: Duration) -> Option<Vec<Change>> {
+        if !self.completed(wait, deadline) {
+            return None;
+        }
+        match self.service.take(wait) {
+            Some(WatchReply::Changes(changes)) => Some(changes),
+            _ => None,
+        }
+    }
+
+    /// Reads deliveries of `watch`, up to [`READS`], until `done` holds of
+    /// one, and says whether it did. `done` sees each delivery in turn.
+    fn reads_until(
+        &mut self,
+        watch: u64,
+        deadline: Duration,
+        mut done: impl FnMut(&[Change]) -> bool,
+    ) -> bool {
+        for _ in 0..READS {
+            let Some(wait) = self.ask(watch) else {
+                return false;
+            };
+            let Some(changes) = self.delivery(wait, deadline) else {
+                return false;
+            };
+            if done(&changes) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Whether `changes` hold a change at `path` with `kind` among its kinds.
+fn has(changes: &[Change], path: &Path, kind: Kind) -> bool {
+    changes
+        .iter()
+        .any(|change| change.path == path && change.kinds.contains(kind))
+}
+
+/// Whether `changes` hold a change at `path`, of any kind.
+fn names(changes: &[Change], path: &Path) -> bool {
+    changes.iter().any(|change| change.path == path)
+}
+
 /// One run of [`check`].
-struct Check<'a, W, G> {
+struct Check<'a, W, C, G> {
     /// What is checked.
     watch: W,
+    /// The clock the service properties run on.
+    clock: C,
     /// What makes the changes.
     ground: &'a G,
     /// The caller's directory.
     dir: &'a Path,
 }
 
-impl<W: Watch + Clone, G: Ground> Check<'_, W, G> {
+impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
     /// A fresh directory named `name` in the caller's.
     fn fresh(&self, name: &str) -> PathBuf {
         let dir = self.dir.join(name);
@@ -416,5 +636,236 @@ impl<W: Watch + Clone, G: Ground> Check<'_, W, G> {
         };
         kind(&dir.join("missing")) == Some(RefusalKind::NotFound)
             && kind(&file) == Some(RefusalKind::NotADirectory)
+    }
+
+    /// A service over the watch, on the clock.
+    fn served(&self) -> Served<W, C> {
+        let (sender, completed) = mpsc::channel();
+        let sender = Mutex::new(sender);
+        let service = Service::new(self.watch.clone(), self.clock.clone(), move |id| {
+            sender
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(id)
+                .ok();
+        });
+        Served {
+            service,
+            completed,
+            seen: Vec::new(),
+            next_wait: 100,
+        }
+    }
+
+    /// A served watch, the watch `1`, on `target`; `None` if it was not
+    /// started.
+    fn watching(&self, target: Target, coalescing: Coalescing) -> Option<Served<W, C>> {
+        let mut served = self.served();
+        served
+            .started(1, target, coalescing, self.deadline())
+            .then_some(served)
+    }
+
+    /// A file watch on `file` with no window, read until a delivery holds
+    /// `kind` at `file` once `change` has been made.
+    fn file_told(&self, file: &Path, kind: Kind, change: impl FnOnce()) -> bool {
+        let Some(mut served) = self.watching(Target::File(file.to_path_buf()), AT_ONCE) else {
+            return false;
+        };
+        change();
+        served.reads_until(1, self.deadline(), |changes| has(changes, file, kind))
+    }
+
+    fn file_written(&self) -> bool {
+        let file = self.fresh("file-written").join("f");
+        self.ground.write(&file, b"x");
+        self.file_told(&file, Kind::Written, || self.ground.write(&file, b"y"))
+    }
+
+    fn file_renamed_over(&self) -> bool {
+        let dir = self.fresh("file-renamed-over");
+        let (file, other) = (dir.join("f"), dir.join("g"));
+        self.ground.write(&file, b"f");
+        self.ground.write(&other, b"g");
+        self.file_told(&file, Kind::Renamed, || self.ground.rename(&other, &file))
+    }
+
+    fn file_removed(&self) -> bool {
+        let file = self.fresh("file-removed").join("f");
+        self.ground.write(&file, b"x");
+        self.file_told(&file, Kind::Removed, || self.ground.remove(&file))
+    }
+
+    fn file_made(&self) -> bool {
+        let file = self.fresh("file-made").join("f");
+        self.file_told(&file, Kind::Created, || self.ground.write(&file, b"x"))
+    }
+
+    fn file_survives_save(&self) -> bool {
+        let dir = self.fresh("file-save");
+        let (file, saved) = (dir.join("f"), dir.join("f.tmp"));
+        self.ground.write(&file, b"x");
+        let Some(mut served) = self.watching(Target::File(file.clone()), AT_ONCE) else {
+            return false;
+        };
+        self.ground.write(&saved, b"y");
+        self.ground.rename(&saved, &file);
+        if !served.reads_until(1, self.deadline(), |changes| {
+            has(changes, &file, Kind::Renamed)
+        }) {
+            return false;
+        }
+        self.ground.write(&file, b"z");
+        served.reads_until(1, self.deadline(), |changes| {
+            has(changes, &file, Kind::Written)
+        })
+    }
+
+    fn file_ignores_siblings(&self) -> bool {
+        let dir = self.fresh("file-siblings");
+        let (file, sibling) = (dir.join("f"), dir.join("s"));
+        let Some(mut served) = self.watching(Target::File(file.clone()), AT_ONCE) else {
+            return false;
+        };
+        self.ground.write(&sibling, b"x");
+        self.ground.write(&file, b"x");
+        let mut sibling_told = false;
+        served.reads_until(1, self.deadline(), |changes| {
+            sibling_told |= names(changes, &sibling);
+            names(changes, &file)
+        }) && !sibling_told
+    }
+
+    fn directory_entries(&self) -> bool {
+        let dir = self.fresh("directory-entries");
+        let sub = dir.join("sub");
+        let (made, written, renamed, removed) =
+            (dir.join("n"), dir.join("a"), dir.join("b"), dir.join("r"));
+        let deeper = sub.join("x");
+        self.ground.make_dir(&sub);
+        self.ground.write(&deeper, b"x");
+        self.ground.write(&written, b"a");
+        self.ground.write(&removed, b"r");
+        let Some(mut served) =
+            self.watching(Target::Directory(dir.clone(), Depth::Entries), AT_ONCE)
+        else {
+            return false;
+        };
+        self.ground.write(&deeper, b"y");
+        self.ground.write(&made, b"n");
+        self.ground.write(&written, b"aa");
+        self.ground.rename(&written, &renamed);
+        self.ground.remove(&removed);
+        let wanted = [
+            (&made, Kind::Created),
+            (&written, Kind::Written),
+            (&written, Kind::Renamed),
+            (&renamed, Kind::Renamed),
+            (&removed, Kind::Removed),
+        ];
+        let mut seen = [false; 5];
+        let mut deeper_told = false;
+        served.reads_until(1, self.deadline(), |changes| {
+            deeper_told |= names(changes, &deeper);
+            for (index, (path, kind)) in wanted.iter().enumerate() {
+                seen[index] |= has(changes, path, *kind);
+            }
+            seen.iter().all(|&seen| seen)
+        }) && !deeper_told
+    }
+
+    fn directory_tree(&self) -> bool {
+        let dir = self.fresh("directory-tree");
+        let deep = dir.join("x").join("y");
+        self.ground.make_dir(&dir.join("x"));
+        self.ground.make_dir(&deep);
+        let file = deep.join("f");
+        self.ground.write(&file, b"x");
+        let Some(mut served) = self.watching(Target::Directory(dir, Depth::Tree), AT_ONCE) else {
+            return false;
+        };
+        self.ground.write(&file, b"y");
+        served.reads_until(1, self.deadline(), |changes| {
+            has(changes, &file, Kind::Written)
+        })
+    }
+
+    fn coalesced(&self) -> bool {
+        let dir = self.fresh("coalesced");
+        let (file, sentinel) = (dir.join("f"), dir.join("sentinel"));
+        self.ground.write(&file, b"x");
+        let window = Coalescing {
+            window_ms: WINDOW,
+            bound: 100,
+        };
+        let Some(mut served) = self.watching(Target::Directory(dir, Depth::Entries), window) else {
+            return false;
+        };
+        let Some(first) = served.ask(1) else {
+            return false;
+        };
+        self.ground.write_times(&file, COALESCED_WRITES);
+        self.ground.let_pass(WINDOW);
+        served.service.wake();
+        let Some(changes) = served.delivery(first, self.deadline()) else {
+            return false;
+        };
+        let once = changes.iter().filter(|change| change.path == file).count() == 1;
+        let Some(second) = served.ask(1) else {
+            return false;
+        };
+        self.ground.write(&sentinel, b"x");
+        self.ground.let_pass(WINDOW);
+        served.service.wake();
+        let Some(after) = served.delivery(second, self.deadline()) else {
+            return false;
+        };
+        once && names(&after, &sentinel) && !names(&after, &file)
+    }
+
+    fn cancelled_silent(&self) -> bool {
+        let file = self.fresh("cancelled").join("f");
+        self.ground.write(&file, b"x");
+        let target = Target::File(file.clone());
+        let mut served = self.served();
+        if !(served.started(1, target.clone(), AT_ONCE, self.deadline())
+            && served.started(2, target, AT_ONCE, self.deadline()))
+        {
+            return false;
+        }
+        let (Some(cancelled), Some(kept)) = (served.ask(1), served.ask(2)) else {
+            return false;
+        };
+        served.service.cancel(1);
+        self.ground.write(&file, b"y");
+        let told = served
+            .delivery(kept, self.deadline())
+            .is_some_and(|changes| names(&changes, &file));
+        told && !served.ever_completed(cancelled)
+    }
+
+    fn shutdown(&self) -> bool {
+        let dir = self.fresh("shutdown");
+        let file = dir.join("f");
+        self.ground.write(&file, b"x");
+        let Some(mut ended) = self.watching(Target::File(file.clone()), AT_ONCE) else {
+            return false;
+        };
+        let Some(pending) = ended.ask(1) else {
+            return false;
+        };
+        ended.service.shutdown();
+        let refused = ended.service.start(2, Target::File(file.clone()), AT_ONCE)
+            && ended.completed(2, self.deadline())
+            && matches!(
+                ended.service.take(2),
+                Some(WatchReply::Refused(refusal)) if refusal.kind == RefusalKind::ShutDown
+            );
+        let Some(mut sentinel) = self.watching(Target::File(file.clone()), AT_ONCE) else {
+            return false;
+        };
+        self.ground.write(&file, b"y");
+        let told = sentinel.reads_until(1, self.deadline(), |changes| names(changes, &file));
+        refused && told && !ended.ever_completed(pending)
     }
 }

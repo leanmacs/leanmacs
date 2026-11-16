@@ -2,13 +2,18 @@
 //! break one rule each, which shows that the contract bites.
 //!
 //! The directory is made up: nothing here is a real file or a real watch.
-//! The fake's file system in memory is the ground.
+//! The fake's file system in memory is the ground, on a manual clock. A
+//! broken rule of the port breaks the service's properties that rest on it
+//! too, and each test lists every property its fake fails.
 
 use std::path::Path;
 
+use editor_watch::clock::ManualClock;
 use editor_watch::contract::{
-    self, CREATED, DROPPED_IS_SILENT, INDEPENDENT, LIVE_ON_RETURN, REFUSED, REMOVED, RENAMED,
-    RENAMED_OVER, SPELLED_AS_GIVEN, TREE, TREE_NEW_SUBDIRECTORY, WRITTEN,
+    self, CANCELLED_SILENT, COALESCED, CREATED, DIRECTORY_ENTRIES, DIRECTORY_TREE,
+    DROPPED_IS_SILENT, FILE_MADE, FILE_REMOVED, FILE_RENAMED_OVER, FILE_SURVIVES_SAVE,
+    FILE_WRITTEN, INDEPENDENT, LIVE_ON_RETURN, REFUSED, REMOVED, RENAMED, RENAMED_OVER, SHUTDOWN,
+    SPELLED_AS_GIVEN, TREE, TREE_NEW_SUBDIRECTORY, WRITTEN,
 };
 use editor_watch::fake::{FakeWatch, Flaws};
 
@@ -18,10 +23,11 @@ const DIR: &str = "/fake/contract";
 /// The properties a fake that breaks the rules `flaws` names fails.
 fn failures(flaws: Flaws) -> Vec<&'static str> {
     let fake = FakeWatch::flawed(flaws);
-    let ground = fake.ground();
+    let clock = ManualClock::new();
+    let ground = fake.ground().on(clock.clone());
     ground.make_dir(Path::new("/fake"));
     ground.make_dir(Path::new(DIR));
-    contract::check(fake, &ground, Path::new(DIR))
+    contract::check(fake, clock, &ground, Path::new(DIR))
 }
 
 #[test]
@@ -46,7 +52,10 @@ fn a_fake_that_misses_creations_is_reported() {
         ..Flaws::default()
     };
 
-    assert_eq!(failures(flaws), [CREATED, TREE_NEW_SUBDIRECTORY]);
+    assert_eq!(
+        failures(flaws),
+        [CREATED, TREE_NEW_SUBDIRECTORY, FILE_MADE, DIRECTORY_ENTRIES]
+    );
 }
 
 #[test]
@@ -56,7 +65,20 @@ fn a_fake_that_misses_writes_is_reported() {
         ..Flaws::default()
     };
 
-    assert_eq!(failures(flaws), [WRITTEN, TREE]);
+    assert_eq!(
+        failures(flaws),
+        [
+            WRITTEN,
+            TREE,
+            FILE_WRITTEN,
+            FILE_SURVIVES_SAVE,
+            DIRECTORY_ENTRIES,
+            DIRECTORY_TREE,
+            COALESCED,
+            CANCELLED_SILENT,
+            SHUTDOWN
+        ]
+    );
 }
 
 #[test]
@@ -66,7 +88,7 @@ fn a_fake_that_misses_removals_is_reported() {
         ..Flaws::default()
     };
 
-    assert_eq!(failures(flaws), [REMOVED]);
+    assert_eq!(failures(flaws), [REMOVED, FILE_REMOVED, DIRECTORY_ENTRIES]);
 }
 
 #[test]
@@ -76,7 +98,16 @@ fn a_fake_that_drops_renames_is_reported() {
         ..Flaws::default()
     };
 
-    assert_eq!(failures(flaws), [RENAMED, RENAMED_OVER]);
+    assert_eq!(
+        failures(flaws),
+        [
+            RENAMED,
+            RENAMED_OVER,
+            FILE_RENAMED_OVER,
+            FILE_SURVIVES_SAVE,
+            DIRECTORY_ENTRIES
+        ]
+    );
 }
 
 #[test]
@@ -86,7 +117,10 @@ fn a_fake_that_misses_a_rename_over_is_reported() {
         ..Flaws::default()
     };
 
-    assert_eq!(failures(flaws), [RENAMED_OVER]);
+    assert_eq!(
+        failures(flaws),
+        [RENAMED_OVER, FILE_RENAMED_OVER, FILE_SURVIVES_SAVE]
+    );
 }
 
 #[test]
@@ -96,7 +130,10 @@ fn a_fake_whose_tree_is_only_its_entries_is_reported() {
         ..Flaws::default()
     };
 
-    assert_eq!(failures(flaws), [TREE, TREE_NEW_SUBDIRECTORY]);
+    assert_eq!(
+        failures(flaws),
+        [TREE, TREE_NEW_SUBDIRECTORY, DIRECTORY_TREE]
+    );
 }
 
 #[test]
