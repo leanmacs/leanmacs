@@ -184,6 +184,14 @@ request is waiting loses nothing.
   shell three times because project identity was stored in several places
   that had to agree. Here a workspace has one canonical root, set at
   creation; everything else is derived from it.
+- **A session's workspace is a workspace of the editor's**
+  ([projects.md](projects.md)): its location is `local` for a worktree on
+  this machine, or `branchOnly`, the git remote and the branch, for a
+  remote session. A remote session registers its workspace with
+  `Workspace.register` (`StateRequest.registerWorkspace`), which puts it in
+  the project of its remote, beside the local checkouts of the same
+  repository; a location that is not local reports that it cannot read
+  files or run commands.
 
 ## Attention
 

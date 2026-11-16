@@ -15,6 +15,7 @@ and the document updated.
 | [text-and-display.md](text-and-display.md) | Text storage, the edit log, anchors, excerpt buffers, decorations, the scene, layout, rendering, view kinds. As built, among the rest: how a view follows its cursor, the scroll margin, and where the follow runs in the publish |
 | [rendering-prior-art.md](rendering-prior-art.md) | A survey of how Zed, neomacs, Xi, Helix, Lapce and others stay responsive; what we adopt and reject |
 | [rust-library.md](rust-library.md) | What the Rust library provides beyond text and display: timers, processes, files, watching, diff, terminal, syntax; and what is built in Lean on top |
+| [projects.md](projects.md) | Projects, workspaces and locations: which codebase and which checkout a buffer belongs to, the finder and its config, git and marker adapters, which state lives in a workspace and which in a project, and `workspace-current`. Built |
 | [agent-hosting.md](agent-hosting.md) | Hosting coding agents: ACP, the terminal front end, the agent table, permissions, sessions |
 | [review-and-navigation.md](review-and-navigation.md) | Reviewing agents' plans and code, provenance, version control, the rdm client, codebase navigation |
 
