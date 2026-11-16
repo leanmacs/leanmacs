@@ -165,6 +165,8 @@ trait Lays: Send {
     fn define(&mut self, definitions: &[FaceDef]);
     /// [`Layout::set_scale`].
     fn set_scale(&mut self, scale: f32);
+    /// [`Layout::scale`].
+    fn scale(&self) -> f32;
 }
 
 impl<S: Shaper> Lays for Layout<S>
@@ -207,6 +209,10 @@ where
     fn set_scale(&mut self, scale: f32) {
         Layout::set_scale(self, scale);
     }
+
+    fn scale(&self) -> f32 {
+        Layout::scale(self)
+    }
 }
 
 /// Layout behind a handle, with the last scene published and its frame.
@@ -222,9 +228,6 @@ pub struct Display {
     /// Where its frames are presented, once it is bound
     /// ([`Display::present_to`]).
     presenter: Mutex<Option<Arc<Presenter>>>,
-    /// The scale it was last told ([`Display::set_scale`]); 1 until it is
-    /// told one. A picture of a display not bound is drawn at it.
-    scale: Mutex<f32>,
 }
 
 impl Display {
@@ -244,7 +247,6 @@ impl Display {
             scene: Mutex::new(None),
             frame: Mutex::new(Arc::new(Frame::default())),
             presenter: Mutex::new(None),
-            scale: Mutex::new(1.0),
         }
     }
 
@@ -282,7 +284,6 @@ impl Display {
     /// ([`Layout::set_scale`]): every later frame, query and heights answer
     /// is at it.
     pub fn set_scale(&self, scale: f32) {
-        *self.scale.lock().unwrap_or_else(PoisonError::into_inner) = scale;
         self.layout().set_scale(scale);
     }
 
@@ -303,10 +304,9 @@ impl Display {
                 rgba: Vec::new(),
             };
         };
-        let scale = match self.presenter() {
-            Some(presenter) => presenter.scale(),
-            None => *self.scale.lock().unwrap_or_else(PoisonError::into_inner),
-        };
+        // The scale the frame was laid out at: the layout's, which
+        // `layout` sets to the presenter's when the display is bound.
+        let scale = self.layout().scale();
         let size = |pixels: u64| u32::try_from(pixels).unwrap_or(u32::MAX);
         let mut renderer = HeadlessRenderer::new(Settings {
             antialiasing: Antialiasing::Grayscale,
