@@ -1107,6 +1107,11 @@ fn a_picture_crosses_to_a_png_file_and_back() {
     // scene: a PNG file has at least one pixel each way.
     let (written, _, bytes, reason) = to_png(0, 0, &[]);
     assert!(!written && bytes.is_empty() && !reason.is_empty());
+    // Nor one whose size in bytes is past any number: refused, not a
+    // panic across the boundary.
+    let side = u64::from(u32::MAX);
+    let (written, _, bytes, reason) = to_png(side, side, &rgba);
+    assert!(!written && bytes.is_empty() && !reason.is_empty());
     let (mut back, mut reason) = (MaybeUninit::uninit(), MaybeUninit::uninit());
     // SAFETY: as above.
     let (read, back, reason) = unsafe {

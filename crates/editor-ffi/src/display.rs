@@ -618,7 +618,11 @@ pub unsafe extern "C" fn editor_ffi_picture_to_png(
     let sized = u32::try_from(width).ok().zip(u32::try_from(height).ok());
     let image = sized
         .and_then(|(width, height)| {
-            let pixels = usize::try_from(u64::from(width) * u64::from(height) * 4).ok()?;
+            // Checked: two sides of `u32::MAX` are past any `u64` of bytes.
+            let bytes = u64::from(width)
+                .checked_mul(u64::from(height))?
+                .checked_mul(4)?;
+            let pixels = usize::try_from(bytes).ok()?;
             (pixels == rgba.len()).then(|| Image {
                 width,
                 height,
