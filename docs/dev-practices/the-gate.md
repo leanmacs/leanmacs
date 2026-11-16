@@ -203,24 +203,41 @@ incremental one has an error, on a recording mock, single-threaded; and the
 worker stepped by hand and, in `tests/worker.rs`, on a real thread while
 another edits and touches, with every wait bounded. The port's contract is
 tested on the fake and on implementations written to break each of its
-eleven properties. The real adapter, over tree-sitter with the Rust and
-JSON grammars compiled in (`crates/editor-syntax-treesitter`), is held to
-that contract for each grammar, over fixtures under `tests/syntax/`: among
-it, that a tree told the edit log's patches and reparsed as the core
-reparses equals a fresh parse, texts with errors among them, on named cases and on a sweep of random edits from a fixed seed;
-that the grammar's shipped highlights query compiles (`SHIPPED`); and that
-its spans on the reparsed tree equal a fresh parse's over the same edits
-(`HIGHLIGHTS_AFTER_EDITS`). Highlighting is tested on the fake: the rule
+fourteen properties. The real adapter, over tree-sitter with the Rust,
+JSON and Markdown grammars compiled in (`crates/editor-syntax-treesitter`),
+is held to that contract for each grammar, over fixtures under
+`tests/syntax/`: among it, that a tree told the edit log's patches and
+reparsed as the core reparses equals a fresh parse, texts with errors among
+them, on named cases and on a sweep of random edits from a fixed seed;
+that the grammar's shipped queries of the kinds its corpus lists compile,
+and none of another kind (`SHIPPED`); that its spans on the reparsed tree
+equal a fresh parse's over the same edits (`HIGHLIGHTS_AFTER_EDITS`); that
+a parse in ranges reads only them (`IN_RANGES`); that a range's matches,
+flattened, are its captures, with each node's named children (`MATCHES`);
+and each pattern's `#set!` settings (`SETTINGS`). The injection rule
+(`inject.rs`) is tested on a mock that answers canned matches and on the
+fake, and on the real grammars in the adapter's `tests/injections.rs`: a
+Markdown fence's layer is its content parsed alone, a quoted fence leaves
+out each `> `, and a Rust macro's token tree is a Rust layer. A session's
+layers, its delivery again at the same revision when new injections find
+new layers, the spans of a layer drawn over the host's and carried through
+a patch, and its kept queries with their refusals are tested in
+`session.rs`, single-threaded. Highlighting is tested on the fake: the rule
 that turns captures into spans and the carrying of spans through a patch
 (`highlight.rs`), which tree draws a snapshot (`session.rs`), and, in
 `tests/highlight.rs`, a parse held on a real worker thread while an edit,
-its touch and a read of the highlights on other threads each complete
-within a bound. `crates/editor-ffi/tests/syntax.rs` runs the syntax service on real
+its touch, a language set for injections and a read of the highlights on
+other threads each complete within a bound. `crates/editor-ffi/tests/syntax.rs` runs the syntax service on real
 documents through their edit paths and the C functions, and
 `crates/editor-ffi/tests/highlight.rs` highlights a Rust fixture through
 the C functions, edits it, and holds its spans once reparsed to a fresh
 highlight of its text; it runs layout's spans contract on the service, and
-checks that a published scene paints a keyword in its face. `mise run deny`
+checks that a published scene paints a keyword in its face. It does the
+same for a Markdown document given its injections and languages through the
+C functions: a Rust fence drawn in Rust's captures, a JSON fence in JSON's,
+no layer over a quoted fence's `> `, the spans after edits equal to a fresh
+injected highlight, the spans contract with layers, and a fenced `fn`
+painted in the keyword face. `mise run deny`
 holds that only the adapter depends on tree-sitter and its grammars, and
 bans `wasmtime` and `tree-sitter-loader`.
 
@@ -534,10 +551,15 @@ checks:
   (`syntaxTreeFailures`), and `contract-test` runs it on its real binding:
   the grammars, refusals, capture names, a table of exact cases that are
   the library's answers, the range rule, a grammar's shipped query, and a
-  highlight answered or refused. `highlightFaceChecks` and
+  highlight answered or refused, and injections, languages and kept queries
+  with their refusals. `highlightFaceChecks` and
   `highlightEnterChecks` pin the capture-to-face rule and what setting a
   major mode with a syntax tree asks of the port, through the loop's
-  dispatch on the models. `syntaxTreeChecks` are what
+  dispatch on the models, its injections and kept queries among it.
+  `indentRuleChecks` and `indentLevelChecks` pin the indent rule and the
+  indent primitive, and `treeObjectRuleChecks` and `evilObjectChecks` the
+  syntax tree's text objects, by key, on a test mode of the model's JSON
+  grammar. `syntaxTreeChecks` are what
   only the model shows: its JSON tree node by node, its `ERROR` answer
   outside the subset, what its query subset refuses as unsupported, and
   the contract seen to report a model that answers a range with the whole
@@ -977,11 +999,18 @@ Rust grammar, a Rust function's name captured, a query of one grammar asked
 of a text parsed with another or highlighted with it, a text edited through
 its document reparsed, a Rust text highlighted and edited drawn by the real
 display with its keywords in the keyword face's colour once the edit's
-delivery is reported on the editor queue, and a job's command run by
-`Job.finishWith` reaching the syntax tree it is handed.
+delivery is reported on the editor queue, a Markdown text with a fenced
+Rust block drawn with the fence's `fn` in the keyword face's colour, and a
+job's command run by `Job.finishWith` reaching the syntax tree it is
+handed. Over the fixtures of `tests/syntax`, its third argument, it checks
+that the indent levels of `rust/indent.rs` are its own indentation and the
+tree's text objects of `rust/objects.rs` cover the ranges written by hand,
+each before and after an edit, and that the shipped Rust indents and text
+objects queries name only what their rules read.
 `ffi-test`'s own `syntaxChecks` pin that a list of strings out, a query
 handle with its refusals, captures with each of their refusals, a shipped
-query and a highlight with each refusal cross the boundary, and that a
+query, a highlight, an injection, a language and a kept query with each
+refusal cross the boundary, and that a
 file's loaded text is of no document; its event checks decode a parse
 delivered.
 
@@ -997,8 +1026,10 @@ when its type changes; a command the library refuses is reported as refused
 and leaves its store as it was; the editor answers events while a chunk
 elaborates; reloads are serialised; a script that cannot run to its end
 says why; a job's command that sets a mode with a syntax tree reaches the
-host's syntax tree; and a parse of a highlighted text the library delivers
-makes the host publish a scene, with no key pressed. Its config directories are temporary directories of its own.
+host's syntax tree; a parse of a highlighted text the library delivers
+makes the host publish a scene, with no key pressed; and, in a Rust buffer
+of a host of the Vim scheme that ships, `v a f` selects the enclosing
+function and `d a f` deletes it. Its config directories are temporary directories of its own.
 
 With no arguments `ffi-test` runs its checks of handles, plain data, the
 event queues, the timer service, the document, the snapshot of a document,

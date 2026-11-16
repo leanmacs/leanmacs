@@ -1356,7 +1356,8 @@ faces ("Highlights, as built", below).
 
 **How grammars are loaded: compiled in.** Each grammar is a crates.io
 grammar crate, pinned exactly (`tree-sitter-rust` 0.24.2,
-`tree-sitter-json` 0.24.8, over `tree-sitter` 0.27.2), whose build compiles
+`tree-sitter-json` 0.24.8 and `tree-sitter-md` 0.5.4, over `tree-sitter`
+0.27.2), whose build compiles
 the generated `parser.c` (and the grammar's scanner, if it has one) with
 `cc` when Cargo builds the library; the objects end up in
 `libeditor_ffi.a`, which Lake links. Nothing is fetched, generated or
@@ -1376,7 +1377,9 @@ loaded at run time. Set aside, and why:
 
 `deny.toml` bans `wasmtime` and `tree-sitter-loader` outright, and lets only
 the adapter depend on tree-sitter and the grammars. The grammars are Rust,
-for the editor's own language, and JSON, which the Lean model reproduces.
+for the editor's own language, JSON, which the Lean model reproduces, and
+Markdown, whose block grammar alone is listed ("Injections, indentation
+and text objects, as built", below).
 
 **The port** (`crates/editor-syntax`, over `editor-text` alone) is
 `Syntax`: the grammars it has, a parser for one, a parse of a snapshot
@@ -1392,7 +1395,8 @@ grammar of parens and atoms that reparses whole.
 
 **The contract** (`editor_syntax::contract::check`, over a `Corpus` of a
 grammar: texts, pieces random edits insert, a query and its names, bad
-queries with their kinds) holds every implementation to eleven properties:
+queries with their kinds, the kinds of query it ships, a query with `#set!`
+settings) holds every implementation to fourteen properties:
 the grammar listed and opening a parser; a whole tree (the root reaches
 the text's end, each node within its parent on positions with their points,
 siblings in order; the root may start after the blanks that lead the text,
@@ -1402,12 +1406,16 @@ texts of both; the incremental reparse, as the core makes it, equal to a
 fresh parse; queries refused by kind; capture names in order; a
 range answering the whole text's captures that overlap it; and every
 capture naming one of the query's and being a node's range, in the core's
-order; the grammar's shipped highlights query compiling, and an unlisted
-grammar shipping none (`SHIPPED`); and, over the same edits as the
-incremental property, the shipped highlights of the reparsed tree equal to
-a fresh parse's (`HIGHLIGHTS_AFTER_EDITS`). Each property is seen to bite on
-an implementation written to break it. The fake passes it, and the adapter
-passes it for Rust and for JSON.
+order; the grammar shipping a query of each kind the corpus lists, each
+compiling, and none of another kind, and an unlisted grammar shipping none
+(`SHIPPED`); over the same edits as the incremental property, the shipped
+highlights of the reparsed tree equal to a fresh parse's
+(`HIGHLIGHTS_AFTER_EDITS`); a parse in ranges reading only the ranges
+(`IN_RANGES`); a range's matches, flattened, being its captures, each with
+its node's named children (`MATCHES`); and each pattern's `#set!` settings
+(`SETTINGS`). Each property is seen to bite on an implementation written to
+break it. The fake passes it, and the adapter passes it for Rust, JSON and
+Markdown.
 
 - **Incremental equals fresh** is checked on named cases (an insert inside
   a token, a delete across lines, everything deleted, an edit at offset 0
@@ -1611,6 +1619,141 @@ its buffer's text (`lean/Editor/Highlight.lean`).
   buffers, in place of one compiled each time a mode is set.
 - Drawing typed text in its token's face before the reparse, by
   interpolating the tree (set aside above).
+
+### Injections, indentation and text objects, as built
+
+Built by the syntax roadmap's phase 3 (2026-11-16).
+
+**Where each query comes from.** The port's `QueryKind` is `Highlights`,
+`Injections`, `TextObjects` and `Indents`, and the adapter's table lists,
+for each grammar, the queries it ships by kind. A grammar crate's own query
+is used wherever it ships one, as phase 2 decided for highlights:
+
+| Grammar | Highlights | Injections | Text objects | Indents |
+|---|---|---|---|---|
+| `rust` | the crate's | the crate's (a macro's or a macro rule's token tree, as Rust, its children included) | ours | ours |
+| `json` | the crate's | none | none | none |
+| `markdown` | the crate's, of the block grammar | the crate's, of the block grammar (a fence's code in the language its info string names) | none | none |
+
+`tree-sitter-rust` 0.24.2 ships no `indents.scm` or `textobjects.scm`, so
+Rust's are this repository's (`crates/editor-syntax-treesitter/queries/rust/`,
+GPL-3.0-or-later), each opening with a comment naming the Lean rule that
+reads it, with nvim-treesitter's capture names so a config author can read
+them. Third-party query sets are set aside for the reason phase 2 gave:
+their captures and directives are written for their own editors' rules
+(nvim-treesitter-textobjects' `#make-range!`, nvim's `@indent.align` with
+`#set!` metadata, Helix's `#same-line?` and `@outdent`), which tree-sitter's
+Rust crate does not evaluate and our rules do not read. Drift is guarded
+twice: the contract's `SHIPPED` (every kind a corpus lists compiles), and
+real-only Lean checks that the capture names of Rust's shipped indents and
+text objects are among the names their rules read. A mode's config may
+replace any of the four with a source of its own; an empty source captures
+nothing, which turns that part off. The indents query's `>` is a branch
+only as a generic list's closing angle bracket (`type_arguments`,
+`type_parameters`), never as a comparison leading a continuation row, which
+keeps that row's level (the plan review's advice; the Rust indent fixture
+has such a row).
+
+**Markdown is `tree-sitter-md`'s block grammar alone.** `tree-sitter-md`
+0.5.4 (MIT, the tree-sitter-grammars project's, the one nvim, Helix and Zed
+use) is depended on with no features: its `parser` feature only adds a
+wrapper over tree-sitter the adapter does not use. Its inline grammar is not
+listed: in a sweep of 4,000 random incremental reparses on 2026-11-16, 598
+gave a tree other than a fresh parse's with no error in it, so the core's
+fallback would not catch them and `INCREMENTAL` would fail; the block
+grammar's 6,000 all equalled the fresh parse. So inline Markdown (emphasis,
+code spans, links) is not highlighted, and the block grammar's injection of
+each `(inline)` node as `markdown_inline` names a grammar the service does
+not have. A Markdown tree may say it has an error with no error node the
+walk shows (a heading marker that ends the text), which only makes the core
+parse it whole.
+
+**What the port gains.** `Syntax::matches` (a query's matches, each with
+its captures, and each captured node's named children), `pattern_settings`
+(a pattern's `#set!`s) and `parse_in` (the tree of the bytes in some ranges
+only, parsed whole, nodes keeping the text's offsets and points; the
+adapter sets the parser's included ranges and sets them back after). A
+leaf of tree-sitter's may run from one range into the next, its lexer going
+on at the next range's start, so `IN_RANGES` holds a leaf to starting and
+ending in the ranges, not to lying within one; what a leaf holds of a gap is
+not the layer's, and a layer's spans are cut to its ranges.
+
+**The injection rule** (`editor_syntax::inject`). Each match of an
+injections query over a tree's ranges says one injection: its language,
+the text of its first `injection.language` capture, trimmed and lower-cased
+in ASCII, or else its pattern's `injection.language` setting; its content,
+the ranges of its `injection.content` captures, each node's named children
+taken out unless the pattern sets `injection.include-children` (so a
+fence's code keeps its punctuation and leaves out a block quote's `> `),
+cut to the parent's ranges and made one where they touch. A match injects
+nothing with no language, no range left, ranges that are the parent's own,
+or a language not known: nothing aliases a name. Each match is a layer of
+its own; `injection.combined` is not built.
+
+**Layers in a round.** A session's round finds the new tree's layers, and
+each layer's own down to three below the host, each parsed whole in its
+ranges by a parser kept for its grammar, on the worker. A tree parsed whole
+equals a fresh parse with nothing to prove, and injected regions are small.
+The round reads the injections and their generation once, briefly under the
+state lock (nothing takes the state lock and then the work lock). When only
+the injections changed, the base tree is kept and its layers found again,
+and the result is delivered at the same revision when the layers differ
+from the base's (by language, grammar, depth and ranges, which fix a
+layer's tree); otherwise the round is up to date, a language's new faces
+being read when highlights are asked. So the layers a mode's injections
+find are drawn with no key pressed, and a mode set over a text with nothing
+to inject reports no parse.
+
+**Layers drawn over the host.** A snapshot's highlights are the host's
+spans, then each layer's, by depth and then by start: its language's
+highlighter's spans of its tree, cut to its ranges and carried through the
+patch as the host's are. Layout stacks spans in the order given, so an
+injected span is drawn over the host's, and where the injected language has
+no face the host's shows through. The faces are one table, the host's
+names then each language's, no name twice. A layer whose language is gone,
+or is now of another grammar, is not drawn.
+
+**Measured** by hand on 2026-11-16, in a release build on the owner's
+machine: a round after an edit of `crates/editor-layout/src/frame.rs`
+(138,437 bytes, the largest Rust file in the repository, 392 macro layers)
+takes 10.0 ms at the median and 10.8 ms at most over 20 runs, under a
+16 ms frame, so reusing a layer's tree across rounds stays an open
+question.
+
+**Kept queries.** A session keeps one query of each structural kind it is
+given (`Session::keep`), and answers a kept query's names and captures in a
+range from the tree delivered (`Session::kept_captures`), refused, in this
+order, with `NoQuery`, `BadRange` and `NotParsed`. A structural question
+before its reparse is delivered is refused, not carried as highlights are:
+an indent level or a text object of a tree that lacks the latest edit would
+be wrong, not stale, and the caller keeps the row's indent or finds no
+object. An attach with the same grammar keeps the kept queries and the
+injections; a detach, or another grammar, drops them.
+
+**The C functions** are `editor_ffi_syntax_inject`,
+`editor_ffi_syntax_inject_language` (a language's name, its highlights
+query and faces, and its injections query or null),
+`editor_ffi_syntax_keep`, `editor_ffi_syntax_kept_names` and
+`editor_ffi_syntax_kept_captures`, each with a status of its own; a kind
+crosses as a tag, 0 to 3. In Lean, entering a major mode with a syntax tree
+injects, gives a language for each grammar, and keeps the text objects and
+indents queries (`lean/Editor/Highlight.lean`); the indent rule
+(`lean/Editor/Indent.lean`) and the text-object rule
+(`lean/Editor/Evil/TreeObjects.lean`) are Lean's, over plain rows.
+
+**Open questions:**
+
+- Reusing an injected layer's tree across rounds (measured above).
+- Listing a grammar that is only ever parsed whole as an injected layer:
+  Markdown's inline grammar.
+- Language aliases for injections (`rs`, `jsonc`), and where they are
+  configured.
+- `injection.combined`: one layer of several matches.
+- A structural question asked before its reparse is delivered: a macro or
+  `.` that runs a text object right after an edit, a wait for a parse, or
+  carrying.
+- Text objects and indent levels inside injected layers: they are answered
+  from the host tree only today.
 
 ## Built in Lean on these services
 

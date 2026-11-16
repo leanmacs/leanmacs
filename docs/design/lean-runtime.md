@@ -819,8 +819,10 @@ editor state's buffers and windows through one port, whose shape is:
 - **The syntax tree port** (`lean/Editor/SyntaxTree.lean`, made a sub-port
   by the syntax roadmap's phase 2) is what a command and a major mode ask
   of the library's syntax service: grammars, attaching and detaching a
-  text, queries, a grammar's shipped query, and drawing a text with a
-  query's captures in faces. **Its refusal is a value**: `SyntaxTree.lift`
+  text, queries, a grammar's shipped query, drawing a text with a query's
+  captures in faces, its injections and the languages they may name, and
+  keeping a query of a structural kind (text objects, indents) whose
+  captures are asked by kind (made by the syntax roadmap's phase 3). **Its refusal is a value**: `SyntaxTree.lift`
   runs a syntax tree program in a command and hands back its `Except
   SyntaxTreeError`, which the command matches on, as the clipboard's is, so
   the editor's error type is not widened. Its result type is not the

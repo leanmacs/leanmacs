@@ -1600,7 +1600,7 @@ follows Vim 9.1 with its default options:
 | Key | Command | Behaviour, as Vim 9.1 documents it |
 |---|---|---|
 | `<Backspace>` | `insert-delete-backward` | Deletes the character before the bar; a carriage return and line feed, or a character of several bytes, goes whole. At a line's start it joins the line to the one above, and it deletes past where the insert began: `i_<BS>` under `backspace=indent,eol,start`, Vim 9.1's default. At the text's start it deletes nothing |
-| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent`, and indentation waits for syntax |
+| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent`. The primitive an indenting line break would call, each row's level from its mode's indents query (`TextId.indentLevels`, `lean/Editor/Indent.lean`), is built; indenting on `RET`, `o` and `O`, and the `=` operator, are task `syntax-done-signal-mode-and-indent-operator`'s |
 | `TAB` | `insert-tab` | Inserts a tab character: Vim's defaults `noexpandtab` and `softtabstop=0` |
 | `<ArrowLeft>` | `insert-left` | One cell back, no further than the line's start (`whichwrap=b,s`: no wrap) |
 | `<ArrowRight>` | `insert-right` | One cell on, no further than where the line's content ends |
@@ -1976,9 +1976,58 @@ literal port of Vim 9.1's `textobject.c`:
     built (Vim's "another string is included"): there is none, and the
     selection is as it was.
   - Word classes beyond ASCII are the text's word class as it stands.
-  - `i<` `a<`, `it` `at`, `is` `as` and `ip` `ap` are not built; the
-    syntax-aware objects are rdm:roadmap/syntax-tree-sitter phase 3's,
-    and reuse this vocabulary's shape.
+  - `i<` `a<`, `it` `at`, `is` `as` and `ip` `ap` are not built.
+
+#### The syntax tree's objects
+
+Status: built, by the syntax-tree-sitter roadmap's phase 3
+(`lean/Editor/Evil/TreeObjects.lean`; pinned by `treeObjectRuleChecks`,
+`evilObjectChecks`, `ContractTest`'s rows over `tests/syntax/rust/objects.rs`
+and `ConfigTest`'s `v a f` through a host of the Vim scheme).
+
+Six more entries of `Evil.objects` (which is `Evil.vimObjects`, the sixteen
+above, and these) take their ranges from the syntax tree of a buffer's
+text: the captures of the text objects query its major mode keeps
+(`Mode.SyntaxTree.textObjects`, or the grammar's shipped one), asked of the
+library as plain rows (`SyntaxTree.capturesOf`), the rule Lean's:
+
+| Keys | Objects | Captures read | Rule |
+|---|---|---|---|
+| `af`, `if` | `a-function`, `inner-function` | `function.outer`, `function.inner` | The function round the cursor; inside, its body |
+| `ac`, `ic` | `a-class`, `inner-class` | `class.outer`, `class.inner` | The class round the cursor (a struct, enum, union, trait, impl or mod in Rust); inside, its body |
+| `aa`, `ia` | `an-argument`, `inner-argument` | `parameter.inner` | The argument round the cursor, with its separator; alone |
+
+- **The rule** (`TreeObjects.choose`): the nodes of the object's outer
+  capture, each range once; those enclosing the selection (`start ≤ low`,
+  `high < stop`), smallest first; in a visual state with a selection wider
+  than one cell, a node no bigger than the selection passed over for the
+  next one out, as block objects do; the `count`th (1 with none typed),
+  too few being no object; and for `if` and `ic` the longest inner row
+  within the chosen node, none being no object (a unit struct, a signature
+  with no body).
+- **Inside brackets**: an inner range that starts with an opening bracket
+  and ends with its partner is Vim's inner block between them
+  (`Evil.innerBetween`, which `i{` runs too, factored out of
+  `currentBlock`); any other inner range is taken as it is, exclusive (a
+  closure whose body is an expression).
+- **Outer objects** are the node's range, exclusive. `d af` of a function
+  that fills its lines takes them whole, by `d`'s own rule over lines (a
+  charwise span from a line's indent to the end of a later line); `c` and
+  `y` take it charwise.
+- **The separator** of `aa`: a comma after the argument (blanks before it
+  allowed) is taken with the blanks after it, line breaks included, up to
+  the next non-blank; otherwise a comma before it, blanks and line breaks
+  between allowed; otherwise the argument alone.
+- **No object** where the syntax tree port refuses: a text with no syntax
+  tree, one whose mode keeps no text objects query, and one whose last
+  edit's tree is not yet delivered ("A structural question before its
+  reparse", `docs/design/README.md`). Under an operator the command gives
+  up (`noObjectHere`); in a visual state the selection stays.
+- **Open points**: a node found forward when none encloses the cursor, as
+  `ib` finds the next pair; `d af` taking whole lines when the function
+  fills them under `c` and `y` too; text objects inside injected layers
+  (`vaf` in a Markdown fence finds nothing); and a macro or `.` that runs an
+  object right after an edit, before its reparse is delivered.
 
 ### Operators as built
 
@@ -2343,7 +2392,7 @@ Which names have something behind them:
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
 | `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
 | The operators (`delete`, `change`, `yank`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
-| The sixteen text objects of `objects` | Built: entries of `Evil.objects`, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
+| The twenty-two text objects of `objects` | Built: entries of `Evil.objects`, Vim's sixteen and the syntax tree's six, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
 | `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
@@ -2354,7 +2403,7 @@ Which names have something behind them:
 | Table | Keys |
 |---|---|
 | `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward, `%` matching-bracket |
-| `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
+| `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace, `a f` a-function, `i f` inner-function, `a c` a-class, `i c` inner-class, `a a` an-argument, `i a` inner-argument: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
 | `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
 | `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `RET` insert-newline, `TAB` insert-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down (each enters no state, and none is a change dot repeat replays) |
@@ -2439,15 +2488,21 @@ structure Mode where
   onEnter    : ViewId → EditorM Unit := fun _ => pure ()
 
 structure Mode.SyntaxTree where
-  grammar    : String                               -- the library's grammar: rust, json
-  highlights : Option String := none                -- query source; none: the grammar's shipped one
-  captures   : List (String × Option FaceName) := [] -- config's capture faces, over the shipped default
+  grammar     : String                               -- the library's grammar: rust, json, markdown
+  highlights  : Option String := none                -- query source; none: the grammar's shipped one
+  captures    : List (String × Option FaceName) := [] -- config's capture faces, over the shipped default
+  injections  : Option String := none                -- injections query source; none: the shipped one
+  textObjects : Option String := none                -- text objects query source; none: the shipped one
+  indents     : Option String := none                -- indents query source; none: the shipped one
 ```
 
 - **`syntaxTree` says how the mode's text is parsed and drawn**: a grammar
   of the library's syntax service, the highlights query's source (none for
-  the one the grammar ships), and config's mapping of capture names to
-  faces over the shipped default (`lean/Editor/Highlight.lean`). It is not
+  the one the grammar ships), config's mapping of capture names to faces
+  over the shipped default (`lean/Editor/Highlight.lean`), and the sources
+  of the injections, text objects and indents queries, each none for the
+  grammar's shipped one; an empty source captures nothing, which turns that
+  part off. It is not
   called `syntax`, which is a keyword of Lean's. A derived mode with none
   takes the nearest of its lineage (`Mode.syntaxTreeOf`). Config writes it
   in `defineMode`; there is no other registry API.
@@ -2626,7 +2681,18 @@ contributes nothing.
   first, so it is drawn plain, as the echo area says: a refused attach
   replaces nothing, and an attach with the grammar the text already has
   keeps its highlighter, so without it the mode before would still be
-  drawn. When a mode with no
+  drawn. After highlights
+  that succeeded, four more steps, each from the mode's own source or the
+  grammar's shipped query, a grammar that ships none of a kind skipping its
+  step: the text's injections (compiled, `inject`ed, released); a language
+  for each grammar the library has (its highlights, the mode's own for its
+  grammar, in the faces of the mode's mapping, so config's capture faces
+  reach embedded code, and its injections; names are grammar names, an
+  alias names nothing); and the text objects and indents queries, each kept
+  as its kind (`keep`). A refusal in one of these stops that step alone and
+  is said under the mode's name, ``injections: `<mode>`: …``,
+  ``text objects: `<mode>`: …`` or ``indents: `<mode>`: …``; the
+  highlights stay and the text is not detached. When a mode with no
   syntax tree replaces one with a syntax tree, the text is detached, which
   drops its highlights; when neither has one, the port is asked nothing.
   What the port did is not undone on rollback, as the clipboard is not.
@@ -3237,7 +3303,9 @@ names a scheme's key:
 | `modeRegistryChecks` | A mode's lineage, a cycle and a missing parent; the order of the active keymaps; a mode name no mode is registered under; a view with no window |
 | `modeDispatchChecks` | On the editor's models, through the loop: a major mode's role runs its command in a view of its buffer and the global binding elsewhere; a minor mode's wins; a derived mode falls to its parent; the leader then a suffix |
 | `modeEnterChecks` | On the editor's models: the on-enter action runs once, with the view, when the mode becomes the major mode; a derived mode's lineage root first; a refusal runs nothing |
-| `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it |
+| `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it; then its injections and a language for the model's grammar, its text objects and indents queries kept, and a refusal of one of those steps said and stopping it alone |
+| `treeObjectRuleChecks` | The syntax tree's text-object rule (`Evil.TreeObjects.choose`), pure, over hand-built rows: the smallest node first, a count, a node no bigger than a wider selection passed over, the inside as the longest inner row within, no inside, and no node round the cursor |
+| `indentRuleChecks`, `indentLevelChecks` | The indent rule (`Indent.rule`), pure, over hand-built rows; and the indent primitive (`TextId.indentLevels`) on the editor's models, under a test mode of the model's JSON grammar with an indents query of its own, refused for a text with no syntax tree or no indents query |
 | `ConfigTest.modeChecks` | Through the headless host and the real elaborator: a config mode's role runs its store command, and once a reload drops the mode the role's key runs the global binding; a compiled mode's role runs its command before any reload and after a reload of a config that defines no mode |
 
 Beside them, `stateChecks` pin the three state operations, `registryChecks`

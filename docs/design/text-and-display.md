@@ -1037,7 +1037,11 @@ and `scene::spans_contract::check` (within the bytes asked and not empty, a
 face it has, ends on positions), which the syntax service's adapter in
 `editor-ffi` runs. The syntax service fills the port from the tree it last
 delivered, carried through the edits since (`docs/design/rust-library.md`,
-"Highlights, as built").
+"Highlights, as built"): the host's spans, then each injected layer's, by
+depth and then by start, so an injected span is drawn over the host's and
+the host's shows through where the injected language has no face
+(`docs/design/rust-library.md`, "Injections, indentation and text objects,
+as built").
 
 **The decorations a scene carries** have one source built: the matches of
 the last search, in the face `search-match` (`lean/Editor/Loop.lean`,
@@ -1079,7 +1083,10 @@ of a run is that of the highest layer over the run that sets it:
 2. the scene's decorations of the view, a later one in the view's list over
    an earlier one;
 3. the text's own spans, a syntax's highlights, a later one in the text's
-   order over an earlier one, so an inner node is over the node around it;
+   order over an earlier one, so an inner node is over the node around it,
+   and an injected layer's spans, which come after the host's, deeper
+   after shallower, are over the host's (a fenced block's Rust over the
+   Markdown around it);
 4. (lowest) the face `default`; and where `default` leaves an attribute
    unset, layout's base value: no family, 16 points, weight 400, upright,
    black on white, no underline, no strike-through, and a line height of
