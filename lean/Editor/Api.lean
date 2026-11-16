@@ -208,7 +208,8 @@ about its view is here.
     "Rollback").
 - `Target.onArea run` runs `run` with what the display is asked about the
   view with (`Scroll.Area`): a snapshot of the buffer's text, taken there,
-  and the view's rectangle, read from the state (`EditorState.rect?`). So
+  and the view's rectangle and padding, read from the state
+  (`EditorState.rect?`, `EditorState.paddingOf`). So
   a command asks which rows its view shows (`Scroll.Area.rows`) and where
   a position goes by rows (`Display.linesFrom`) of the text as its own
   edits have left it.
@@ -1067,7 +1068,10 @@ def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : Ed
   -- A window's bottom row is its status row, and the minibuffer's view's
   -- the frame's bottom row (`EditorState.bottomRow`).
   let bottom := state.bottomRow target.window.id
-  some <$> target.buffer.text.withSnapshot fun snapshot => run (.ofRect snapshot rect bottom)
+  -- Its padding is the one the scene showing it has (`EditorState.paddingOf`).
+  let padding := state.paddingOf target.window.id
+  some <$>
+      target.buffer.text.withSnapshot fun snapshot => run (.ofRect snapshot rect bottom padding)
 
 end Target
 

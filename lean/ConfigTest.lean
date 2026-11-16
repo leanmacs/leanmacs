@@ -1688,10 +1688,10 @@ def scriptChecks (context : Context) : List Check :=
                 patience
           return failure == none &&
               (← stage.output.get) ==
-                #["scene 640x480, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
-                  "view 0 0,0 640x464: \"\", scroll 0, selections 0..0", statusOf,
-                  "scene 320x200, focused 0, echo \"\", preedit -, published 3, theme \"default\"",
-                  "view 0 0,0 320x184: \"\", scroll 0, selections 0..0", statusOf] },
+                #["scene 640x480, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                  "view 0 0,0 640x464: \"\", scroll 0, selections 0..0, padding 8 8", statusOf,
+                  "scene 320x200, focused 0, echo \"\", echo padding 8, preedit -, published 3, theme \"default\"",
+                  "view 0 0,0 320x184: \"\", scroll 0, selections 0..0, padding 8 8", statusOf] },
     { name :=
         "a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it"
       run :=
@@ -1706,11 +1706,11 @@ def scriptChecks (context : Context) : List Check :=
           return failure == none &&
               (← stage.output.get) ==
                 #["scene: none",
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
-                  "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6",
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                  "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6, padding 8 8",
                   statusOf (modified := true) (cursor := ⟨0, 5⟩),
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 3, theme \"default\"",
-                  "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12",
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 3, theme \"default\"",
+                  "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12, padding 8 8",
                   statusOf (modified := true) (cursor := ⟨0, 11⟩)] },
     { name :=
         "a view's status line is printed as the view's id, its status face if it has one, and each field's face, quoted text and padding when it has one, the left fields and then, after a bar, the right ones; and as - for a status line with no field"
@@ -1743,10 +1743,10 @@ def scriptChecks (context : Context) : List Check :=
           return failure == none && statusOf != statusOf (modified := true) &&
               (← stage.output.get) ==
                 #["key arrived: <F5> - -",
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
-                  "view 0 0,0 0x0: \"\", scroll 0, selections 0..0", statusOf,
-                  "scene 0x0, focused 0, echo \"\", preedit -, published 3, theme \"default\"",
-                  "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1",
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                  "view 0 0,0 0x0: \"\", scroll 0, selections 0..0, padding 8 8", statusOf,
+                  "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 3, theme \"default\"",
+                  "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1, padding 8 8",
                   statusOf (modified := true) (cursor := ⟨0, 1⟩)] },
     { name :=
         "the scene is published again after a reload installs and after a job's command runs, once a frame exists"
@@ -1771,12 +1771,12 @@ def scriptChecks (context : Context) : List Check :=
           -- reload's install published nothing, the count would be short.
           return (← session.lines) ==
               #["reload 1: installed, 2 chunks, 1 commands",
-                "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
-                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4",
+                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
                 statusOf (modified := true) (cursor := ⟨0, 4⟩), "spawn count: job 1",
                 "job 1 count: ok", "reload 2: installed, 2 chunks, 1 commands",
-                "scene 0x0, focused 0, echo \"\", preedit -, published 10, theme \"default\"",
-                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4",
+                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 10, theme \"default\"",
+                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
                 statusOf (modified := true) (cursor := ⟨0, 4⟩)] },
     { name :=
         "once a command has released the focused buffer's text, a commit is still followed by a scene: its echo is the refusal, and it has no view of that buffer"
@@ -1795,10 +1795,10 @@ def scriptChecks (context : Context) : List Check :=
           -- after the release been refused, the count would be short.
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 1 commands",
-                "scene 0x0, focused 0, echo \"\", preedit -, published 1, theme \"default\"",
-                "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1",
+                "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
+                "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1, padding 8 8",
                 statusOf (modified := true) (cursor := ⟨0, 1⟩), "run forget: ok",
-                "scene 0x0, focused 0, echo \"refused: no such text\", preedit -, published 5, theme \"default\""] },
+                "scene 0x0, focused 0, echo \"refused: no such text\", echo padding 8, preedit -, published 5, theme \"default\""] },
     { name :=
         "a program of the editor loop that is refused is printed as refused and hands back nothing, and what it made before the refusal is kept; one that is not refused prints nothing and hands back its result"
       run := do
@@ -1878,9 +1878,13 @@ def scene (session : Session) : IO (String × Array String) := do
   let before := (← session.output.get).size
   session.ask [.scene]
   let printed := (← session.output.get).extract before
+  -- The echo's text is between `, echo ` and `, echo padding `.
   let echo :=
-    match printed[0]?.map (·.splitOn ", echo ") with
-    | some [_, rest] => (rest.splitOn ", preedit ").headD ""
+    match printed[0]?.map (·.splitOn ", echo padding ") with
+    | some (head :: _) =>
+      match head.splitOn ", echo " with
+      | _ :: rest => ", echo ".intercalate rest
+      | [] => ""
     | _ => ""
   return (echo, printed.filter (·.startsWith "view "))
 
@@ -1980,7 +1984,7 @@ def setup : SetupM Unit := do
 /-- The line of a view 0 that fills a frame of no size, showing `text` with
 its one cursor at `cursor`. -/
 def viewLine (text : String) (cursor : Nat) : String :=
-  s!"view 0 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}"
+  s!"view 0 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}, padding 8 8"
 
 /-- The collaborators of a host of the test scheme over the real elaborator. -/
 abbrev TestCollaborators :=
@@ -2388,8 +2392,8 @@ def hostLoopChecks (context : Context) : List Check :=
                   #["run split: ok", "run stamp: ok", "run missing: no such command"] &&
                 echo == "missing: no such command".quote &&
                 views ==
-                  #["view 0 0,0 0x0: \"!\", scroll 0, selections 1..1",
-                    "view 1 0,0 0x0: \"!\", scroll 0, selections 1..1"])
+                  #["view 0 0,0 0x0: \"!\", scroll 0, selections 1..1, padding 8 8",
+                    "view 1 0,0 0x0: \"!\", scroll 0, selections 1..1, padding 8 8"])
           { dispatchCompiled with commands := dispatchCompiled.commands.push splitCommand } },
     { name :=
         "the driver's run of a command that fails is rolled back and says so: the output names the refusal, the scene's echo is its error, and the view's text is that before the command"
@@ -2646,7 +2650,7 @@ def Session.sceneLines (session : Session) : IO (Array String) := do
 /-- The line of the minibuffer's view, view 1 in a frame of no size, showing
 `text` with its one cursor at `cursor`. -/
 def minibufferLine (text : String) (cursor : Nat) : String :=
-  s!"view 1 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}"
+  s!"view 1 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}, padding 8 0"
 
 /-- The status line of the minibuffer's view, view 1, while a prompt
 labelled `label` is open: what the host prints (`Headless.statusLine`) of
@@ -3683,6 +3687,53 @@ def faceChecks (context : Context) : List Check :=
                       (lines.filter (·.startsWith "reload ")).map (·.endsWith "rejected") ==
                         #[false, false, false, true, false])]
               return true },
+    {
+      name :=
+        "a real config that sets the frame padding to 12 installs, and the next scene's views are padded 12 and the library's frame draws its rows 12 in; rewritten to 0 and reloaded in the same host, with no restart, the views are padded 0 and no row is drawn in from the view's edge",
+      run :=
+        IO.FS.withTempDir fun directory => do
+          let write (points : Nat) : IO Unit :=
+            writeFiles directory [("10-padding.lean", faceChunk s!"framePadding {points}")]
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The host's display: the real binding over the library's layout in
+          -- cells 8 by 16, at scale 1, which the check keeps to read its frame
+          -- and the scene the host last published.
+          let library ← Ffi.Display.newCells 8 16
+          let made ← IO.mkRef (none : Option Headless.Host.Display)
+          let collaborators :=
+            { stage.collaborators with
+              display := fun snapshots => do
+                let display ←
+                  Headless.Host.Display.real (← RealDisplay.over library snapshots Theme.builtin)
+                made.set (some display)
+                return display }
+          onStage { stage with collaborators } fun host _ => do
+              let settled : IO Unit := do
+                unless ← host.settle patience do
+                  throw (IO.userError "the editor thread did not settle")
+              let reload : IO Unit := do
+                host.send .reload
+                settled
+              -- The paddings of the views of the last scene, and the frame.
+              let shown : IO (Array Padding × String) := do
+                let some display ← made.get | throw (IO.userError "the host made no display")
+                let some scene ← display.last? | throw (IO.userError "the host published no scene")
+                return (scene.views.map (·.padding), ← library.frameText)
+              write 12
+              host.resize 160 96
+              unless ← Event.post (.commit "let x = 1") do
+                return false
+              reload
+              let (twelve, padded) ← shown
+              write 0
+              reload
+              let (zero, plain) ← shown
+              let lines ← stage.output.get
+              return twelve == #[{ across := 12, down := 12 }] &&
+                  (padded.splitOn "  row x 12 y 12 ").length > 1 &&
+                  zero == #[{}] &&
+                  (plain.splitOn "  row x ").length == 1 &&
+                  (lines.filter (·.startsWith "reload ")).all (·.endsWith "commands") },
     {
       name :=
         "a reload that makes mode-line taller sizes the scene published after it by the new heights: agree, asked with no event between the reload and it, says the last rows query about the focused view gave the rows of the frame, as it did before the reload",

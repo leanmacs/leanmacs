@@ -2,18 +2,18 @@ reload 1: installed, 1 chunks, 3 commands
 key arrived: c KeyC control
 key arrived: s KeyS -
 key arrived: g KeyG control
-scene 0x0, focused 0, echo "spin: interrupted", preedit -, published 3, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "spin: interrupted", echo padding 8, preedit -, published 3, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: m KeyM -
-scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
-view 0 0,0 0x0: "mark", scroll 0, selections 4..4
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 0 0,0 0x0: "mark", scroll 0, selections 4..4, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: d KeyD -
 job 1 double: started
 job 1 double: ok
-scene 0x0, focused 0, echo "doubled to 42", preedit -, published 11, theme "default"
-view 0 0,0 0x0: "mark", scroll 0, selections 4..4
+scene 0x0, focused 0, echo "doubled to 42", echo padding 8, preedit -, published 11, theme "default"
+view 0 0,0 0x0: "mark", scroll 0, selections 4..4, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4

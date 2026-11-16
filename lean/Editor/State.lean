@@ -70,7 +70,22 @@ the frame shows.
 laid out in the whole frame, with the minibuffer's view while a prompt is
 open. It is the one definition the scene's views and a command's question
 about its view (`EditorState.rect?`) are both read from, so a command is
-answered with the rectangle the next scene gives its view.
+answered with the rectangle the next scene gives its view. The rectangles
+tile the frame: a view's padding is inside its rectangle, not between
+rectangles.
+
+**The padding of the views** is in whole points, which the display
+multiplies by its scale (Lean handles no scale). `EditorState.padding` is
+the frame padding the last publish laid out with, set from config
+(`framePadding`, `Editor/Setup.lean`) through the loop's keys. Each view's
+is `EditorState.paddingOf`: a window is padded across and down by it, each
+window of a split its own; the minibuffer's view is padded across by the
+bottom row's inset (`EditorState.bottomInset`: the padding, and at least
+the window's corner clearance, `Frame.corner`, outside fullscreen) and not
+down, since its place must stay exactly a text row and the bottom row
+tall. The echo is inset by the same bottom inset (`Scene.echoPadding`). A
+command's question about its view carries the view's padding
+(`Scroll.Area.ofRect`), so it is answered with the rows the frame shows.
 
 The invariants are part of the model (`EditorState.wellFormed`). They are
 stated over the state's views (`EditorState.views`): the tree's windows,
@@ -599,6 +614,11 @@ structure Frame where
   (`Event.Resize.fullscreen`). A command reads it, and nothing but a resize
   changes it. -/
   fullscreen : Bool := false
+  /-- How far in from the window's left and right edges its rounded bottom
+  corners reach, in whole points, as the window last said on a resize
+  (`Event.Resize.corner`): what the bottom row keeps clear of
+  (`EditorState.bottomInset`). Nothing but a resize changes it. -/
+  corner : Nat := 0
   deriving DecidableEq, Repr
 
 /-- A job a command asked to be started: the name it is registered under,
@@ -757,6 +777,11 @@ structure EditorState where
   docs). A publish asks them again (`Loop.publish`); before the first, a
   16-pixel cell's. -/
   heights : Display.Heights := { text := 16, status := 16, message := 16 }
+  /-- The frame padding the last publish laid the views out with, in whole
+  points: what every view's content is inset by ("The padding of the
+  views", in the module docs). A publish sets it from what it is handed
+  (`Loop.publish`), as it sets `heights`; 0 before the first. -/
+  padding : Nat := 0
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -1021,6 +1046,26 @@ def rects (state : EditorState) : Array (ViewId × Rect) :=
   let frame := state.frame
   frame.tree.rects { x := 0, y := 0, width := frame.size.width, height := frame.size.height }
     state.minibufferView? state.minibufferPlace
+
+/-- How far the frame's bottom row, where the echo and a prompt are drawn,
+is inset from the frame's left and right edges, in points: the frame
+padding, and at least the window's corner clearance outside fullscreen, so
+that its first glyph is clear of the rounded corner. In fullscreen the
+window has square corners, so it is the padding alone, whatever the window
+last said of its corners. -/
+def bottomInset (state : EditorState) : Nat :=
+  if state.frame.fullscreen then state.padding else max state.padding state.frame.corner
+
+/-- The padding of the view `id`, in points ("The padding of the views", in
+the module docs): the frame padding across and down for a window, and for
+the minibuffer's view the bottom row's inset across (`bottomInset`) and
+none down, since its place is exactly a text row and the bottom row
+(`minibufferPlace`) and must stay that tall. Each window has its own: two
+windows of a split are each padded, with no gap of their own between
+them. -/
+def paddingOf (state : EditorState) (id : ViewId) : Padding :=
+  if state.minibufferView? == some id then { across := state.bottomInset, down := 0 }
+  else { across := state.padding, down := state.padding }
 
 /-- How tall the bottom row of the view `id` is: the frame's bottom row for
 the minibuffer's view, which holds the prompt, and a window's status row

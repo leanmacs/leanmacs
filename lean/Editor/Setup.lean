@@ -183,6 +183,11 @@ under is left out, the rest are drawn, and the echo area says so. A config
 that lists none has the default order. A `setup` that defines a segment
 name twice, or lists the mode line twice, is refused.
 
+Config sets the frame padding in points (`framePadding 12`): how far every
+window's text is inset from its edges, the bottom row at least as far as
+the window's corners reach. A config that sets none has the editor's 8,
+and a reload changes it. Setting it twice is refused.
+
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
 over, so the type does not refer to itself. A job's handler is carried the
@@ -242,6 +247,10 @@ inductive SetupRequest where
   /-- List the segments of the mode line, by name, for each side, once the
   config is installed. -/
   | modeLine (order : ModeLine.Order)
+  /-- Set the frame padding, in whole points, once the config is installed:
+  how far every window's content is inset from its edges, and the bottom
+  row at least (`EditorState.paddingOf`). -/
+  | framePadding (points : Nat)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -258,6 +267,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .useTheme _ => Unit
   | .segment _ => Unit
   | .modeLine _ => Unit
+  | .framePadding _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -400,5 +410,17 @@ def modeLine (left right : List String) : SetupM Unit :=
   ExceptT.lift
     (Program.request (port := setupPort)
       (.modeLine { left := left.toArray, right := right.toArray }))
+
+/-- Sets the frame padding once the config is installed, in whole points
+(logical pixels, which the display multiplies by the window's scale): how
+far every window's text and its mode line's first and last fields are inset
+from its edges, filled with the default face's background. The bottom row,
+the echo and a prompt, is inset at least this, and at least as far as the
+window's rounded corners reach outside fullscreen. A config that sets none
+has the editor's 8 (`Loop.padding`); 0 draws as with no padding. A reload
+changes it with no restart. The editor refuses the `setup` for setting the
+frame padding twice. -/
+def framePadding (points : Nat) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.framePadding points))
 
 end Editor

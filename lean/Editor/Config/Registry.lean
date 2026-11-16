@@ -500,6 +500,10 @@ accepted names at most one (`theme`). -/
   more than one is refused, so a `setup` that is accepted makes at most one
   (`modeLine`). -/
   modeLines : Array ModeLine.Order := #[]
+  /-- The frame paddings `setup` set (`framePadding`), in points, in order:
+  more than one is refused, so a `setup` that is accepted sets at most one
+  (`framePadding`). -/
+  framePaddings : Array Nat := #[]
 
 namespace Registrations
 
@@ -510,6 +514,10 @@ def theme (collected : Registrations) : Option String :=
 /-- The listing of the mode line a `setup` made, if it made one. -/
 def modeLine (collected : Registrations) : Option ModeLine.Order :=
   collected.modeLines[0]?
+
+/-- The frame padding a `setup` set, in points, if it set one. -/
+def framePadding (collected : Registrations) : Option Nat :=
+  collected.framePaddings[0]?
 
 /-- The handler of the setup port that collects: its answer to each request,
 and what has been registered after it. -/
@@ -539,6 +547,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with segments := collected.segments.push segment })
   | .modeLine order, collected =>
     ((), { collected with modeLines := collected.modeLines.push order })
+  | .framePadding points, collected =>
+    ((), { collected with framePaddings := collected.framePaddings.push points })
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -551,7 +561,8 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 /-- What is wrong with what was collected, if anything: a store declared
 twice, a command name or a job name registered twice, a face set twice, a
 theme defined twice, a theme named twice (by its first two names), a
-segment defined twice, the mode line listed twice, a key
+segment defined twice, the mode line listed twice, the frame padding set
+twice, a key
 sequence bound twice, a binding of no keys, an ex name bound twice, a
 command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
@@ -586,6 +597,8 @@ def problem? (collected : Registrations) : Option String := do
     return s!"the segment `{name}` is defined twice"
   if collected.modeLines.size > 1 then
     return "the mode line is listed twice"
+  if collected.framePaddings.size > 1 then
+    return "the frame padding is set twice"
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command

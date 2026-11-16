@@ -55,6 +55,11 @@ the model tests run it with outcomes built by hand
   after the unknown theme's sentence. The host resolves the listing over
   the registry for each step (`Headless.keys`). A rejected outcome changes
   none of it.
+- **The frame padding follows config.** An install sets the padding in
+  force (`State.framePadding`) to the one the config set, or none for the
+  editor's 8 (`Loop.padding`), so a reload that sets none goes back to it.
+  The host hands it to the loop for each step (`Headless.keys`), so it
+  changes with no restart. A rejected outcome changes none of it.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -149,6 +154,10 @@ structure State (σ : Type) where
   the default order (`ModeLine.Order.standard`): set at every install, so a
   config that lists none goes back to the default. -/
   modeLine : Option ModeLine.Order := none
+  /-- The frame padding the installed config set, in points, or none for the
+  editor's own (`Loop.padding`): set at every install, so a config that
+  sets none goes back to it. -/
+  framePadding : Option Nat := none
 
 /-- What happened, as far as reloads go. -/
 inductive Event (σ : Type) where
@@ -244,7 +253,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
     let modeLine := built.registrations.modeLine
     let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
     ({ state with
-        themeName, modeLine },
+        themeName, modeLine, framePadding := built.registrations.framePadding },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments })
 

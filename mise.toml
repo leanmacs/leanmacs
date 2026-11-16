@@ -232,6 +232,11 @@ run = [
   # their paddings, in insert state, in normal state and with the ex prompt
   # open (`mode-line/expected`). It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/mode-line/config ../tests/headless/mode-line/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/mode-line/expected -",
+  # The frame padding (tests/headless/padding): a config that sets it to 12
+  # points; each scene prints the window's view padded 12 across and down,
+  # the echo padded 12, and with the ex prompt open the minibuffer's view
+  # padded 12 across and none down (`padding/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/padding/config ../tests/headless/padding/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/padding/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed

@@ -537,7 +537,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped. Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
-| `resize` | Sets the frame's size and whether the window is in fullscreen (`Frame.fullscreen`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: the scene has no field for it |
+| `resize` | Sets the frame's size, whether the window is in fullscreen (`Frame.fullscreen`) and its corner clearance in points (`Frame.corner`), which the bottom row is inset by (`EditorState.bottomInset`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: Lean handles no scale, and the display lays out at its own |
 | `focus gained` | Sets whether the frame has the keyboard focus |
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
 | `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
@@ -587,6 +587,13 @@ changed the state or not (`Loop.publish`):
    same snapshot; otherwise a new snapshot is taken, and views of one
    buffer share it. A view's scroll anchor and selection are its window's
    markers, and it has no decorations: later phases choose those. Its
+   padding is `EditorState.paddingOf`'s, in points, from the padding the
+   step's keys hand the publish (`Loop.Keys.padding`, config's
+   `framePadding` or the editor's 8 through the host, and 0 for a loop
+   handed none), which the state keeps (`EditorState.padding`); the
+   scene's echo padding is the bottom row's inset
+   (`EditorState.bottomInset`: at least the corner clearance the last
+   resize said, outside fullscreen). Its
    cursor is the one the scheme reports of the view
    (`InputScheme.report`, in the scheme's state after the last key): a bar
    in the face `cursor` under a scheme that says nothing. Its status line
@@ -833,6 +840,13 @@ milliseconds, unless a step is handed another threshold. -/
 def Loop.slowAfter : Nat :=
   100
 
+/-- The editor's frame padding when config sets none, in whole points: what
+every window's text is inset by from its edges, and the bottom row at least
+(`EditorState.paddingOf`). The host applies it (`Headless.keys`); a loop
+handed no padding (`Loop.Keys.padding`) has none. -/
+def Loop.padding : Nat :=
+  8
+
 /-- What a step is handed beside the loop and the event: what the keys are
 looked up in, and what an invocation runs. It is rebuilt by the caller for
 each step, from the registry as it then is, so a reload changes it between
@@ -856,6 +870,12 @@ structure Loop.Keys (scheme : InputScheme) where
   segments in the order config listed, or the default one
   (`Editor/ModeLine.lean`). -/
   modeLine : ModeLine := ModeLine.standard
+  /-- The frame padding the scene's views are laid out with, in whole points
+  (`EditorState.paddingOf`). It is 0 unless the host hands one: the
+  editor's own default, `Loop.padding`, is applied by the host from config
+  (`framePadding`, `Editor/Setup.lean`), so a loop handed none draws and
+  scrolls as with no padding. -/
+  padding : Nat := 0
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1068,16 +1088,19 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
-            cursor := report.cursor, decorations := #[], status, statusFace }
+            cursor := report.cursor, decorations := #[], status, statusFace
+            padding := state.paddingOf id }
   return (views, shown, refusal)
 
 /-- The scene of `state` over `views`: what the state says of the frame, the
-echo area and the preedit, around the views made of its windows, with
-`pending` as the keys typed of a sequence not yet completed. -/
+echo area, inset by the bottom row's inset (`EditorState.bottomInset`), and
+the preedit, around the views made of its windows, with `pending` as the
+keys typed of a sequence not yet completed. -/
 def scene (state : EditorState) (views : Array View) (pending : String) : Scene :=
   let frame := state.frame
   { size := frame.size, views, focused := if frame.hasFocus then some frame.focused else none
-    echo := state.echo, pending, preedit := state.preedit, title := state.title }
+    echo := state.echo, echoPadding := state.bottomInset, pending, preedit := state.preedit
+    title := state.title }
 
 /-- The keys the scheme reports as pending in the loop's state, as a key
 string (`Key.notations`): what the scene shows of a sequence begun and not
@@ -1126,7 +1149,8 @@ the head of the primary range of the view's selection, is not among the
 rows the display answers from the view's scroll anchor, or is nearer an
 edge of them than `margin` rows, the anchor's marker is placed where the
 follow policy says (`Scroll.follow`, `Editor/Scroll.lean`), with the bias
-it had. The display is asked with the view's own snapshot and rectangle.
+it had. The display is asked with the view's own snapshot, rectangle and
+padding.
 
 A view of no height is not asked about: no request is made for it. A view
 that shows no row keeps its anchor. Refused, with nothing placed, when a
@@ -1137,7 +1161,7 @@ def follow (margin : Nat) (bottom : Nat) (view : View) : EditorM Unit := do
     return
   let text := view.scroll.text
   let .anchor anchor ← text.marker view.scroll | throw .noSuchMarker
-  let area := Scroll.Area.ofRect view.snapshot view.rect bottom
+  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding
   let shown ← area.rows anchor.offset
   if shown.isEmpty then
     return
@@ -1164,7 +1188,7 @@ snapshot the last scene named that this one does not. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
-def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
+def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0) :
     EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
@@ -1172,7 +1196,10 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
   let (state, unlisted) ← listed state
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
-  let state := { state with heights := ← Display.heights }
+  -- The padding the views are laid out with is the one handed in.
+  let state :=
+    { state with
+      heights := ← Display.heights, padding }
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views modeLine
   -- Each view follows its cursor before the scene names its anchor: the
   -- snapshots the questions of layout need were taken just above. Each is
@@ -1206,7 +1233,8 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
     return { state with
         frame :=
           { state.frame with
-            size := ⟨resize.width, resize.height⟩, fullscreen := resize.fullscreen } }
+            size := ⟨resize.width, resize.height⟩, fullscreen := resize.fullscreen
+            corner := resize.corner } }
   | .focus gained => return { state with frame := { state.frame with hasFocus := gained } }
   | .commit text => do
     let some target := state.focusedTarget? | return { state with preedit := none }
@@ -1598,9 +1626,9 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
 one the publish left, and it says stop when the editor then leaves
 (`nextOf`) and to go on otherwise. The scene comes first, so the scene of
 the step that says stop is the last one. -/
-def Stepped.published (stepped : Stepped scheme) (modeLine : ModeLine := ModeLine.standard) :
-    EditorM (Stepped scheme) := do
-  let loop ← stepped.loop.publish modeLine
+def Stepped.published (stepped : Stepped scheme) (modeLine : ModeLine := ModeLine.standard)
+    (padding : Nat := 0) : EditorM (Stepped scheme) := do
+  let loop ← stepped.loop.publish modeLine padding
   return { stepped with
       loop, next := nextOf loop }
 
@@ -1612,7 +1640,7 @@ scheme's states are left as they are, but for a view the command closed. -/
 def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     EditorM (Stepped scheme) := do
   let report := scheme.report loop.input loop.state.frame.focused
-  (loop.ranInto (← run keys loop.state invocation [] report)).published keys.modeLine
+  (loop.ranInto (← run keys loop.state invocation [] report)).published keys.modeLine keys.padding
 
 /-- Runs the command registered under `name` as an invocation with no
 arguments that no key yielded (`invoke`), and publishes a scene of the
@@ -1633,7 +1661,7 @@ def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command 
     dispatch keys loop.state label do
         command
         return none
-  (loop.ranInto ran).published keys.modeLine
+  (loop.ranInto ran).published keys.modeLine keys.padding
 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on: stop, once the editor leaves ("Quit", in the module
@@ -1644,7 +1672,7 @@ refused: the publish puts a refusal of its own in the echo area too ("When
 publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   if let some pressed := stepped? event then
-    return ← (← loop.key keys pressed).published keys.modeLine
+    return ← (← loop.key keys pressed).published keys.modeLine keys.padding
   match event with
   | .closeRequested | .quit =>
     return { loop, next := .stop }
@@ -1670,7 +1698,7 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     ({        loop :=
                 { loop with
                   state, input := told loop.input, atRest := told loop.atRest }
-              next := .continue } : Stepped scheme).published keys.modeLine
+              next := .continue } : Stepped scheme).published keys.modeLine keys.padding
 
 /-- Lowers the interrupt flag for an event taken off the queue when the
 library marked it as a press of the interrupt key (`interrupt`), and for no

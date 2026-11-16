@@ -48,11 +48,13 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
   the name `Pixels` from when a theme stated physical pixels.
 - A face's lengths are its size, a line height stated as a length, and its
   vertical padding. A status field's horizontal padding is the field's own
-  (`StatusField.padding`, `Editor/Scene.lean`), in whole points too.
-- Only a face's lengths and a status field's padding are points. A
-  scene's sizes and rectangles
-  (`Editor/Scene.lean`), a pointer's position and a resize's size
-  (`Editor/Event.lean`) are physical pixels, as before.
+  (`StatusField.padding`, `Editor/Scene.lean`), in whole points too, and so
+  are a view's padding and the echo's (`View.padding`, `Scene.echoPadding`)
+  and a window's corner clearance (`Event.Resize.corner`): layout multiplies
+  each at its scale, and Lean still multiplies nothing.
+- Only those lengths and paddings are points. A scene's sizes and
+  rectangles (`Editor/Scene.lean`), a pointer's position and a resize's
+  size (`Editor/Event.lean`) are physical pixels, as before.
 - A weight is 1 to 1000: 400 is normal and 700 bold. The binding sends a
   weight outside that range as the nearest end of it.
 - A size or a line height of 0 is sent as it is. The lines of such a font

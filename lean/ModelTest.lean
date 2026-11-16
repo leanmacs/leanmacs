@@ -2470,7 +2470,21 @@ def setupChecks : List Check :=
         pure
           (refusal twice == some "the segment `greeting` is defined twice" &&
             refusal listed == some "the mode line is listed twice" &&
-            refusal (modeLine ["nope"] []) == none) }]
+            refusal (modeLine ["nope"] []) == none) },
+    { name :=
+        "a setup's frame padding is collected, a setup that sets none has none, and one that sets it twice is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          framePadding 12
+          framePadding 4
+        match Config.Registrations.ofSetup (framePadding 12),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.framePadding == some 12 && plain.framePadding == none &&
+              refusal twice == some "the frame padding is set twice" &&
+              refusal (framePadding 0) == none)
+        | _, _ => pure false }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -3211,6 +3225,17 @@ def reportFrom (state : Config.State Elaborated) (outcome : Config.Outcome Elabo
 outcomes built by hand. -/
 def reloadChecks : List Check :=
   [{  name :=
+        "an install sets the frame padding config sets, a later install that sets none goes back to none, the editor's own, and a rejected one changes nothing"
+      run :=
+        let (state, _) :=
+          reduceFrom themed [.requested, .finished (accepted ["a"] (framePadding 12))]
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        pure
+          (themed.framePadding == none && state.framePadding == some 12 &&
+            dropped.framePadding == none &&
+            kept.framePadding == some 12) },
+    { name :=
         "an install sets the mode line config lists, and its report names each segment nobody registered, which the echo area says after the unknown theme's sentence; a later install that lists none goes back to the default, and a rejected one changes nothing"
       run :=
         let listed : SetupM Unit := modeLine ["state", "nope"] ["position"]
@@ -20444,6 +20469,124 @@ def scrollFailures (keys : List String) (contents : String) (size : Size)
             else some s!"{key} from anchor {anchor} and cursor {head} of {repr contents}"
           | none => some s!"{key} from anchor {anchor} and cursor {head}: no scene"
 
+/-- The last scene of a run of the loop over the state `start` makes, each
+step handed the frame padding `padding`, fed `events`; `none` when the run
+was refused or published nothing. -/
+def paddedScene (padding : Nat) (events : List Event)
+    (start : TextM EditorState := EditorState.initial ⟨640, 480⟩) : Option Scene :=
+  match dispatched { padding } events start with
+  | some (_, scenes, _) => scenes.back?
+  | none => none
+
+/-- A resize to 640 by 480 at scale 1, in fullscreen when `fullscreen` says,
+whose window's corners reach `corner` points in. -/
+def resizedWith (corner : Nat) (fullscreen : Bool := false) : Event :=
+  .resize { width := 640, height := 480, scale := 1.0, fullscreen, corner }
+
+/-- The padding of the view `id` in `scene`, if it has the view. -/
+def paddingIn (scene : Scene) (id : ViewId) : Option Padding :=
+  (scene.views.find? (·.id == id)).map (·.padding)
+
+/-- The checks of the views' padding (`EditorState.paddingOf`,
+`EditorState.bottomInset`, `Loop.Keys.padding`): what the loop puts in the
+scene, in points. Lean handles no scale, so every number here is points:
+that layout multiplies them at its scale is pinned in `crates/editor-layout`
+(`tests/padding.rs`), and that the first glyph is where these say over real
+layout by `FfiTest.paddingChecks`. -/
+def paddingChecks : List Check :=
+  [{  name :=
+        "a resize keeps its corner clearance in the frame beside fullscreen, and the frame keeps no scale"
+      run := do
+        let some ((loop, _), _, _) := looped (EditorState.initial ⟨0, 0⟩) [resizedWith 14]
+          | return false
+        let frame := loop.state.frame
+        let some ((later, _), _, _) :=
+          looped (EditorState.initial ⟨0, 0⟩) [resizedWith 14, resizedWith 0 true]
+          | return false
+        return frame.corner == 14 && !frame.fullscreen && frame.size == ⟨640, 480⟩ &&
+            later.state.frame.corner == 0 &&
+            later.state.frame.fullscreen &&
+            frame ==
+              { size := ⟨640, 480⟩, tree := frame.tree, focused := frame.focused, corner := 14 } },
+    { name :=
+        "at a padding of 8 each window's view is padded 8 across and 8 down, each window of a split its own, and the scene's echo padding is 8 with square corners"
+      run :=
+        pure <|
+          match paddedScene 8 [resizedWith 0] twoBuffers with
+          | none => false
+          | some scene =>
+            paddingIn scene ⟨0⟩ == some { across := 8, down := 8 } &&
+              paddingIn scene ⟨1⟩ == some { across := 8, down := 8 } &&
+              (scene.views.map (·.rect.x)) == #[0, 320] &&
+              scene.echoPadding == 8 },
+    { name :=
+        "criterion 3, on the model: with a prompt open and a corner clearance of 14, the minibuffer's view is padded 14 across and none down and the echo 14, the larger of the padding 8 and the corner; with a corner of 4 both are 8, the padding; and in fullscreen with a corner of 14 both are 8, the padding alone"
+      run :=
+        let bottom (events : List Event) : Option (Nat × Nat × Nat) := do
+          let scene ← paddedScene 8 events (promptedOver "x")
+          let minibuffer ← scene.views.back?
+          let window ← paddingIn scene ⟨0⟩
+          guard (minibuffer.id != ⟨0⟩ && window == { across := 8, down := 8 })
+          return (minibuffer.padding.across, minibuffer.padding.down, scene.echoPadding)
+        pure
+          (bottom [resizedWith 14] == some (14, 0, 14) &&
+            bottom [resizedWith 4] == some (8, 0, 8) &&
+            bottom [resizedWith 14 true] == some (8, 0, 8)) },
+    { name :=
+        "the state's bottom inset is the padding and at least the corner outside fullscreen, and the padding alone in fullscreen; a view's padding is the state's, the minibuffer's view's across only"
+      run := do
+        let some state := onTextModel (promptedOver "x") | return false
+        let shaped (padding corner : Nat) (fullscreen : Bool) : EditorState :=
+          { state with
+            padding,
+            frame :=
+              { state.frame with
+                corner, fullscreen } }
+        let some minibuffer := state.minibufferView? | return false
+        return (shaped 8 14 false).bottomInset == 14 && (shaped 8 4 false).bottomInset == 8 &&
+            (shaped 8 14 true).bottomInset == 8 &&
+            (shaped 0 0 false).bottomInset == 0 &&
+            (shaped 8 14 false).paddingOf minibuffer == { across := 14, down := 0 } &&
+            (shaped 8 14 false).paddingOf ⟨0⟩ == { across := 8, down := 8 } &&
+            (shaped 0 14 false).paddingOf ⟨0⟩ == {} },
+    { name :=
+        "a loop handed no padding gives every view no padding and the echo none: it draws and scrolls as before there was one"
+      run :=
+        pure <|
+          match paddedScene 0 [resizedWith 0] twoBuffers,
+            paddedScene 0 [resizedWith 0] (promptedOver "x"),
+            dispatched {} [resizedWith 0] twoBuffers with
+          | some windows, some prompted, some (_, scenes, _) =>
+            windows.views.all (·.padding == {}) && windows.echoPadding == 0 &&
+              prompted.views.all (·.padding == {}) &&
+              prompted.echoPadding == 0 &&
+              scenes.back? == some windows
+          | _, _, _ => false },
+    { name :=
+        "the area a view is asked about keeps the rectangle's width and its height less the bottom row, and carries the padding; the loop's follow asks with the view's padding, so a cursor on the fifth row of a text area five rows tall is followed when the view is padded a row down, and not when it is not"
+      run := do
+        let area :=
+          Scroll.Area.ofRect ⟨3⟩ { x := 0, y := 0, width := 640, height := 200 } 16
+            { across := 8, down := 8 }
+        -- Lines of two digits and a break: the fifth row starts at byte 12.
+        -- In cells of a pixel a frame 10 by 7 gives the window 6 rows, 5
+        -- above its status row, and a padding of 1 down leaves 3.
+        let anchorAfter (padding : Nat) : Option Nat :=
+          let program : EditorM Nat := do
+            let state ← viewState (numbered 20) ⟨10, 7⟩ 0 12
+            let keys : Loop.Keys TestScheme.scheme := { padding }
+            let (loop, _) ← stepsWith keys { state } [.focus true]
+            let some target := loop.state.focusedTarget? | throw .noSuchText
+            return (← target.anchor).offset
+          match program.runModel editorModel with
+          | (.ok offset, _) => some offset
+          | (.error _, _) => none
+        return area ==
+              { snapshot := ⟨3⟩, width := 640, height := 184,
+                padding := { across := 8, down := 8 } } &&
+            anchorAfter 0 == some 0 &&
+            anchorAfter 1 == some 6 }]
+
 /-- The checks of a view that follows its cursor (`Editor/Loop.lean`,
 "Following the cursor"), on the loop's driver over the editor's models,
 under the Vim scheme that ships with evil's commands: keys are pressed, and
@@ -21533,6 +21676,7 @@ def checks : List Check :=
     fileModelChecks ++
     sceneChecks ++
     modeLineChecks ++
+    paddingChecks ++
     faceChecks ++
     displayChecks ++
     frameDisplayChecks ++

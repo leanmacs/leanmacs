@@ -415,14 +415,14 @@ be dropped:
 ```console
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/scene-script
 key arrived: i KeyI -
-scene 0x0, focused 0, echo "", preedit -, published 2, theme "default"
-view 0 0,0 0x0: "hello", scroll 0, selections 5..5
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 2, theme "default"
+view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
 status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 reload 1: installed, 2 chunks, 1 commands
 spawn count: job 1
 job 1 count: ok
-scene 0x0, focused 0, echo "", preedit -, published 9, theme "default"
-view 0 0,0 0x0: "hello", scroll 0, selections 5..5
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 9, theme "default"
+view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
 status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 ```
 
@@ -444,20 +444,20 @@ reload 1: installed, 1 chunks, 3 commands
 key arrived: c KeyC control
 key arrived: s KeyS -
 key arrived: g KeyG control
-scene 0x0, focused 0, echo "spin: interrupted", preedit -, published 3, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "spin: interrupted", echo padding 8, preedit -, published 3, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: m KeyM -
-scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
-view 0 0,0 0x0: "mark", scroll 0, selections 4..4
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 0 0,0 0x0: "mark", scroll 0, selections 4..4, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: d KeyD -
 job 1 double: started
 job 1 double: ok
-scene 0x0, focused 0, echo "doubled to 42", preedit -, published 11, theme "default"
-view 0 0,0 0x0: "mark", scroll 0, selections 4..4
+scene 0x0, focused 0, echo "doubled to 42", echo padding 8, preedit -, published 11, theme "default"
+view 0 0,0 0x0: "mark", scroll 0, selections 4..4, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 ```
 
@@ -486,14 +486,14 @@ output must be exactly `tests/headless/files/expected`:
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script
 reload 1: installed, 1 chunks, 1 commands
 run save-buffer: ok
-scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 1, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "scratch has no file to save to", echo padding 8, preedit -, published 1, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run open-relative: ok
 job 1 load-file: started
 job 1 load-file: ok
-scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 5, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", echo padding 8, preedit -, published 5, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
@@ -537,26 +537,26 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 1 chunks, 2 commands
 run ask-name: ok
 key arrived: ! Digit1 shift
-scene 0x0, focused 1, echo "", preedit -, published 2, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "Ada!", scroll 0, selections 4..4
+view 1 0,0 0x0: "Ada!", scroll 0, selections 4..4, padding 8 0
 status 1: minibuffer.prompt "Name: "
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "hello Ada!", preedit -, published 5, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "hello Ada!", echo padding 8, preedit -, published 5, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run ask-name: ok
 key arrived: <Escape> Escape -
-scene 0x0, focused 0, echo "", preedit -, published 8, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run open-file: ok
 key arrived: <Enter> Enter -
 job 1 load-file: started
 job 1 load-file: ok
-scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 15, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", echo padding 8, preedit -, published 15, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
@@ -576,16 +576,16 @@ key arrived: e KeyE -
 key arrived: l KeyL -
 key arrived: l KeyL -
 key arrived: o KeyO -
-scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
-view 0 0,0 0x0: "hello", scroll 0, selections 5..5
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
 status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 key arrived: <Escape> Escape -
-scene 0x0, focused 0, echo "", preedit -, published 8, theme "default"
-view 0 0,0 0x0: "hello", scroll 0, selections 4..4
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "default"
+view 0 0,0 0x0: "hello", scroll 0, selections 4..4, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 key arrived: 0 Digit0 -
-scene 0x0, focused 0, echo "", preedit -, published 10, theme "default"
-view 0 0,0 0x0: "hello", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 10, theme "default"
+view 0 0,0 0x0: "hello", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
@@ -616,26 +616,26 @@ and the exit status is 0. Its output must be exactly
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "bogus: not an ex command", preedit -, published 4, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "bogus: not an ex command", echo padding 8, preedit -, published 4, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run ex: ok
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 10, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "scratch has no file to save to", echo padding 8, preedit -, published 10, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
-scene 0x0, focused 3, echo "", preedit -, published 13, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 3, echo "", echo padding 8, preedit -, published 13, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 3 0,0 0x0: "e", scroll 0, selections 1..1
+view 3 0,0 0x0: "e", scroll 0, selections 1..1, padding 8 0
 status 3: minibuffer.prompt ":", minibuffer.candidate "e", minibuffer.candidate "reload"
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
-scene 0x0, focused 4, echo "", preedit -, published 18, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, published 18, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 4 0,0 0x0: "", scroll 0, selections 0..0
+view 4 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
 status 4: minibuffer.prompt "Open file: "
 key arrived: <Escape> Escape -
 key arrived: : Semicolon shift
@@ -663,33 +663,33 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 1 chunks, 2 commands
 run pick: ok
 key arrived: w KeyW -
-scene 0x0, focused 1, echo "", preedit -, published 2, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "w", scroll 0, selections 1..1
+view 1 0,0 0x0: "w", scroll 0, selections 1..1, padding 8 0
 status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.candidate "wq"
 key arrived: <Tab> Tab -
 key arrived: <Tab> Tab -
-scene 0x0, focused 1, echo "", preedit -, published 5, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 5, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "w", scroll 0, selections 1..1
+view 1 0,0 0x0: "w", scroll 0, selections 1..1, padding 8 0
 status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.chosen "wq"
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "picked wq", preedit -, published 8, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "picked wq", echo padding 8, preedit -, published 8, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run pick: ok
 key arrived: z KeyZ -
-scene 0x0, focused 2, echo "", preedit -, published 11, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 2, echo "", echo padding 8, preedit -, published 11, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 2 0,0 0x0: "z", scroll 0, selections 1..1
+view 2 0,0 0x0: "z", scroll 0, selections 1..1, padding 8 0
 status 2: minibuffer.prompt "Pick: "
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "picked z", preedit -, published 15, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "picked z", echo padding 8, preedit -, published 15, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
@@ -710,23 +710,23 @@ way, and the next scene is drawn in it. Its output must be exactly
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/themes/config ../tests/headless/themes/script
 reload 1: installed, 1 chunks, 0 commands
 key arrived: <Escape> Escape -
-scene 0x0, focused 0, echo "", preedit -, published 1, theme "first"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "first"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "", preedit -, published 7, theme "second"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 7, theme "second"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "", preedit -, published 13, theme "solarized-dark"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 13, theme "solarized-dark"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "", preedit -, published 19, theme "fairy-floss"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 19, theme "fairy-floss"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
@@ -742,13 +742,13 @@ exactly `tests/headless/shipped-themes/expected`:
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/shipped-themes/config ../tests/headless/shipped-themes/script
 reload 1: installed, 1 chunks, 0 commands
 key arrived: <Escape> Escape -
-scene 0x0, focused 0, echo "", preedit -, published 1, theme "solarized-light"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "solarized-light"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "", preedit -, published 7, theme "fairy-floss"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 7, theme "fairy-floss"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
@@ -767,25 +767,47 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 1 chunks, 0 commands
 segment: no segment is registered as `nope`
 key arrived: <F5> F5 -
-scene 0x0, focused 0, echo "reload: no segment is registered as `nope`", preedit -, published 1, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0
+scene 0x0, focused 0, echo "reload: no segment is registered as `nope`", echo padding 8, preedit -, published 1, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: i KeyI -
 key arrived: a KeyA -
 key arrived: b KeyB -
 key arrived: c KeyC -
-scene 0x0, focused 0, echo "", preedit -, published 6, theme "default"
-view 0 0,0 0x0: "abc", scroll 0, selections 3..3
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 0 0,0 0x0: "abc", scroll 0, selections 3..3, padding 8 8
 status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:4" +4, mode-line.secondary "All" +4
 key arrived: <Escape> Escape -
-scene 0x0, focused 0, echo "", preedit -, published 8, theme "default"
-view 0 0,0 0x0: "abc", scroll 0, selections 2..2
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "default"
+view 0 0,0 0x0: "abc", scroll 0, selections 2..2, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
-scene 0x0, focused 1, echo "", preedit -, published 10, theme "default"
-view 0 0,0 0x0: "abc", scroll 0, selections 2..2
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 10, theme "default"
+view 0 0,0 0x0: "abc", scroll 0, selections 2..2, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "", scroll 0, selections 0..0
+view 1 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 1: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "e", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload"
+```
+
+A thirteenth, `tests/headless/padding/script`, runs on the config in
+`tests/headless/padding/config`, which sets the frame padding to 12 points
+(`framePadding 12`). After a resize to 640 by 480 the window's view is
+padded 12 across and 12 down and the echo 12, the padding, since the
+headless window's corners are square; with the ex prompt open the
+minibuffer's view is padded 12 across and none down. Its output must be
+exactly `tests/headless/padding/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/padding/config ../tests/headless/padding/script
+reload 1: installed, 1 chunks, 0 commands
+scene 640x480, focused 0, echo "", echo padding 12, preedit -, published 1, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 12 12
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: : Semicolon shift
+scene 640x480, focused 1, echo "", echo padding 12, preedit -, published 3, theme "default"
+view 0 0,0 640x448: "", scroll 0, selections 0..0, padding 12 12
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,448 640x32: "", scroll 0, selections 0..0, padding 12 0
 status 1: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "e", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload"
 ```
 
@@ -930,21 +952,27 @@ key arrived: <logical> <physical> <modifiers>
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
-scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>, theme <quoted name>
-view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
+scene <w>x<h>, focused <id or ->, echo <quoted>, echo padding <n>, preedit <quoted or ->, published <n>, theme <quoted name>
+view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …, padding <across> <down>
 status <view id>[ in <status face>]: <face> <quoted text>[ +<padding>], … | <face> <quoted text>[ +<padding>], …   (or "-" for no field)
 scene: none
 loop: refused: <error>
 ```
 
 `scene` prints the frame's size, the focused view (`-` while the frame does
-not have the keyboard focus), the echo area, the input method's preedit
+not have the keyboard focus), the echo area and its padding in points (the
+bottom row's inset: the frame padding, and at least the window's corner
+clearance outside fullscreen, which the headless window says is 0), the
+input method's preedit
 (`-` when there is none), how many scenes have been published and the name
 of the theme the scene was drawn in (`default` until a config names another
 or `load-theme` loads one); then, for
 each view in drawing order, its rectangle, the text of its snapshot, read
-from the library, and the offsets of its scroll anchor and of each range of
-its selection. After each view's line comes its status line, one entry a
+from the library, the offsets of its scroll anchor and of each range of
+its selection, and its padding across and down in points: the frame
+padding both ways for a window (config's `framePadding`, or the editor's 8),
+and for the minibuffer's view the bottom row's inset across and none down.
+After each view's line comes its status line, one entry a
 field, each the field's face, its text and, when it has one, its padding
 in points after `+`: the left fields, then ` | ` and the right fields when
 there are any. A view with a status face prints it after its id, as `in

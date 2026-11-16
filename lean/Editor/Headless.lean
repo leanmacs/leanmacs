@@ -301,8 +301,8 @@ key arrived: <logical> <physical> <modifiers>
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
-scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>, theme <quoted name>
-view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
+scene <w>x<h>, focused <id or ->, echo <quoted>, echo padding <n>, preedit <quoted or ->, published <n>, theme <quoted name>
+view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …, padding <across> <down>
 status <view id>: <face> <quoted text>, …   (or "-" for no field)
 scene: none               (no scene has been published)
 loop: refused: <error>    (a program of the editor loop was refused)
@@ -319,8 +319,9 @@ journal: <n> frames presented, present - input median <a> us, p99 <b> us, max <c
 
 `agree` answers `agree`: the last rows query the display answered since the
 publish before the last one that names the last scene's focused view's
-snapshot, at its width and the anchor it was published with, and whether
-its rows are those of the frame the display laid out of that scene
+snapshot, at its width, its padding and the anchor it was published with,
+and whether its rows are those of the frame the display laid out of that
+scene
 (`Host.Display.frameRows`). The queries are the loop's own, made as it
 follows the cursor before each publish, and a scroll command's. `idle` and
 `journal` are the driver's: once the editor thread has settled, each waits
@@ -333,9 +334,11 @@ it is for measuring, never for a fixture.
 The `scene`, `view` and `status` lines answer `scene`: the last scene
 published, with how many scenes have been and the name of the theme it was
 drawn in (`Host.Display.drawnIn`), then each view in drawing order,
-its snapshot's text read from the library, and the offsets of its scroll
+its snapshot's text read from the library, the offsets of its scroll
 anchor and of each range of its selection, as the markers are when it is
-asked. After each view's line comes its status line (`statusLine`), one
+asked, and its padding across and down in points (`EditorState.paddingOf`);
+the scene's line says the echo's padding (`EditorState.bottomInset`). After
+each view's line comes its status line (`statusLine`), one
 entry a field, the left fields and then, after ` | `, the right ones, each
 with its padding: the mode line's (`Loop.statusOf`, `Editor/ModeLine.lean`),
 which under the Vim scheme and the default order is the badge of the
@@ -1043,12 +1046,14 @@ requests are told of the registry (`Config.Registry.registered`: the modes
 whose on-enter actions a major mode runs, the jobs' names and the ex
 bindings); and the mode line, config's listing or the default order
 resolved over the registry's segments, a name nobody registered left out
-(`Config.Registry.resolve`). It is made for each window event, so a reload
+(`Config.Registry.resolve`); and the frame padding config set, or the
+editor's 8 (`Loop.padding`). It is made for each window event, so a reload
 changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
     slowAfter := collaborators.slowAfter, registered := running.config.registry.registered
-    modeLine := (running.config.registry.resolve (running.config.modeLine.getD .standard)).1 }
+    modeLine := (running.config.registry.resolve (running.config.modeLine.getD .standard)).1
+    padding := running.config.framePadding.getD Loop.padding }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what
@@ -1058,7 +1063,8 @@ def publish (collaborators : Collaborators σ scheme) (running : Running σ sche
     IO (Running σ scheme) := do
   let some frame := running.frame | return running
   let (published, running) ←
-    running.attempt collaborators (frame.publish (running.keys collaborators).modeLine)
+    running.attempt collaborators
+        (frame.publish (running.keys collaborators).modeLine (running.keys collaborators).padding)
   return { running with frame := some (published.getD frame) }
 
 /-- The loop's frame, made if there is none (`Collaborators.start`): the
@@ -1255,7 +1261,7 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
     | some text => text.quote
     | none => "-"
   let mut lines :=
-    #[s!"scene {scene.size.width}x{scene.size.height}, focused {focused}, echo {scene.echo.quote}, preedit {preedit}, published {published}, theme {theme.quote}"]
+    #[s!"scene {scene.size.width}x{scene.size.height}, focused {focused}, echo {scene.echo.quote}, echo padding {scene.echoPadding}, preedit {preedit}, published {published}, theme {theme.quote}"]
   for view in scene.views do
     let .anchor scroll ← view.scroll.text.marker view.scroll | throw .noSuchMarker
     let selections ←
@@ -1266,7 +1272,7 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
     let rect := view.rect
     lines :=
       (lines.push
-            s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}").push
+            s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}, padding {view.padding.across} {view.padding.down}").push
         (statusLine view.id view.status view.statusFace)
   return lines
 
@@ -1294,9 +1300,10 @@ def rowsText (rows : Array Display.Row) : String :=
 published, given `asked`, the rows queries answered since the publish before
 it, and `shown`, the rows of the frame the display laid out of it: the last
 query that names the view's snapshot, at its width and the anchor it was
-published with (`anchor`), and whether its rows are the frame's. The
-query's height is not matched: it is what the loop asked with, and a height
-other than the frame's text area is what `agree` is there to catch. -/
+published with (`anchor`), and its padding, since the loop asks with it,
+and whether its rows are the frame's. The query's height is not matched: it
+is what the loop asked with, and a height other than the frame's text area
+is what `agree` is there to catch. -/
 def agreement (scene : Scene) (anchor : Nat) (asked : Array Asked)
     (shown : Option (Array Display.Row)) : String :=
   match scene.focused.bind fun id => scene.views.find? (·.id == id) with
@@ -1304,7 +1311,8 @@ def agreement (scene : Scene) (anchor : Nat) (asked : Array Asked)
   | some view =>
     let matches_ (asked : Asked) : Bool :=
       asked.query.snapshot == view.snapshot && asked.query.width == view.rect.width &&
-        asked.query.anchor == anchor
+        asked.query.anchor == anchor &&
+        asked.query.padding == view.padding
     match (asked.filter matches_).back?, shown with
     | none, _ => s!"agree view {view.id.index}: no rows query from {anchor}"
     | some _, none => s!"agree view {view.id.index}: the frame has no such view"
