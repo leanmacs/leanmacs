@@ -37,6 +37,12 @@
 //!   scale (`tests/scale.rs`); and that a change of scale alone shapes
 //!   every row shown again and the scale a layout has shapes none
 //!   (`tests/counters.rs`);
+//! - a view's padding and the echo's: points multiplied at the layout's
+//!   scale, unrounded ([`Layout::padding_pixels`]); the text, the cursors
+//!   and the selections moved in by it, the text wrapped at the width less
+//!   it and filling the height less it, a status row's fields inset by it
+//!   with its background across the view, and the rows query taking it off
+//!   by the same rule (`tests/padding.rs`, `tests/heights.rs`);
 //! - the rows a view shows, at most one for each pixel of its height
 //!   whatever height a font gives its lines, and where a move goes, with
 //!   its goal x ([`query`]);
@@ -84,7 +90,7 @@ use crate::cache::{Counters, StatusKept, Texts, state};
 use crate::decoration::{DecorationSource, Styles, fonts_of};
 use crate::face::{FaceDef, SELECTION_FACE};
 use crate::query::{Moved, QueryError, RowRange, Walker};
-use crate::scene::{TextKey, TextRef, ViewId};
+use crate::scene::{Padding, TextKey, TextRef, ViewId};
 use crate::shaper::{FontId, Shaper};
 use crate::tabs::{DEFAULT_TAB_WIDTH, row_content, segment_count};
 use crate::wrap::Outcome;
@@ -213,16 +219,31 @@ impl<S: Shaper> Layout<S> {
         height
     }
 
-    /// The rows of `text` a view `width` pixels wide and `height` tall
-    /// shows from the visual line that holds `anchor`, as many as fit
-    /// whole, fewer at the end of the text.
+    /// `points` of padding in pixels at the scale this layout lays out at
+    /// ([`Layout::set_scale`]): `points` times the scale, unrounded, as a
+    /// status field's padding is. Frames and queries both take a padding
+    /// off through this, so the two cannot disagree ([`frame`], "The
+    /// padding").
+    pub fn padding_pixels(&self, points: u32) -> f32 {
+        points as f32 * self.scale()
+    }
+
+    /// The rows of `text` a view `width` pixels wide and `height` tall,
+    /// its content inset by `padding` (in points), shows from the visual
+    /// line that holds `anchor`, as many as fit whole, fewer at the end of
+    /// the text. The padding is taken off as the frame takes it off: twice
+    /// [`Layout::padding_pixels`] of `across` from the width and of `down`
+    /// from the height, at 0 at least.
     pub fn rows_shown(
         &mut self,
         text: &TextRef,
         width: f32,
         height: f32,
+        padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
+        let width = self.inset(width, padding.across);
+        let height = self.inset(height, padding.down);
         self.query(text, width, |walker| {
             let rows = walker.rows_shown(height, anchor)?;
             Ok(rows
@@ -233,21 +254,32 @@ impl<S: Shaper> Layout<S> {
     }
 
     /// The position of `text` `lines` visual lines below `position` (above
-    /// when negative) in a view `width` pixels wide, aiming for the x
-    /// `goal`, or for the position's own when there is none; and the goal
-    /// to pass to the next move. A move past the first or the last line
-    /// stops there.
+    /// when negative) in a view `width` pixels wide whose text is inset
+    /// `across` points from each side, aiming for the x `goal`, or for the
+    /// position's own when there is none; and the goal to pass to the next
+    /// move. A move past the first or the last line stops there. A move
+    /// only wraps, so it takes no height: the width it wraps at is
+    /// `width` less twice [`Layout::padding_pixels`] of `across`, as the
+    /// frame's. The goal is from the text's left, not the view's.
     pub fn lines_from(
         &mut self,
         text: &TextRef,
         width: f32,
+        across: u32,
         position: usize,
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
+        let width = self.inset(width, across);
         self.query(text, width, |walker| {
             walker.lines_from(position, lines, goal)
         })
+    }
+
+    /// `extent` less `points` of padding at each end, in pixels at the
+    /// layout's scale, and 0 at least.
+    pub(crate) fn inset(&self, extent: f32, points: u32) -> f32 {
+        (extent - 2.0 * self.padding_pixels(points)).max(0.0)
     }
 
     /// Runs `ask` on a walker over what is kept of `text` at `width`, with
@@ -290,7 +322,7 @@ mod tests {
 
     use crate::Layout;
     use crate::face::{Color, Face, FaceDef};
-    use crate::scene::{Decoration, Rect, Scene, TextKey, TextRef, View, ViewId};
+    use crate::scene::{Decoration, Padding, Rect, Scene, TextKey, TextRef, View, ViewId};
     use crate::shaper::Length;
     use crate::shaper::fake::CellShaper;
 
@@ -352,19 +384,37 @@ mod tests {
         let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
         layout.frame(&scene(sized(32)));
         // The rows are 16, 32 and 16 tall: 48 pixels hold two.
-        assert_eq!(layout.rows_shown(&text, 40.0, 48.0, 0).unwrap().len(), 2);
+        assert_eq!(
+            layout
+                .rows_shown(&text, 40.0, 48.0, Padding::default(), 0)
+                .unwrap()
+                .len(),
+            2
+        );
         // A scene that carries no faces keeps them.
         let mut kept = scene(sized(32));
         kept.faces = None;
         layout.frame(&kept);
-        assert_eq!(layout.rows_shown(&text, 40.0, 48.0, 0).unwrap().len(), 2);
+        assert_eq!(
+            layout
+                .rows_shown(&text, 40.0, 48.0, Padding::default(), 0)
+                .unwrap()
+                .len(),
+            2
+        );
         // The face made paint only: three rows of 16.
         let red = Face {
             foreground: Some(Color::rgb(9, 0, 0)),
             ..Face::default()
         };
         layout.frame(&scene(red));
-        assert_eq!(layout.rows_shown(&text, 40.0, 48.0, 0).unwrap().len(), 3);
+        assert_eq!(
+            layout
+                .rows_shown(&text, 40.0, 48.0, Padding::default(), 0)
+                .unwrap()
+                .len(),
+            3
+        );
         // A query is in the default face's font too: at twice the base
         // size a glyph is 20 across and a row 32 tall, so a view 20 wide
         // and 64 tall shows `a` and `b`, each on a row.
@@ -372,7 +422,9 @@ mod tests {
             views: scene(Face::default()).views,
             ..defining("default", sized(32))
         });
-        let rows = layout.rows_shown(&text, 20.0, 64.0, 0).unwrap();
+        let rows = layout
+            .rows_shown(&text, 20.0, 64.0, Padding::default(), 0)
+            .unwrap();
         assert_eq!(
             rows.iter()
                 .map(|row| (row.start, row.stop))

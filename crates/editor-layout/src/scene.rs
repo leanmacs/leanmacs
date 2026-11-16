@@ -17,7 +17,8 @@
 //! in the font its faces resolve to; and a view's `status` as one row at
 //! the bottom of its `rect`, above which its text has what is left, with
 //! each field on its side and padded, the row in the view's
-//! `status_face` over the mode line's. What
+//! `status_face` over the mode line's; each inset from the view's edges
+//! by its `padding`, and the echo by the scene's `echo_padding`. What
 //! it carries and lays out nothing of: the scene's `echo`, `pending`,
 //! `preedit` and `focused`, which no phase of the display pipeline draws
 //! yet.
@@ -131,6 +132,20 @@ pub struct StatusField {
     pub padding: u32,
 }
 
+/// How far a view's content is inset from its edges, in whole points,
+/// which layout multiplies by its scale as it does a face's lengths
+/// ([`Layout::padding_pixels`](crate::Layout::padding_pixels);
+/// [`frame`](crate::frame), "The padding"). The default is none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Padding {
+    /// The inset of the text, and of the status row's first and last
+    /// fields, from the view's left and right edges.
+    pub across: u32,
+    /// The inset of the text rows from the view's top, and from the top of
+    /// its status row (its bottom when it has none).
+    pub down: u32,
+}
+
 /// Which text: a key the binding gives each text, unique in the process.
 /// Layout keeps its state per key, so two snapshots of one key at one
 /// revision must hold the same text: the binding gives a key to each
@@ -205,6 +220,9 @@ pub struct View {
     /// field's, which gives the row its background: an unselected
     /// window's `mode-line.inactive`, and `None` for a selected one.
     pub status_face: Option<String>,
+    /// How far its text and its status fields are inset from its edges, in
+    /// points; none by default.
+    pub padding: Padding,
 }
 
 /// Everything the display shows, as published after a command.
@@ -218,6 +236,10 @@ pub struct Scene {
     pub focused: Option<ViewId>,
     /// The echo area's text.
     pub echo: String,
+    /// How far the echo is inset from the frame's left and right edges, in
+    /// points, in the view [`ECHO_VIEW`](crate::frame::ECHO_VIEW) layout
+    /// makes of it; none by default.
+    pub echo_padding: u32,
     /// The pending key prefix, rendered by Lean.
     pub pending: String,
     /// The input method's preedit text, if it is composing.

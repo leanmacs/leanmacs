@@ -11,7 +11,9 @@
 use editor_layout::Layout;
 use editor_layout::face::{Face, FaceDef};
 use editor_layout::frame::{Frame, Heights, ViewFrame};
-use editor_layout::scene::{Rect, Scene, Size, StatusField, TextKey, TextRef, View, ViewId};
+use editor_layout::scene::{
+    Padding, Rect, Scene, Size, StatusField, TextKey, TextRef, View, ViewId,
+};
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight};
 use editor_text::Text;
@@ -109,7 +111,13 @@ fn asked(
     anchor: usize,
 ) -> Vec<(usize, usize)> {
     layout
-        .rows_shown(&lines(), rect.width as f32, height as f32, anchor)
+        .rows_shown(
+            &lines(),
+            rect.width as f32,
+            height as f32,
+            Padding::default(),
+            anchor,
+        )
         .unwrap()
         .iter()
         .map(|row| (row.start, row.stop))
@@ -398,4 +406,51 @@ fn a_view_with_no_status_field_gives_its_whole_height_to_its_text_at_the_bottom_
     assert!(laid.status.is_none());
     assert_eq!(rows_of(laid), asked(&mut layout, rect, 32, 0));
     assert_eq!(laid.rows.len(), 2);
+}
+
+#[test]
+fn a_padded_views_text_rows_are_the_rows_query_at_its_height_less_its_bottom_row_with_its_padding()
+{
+    // The padding is taken off by the frame and by the query alike, so a
+    // caller that asks with the view's padding at its height less its
+    // bottom row is answered with the rows the frame shows.
+    for scale in [1.0, 1.5, 2.0] {
+        let mut layout = layout_with(&[], scale);
+        let heights = layout.heights();
+        for (frame_height, height) in [(496, 480), (100, 100), (149, 133)] {
+            let rect = Rect {
+                x: 0,
+                y: 0,
+                width: 640,
+                height,
+            };
+            let bottom = if height >= frame_height {
+                heights.message
+            } else {
+                heights.status
+            };
+            let padding = Padding { across: 8, down: 3 };
+            let mut padded = scene(frame_height, rect, 240);
+            padded.views[0].padding = padding;
+            let frame = layout.frame(&padded);
+            let query: Vec<(usize, usize)> = layout
+                .rows_shown(
+                    &lines(),
+                    rect.width as f32,
+                    rect.height.saturating_sub(bottom) as f32,
+                    padding,
+                    240,
+                )
+                .unwrap()
+                .iter()
+                .map(|row| (row.start, row.stop))
+                .collect();
+            assert_eq!(
+                rows_of(view(&frame)),
+                query,
+                "a view {height} tall in a frame {frame_height} tall at scale {scale}"
+            );
+            assert!(!query.is_empty());
+        }
+    }
 }

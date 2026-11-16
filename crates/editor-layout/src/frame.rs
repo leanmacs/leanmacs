@@ -2,7 +2,8 @@
 //! scene.
 //!
 //! For each view, the visual rows it shows from its scroll anchor, as many
-//! as fit its rectangle, each with its `y`, its glyphs (shared with the
+//! as fit its rectangle less its padding, each with its `x` and `y`, its
+//! glyphs (shared with the
 //! line store, never copied), its runs and a content hash; and the
 //! geometry of its cursors and of its selections. Geometry is in pixels
 //! from the view's top left.
@@ -28,14 +29,17 @@
 //!   plus its padding on each side, and its glyphs start its padding in.
 //!   The left fields, in the scene's order, run from the row's start, each
 //!   box from the end of the one before. The right fields, in the scene's
-//!   order, are laid out the same way and end at the row's end, the view's
-//!   width.
+//!   order, are laid out the same way and end at the row's end. The row's
+//!   start and end are the view's padding across in from its left and
+//!   right edges ("The padding", below): 0 and the view's width when it
+//!   has none.
 //! - **When both do not fit**, the right side keeps its place: every left
 //!   glyph that would end past the right side's start is dropped, and the
 //!   left boxes are cut there (a box with nothing left is dropped). A right
 //!   side wider than the row starts at the row's start, and what of it runs
-//!   past the row's end is outside the view, which draws nothing outside
-//!   its rectangle. With no right field nothing is cut.
+//!   past the row's end is drawn on into the padding, and what runs past
+//!   the view's edge is outside the view, which draws nothing outside its
+//!   rectangle. With no right field nothing is cut.
 //! - **Boxes.** The row carries each field's box ([`StatusBox`]) in the
 //!   background of the field's face over the row's faces, so a padding,
 //!   which has no glyph in it, is painted as data. The row's own
@@ -55,8 +59,46 @@
 //!   and the renderer draws nothing of a view outside its rectangle.
 //!
 //! The view's text rows are those that fit whole in the whole pixels that
-//! remain, and none when the status row is taller than the view. A view
-//! with no status field gives its whole height to its text.
+//! remain less the view's padding down twice, and none when the status row
+//! is taller than the view. A view with no status field gives its whole
+//! height to its text, less that padding.
+//!
+//! **The padding.** A view's [`View::padding`] insets its content from its
+//! edges, in whole points that layout turns into pixels at its scale with
+//! one function, [`Layout::padding_pixels`]: the points times the scale,
+//! unrounded, as a status field's padding is. So 8 points are 8 pixels at
+//! scale 1, 16 at scale 2 and 12 at scale 1.5, and 3 points are 4½ at 1.5.
+//! Below, `across` and `down` are those pixels.
+//!
+//! - **The text** is laid out in the rectangle less `across` at the left
+//!   and right and `down` at the top and above the status row (or the
+//!   bottom, with none): it wraps at the view's width less twice `across`,
+//!   and its rows are those that fit whole in its height less its status
+//!   row less twice `down`, which may be a fractional number of pixels.
+//!   Each extent is at 0 at least, and a width of 0 is a view narrower
+//!   than a cell.
+//! - **A row** starts `down` from the view's top, and its [`FrameRow::x`]
+//!   is `across`: its glyphs keep their `x` from the row's start, shared
+//!   with the line store and never copied. A row's hash leaves out its `x`
+//!   and its `y`, so a change of padding rebuilds no row.
+//! - **A cursor and a selection area** are `across` further right than
+//!   their cells on the row, and at the row's `y`.
+//! - **The status row** keeps its background across the whole view, so the
+//!   padding beside its fields is the mode line's colour, and its fields
+//!   run between `across` in from each edge ("The mode line", above). It
+//!   takes no `down`: it is at the view's foot.
+//! - **The view's background** (the default face's) fills its rectangle,
+//!   so the padding round the text is paper, not a border.
+//!
+//! The echo's view, [`ECHO_VIEW`], has no padding of its own: its fields
+//! are inset [`Scene::echo_padding`] points from the frame's left and
+//! right edges, by the same function. A padding of 0, a scene's default,
+//! lays out as before there was one.
+//!
+//! The rows query takes a padding off by the same rule
+//! ([`Layout::rows_shown`], [`Layout::lines_from`]), so a caller that asks
+//! with a view's padding at its height less its bottom row is answered
+//! with the rows its frame shows (`tests/padding.rs`, `tests/heights.rs`).
 //!
 //! **The bottom row.** A view whose rectangle reaches the frame's bottom
 //! edge (its foot at or below the scene's height) and that has a status
@@ -78,7 +120,8 @@
 //! has no text rows, no cursor and no selection, and its one status row is
 //! the echo, shaped as a status row is, in the face `echo-area` over the
 //! default face, not `mode-line`, its line below the echo area's vertical
-//! padding. An empty echo, a frame of no width or no
+//! padding, and its text inset [`Scene::echo_padding`] from the frame's
+//! left and right edges ("The padding", below). An empty echo, a frame of no width or no
 //! height, and a bottom row any view covers any of, give no such view: the
 //! row then shows what the views there draw, or the target's clear
 //! colour.
@@ -119,8 +162,8 @@
 //!
 //! A row's hash covers its glyphs (each with its font's id and the offset
 //! its outline is drawn at), its runs (their bytes and their paint) and
-//! its height and baseline, all relative to the row's start: never its `y`
-//! or an absolute offset. So scrolling,
+//! its height and baseline, all relative to the row's start: never its `x`,
+//! its `y` or an absolute offset. So scrolling,
 //! and an edit on another row, leave it as it was, and a renderer reuses
 //! what it built for a row whose hash it has seen. A change of a face's
 //! colour changes the hash of the rows drawn in it and of no other. A
@@ -175,6 +218,9 @@ pub struct Area {
 /// One visual row of a view's frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameRow {
+    /// Its left, from the view's left: the view's padding across, in
+    /// pixels (module docs, "The padding"). Its glyphs' `x` are from here.
+    pub x: f32,
     /// Its top, from the view's top.
     pub y: f32,
     /// How far down it is.
@@ -328,6 +374,8 @@ impl Frame {
     /// selections. No hash, and neither the generation nor the table of
     /// fonts.
     ///
+    /// - A row is `row`, then ` x <x>` when its `x` is not 0 (a padded
+    ///   view's), then its `y`, its height, its baseline and its bytes.
     /// - A colour is its eight hexadecimal digits, `rrggbbaa`.
     /// - A glyph is `id@x`, with `^dx,dy` after it when its outline is
     ///   drawn off its pen position, and then `#font` when it is drawn in
@@ -360,9 +408,13 @@ impl Frame {
                 view.selection.0
             );
             for row in &view.rows {
+                out.push_str("  row");
+                if row.x != 0.0 {
+                    let _ = write!(out, " x {}", row.x);
+                }
                 let _ = write!(
                     out,
-                    "  row y {} height {} baseline {} bytes {}..{}",
+                    " y {} height {} baseline {} bytes {}..{}",
                     row.y, row.height, row.baseline, row.bytes.start, row.bytes.end
                 );
                 describe_line(&mut out, &row.line, &row.runs);
@@ -613,7 +665,8 @@ impl<S: Shaper> Layout<S> {
             }],
             ..View::default()
         };
-        let status = self.status_row(&view, ECHO_AREA_FACE, tall);
+        let inset = self.padding_pixels(scene.echo_padding);
+        let status = self.status_row(&view, ECHO_AREA_FACE, tall, inset);
         let selection = self.styles.intern(SELECTION_FACE);
         let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
         Some(ViewFrame {
@@ -642,8 +695,16 @@ impl<S: Shaper> Layout<S> {
     /// The row is exactly as tall as `height`, whatever height its lines
     /// were shaped at, and sits at the view's bottom, its line below the
     /// vertical padding of the face `base`: the mode line for a view's
-    /// status row, and the echo area for the echo's.
-    fn status_row(&mut self, view: &View, base: &str, height: u32) -> Option<StatusRow> {
+    /// status row, and the echo area for the echo's. Its fields are inset
+    /// `inset` pixels from the view's left and right edges, and its
+    /// background is not.
+    fn status_row(
+        &mut self,
+        view: &View,
+        base: &str,
+        height: u32,
+        inset: f32,
+    ) -> Option<StatusRow> {
         if view.status.is_empty() {
             self.status.remove(&view.id);
             return None;
@@ -732,16 +793,18 @@ impl<S: Shaper> Layout<S> {
             .map(span)
             .sum();
         let has_right = placed.iter().any(|field| field.side == Side::Right);
+        // The fields run between the insets.
+        let end = (width - inset).max(inset);
         // Where the right side starts, and so where the left side is cut;
         // with no right side nothing is cut.
         let cut = if has_right {
-            (width - right).max(0.0)
+            (end - right).max(inset)
         } else {
             f32::INFINITY
         };
         let mut glyphs = Vec::new();
         let mut boxes = Vec::new();
-        for (side, from) in [(Side::Left, 0.0), (Side::Right, cut.min(width))] {
+        for (side, from) in [(Side::Left, inset), (Side::Right, cut.min(end))] {
             let mut x = from;
             for field in placed.iter().filter(|field| field.side == side) {
                 let across = span(field);
@@ -860,12 +923,17 @@ impl<S: Shaper> Layout<S> {
         } else {
             heights.status
         };
-        let status = self.status_row(view, MODE_LINE_FACE, bottom);
-        // What is left for the text above the status row, in whole pixels.
+        let across = self.padding_pixels(view.padding.across);
+        let down = self.padding_pixels(view.padding.down);
+        let status = self.status_row(view, MODE_LINE_FACE, bottom, across);
+        // What is left for the text above the status row, in whole pixels,
+        // less the padding above and below it (module docs, "The padding").
         let text_height = match status {
             Some(_) => view.rect.height.saturating_sub(bottom),
             None => view.rect.height,
         } as f32;
+        let text_height = self.inset(text_height, view.padding.down);
+        let text_width = self.inset(view.rect.width as f32, view.padding.across);
         let cursor_face = self.styles.intern(&view.cursor.face);
         let selection_face = self.styles.intern(SELECTION_FACE);
         let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
@@ -919,12 +987,7 @@ impl<S: Shaper> Layout<S> {
         };
         let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
         let fonts = |bytes: Range<usize>| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
-        let mut held = state(
-            &mut self.texts,
-            text,
-            self.tab_width,
-            Some(view.rect.width as f32),
-        );
+        let mut held = state(&mut self.texts, text, self.tab_width, Some(text_width));
         let state = &mut *held;
         let mut seen: HashMap<(usize, usize), Outcome> = HashMap::new();
         let mut walker = Walker {
@@ -938,7 +1001,7 @@ impl<S: Shaper> Layout<S> {
         };
         let anchor = boundary_at_or_before(snapshot, view.scroll);
         let shown = walker.rows_shown(text_height, anchor).unwrap_or_default();
-        let mut y = 0.0;
+        let mut y = down;
         for &visual in &shown {
             let Some(entry) = walker.entry(visual.row, visual.segment) else {
                 continue;
@@ -978,7 +1041,7 @@ impl<S: Shaper> Layout<S> {
                 let covered = entry.cells(visual.line).map(|cells| cells.covered(held));
                 for (left, right) in covered.unwrap_or_default() {
                     frame.selections.push(Area {
-                        x: left,
+                        x: across + left,
                         y,
                         width: right - left,
                         height: line.height,
@@ -997,6 +1060,7 @@ impl<S: Shaper> Layout<S> {
                 }
             }
             frame.rows.push(FrameRow {
+                x: across,
                 y,
                 height: line.height,
                 baseline: line.baseline,
@@ -1043,7 +1107,7 @@ impl<S: Shaper> Layout<S> {
                 .map_or(advance, |cell| cell.width);
             frame.cursors.push(CursorBox {
                 area: Area {
-                    x,
+                    x: row.x + x,
                     y: row.y,
                     width,
                     height: row.height,
@@ -1103,8 +1167,8 @@ mod tests {
         BASE_BACKGROUND, BASE_FOREGROUND, Color, Face, FaceDef, Paint, Underline, UnderlineStyle,
     };
     use crate::scene::{
-        Cursor, CursorShape, Decoration, Rect, Scene, Side, StatusField, TextKey, TextRef, View,
-        ViewId,
+        Cursor, CursorShape, Decoration, Padding, Rect, Scene, Side, StatusField, TextKey, TextRef,
+        View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
     use crate::shaper::scripted::{ScriptedShaper, glyph, line};
@@ -1238,6 +1302,7 @@ mod tests {
             decorations: vec![],
             status: vec![],
             status_face: None,
+            padding: Padding::default(),
         }
     }
 
@@ -1277,8 +1342,20 @@ mod tests {
         // The rows query fits them by their heights too, in the fonts of
         // the last frame that showed the text.
         let text = tall.text.unwrap();
-        assert_eq!(layout.rows_shown(&text, 40.0, 63.0, 0).unwrap().len(), 2);
-        assert_eq!(layout.rows_shown(&text, 40.0, 64.0, 0).unwrap().len(), 3);
+        assert_eq!(
+            layout
+                .rows_shown(&text, 40.0, 63.0, Padding::default(), 0)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            layout
+                .rows_shown(&text, 40.0, 64.0, Padding::default(), 0)
+                .unwrap()
+                .len(),
+            3
+        );
     }
 
     #[test]
@@ -1307,7 +1384,9 @@ mod tests {
         let at_top = frame(&mut layout, view(text, 4, 160, 0, &[]));
         let snapshot = TextRef::fixed(key(text), Text::from(text).snapshot());
         for n in 1..=5 {
-            let moved = layout.lines_from(&snapshot, 40.0, 0, n, Some(0.0)).unwrap();
+            let moved = layout
+                .lines_from(&snapshot, 40.0, 0, 0, n, Some(0.0))
+                .unwrap();
             let scrolled = frame(&mut layout, view(text, 4, 160, moved.position, &[]));
             let expected = &at_top.rows[usize::try_from(n).unwrap()];
             let first = &scrolled.rows[0];
@@ -1340,7 +1419,7 @@ mod tests {
                 for (n, expected) in at_top.rows.iter().enumerate() {
                     let lines = i64::try_from(n).unwrap();
                     let moved = layout
-                        .lines_from(&snapshot, width, 0, lines, Some(0.0))
+                        .lines_from(&snapshot, width, 0, 0, lines, Some(0.0))
                         .unwrap();
                     let scrolled =
                         frame(&mut layout, view(text, columns, 1600, moved.position, &[]));

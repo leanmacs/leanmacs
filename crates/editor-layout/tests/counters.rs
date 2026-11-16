@@ -14,7 +14,7 @@ use editor_layout::cache::Counters;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::frame::Frame;
 use editor_layout::scene::{
-    Changes, Cursor, Decoration, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId,
+    Changes, Cursor, Decoration, Padding, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -83,6 +83,7 @@ fn scene_rows(text: &TextRef, width: u32, cursor: usize, rows: u32) -> Scene {
             decorations: vec![],
             status: vec![],
             status_face: None,
+            padding: Padding::default(),
         }],
         ..Scene::default()
     }
@@ -163,8 +164,10 @@ fn a_query_reuses_what_a_frame_laid_out() {
     let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
     layout.frame(&scene(&text, 400, 0));
     let queried = counted(&mut layout, |layout| {
-        layout.rows_shown(&text, 400.0, 5.0 * 16.0, 0).unwrap();
-        layout.lines_from(&text, 400.0, 0, 3, None).unwrap();
+        layout
+            .rows_shown(&text, 400.0, 5.0 * 16.0, Padding::default(), 0)
+            .unwrap();
+        layout.lines_from(&text, 400.0, 0, 0, 3, None).unwrap();
     });
     assert_eq!((queried.shaped, queried.broken), (0, 0));
 }
@@ -597,7 +600,10 @@ fn a_default_face_whose_lines_have_no_height_lays_out_a_row_for_each_pixel_of_th
         assert_eq!(again, count(0, 0, 160), "{flat:?}");
         // And the rows query likewise.
         let queried = counted(&mut layout, |layout| {
-            rows = layout.rows_shown(&text, 200.0, 160.0, 0).unwrap().len();
+            rows = layout
+                .rows_shown(&text, 200.0, 160.0, Padding::default(), 0)
+                .unwrap()
+                .len();
         });
         assert_eq!((rows, queried), (160, count(0, 0, 160)), "{flat:?}");
         // A move counts lines, not pixels: three lines down is on the
@@ -605,7 +611,7 @@ fn a_default_face_whose_lines_have_no_height_lays_out_a_row_for_each_pixel_of_th
         let mut row = None;
         let moved = counted(&mut layout, |layout| {
             let to = layout
-                .lines_from(&text, 200.0, 0, 3, None)
+                .lines_from(&text, 200.0, 0, 0, 3, None)
                 .unwrap()
                 .position;
             row = text.snapshot.offset_to_point(to).map(|point| point.row);

@@ -67,7 +67,7 @@
 
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Cursor, CursorShape, Decoration, Rect, Scene, Side, Size, StatusField, View, ViewId,
+    Cursor, CursorShape, Decoration, Padding, Rect, Scene, Side, Size, StatusField, View, ViewId,
 };
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
 use editor_text::Marker;
@@ -617,6 +617,7 @@ impl WireScene {
                         })
                         .collect(),
                     status_face: view.status_face.clone(),
+                    padding: Padding::default(),
                 }
             })
             .collect();
@@ -628,6 +629,7 @@ impl WireScene {
             views,
             focused: self.focused.map(ViewId),
             echo: self.echo.clone(),
+            echo_padding: 0,
             pending: self.pending.clone(),
             preedit: self.preedit.clone(),
             faces: self.faces.as_deref().map(face_defs),

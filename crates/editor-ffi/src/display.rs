@@ -91,7 +91,7 @@ use editor_layout::Layout;
 use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
 use editor_layout::query::{Moved, QueryError, RowRange};
-use editor_layout::scene::{Changes, Scene, TextKey, TextRef};
+use editor_layout::scene::{Changes, Padding, Scene, TextKey, TextRef};
 use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
 use editor_render::port::{DrawRequest, Renderer, Target};
@@ -184,7 +184,7 @@ where
         height: f32,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
-        Layout::rows_shown(self, text, width, height, anchor)
+        Layout::rows_shown(self, text, width, height, Padding::default(), anchor)
     }
 
     fn lines_from(
@@ -195,7 +195,7 @@ where
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
-        Layout::lines_from(self, text, width, position, lines, goal)
+        Layout::lines_from(self, text, width, 0, position, lines, goal)
     }
 
     fn heights(&mut self) -> Heights {

@@ -2725,6 +2725,7 @@ mod tests {
         let rows = rows
             .iter()
             .map(|fonts| FrameRow {
+                x: 0.0,
                 y: 0.0,
                 height: 16.0,
                 baseline: 12.0,

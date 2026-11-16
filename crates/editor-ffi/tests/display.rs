@@ -36,7 +36,8 @@ use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Cursor, CursorShape, Decoration, Rect, Scene, Size, StatusField, TextKey, TextRef, View, ViewId,
+    Cursor, CursorShape, Decoration, Padding, Rect, Scene, Size, StatusField, TextKey, TextRef,
+    View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -141,7 +142,7 @@ fn rows_directly(text: &str, width: f32, height: f32, anchor: usize) -> Vec<(usi
     let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
     let text = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
     layout
-        .rows_shown(&text, width, height, anchor)
+        .rows_shown(&text, width, height, Padding::default(), anchor)
         .unwrap()
         .into_iter()
         .map(|row| (row.start, row.stop))
@@ -166,7 +167,14 @@ fn a_display_is_live_from_new_until_free_and_answers_the_queries_as_layout_does(
     let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
     for (position, lines, goal) in [(1, 1, None), (6, 2, Some(20)), (13, -3, None)] {
         let expected = layout
-            .lines_from(&direct, 32.0, position, lines, goal.map(|goal| goal as f32))
+            .lines_from(
+                &direct,
+                32.0,
+                0,
+                position,
+                lines,
+                goal.map(|goal| goal as f32),
+            )
             .unwrap();
         assert_eq!(
             moved(display, snapshot, 32, position, lines, goal),
@@ -331,9 +339,11 @@ fn scene_directly() -> Scene {
                 ..StatusField::default()
             }],
             status_face: None,
+            padding: Padding::default(),
         }],
         focused: Some(ViewId(3)),
         echo: "hello".to_owned(),
+        echo_padding: 0,
         pending: String::new(),
         preedit: None,
         faces: None,
@@ -541,7 +551,7 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
     );
     let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
     let expected: Vec<(usize, usize)> = layout
-        .rows_shown(&direct, 160.0, 64.0, 0)
+        .rows_shown(&direct, 160.0, 64.0, Padding::default(), 0)
         .unwrap()
         .into_iter()
         .map(|row| (row.start, row.stop))

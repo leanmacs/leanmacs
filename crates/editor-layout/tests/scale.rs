@@ -18,7 +18,7 @@ use editor_layout::Layout;
 use editor_layout::face::{Face, FaceDef};
 use editor_layout::frame::{Area, Frame, ViewFrame};
 use editor_layout::scene::{
-    Decoration, Rect, Scene, Side, StatusField, TextKey, TextRef, View, ViewId,
+    Decoration, Padding, Rect, Scene, Side, StatusField, TextKey, TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight};
@@ -296,11 +296,23 @@ fn the_queries_answer_at_the_scale_last_set() {
     let text = TextRef::fixed(TextKey(1), Text::from(rows.as_str()).snapshot());
     // A text nothing has laid out: every row of it is an estimate.
     let other = TextRef::fixed(TextKey(2), Text::from("a\nb\nc").snapshot());
-    assert_eq!(layout.rows_shown(&text, 400.0, 112.0, 0).unwrap().len(), 8);
+    assert_eq!(
+        layout
+            .rows_shown(&text, 400.0, 112.0, Padding::default(), 0)
+            .unwrap()
+            .len(),
+        8
+    );
     assert_eq!(layout.height_estimate(&other, 400.0), 3.0 * 14.0);
     // No frame between the change and the queries.
     layout.set_scale(2.0);
-    assert_eq!(layout.rows_shown(&text, 400.0, 112.0, 0).unwrap().len(), 4);
+    assert_eq!(
+        layout
+            .rows_shown(&text, 400.0, 112.0, Padding::default(), 0)
+            .unwrap()
+            .len(),
+        4
+    );
     assert_eq!(layout.height_estimate(&other, 400.0), 3.0 * 28.0);
 }
 
