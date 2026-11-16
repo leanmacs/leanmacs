@@ -2743,7 +2743,8 @@ binding over a display of the one font `font`: `text` in one view the size
 of `themePictureSize`, in `theme`, with the shipped mode line of a selected
 window in visual state on `source.lean` (`themeStatus`): the `VISUAL` badge,
 the buffer's name, and on the right line:col and the position, the same in
-every draw, read from `selectedIn`. With `selected`, the text holds
+every draw, read from `selectedIn`; padded as the editor pads a window,
+`Loop.padding` points across and down. With `selected`, the text holds
 one selection, from the `a` of `area` to its head on the `h` of `(w h`,
 with a block cursor there in `cursor`; without, it holds none, and so no
 cursor. The offsets are found in `selectedIn`, the fixture's own text, so
@@ -2771,7 +2772,9 @@ def themePicture (font : ByteArray) (theme : Editor.Theme) (text selectedIn : St
             selections := if selected.isSome then #[marker selection] else #[]
             cursor := { shape := .block, face := selected.getD unthemedFace }
             decorations := #[]
-            status := themeStatus selectedIn (head + 3) }]
+            status := themeStatus selectedIn (head + 3)
+            -- The editor's frame padding at scale 1 (`Loop.padding`).
+            padding := { across := Editor.Loop.padding, down := Editor.Loop.padding } }]
       focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
   if let .error refusal← (Editor.Display.publish scene).runReal real then
     throw (IO.userError s!"publishing was refused: {repr refusal}")
