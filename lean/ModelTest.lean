@@ -23,6 +23,7 @@ import Editor.FrameCommands.Compiled
 import Editor.Fuzzy.Contract
 import Editor.Fuzzy.Model
 import Editor.Headless.CommandLine
+import Editor.Indent
 import Editor.InputScheme.Contract
 import Editor.InputScheme.Test
 import Editor.InputScheme.Vim.Default
@@ -514,7 +515,20 @@ names a scheme's key:
   models through the loop's dispatch: the text attached and highlighted in
   the faces the rule gives, a mode's own query, a refusal said in the echo
   area with the mode still set, a parent's syntax tree taken, and the text
-  detached when a mode with none replaces it.
+  detached when a mode with none replaces it; and the steps after the
+  highlights: injections, a language for the model's grammar, and the text
+  objects and indents queries kept, each refusal said and stopping its own
+  step alone.
+- `indentRuleChecks`: the indent rule (`Editor/Indent.lean`), pure, over
+  hand-built rows: begins on one row count once, a branch takes a level
+  away only as a row's first non-blank, the level never below 0, the rows
+  of an ignored node after its first kept, a node ending at a row's start
+  not reaching it, a blank row's level, and names the rule does not read
+  ignored;
+- `indentLevelChecks`: the indent primitive (`TextId.indentLevels`), on the
+  editor's models: a pretty-printed JSON text under a test mode's indents
+  query gets each row's indent in levels, a text with no syntax tree is
+  refused, and an empty indents source answers 0 for every row.
 -/
 
 namespace ModelTest
@@ -14793,6 +14807,117 @@ def highlightEnterChecks : List Check :=
               major == some "other" && model.texts.isEmpty && model.attached.isEmpty
             | none => false }]
 
+/-- A node of the indents query, for the indent rule's checks: its capture's
+name, where it starts, and its first and last rows. -/
+def indentNode (name : String) (start firstRow lastRow : Nat) : Indent.Captured :=
+  { name, start, firstRow, lastRow }
+
+/-- The rows from 0 through `last`, each with its first non-blank at the
+offset `firstNonBlanks` gives it, or 1000 past it. -/
+def indentLines (firstNonBlanks : List Nat) : Array Indent.Line :=
+  (firstNonBlanks.zipIdx.map fun (offset, row) => { row, firstNonBlank := offset }).toArray
+
+/-- The checks of the indent rule (`Indent.rule`, `Editor/Indent.lean`),
+pure, over hand-built rows. -/
+def indentRuleChecks : List Check :=
+  [{  name := "begins on one row count once, and each begin counts on the rows after its first"
+      run :=
+        pure
+          (Indent.rule
+              #[indentNode "indent.begin" 0 0 3, indentNode "indent.begin" 4 0 3,
+                indentNode "indent.begin" 10 1 2]
+              (indentLines [0, 10, 20, 30]) ==
+            #[some 0, some 1, some 2, some 1]) },
+    { name := "a branch takes a level away only where it starts a row's first non-blank"
+      run :=
+        pure
+          (Indent.rule
+              #[indentNode "indent.begin" 0 0 2, indentNode "indent.branch" 20 2 2,
+                indentNode "indent.branch" 15 1 1]
+              (indentLines [0, 12, 20]) ==
+            #[some 0, some 1, some 0]) },
+    { name := "the level is never below 0"
+      run :=
+        pure (Indent.rule #[indentNode "indent.branch" 0 0 0] (indentLines [0]) == #[some 0]) },
+    { name :=
+        "the rows of an ignored node after its first keep their indent, and so its first does not"
+      run :=
+        pure
+          (Indent.rule #[indentNode "indent.begin" 0 0 3, indentNode "indent.ignore" 10 1 2]
+              (indentLines [0, 10, 20, 30]) ==
+            #[some 0, some 1, none, some 1]) },
+    { name := "a node whose last byte is on the row before reaches no further"
+      run :=
+        pure
+          (Indent.rule #[indentNode "indent.begin" 0 0 1] (indentLines [0, 5, 9]) ==
+            #[some 0, some 1, some 0]) },
+    { name := "a blank row gets the level a line typed there would have"
+      run :=
+        pure
+          (Indent.rule #[indentNode "indent.begin" 0 0 2] (indentLines [0, 2, 3]) ==
+            #[some 0, some 1, some 1]) },
+    { name := "names the rule does not read are ignored"
+      run :=
+        pure
+          (Indent.rule
+              #[indentNode "indent.align" 0 0 2, indentNode "function.outer" 0 0 2,
+                indentNode "indent.begin" 0 0 2]
+              (indentLines [0, 2, 3]) ==
+            #[some 0, some 1, some 1]) }]
+
+/-- The indents source of the model's test mode: an object and an array
+indent what they hold, and their closing brackets lead out. -/
+def jsonIndents : String :=
+  "(object) @indent.begin\n(array) @indent.begin\n\"}\" @indent.branch\n\"]\" @indent.branch"
+
+/-- The indent levels of rows `first` through `last` of a text of `text`, set
+to a test mode with `syntaxTree` when given, on the editor's models: the
+levels on the right, a refusal on the left; `none` when the command was
+refused. -/
+def indentLevelsOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (first last : Nat) :
+    Option (Sum SyntaxTreeError (Array (Option Nat))) :=
+  let program : EditorM (Except SyntaxTreeError (Array (Option Nat))) := do
+    let id ← createText text
+    if let some syntaxTree := syntaxTree then
+      Highlight.enter "test" id syntaxTree
+    id.indentLevels first last
+  match program.runModel editorModel with
+  | (.ok (.ok levels), _) => some (.inr levels)
+  | (.ok (.error refusal), _) => some (.inl refusal)
+  | (.error _, _) => none
+
+/-- The checks of the indent primitive (`TextId.indentLevels`,
+`Editor/Indent.lean`), on the editor's models through the syntax tree
+model. -/
+def indentLevelChecks : List Check :=
+  let pretty := "{\n  \"a\": [\n    1,\n    {\n      \"b\": null\n    }\n  ],\n\n  \"c\": {}\n}\n"
+  let spaces (line : String) : Nat := (line.toList.takeWhile (· == ' ')).length
+  [{  name :=
+        "a two-space pretty-printed JSON text, under a test mode's indents query, gets each row's leading spaces divided by two, a blank row the level of what holds it"
+      run :=
+        pure <|
+          let lines := pretty.splitOn "\n"
+          let expected :=
+            (lines.take (lines.length - 1)).toArray.map fun line =>
+              if line.isEmpty then some 1 else some (spaces line / 2)
+          indentLevelsOf pretty (some { grammar := "json", indents := some jsonIndents }) 0 9 ==
+            some (.inr expected) },
+    { name := "rows past the text's last are left out, and a first row past the last answers none"
+      run :=
+        pure <|
+          let mode := some { grammar := "json", indents := some jsonIndents }
+          indentLevelsOf "[\n  1\n]" mode 1 7 == some (.inr #[some 1, some 0]) &&
+            indentLevelsOf "[\n  1\n]" mode 3 4 == some (.inr #[]) },
+    { name := "a text with no syntax tree is refused as not attached"
+      run := pure (indentLevelsOf "[1]" none 0 0 == some (.inl .notAttached)) },
+    { name := "a text whose grammar ships no indents query is refused as keeping none"
+      run := pure (indentLevelsOf "[1]" (some { grammar := "json" }) 0 0 == some (.inl .noQuery)) },
+    { name := "a mode with an empty indents source answers 0 for every row"
+      run :=
+        pure
+          (indentLevelsOf pretty (some { grammar := "json", indents := some "" }) 0 3 ==
+            some (.inr #[some 0, some 0, some 0, some 0])) }]
+
 /-- The checks of a mode's on-enter action, on the editor's models: a
 command asks for a major mode by the request, and the loop that runs the
 command runs the mode's on-enter actions inside it
@@ -27160,6 +27285,8 @@ def checks : List Check :=
     modeEnterChecks ++
     highlightFaceChecks ++
     highlightEnterChecks ++
+    indentRuleChecks ++
+    indentLevelChecks ++
     apiStateChecks ++
     driverChecks ++
     promptChecks ++

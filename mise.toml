@@ -146,8 +146,9 @@ run = [
   # child's environment (tests/process-environment), and the directory of
   # the fixture that stands in for git in the workspace finder's checks,
   # whose properties `lean-test` runs against the finder's model
-  # (tests/workspaces).
-  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces",
+  # (tests/workspaces), and the directory of the syntax fixtures, whose Rust
+  # fixtures the indent and text-object checks read (tests/syntax).
+  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces ../tests/syntax",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment.

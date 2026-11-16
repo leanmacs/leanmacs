@@ -9,6 +9,7 @@ import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.File.Cases
+import Editor.Indent
 import Editor.Fuzzy.Contract
 import Editor.Fuzzy.Real
 import Editor.InputScheme.Test
@@ -913,6 +914,22 @@ def settlingAttach (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTre
       discard (Ffi.syntaxSettle found 5000)
   return reply
 
+/-- `handler`, a real syntax tree binding's over `table`, which waits, with
+a bound, for a snapshot's tree to be delivered before it forwards a question
+of its captures or of a kept query's, and after an attach
+(`settlingAttach`). -/
+def settling (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTreeHandler :=
+  settlingAttach table fun request => do
+    let asked :=
+      match request with
+      | .captures snapshot _ _ _ => some snapshot
+      | .capturesOf snapshot _ _ _ => some snapshot
+      | _ => none
+    if let some snapshot := asked then
+      if let some found← table.find? snapshot then
+        discard (Ffi.syntaxSettle found 5000)
+    handler request
+
 /-- Whether the editor queue holds exactly one event, the library's report
 of a parse delivered, which is pulled: what an edit of a highlighted text
 leaves once its tree is delivered. It never parks a pull on an empty
@@ -1523,17 +1540,7 @@ def syntaxTreeOver (texts : Array String) :
     documents.mapM fun document => do
         table.add (← document.snapshot)
   let real ← RealSyntaxTree.new table.reader
-  let handler : SyntaxTreeHandler := fun request => do
-    let asked :=
-      match request with
-      | .captures snapshot _ _ _ => some snapshot
-      | .capturesOf snapshot _ _ _ => some snapshot
-      | _ => none
-    if let some snapshot := asked then
-      if let some found← table.find? snapshot then
-        discard (Ffi.syntaxSettle found 5000)
-    real.handle request
-  return (documents, table, ids, settlingAttach table handler)
+  return (documents, table, ids, settling table real.handle)
 
 /-- Runs `property` of the syntax tree interface's contract against the real
 binding, over documents of its texts. -/
@@ -1568,6 +1575,83 @@ def onRealSyntaxTree (texts : Array String)
 their nodes. -/
 def capturedTexts (text : String) (captures : Array SyntaxTree.Capture) : Array String :=
   captures.map fun capture => String.fromUTF8! (text.toUTF8.extract capture.start capture.stop)
+
+/-- The capture names of the query of `kind` the library ships for
+`grammar`; none when it ships none or the query does not compile. -/
+def shippedNames (grammar : String) (kind : QueryKind) : IO (Option (Array String)) := do
+  let table ← Snapshots.new
+  let real ← RealSyntaxTree.new table.reader
+  let program : SyntaxTreeM (Array String) := do
+    let query ← SyntaxTree.compile grammar (← SyntaxTree.shippedQuery grammar kind)
+    SyntaxTree.captureNames query
+  return (← program.runWith real.handle).toOption
+
+/-- What the indent primitive answers of each row of `text`, whose major
+mode is the shipped Rust one, over the real syntax tree binding: the text,
+the levels, and the texts the run left. Each question waits for its
+snapshot's tree (`settling`). -/
+def rustIndentLevels (table : Snapshots) (texts : RealTexts) (text : TextId) :
+    IO (Option (Array (Option Nat))) := do
+  let real ← RealSyntaxTree.new table.reader
+  let levels : EditorM (Except SyntaxTreeError (Array (Option Nat))) := do
+    text.indentLevels 0 ((← text.rowCount) - 1)
+  let (.ok (.ok answered), _) ←
+    levels.runReal texts (← recorderOf table).handle (syntaxTree :=
+        settling table real.handle) | return none
+  return some answered
+
+/-- The levels the indent rule must give `source`, a rustfmt-formatted Rust
+text indented four spaces a level, for each of its rows: `none` for the
+rows in `kept`, kept as they are, `some` of the leading spaces divided by
+four for every other row with content, and nothing asked of a blank row. -/
+def rustIndentHolds (source : String) (kept : List String) (levels : Array (Option Nat)) : Bool :=
+  let lines := (source.splitOn "\n").toArray
+  lines.size == levels.size &&
+    (lines.zip levels).all fun (line, level) =>
+      if kept.contains line then level == none
+      else
+        if line.trimAscii.isEmpty then true
+        else level == some ((line.toList.takeWhile (· == ' ')).length / 4)
+
+/-- What only the real syntax tree binding shows over the fixtures in
+`fixtures` (`tests/syntax`): the indent levels of a Rust fixture, before
+and after an edit, and the names the shipped Rust indents query captures. -/
+def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
+  [{  name := "the shipped Rust indents query names only what the indent rule reads"
+      run := do
+        let some names ← shippedNames "rust" .indents | return false
+        return !names.isEmpty && names.all Indent.names.contains },
+    { name :=
+        "the indent levels of the Rust fixture are its own indentation, and the rows inside its multi-line string and block comment keep theirs, before and after an edit that wraps a statement in a new block"
+      run := do
+        let source ← IO.FS.readFile (fixtures / "rust" / "indent.rs")
+        let kept := ["not indented by the rule\";", "       comment */"]
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let entered : EditorM TextId := do
+          let text ← createText source
+          Highlight.enter "rust" text { grammar := "rust" }
+          return text
+        let (.ok text, texts) ←
+          entered.runReal (.over table) (← recorderOf table).handle (syntaxTree :=
+              settling table real.handle) | return false
+        let some before ← rustIndentLevels table texts text | return false
+        -- A statement wrapped in a new `if` block, formatted.
+        let statement := "                let y = x + 1;\n"
+        let wrapped :=
+          "                if y > 0 {\n                    let y = x + 1;\n                }\n"
+        let some offset := (source.splitOn statement).head?.map (·.utf8ByteSize) | return false
+        let edit : EditorM Unit := do
+          text.delete offset (offset + statement.utf8ByteSize)
+          text.insert offset wrapped
+        let (.ok (), texts) ← edit.runReal texts (← recorderOf table).handle | return false
+        let edited := source.replace statement wrapped
+        let some after ← rustIndentLevels table texts text | return false
+        -- The documents are read, so they live to here.
+        let read : EditorM String := text.read
+        let (.ok now, _) ← read.runReal texts (← recorderOf table).handle | return false
+        return now == edited && rustIndentHolds source kept before &&
+            rustIndentHolds edited kept after }]
 
 /-- What only the real syntax tree binding shows: the library's Rust
 grammar, a query of one grammar asked of a text parsed with another, and a
@@ -2107,11 +2191,12 @@ timer service, the display interface's against the recorder and the watch
 port's against its real binding, then shuts down: exits 0 when everything
 holds, and 1 after naming on stderr what does not.
 
-Its two arguments are the directory of the fixtures a child's environment
-is looked up with (`tests/process-environment`) and the directory of the
-fixture that stands in for git in the workspace finder's checks
-(`tests/workspaces`), each made absolute here; any other command line is
-status 2, with the usage on stderr.
+Its three arguments are the directory of the fixtures a child's
+environment is looked up with (`tests/process-environment`), the directory
+of the fixture that stands in for git in the workspace finder's checks
+(`tests/workspaces`), and the directory of the syntax fixtures
+(`tests/syntax`), each made absolute here; any other command line is status
+2, with the usage on stderr.
 
 The pool's threads are learnt first, by warming it, before anything else
 runs: the check that the pump is not one of the pool's tasks compares
@@ -2121,13 +2206,15 @@ exit: a task that failed a check may still be blocked in the library. -/
 def main (arguments : List String) : IO UInt32 := do
   -- The fixtures of the environment checks and of the workspace checks, made
   -- absolute here, at the edge.
-  let (fixtures, workspaceFixtures) ←
+  let (fixtures, workspaceFixtures, syntaxFixtures) ←
     match arguments with
-    | [directory, workspaces] =>
-      pure (← IO.FS.realPath directory, ← IO.FS.realPath workspaces)
+    | [directory, workspaces, syntaxDirectory] =>
+      pure
+          (← IO.FS.realPath directory, ← IO.FS.realPath workspaces,
+            ← IO.FS.realPath syntaxDirectory)
     | _ =>
       IO.eprintln
-          "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures>"
+          "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures> <the directory of the syntax fixtures>"
       return 2
   let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
   let completions ← Editor.Job.Completions.new
@@ -2186,7 +2273,8 @@ def main (arguments : List String) : IO UInt32 := do
   let fuzzyChecks := ContractTest.fuzzyChecks
   let fuzzyCheckFailed ← ContractTest.checkFailures fuzzyChecks
   let syntaxTreeFailed ← ContractTest.syntaxTreeFailures
-  let syntaxTreeChecks := ContractTest.syntaxTreeChecks
+  let syntaxTreeChecks :=
+    ContractTest.syntaxTreeChecks ++ ContractTest.syntaxFixtureChecks syntaxFixtures
   let syntaxTreeCheckFailed ← ContractTest.checkFailures syntaxTreeChecks
   let watchFailed ← ContractTest.watchFailures services.timers
   let watchChecks := ContractTest.watchChecks services.timers
