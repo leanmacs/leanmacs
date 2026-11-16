@@ -165,8 +165,8 @@ impl fmt::Debug for ResolvedFont {
 /// [`Styles::style`](crate::decoration::Styles::style)), so a shaper and
 /// every adapter of this port see physical pixels and no scale. The names
 /// below say "pixels" for both, as they did when a theme stated physical
-/// pixels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// pixels. The default is no length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Length(pub u32);
 
 impl Length {

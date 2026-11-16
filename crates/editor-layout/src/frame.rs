@@ -391,17 +391,20 @@ pub const KEPT_VIEW_HEIGHTS: usize = 4;
 pub const ECHO_VIEW: ViewId = ViewId(u64::MAX);
 
 /// The heights of the rows a frame is built of, in whole physical pixels
-/// at the layout's scale, each its line height rounded up and at least 1
+/// at the layout's scale, each its line height, and for a status row its
+/// face's vertical padding above and below, rounded up and at least 1
 /// ([`Layout::heights`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Heights {
-    /// One text row in the default face.
+    /// One text row in the default face. The default face's vertical
+    /// padding is no text row's.
     pub text: u32,
-    /// A window's status row: the face `mode-line` over the default face.
+    /// A window's status row: the face `mode-line` over the default face,
+    /// its line and its vertical padding twice.
     pub status: u32,
     /// The frame's bottom row, where the echo text or a prompt is drawn:
     /// the taller of the face `echo-area` and the face `mode-line`, each
-    /// over the default face.
+    /// over the default face and each with its vertical padding twice.
     pub message: u32,
 }
 
@@ -427,15 +430,20 @@ impl<S: Shaper> Layout<S> {
     pub fn heights(&mut self) -> Heights {
         let mode_line = self.styles.intern(MODE_LINE_FACE);
         let echo_area = self.styles.intern(ECHO_AREA_FACE);
-        let line_of = |stack: &[FaceId]| {
-            let font = self.styles.style(&self.shaper, stack).font;
-            whole_pixels(self.shaper.metrics(font).line_height)
+        let line_of = |stack: &[FaceId], padded: bool| {
+            let style = self.styles.style(&self.shaper, stack);
+            let padding = if padded {
+                2.0 * style.vertical_padding.as_pixels()
+            } else {
+                0.0
+            };
+            whole_pixels(self.shaper.metrics(style.font).line_height + padding)
         };
-        let status = line_of(&[mode_line]);
+        let status = line_of(&[mode_line], true);
         Heights {
-            text: line_of(&[]),
+            text: line_of(&[], false),
             status,
-            message: status.max(line_of(&[echo_area])),
+            message: status.max(line_of(&[echo_area], true)),
         }
     }
     /// Lays `scene` out into a frame, in the faces it carries, or in those
@@ -600,6 +608,8 @@ impl<S: Shaper> Layout<S> {
                 font: mode.font,
             });
         }
+        // The line sits below the row face's padding, in whole pixels.
+        let padding = mode.vertical_padding.as_pixels().floor();
         let generation = self.shaper.generation();
         let line = match self.status.get(&view.id) {
             Some(kept)
@@ -627,7 +637,7 @@ impl<S: Shaper> Layout<S> {
         Some(StatusRow {
             y: view.rect.height.saturating_sub(height) as f32,
             height: height as f32,
-            baseline: line.baseline,
+            baseline: padding + line.baseline,
             hash: {
                 let mut hasher = DefaultHasher::new();
                 (hash(&line, &runs), background).hash(&mut hasher);

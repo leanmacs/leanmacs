@@ -295,6 +295,7 @@ fn face(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireFace> {
             underline,
             strike_through,
             line_height,
+            vertical_padding: None,
         },
     })
 }
@@ -706,6 +707,7 @@ mod tests {
                 }),
                 strike_through: Some(true),
                 line_height: Some(LineHeight::Pixels(Length(1536))),
+                vertical_padding: None,
             },
         };
         let words = [

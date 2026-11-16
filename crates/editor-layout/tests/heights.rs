@@ -190,6 +190,82 @@ fn faces_defined_with_no_frame_between_are_the_faces_the_heights_and_the_next_fr
     assert_eq!(layout.heights(), heights);
 }
 
+/// A face of the vertical padding `points` and nothing else.
+fn padded(points: u32) -> Face {
+    Face {
+        vertical_padding: Some(Length::pixels(points)),
+        ..Face::default()
+    }
+}
+
+#[test]
+fn a_mode_line_vertical_padding_makes_the_status_and_bottom_rows_taller_and_the_rows_query_agrees()
+{
+    // Three points above and below the mode line's 16: 22, which the
+    // bottom row takes too, the echo area being 16.
+    let mut layout = layout_with(&[("mode-line", padded(3))], 1.0);
+    assert_eq!(
+        layout.heights(),
+        Heights {
+            text: 16,
+            status: 22,
+            message: 22
+        }
+    );
+    let rect = |y: u32, height: u32| Rect {
+        x: 0,
+        y,
+        width: 640,
+        height,
+    };
+    // A view mid-frame and one at the bottom edge.
+    for (frame_height, view) in [
+        (400, rect(0, 200)),
+        (200, rect(0, 200)),
+        (300, rect(100, 200)),
+    ] {
+        for anchor in [0, 240] {
+            assert_agrees(&mut layout, frame_height, view, anchor);
+        }
+    }
+    // The status row is 22 tall at the view's foot, and its line sits
+    // below the padding: the fake's baseline of 12, 3 down.
+    let frame = layout.frame(&scene(400, rect(0, 200), 0));
+    let status = view(&frame).status.clone().expect("a status row");
+    assert_eq!(
+        (status.y, status.height, status.baseline),
+        (178.0, 22.0, 15.0)
+    );
+    // 178 pixels of text above it: eleven rows of 16.
+    assert_eq!(view(&frame).rows.len(), 11);
+    // An echo area padded five points makes only the bottom row taller:
+    // 16 + 10 = 26.
+    let mut layout = layout_with(&[("mode-line", padded(3)), ("echo-area", padded(5))], 1.0);
+    assert_eq!(
+        layout.heights(),
+        Heights {
+            text: 16,
+            status: 22,
+            message: 26
+        }
+    );
+    assert_agrees(&mut layout, 200, rect(0, 200), 0);
+    assert_agrees(&mut layout, 400, rect(0, 200), 0);
+    // A view at the bottom edge draws in the mode line, so its line is
+    // the mode line's padding down, not the echo area's.
+    let frame = layout.frame(&scene(200, rect(0, 200), 0));
+    let status = view(&frame).status.clone().expect("a status row");
+    assert_eq!(
+        (status.y, status.height, status.baseline),
+        (174.0, 26.0, 15.0)
+    );
+    // The default face's padding is no row's: it is not the mode line's
+    // where the mode line sets its own, and a text row has none.
+    let mut layout = layout_with(&[("default", padded(7)), ("mode-line", padded(3))], 1.0);
+    assert_eq!(layout.heights().text, 16);
+    assert_eq!(layout.heights().status, 22);
+}
+
 #[test]
 fn a_height_is_rounded_up_to_a_whole_pixel() {
     // Lines of 16¼ pixels, which every face inherits from the default.
