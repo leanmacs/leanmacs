@@ -419,6 +419,19 @@ depends = ["app"]
 timeout = "300s"
 run = "tools/app-check.sh lean"
 
+# Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
+# hk.pkl: it writes outside the checkout. It prepares the owner's Finder
+# session (docs/dev-practices/finder-session.md): after `app-check`, on a
+# clean checkout, tools/prepare-finder-session.sh moves any existing
+# /Applications/Leanmacs.app and ~/.config/leanmacs aside to timestamped
+# backups, installs the built bundle and the config fixture
+# tests/headless/finder-session/config in their place, and prints how to
+# restore them. It removes nothing and opens, registers or runs nothing.
+[tasks.finder-session-prepare]
+description = "Opt-in, never part of ci; macOS on arm64 only: build and check Leanmacs.app, install it to /Applications and the Finder-session config fixture to ~/.config/leanmacs, moving any existing ones aside to timestamped backups (tools/prepare-finder-session.sh, docs/dev-practices/finder-session.md)"
+depends = ["app-check"]
+run = "tools/prepare-finder-session.sh lean"
+
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It ends in
 # an abort, and on macOS every abort makes the system write a crash report
 # under ~/Library/Logs/DiagnosticReports, so in the gate it would leave a file

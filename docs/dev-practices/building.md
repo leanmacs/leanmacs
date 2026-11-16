@@ -131,5 +131,10 @@ sets `HOME` for an app started from Finder, and normally not
 `XDG_CONFIG_HOME`. The toolchain and the modules config is elaborated on
 are the bundle's own, found from the executable's path.
 
+`mise run finder-session-prepare` installs the built bundle to
+`/Applications` and a config fixture to `~/.config/leanmacs`, moving any
+existing ones aside to timestamped backups, for the owner's session in
+Finder ([`finder-session.md`](finder-session.md)).
+
 `mise run app-check` checks the built bundle
 ([`on-demand-checks.md`](on-demand-checks.md), "The app bundle, on demand").
