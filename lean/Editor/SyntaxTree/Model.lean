@@ -25,11 +25,19 @@ Its state has three parts:
   and its faces, as `highlight` set it: a later one replaces it, and
   `detach` drops it. It is what the editor's checks read
   (`ModelTest.highlightEnterChecks`); the model draws nothing.
+- `injected` and `languages`: the injections query of each snapshot that
+  has one, and each language `injectLanguage` gave it, by name, as they were
+  set; `detach` drops them. The model parses no layer and draws nothing:
+  they are what the editor's checks read.
+- `kept`: the query each snapshot keeps of each kind, compiled, so it
+  outlives its id's release; `detach` drops them. `capturesOf` answers its
+  captures as `captures` answers a query's, of the snapshot's own text.
 
 Its shipped highlights query (`highlights`) is its own, in its query subset:
 the library's JSON one uses an alternation, which the model refuses as
 unsupported. Each implementation's source is its own, and the contract
-compares only that it compiles.
+compares only that it compiles. It ships no query of another kind, as the
+library ships none for `json`.
 
 A request is checked in the order the real binding checks it: the
 snapshot and the query ids first, then whether the text is attached, the
@@ -58,6 +66,15 @@ structure SyntaxTreeModel where
   /-- The highlighter of each snapshot that has one: its query and its
   faces. -/
   highlighted : Array (SnapshotId × QueryId × Array (Option FaceName)) := #[]
+  /-- The injections query of each snapshot that has one. -/
+  injected : Array (SnapshotId × QueryId) := #[]
+  /-- The languages each snapshot's injections may name, as
+  `injectLanguage` gave them: the name, the highlights query, its faces and
+  the injections query, if any. -/
+  languages : Array (SnapshotId × String × QueryId × Array (Option FaceName) × Option QueryId) :=
+    #[]
+  /-- The query each snapshot keeps of each kind, compiled. -/
+  kept : Array (SnapshotId × QueryKind × SyntaxTreeModel.Query) := #[]
 
 namespace SyntaxTreeModel
 
@@ -114,11 +131,95 @@ def detach (model : SyntaxTreeModel) (snapshot : SnapshotId) :
     (.ok (),
       { model with
         attached := model.attached.filter (!model.sameText ·.1 snapshot)
-        highlighted := model.highlighted.filter (!model.sameText ·.1 snapshot) })
+        highlighted := model.highlighted.filter (!model.sameText ·.1 snapshot)
+        injected := model.injected.filter (!model.sameText ·.1 snapshot)
+        languages := model.languages.filter (!model.sameText ·.1 snapshot)
+        kept := model.kept.filter (!model.sameText ·.1 snapshot) })
 
-/-- `shippedQuery`. -/
-def shippedQuery (named : String) (_kind : QueryKind) : Except SyntaxTreeError String :=
-  if named != grammar then .error .unknownGrammar else .ok highlights
+/-- `shippedQuery`: highlights alone. -/
+def shippedQuery (named : String) (kind : QueryKind) : Except SyntaxTreeError String :=
+  if named != grammar then .error .unknownGrammar
+  else if kind == .highlights then .ok highlights else .error .noShippedQuery
+
+/-- The query `query` names, of the grammar `snapshot`'s text is parsed
+with: checked in the order the real binding checks it, the snapshot and
+the query ids first, then whether the text is attached and the query's
+grammar. -/
+def queryOfText (model : SyntaxTreeModel) (snapshot : SnapshotId) (query : QueryId) :
+    Except SyntaxTreeError Query := do
+  if (model.text? snapshot).isNone then
+    throw .noSuchSnapshot
+  let some (queryGrammar, compiled) := model.query? query | throw .noSuchQuery
+  let some textGrammar := model.attachedTo? snapshot | throw .notAttached
+  if queryGrammar != textGrammar then
+    throw .wrongGrammar
+  return compiled
+
+/-- `inject`. -/
+def inject (model : SyntaxTreeModel) (snapshot : SnapshotId) (query : QueryId) :
+    Except SyntaxTreeError Unit × SyntaxTreeModel :=
+  match model.queryOfText snapshot query with
+  | .error refusal => (.error refusal, model)
+  | .ok _ =>
+    (.ok (),
+      { model with
+        injected := (model.injected.filter (!model.sameText ·.1 snapshot)).push (snapshot, query) })
+
+/-- `injectLanguage`, checked in the order the real binding checks it. -/
+def injectLanguage (model : SyntaxTreeModel) (snapshot : SnapshotId) (name : String)
+    (highlights : QueryId) (faces : Array (Option FaceName)) (injections : Option QueryId) :
+    Except SyntaxTreeError Unit × SyntaxTreeModel :=
+  let checked : Except SyntaxTreeError Unit := do
+    if (model.text? snapshot).isNone then
+      throw .noSuchSnapshot
+    let some (highlightsGrammar, compiled) := model.query? highlights | throw .noSuchQuery
+    let injectionsGrammar ←
+      match injections with
+      | none =>
+        pure none
+      | some query =>
+        match model.query? query with
+        | some (queryGrammar, _) =>
+          pure (some queryGrammar)
+        | none =>
+          throw .noSuchQuery
+    if (model.attachedTo? snapshot).isNone then
+      throw .notAttached
+    if injectionsGrammar.any (· != highlightsGrammar) then
+      throw .wrongGrammar
+    if faces.size != compiled.names.size then
+      throw .badFaces
+  match checked with
+  | .error refusal => (.error refusal, model)
+  | .ok () =>
+    let others :=
+      model.languages.filter fun (other, named, _) =>
+        !(model.sameText other snapshot && named == name)
+    (.ok (),
+      { model with languages := others.push (snapshot, name, highlights, faces, injections) })
+
+/-- `keep`. -/
+def keep (model : SyntaxTreeModel) (snapshot : SnapshotId) (kind : QueryKind) (query : QueryId) :
+    Except SyntaxTreeError Unit × SyntaxTreeModel :=
+  match model.queryOfText snapshot query with
+  | .error refusal => (.error refusal, model)
+  | .ok compiled =>
+    let others :=
+      model.kept.filter fun (other, held, _) => !(model.sameText other snapshot && held == kind)
+    (.ok (), { model with kept := others.push (snapshot, kind, compiled) })
+
+/-- `capturesOf`, checked in the order the real binding checks it. -/
+def capturesOf (model : SyntaxTreeModel) (snapshot : SnapshotId) (kind : QueryKind)
+    (first last : Nat) : Except SyntaxTreeError SyntaxTree.Kept := do
+  let some text := model.text? snapshot | throw .noSuchSnapshot
+  if (model.attachedTo? snapshot).isNone then
+    throw .notAttached
+  let some (_, _, compiled) :=
+    model.kept.find? fun (other, held, _) => model.sameText other snapshot && held == kind
+    | throw .noQuery
+  unless first ≤ last && isPosition text first && isPosition text last do
+    throw .badRange
+  return { names := compiled.names, captures := compiled.captures (Json.parse text) first last }
 
 /-- `highlight`, checked in the order the real binding checks it. -/
 def highlight (model : SyntaxTreeModel) (snapshot : SnapshotId) (query : QueryId)
@@ -178,6 +279,12 @@ def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply
     ((), { model with queries := model.queries.modify query.index fun _ => none })
   | .shippedQuery named kind, model => (shippedQuery named kind, model)
   | .highlight snapshot query faces, model => model.highlight snapshot query faces
+  | .inject snapshot query, model => model.inject snapshot query
+  | .injectLanguage snapshot name highlights faces injections, model =>
+    model.injectLanguage snapshot name highlights faces injections
+  | .keep snapshot kind query, model => model.keep snapshot kind query
+  | .capturesOf snapshot kind first last, model =>
+    (model.capturesOf snapshot kind first last, model)
 
 end SyntaxTreeModel
 

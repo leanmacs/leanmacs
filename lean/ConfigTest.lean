@@ -1256,8 +1256,8 @@ def setup : SetupM Unit := do
 "
 
 /-- A syntax tree request as `withRecordedSyntaxTree` records it: its
-constructor, with the grammar it names, and a highlight's faces by name,
-`-` for none. -/
+constructor, with the grammar or language and the kind it names, and a
+highlight's faces by name, `-` for none. -/
 def recordedRequest : SyntaxTreeRequest → String
   | .grammars => "grammars"
   | .attach _ grammar => s!"attach {grammar}"
@@ -1266,9 +1266,13 @@ def recordedRequest : SyntaxTreeRequest → String
   | .captureNames _ => "captureNames"
   | .captures .. => "captures"
   | .release _ => "release"
-  | .shippedQuery grammar _ => s!"shippedQuery {grammar}"
+  | .shippedQuery grammar kind => s!"shippedQuery {grammar} {kind.name}"
   | .highlight _ _ faces =>
     s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
+  | .inject .. => "inject"
+  | .injectLanguage _ name .. => s!"injectLanguage {name}"
+  | .keep _ kind _ => s!"keep {kind.name}"
+  | .capturesOf _ kind .. => s!"capturesOf {kind.name}"
 
 /-- Runs `check` against a host over a config of `highlightChunk`, whose
 syntax tree collaborator is the real binding over the library's syntax

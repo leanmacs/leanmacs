@@ -1501,8 +1501,8 @@ def fuzzyChecks : List Check :=
 /-- Documents of `texts` in the library, a table of a snapshot of each, the
 ids of those snapshots in the order of `texts`, and a real syntax tree
 binding over the table whose handler waits, with a bound, for a snapshot's
-tree to be delivered before it forwards a question of its captures, and
-after an attach (`settlingAttach`). The
+tree to be delivered before it forwards a question of its captures or of a
+kept query's, and after an attach (`settlingAttach`). The
 documents are returned so that the caller keeps them alive: a document
 freed detaches its text. -/
 def syntaxTreeOver (texts : Array String) :
@@ -1514,7 +1514,12 @@ def syntaxTreeOver (texts : Array String) :
         table.add (← document.snapshot)
   let real ← RealSyntaxTree.new table.reader
   let handler : SyntaxTreeHandler := fun request => do
-    if let .captures snapshot _ _ _ := request then
+    let asked :=
+      match request with
+      | .captures snapshot _ _ _ => some snapshot
+      | .capturesOf snapshot _ _ _ => some snapshot
+      | _ => none
+    if let some snapshot := asked then
       if let some found← table.find? snapshot then
         discard (Ffi.syntaxSettle found 5000)
     real.handle request

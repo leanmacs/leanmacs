@@ -58,6 +58,7 @@ answers cross (`FfiTest.displayChecks`); `tests/c_api.rs`,
 | Enum | An enumeration inductive, which Lean passes as a `UInt8` tag that Rust checks | A `UInt64` tag in a private raw structure, decoded here (`EventKind.ofTag?`); an unknown tag is an `IO` error |
 | Small structure | The wrapper passes the fields as scalar arguments | The glue builds the structure in one call. Declare object fields first, then `UInt64` fields and nothing else, so the declaration order is the layout the glue writes |
 | Option | The wrapper passes a presence flag and a value | The glue builds `none` or `some` |
+| Optional handle | `@& Option` of a handle, which the glue passes as the handle's pointer, or null for `none` (`syntaxInjectLanguage`) | None yet |
 | Byte range | Two scalars | `ByteRange`: two `UInt64`, half-open, in bytes |
 | List | *Words*: a `@& ByteArray` of 64-bit numbers, eight bytes each, least significant first, written by a private encoder here; the glue passes its bytes and byte length, and Rust checks every count against the buffer | The glue copies the library's buffer of words into a `ByteArray` and hands the buffer back; a private decoder here builds the typed value, and words it cannot read are an `IO` error |
 | List of handles | `@& Array Snapshot`, an array of handles borrowed for the call, beside the words, which name a handle by its index in it; the glue passes it as a C array of the handles' pointers and its count, which it builds for the call (`Display.publish`) | None yet |
@@ -248,13 +249,25 @@ snapshot's revision: it never waits for a parse. `syntaxSettle` waits, with
 a bound, for a delivery, for tests.
 
 `syntaxShippedQuery` answers the source of the query of a kind a grammar is
-published with (the kind as a tag, 0 for highlights), or a status.
+published with (the kind as a tag: 0 highlights, 1 injections, 2 text
+objects, 3 indents), or a status.
 `syntaxHighlight` has the library draw a document with a query's captures
 in faces from now on: the faces cross as a list of strings in, the empty
 string for none, and the refusal is a status. Highlights never come back to
 Lean: the library draws them in the display, and reports each delivery of a
 highlighted document's parse as a `parsed` event on the editor queue
 ("The event queues").
+
+`syntaxInject` has the library find a document's injections with a query
+from its next round on, and `syntaxInjectLanguage` gives it a language an
+injection may name: its highlights query, a face for each capture as a list
+of strings in, and its own injections query, an optional handle. The
+library parses each injection as a layer and draws it over the document's
+own spans, and reports the delivery like any other. `syntaxKeep` has a
+document keep a query of a kind, and `syntaxKeptNames` and
+`syntaxKeptCaptures` answer its capture names, a list of strings out with a
+status, and its captures in a range, as words, from the tree delivered,
+refused as `syntaxCaptures` is. Each refusal is a status.
 
 Its one caller is the syntax tree interface's real binding
 (`Editor/SyntaxTree/Real.lean`). Tests: the syntax checks of `ffi-test`
@@ -3365,8 +3378,186 @@ def syntaxHighlight (snapshot : Snapshot) (query : SyntaxQuery) (faces : Array S
   | status =>
     throw (IO.userError s!"the library answered a highlight with the status {status}")
 
+/-- Why the library did not take an injections query. -/
+inductive SyntaxInjectRefusal where
+  /-- The snapshot's document is not attached. -/
+  | notAttached
+  /-- The query is of another grammar than the document is parsed with. -/
+  | wrongGrammar
+  deriving DecidableEq, Repr
+
+/-- `syntaxInject` as it crosses: the status (0 injected, 1 not attached, 2
+wrong grammar). -/
+@[extern "editor_glue_syntax_inject"]
+private opaque syntaxInjectRaw (snapshot : @& Snapshot) (query : @& SyntaxQuery) : IO UInt64
+
+/-- Has the library find the injections of the document `snapshot` is of
+with `query` from its next round on. A status the library has no word for
+is an `IO` error. -/
+def syntaxInject (snapshot : Snapshot) (query : SyntaxQuery) :
+    IO (Except SyntaxInjectRefusal Unit) := do
+  match ← syntaxInjectRaw snapshot query with
+  | 0 =>
+    return .ok ()
+  | 1 =>
+    return .error .notAttached
+  | 2 =>
+    return .error .wrongGrammar
+  | status =>
+    throw (IO.userError s!"the library answered an injection with the status {status}")
+
+/-- Why the library did not take a language for injections. -/
+inductive SyntaxInjectLanguageRefusal where
+  /-- The snapshot's document is not attached. -/
+  | notAttached
+  /-- The injections query is of another grammar than the highlights
+  query. -/
+  | wrongGrammar
+  /-- The faces are not one for each of the highlights query's capture
+  names. -/
+  | badFaces
+  deriving DecidableEq, Repr
+
+/-- `syntaxInjectLanguage` as it crosses: the name, the highlights query,
+its faces as words and one string, and the injections query or none; the
+status (0 injected, 1 not attached, 2 wrong grammar, 3 bad faces). -/
+@[extern "editor_glue_syntax_inject_language"]
+private opaque syntaxInjectLanguageRaw (snapshot : @& Snapshot) (name : @& String)
+    (highlights : @& SyntaxQuery) (words : @& ByteArray) (strings : @& String)
+    (injections : @& Option SyntaxQuery) : IO UInt64
+
+/-- Has the library parse an injection of the language `name` in the
+document `snapshot` is of with `highlights`' grammar, draw it with its
+captures in `faces` (one for each capture name, the empty string for none),
+and find injections of its own with `injections`, from its next round on. A
+status the library has no word for is an `IO` error. -/
+def syntaxInjectLanguage (snapshot : Snapshot) (name : String) (highlights : SyntaxQuery)
+    (faces : Array String) (injections : Option SyntaxQuery) :
+    IO (Except SyntaxInjectLanguageRefusal Unit) := do
+  let faceWords := lengthWords faces
+  let strings := faces.foldl (· ++ ·) ""
+  match ← syntaxInjectLanguageRaw snapshot name highlights faceWords strings injections with
+  | 0 =>
+    return .ok ()
+  | 1 =>
+    return .error .notAttached
+  | 2 =>
+    return .error .wrongGrammar
+  | 3 =>
+    return .error .badFaces
+  | status =>
+    throw (IO.userError s!"the library answered a language with the status {status}")
+
+/-- Why the library did not keep a query. -/
+inductive SyntaxKeepRefusal where
+  /-- The snapshot's document is not attached. -/
+  | notAttached
+  /-- The query is of another grammar than the document is parsed with. -/
+  | wrongGrammar
+  deriving DecidableEq, Repr
+
+/-- `syntaxKeep` as it crosses: the kind as its tag, and the status (0
+kept, 1 not attached, 2 wrong grammar, 3 no such kind). -/
+@[extern "editor_glue_syntax_keep"]
+private opaque syntaxKeepRaw (snapshot : @& Snapshot) (kind : UInt8) (query : @& SyntaxQuery) :
+    IO UInt64
+
+/-- Has the document `snapshot` is of keep `query` as its query of the kind
+`kind` tags (0 highlights, 1 injections, 2 text objects, 3 indents). A kind
+the library has no tag for, or a status it has no word for, is an `IO`
+error. -/
+def syntaxKeep (snapshot : Snapshot) (kind : UInt8) (query : SyntaxQuery) :
+    IO (Except SyntaxKeepRefusal Unit) := do
+  match ← syntaxKeepRaw snapshot kind query with
+  | 0 =>
+    return .ok ()
+  | 1 =>
+    return .error .notAttached
+  | 2 =>
+    return .error .wrongGrammar
+  | status =>
+    throw (IO.userError s!"the library answered a keep with the status {status}")
+
+/-- Why the library did not answer a question of a kept query. -/
+inductive SyntaxKeptRefusal where
+  /-- The snapshot's document is not attached. -/
+  | notAttached
+  /-- The document keeps no query of that kind. -/
+  | noQuery
+  /-- The range is not two positions of the snapshot's text in order. -/
+  | badRange
+  /-- No tree of the snapshot's revision has been delivered yet. -/
+  | notParsed
+  deriving DecidableEq, Repr
+
+/-- The refusal a kept query's status says, or `none` for a status the
+library has no word for (1 not attached, 2 no query, 3 bad range, 4 not
+parsed). -/
+private def keptRefusal? : UInt64 → Option SyntaxKeptRefusal
+  | 1 => some .notAttached
+  | 2 => some .noQuery
+  | 3 => some .badRange
+  | 4 => some .notParsed
+  | _ => none
+
+/-- A kept query's names as the glue builds them in one call: the names,
+none for a refusal, then the status. -/
+private structure RawKeptNames where
+  /-- The names. -/
+  names : RawStrings
+  /-- 0 answered, or the refusal's status. -/
+  status : UInt64
+
+/-- `syntaxKeptNames` as it crosses. -/
+@[extern "editor_glue_syntax_kept_names"]
+private opaque syntaxKeptNamesRaw (snapshot : @& Snapshot) (kind : UInt8) : IO RawKeptNames
+
+/-- The capture names of the query the document `snapshot` is of keeps of
+the kind `kind` tags, or why not. A status or words the decoder here cannot
+read are an `IO` error. -/
+def syntaxKeptNames (snapshot : Snapshot) (kind : UInt8) :
+    IO (Except SyntaxKeptRefusal (Array String)) := do
+  let raw ← syntaxKeptNamesRaw snapshot kind
+  if raw.status == 0 then
+    let some names := raw.names.strings?
+      | throw (IO.userError "the library's words do not spell a list of capture names")
+    return .ok names
+  match keptRefusal? raw.status with
+  | some refusal =>
+    return .error refusal
+  | none =>
+    throw (IO.userError s!"the library answered kept names with the status {raw.status}")
+
+/-- `syntaxKeptCaptures` as it crosses: the captures as words with the
+status 0, or no words and the refusal's status. -/
+@[extern "editor_glue_syntax_kept_captures"]
+private opaque syntaxKeptCapturesRaw (snapshot : @& Snapshot) (kind : UInt8) (start stop : USize) :
+    IO RawWords
+
+/-- The captures of the query the document `snapshot` is of keeps of the
+kind `kind` tags, in the range from `start` to `stop` of its text, in the
+order `syntaxCaptures` answers: answered at once from the tree the library
+last delivered, and refused as `notParsed` when that tree is not of the
+snapshot's revision. It never waits for a parse. A status or words the
+decoder here cannot read are an `IO` error. -/
+def syntaxKeptCaptures (snapshot : Snapshot) (kind : UInt8) (start stop : USize) :
+    IO (Except SyntaxKeptRefusal (Array SyntaxCapture)) := do
+  let raw ← syntaxKeptCapturesRaw snapshot kind start stop
+  if raw.status == 0 then
+    match (wordsOf? raw.words).bind capturesOf? with
+    | some captures =>
+      return .ok captures
+    | none =>
+      throw (IO.userError "the library's words do not spell captures")
+  match keptRefusal? raw.status with
+  | some refusal =>
+    return .error refusal
+  | none =>
+    throw (IO.userError s!"the library answered kept captures with the status {raw.status}")
+
 /-- For tests: waits up to `boundMs` milliseconds for the library to deliver
-a tree of `snapshot`'s revision, or a newer one, and returns whether it did.
+a tree of `snapshot`'s revision, or a newer one, with layers found with the
+injections as they are now, and returns whether it did.
 It blocks in the library and does not sleep; `false` at once for a document
 that is not attached. -/
 @[extern "editor_glue_syntax_settle"]

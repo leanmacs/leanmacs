@@ -3307,7 +3307,9 @@ query answers are the library's rules; these pin that each request, its
 answer and each refusal cross. -/
 def syntaxChecks (_ : Unit) : List Check :=
   [{  name := "the grammars the library has cross as a list of strings"
-      run := return (← Editor.Ffi.syntaxGrammars) == #["json", "rust"] },
+      run := do
+        let grammars ← Editor.Ffi.syntaxGrammars
+        return ["json", "rust", "markdown"].all grammars.contains },
     { name :=
         "a query crosses as a handle, with its capture names as a list of strings, and is freed when the last reference to it goes"
       run := do
@@ -3410,6 +3412,80 @@ def syntaxChecks (_ : Unit) : List Check :=
             wrongGrammar matches .error .wrongGrammar &&
             badFaces matches .error .badFaces &&
             highlighted matches .ok () },
+    { name :=
+        "an injections query and a language cross, the language's injections query as a handle or none, and each refusal as its status: a text not attached, a query of another grammar and faces not one for each capture name"
+      run := do
+        let some (document, snapshot) ←
+          parsedSnapshot "# Title\n\n```rust\nfn f() {}\n```\n" "markdown" | return false
+        let some markdown ←
+          syntaxQuery "markdown"
+              "(fenced_code_block (info_string (language) @injection.language) (code_fence_content) @injection.content)" | return false
+        let some rust ← syntaxQuery "rust" "(identifier) @id" | return false
+        let some json ← syntaxQuery "json" "(number) @n" | return false
+        let other ← (← Editor.Ffi.Document.new "x").snapshot
+        let notAttached ← Editor.Ffi.syntaxInject other markdown
+        let wrongGrammar ← Editor.Ffi.syntaxInject snapshot rust
+        let injected ← Editor.Ffi.syntaxInject snapshot markdown
+        let languageNotAttached ←
+          Editor.Ffi.syntaxInjectLanguage other "rust" rust #["syntax.variable"] none
+        let languageWrongGrammar ←
+          Editor.Ffi.syntaxInjectLanguage snapshot "rust" rust #["syntax.variable"] (some json)
+        let badFaces ← Editor.Ffi.syntaxInjectLanguage snapshot "rust" rust #[] none
+        let language ←
+          Editor.Ffi.syntaxInjectLanguage snapshot "rust" rust #["syntax.variable"] (some rust)
+        let plain ← Editor.Ffi.syntaxInjectLanguage snapshot "json" json #["é漢"] none
+        let kept ← document.read
+        return !kept.isEmpty && notAttached matches .error .notAttached &&
+            wrongGrammar matches .error .wrongGrammar &&
+            injected matches .ok () &&
+            languageNotAttached matches .error .notAttached &&
+            languageWrongGrammar matches .error .wrongGrammar &&
+            badFaces matches .error .badFaces &&
+            language matches .ok () &&
+            plain matches .ok () },
+    { name :=
+        "a kept query crosses by its kind's tag, its names as a list of strings and its captures as words, and each refusal as its status: nothing kept, a query of another grammar, a range not two positions in order, a text not attached and a tree not delivered of the snapshot's revision; a kind with no tag is an IO error"
+      run := do
+        let some (document, snapshot) ← parsedSnapshot "fn one() {}\n" "rust" | return false
+        let some query ←
+          syntaxQuery "rust" "(function_item name: (identifier) @name) @function" | return false
+        let some json ← syntaxQuery "json" "(number) @n" | return false
+        let nothing ← Editor.Ffi.syntaxKeptCaptures snapshot 2 0 12
+        let nothingNamed ← Editor.Ffi.syntaxKeptNames snapshot 2
+        let wrongGrammar ← Editor.Ffi.syntaxKeep snapshot 2 json
+        let kept ← Editor.Ffi.syntaxKeep snapshot 2 query
+        let names ← Editor.Ffi.syntaxKeptNames snapshot 2
+        let captures ← Editor.Ffi.syntaxKeptCaptures snapshot 2 0 12
+        let badRange ← Editor.Ffi.syntaxKeptCaptures snapshot 2 5 2
+        let otherKind ← Editor.Ffi.syntaxKeptCaptures snapshot 3 0 12
+        let other ← (← Editor.Ffi.Document.new "x").snapshot
+        let notAttached ← Editor.Ffi.syntaxKeptCaptures other 2 0 1
+        let noTag ←
+          try
+            discard (Editor.Ffi.syntaxKeep snapshot 9 query)
+            pure false
+          catch _ =>
+            pure true
+        unless ← document.replace 0 0 "fn zero() {}\n" do
+          return false
+        unless ← Editor.Ffi.syntaxSettle (← document.snapshot) 5000 do
+          return false
+        let notParsed ← Editor.Ffi.syntaxKeptCaptures snapshot 2 0 12
+        let read ← document.read
+        return !read.isEmpty && nothing matches .error .noQuery &&
+            nothingNamed matches .error .noQuery &&
+            wrongGrammar matches .error .wrongGrammar &&
+            kept matches .ok () &&
+            names.toOption == some #["name", "function"] &&
+            captures.toOption ==
+              some
+                #[{ pattern := 0, capture := 1, start := 0, stop := 11 },
+                  { pattern := 0, capture := 0, start := 3, stop := 6 }] &&
+            badRange matches .error .badRange &&
+            otherKind matches .error .noQuery &&
+            notAttached matches .error .notAttached &&
+            noTag &&
+            notParsed matches .error .notParsed },
     { name :=
         "a document is attached and detached through a snapshot of it, and one of a grammar the library lacks is refused"
       run := do

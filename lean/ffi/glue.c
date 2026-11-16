@@ -808,6 +808,22 @@ uint64_t editor_ffi_syntax_highlight(const editor_ffi_snapshot *snapshot,
                                      const uint8_t *words, size_t words_len,
                                      const uint8_t *strings,
                                      size_t strings_len);
+uint64_t editor_ffi_syntax_inject(const editor_ffi_snapshot *snapshot,
+                                  const editor_ffi_syntax_query *query);
+uint64_t editor_ffi_syntax_inject_language(
+    const editor_ffi_snapshot *snapshot, const uint8_t *name, size_t name_len,
+    const editor_ffi_syntax_query *highlights, const uint8_t *words,
+    size_t words_len, const uint8_t *strings, size_t strings_len,
+    const editor_ffi_syntax_query *injections);
+uint64_t editor_ffi_syntax_keep(const editor_ffi_snapshot *snapshot,
+                                uint8_t kind,
+                                const editor_ffi_syntax_query *query);
+uint64_t editor_ffi_syntax_kept_names(const editor_ffi_snapshot *snapshot,
+                                      uint8_t kind,
+                                      editor_ffi_raw_strings *out);
+void editor_ffi_syntax_kept_captures(const editor_ffi_snapshot *snapshot,
+                                     uint8_t kind, size_t start, size_t end,
+                                     editor_ffi_raw_words *out);
 
 static lean_external_class *syntax_query_class;
 static pthread_once_t syntax_query_class_once = PTHREAD_ONCE_INIT;
@@ -939,6 +955,70 @@ lean_obj_res editor_glue_syntax_highlight(b_lean_obj_arg snapshot,
       lean_get_external_data(snapshot), lean_get_external_data(query),
       byte_array_bytes(words), byte_array_len(words), string_bytes(strings),
       string_len(strings))));
+}
+
+// `Editor.Ffi.syntaxInjectRaw : @& Snapshot → @& SyntaxQuery → IO UInt64`
+lean_obj_res editor_glue_syntax_inject(b_lean_obj_arg snapshot,
+                                       b_lean_obj_arg query) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_syntax_inject(
+      lean_get_external_data(snapshot), lean_get_external_data(query))));
+}
+
+// `Editor.Ffi.syntaxInjectLanguageRaw : @& Snapshot → @& String →
+// @& SyntaxQuery → @& ByteArray → @& String → @& Option SyntaxQuery →
+// IO UInt64`. `none` crosses as a null query.
+lean_obj_res editor_glue_syntax_inject_language(
+    b_lean_obj_arg snapshot, b_lean_obj_arg name, b_lean_obj_arg highlights,
+    b_lean_obj_arg words, b_lean_obj_arg strings, b_lean_obj_arg injections) {
+  const editor_ffi_syntax_query *own =
+      lean_is_scalar(injections)
+          ? NULL
+          : lean_get_external_data(lean_ctor_get(injections, 0));
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_syntax_inject_language(
+      lean_get_external_data(snapshot), string_bytes(name), string_len(name),
+      lean_get_external_data(highlights), byte_array_bytes(words),
+      byte_array_len(words), string_bytes(strings), string_len(strings), own)));
+}
+
+// `Editor.Ffi.syntaxKeepRaw : @& Snapshot → UInt8 → @& SyntaxQuery →
+// IO UInt64`
+lean_obj_res editor_glue_syntax_keep(b_lean_obj_arg snapshot, uint8_t kind,
+                                     b_lean_obj_arg query) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_syntax_keep(
+      lean_get_external_data(snapshot), kind, lean_get_external_data(query))));
+}
+
+// `Editor.Ffi.syntaxKeptNamesRaw : @& Snapshot → UInt8 → IO RawKeptNames`
+lean_obj_res editor_glue_syntax_kept_names(b_lean_obj_arg snapshot,
+                                           uint8_t kind) {
+  editor_ffi_raw_strings raw;
+  uint64_t status =
+      editor_ffi_syntax_kept_names(lean_get_external_data(snapshot), kind, &raw);
+  lean_object *names;
+  if (status == 0) {
+    names = raw_strings_take(raw);
+  } else {
+    // An empty `RawStrings`: no words, no text.
+    names = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(names, 0, lean_alloc_sarray(1, 0, 0));
+    lean_ctor_set(names, 1, lean_mk_string(""));
+  }
+  // `RawKeptNames`: the object field `names`, then `status`.
+  lean_object *kept = lean_alloc_ctor(0, 1, sizeof(uint64_t));
+  lean_ctor_set(kept, 0, names);
+  lean_ctor_set_uint64(kept, uint64_field(1, 0), status);
+  return lean_io_result_mk_ok(kept);
+}
+
+// `Editor.Ffi.syntaxKeptCapturesRaw : @& Snapshot → UInt8 → USize → USize →
+// IO RawWords`
+lean_obj_res editor_glue_syntax_kept_captures(b_lean_obj_arg snapshot,
+                                              uint8_t kind, size_t start,
+                                              size_t stop) {
+  editor_ffi_raw_words raw;
+  editor_ffi_syntax_kept_captures(lean_get_external_data(snapshot), kind, start,
+                                  stop, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
 // `Editor.Ffi.syntaxSettle : @& Snapshot → UInt64 → IO Bool`

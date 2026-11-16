@@ -46,7 +46,16 @@ the library has:
   implementation's own and is not compared), and an unlisted grammar's
   refused;
 - a highlighter set, and refused for a text not attached, a face table of
-  the wrong size, and a released query.
+  the wrong size, and a released query;
+- json's shipped queries of the other kinds refused, as neither ships one;
+- an injection and a keep refused for a text not attached, and a language
+  with faces of the wrong size;
+- a question of a kept query refused with nothing kept, with a bad range,
+  and after a detach; and, after a keep and its query's release, answering
+  what `captures` answers of the same source newly compiled.
+
+A runner waits for a snapshot's tree before it forwards a `captures` or a
+`capturesOf`.
 
 The cases are the library's own answers, read from the library when the
 cases were written; the model is written to the rule, and the contract
@@ -241,6 +250,64 @@ def properties : List Property :=
               (←
                 refusedWith .badFaces
                     (SyntaxTree.highlight snapshot query #[none, none, some ⟨"x"⟩])) },
+      { name := "json ships no injections, text objects or indents query"
+        texts := #[]
+        holds := fun _ => do
+          return (← refusedWith .noShippedQuery (SyntaxTree.shippedQuery json .injections)) &&
+              (← refusedWith .noShippedQuery (SyntaxTree.shippedQuery json .textObjects)) &&
+              (← refusedWith .noShippedQuery (SyntaxTree.shippedQuery json .indents)) },
+      { name :=
+          "an injection and a keep of a text not attached are refused, and a language with faces not one for each capture name"
+        texts := #["[1]"]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          let query ← SyntaxTree.compile json "(number) @number"
+          let inject ← refusedWith .notAttached (SyntaxTree.inject snapshot query)
+          let keep ← refusedWith .notAttached (SyntaxTree.keep snapshot .indents query)
+          SyntaxTree.attach snapshot json
+          let faces ← refusedWith .badFaces (SyntaxTree.injectLanguage snapshot json query #[] none)
+          SyntaxTree.injectLanguage snapshot json query #[some ⟨"syntax.number"⟩] (some query)
+          SyntaxTree.inject snapshot query
+          SyntaxTree.keep snapshot .indents query
+          return inject && keep && faces },
+      { name :=
+          "a question of a kept query is refused with nothing kept of its kind and with a range not two positions in order"
+        texts := #["[1, 2]"]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          SyntaxTree.attach snapshot json
+          let nothing ← refusedWith .noQuery (SyntaxTree.capturesOf snapshot .textObjects 0 6)
+          let query ← SyntaxTree.compile json "(number) @n"
+          SyntaxTree.keep snapshot .textObjects query
+          let other ← refusedWith .noQuery (SyntaxTree.capturesOf snapshot .indents 0 6)
+          let bad ← refusedWith .badRange (SyntaxTree.capturesOf snapshot .textObjects 4 2)
+          return nothing && other && bad },
+      { name :=
+          "a range of a kept query answers its names and what captures answers of the same source newly compiled, after the keep and its query's release"
+        texts := #["{\"a\": [1, {\"b\": 2}]}"]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          let source := "(pair key: (string) @key)\n(array) @array"
+          SyntaxTree.attach snapshot json
+          let kept ← SyntaxTree.compile json source
+          SyntaxTree.keep snapshot .textObjects kept
+          SyntaxTree.release kept
+          let fresh ← SyntaxTree.compile json source
+          (ranges 20).allM fun (first, last) => do
+              let answer ← SyntaxTree.capturesOf snapshot .textObjects first last
+              return answer.names == #["key", "array"] &&
+                  answer.captures == (← SyntaxTree.captures snapshot fresh first last) },
+      { name := "after a detach a question of a kept query is refused as not attached"
+        texts := #["[1]"]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          SyntaxTree.attach snapshot json
+          let query ← SyntaxTree.compile json "(number) @n"
+          SyntaxTree.keep snapshot .indents query
+          let before := (← SyntaxTree.capturesOf snapshot .indents 0 3).captures.size == 1
+          SyntaxTree.detach snapshot
+          return before &&
+              (← refusedWith .notAttached (SyntaxTree.capturesOf snapshot .indents 0 3)) },
       { name := "a highlight with a released query is refused"
         texts := #["[1]"]
         holds := fun snapshots => do

@@ -33,10 +33,13 @@ query when the last reference to its handle goes.
 - A face crosses as its name, and `none` as the empty string, which is no
   face's name: `some ⟨""⟩` crosses as `none` does. A kind crosses as its
   tag (`kindTag`).
-- **`captures` never waits for a parse.** It is answered from the tree the
-  library last delivered, and refused with `notParsed` when that tree is not
-  of the snapshot's revision. A caller asks again later; `contract-test`'s
-  runner waits for the delivery first (`Ffi.syntaxSettle`).
+- **`captures` and `capturesOf` never wait for a parse.** Each is answered
+  from the tree the library last delivered, and refused with `notParsed`
+  when that tree is not of the snapshot's revision. A caller asks again
+  later; `contract-test`'s runner waits for the delivery first
+  (`Ffi.syntaxSettle`). `capturesOf` is two calls, the kept query's
+  captures and then its names, both answered on the editor thread, where
+  nothing keeps another query between them.
 
 This module adds no decision: each request is one call. It imports
 `Editor.Ffi`, so only an executable linked with the library imports it.
@@ -81,6 +84,16 @@ def kindOf (tag : UInt64) : QueryErrorKind :=
 /-- The library's tag of a kind of query. -/
 def kindTag : QueryKind → UInt8
   | .highlights => 0
+  | .injections => 1
+  | .textObjects => 2
+  | .indents => 3
+
+/-- The port's refusal of a question of a kept query, from the library's. -/
+def keptRefusal : Ffi.SyntaxKeptRefusal → SyntaxTreeError
+  | .notAttached => .notAttached
+  | .noQuery => .noQuery
+  | .badRange => .badRange
+  | .notParsed => .notParsed
 
 /-- The library's handle of the query `query`, if this binding gave it out
 and it is not released. -/
@@ -145,6 +158,55 @@ def handle (real : RealSyntaxTree) : SyntaxTreeHandler
       | .error .notAttached => .error .notAttached
       | .error .wrongGrammar => .error .wrongGrammar
       | .error .badFaces => .error .badFaces
+  | .inject snapshot query => do
+    let some text ← real.snapshots.find? snapshot | return .error .noSuchSnapshot
+    let some found ← real.query? query | return .error .noSuchQuery
+    return match ← Ffi.syntaxInject text found with
+      | .ok () => .ok ()
+      | .error .notAttached => .error .notAttached
+      | .error .wrongGrammar => .error .wrongGrammar
+  | .injectLanguage snapshot name highlights faces injections => do
+    let some text ← real.snapshots.find? snapshot | return .error .noSuchSnapshot
+    let some found ← real.query? highlights | return .error .noSuchQuery
+    let own ←
+      match injections with
+      | none =>
+        pure none
+      | some query =>
+        match ← real.query? query with
+        | some own =>
+          pure (some own)
+        | none =>
+          return .error .noSuchQuery
+    let names := faces.map fun face => (face.map (·.name)).getD ""
+    return match ← Ffi.syntaxInjectLanguage text name found names own with
+      | .ok () => .ok ()
+      | .error .notAttached => .error .notAttached
+      | .error .wrongGrammar => .error .wrongGrammar
+      | .error .badFaces => .error .badFaces
+  | .keep snapshot kind query => do
+    let some text ← real.snapshots.find? snapshot | return .error .noSuchSnapshot
+    let some found ← real.query? query | return .error .noSuchQuery
+    return match ← Ffi.syntaxKeep text (kindTag kind) found with
+      | .ok () => .ok ()
+      | .error .notAttached => .error .notAttached
+      | .error .wrongGrammar => .error .wrongGrammar
+  | .capturesOf snapshot kind start stop => do
+    let some text ← real.snapshots.find? snapshot | return .error .noSuchSnapshot
+    match ← Ffi.syntaxKeptCaptures text (kindTag kind) (offset start) (offset stop) with
+    | .error refusal =>
+      return .error (keptRefusal refusal)
+    | .ok captures =>
+      match ← Ffi.syntaxKeptNames text (kindTag kind) with
+      | .error refusal =>
+        return .error (keptRefusal refusal)
+      | .ok names =>
+        return .ok
+            { names
+              captures :=
+                captures.map fun capture =>
+                  { pattern := capture.pattern.toNat, capture := capture.capture.toNat,
+                    start := capture.start.toNat, stop := capture.stop.toNat } }
 
 end RealSyntaxTree
 

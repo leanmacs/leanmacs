@@ -36,14 +36,35 @@ scheme's key grammar (`Editor/InputScheme.lean`).
 - **`release query`**: the query is not needed any more.
 - **`shippedQuery grammar kind`** answers the source of the query of `kind`
   that `grammar` is published with (`QueryKind.highlights`: its
-  `highlights.scm`). Each implementation ships its own: the library the
-  grammar crate's, pinned with it, and the model one in its own query
-  subset. A caller compares only that it compiles.
+  `highlights.scm`; `injections`, `textObjects`, `indents`). Each
+  implementation ships its own: the library the grammar crate's, pinned
+  with it, or its own where the crate ships none, and the model its
+  highlights alone, in its own query subset. A caller compares only that it
+  compiles.
 - **`highlight snapshot query faces`**: the text `snapshot` is of is drawn
   with `query`'s captures in `faces` from now on, one entry for each of its
   capture names, `none` for a capture that draws nothing, in place of any
   highlighter before. Highlights reach the display in the library, never
   through Lean; `detach`, and an attach with another grammar, drop them.
+- **`inject snapshot query`**: the text finds its injections with `query`,
+  a query of its grammar, from now on: text of another language held in a
+  node of its own (a fenced block in Markdown), each parsed as a layer and
+  drawn over the text's own highlights, in the library.
+- **`injectLanguage snapshot name highlights faces injections`**: an
+  injection of the language `name` is parsed with `highlights`' grammar,
+  drawn with its captures in `faces`, as `highlight` draws, and finds
+  injections of its own with `injections`, if given, a query of the same
+  grammar.
+- **`keep snapshot kind query`**: the text keeps `query`, a query of its
+  grammar, as its query of `kind`, in place of any before. A text keeps one
+  of each kind, so a question names a kind, not a query, and the query may
+  be released.
+- **`capturesOf snapshot kind start stop`** answers the capture names of the
+  query the text keeps of `kind` and its captures in the range, as
+  `captures` answers them (`Kept`).
+
+`detach`, and an attach with another grammar, drop the injections, the
+languages and the kept queries with the highlighter.
 
 ## Refusals
 
@@ -66,6 +87,12 @@ A refusal is a value: each reply is an `Except SyntaxTreeError`.
 - `noShippedQuery`: the grammar is published with no query of that kind.
 - `badFaces`: the faces are not one for each of the query's capture
   names.
+- `noQuery`: the text keeps no query of that kind.
+
+A structural question (`capturesOf`) before the reparse of its snapshot is
+delivered is refused with `notParsed`, never answered from an older tree:
+an indent level or a text object of a tree that lacks the latest edit would
+be wrong, not stale.
 
 ## Scope
 
@@ -95,7 +122,22 @@ with, each for one job. -/
 inductive QueryKind where
   /-- What to draw in which face: `highlights.scm`. -/
   | highlights
+  /-- Which nodes hold text of another language: `injections.scm`. -/
+  | injections
+  /-- Which nodes are a function, a class or an argument, around and
+  inside: `textobjects.scm`. -/
+  | textObjects
+  /-- Which nodes indent the rows they hold: `indents.scm`. -/
+  | indents
   deriving DecidableEq, Repr
+
+/-- The kind's name, as a user reads it: `highlights`, `injections`,
+`textObjects`, `indents`. -/
+def QueryKind.name : QueryKind → String
+  | .highlights => "highlights"
+  | .injections => "injections"
+  | .textObjects => "textObjects"
+  | .indents => "indents"
 
 /-- The name of a compiled query the syntax service holds. It is plain data,
 so a request can carry it. -/
@@ -151,6 +193,8 @@ inductive SyntaxTreeError where
   | noShippedQuery
   /-- The faces are not one for each of the query's capture names. -/
   | badFaces
+  /-- The text keeps no query of that kind. -/
+  | noQuery
   deriving DecidableEq, Repr
 
 /-- The refusal, as words a user reads in the echo area. -/
@@ -166,6 +210,7 @@ def SyntaxTreeError.describe : SyntaxTreeError → String
   | .query kind offset => s!"the query is not one: {repr kind} at byte {offset}"
   | .noShippedQuery => "the grammar ships no such query"
   | .badFaces => "the faces are not one for each capture name"
+  | .noQuery => "the text keeps no query of that kind"
 
 namespace SyntaxTree
 
@@ -180,6 +225,16 @@ structure Capture where
   start : Nat
   /-- The offset the node stops at, not included. -/
   stop : Nat
+  deriving DecidableEq, Repr
+
+/-- What a question of a kept query answers: the query's capture names,
+which a capture names one of by its index, and its captures in the
+range. -/
+structure Kept where
+  /-- The capture names, in the order they first appear in the source. -/
+  names : Array String
+  /-- The captures, each once, in the order `captures` answers. -/
+  captures : Array Capture
   deriving DecidableEq, Repr
 
 end SyntaxTree
@@ -206,6 +261,20 @@ inductive SyntaxTreeRequest where
   /-- Draw the text `snapshot` is of with `query`'s captures in `faces`,
   one for each capture name, from now on. -/
   | highlight (snapshot : SnapshotId) (query : QueryId) (faces : Array (Option FaceName))
+  /-- Find the injections of the text `snapshot` is of with `query` from
+  now on. -/
+  | inject (snapshot : SnapshotId) (query : QueryId)
+  /-- Parse an injection of the language `name` with `highlights`' grammar,
+  draw it with its captures in `faces`, and find injections of its own with
+  `injections`, from now on. -/
+  |
+  injectLanguage (snapshot : SnapshotId) (name : String) (highlights : QueryId)
+    (faces : Array (Option FaceName)) (injections : Option QueryId)
+  /-- Keep `query` as the text's query of `kind`. -/
+  | keep (snapshot : SnapshotId) (kind : QueryKind) (query : QueryId)
+  /-- The capture names of the query the text keeps of `kind`, and its
+  captures in the range from `start` to `stop`. -/
+  | capturesOf (snapshot : SnapshotId) (kind : QueryKind) (start stop : Nat)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request. -/
@@ -219,6 +288,10 @@ def SyntaxTreeRequest.Reply : SyntaxTreeRequest → Type
   | .release _ => Unit
   | .shippedQuery _ _ => Except SyntaxTreeError String
   | .highlight _ _ _ => Except SyntaxTreeError Unit
+  | .inject _ _ => Except SyntaxTreeError Unit
+  | .injectLanguage _ _ _ _ _ => Except SyntaxTreeError Unit
+  | .keep _ _ _ => Except SyntaxTreeError Unit
+  | .capturesOf _ _ _ _ => Except SyntaxTreeError SyntaxTree.Kept
 
 /-- The syntax tree port: `SyntaxTreeRequest` and the reply to each request. -/
 abbrev syntaxTreePort : Port :=
@@ -286,6 +359,38 @@ def highlight (snapshot : SnapshotId) (query : QueryId) (faces : Array (Option F
     SyntaxTreeM Unit :=
   ExceptT.mk (Program.request (port := syntaxTreePort) (.highlight snapshot query faces))
 
+/-- Find the injections of the text `snapshot` is of with `query`, a query of
+its grammar, from now on. Refused, checked in this order, with
+`noSuchSnapshot`, `noSuchQuery`, `notAttached` or `wrongGrammar`. -/
+def inject (snapshot : SnapshotId) (query : QueryId) : SyntaxTreeM Unit :=
+  ExceptT.mk (Program.request (port := syntaxTreePort) (.inject snapshot query))
+
+/-- Parse an injection of the language `name` in the text `snapshot` is of
+with `highlights`' grammar, draw it with its captures in `faces`, one entry
+for each of its capture names, and find injections of its own with
+`injections`, a query of the same grammar, from now on. Refused, checked in
+this order, with `noSuchSnapshot`, `noSuchQuery`, `notAttached`,
+`wrongGrammar` (the injections query is of another grammar than the
+highlights query) or `badFaces`. -/
+def injectLanguage (snapshot : SnapshotId) (name : String) (highlights : QueryId)
+    (faces : Array (Option FaceName)) (injections : Option QueryId) : SyntaxTreeM Unit :=
+  ExceptT.mk
+    (Program.request (port := syntaxTreePort)
+      (.injectLanguage snapshot name highlights faces injections))
+
+/-- Keep `query`, a query of the text's grammar, as the text's query of
+`kind`, in place of any before. Refused, checked in this order, with
+`noSuchSnapshot`, `noSuchQuery`, `notAttached` or `wrongGrammar`. -/
+def keep (snapshot : SnapshotId) (kind : QueryKind) (query : QueryId) : SyntaxTreeM Unit :=
+  ExceptT.mk (Program.request (port := syntaxTreePort) (.keep snapshot kind query))
+
+/-- The capture names of the query the text `snapshot` is of keeps of
+`kind`, and its captures in the range from `start` to `stop`, in the order
+`captures` answers. Refused, checked in this order, with `noSuchSnapshot`,
+`notAttached`, `noQuery`, `badRange` or `notParsed`. -/
+def capturesOf (snapshot : SnapshotId) (kind : QueryKind) (start stop : Nat) : SyntaxTreeM Kept :=
+  ExceptT.mk (Program.request (port := syntaxTreePort) (.capturesOf snapshot kind start stop))
+
 /-- Whether a node over `start`..`stop` is in the range `first`..`last`: it
 shares a byte with it, or, when the node or the range is empty, it starts
 within it, its ends included. The Rust core's `query::overlaps`. -/
@@ -310,7 +415,8 @@ end SyntaxTree
 
 /-- The handler of a run with no syntax service handed in: it has no
 grammars, so an attach and a compile are refused with `unknownGrammar`, as
-is a shipped query; it holds no query, so a question of one is refused with
+is a shipped query; it holds no query, so a question of one, an injection, a
+language, a keep and a question of a kept query are refused with
 `noSuchQuery`; and a detach and a release do nothing. What a command run
 where no host handed one in reaches (`EditorM.runReal`,
 `Editor/Command/Real.lean`). -/
@@ -324,6 +430,10 @@ def SyntaxTree.none : SyntaxTreeHandler
   | .release _ => pure ()
   | .shippedQuery _ _ => pure (.error .unknownGrammar)
   | .highlight _ _ _ => pure (.error .noSuchQuery)
+  | .inject _ _ => pure (.error .noSuchQuery)
+  | .injectLanguage _ _ _ _ _ => pure (.error .noSuchQuery)
+  | .keep _ _ _ => pure (.error .noSuchQuery)
+  | .capturesOf _ _ _ _ => pure (.error .noSuchQuery)
 
 /-- Runs a syntax tree program against `handler`: its result, or the refusal
 it failed with. -/
