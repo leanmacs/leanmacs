@@ -500,7 +500,10 @@ impl Drop for HandOver {
 
 impl<P: Processes + 'static> Service<P> {
     /// A service that starts children with `processes` and calls `complete`
-    /// with a run's id when its result is kept.
+    /// with an id when its reply is kept: a run's id, whose result
+    /// [`take`](Self::take) collects; or an open's id, or the wait id of a
+    /// read, a write or a close of a streaming child's input, whose reply
+    /// [`take_stream`](Self::take_stream) collects.
     pub fn new(processes: P, complete: impl Fn(u64) + Send + Sync + 'static) -> Self {
         Self {
             inner: Arc::new(Inner {
