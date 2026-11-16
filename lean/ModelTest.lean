@@ -20431,7 +20431,11 @@ run through Vim 9.1.1752 headless and read off its marks: the text and the
 cursor, the keys, the selection's one range as an anchor and a head, and
 the text it covers. A block's closing bracket is found past quoted ones,
 and a selection extended to the next pair out passes over a quoted opening
-bracket too. The last four are an object that is not there, where
+bracket too. Each word, WORD and block object has rows over a selection
+made wider forward by a motion or an object, and over one made wider
+backward, its head before its anchor, where a block's search starts from
+the head and one no bigger than the selection is the next one out; Vim
+leaves such a block's selection forward. The last four are an object that is not there, where
 the selection is as it was, and the recorded departure of a quote object
 over a selection wider than one cell, which is left as it was too. -/
 def objectSelectionRows : List (String × String × List (Nat × Nat) × List String) :=
@@ -20460,6 +20464,32 @@ def objectSelectionRows : List (String × String × List (Nat × Nat) × List St
     ("f(a|b)", "v l i (", [(2, 3)], ["ab"]), ("f(a|b)", "v l a (", [(1, 4)], ["(ab)"]),
     ("(a \"b|)\" c)", "v i (", [(1, 8)], ["a \"b)\" c"]),
     ("(x \"(\" (|ab) y)", "v i ( i (", [(1, 12)], ["x \"(\" (ab) y"]),
+    ("foo b|a.r baz", "v l i W", [(5, 7)], ["a.r"]),
+    ("foo |a.r baz", "v i W i W", [(4, 7)], ["a.r "]),
+    ("foo b|a.r baz", "v l a W", [(5, 8)], ["a.r "]),
+    ("foo b.a|r baz", "v b i W", [(7, 4)], ["b.ar"]),
+    ("foo b.r b|a.z", "v h a W", [(9, 4)], ["b.r ba"]),
+    ("foo b.r b|a.z", "v h i W", [(9, 7)], [" ba"]), ("x [a |bc] y", "v l i [", [(3, 6)], ["a bc"]),
+    ("[x[a|b]]", "v i [ i [", [(1, 5)], ["x[ab]"]),
+    ("x [a |bc] y", "v l a [", [(2, 7)], ["[a bc]"]), ("{a |bc}", "v l i {", [(1, 4)], ["a bc"]),
+    ("{x{a|b}}", "v i { i {", [(1, 5)], ["x{ab}"]), ("{a |bc}", "v l a {", [(0, 5)], ["{a bc}"]),
+    ("{\n  {\n    a|b\n  }\n}", "v i { i {", [(2, 16)], ["  {\n    ab\n  }\n"]),
+    ("{\n  a|b\n  cd\n}", "v j i {", [(2, 11)], ["  ab\n  cd\n"]),
+    ("x {\n  a|b\n  cd\n  }", "v j i {", [(4, 13)], ["  ab\n  cd\n"]),
+    ("f(ab c|d)", "v h i (", [(2, 6)], ["ab cd"]), ("g(f(a|b))", "v h i (", [(2, 6)], ["f(ab)"]),
+    ("f(ab c|d)", "v h a (", [(1, 7)], ["(ab cd)"]), ("g(f(a|b))", "v h a (", [(3, 6)], ["(ab)"]),
+    ("x [ab c|d] y", "v h i [", [(3, 7)], ["ab cd"]), ("[x[a|b]]", "v h i [", [(1, 5)], ["x[ab]"]),
+    ("x [ab c|d] y", "v b a [", [(2, 8)], ["[ab cd]"]),
+    ("{ab c|d}", "v h i {", [(1, 5)], ["ab cd"]), ("{x{a|b}}", "v h i {", [(1, 5)], ["x{ab}"]),
+    ("{ab c|d}", "v b a {", [(0, 6)], ["{ab cd}"]), ("{x{a|b}}", "v h a {", [(2, 5)], ["{ab}"]),
+    ("{\n  {\n    ab|c\n  }\n}", "v k i {", [(2, 17)], ["  {\n    abc\n  }\n"]),
+    ("g(f(ab|))", "v h h h a (", [(1, 7)], ["(f(ab))"]),
+    ("[x[ab|]]", "v h h h a [", [(0, 6)], ["[x[ab]]"]),
+    ("{x{ab|}}", "v h h h a {", [(0, 6)], ["{x{ab}}"]),
+    ("g(f(|ab))", "v l l l a (", [(3, 6)], ["(ab)"]),
+    ("g(f(ab|))", "v h h h i (", [(2, 6)], ["f(ab)"]),
+    ("g(f(|ab))", "v l l l i (", [(2, 6)], ["f(ab)"]),
+    ("foo b|a.r baz", "v b a W", [(5, 0)], ["foo ba"]),
     ("foo b|ar baz", "V i w", [(4, 6)], ["bar"]), ("f(|a)", "V i (", [(2, 2)], ["a"]),
     ("f(|a)", "V a b", [(1, 3)], ["(a)"]), ("a|b", "v i (", [(1, 1)], ["b"]),
     ("f|()", "v i (", [(1, 1)], ["("]), ("|{\n}", "v i {", [(0, 0)], ["{"]),
@@ -20578,6 +20608,23 @@ def evilObjectChecks : List Check :=
             objectSelectionRows.any fun (_, typed, _, _) =>
               let tokens := (typed.splitOn " ").filter (fun token => !token.all Char.isDigit)
               (objectNamed (" ".intercalate (tokens.drop (tokens.length - 2)))) == some name },
+    { name :=
+        "the visual table covers wider selections: each of iw aw iW aW i( a( i[ a[ i{ a{ has a row over a selection a motion or an object made wider than one cell, and a row over one a backward motion made, its head before its anchor"
+      run :=
+        pure <|
+          ["i w", "a w", "i W", "a W", "i (", "a (", "i [", "a [", "i {", "a {"].all fun key =>
+            -- The keys of each row of `key`, between the visual state's key
+            -- and the object, with any count left out.
+            let widened :=
+              objectSelectionRows.filterMap fun (_, typed, _, _) =>
+                let tokens := typed.splitOn " "
+                if tokens.drop (tokens.length - 2) == key.splitOn " " then
+                  some
+                    (((tokens.drop 1).take (tokens.length - 3)).filter fun token =>
+                      !token.all Char.isDigit)
+                else none
+            widened.any (!·.isEmpty) &&
+              widened.any fun keys => keys.contains "h" || keys.contains "b" },
     { name :=
         "a sweep of every default operator key over every default text object key, with no count and with a count of 2, from every position a cursor may rest at in a few texts: nothing is refused, after an operator that enters no state the cursor is where normal state lets one rest, a yank leaves the text, and u gives back a text that changed, with the cursor where it was"
       run := do
