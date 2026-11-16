@@ -68,16 +68,19 @@
 //! one function, [`Layout::padding_pixels`]: the points times the scale,
 //! unrounded, as a status field's padding is. So 8 points are 8 pixels at
 //! scale 1, 16 at scale 2 and 12 at scale 1.5, and 3 points are 4½ at 1.5.
-//! Below, `across` and `down` are those pixels.
+//! Below, `across`, `down` and `top` are those pixels.
 //!
 //! - **The text** is laid out in the rectangle less `across` at the left
-//!   and right and `down` at the top and above the status row (or the
-//!   bottom, with none): it wraps at the view's width less twice `across`,
-//!   and its rows are those that fit whole in its height less its status
-//!   row less twice `down`, which may be a fractional number of pixels.
-//!   Each extent is at 0 at least, and a width of 0 is a view narrower
-//!   than a cell.
-//! - **A row** starts `down` from the view's top, and its [`FrameRow::x`]
+//!   and right, `top` and `down` at the top, and `down` above the status
+//!   row (or the bottom, with none): it wraps at the view's width less
+//!   twice `across`, and its rows are those that fit whole in its height
+//!   less its status row less twice `down` and once `top`, which may be a
+//!   fractional number of pixels. Each extent is at 0 at least, and a
+//!   width of 0 is a view narrower than a cell. `top` is what a window's
+//!   title bar covers of a view along the frame's top edge
+//!   ([`Padding::top`](crate::scene::Padding::top)), so the first row
+//!   starts below it and the padding; it is 0 for any other view.
+//! - **A row** starts `top` and `down` from the view's top, and its [`FrameRow::x`]
 //!   is `across`: its glyphs keep their `x` from the row's start, shared
 //!   with the line store and never copied. A row's hash leaves out its `x`
 //!   and its `y`, so a change of padding rebuilds no row.
@@ -924,7 +927,7 @@ impl<S: Shaper> Layout<S> {
             heights.status
         };
         let across = self.padding_pixels(view.padding.across);
-        let down = self.padding_pixels(view.padding.down);
+        let first_row = self.first_row(view.padding);
         let status = self.status_row(view, MODE_LINE_FACE, bottom, across);
         // What is left for the text above the status row, in whole pixels,
         // less the padding above and below it (module docs, "The padding").
@@ -932,7 +935,7 @@ impl<S: Shaper> Layout<S> {
             Some(_) => view.rect.height.saturating_sub(bottom),
             None => view.rect.height,
         } as f32;
-        let text_height = self.inset(text_height, view.padding.down);
+        let text_height = self.text_height(text_height, view.padding);
         let text_width = self.inset(view.rect.width as f32, view.padding.across);
         let cursor_face = self.styles.intern(&view.cursor.face);
         let selection_face = self.styles.intern(SELECTION_FACE);
@@ -1001,7 +1004,7 @@ impl<S: Shaper> Layout<S> {
         };
         let anchor = boundary_at_or_before(snapshot, view.scroll);
         let shown = walker.rows_shown(text_height, anchor).unwrap_or_default();
-        let mut y = down;
+        let mut y = first_row;
         for &visual in &shown {
             let Some(entry) = walker.entry(visual.row, visual.segment) else {
                 continue;

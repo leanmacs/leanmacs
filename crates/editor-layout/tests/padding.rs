@@ -57,9 +57,18 @@ fn rect(width: u32, height: u32) -> Rect {
     }
 }
 
-/// The padding `across` and `down`.
+/// The padding `across` and `down`, with no top inset.
 fn padding(across: u32, down: u32) -> Padding {
-    Padding { across, down }
+    Padding {
+        across,
+        down,
+        top: 0,
+    }
+}
+
+/// The padding `across` and `down`, with the top inset `top`.
+fn padding_under(across: u32, down: u32, top: u32) -> Padding {
+    Padding { across, down, top }
 }
 
 /// A view of `text` in `rect` with `padding`, and no status field.
@@ -374,6 +383,70 @@ fn the_rows_query_takes_the_padding_off_at_the_layouts_scale() {
         let narrower = layout.lines_from(&text, width - 32.0, 0, 20, lines, None);
         assert_eq!(padded, narrower, "{lines} lines");
     }
+}
+
+#[test]
+fn a_view_padded_with_a_top_inset_starts_its_first_row_below_it_and_the_padding() {
+    // At scale 2 a row is 32 pixels; 8 points are 16 pixels and 28 are 56.
+    let mut layout = layout_at(2.0);
+    let status = layout.heights().status;
+    let line = layout.heights().text as f32;
+    let text = lines();
+    let shown = |padded: Padding| View {
+        status: vec![field("normal", Side::Left)],
+        ..view(text.clone(), rect(640, 400), padded)
+    };
+    let frame = layout.frame(&scene(vec![shown(padding_under(8, 8, 28))]));
+    let laid = only(&frame);
+    // The first row is the top inset and the padding down below the top.
+    assert_eq!(laid.rows[0].y, 72.0);
+    assert_eq!(laid.rows[0].x, 16.0);
+    assert_eq!(laid.rows[1].y, 72.0 + line);
+    // The rows that fit are those of the height less the status row less
+    // 88 pixels: twice the padding down and the top inset once.
+    let text_height = (400 - status) as f32;
+    let fits = ((text_height - 88.0) / line).floor() as usize;
+    assert_eq!(laid.rows.len(), fits);
+    assert_eq!(
+        rows_of(laid),
+        asked(
+            &mut layout,
+            &text,
+            640.0 - 32.0,
+            text_height - 88.0,
+            Padding::default()
+        )
+    );
+    // The query with the same padding answers the rows the frame shows.
+    assert_eq!(
+        asked(
+            &mut layout,
+            &text,
+            640.0,
+            text_height,
+            padding_under(8, 8, 28)
+        ),
+        rows_of(laid)
+    );
+    // The status row stays at the view's foot.
+    let row = laid.status.as_ref().expect("a status row");
+    assert_eq!(row.y, text_height);
+}
+
+#[test]
+fn a_top_inset_of_0_lays_out_as_before() {
+    let mut layout = layout_at(2.0);
+    let text = lines();
+    let frame = |layout: &mut Layout<CellShaper>, padded: Padding| {
+        layout.frame(&scene(vec![View {
+            status: vec![field("normal", Side::Left)],
+            ..view(text.clone(), rect(640, 400), padded)
+        }]))
+    };
+    let before = frame(&mut layout, padding(8, 8));
+    let after = frame(&mut layout, padding_under(8, 8, 0));
+    assert_eq!(only(&before).rows[0].y, 16.0);
+    assert_eq!(only(&after), only(&before));
 }
 
 #[test]

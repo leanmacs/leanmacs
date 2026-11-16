@@ -144,6 +144,10 @@ pub struct Padding {
     /// The inset of the text rows from the view's top, and from the top of
     /// its status row (its bottom when it has none).
     pub down: u32,
+    /// The further inset of the text rows from the view's top, beyond
+    /// `down`: what a window's title bar covers of a view along the
+    /// frame's top edge. 0 by default.
+    pub top: u32,
 }
 
 /// Which text: a key the binding gives each text, unique in the process.

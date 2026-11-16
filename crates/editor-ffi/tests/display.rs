@@ -605,7 +605,17 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
     // A key of its own: layout keeps what it laid out per key.
     let direct = TextRef::fixed(TextKey(1), Text::from(long).snapshot());
     let expected: Vec<(usize, usize)> = layout
-        .rows_shown(&direct, 160.0, 96.0, Padding { across: 8, down: 8 }, 0)
+        .rows_shown(
+            &direct,
+            160.0,
+            96.0,
+            Padding {
+                across: 8,
+                down: 8,
+                top: 0,
+            },
+            0,
+        )
         .unwrap()
         .into_iter()
         .map(|row| (row.start, row.stop))
@@ -1073,13 +1083,21 @@ fn a_scene_published_with_faces_comes_back_with_them() {
 fn a_views_padding_and_the_echos_cross_reach_layout_and_come_back() {
     let _alone = alone();
     let (display, document, snapshot, mut wire) = published_scene();
-    wire.views[0].padding = Padding { across: 8, down: 4 };
+    wire.views[0].padding = Padding {
+        across: 8,
+        down: 4,
+        top: 0,
+    };
     wire.echo_padding = 14;
     let (words, strings) = wire.encode();
     assert!(publish(display, &words, &strings, &[snapshot]));
     // Layout's frame of the same scene padded the same way.
     let mut direct_scene = scene_directly();
-    direct_scene.views[0].padding = Padding { across: 8, down: 4 };
+    direct_scene.views[0].padding = Padding {
+        across: 8,
+        down: 4,
+        top: 0,
+    };
     direct_scene.echo_padding = 14;
     let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
     let direct = layout.frame(&direct_scene).describe();

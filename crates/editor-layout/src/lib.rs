@@ -232,8 +232,8 @@ impl<S: Shaper> Layout<S> {
     /// its content inset by `padding` (in points), shows from the visual
     /// line that holds `anchor`, as many as fit whole, fewer at the end of
     /// the text. The padding is taken off as the frame takes it off: twice
-    /// [`Layout::padding_pixels`] of `across` from the width and of `down`
-    /// from the height, at 0 at least.
+    /// [`Layout::padding_pixels`] of `across` from the width, and twice of
+    /// `down` and once of `top` from the height, at 0 at least.
     pub fn rows_shown(
         &mut self,
         text: &TextRef,
@@ -243,7 +243,7 @@ impl<S: Shaper> Layout<S> {
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
         let width = self.inset(width, padding.across);
-        let height = self.inset(height, padding.down);
+        let height = self.text_height(height, padding);
         self.query(text, width, |walker| {
             let rows = walker.rows_shown(height, anchor)?;
             Ok(rows
@@ -280,6 +280,19 @@ impl<S: Shaper> Layout<S> {
     /// layout's scale, and 0 at least.
     pub(crate) fn inset(&self, extent: f32, points: u32) -> f32 {
         (extent - 2.0 * self.padding_pixels(points)).max(0.0)
+    }
+
+    /// The height a view's text rows fill of `height`, with `padding`:
+    /// `height` less `down` above and below and `top` above, in pixels at
+    /// the layout's scale, and 0 at least ([`frame`], "The padding").
+    pub(crate) fn text_height(&self, height: f32, padding: Padding) -> f32 {
+        (self.inset(height, padding.down) - self.padding_pixels(padding.top)).max(0.0)
+    }
+
+    /// How far down from a view's top its first text row starts, with
+    /// `padding`: `top` and `down`, in pixels at the layout's scale.
+    pub(crate) fn first_row(&self, padding: Padding) -> f32 {
+        self.padding_pixels(padding.top) + self.padding_pixels(padding.down)
     }
 
     /// Runs `ask` on a walker over what is kept of `text` at `width`, with

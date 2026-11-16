@@ -449,6 +449,7 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
     let padding = Padding {
         across: narrow(words.word()?)?,
         down: narrow(words.word()?)?,
+        top: 0,
     };
     Some(WireView {
         id,
@@ -699,7 +700,11 @@ mod tests {
                     padding: 8,
                 }],
                 status_face: Some("dim".to_owned()),
-                padding: Padding { across: 8, down: 4 },
+                padding: Padding {
+                    across: 8,
+                    down: 4,
+                    top: 0,
+                },
             }],
             faces: None,
         }
@@ -1206,7 +1211,14 @@ mod tests {
     #[test]
     fn a_views_padding_and_the_echos_reach_layout_in_points() {
         let scene = full().resolve(&[]);
-        assert_eq!(scene.views[0].padding, Padding { across: 8, down: 4 });
+        assert_eq!(
+            scene.views[0].padding,
+            Padding {
+                across: 8,
+                down: 4,
+                top: 0,
+            }
+        );
         assert_eq!(scene.echo_padding, 14);
         // None by default.
         let bare = WireScene {

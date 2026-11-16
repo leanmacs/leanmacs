@@ -763,6 +763,7 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
     let padding = Padding {
         across: points(across),
         down: points(down),
+        top: 0,
     };
     let raw = answered(
         display.rows(snapshot, width, height, padding, anchor),
