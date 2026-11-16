@@ -45,8 +45,8 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
 is `parse` with the edit compiled, and `scheme` packages it as an
 `InputScheme` over a registry of Vim states. The rules:
 
-- **A key is walked through the active keymaps, then the Vim state's**
-  (`Keymap.walk` over `maps view ++ record.keymaps`, with `record` the
+- **A key is walked through the active keymaps, over the Vim state's**
+  (`Keymap.walkOver (maps view) record.keymaps`, with `record` the
   record of the Vim state the key's view is in). **While an operator
   waits, a state's pending keymaps are walked in place of its own**
   (`StateRecord.pending`, Vim's Operator-pending mode), when it has any:
@@ -55,9 +55,13 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   own keymaps while an operator waits, as before. The active keymaps are the
   specific ones, so a binding of theirs replaces a default, and it holds in
   every Vim state, except a mode's where typing is text ("Mode keys"
-  below). It is one walk, so prefixes merge across the two lists,
-  and a part of speech bound in an active keymap is the same to the grammar
-  as one bound in a state's keymap.
+  below). The specific keymaps decide a sequence they bind or begin, so an
+  active prefix shadows a state's binding of the same keys: a config's
+  `C-w l` makes `C-w` a prefix in insert state, over the state's own
+  `C-w`. Only a sequence they leave unbound is looked up in the state's,
+  so prefixes still merge across the two lists, and a part of speech bound
+  in an active keymap is the same to the grammar as one bound in a state's
+  keymap.
 - **A motion alone is a move**, and **a command is run**. A key bound to a
   command name alone (`scheme.command`, as a binding from config is) is
   bound to `Bound.command` of that name, which changes no text and enters
@@ -999,7 +1003,7 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
         let own :=
           if state.operator.isSome && !record.pending.isEmpty then record.pending
           else record.keymaps
-        match Keymap.walk (active ++ own) state.walked key with
+        match Keymap.walkOver active own state.walked key with
         | (_, some binding) => state.reached states view typed binding
         | (walked, none) =>
           if !walked.isEmpty then

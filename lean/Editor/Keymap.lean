@@ -37,6 +37,14 @@ That an unbound key resets the pending prefix is proved, not only checked
 (`Keymap.walk_unbound`): its hypothesis is about the bindings, that none
 begins with the keys so far, and the kernel checks it on every build.
 
+`Keymap.walkOver` walks two tiers, specific keymaps over defaults
+(`Keymap.resolveOver`): the specific tier decides a sequence it binds or
+begins, so a specific prefix shadows a default binding of the same keys,
+and only a sequence it leaves unbound is resolved in the defaults, so
+prefixes still merge. The reset is proved for it too
+(`Keymap.walkOver_unbound`). The Vim scheme walks its active keymaps over a
+state's this way.
+
 ## The chord
 
 A key from a window carries where it is on the keyboard and whether the
@@ -151,6 +159,25 @@ def resolve (maps : List (Keymap β)) (keys : List Key) : Lookup β :=
   | some binding => .bound binding
   | none => if maps.any (·.continues keys) then .pending else .unbound
 
+/-- A sequence no binding of any keymap in `maps` begins with, or is, is
+unbound. -/
+theorem resolve_unbound (maps : List (Keymap β)) (keys : List Key)
+    (unbound : ∀ keymap ∈ maps, ∀ entry ∈ keymap.bindings, ¬keys <+: entry.1) :
+    resolve maps keys = .unbound := by
+  have notBound : maps.findSome? (·.find? keys) = none := by
+    rw [List.findSome?_eq_none_iff]
+    intro keymap member
+    simp only [find?, Option.map_eq_none_iff, List.find?_eq_none]
+    intro entry present equal
+    have same : entry.1 = keys := by simpa using equal
+    exact unbound keymap member entry present (same ▸ List.prefix_refl _)
+  have notPending : maps.any (·.continues keys) = false := by
+    rw [List.any_eq_false]
+    intro keymap member
+    simp only [continues, List.any_eq_true, not_exists, not_and, List.isPrefixOf_iff_prefix]
+    exact unbound keymap member
+  simp [resolve, notBound, notPending]
+
 /-- One step of the walk through `maps`, in precedence order: the keys
 `pending` so far, followed by the chord of `key`, are resolved. A bound
 sequence gives its binding and leaves nothing pending; a prefix becomes
@@ -163,25 +190,52 @@ def walk (maps : List (Keymap β)) (pending : List Key) (key : Key) : List Key �
   | .pending => (keys, none)
   | .unbound => ([], none)
 
+/-- What two tiers of keymaps make of `keys`: the `specific` keymaps decide
+whenever one of them binds `keys` or a longer sequence that begins with it,
+and only a sequence they leave unbound is resolved in the `defaults`. So a
+specific prefix shadows a default binding of the same keys, a specific
+binding replaces a default one, and prefixes still merge across the tiers:
+a sequence pending in the specific keymaps and unbound there once more keys
+come is looked up in the defaults with those keys. -/
+def resolveOver (specific defaults : List (Keymap β)) (keys : List Key) : Lookup β :=
+  match resolve specific keys with
+  | .unbound => resolve defaults keys
+  | decided => decided
+
+/-- One step of the walk through two tiers of keymaps, `specific` over
+`defaults` (`resolveOver`): the keys `pending` so far, followed by the chord
+of `key`, are resolved, with the outcomes of `walk`. -/
+def walkOver (specific defaults : List (Keymap β)) (pending : List Key) (key : Key) :
+    List Key × Option β :=
+  let keys := pending ++ [key.chord]
+  match resolveOver specific defaults keys with
+  | .bound binding => ([], some binding)
+  | .pending => (keys, none)
+  | .unbound => ([], none)
+
 /-- An unbound key resets the walk: when no binding of any keymap in `maps`
 begins with the pending keys followed by the chord of `key`, or is that
 sequence, the walk leaves nothing pending and gives nothing. -/
 theorem walk_unbound (maps : List (Keymap β)) (pending : List Key) (key : Key)
     (unbound : ∀ keymap ∈ maps, ∀ entry ∈ keymap.bindings, ¬(pending ++ [key.chord]) <+: entry.1) :
-    walk maps pending key = ([], none) := by
-  have notBound : maps.findSome? (·.find? (pending ++ [key.chord])) = none := by
-    rw [List.findSome?_eq_none_iff]
-    intro keymap member
-    simp only [find?, Option.map_eq_none_iff, List.find?_eq_none]
-    intro entry present equal
-    have same : entry.1 = pending ++ [key.chord] := by simpa using equal
-    exact unbound keymap member entry present (same ▸ List.prefix_refl _)
-  have notPending : maps.any (·.continues (pending ++ [key.chord])) = false := by
-    rw [List.any_eq_false]
-    intro keymap member
-    simp only [continues, List.any_eq_true, not_exists, not_and, List.isPrefixOf_iff_prefix]
-    exact unbound keymap member
-  simp [walk, resolve, notBound, notPending]
+    walk maps pending key = ([], none) := by simp [walk, resolve_unbound maps _ unbound]
+
+/-- An unbound key resets the walk over two tiers too: when no binding of
+any keymap in `specific` or in `defaults` begins with the pending keys
+followed by the chord of `key`, or is that sequence, the walk leaves nothing
+pending and gives nothing. -/
+theorem walkOver_unbound (specific defaults : List (Keymap β)) (pending : List Key) (key : Key)
+    (unbound :
+      ∀ keymap ∈ specific ++ defaults,
+        ∀ entry ∈ keymap.bindings, ¬(pending ++ [key.chord]) <+: entry.1) :
+    walkOver specific defaults pending key = ([], none) := by
+  have inSpecific :=
+    resolve_unbound specific (pending ++ [key.chord]) fun keymap member =>
+      unbound keymap (List.mem_append_left _ member)
+  have inDefaults :=
+    resolve_unbound defaults (pending ++ [key.chord]) fun keymap member =>
+      unbound keymap (List.mem_append_right _ member)
+  simp [walkOver, resolveOver, inSpecific, inDefaults]
 
 end Keymap
 

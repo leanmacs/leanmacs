@@ -190,6 +190,21 @@ pending prefix is proved (`Keymap.walk_unbound`): when no binding of any
 keymap in the list begins with the pending keys followed by the key, the
 walk leaves nothing pending and gives nothing.
 
+**The Vim scheme walks two tiers** (`Keymap.walkOver specific defaults`,
+over `Keymap.resolveOver`): the active keymaps are the specific tier and
+the Vim state's keymaps the defaults. A sequence is resolved in the
+specific tier first; when a keymap there binds it, or binds a longer
+sequence that begins with it, the specific tier decides (its binding, or
+pending), and only a sequence it leaves unbound is resolved in the
+defaults. Prefixes still merge across the tiers: with `g r` specific and
+`g g` a default, `g` is pending, and `g g` is then unbound in the specific
+tier and bound in the defaults. The one case this changes from a single
+walk over both lists is a specific prefix over a default exact binding,
+which the prefix now shadows. The reset is proved for it too
+(`Keymap.walkOver_unbound`): when no binding of either tier begins with the
+sequence, nothing is pending and nothing is given. `Keymap.resolve` and
+`Mode.check`, which resolves over one list, are unchanged.
+
 ### Input schemes
 
 A scheme is a state machine over keys, packaged with its own state and
@@ -1068,9 +1083,10 @@ state.
 ### Which keymaps a key is looked up in
 
 For a key for a view whose Vim state has the record `record`, the walk runs
-over `maps view ++ record.keymaps`: the active keymaps passed to `step`
-first, in their own order, then the state's. **While an operator waits it
-runs over `maps view ++ record.pending`** when the record has pending
+over `maps view` over `record.keymaps` (`Keymap.walkOver`): the active
+keymaps passed to `step` are the specific tier, in their own order, and the
+state's the defaults. **While an operator waits it runs over `maps view`
+over `record.pending`** when the record has pending
 keymaps (`StateRecord.pending`, Vim's Operator-pending mode), and over the
 state's own otherwise. Normal state's pending keymaps are its own without
 `normalCommands` and with `objects` first, so `i` and `a`, which begin an
@@ -1082,10 +1098,20 @@ command.
   user's config) and the state's are the scheme's defaults. A specific
   binding must be able to replace a default, as a mode's role key such as
   `j` in a list buffer has to.
-- **It is one walk** (`Keymap.walk`), so prefixes merge across both lists,
-  and a part of speech bound in an active keymap is the same to the grammar
-  as one bound in a state's keymap. That is what makes a motion bound after
-  the scheme was built work after every operator with no further binding.
+- **It is one walk over two tiers** (`Keymap.walkOver`, "Lookup through a
+  list of keymaps" above), so prefixes merge across both lists, and a part
+  of speech bound in an active keymap is the same to the grammar as one
+  bound in a state's keymap. That is what makes a motion bound after the
+  scheme was built work after every operator with no further binding.
+- **An active prefix shadows a state's binding of the same keys.** Where
+  the active keymaps bind a sequence beginning with keys the state binds
+  exactly, the keys are pending and the state's binding is not reached.
+  Insert state binds `C-w` to Vim's word delete; a config that binds
+  `C-w l` with `bindKey` makes `C-w` a prefix in insert state too, so
+  `C-w l` runs its command there and the word delete is not reached. A
+  config that binds nothing under `C-w` keeps the word delete. So which
+  of the two insert state's `C-w` does is a matter of the bindings a
+  config defines, with no switch of its own.
 - **Consequence**: an active keymap's binding holds in every Vim state,
   insert included, except a mode's (below). A binding meant for one state
   belongs in that state's keymaps.

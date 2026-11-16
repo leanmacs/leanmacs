@@ -9506,7 +9506,45 @@ def keymapChecks : List Check :=
         pure
           (keymap.keysFor (· == 1) == [[controlKey "x", charKey "c"], [charKey "a"]] &&
             keymap.keysFor (· == 2) == [[charKey "b"], [charKey "d"]] &&
-            keymap.keysFor (· == 3) == []) }]
+            keymap.keysFor (· == 3) == []) },
+    { name :=
+        "the walk over specific keymaps and defaults: a specific prefix shadows a default binding of the same keys, so C-w is pending where the specific maps bind C-w h and the defaults bind C-w alone, and h then gives the specific binding"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [controlKey "w", charKey "h"] 1
+        let defaults : Keymap Nat := Keymap.empty.bind [controlKey "w"] 2
+        let (first, firstBound) := Keymap.walkOver [specific] [defaults] [] (controlKey "w")
+        pure
+          (first == [controlKey "w"] && firstBound == none &&
+            Keymap.walkOver [specific] [defaults] first (charKey "h") == ([], some 1) &&
+            Keymap.walkOver [] [defaults] [] (controlKey "w") == ([], some 2)) },
+    { name :=
+        "the walk over specific keymaps and defaults gives the specific binding of a sequence both bind exactly, and the default binding of one the specific maps leave unbound"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [charKey "x"] 1
+        let defaults : Keymap Nat := (Keymap.empty.bind [charKey "x"] 2).bind [charKey "b"] 3
+        pure
+          (Keymap.walkOver [specific] [defaults] [] (charKey "x") == ([], some 1) &&
+            Keymap.walkOver [specific] [defaults] [] (charKey "b") == ([], some 3)) },
+    { name :=
+        "the walk over specific keymaps and defaults merges prefixes: with g r specific and g g default, g is pending, then g g gives the default and g r the specific binding"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [charKey "g", charKey "r"] 1
+        let defaults : Keymap Nat := Keymap.empty.bind [charKey "g", charKey "g"] 2
+        let (pending, bound) := Keymap.walkOver [specific] [defaults] [] (charKey "g")
+        pure
+          (pending == [charKey "g"] && bound == none &&
+            Keymap.walkOver [specific] [defaults] pending (charKey "g") == ([], some 2) &&
+            Keymap.walkOver [specific] [defaults] pending (charKey "r") == ([], some 1)) },
+    { name :=
+        "the walk over specific keymaps and defaults resets on a sequence neither binds nor begins: alone, after a specific prefix, and after a prefix of both"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [controlKey "w", charKey "h"] 1
+        let defaults : Keymap Nat :=
+          (Keymap.empty.bind [controlKey "w"] 2).bind [charKey "g", charKey "g"] 3
+        pure
+          (Keymap.walkOver [specific] [defaults] [] (charKey "z") == ([], none) &&
+            Keymap.walkOver [specific] [defaults] [controlKey "w"] (charKey "x") == ([], none) &&
+            Keymap.walkOver [specific] [defaults] [charKey "g"] (charKey "q") == ([], none)) }]
 
 /-- Whether `text` is a key string that names exactly `keys`. -/
 def parses (text : String) (keys : List Key) : Bool :=
@@ -13303,7 +13341,24 @@ def vimGrammarChecks : List Check :=
             (vimInvoked visual { command := "t-cut" }).1.lastChange == some vimRunCut &&
             unchanged visual { command := "t-none" } &&
             unchanged vimInit { command := "t-copy" } &&
-            unchanged visual { command := "t-copy", arguments := [.nat 1] }) }]
+            unchanged visual { command := "t-copy", arguments := [.nat 1] }) },
+    { name :=
+        "an active keymap's prefix shadows a Vim state's binding of the same keys: with insert state binding C-w and active maps binding C-w x, C-w is pending in insert state and C-w x runs the active binding; with no active maps C-w runs the state's"
+      run :=
+        let insert := vimStates.get "insert"
+        let states :=
+          vimStates.register
+            { insert with
+              keymaps :=
+                insert.keymaps ++ [vimKeymap [("C-w", .command { name := "t-delete-word" })]] }
+        let active (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("C-w x", .command { name := "t-exchange" })]]
+        let ran (name : String) : Option Invocation :=
+          some { command := name, arguments := [.nat 0, .str ""] }
+        let (inInsert, yields) := vimFed "i C-w x" active ⟨0⟩ states
+        pure
+          (yields.drop 1 == [none, ran "t-exchange"] && inInsert.stateOf states ⟨0⟩ == "insert" &&
+            (vimFed "i C-w" vimNoMaps ⟨0⟩ states).2.drop 1 == [ran "t-delete-word"]) }]
 
 /-- `vimStates` with a state the checks register, `test`, whose keymap
 binds `m` to a motion and whose cursor is an underline, and with `q` bound
