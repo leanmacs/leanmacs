@@ -48,7 +48,9 @@ A job reaches processes through one request, `process`, which carries a
 `ProcessRequest` (`Editor/Process.lean`): `Process.run` runs a command to
 its end and replies with how it ended and both its output streams, or a
 refusal: an `Except ProcessError`, a value, which the job matches on.
-`Process.start` starts a streaming child, which the job then reads
+`Process.runWithin` does so under a time limit, and `Process.runWithInput`
+also feeds the child its standard input, then end of file, as a filter
+does (`Editor/Shell.lean`). `Process.start` starts a streaming child, which the job then reads
 (`Process.read`, a delivery of lines or bytes at a time), writes to
 (`Process.write`, `Process.writeLine`) and closes the input of
 (`Process.closeInput`). A cancelled job's child is killed, with its process
