@@ -3444,7 +3444,7 @@ def run (scenario : String) (checks : List Check) : IO UInt8 := do
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | theme-pictures <dir> <font> [--write] | window-host [<file>] | window-host-undrawn <file>]"
+      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | theme-pictures <dir> <font> [--write] | window-host [<file>] | window-host-config <sysroot> <olean dir> <config dir> | window-host-undrawn <file>]"
   return 2
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
@@ -3455,9 +3455,10 @@ sample window opens, reports its fixed input and asks to close, which ends
 the host's loop and closes the window, and the report is printed to stderr.
 0 when the window ran, the latest render session's counters, read once
 `windowRun` has returned (the presenter's last handle), show a frame drawn,
-and no surface said what it offered, and, with no file, the last title the
-scripted window was asked to show is `scratch`; 1 otherwise, saying why on
-stderr. The process starts no other render session, so the counters are this
+no surface said what it offered, the window was opened with the themed
+title bar and asked for the dark appearance of the built-in paper and for
+nothing else, and, with no file, the last title the scripted window was
+asked to show is `scratch`; 1 otherwise, saying why on stderr. The process starts no other render session, so the counters are this
 run's. -/
 def windowHostScenario (file : Option String) : IO UInt8 := do
   let options : Editor.Window.Options :=
@@ -3480,6 +3481,20 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   unless (← Editor.Ffi.windowPresentation) == none do
     IO.eprintln "ffi-test window-host: a scripted window said what a surface offered"
     return 1
+  -- With no config the window opens with the themed title bar, and once it
+  -- has opened it is asked for the appearance of the built-in theme's
+  -- paper, which is dark.
+  unless (← Editor.Ffi.windowOpenedWith .scripted) == some (true, .themed) do
+    IO.eprintln "ffi-test window-host: the window was not opened with the themed title bar"
+    return 1
+  let requests :=
+    ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
+      | .request request => some request
+      | .title _ => none
+  unless requests == #[.darkAppearance] do
+    IO.eprintln
+        s!"ffi-test window-host: the window was asked {repr requests}, not the dark appearance alone"
+    return 1
   -- With no file the selected buffer is the one empty buffer, whose name is
   -- the window's title. With a file, its load may not finish before the
   -- sample asks to close, so the title is not looked at.
@@ -3493,6 +3508,34 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
           s!"ffi-test window-host: the window was last asked for the title {titles.back?}, not scratch"
       return 1
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
+  return 0
+
+/-- The window mode's wiring (`Editor.Window.host`) on the library's
+scripted platform, with no file and config loaded at start from
+`configDir` with the toolchain `sysroot` and the `.olean` files in
+`oleanDir`: the fixture `tests/window/title-bar/config`, whose `setup`
+keeps the standard title bar. The host waits for the start-up reload with
+no bound, so the result does not race the clock (the task's time limit
+ends a run that hangs). 0 when the window mode ended with status 0 and the
+scripted window was opened with the standard title bar; 1 otherwise,
+saying why on stderr. -/
+def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 := do
+  let options : Editor.Window.Options :=
+    { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
+      oleans := oleanDir, composition := true }
+  let status ←
+    Editor.Window.host .scripted options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+        (← Editor.Clipboard.InProcess.new).handle #[] (patience := none)
+  unless status == 0 do
+    IO.eprintln s!"ffi-test window-host-config: the window mode ended with status {status}"
+    return 1
+  let opened ← Editor.Ffi.windowOpenedWith .scripted
+  unless opened == some (true, .standard) do
+    IO.eprintln
+        s!"ffi-test window-host-config: the window was opened with {repr opened}, not the standard title bar"
+    return 1
+  IO.println
+      "ffi-test window-host-config: the window opened with the title bar the start-up config chose"
   return 0
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
@@ -3564,6 +3607,10 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit status
   | ["window-host"] =>
     let status ← FfiTest.windowHostScenario none
+    Editor.Ffi.quit
+    IO.Process.exit status
+  | ["window-host-config", sysroot, oleanDir, configDir] =>
+    let status ← FfiTest.windowHostConfigScenario sysroot oleanDir configDir
     Editor.Ffi.quit
     IO.Process.exit status
   | ["window-host-undrawn", file] =>

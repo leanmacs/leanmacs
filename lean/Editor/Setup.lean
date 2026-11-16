@@ -6,6 +6,7 @@ import Editor.Key.Notation
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Store
+import Editor.Window
 
 /-!
 # `setup`: what config registers
@@ -188,6 +189,11 @@ window's text is inset from its edges, the bottom row at least as far as
 the window's corners reach. A config that sets none has the editor's 8,
 and a reload changes it. Setting it twice is refused.
 
+Config keeps the system's standard title bar with `titleBar .standard`, in
+place of the themed one, whose paper is the theme's. It is read when the
+window opens, so a reload changes it at the next start. Choosing it twice
+is refused.
+
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
 over, so the type does not refer to itself. A job's handler is carried the
@@ -251,6 +257,8 @@ inductive SetupRequest where
   how far every window's content is inset from its edges, and the bottom
   row at least (`EditorState.paddingOf`). -/
   | framePadding (points : Nat)
+  /-- Choose the title bar the window opens with (`Window.TitleBar`). -/
+  | titleBar (style : Window.TitleBar)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -268,6 +276,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .segment _ => Unit
   | .modeLine _ => Unit
   | .framePadding _ => Unit
+  | .titleBar _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -422,5 +431,14 @@ changes it with no restart. The editor refuses the `setup` for setting the
 frame padding twice. -/
 def framePadding (points : Nat) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.framePadding points))
+
+/-- Chooses the title bar the window opens with: `titleBar .standard` keeps
+the system's standard title bar, above the content, in place of the themed
+one, which shows the theme's paper under the window's title and buttons. A
+config that chooses none has the themed title bar. It is read when the
+window opens, once the start-up config has loaded, so a reload changes it
+at the next start. The editor refuses the `setup` for choosing it twice. -/
+def titleBar (style : Window.TitleBar) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.titleBar style))
 
 end Editor

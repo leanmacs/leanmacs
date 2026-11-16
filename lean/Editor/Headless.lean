@@ -1458,6 +1458,10 @@ structure Progress where
   /-- How many jobs are running: started, and neither dealt with nor
   cancelled with their owner. -/
   jobs : Nat := 0
+  /-- The title bar the installed config chose (`Config.State.titleBar`),
+  or none: what the window mode opens its window with once the start-up
+  reload has finished (`Window.titleBarAtOpen`). -/
+  titleBar : Option Window.TitleBar := none
 
 /-- The registry a host starts with: what compiled code hands it, its
 commands, jobs, key bindings, modes, ex bindings, themes and segments, for
@@ -1488,7 +1492,8 @@ def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborator
 /-- The editor thread: pulls the editor queue and handles each event to its
 end, until the driver ends the loop or the queues are quit. After each event
 it publishes in `progress` how many markers it has reached, whether a reload
-is running, and how many jobs are.
+is running, how many jobs are, and the title bar the installed config
+chose.
 
 Before the first event it registers what compiled code hands it (`compiled`),
 and tells the library its interrupt key; when it ends it leaves the library with
@@ -1507,7 +1512,7 @@ def loop {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ sc
       break
     progress.set
         { markers := running.markers, reloading := running.config.running,
-          jobs := running.jobs.running }
+          jobs := running.jobs.running, titleBar := running.config.titleBar }
   -- Nothing will deal with a result any more: no job runs on unowned.
   running.jobs.cancelAll
   -- Nor will anything take a key off the queue, so none is to raise the flag.

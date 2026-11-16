@@ -365,6 +365,14 @@ run = [
   # no open, and the window runs on the editor's one empty buffer. It must
   # exit 0 as the scenario with a file does. It touches no file.
   ".lake/build/bin/ffi-test window-host",
+  # The same wiring with no file and config loaded at start, on the fixture
+  # tests/window/title-bar/config, whose `setup` keeps the standard title
+  # bar: the host waits for the start-up reload, with no bound so that the
+  # result does not race the clock (this task's time limit ends a run that
+  # hangs), and the scripted window must be opened with the standard title
+  # bar. The toolchain's directory and the `.olean` directory are passed in,
+  # as for config-test. It touches no file.
+  ".lake/build/bin/ffi-test window-host-config \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
   # The same wiring on the library's scripted platform whose renderer cannot
   # be made, as a machine with no usable GPU gives: the window runs with
   # nothing drawing in it. The scenario must exit 0, which it does only when

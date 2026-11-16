@@ -2484,6 +2484,20 @@ def setupChecks : List Check :=
             (collected.framePadding == some 12 && plain.framePadding == none &&
               refusal twice == some "the frame padding is set twice" &&
               refusal (framePadding 0) == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          titleBar .standard
+          titleBar .themed
+        match Config.Registrations.ofSetup (titleBar .standard),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.titleBar == some .standard && plain.titleBar == none &&
+              refusal twice == some "the title bar is chosen twice" &&
+              refusal (titleBar .themed) == none)
         | _, _ => pure false }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
@@ -3228,6 +3242,26 @@ def reportFrom (state : Config.State Elaborated) (outcome : Config.Outcome Elabo
 outcomes built by hand. -/
 def reloadChecks : List Check :=
   [{  name :=
+        "an install sets the title bar config chooses, a later install that chooses none goes back to none, the themed one, and a rejected one changes nothing"
+      run :=
+        let (state, _) :=
+          reduceFrom themed [.requested, .finished (accepted ["a"] (titleBar .standard))]
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        pure
+          (themed.titleBar == none && state.titleBar == some .standard &&
+            dropped.titleBar == none &&
+            kept.titleBar == some .standard) },
+    { name :=
+        "the window opens with the title bar the start-up config chose once its reload has finished, themed when it chose none, and themed when the wait ran out before the reload finished, whatever was installed by then"
+      run :=
+        pure
+          (Window.titleBarAtOpen true (some .standard) == .standard &&
+            Window.titleBarAtOpen true (some .themed) == .themed &&
+            Window.titleBarAtOpen true none == .themed &&
+            Window.titleBarAtOpen false (some .standard) == .themed &&
+            Window.titleBarAtOpen false none == .themed) },
+    { name :=
         "an install sets the frame padding config sets, a later install that sets none goes back to none, the editor's own, and a rejected one changes nothing"
       run :=
         let (state, _) :=

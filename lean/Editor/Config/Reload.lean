@@ -74,6 +74,12 @@ the model tests run it with outcomes built by hand
   (`editor-platform`'s crate docs, "What a window is asked"), and a window
   that opens again is asked afresh. A theme that states no paper asks for
   nothing. The effect comes after `themed` and after a reload's report.
+- **The title bar follows config, at the next start.** An install sets the
+  title bar in force (`State.titleBar`) to the one the config chose, or
+  none for the themed one. The window mode reads it once, when it opens the
+  window after the start-up reload (`Window.titleBarAtOpen`), so a reload
+  that changes it takes effect at the next start. A rejected outcome
+  changes none of it.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -172,6 +178,10 @@ structure State (σ : Type) where
   editor's own (`Loop.padding`): set at every install, so a config that
   sets none goes back to it. -/
   framePadding : Option Nat := none
+  /-- The title bar the installed config chose (`titleBar`), or none for the
+  themed one: set at every install, so a config that chooses none goes
+  back to it. The window mode reads it when it opens the window. -/
+  titleBar : Option Window.TitleBar := none
   /-- Whether the window has opened (`Event.windowOpened`): only then is an
   appearance asked of it. -/
   windowOpen : Bool := false
@@ -277,7 +287,8 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
     let modeLine := built.registrations.modeLine
     let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
     ({ state with
-        themeName, modeLine, framePadding := built.registrations.framePadding },
+        themeName, modeLine, framePadding := built.registrations.framePadding
+        titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments })
 

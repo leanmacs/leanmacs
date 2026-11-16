@@ -20,7 +20,13 @@ There is one editor loop; this module only wires it to a window:
 | Driver | the script | none: the open command with the file, when one was given, what the echo area has to say, and a reload when config is loaded at start, are posted before the first event (`Options.starts`), and the window's events are the input |
 
 - **The main thread.** `main` calls `Ffi.windowRun`, which blocks until the
-  window has closed. The host's thread is a dedicated task, as the keyboard
+  window has closed. When config is loaded at start it first waits for the
+  start-up reload to finish, installed or refused, for at most
+  `configPatience` (3 s), and opens the window with the title bar that
+  config chose (`titleBar`, `Editor/Setup.lean`; `titleBarAtOpen`):
+  the platform cannot change the title bar under an open window. A reload
+  that chooses another takes effect at the next start. With no config
+  loaded, or when the wait runs out, the window opens themed. The host's thread is a dedicated task, as the keyboard
   check's loop is. When the loop ends, because `:q` let the editor leave or
   the window asked to close, a task that waits on the host's thread waits a
   little for the render loop to draw what was published last, and then asks
@@ -57,7 +63,9 @@ There is one editor loop; this module only wires it to a window:
 `host` is the wiring with the platform, the display and the clipboard
 handed in, so that `ffi-test` runs it on the library's scripted platform
 with a cells display and a clipboard of its own (`FfiTest`, the scenarios
-`window-host`, with a file and with none, and `window-host-undrawn` on the scripted platform whose
+`window-host`, with a file and with none, `window-host-config`, which
+loads a config that keeps the standard title bar and waits for it with no
+bound, and `window-host-undrawn` on the scripted platform whose
 renderer cannot be made): nothing in the gate opens a window, reads the
 machine's fonts or touches the desktop's clipboard.
 
@@ -71,6 +79,27 @@ loop to draw what was published last before it closes the window, in
 milliseconds. -/
 def drawPatience : Nat :=
   1000
+
+/-- The library's name of a title bar. -/
+def TitleBar.library : TitleBar → Ffi.TitleBar
+  | .themed => .themed
+  | .standard => .standard
+
+/-- Waits for the start-up reload `host` was sent to finish, installed or
+refused, for at most `patience` milliseconds, or with no bound for none;
+whether it finished. A loop that has ended has nothing more to finish. -/
+def awaitConfig (host : Headless.Host) : Option Nat → IO Bool
+  | some patience => return (← host.await patience) == .settled
+  | none => do
+    repeat
+      match ← host.await drawPatience with
+      | .settled =>
+        return true
+      | .ended =>
+        return false
+      | _ =>
+        pure ()
+    return false
 
 /-- The library's name of a present mode the command line asked for. -/
 def PresentMode.library : PresentMode → Ffi.PresentMode
@@ -141,14 +170,18 @@ was given, drawn from `display` and with `clipboard` as its clipboard, and
 returns once the window has closed: the host is started, and what
 `options.starts` gives is posted before the first event (the file opened
 when one was given, each of `said` said in the echo area, and config
-reloaded when `plan` says so); the window is run; and it is closed when the
-host's loop ends.
+reloaded when `plan` says so); when config is loaded, its reload is waited
+for, for at most `patience` milliseconds (none for no bound, which a test
+gives so that its result does not race the clock); the window is run, with
+the title bar that config chose (`titleBarAtOpen`); and it is closed when
+the host's loop ends.
 The exit status: 0 when the window ran with something drawing in it; 1 when
 it could not be opened, when nothing could draw in it (`nothingDrew`, said
 on stderr, and in the echo area while the loop still runs), or when the loop
 ended with an error. -/
 def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (display : Ffi.Display)
-    (clipboard : ClipboardHandler) (said : Array String) : IO UInt32 := do
+    (clipboard : ClipboardHandler) (said : Array String)
+    (patience : Option Nat := some configPatience) : IO UInt32 := do
   let shipped ←
     Headless.shipped (options.sysroot.getD "") options.oleans (options.config.getD "") IO.eprintln
   let collaborators :=
@@ -168,10 +201,20 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
             Headless.within drawPatience do
               return (← Ffi.renderResting) != some false
         Ffi.windowClose platform
+  -- The title bar is chosen as the window opens, so config loaded at start
+  -- is waited for first (`awaitConfig`), for at most `patience`.
+  let titleBar ←
+    match plan with
+    | .load _ =>
+      do
+        let settled ← awaitConfig host patience
+        pure (titleBarAtOpen settled (← host.progress.get).titleBar)
+    | .skip _ =>
+      pure (titleBarAtOpen true none)
   let opened ← Ffi.inputClock
   let ran ←
     Ffi.windowRun platform options.composition (options.presentMode.map PresentMode.library)
-        options.frameLatency
+        options.frameLatency (titleBar := titleBar.library)
   let closed ← Ffi.inputClock
   -- Nothing drew in the window: a loop still running says why in the echo
   -- area before it ends.

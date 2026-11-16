@@ -504,6 +504,9 @@ accepted names at most one (`theme`). -/
   more than one is refused, so a `setup` that is accepted sets at most one
   (`framePadding`). -/
   framePaddings : Array Nat := #[]
+  /-- The title bars `setup` chose (`titleBar`), in order: more than one is
+  refused, so a `setup` that is accepted chooses at most one (`titleBar`). -/
+  titleBars : Array Window.TitleBar := #[]
 
 namespace Registrations
 
@@ -518,6 +521,10 @@ def modeLine (collected : Registrations) : Option ModeLine.Order :=
 /-- The frame padding a `setup` set, in points, if it set one. -/
 def framePadding (collected : Registrations) : Option Nat :=
   collected.framePaddings[0]?
+
+/-- The title bar a `setup` chose, if it chose one. -/
+def titleBar (collected : Registrations) : Option Window.TitleBar :=
+  collected.titleBars[0]?
 
 /-- The handler of the setup port that collects: its answer to each request,
 and what has been registered after it. -/
@@ -549,6 +556,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with modeLines := collected.modeLines.push order })
   | .framePadding points, collected =>
     ((), { collected with framePaddings := collected.framePaddings.push points })
+  | .titleBar style, collected =>
+    ((), { collected with titleBars := collected.titleBars.push style })
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -599,6 +608,8 @@ def problem? (collected : Registrations) : Option String := do
     return "the mode line is listed twice"
   if collected.framePaddings.size > 1 then
     return "the frame padding is set twice"
+  if collected.titleBars.size > 1 then
+    return "the title bar is chosen twice"
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command
