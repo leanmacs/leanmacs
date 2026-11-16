@@ -97,7 +97,11 @@ the same `tools/stage-bundle.sh`. On 2026-11-15 that was 2,006 files,
 bundle identifier `io.github.leanmacs.Leanmacs`, the executable `editor`,
 the icon, `NSHighResolutionCapable`, `LSArchitecturePriority` arm64 and
 `LSMinimumSystemVersion`, the lowest macOS the bundle has been run on
-(27.2). It has no document types and no version yet.
+(27.2). Its two document types (`CFBundleDocumentTypes`) are plain text
+(`public.plain-text`) and source code (`public.source-code`), each with the
+app as an `Editor` at the rank `Alternate`: Finder offers it under "Open
+With" and it takes a drop on its Dock icon, but it is never the default app
+for either. It has no version yet.
 
 Lake rebuilds the bundle only when an input changes: the executable, the
 `Editor` library's modules, `config-test` (which lists the closure), the

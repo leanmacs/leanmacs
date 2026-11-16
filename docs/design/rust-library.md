@@ -261,8 +261,9 @@ built"):
   modifiers held, with the text it produced beside them; a step of an input
   method's composition (enabled, a preedit, a commit, disabled); the pointer
   pressed, dragged, released or wheeled, with its position, button and
-  modifiers; the frame resized, with its size and scale; and a request to
-  close. Named keys and physical keys are W3C UI Events names, as strings.
+  modifiers; the frame resized, with its size and scale; files the system
+  asks the program to open; and a request to close. Named keys and
+  physical keys are W3C UI Events names, as strings.
   The command loop fixed this shape (its phase 1) so that both roadmaps
   build on one, and the winit adapter produces all of it (the display
   pipeline's phase 5). The one option is whether composition is allowed.
@@ -305,6 +306,32 @@ built"):
   and Lean's own bindings (`C-s-f`, `s-m`) reach the window. Nobody has
   seen a window of ours in fullscreen ([concurrency.md](concurrency.md),
   "Still to verify").
+- **Files the system asks the app to open** (`Input::OpenFiles`). When
+  Finder opens a file with the app ("Open With", a double-click on a
+  document of a type it claims, a drop on its Dock icon), macOS calls the
+  application delegate's `application:openURLs:`; it puts nothing on the
+  command line. winit 0.31 passes none of this on, and guarantees it never
+  registers an application delegate (winit-appkit's crate docs, "Custom
+  `NSApplicationDelegate`"). So on macOS `editor-platform-winit` registers
+  its own, through `objc2`, `objc2-foundation` and `objc2-app-kit`, pinned
+  exactly at the versions winit already resolves to, and `deny.toml` lets
+  no other crate of the workspace depend on them. It is installed after
+  winit's event loop is built and before it runs, because a cold start's
+  open-documents event arrives during `finishLaunching`, before winit makes
+  the window. Its one method reads each URL's file path and sends the list
+  on a channel of its own, then wakes the loop, as a request is sent; it is
+  the one untested forward. Every decision is pure and tested
+  (`files.rs`): each list is one input, its paths in order, a path that is
+  not UTF-8 is left out, an empty list is no input, and what arrives before
+  the window has opened is held and reported after `Opened` and the
+  `Resized` after it, in the order it arrived. A close drops pending files
+  with the requests. The install also registers
+  `NSTreatUnknownArgumentsAsOpen = NO` in the volatile registration
+  domain, so AppKit does not take a command-line argument (`editor
+  notes.txt`) for a file to open as well. On the queue the input is the
+  kind `OpenFiles`, code 0, no text, and the words `[n, then for each of
+  the n paths: m, m scalars]`. Nobody has seen it arrive from Finder or the
+  Dock yet ([concurrency.md](concurrency.md), "Still to verify").
 - **What a window tells whatever draws in it** (`Canvas`): that it
   opened, with its native window (`NativeWindow`: an AppKit view, an Xlib
   window or a Wayland surface, as plain data that names no library), its
@@ -318,7 +345,8 @@ built"):
   ([concurrency.md](concurrency.md), "Sharing state").
 - **How it crosses to Lean.** `editor-ffi`'s `window::event` makes each
   input an event of the editor queue, with a key's identity, a pointer's
-  detail and a resize as words beside it (the table in `window.rs`), and
+  detail, a resize and the paths to open as words beside it (the table in
+  `window.rs`), and
   `window::input` is its inverse, which `editor_ffi_window_post_input`
   uses to post an input as a window would, for tests and the headless
   driver.

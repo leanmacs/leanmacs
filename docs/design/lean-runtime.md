@@ -188,6 +188,14 @@ handed it, and a Lean loop on a dedicated task pulls it.
 - **The window's title is the scene's** (`Scene.title`, the selected
   buffer's name). It is published with every scene, and the library sends
   it to the window only when it changes.
+- **Files Finder and the Dock open the app with arrive from the window**,
+  as an `openFiles` event with their absolute paths, after `windowOpened`
+  and the resize after it, never on the command line: a Finder start posts
+  no open. The loop runs `open-file` with the paths, as an invocation no key
+  yielded, in the focused window, and the open command opens them one after
+  another, so the last path's buffer is shown last (`lean/Editor/Loop.lean`,
+  "What each event does"; [rust-library.md](rust-library.md), "Files the
+  system asks the app to open").
 - **The window runs once in a process**, which is all winit allows.
 
 The one thing that runs a window today is the keyboard check
@@ -663,7 +671,7 @@ the display pipeline's, which holds it to the same contract:
 | Its pure model: the scenes published, in order, and a layout in fixed-size cells, in which a tab reaches to the next multiple of 8 cells and a wide character is two, for tests, and for the recorder below | `lean/Editor/Display/Model.lean` |
 | Its contract, imported from the port alone: properties of the two queries at a cell size, run against the model by `lake test` at two sizes, against the recorder over the library's snapshots by `contract-test` at the same two, and to be run against the real binding over a fake shaper whose glyphs have that size | `lean/Editor/Display/Contract.lean` |
 | The display where there is no window (the headless host): a recorder that keeps the last scene published and how many have been, and answers the two queries with the model's layout rule over the text of the library's snapshot, read through the published table's read half. It is the one place the model's rule runs outside a test, because a host with no window has no layout to ask; an editor with a window asks the real binding every time | `lean/Editor/Display/Recorder.lean` |
-| The events of the editor queue as plain data (a key with its logical and physical identity and modifiers, a pointer, a resize), and the one module that reads and writes their layouts on the queue | `lean/Editor/Event.lean`, `lean/Editor/Event/Queue.lean` |
+| The events of the editor queue as plain data (a key with its logical and physical identity and modifiers, a pointer, a resize, files to open), and the one module that reads and writes their layouts on the queue | `lean/Editor/Event.lean`, `lean/Editor/Event/Queue.lean` |
 
 The runner is the job port's real handler. It is not a function from a
 request to an `IO` reply, as the text port's is, because a job must hold no

@@ -86,7 +86,10 @@ copy; verifies the copy's signature with `codesign --verify --strict
 --deep`; reads its `Info.plist` with `plutil` (it lints,
 `CFBundleExecutable` is an executable file under `Contents/MacOS`,
 `LSArchitecturePriority` starts with arm64, `LSMinimumSystemVersion` is no
-later than this machine's macOS) and the executable with `lipo` (arm64
+later than this machine's macOS, and `CFBundleDocumentTypes` is exactly two
+types, `public.plain-text` then `public.source-code`, each with
+`CFBundleTypeRole` `Editor` and `LSHandlerRank` `Alternate`, read key by key
+with `plutil -extract`) and the executable with `lipo` (arm64
 alone); reads the icon with ImageIO (`sips`: 16 pixels wide); and runs the
 copy's `Contents/MacOS/editor headless` on `tests/headless/bundle` with no
 directory argument, an empty environment (`env -i`) and `/` as the working

@@ -796,7 +796,16 @@ transaction through. Where those come from is open.
     stays open ("Prompts");
   - the command as it is registered (`open-file`) opens the path that is
     its first argument, and with no path asks for one with a prompt
-    ("Prompts"), naming itself as the command that receives the answer.
+    ("Prompts"), naming itself as the command that receives the answer;
+  - several paths open one after another, each after the last's result is
+    delivered, so the last is shown last: the order carries the paths still
+    to open, and the job's command opens them whatever became of its own
+    file. One load per path at once would show whichever finished last,
+    since jobs run in parallel. An interrupted delivery is rolled back with
+    what it started, so the paths after it are not opened; and two opens of
+    several paths in flight at once load beside each other. The files
+    Finder and the Dock open the app with take this route
+    ([lean-runtime.md](lean-runtime.md), "The window, as built").
 
   An empty buffer made when the command runs and filled later was set
   aside: the window would change before the file is known to exist, and a
@@ -1513,6 +1522,12 @@ handler never runs.
 
 ## Still to verify
 
+- Files from Finder and the Dock have not been seen arriving: an "Open
+  With" cold start, a drop on the Dock icon while the app runs, a two-file
+  open showing the second, and `editor notes.txt` from a terminal opening
+  one buffer (that `NSTreatUnknownArgumentsAsOpen = NO` took). Everything
+  but receiving the real Apple Event is pinned by tests; trying it is the
+  roadmap `macos-app`'s phase 6, the owner's.
 - An input method's composition on macOS. Real keyboard input reaching the
   Lean loop there is no longer open: the owner checked it by hand on
   2026-11-12, with `mise run window-check` started from Ghostty, and the
