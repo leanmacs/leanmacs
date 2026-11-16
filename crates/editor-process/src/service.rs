@@ -2259,6 +2259,55 @@ mod streaming {
         assert!(pending_comes_to(&service, 0));
     }
 
+    // Seen to bite once by hand, on 2026-11-15: with `write_all` writing
+    // from the start of the bytes each time, or moving its offset one byte
+    // too far once, this fails at what the child received.
+    #[test]
+    fn a_write_many_times_the_input_pipe_arrives_whole_and_in_order() {
+        let fake = FakeProcesses::scripted([(
+            command("cat"),
+            Ok(Script::ends(Exit::Code(0))
+                .step(Step::EchoUntilClosed(Stream::Out))
+                .pipe_capacity(4)),
+        )]);
+        let (service, completed) = service(&fake);
+        let streaming = Streaming {
+            input: Input::Pipe,
+            out: Framing::Bytes,
+            err: Framing::Bytes,
+            bound: ROOMY,
+        };
+        opened(&service, &completed, 1, command("cat"), streaming);
+        // 1,000 bytes, so at least 250 partial writes, and no run of them
+        // repeats within 251 bytes: a resend or a wrong offset shows.
+        let bytes: Vec<u8> = (0..1000_u32)
+            .map(|at| u8::try_from(at % 251).expect("under 251"))
+            .collect();
+
+        assert_eq!(
+            replied(&service, &completed, 2, || service.write(
+                1,
+                2,
+                bytes.clone()
+            )),
+            Some(StreamReply::Written)
+        );
+        let child = fake.record().spawned[0].0;
+        assert_eq!(fake.record().children[&child].received, bytes);
+        assert_eq!(
+            replied(&service, &completed, 3, || service.close_input(1, 3)),
+            Some(StreamReply::Written)
+        );
+
+        let all = to_the_end(&service, &completed, 1, 4);
+        assert_eq!(all_bytes(&all, Stream::Out), bytes, "echoed");
+        assert_eq!(
+            all.last().and_then(|delivered| delivered.ended.clone()),
+            Some(End::Exited(Exit::Code(0)))
+        );
+        assert!(pending_comes_to(&service, 0));
+    }
+
     #[test]
     fn a_write_with_no_input_after_a_close_or_once_the_child_closed_it_is_input_closed() {
         let fake = FakeProcesses::scripted([
