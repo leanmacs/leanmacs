@@ -69,12 +69,20 @@ impl Arrivals {
     }
 }
 
-/// Where the application delegate hands the paths it is given: a channel
-/// the loop takes them from when it is woken, and the loop's waker.
+/// Where the application delegate and the menu bar's target hand what they
+/// are given: the paths to open, the system's asks to terminate and the
+/// command items chosen, each on a channel the loop takes them from when
+/// it is woken, and the loop's waker.
 #[cfg(any(target_os = "macos", test))]
+#[derive(Clone)]
 pub(crate) struct Handing {
     /// Where the paths go.
     pub(crate) files: mpsc::Sender<Vec<PathBuf>>,
+    /// Where each ask to terminate goes (`terminate.rs` decides what comes
+    /// of it).
+    pub(crate) terminations: mpsc::Sender<()>,
+    /// Where the name of each command item chosen goes.
+    pub(crate) menus: mpsc::Sender<String>,
     /// What wakes the loop.
     pub(crate) proxy: EventLoopProxy,
 }
@@ -86,6 +94,19 @@ impl Handing {
     /// dropped its end of the channel, and the paths go nowhere.
     pub(crate) fn hand(&self, paths: Vec<PathBuf>) {
         let _ = self.files.send(paths);
+        self.proxy.wake_up();
+    }
+
+    /// Sends an ask to terminate, then wakes the loop, as `hand` does.
+    pub(crate) fn terminate(&self) {
+        let _ = self.terminations.send(());
+        self.proxy.wake_up();
+    }
+
+    /// Sends the name of a command item chosen, then wakes the loop, as
+    /// `hand` does.
+    pub(crate) fn choose(&self, name: String) {
+        let _ = self.menus.send(name);
         self.proxy.wake_up();
     }
 }

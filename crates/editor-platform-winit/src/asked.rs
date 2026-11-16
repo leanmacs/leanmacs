@@ -26,6 +26,8 @@
 //!   `set_theme`, which on macOS sets the window's `NSAppearance` to
 //!   `aqua` or `darkAqua`; on X11 and Wayland it hints a GTK variant or
 //!   themes the client-side decorations.
+//! - **Keeping running is nothing done to the window.** It answers the
+//!   system's quit, which is the module `terminate`'s.
 //!
 //! The adapter's run of `editor_platform::contract::requests` is this
 //! module's: the translation, over a window that records what it is told
@@ -84,6 +86,12 @@ impl Asked {
                 self.title.clone_from(&title);
                 Some(Act::Title(title))
             }
+            // Not the window's: it answers the system's quit, which
+            // `terminate.rs` decides. The handler never sends it here.
+            Request::KeepRunning => None,
+            // Not the window's: the menu bar is the application's. The
+            // handler never sends it here.
+            Request::Menu(_) => None,
             Request::Appearance(appearance) if self.appearance == Some(appearance) => None,
             Request::Appearance(appearance) => {
                 self.appearance = Some(appearance);
@@ -279,6 +287,9 @@ mod tests {
     }
 
     impl Carries for Carried {
+        /// The window alone has no menu bar: the menu is the application's.
+        const MENU_BAR: bool = false;
+
         fn carry_out(&mut self, request: Request) {
             carry_out(&mut self.asked, &self.window, request);
         }
@@ -293,6 +304,43 @@ mod tests {
         assert_eq!(requests::check(Carried::default), Ok(()));
     }
 
+    /// The adapter as the handler routes a request: a menu to the menu
+    /// bar, which on macOS is built from its plan and read back (the model
+    /// of what AppKit holds, `menu::Plan::built`), and is dropped
+    /// elsewhere; every other request to the window's translation.
+    #[derive(Default)]
+    struct WithMenuBar {
+        carried: Carried,
+        menu: Option<editor_platform::Menu>,
+    }
+
+    impl Carries for WithMenuBar {
+        const MENU_BAR: bool = cfg!(target_os = "macos");
+
+        fn carry_out(&mut self, request: Request) {
+            match request {
+                Request::Menu(menu) if Self::MENU_BAR => {
+                    let plan = crate::menu::plan(&menu);
+                    self.menu = Some(crate::menu::read(&plan.built(), &plan.commands).menu);
+                }
+                Request::Menu(_) => {}
+                request => self.carried.carry_out(request),
+            }
+        }
+
+        fn shown(&self) -> Shown {
+            Shown {
+                menu: self.menu.clone(),
+                ..self.carried.shown()
+            }
+        }
+    }
+
+    #[test]
+    fn the_request_contract_holds_of_the_adapter_with_its_menu_bar() {
+        assert_eq!(requests::check(WithMenuBar::default), Ok(()));
+    }
+
     #[test]
     fn each_request_that_changes_the_window_is_one_call_on_it_and_one_that_does_not_is_none() {
         let mut carried = Carried::default();
@@ -302,6 +350,8 @@ mod tests {
             Request::EnterFullscreen,
             Request::Title("notes.txt".into()),
             Request::Title("notes.txt".into()),
+            Request::KeepRunning,
+            Request::Menu(editor_platform::Menu::default()),
             Request::LeaveFullscreen,
             Request::Appearance(Appearance::Dark),
             Request::Appearance(Appearance::Dark),

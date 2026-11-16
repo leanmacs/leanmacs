@@ -553,6 +553,60 @@ command cannot end the process.
 - **Not changed: a window's close request** stops the loop whatever is
   unsaved. The rule here could be applied there; it is not this phase's.
 
+**The system's quit is put through `quit`** (decided and built
+2026-11-15, the macOS integration roadmap's phase 3:
+`lean/Editor/Loop.lean`, "Quit"; `lean/Editor/State.lean`, "Quit";
+`crates/editor-platform-winit/src/terminate.rs`).
+
+- **It reaches the loop as an event** (`Event.quitRequested`): Command-Q,
+  Quit from the Dock's menu, a logout, restart or shutdown. It is not the
+  queue's `quit`, nor the window's close request.
+- **The step runs `quit` as an invocation no key yielded**, after it has
+  remembered the system's quit (`EditorState.systemQuit`). So it is
+  guarded, rolled back and published as every command is, config's
+  command named `quit` runs in its place, and the rules above hold of it:
+  with nothing unsaved the step says stop, as for `:q`; with unsaved
+  changes it is refused and says why; with a save in flight it waits.
+- **When the editor does not quit, the system is told once.** When the
+  state is not asked to quit after the publish's `settleQuit`, the quit
+  was refused, did not ask, or was withdrawn (an edit while it waited, a
+  refused save), and the publish asks the frame `keepRunning`
+  (`EditorState.answerSystemQuit`) and forgets the system's quit. On macOS
+  that replies `NO` to AppKit's wait, which also cancels a logout, as
+  TextEdit's unsaved document does. A quit typed in the editor asks the
+  frame nothing.
+- **A close with the system's quit pending may end the process inside the
+  window's run.** This is the window port's rule (`Platform::run`,
+  `Platform::close` and `Input::QuitRequested`, in
+  `crates/editor-platform/src/lib.rs`), so everything that must happen
+  before the program ends happens before the close. A `KeepRunning` asked
+  just before the close refuses the quit instead, and the run returns. The
+  port's fake models it: it returns all the same and says whether its close
+  let a quit go (`ScriptedPlatform::quit_let_go`). On macOS it is AppKit's
+  terminate: AppKit waits inside `terminate:`, under winit's run, so the run
+  cannot return while one is pending, and once answered `YES` AppKit ends
+  the process with status 0.
+- **When the editor leaves, its own shutdown runs, and then the system's
+  quit goes ahead.** The step says stop; the window mode's closer
+  (`Editor.Window.closeOnceEnded`, `lean/Editor/Window/Real.lean`) shuts
+  down (the library's children killed and reaped, its watches ended, the
+  queues quit: `Editor.Window.shutdown`) and only then closes the window.
+  With a terminate pending, the window adapter tells the drawer the window
+  is closing and then replies `YES` (`terminate.rs`), so a logout the
+  editor goes along with goes on, and nothing that follows the run is
+  reached: the exit status is 0, and `--report` and the "nothing could
+  draw" line are not printed. With none pending the run returns and `main`
+  exits with its status. An ask the editor never heard of (held before the
+  window opened, or still on its channel at the close) is answered `YES`
+  too, since the editor was leaving anyway.
+- **When the editor loop fails, the system's quit is refused.** The closer
+  reads the loop's result first, and on an error says `editor: the editor
+  loop ended with an error: <error>` on stderr, shuts down, and asks the
+  window to keep running just before the close. The adapter finds that
+  keep running with the close (`wake`) and replies `NO` to a terminate
+  pending, held or waiting (`terminate.rs`), so the run returns, `main`
+  exits with status 1, and a logout is not carried out over a crash.
+
 **`quit` refuses while a buffer that holds a file has unsaved changes, and
 waits for a save in flight.**
 
@@ -688,6 +742,49 @@ and changes on disk:
   relative directory or program, a program that is not there or not
   allowed, or a stream past the run's limit, which has no default. A
   cancelled job's child is killed with its process group.
+- **A child's environment, as built** (`lean/Editor/Process/Environment.lean`,
+  `Process.prepared` in `lean/Editor/Job.lean`). The question is "what
+  environment does a child started in this directory get?", and the answer
+  is the editor's own, then the variables its directory's lookup returns set
+  over it, then the command's own `Environment`. The editor's own process
+  environment is never changed. `Process.run`, `Process.runWithin` and
+  `Process.start` each prepare their command first, as a job program, so the
+  model and the runner run the same code; the lookup itself is a raw
+  request, so it never looks itself up.
+  - *Sources.* Config's setting (`processEnvironment`, the setup port's
+    first option): `inherited`, no lookup, children exactly as before;
+    `mise` with an absolute path, or with none; and the default `auto`.
+  - *Resolution.* `mise` with no path, and `auto` in the window mode, take
+    the first of `~/.local/bin/mise` (from `HOME`), `/opt/homebrew/bin/mise`
+    and `/usr/local/bin/mise` whose stamp a file request answers; with none,
+    `mise` reports "mise is not at …" once for each directory and `auto` is
+    `inherited`. `auto` in the headless mode and the checks is `inherited`.
+    The first job to resolve the setting keeps the answer in the shared
+    state until a reload.
+  - *The lookup* runs `<mise> env --json` in the child's directory through
+    the process service, with a mebibyte of output and a time limit, 5 s by
+    default (`ProcessRequest.runWithin`, a run killed with its group once
+    its limit has passed: the runner arms an alarm on the clock and cancels
+    the run at the library when the alarm comes first). The JSON object of
+    strings is read in Lean, outside `Lean.Data.Json`, which config's
+    closure leaves out.
+  - *The cache* is one entry for each directory in the state every job of a
+    host shares (`JobRequest.environment`, answered at once, as `now` is;
+    `Job.sharedEnvironments` behind a reference). An entry is kept while the
+    stamps of `mise.toml`, `.mise.toml`, `.tool-versions` and
+    `mise.local.toml` in the directory and each ancestor, read through the
+    file port's stamp request before the lookup ran, are unchanged. A
+    reload that installs drops every entry. mise's global config and
+    environment variables are not stamped: a change there is picked up
+    after a reload.
+  - *Ordering.* A start in a directory with no entry waits for the lookup
+    and then starts its child, in the job; the loop never waits for either.
+  - *Failures* (a status other than 0, a signal, output that is not a JSON
+    object of strings, a run past its limit, a refusal, no mise) start the
+    child with the inherited environment and are reported once for the
+    directory until its entry is dropped: the host posts the message to the
+    editor queue and says it in the echo area. In an untrusted directory
+    `mise env` exits non-zero, which is this path.
 - **A streaming child is requests a job awaits, one at a time**:
   `Process.start` starts it with its input, how each output stream is
   framed (lines or bytes) and its bound, and names it for the job;
@@ -1620,6 +1717,12 @@ reload leaves the old config's watch delivering.
   one buffer (that `NSTreatUnknownArgumentsAsOpen = NO` took). Everything
   but receiving the real Apple Event is pinned by tests; trying it is the
   roadmap `macos-app`'s phase 6, the owner's.
+- The system's quit has been seen only in the window adapter's contract
+  example, which calls `terminate:` and sends its own process the quit
+  Apple Event. A Quit from the Dock's menu and a logout from loginwindow
+  have not been seen reaching the editor; nor has the editor's window
+  answering them, since the editor runs in a window only once the macOS
+  app is installed.
 - An input method's composition on macOS. Real keyboard input reaching the
   Lean loop there is no longer open: the owner checked it by hand on
   2026-11-12, with `mise run window-check` started from Ghostty, and the

@@ -1,12 +1,12 @@
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config toggle-fullscreen minimise-window load-theme greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config toggle-fullscreen minimise-window load-theme greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config toggle-fullscreen minimise-window load-theme greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config toggle-fullscreen minimise-window load-theme greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"

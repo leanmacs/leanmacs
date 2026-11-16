@@ -32,10 +32,12 @@ import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Key.Notation
 import Editor.Loop.Driver
+import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.ModuleLookup
+import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Role
 import Editor.Scene
@@ -232,6 +234,13 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   when the save is refused and when the buffer is edited meanwhile. They
   name no ex name. They are apart from `dispatchChecks`, which are
   defined before the driver;
+- `systemQuitChecks`: the system's quit (`Event.quitRequested`,
+  `Editor/Loop.lean`, "Quit") on that driver, with the compiled `quit`
+  registered: with nothing unsaved the step says stop; with unsaved
+  changes the editor goes on, says why, and asks the frame `keepRunning`
+  once; with a save in flight it waits, and a refused save withdraws the
+  quit and asks `keepRunning`; config's `quit` runs in its place; and a
+  quit the system did not ask asks the frame nothing;
 - `exChecks`: the ex command line (`Editor/Ex.lean`) on that driver, with
   the commands compiled code registers for it, for the minibuffer and for
   files, keys of the test scheme bound to the ex command and to the accept
@@ -439,7 +448,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   Vim, which leaves the cursor at the start of the changed text;
 - `evilRepeatChecks`: `.` after a change of each kind (`repeatRows`), a
   count before it, a change with an insert session and its typed and
-  committed text, and what is not repeated.
+  committed text, and what is not repeated;
+- `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
+  All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
+  item (`clipRan`), in each Vim state, on the clipboard model.
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
@@ -668,6 +680,73 @@ def jobModelChecks : List Check :=
           sleep 3
           discard timer.tick
         pure (modelled job == (.finished (), 30)) },
+    { name :=
+        "in the job model, a run whose script takes longer than its time limit is refused as timedOut with the clock at exactly its start plus the limit, and is killed; one within its limit moves the clock by what it takes and is not killed"
+      run :=
+        let slow := JobContract.sh "/p" "/bin/sleep 600"
+        let quick := JobContract.sh "/p" "exit 0"
+        let model : JobModel :=
+          { now := 10
+            processes :=
+              {
+                scripts :=
+                  #[{ command := slow,
+                      reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 600000 },
+                    { command := quick,
+                      reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 30 }] } }
+        let (late, afterLate) := (Process.runWithin slow 100 50).runModel model
+        let (within, afterWithin) := (Process.runWithin quick 100 50).runModel model
+        pure
+          ((match late with
+            | .finished (.error (.timedOut 50)) => true
+            | _ => false) &&
+            afterLate.now == 60 &&
+            afterLate.processes.killed == #[slow] &&
+            (match within with
+            | .finished (.ok ran) => ran.exit == .code 0
+            | _ => false) &&
+            afterWithin.now == 40 &&
+            afterWithin.processes.killed == #[]) },
+    { name :=
+        "in the job model, a cancel that falls before a run's time limit ends the job cancelled at that instant, and the run is killed once"
+      run :=
+        let slow := JobContract.sh "/p" "/bin/sleep 600"
+        let model : JobModel :=
+          { cancelAt := some 20
+            processes :=
+              {
+                scripts :=
+                  #[{ command := slow,
+                      reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+                      takes := 600000 }] } }
+        let (outcome, after) := (Process.runWithin slow 100 50).runModel model
+        pure
+          ((match outcome with
+            | .cancelled => true
+            | _ => false) &&
+            after.now == 20 &&
+            after.processes.killed == #[slow]) },
+    { name :=
+        "in the job model, environment requests are answered from its environments without moving the clock, and a message they say is reported"
+      run :=
+        let failure := Process.Failure.signalled 9
+        let entry : Process.Entry := { stamps := #[], found := .failed failure }
+        let job : JobM (Option Process.Entry × Process.Policy) := do
+          Process.askEnvironment (.record "/p/d" entry)
+          let found ← Process.askEnvironment (.cached "/p/d")
+          let policy ← Process.askEnvironment .policy
+          return (found, policy)
+        let (outcome, after) :=
+          job.runModel { now := 7, environments := { setting := .inherited, limit := 3 } }
+        pure
+          (outcome ==
+              .finished
+                (some entry,
+                  { setting := .inherited, host := .headless, resolved := none, limit := 3 }) &&
+            after.now == 7 &&
+            after.reported == #[Process.failureMessage "/p/d" failure]) },
     { name :=
         "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
       run := do
@@ -1241,6 +1320,7 @@ def processChecks : List Check :=
             | .write _ _ => "write"
             | .closeInput _ => "closeInput"
             | .run _ _ => "run"
+            | .runWithin .. => "runWithin"
         return finished && kinds == #["start", "read"] && (← processes.withdrawn).isEmpty },
     -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
     -- taken out of `Handle.conclude`, this check and the next fail.
@@ -1728,7 +1808,49 @@ def runnerChecks : List Check :=
               (← rig.services.completions.waiting) == 0
         finally
           short.handle.cancel
-          sleeper.handle.cancel }]
+          sleeper.handle.cancel },
+    { name :=
+        "over shared environments, a job's record of a failure reaches the report once, a second job finds the first one's entry, and no environment request registers a wait"
+      run := do
+        let rig ← Rig.new
+        let state ← IO.mkRef ({} : Process.Environments)
+        let said ← IO.mkRef #[]
+        let rig :=
+          { rig with
+            services :=
+              { rig.services with
+                environments :=
+                  Job.sharedEnvironments state fun text => said.modify (·.push text) } }
+        let failure := Process.Failure.exited 1 "untrusted"
+        let entry : Process.Entry := { stamps := #[none], found := .failed failure }
+        let first ←
+          rig.spawn
+              (reporting fun _ => do
+                Process.askEnvironment (.record "/p/d" entry)
+                Process.askEnvironment (.record "/p/d" entry)
+                return true)
+        let firstEnded ← first.endedAs (.finished #["true"])
+        let second ←
+          rig.spawn
+              (reporting fun _ => do
+                let found : Option Process.Entry ← Process.askEnvironment (.cached "/p/d")
+                return found == some entry)
+        let secondEnded ← second.endedAs (.finished #["true"])
+        return firstEnded && secondEnded &&
+            (← said.get) == #[Process.failureMessage "/p/d" failure] &&
+            (← rig.services.completions.waiting) == 0 &&
+            (← rig.clock.started).isEmpty },
+    { name :=
+        "a runner given no environments answers the policy as inherited: auto in the headless mode"
+      run := do
+        let rig ← Rig.new
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                let policy : Process.Policy ← Process.askEnvironment .policy
+                return policy ==
+                    { setting := .auto, host := .headless, resolved := none, limit := 5000 })
+        job.endedAs (.finished #["true"]) }]
 
 /-- An owner of jobs. -/
 def anna : Config.Owner :=
@@ -2498,7 +2620,30 @@ def setupChecks : List Check :=
             (collected.titleBar == some .standard && plain.titleBar == none &&
               refusal twice == some "the title bar is chosen twice" &&
               refusal (titleBar .themed) == none)
-        | _, _ => pure false }]
+        | _, _ => pure false },
+    { name :=
+        "a setup's process environment is collected as it set it: inherited, mise with no path and mise with an absolute path; a setup that does not set it collects none"
+      run :=
+        let collected (setup : SetupM Unit) : Option (Option Process.Setting) :=
+          match Config.Registrations.ofSetup setup with
+          | .ok registrations => some registrations.environment
+          | .error _ => none
+        pure
+          (collected (processEnvironment .inherited) == some (some .inherited) &&
+            collected (processEnvironment (.mise none)) == some (some (.mise none)) &&
+            collected (processEnvironment (.mise (some "/opt/homebrew/bin/mise"))) ==
+              some (some (.mise (some "/opt/homebrew/bin/mise"))) &&
+            collected (command "first" (makes "1")) == some none) },
+    { name :=
+        "a setup that gives mise a relative path, or sets the process environment twice, is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          processEnvironment .inherited
+          processEnvironment (.mise none)
+        pure
+          (refusal (processEnvironment (.mise (some "bin/mise"))) ==
+              some "the path to mise must be absolute: bin/mise" &&
+            refusal twice == some "the process environment is set twice") }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -3524,6 +3669,18 @@ def reloadChecks : List Check :=
         pure
           (state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)] &&
             state.theme == loaded.theme) },
+    { name :=
+        "an installed reload puts config's process environment in the registry, a rejected one leaves the one that was there, and a config that sets none gives none"
+      run :=
+        let (loaded, _) :=
+          reduce [.requested, .finished (accepted ["a"] (processEnvironment .inherited))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        pure
+          ((reduce []).1.registry.environment == none &&
+            loaded.registry.environment == some .inherited &&
+            kept.registry.environment == some .inherited &&
+            bare.registry.environment == none) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -5585,7 +5742,24 @@ def modelWithFile : FileModel :=
 (`Editor/File/Model.lean`) and of the file data (`Editor/File.lean`). They
 touch no file. -/
 def fileModelChecks : List Check :=
-  [{
+  [{  name :=
+        "the file model's stamp of a file is the stamp it was written with, and a write changes it; of nothing it is none"
+      run :=
+        let (before, model) := modelWithFile.handle (.stamp (modelRoot / "mixed.txt"))
+        let (written, _) := model.written (modelRoot / "mixed.txt") mixedBytes
+        let (after, _) :=
+          (model.withFile (modelRoot / "mixed.txt") mixedBytes).handle
+            (.stamp (modelRoot / "mixed.txt"))
+        let (nothing, _) := modelWithFile.handle (.stamp (modelRoot / "missing.txt"))
+        let stampOf : Except FileError (Option File.Stamp) → Option (Option File.Stamp)
+          | .ok stamp => some stamp
+          | .error _ => none
+        pure
+          (stampOf before == some ((modelWithFile.file? (modelRoot / "mixed.txt")).map (·.stamp)) &&
+            stampOf after == some (some written) &&
+            stampOf before != stampOf after &&
+            stampOf nothing == some none) },
+    {
       name :=
         "the file model decodes bytes to the text the library keeps them as, and encodes that text to the bytes again: thirteen byte strings, each against a text written out by hand",
       run :=
@@ -9109,7 +9283,18 @@ def keymapChecks : List Check :=
             odd.find? [controlKey "x", charKey "b"] == none &&
             !odd.continues [controlKey "x"] &&
             (keymap.filter (· > 3)).continues [controlKey "x"] &&
-            (keymap.filter fun _ => true).bindings == keymap.bindings) }]
+            (keymap.filter fun _ => true).bindings == keymap.bindings) },
+    { name :=
+        "keysFor gives the sequences bound to the bindings a predicate keeps, in the order each was last bound, and a sequence rebound to another binding is not among them"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofList
+            [([charKey "a"], 1), ([charKey "b"], 2), ([controlKey "x", charKey "c"], 1),
+              ([charKey "d"], 1), ([charKey "a"], 1), ([charKey "d"], 2)]
+        pure
+          (keymap.keysFor (· == 1) == [[controlKey "x", charKey "c"], [charKey "a"]] &&
+            keymap.keysFor (· == 2) == [[charKey "b"], [charKey "d"]] &&
+            keymap.keysFor (· == 3) == []) }]
 
 /-- Whether `text` is a key string that names exactly `keys`. -/
 def parses (text : String) (keys : List Key) : Bool :=
@@ -11713,6 +11898,32 @@ def startled : InputScheme :=
     leader := TestScheme.leader
     report := fun state _ => { session := state.2 } }
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that a menu item's invocation of any name is made one of another
+name. -/
+def meddling : InputScheme :=
+  { TestScheme.scheme with
+    invoked := fun _ state invocation =>
+      (state, { invocation with command := invocation.command ++ "-not" }) }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that a menu item's invocation of any name reports the view as in an
+insert session from then on. Its state is the test scheme's, and whether a
+menu item named one. -/
+def menuStartled : InputScheme :=
+  { State := TestScheme.State × Bool
+    Binding := Invocation
+    init := ({}, false)
+    step := fun maps view state key =>
+      let (next, yielded) := TestScheme.step maps view state.1 key
+      ((next, state.2), yielded)
+    pending := (·.1.pending)
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader
+    report := fun state _ => { session := state.2 }
+    invoked := fun _ state invocation => ((state.1, true), invocation) }
+
 /-- The subject the scheme contract is run on: `scheme` over the scheme
 checks' keymaps for view 0, the sequences those bind, a key none of them
 goes on with, and that same key as the one that prints and that nothing
@@ -11849,7 +12060,13 @@ def schemeContractChecks : List Check :=
         pure
           (failsOnly subject [SchemeContract.quietKeyKeepsReport] &&
             !(subject.scheme.report (subject.feed (keys "C-x")).1 ⟨0⟩).session &&
-            (subject.scheme.report (subject.feed (keys "C-x z")).1 ⟨0⟩).session) }]
+            (subject.scheme.report (subject.feed (keys "C-x z")).1 ⟨0⟩).session) },
+    { name :=
+        "the scheme contract reports a scheme that changes a menu item's invocation of a name it does not know, and one that changes its report of the view for one, for that property alone"
+      run :=
+        pure
+          (failsOnly (subjectOf meddling schemeMaps) [SchemeContract.invokedKeepsUnknown] &&
+            failsOnly (subjectOf menuStartled schemeMaps) [SchemeContract.invokedKeepsUnknown]) }]
 
 /-- The delete operator of the Vim checks: it changes text and names no
 state. -/
@@ -12149,6 +12366,55 @@ def vimSubjectOver (states : Vim.States) : SchemeContract.Subject :=
 scheme over `vimStates`. -/
 def vimSubject : SchemeContract.Subject :=
   vimSubjectOver vimStates
+
+/-- What the run-table checks' visual states run `t-copy` as: the yank of
+the selection into the register `+`. -/
+def vimRunCopy : Vim.Edit :=
+  .operate vimYank .selection none (some "+")
+
+/-- What the run-table checks' visual states run `t-cut` as: the deletion of
+the selection into the register `+`. -/
+def vimRunCut : Vim.Edit :=
+  .operate vimDelete .selection none (some "+")
+
+/-- What the run-table checks' normal state runs `t-enter` as: a command of
+that name that enters `visual-line`. -/
+def vimRunEnter : Vim.Edit :=
+  .run { name := "t-enter", enters := some "visual-line" } none none
+
+/-- `vimStates` with run tables (`StateRecord.runs`): normal state runs
+`t-enter` as `vimRunEnter`, and `visual` and a `visual-line` state the
+checks register run `t-copy` and `t-cut` as `vimRunCopy` and
+`vimRunCut`. -/
+def vimRunStates : Vim.States :=
+  let visual := vimStates.get "visual"
+  let runs := [("t-copy", vimRunCopy), ("t-cut", vimRunCut)]
+  ((vimStates.register { vimStates.initial with runs := [("t-enter", vimRunEnter)] }).register
+        { visual with runs }).register
+    { name := "visual-line", keymaps := visual.keymaps, operatesOnSelection := true, shape := .line
+      runs }
+
+/-- Active keymaps, for every view, that bind keys to command names alone,
+as the scheme binds a command name (`InputScheme.command`): `C` to
+`t-copy`, `X` to `t-cut`, `S` to `t-enter` and `N` to `t-none`, which no
+run table has. -/
+def vimRunMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
+  [vimKeymap
+      [("C", .command { name := "t-copy" }), ("X", .command { name := "t-cut" }),
+        ("S", .command { name := "t-enter" }), ("N", .command { name := "t-none" })]]
+
+/-- The Vim scheme over `vimRunStates` fed `text` with `vimRunMaps`: the
+state it is left in, the name of the Vim state view 0 is then in, and what
+each key yielded. -/
+def vimRunFed (text : String) : Vim.State × String × List (Option Invocation) :=
+  let (state, yields) := vimFed text vimRunMaps ⟨0⟩ vimRunStates
+  (state, state.stateOf vimRunStates ⟨0⟩, yields)
+
+/-- What the Vim scheme over `vimRunStates` makes of `invocation`, named by
+a menu item for view 0 from `state` (`InputScheme.invoked`), at the
+state's own type. -/
+def vimInvoked (state : Vim.State) (invocation : Invocation) : Vim.State × Invocation :=
+  (Vim.scheme vimRunStates).invoked ⟨0⟩ state invocation
 
 /-- The checks of the Vim scheme's grammar (`Editor/InputScheme/Vim.lean`),
 on the registry written here: the keymaps a key is looked up in, and what a
@@ -12489,7 +12755,73 @@ def vimGrammarChecks : List Check :=
           (vimPending "g r" vimTwoKeyMaps == keys "g r" &&
             vimPending "g r a" vimTwoKeyMaps == keys "g r a" &&
             vimPending "g r a d" vimTwoKeyMaps == keys "g r a d" &&
-            vimPending "g r a d d" vimTwoKeyMaps == []) }]
+            vimPending "g r a d d" vimTwoKeyMaps == []) },
+    { name :=
+        "a key bound to a command name the view's state has a run-table entry for completes that entry's edit: over the selection in a visual state it ends the selection, leaving the view in the initial state, and a yank is not the last change where a deletion is"
+      run :=
+        let (copied, copiedIn, copiedYields) := vimRunFed "v C"
+        let (cut, cutIn, cutYields) := vimRunFed "v X"
+        pure
+          (copiedYields.getLast? == some (some (vimOperate "yank" "selection" "" 0 "+")) &&
+            copiedIn == "normal" &&
+            copied.lastChange == none &&
+            cutYields.getLast? == some (some (vimOperate "delete" "selection" "" 0 "+")) &&
+            cutIn == "normal" &&
+            cut.lastChange == some vimRunCut) },
+    { name :=
+        "a run-table entry that names a state enters it: S in normal state yields t-enter and leaves the view in visual-line"
+      run :=
+        pure
+          (vimRunFed "S" ==
+            ((vimFed "S" vimRunMaps ⟨0⟩ vimRunStates).1, "visual-line",
+              [some { command := "t-enter", arguments := [.nat 0, .str ""] }])) },
+    { name :=
+        "a command name the view's state has no run-table entry for runs the command of that name and enters nothing: N anywhere, and C in normal state"
+      run :=
+        pure
+          ((vimRunFed "N").2 ==
+              ("normal", [some { command := "t-none", arguments := [.nat 0, .str ""] }]) &&
+            (vimRunFed "C").2 ==
+              ("normal", [some { command := "t-copy", arguments := [.nat 0, .str ""] }]) &&
+            (vimRunFed "v N").2.1 == "visual" &&
+            (vimRunFed "v N").2.2.getLast? ==
+              some (some { command := "t-none", arguments := [.nat 0, .str ""] })) },
+    { name :=
+        "a run-table entry is used as written: a count and a register typed before its key are dropped"
+      run :=
+        pure
+          ((vimRunFed "v 2 C").2.2.getLast? ==
+              some (some (vimOperate "yank" "selection" "" 0 "+")) &&
+            (vimRunFed "v \" a C").2.2.getLast? ==
+              some (some (vimOperate "yank" "selection" "" 0 "+"))) },
+    { name :=
+        "a binding of the active keymaps to another command wins over the run table: with C bound to t-other in a keymap before, v C runs t-other and stays in visual"
+      run :=
+        let rebound (view : ViewId) : List (Keymap Vim.Bound) :=
+          vimKeymap [("C", .command { name := "t-other" })] :: vimRunMaps view
+        let (state, yields) := vimFed "v C" rebound ⟨0⟩ vimRunStates
+        pure
+          (yields.getLast? ==
+              some (some { command := "t-other", arguments := [.nat 0, .str ""] }) &&
+            state.stateOf vimRunStates ⟨0⟩ == "visual") },
+    { name :=
+        "a menu item's invocation of a name the view's state has a run-table entry for is that entry's edit, compiled, with the state the entry leaves; one of a name it has none for, or one with arguments, comes back as it was, with the state"
+      run :=
+        let visual := (vimRunFed "v").1
+        let (copied, copy) := vimInvoked visual { command := "t-copy" }
+        let (entered, enter) := vimInvoked vimInit { command := "t-enter" }
+        let unchanged (state : Vim.State) (invocation : Invocation) : Bool :=
+          let (after, yielded) := vimInvoked state invocation
+          decide (after = state) && yielded == invocation
+        pure
+          (copy == vimOperate "yank" "selection" "" 0 "+" &&
+            copied.stateOf vimRunStates ⟨0⟩ == "normal" &&
+            enter == { command := "t-enter", arguments := [.nat 0, .str ""] } &&
+            entered.stateOf vimRunStates ⟨0⟩ == "visual-line" &&
+            (vimInvoked visual { command := "t-cut" }).1.lastChange == some vimRunCut &&
+            unchanged visual { command := "t-none" } &&
+            unchanged vimInit { command := "t-copy" } &&
+            unchanged visual { command := "t-copy", arguments := [.nat 1] }) }]
 
 /-- `vimStates` with a state the checks register, `test`, whose keymap
 binds `m` to a motion and whose cursor is an underline, and with `q` bound
@@ -14149,6 +14481,10 @@ def driverJobs (name : String) : Option (List Argument → Work) :=
           discard <| JobContract.loaded (fileRoot / "note.txt")
           throw "lost")
         fun (_ : Unit) => pure ()
+  | "build" =>
+    some fun _ =>
+      Work.of (fun _ => Process.run { program := "/bin/true", directory := "/p/d" } 10) fun _ =>
+        pure ()
   | _ => none
 
 /-- The commands of the driver checks, bound under `C-c`: `ask` (`a`)
@@ -14158,7 +14494,8 @@ and is then refused; `none` (`n`) starts `double` with no argument; `bad`
 (`b`) and `chain` (`c`) start the jobs of those names; `load` (`l`) starts
 `load` with `note.txt`, `adopt` (`s`) starts `adopt` with 0, `save` (`w`)
 takes a snapshot of its buffer's text and starts `save` with its index, and
-`lose` (`t`) starts `lose`. -/
+`lose` (`t`) starts `lose`, and `build` (`e`) starts `build`, which runs
+`/bin/true` in `/p/d`. -/
 def driverKeys : Loop.Keys TestScheme.scheme :=
   let starts (name : String) (arguments : List Argument := []) : Dispatched := fun _ => do
     discard <| startJob name arguments
@@ -14167,7 +14504,7 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
     [("C-c a", invoke "ask"), ("C-c m", invoke "missing"), ("C-c f", invoke "fail"),
       ("C-c n", invoke "none"), ("C-c b", invoke "bad"), ("C-c c", invoke "chain"),
       ("C-c l", invoke "load"), ("C-c s", invoke "adopt"), ("C-c w", invoke "save"),
-      ("C-c t", invoke "lose")]
+      ("C-c t", invoke "lose"), ("C-c e", invoke "build")]
     [("ask", fun _ => do
         message "asked"
         discard <| startJob "double" [.nat 21]
@@ -14183,7 +14520,7 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
         let taken ← call.target.buffer.text.snapshot
         discard <| startJob "save" [.nat taken.index]
         return none),
-      ("lose", starts "lose")]
+      ("lose", starts "lose"), ("build", starts "build")]
 
 /-- A driver over the initial state, with the commands and the jobs of the
 driver checks; `none` if making the state was refused. -/
@@ -14219,6 +14556,31 @@ def driverChecks : List Check :=
     steps.flatMap fun step => (step.map (·.starts)).getD #[]
   let echoOf (driver : TestDriver) : Option String := driver.model.display.scenes.back?.map (·.echo)
   [{  name :=
+        "a job whose directory's lookup fails leaves the loop's echo area saying why, as the host says it"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let child : Process.Command := { program := "/bin/true", directory := "/p/d" }
+            let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+            let driver :=
+              { driver with
+                jobs :=
+                  { environments := { setting := .mise (some "/opt/mise") }
+                    processes :=
+                      {
+                        scripts :=
+                          #[{ command := lookup
+                              reply :=
+                                .ok { exit := .code 1, stdout := .empty, stderr := .empty } },
+                            { command := child
+                              reply :=
+                                .ok { exit := .code 0, stdout := .empty, stderr := .empty } }] } } }
+            let (built, _) := fedTo driver (presses "C-c e")
+            built.loop.state.echo == Process.failureMessage "/p/d" (.exited 1 "") &&
+              built.jobs.processes.started == #[lookup, child] },
+    { name :=
         "a command that starts a job with an argument: the step hands the start back, the job is run with that argument, and once it is finished a command has run that received the value the job computed from it; the delivery publishes a scene and leaves the echo the command left"
       run :=
         pure <|
@@ -16970,6 +17332,124 @@ def dispatchQuitChecks : List Check :=
               failed.loop.state.theme == none &&
               failed.themes == #["second"] &&
               driver.themes == #[] }]
+
+/-- The compiled quit command (`Ex.quitCommand`), as the system quit checks
+register it. -/
+def compiledQuit : Dispatched := fun call => do
+  Ex.quitCommand call
+  return none
+
+/-- What a step of the system quit checks is handed: the open command with
+the path of `note.txt` (`C-o n`) and the save command (`C-o w`), as the
+quit checks have them, and `quit` (`Ex.quitName`), bound to `C-l q`, as
+`command` does it: the compiled one, or one config registered in its
+place. -/
+def systemQuitKeys (command : Dispatched := compiledQuit) : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
+      ("C-l q", invoke Ex.quitName)]
+    [(Files.openName, fun call => do
+        Files.openCommand call
+        return none),
+      (Files.saveName, fun call => do
+        Files.saveCommand call
+        return none),
+      (Ex.quitName, command)]
+
+/-- A driver of the system quit checks, with `quit` as `command` does it
+and the file `note.txt` open in view 0, as `quitDriver` opens it. -/
+def systemQuitDriver (command : Dispatched := compiledQuit) : Option TestDriver :=
+  (Loop.Driver.over (systemQuitKeys command) fileJobs (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver =>
+    ((fedTo { driver with jobs := { files := commandFiles } } (presses "C-o n")).1.finish 1).1
+
+/-- How many times `driver`'s frame was asked to keep running. -/
+def keptRunning (driver : TestDriver) : Nat :=
+  (driver.model.display.asked.filter (· == .keepRunning)).size
+
+/-- The checks of the system's quit in the loop (`Editor/Loop.lean`,
+"Quit"): `Event.quitRequested` runs `quit` as an invocation no key yielded,
+so the editor leaves as it does for `:q`, or keeps running and asks the
+frame `keepRunning` once, when `quit` is refused or a quit it asked is
+withdrawn. -/
+def systemQuitChecks : List Check :=
+  let next (steps : Array (Option (Loop.Stepped TestScheme.scheme))) : Array (Option Loop.Next) :=
+    steps.map (·.map (·.next))
+  let path := inFiles "note.txt"
+  [{  name :=
+        "the system asks to quit with nothing unsaved: the step says stop, the driver has stopped, and the frame is not asked to keep running"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (left, steps) := fedTo driver [.quitRequested]
+            next steps == #[some .stop] && left.stopped && keptRunning left == 0 },
+    { name :=
+        "the system asks to quit with a file's buffer that has unsaved changes: the editor goes on, the echo area says why, the frame is asked to keep running once, and the system's quit is no longer pending; a later edit asks nothing more"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (refused, steps) := fedTo driver [.commit "x", .quitRequested]
+            let (edited, _) := fedTo refused [.commit "y"]
+            next steps == #[some .continue, some .continue] && !refused.stopped &&
+              echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              echoOf refused == some "quit: note.txt has unsaved changes" &&
+              keptRunning refused == 1 &&
+              !refused.loop.state.systemQuit &&
+              keptRunning edited == 1 },
+    { name :=
+        "the system asks to quit with a save in flight: the step says continue and asks nothing, and the delivery of the save's result says stop; when that save is refused, the delivery says continue, the frame is asked to keep running once, and the echo area has the save's refusal"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (saving, _) := fedTo driver ([.commit "x"] ++ presses "C-o w")
+            let (asked, steps) := fedTo saving [.quitRequested]
+            let (left, delivered) := asked.finish 2
+            let changed := rewritten driver path JobContract.otherFile
+            let (refusing, _) := fedTo changed ([.commit "x"] ++ presses "C-o w")
+            let (pending, _) := fedTo refusing [.quitRequested]
+            let (refused, undelivered) := pending.finish 2
+            next steps == #[some .continue] && !asked.stopped && keptRunning asked == 0 &&
+              delivered.map (·.next) == some .stop &&
+              left.stopped &&
+              keptRunning left == 0 &&
+              keptRunning pending == 0 &&
+              undelivered.map (·.next) == some .continue &&
+              !refused.stopped &&
+              keptRunning refused == 1 &&
+              !refused.loop.state.systemQuit &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
+    { name :=
+        "config's command named quit runs in place of the compiled one on the system's quit: its message is the echo, and since nothing asked to quit the frame is asked to keep running once"
+      run :=
+        pure <|
+          match
+            systemQuitDriver fun _ => do
+              message "mine"
+              return none with
+          | none => false
+          | some driver =>
+            let (ran, steps) := fedTo driver [.commit "x", .quitRequested]
+            next steps == #[some .continue, some .continue] && !ran.stopped &&
+              echoOf ran == some "mine" &&
+              keptRunning ran == 1 &&
+              !ran.loop.state.systemQuit },
+    { name :=
+        "a quit typed, not asked by the system, that is refused asks the frame nothing: it was the editor's own quit"
+      run :=
+        pure <|
+          match systemQuitDriver with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver ([.commit "x"] ++ presses "C-l q")
+            !refused.stopped && echoOf refused == some (Ex.notQuitting (.unsaved "note.txt")) &&
+              keptRunning refused == 0 }]
 
 /-- The ex bindings of the ex line's own checks, written here: `say` runs
 the command `greet` of the prompt checks with the rest of the line, and
@@ -19760,6 +20240,31 @@ def evilCrlfDriver (contents : String) (head : Nat) (model : EditorModel := edit
         return { state with buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) })
       model).toOption
 
+/-- What a step of the replace checks is handed: evil's commands, with
+`<F5>` bound in an active keymap to the operator `replace`, which no
+default key binds, so that a visual state's selection is replaced by key. -/
+def replaceHanded : Loop.Keys Vim.Default.scheme :=
+  { evilHanded with
+    maps := fun _ _ => [Vim.Default.keymap [("<F5>", .operator { name := Evil.replace.name })]] }
+
+/-- A driver of the replace checks over the text and cursor `fixture` says,
+with the unnamed register holding `evilSentinel`, on the editor's models
+with the clipboard model `clipboard`. -/
+def replaceDriver (fixture : String) (clipboard : ClipboardModel := {}) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  (Loop.Driver.over replaceHanded (fun _ => none)
+      (do
+        return (← evilState contents head).setRegister Evil.unnamed evilSentinel)
+      { editorModel with clipboard }).toOption
+
+/-- The keys `typed` pressed on `replaceDriver`: what they left, and the
+text the clipboard model then holds. -/
+def evilReplaced (fixture typed : String) (clipboard : ClipboardModel := {}) :
+    Option (EvilEdited × Option String) :=
+  (replaceDriver fixture clipboard).map fun driver =>
+    let after := evilFed driver typed
+    (evilLeft after, after.model.clipboard.held)
+
 /-- The checks of evil's registers and of the commands that read and set
 them without an operator's key (`Editor/Evil/Registers.lean`,
 `Editor/Evil/Operators.lean`), by key, as `evilOperatorChecks` are. -/
@@ -19936,7 +20441,49 @@ def evilRegisterChecks : List Check :=
           put "ab\r\ncd" 5 "\" + p" "xy\r\n" == some "ab\r\ncd\r\n|xy" &&
             put "ab\r\ncd" 0 "\" + p" "xy\r\n" == some "ab\r\n|xy\r\ncd" &&
             put "ab\r\ncd" 5 "\" + P" "xy\r\n" == some "ab\r\n|xy\r\ncd" &&
-            put "ab\r\ncd" 5 "\" + p" "xy\n" == some "ab\r\ncd\r\n|xy" }]
+            put "ab\r\ncd" 5 "\" + p" "xy\n" == some "ab\r\ncd\r\n|xy" },
+    { name :=
+        "the operator replace over a character-wise selection puts the clipboard's text in place of it, the cursor on the last cell put, or on the first when the text holds a line break, which goes in as it is; the unnamed register holds the replaced text and the clipboard model what it held; the view is in normal state"
+      run :=
+        pure <|
+          evilReplaced "a|bcd" "v l \" + <F5>" { held := some "XY" } ==
+              some (⟨"aX|Yd", charwise "bc", false, ""⟩, some "XY") &&
+            evilReplaced "a|bcd" "v l \" + <F5>" { held := some "XY\n" } ==
+              some (⟨"a|XY\nd", charwise "bc", false, ""⟩, some "XY\n") &&
+            ((replaceDriver "a|bcd" { held := some "XY" }).map fun driver =>
+                (evilSeen (evilFed driver "v l \" + <F5>")).bind (·.status[0]?)) ==
+              some (evilLooks "").2[0]? },
+    { name :=
+        "the operator replace over a line-wise selection puts the clipboard's text in place of the lines, a character-wise text with the buffer's line ending added, and the cursor on the first non-blank of the first line put; below a last line with no line break the text's last line break is left out; the unnamed register holds the lines, line-wise"
+      run :=
+        pure <|
+          evilReplaced "ab\nc|d\nef" "V \" + <F5>" { held := some "XY" } ==
+              some (⟨"ab\n|XY\nef", linewise "cd\n", false, ""⟩, some "XY") &&
+            evilReplaced "ab\nc|d\nef" "V \" + <F5>" { held := some "  XY\n" } ==
+              some (⟨"ab\n  |XY\nef", linewise "cd\n", false, ""⟩, some "  XY\n") &&
+            evilReplaced "ab\nc|d" "V \" + <F5>" { held := some "XY\n" } ==
+              some (⟨"ab\n|XY", linewise "cd\n", false, ""⟩, some "XY\n") &&
+            evilReplaced "a|b\ncd\nef" "V j \" + <F5>" { held := some "XY" } ==
+              some (⟨"|XY\nef", linewise "ab\ncd\n", false, ""⟩, some "XY") },
+    { name :=
+        "the operator replace with a clipboard model holding no text gives up with nothingToPut, and with one not available with clipboardUnavailable, and the buffer is as it was"
+      run :=
+        pure <|
+          evilGaveUp ((evilReplaced "a|bcd" "v l \" + <F5>").map (·.1)) "ab|cd" Evil.nothingToPut &&
+            evilGaveUp ((evilReplaced "a|bcd" "v l \" + <F5>" { available := false }).map (·.1))
+              "ab|cd" Evil.clipboardUnavailable &&
+            evilGaveUp ((evilReplaced "ab\nc|d\nef" "V \" + <F5>").map (·.1)) "ab\nc|d\nef"
+              Evil.nothingToPut },
+    { name :=
+        "the operator replace is one step of the history: one undo request gives the text from before it"
+      run :=
+        pure <|
+          match replaceDriver "a|bcd" { held := some "XY" } with
+          | none => false
+          | some driver =>
+            let replaced := evilFed driver "v l \" + <F5>"
+            evilText replaced == some "aXYd" && evilHistory replaced == some (2, false) &&
+              evilText (evilUndone replaced) == some "abcd" }]
 
 /-- The checks of the two commands that open a line (`Evil.openBelow`,
 `Evil.openAbove`), by key, as `evilOperatorChecks` are. -/
@@ -21429,16 +21976,20 @@ def heightChecks : List Check :=
             | _ => false }]
 
 /-- The registry of the frame command checks: the frame's commands and their
-bindings registered for the owner `compiled`, as a host registers them, and
-`config` as config's bindings. -/
-def frameRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
-  ((({} : Config.Registry).replace .compiled FrameCommands.commands).replaceBindings .compiled
-        FrameCommands.bindings).replaceBindings
-    .config config
+bindings, with the menu bar's bindings, registered for the owner
+`compiled`, as a host registers them, and `config` as config's bindings and
+`commands` as config's commands. -/
+def frameRegistry (config : Array Config.KeyBinding := #[])
+    (commands : Array Config.Registration := #[]) : Config.Registry :=
+  (((({} : Config.Registry).replace .compiled FrameCommands.commands).replaceBindings .compiled
+            (FrameCommands.bindings ++ Menu.bindings)).replaceBindings
+        .config config).replace
+    .config commands
 
 /-- What a step of the frame command checks is handed: the active keymaps
-`registry` makes for the test scheme from the loop's state, and its plain
-commands. -/
+`registry` makes for the test scheme from the loop's state, its plain
+commands, and the menu bar that ships with its key equivalents filled from
+`registry`, as a host's are. -/
 def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
   { maps := registry.activeMaps TestScheme.scheme
     command? := fun name =>
@@ -21447,7 +21998,8 @@ def frameKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
         some fun _ => do
           run
           return none
-      | _ => none }
+      | _ => none
+    menu := some (registry.menuOf Menu.standard) }
 
 /-- A driver of the frame command checks over the initial state, with the
 keys of `registry`; `none` if making the state was refused. -/
@@ -21566,6 +22118,473 @@ def titleChecks : List Check :=
               titleOf prompting == some "scratch" &&
               EditorState.title EditorState.none == ""
           | _, _, _ => false }]
+
+/-- The menu bar the frame driver over `registry` publishes once the window
+has said its size; `none` without one. -/
+def menuShown (registry : Config.Registry) : Option Menu := do
+  let driver ← frameDriver registry
+  let scene ← (fedTo driver [resizedTo false]).1.model.display.scenes.back?
+  scene.menu
+
+/-- The key equivalent of `character` with `modifiers` held, the system key
+alone unless told. -/
+def equivalent (character : Char) (modifiers : Modifiers := { superKey := true }) :
+    Option KeyEquivalent :=
+  some { character, modifiers }
+
+/-- The Vim scheme of the menu's run-table checks: the default states, with
+normal state's run table holding `t-enter`, run as `visual-line` entering
+that state, and `t-fail`, run as itself entering it too. -/
+def menuRunScheme : InputScheme :=
+  let enter (name : String) : Vim.Edit := .run { name, enters := some "visual-line" } none none
+  Vim.scheme
+    (Vim.Default.states.register
+      { Vim.Default.states.initial with
+        runs := [("t-enter", enter "visual-line"), ("t-fail", enter "t-fail")] })
+
+/-- A driver of the menu's run-table checks over the text and cursor
+`fixture` says, with evil's commands and `t-fail`, which gives up. -/
+def menuRunDriver (fixture : String) : Option (Loop.Driver menuRunScheme) :=
+  let (contents, head) := barred fixture
+  let fail : Dispatched := fun _ => giveUp "failed"
+  let keys : Loop.Keys menuRunScheme :=
+    { command? := (evilHanded (commands := [("t-fail", fail)])).command? }
+  (Loop.Driver.over keys (fun _ => none) (evilState contents head) editorModel).toOption
+
+/-- The selection of view 0 of `driver`, as the text model has it. -/
+def menuRunSelection (driver : Loop.Driver menuRunScheme) : Option Selection := do
+  let target ← driver.loop.state.target? ⟨0⟩
+  (target.selection.runModel driver.model.texts).1.toOption
+
+/-- The key equivalents the compiled bindings give the menu's commands. -/
+def compiledEquivalents : String → Option KeyEquivalent
+  | "open-file" => equivalent 'o'
+  | "save-buffer" => equivalent 's'
+  | "undo" => equivalent 'z'
+  | "redo" => equivalent 'Z'
+  | "clipboard-cut" => equivalent 'x'
+  | "clipboard-copy" => equivalent 'c'
+  | "clipboard-paste" => equivalent 'v'
+  | "select-all" => equivalent 'a'
+  | "minimise-window" => equivalent 'm'
+  | "toggle-fullscreen" => equivalent 'f' { control := true, superKey := true }
+  | _ => none
+
+/-- The key equivalent `menu`'s item that runs `command` shows; `none` when
+no item runs it. -/
+def keyShown (menu : Menu) (command : String) : Option (Option KeyEquivalent) :=
+  menu.menus.findSome? fun submenu =>
+    submenu.items.findSome? fun
+      | .item _ key (.command name) => if name == command then some key else none
+      | _ => none
+
+/-- The registry of nothing but the binding of `text` to `open-file`. -/
+def openBoundTo (text : String) : Config.Registry :=
+  ({} : Config.Registry).replaceBindings .compiled #[{ keys := keys text, command := "open-file" }]
+
+/-- The checks of the menu bar (`Editor/Menu.lean`, `Editor/Menu/Compiled.lean`):
+a command item chosen runs its command as an invocation, and the key
+equivalents the published menu shows are the chords the registry binds. -/
+def menuChecks : List Check :=
+  [{  name :=
+        "a menu's undo undoes as u does: after x over abc, both leave abc and the same selection"
+      run :=
+        pure <|
+          match evilDriver "|abc" with
+          | none => false
+          | some driver =>
+            let cut := evilFed driver "x"
+            let byKey := evilFed cut "u"
+            let byMenu := (cut.feed { event := .menu "undo", stamp := 0 }).1
+            evilShown cut != evilShown byKey && evilShown byMenu == evilShown byKey &&
+              (evilShown byKey).replace "|" "" == "abc" &&
+              evilSelection byMenu == evilSelection byKey },
+    { name :=
+        "a menu item naming a command the view's state's run table has an entry for runs that entry, with the report of the state it enters: t-enter in normal state leaves the view in visual-line, its selection of the line shape, at rest; one that gives up leaves the scheme at rest in normal state"
+      run :=
+        pure <|
+          match menuRunDriver "a|b\ncd" with
+          | none => false
+          | some driver =>
+            let initial := menuRunScheme.report menuRunScheme.init ⟨0⟩
+            let entered := (driver.feed { event := .menu "t-enter", stamp := 0 }).1
+            let failed := (driver.feed { event := .menu "t-fail", stamp := 0 }).1
+            let report := menuRunScheme.report entered.loop.input ⟨0⟩
+            report.shape == .line && report.selecting &&
+              menuRunScheme.report entered.loop.atRest ⟨0⟩ == report &&
+              (menuRunSelection entered).map (·.shape) == some .line &&
+              entered.loop.state.echo.isEmpty &&
+              failed.loop.state.echo == "t-fail: failed" &&
+              menuRunScheme.report failed.loop.input ⟨0⟩ == initial &&
+              menuRunScheme.report failed.loop.atRest ⟨0⟩ == initial &&
+              menuRunSelection failed == menuRunSelection driver },
+    { name := "a menu's minimise-window asks the frame to minimise"
+      run := pure (framed frameDriver [.menu "minimise-window"] == some (#[.minimise], false)) },
+    { name :=
+        "a menu runs config's command of its name in place of the compiled one, and a command only config registers"
+      run :=
+        let replaced :=
+          frameRegistry (commands :=
+            #[{ name := "minimise-window", action := .plain (Display.askFrame .enterFullscreen) }])
+        let greeting :=
+          frameRegistry (commands :=
+            #[{ name := "greet", action := .plain (Display.askFrame .leaveFullscreen) }])
+        pure
+          (framed (frameDriver replaced) [.menu "minimise-window"] ==
+              some (#[.enterFullscreen], false) &&
+            framed (frameDriver greeting) [.menu "greet"] == some (#[.leaveFullscreen], false)) },
+    { name :=
+        "a menu naming no command says no such command as an invocation does, and asks the frame nothing"
+      run :=
+        pure <|
+          match frameDriver with
+          | none => false
+          | some driver =>
+            let fed := (fedTo driver [.menu "nope"]).1
+            fed.loop.state.echo == "nope: no such command" && fed.model.display.asked.isEmpty },
+    { name :=
+        "on the compiled registry the published menu is the standard one with the chords bound to its commands: s-o, s-s, s-z, s-Z, s-x, s-c, s-v, s-a, s-m and C-s-f, and the system items' own"
+      run :=
+        pure
+          (menuShown frameRegistry == some (Menu.standard.withKeys compiledEquivalents) &&
+            ["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
+                  "clipboard-paste", "select-all", "minimise-window", "toggle-fullscreen",
+                  "nope"].all
+              fun name => frameRegistry.keyEquivalent? name == compiledEquivalents name) },
+    { name :=
+        "the published default menu's Edit menu is Undo, Redo, a separator, Cut, Copy, Paste, a separator and Select All, with the key equivalents s-z, s-Z (s-S-z), s-x, s-c, s-v and s-a"
+      run :=
+        let edit : Option Submenu :=
+          (menuShown frameRegistry).bind fun menu => menu.menus.find? (·.title == "Edit")
+        pure
+          (edit.map (·.items) ==
+            some
+              #[.item "Undo" (equivalent 'z') (.command "undo"),
+                .item "Redo" (equivalent 'Z') (.command "redo"), .separator,
+                .item "Cut" (equivalent 'x') (.command "clipboard-cut"),
+                .item "Copy" (equivalent 'c') (.command "clipboard-copy"),
+                .item "Paste" (equivalent 'v') (.command "clipboard-paste"), .separator,
+                .item "Select All" (equivalent 'a') (.command "select-all")]) },
+    { name := "after config binds toggle-fullscreen to M-s-f, Enter Full Screen shows M-s-f"
+      run :=
+        let rebound :=
+          frameRegistry #[{ keys := keys "M-s-f", command := FrameCommands.toggleFullscreenName }]
+        let shown := equivalent 'f' { alt := true, superKey := true }
+        pure
+          (rebound.keyEquivalent? "toggle-fullscreen" == shown &&
+            ((menuShown rebound).bind (keyShown · "toggle-fullscreen")) == some shown) },
+    { name :=
+        "an item whose command has no single chord with the system key shows none: s-o rebound by config to another command, only C-x C-f, only C-o"
+      run :=
+        let taken := frameRegistry #[{ keys := keys "s-o", command := "save-buffer" }]
+        let registries := [taken, openBoundTo "C-x C-f", openBoundTo "C-o"]
+        pure <|
+          registries.all fun registry =>
+            registry.keyEquivalent? "open-file" == none &&
+              ((menuShown registry).bind (keyShown · "open-file")) == some none },
+    { name :=
+        "a chord a system item shows is no command item's, as AppKit runs the system item: config's s-q, s-h or M-s-h alone to save-buffer shows none on Save, and beside the compiled s-s Save shows s-s"
+      run :=
+        let bound := fun text =>
+          ({} : Config.Registry).replaceBindings .config
+            #[{ keys := keys text, command := Files.saveName }]
+        let beside := frameRegistry #[{ keys := keys "s-q", command := Files.saveName }]
+        pure
+          (["s-q", "s-h", "M-s-h"].all
+              (fun text =>
+                ((menuShown (bound text)).bind (keyShown · Files.saveName)) == some none) &&
+            ((menuShown beside).bind (keyShown · Files.saveName)) == some (equivalent 's') &&
+            (menuShown beside).map (·.systemKeys) == some Menu.standard.systemKeys) }]
+
+/-- The registry of the clipboard command checks: the menu bar's compiled
+bindings, for the owner `compiled`, and `config` as config's bindings. -/
+def clipRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
+  (({} : Config.Registry).replaceBindings .compiled Menu.bindings).replaceBindings .config config
+
+/-- What a step of the clipboard command checks is handed: evil's commands
+and the minibuffer's, then `commands`, with the active keymaps and the menu
+bar `clipRegistry config` makes, as a host's are. -/
+def clipHanded (config : Array Config.KeyBinding := #[])
+    (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
+  let registry := clipRegistry config
+  { evilHanded Minibuffer.commands
+      commands with
+    maps := registry.activeMaps Vim.Default.scheme
+    menu := some (registry.menuOf Menu.standard) }
+
+/-- A driver of the clipboard command checks over the text and cursor
+`fixture` says, with the unnamed register holding `evilSentinel`, on the
+editor's models with the clipboard model `clipboard`, each step handed
+`handed`. -/
+def clipDriver (fixture : String) (clipboard : ClipboardModel := {})
+    (handed : Loop.Keys Vim.Default.scheme := clipHanded) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  (Loop.Driver.over handed (fun _ => none)
+      (do
+        return (← evilState contents head).setRegister Evil.unnamed evilSentinel)
+      { editorModel with clipboard }).toOption
+
+/-- `driver` once the command `name` was chosen: by pressing the key string
+`chord` when `byKey`, and from its menu item otherwise. -/
+def clipRan (byKey : Bool) (name chord : String) (driver : EvilDriver) : EvilDriver :=
+  if byKey then evilFed driver chord else (driver.feed { event := .menu name, stamp := 0 }).1
+
+/-- What the scheme reports of the focused view of `driver`. -/
+def clipReport (driver : EvilDriver) : InputScheme.Report :=
+  Vim.Default.scheme.report driver.loop.input driver.loop.state.frame.focused
+
+/-- The keys `typed` pressed from the text and cursor `fixture` says, on the
+clipboard model `clipboard`, and then the command `name` chosen by `chord`
+when `byKey` and by its menu item otherwise: what they left, the text the
+clipboard model then holds, and the scheme's report of the focused
+view. -/
+def clipLeft (byKey : Bool) (name chord fixture typed : String) (clipboard : ClipboardModel) :
+    Option (EvilEdited × Option String × InputScheme.Report) :=
+  (clipDriver fixture clipboard).map fun driver =>
+    let after := clipRan byKey name chord (evilFed driver typed)
+    (evilLeft after, after.model.clipboard.held, clipReport after)
+
+/-- A prompt opened over `a|b` and `A` typed in it, on the clipboard model
+`clipboard`, and then the command `name` chosen by `chord` when `byKey` and
+by its menu item otherwise: what the minibuffer's view shows, what the asking
+view shows, what the echo area says, the text the clipboard model holds,
+and whether the prompt is still open. -/
+def clipInPrompt (byKey : Bool) (name chord : String) (clipboard : ClipboardModel := {}) :
+    Option (String × String × String × Option String × Bool) :=
+  let ask : Dispatched := fun _ => do
+    discard <| prompt "Name: " { command := "greet" }
+    return none
+  (clipDriver "a|b" clipboard (clipHanded (commands := [("ask", ask)]))).map fun driver =>
+    let (asking, _) := driver.stepped (driver.loop.runNamed driver.handed "ask")
+    let after := clipRan byKey name chord (evilFed asking "A")
+    (evilShown after ⟨1⟩, evilShown after, after.loop.state.echo, after.model.clipboard.held,
+      after.loop.state.prompt.isSome)
+
+/-- Whether `holds` of a command chosen by its chord and of one chosen by
+its menu item. -/
+def bothWays (holds : Bool → Bool) : Bool :=
+  holds true && holds false
+
+/-- What a command that gave up with `reason` says in the echo area, after
+its name. -/
+def gaveUpSaying (name reason : String) : String :=
+  s!"{name}: {reason}"
+
+/-- The checks of the Edit menu's clipboard commands
+(`Editor/Evil/Clipboard.lean`): Cut, Copy, Paste and Select All, each by
+its chord and by its menu item, in each Vim state, on the loop's driver over
+the editor's models with the registry's active keymaps and the clipboard
+model. -/
+def clipboardCommandChecks : List Check :=
+  [{  name :=
+        "Copy in visual over part of a line leaves that text in the clipboard model and the view in normal state; in visual-line it leaves the lines, line-wise; in normal state it gives up with nothingSelected in the echo area and the clipboard model holds what it held"
+      run :=
+        pure <|
+          !Evil.nothingSelected.isEmpty &&
+            bothWays fun byKey =>
+              let copy := clipLeft byKey Evil.copyName "s-c"
+              let normal := vimDefaultReport ""
+              copy "foo |bar baz" "v l l" { held := some "before" } ==
+                  some (⟨"foo |bar baz", charwise "bar", false, ""⟩, some "bar", normal) &&
+                copy "ab\nc|d\nef" "V" { held := some "before" } ==
+                  some (⟨"ab\n|cd\nef", linewise "cd\n", false, ""⟩, some "cd\n", normal) &&
+                copy "foo |bar" "" { held := some "before" } ==
+                  some
+                    (⟨"foo |bar", asItWas, false, gaveUpSaying Evil.copyName Evil.nothingSelected⟩,
+                      some "before", normal) },
+    { name :=
+        "Cut in visual and visual-line removes the selection, leaves it in the clipboard model, and one u gives back the text; it is one step of the history; in normal state it gives up with nothingSelected and the buffer and the clipboard model are as they were; with a clipboard not available it deletes, keeps the text in the unnamed register and says so"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let cut := clipLeft byKey Evil.cutName "s-x"
+            let normal := vimDefaultReport ""
+            let undone (fixture typed : String) : Option (Option (Nat × Bool) × Option String) :=
+              (clipDriver fixture).map fun driver =>
+                let ran := clipRan byKey Evil.cutName "s-x" (evilFed driver typed)
+                (evilHistory ran, evilText (evilFed ran "u"))
+            cut "foo |bar baz" "v l l" { held := some "before" } ==
+                some (⟨"foo | baz", charwise "bar", false, ""⟩, some "bar", normal) &&
+              cut "ab\nc|d\nef" "V" { held := some "before" } ==
+                some (⟨"ab\n|ef", linewise "cd\n", false, ""⟩, some "cd\n", normal) &&
+              undone "foo |bar baz" "v l l" == some (some (2, false), some "foo bar baz") &&
+              undone "ab\nc|d\nef" "V" == some (some (2, false), some "ab\ncd\nef") &&
+              cut "foo |bar" "" { held := some "before" } ==
+                some
+                  (⟨"foo |bar", asItWas, false, gaveUpSaying Evil.cutName Evil.nothingSelected⟩,
+                    some "before", normal) &&
+              cut "foo |bar baz" "v l l" { available := false } ==
+                some
+                  (⟨"foo | baz", charwise "bar", false, Evil.clipboardUnavailable⟩, none, normal) },
+    { name :=
+        "Cut in visual replaces the last change, as \" + d does: after an x, a . after it leaves what a . after \" + d leaves (a change over a selection, not repeated), not a second x; a . after a Copy repeats the x, as a . after \" + y does"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let repeated (chord name : String) : Option (EvilEdited × Option String) :=
+              (clipDriver "foo |bar bar bar").map fun driver =>
+                let after := evilFed (clipRan byKey name chord (evilFed driver "x v l l")) "."
+                (evilLeft after, after.model.clipboard.held)
+            let cut := repeated "s-x" Evil.cutName
+            let copied := repeated "s-c" Evil.copyName
+            cut.isSome && cut == evilClipped "foo |bar bar bar" "x v l l \" + d ." &&
+              (cut.map fun left =>
+                  (left.1.shown, left.1.echo.endsWith (Evil.notRepeated Evil.overSelection))) ==
+                some ("foo |bar bar", true) &&
+              copied.isSome &&
+              copied == evilClipped "foo |bar bar bar" "x v l l \" + y ." &&
+              (copied.map (·.1.shown)) == some "foo |r bar bar" },
+    { name :=
+        "Paste called with a report that is not exclusive, in no state whose run table has an entry for it, puts the clipboard's text before the cursor, as \" + P does, and leaves the clipboard model as it was"
+      run :=
+        pure <|
+          let pasting : Dispatched := fun call => do
+            Evil.paste { call with report := { call.report with shape := .inclusive } }
+            return none
+          let pasted (fixture : String) (held : String) : Option (EvilEdited × Option String) :=
+            (clipDriver fixture { held := some held }
+                  (clipHanded (commands := [("t-paste", pasting)]))).map
+              fun driver =>
+              let (after, _) := driver.stepped (driver.loop.runNamed driver.handed "t-paste")
+              (evilLeft after, after.model.clipboard.held)
+          pasted "a|b" "XY" == evilClipped "a|b" "\" + P" { held := some "XY" } &&
+            (pasted "a|b" "XY").map (fun left => (left.1.shown, left.2)) ==
+              some ("aX|Yb", some "XY") &&
+            (pasted "a|b\n" "cd\n").map (fun left => (left.1.shown, left.2)) ==
+              some ("|cd\nab\n", some "cd\n") },
+    { name :=
+        "Paste puts the clipboard's text before the cursor in normal state (as \" + P), in place of the selection in visual and visual-line, and at the bar as typed text in insert state and in the minibuffer"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let paste := clipLeft byKey Evil.pasteName "s-v"
+            let held : ClipboardModel := { held := some "XY" }
+            (paste "a|b" "" held).map (·.1) == (evilClipped "a|b" "\" + P" held).map (·.1) &&
+              (paste "a|b" "" held).map (·.1.shown) == some "aX|Yb" &&
+              (paste "a|bcd" "v l" held).map (·.1.shown) == some "aX|Yd" &&
+              (paste "ab\nc|d\nef" "V" held).map (·.1.shown) == some "ab\n|XY\nef" &&
+              paste "a|b" "i" held ==
+                some (⟨"aXY|b", asItWas, true, ""⟩, some "XY", vimDefaultReport "i") &&
+              clipInPrompt byKey Evil.pasteName "s-v" held ==
+                some ("AXY|", "a|b", "", some "XY", true) },
+    { name :=
+        "after a Paste in each of normal, visual, visual-line, insert and minibuffer the clipboard model holds what it held before, and in the visual states the replaced text is in the unnamed register and not the clipboard, and the view is in normal state"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let paste := clipLeft byKey Evil.pasteName "s-v"
+            let held : ClipboardModel := { held := some "XY" }
+            let normal := vimDefaultReport ""
+            (paste "a|b" "" held).map (fun left => (left.1.register, left.2)) ==
+                some (asItWas, (some "XY", normal)) &&
+              (paste "a|bcd" "v l" held).map (fun left => (left.1.register, left.2)) ==
+                some (charwise "bc", (some "XY", normal)) &&
+              (paste "ab\nc|d\nef" "V" held).map (fun left => (left.1.register, left.2)) ==
+                some (linewise "cd\n", (some "XY", normal)) &&
+              (paste "a|b" "i" held).map (·.2.1) == some (some "XY") &&
+              (clipInPrompt byKey Evil.pasteName "s-v" held).map (·.2.2.2.1) == some (some "XY") },
+    { name :=
+        "Paste with a clipboard model holding no text gives up with nothingToPut, and with one not available with clipboardUnavailable, in normal, a visual state and insert state, and leaves the buffer as it was"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let refused (fixture typed shown : String) (clipboard : ClipboardModel)
+              (reason : String) : Bool :=
+              match clipLeft byKey Evil.pasteName "s-v" fixture typed clipboard with
+              | some (left, _, _) =>
+                left.shown == shown && left.register == none && left.echo.endsWith reason &&
+                  (left.echo.splitOn "refused").length == 1
+              | none => false
+            [("a|b", "", "a|b"), ("a|bcd", "v l", "ab|cd"), ("a|b", "i", "a|b")].all
+              fun (fixture, typed, shown) =>
+              refused fixture typed shown {} Evil.nothingToPut &&
+                refused fixture typed shown { available := false } Evil.clipboardUnavailable },
+    { name :=
+        "Select All from normal and from insert state leaves the view in visual-line with one range from offset 0 to the first non-blank of the last line, the cursor on the last line; from visual too"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let all (fixture typed : String) :
+              Option (Option Selection × InputScheme.Report × String) :=
+              (clipDriver fixture).map fun driver =>
+                let after := clipRan byKey Evil.selectAllName "s-a" (evilFed driver typed)
+                (evilSelection after, clipReport after, after.loop.state.echo)
+            let lines (anchor head : Nat) :
+              Option (Option Selection × InputScheme.Report × String) :=
+              some (some { ranges := #[⟨anchor, head⟩], shape := .line }, vimDefaultReport "V", "")
+            all "a|b\ncd\n  ef" "" == lines 0 8 && all "a|b\ncd\n  ef" "i" == lines 0 8 &&
+              all "ab\nc|d\n" "" == lines 0 3 &&
+              all "a|b\ncd" "v" == lines 0 3 &&
+              all "a|b\ncd" "V" == lines 0 3 },
+    { name :=
+        "s-x, s-c, s-v and s-a run the four commands in normal, insert, visual, visual-line and the minibuffer (each leaves what that command leaves there, or its refusal names it), and config's binding of s-c to another command runs that command instead, with the clipboard model as it was"
+      run :=
+        pure <|
+          let greet : Dispatched := fun _ => do
+            message "hello"
+            return none
+          let rebound := clipHanded #[{ keys := keys "s-c", command := "greet" }] [("greet", greet)]
+          let overridden :=
+            (clipDriver "foo |bar baz" { held := some "before" } rebound).map fun driver =>
+              let after := evilFed driver "v l l s-c"
+              (evilLeft after, after.model.clipboard.held, clipReport after)
+          overridden ==
+              some
+                (⟨"foo ba|r baz", asItWas, false, "hello"⟩, some "before", vimDefaultReport "v") &&
+            bothWays fun byKey =>
+              let insertRefused (name chord reason : String) : Bool :=
+                (clipLeft byKey name chord "a|b" "i" { held := some "before" }).map
+                    (fun left => (left.1.shown, left.1.echo, left.2.1)) ==
+                  some ("a|b", gaveUpSaying name reason, some "before")
+              insertRefused Evil.copyName "s-c" Evil.nothingSelected &&
+                insertRefused Evil.cutName "s-x" Evil.nothingSelected &&
+                clipInPrompt byKey Evil.copyName "s-c" { held := some "before" } ==
+                  some
+                    ("A|", "a|b", gaveUpSaying Evil.copyName Evil.nothingSelected, some "before",
+                      true) &&
+                clipInPrompt byKey Evil.cutName "s-x" { held := some "before" } ==
+                  some
+                    ("A|", "a|b", gaveUpSaying Evil.cutName Evil.nothingSelected, some "before",
+                      true) &&
+                clipInPrompt byKey Evil.selectAllName "s-a" ==
+                  some
+                    ("A|", "a|b", gaveUpSaying Evil.selectAllName Evil.noLineSelection, none,
+                      true) &&
+                (clipLeft byKey Evil.copyName "s-c" "a|b\ncd" "V j" {}).map (·.2.1) ==
+                  some (some "ab\ncd\n") },
+    { name :=
+        "a Cut or Copy refused (nothing selected) or stopped by the interrupt before any one of its requests leaves the clipboard model as it was, and a refused or stopped Cut leaves the buffer as it was"
+      run :=
+        pure <|
+          let swept (byKey : Bool) (name chord : String) (whole : EvilEdited × Option String) :
+            Bool :=
+            match clipDriver "foo |bar baz" { held := some "before" } with
+            | none => false
+            | some driver =>
+              let selected := evilFed driver "v l l"
+              let ran (asks : Option Nat) : EvilEdited × Option String :=
+                let after :=
+                  clipRan byKey name chord
+                    { selected with
+                      model :=
+                        { selected.model with
+                          watch := { selected.model.watch with arrivesAfter := asks } } }
+                (evilLeft after, after.model.clipboard.held)
+              let stopped : EvilEdited × Option String :=
+                (⟨"foo ba|r baz", asItWas, false, s!"{Vim.operateCommand}: interrupted"⟩,
+                  some "before")
+              let runs := (List.range 80).map fun asks => ran (some asks)
+              ran none == whole && runs.all (fun run => run == stopped || run == whole) &&
+                (runs.filter (· == stopped)).length > 4 &&
+                runs.getLast? == some whole
+          swept true Evil.cutName "s-x" (⟨"foo | baz", charwise "bar", false, ""⟩, some "bar") &&
+            swept false Evil.copyName "s-c"
+              (⟨"foo |bar baz", charwise "bar", false, ""⟩, some "bar") &&
+            bothWays fun byKey =>
+              [(Evil.cutName, "s-x"), (Evil.copyName, "s-c")].all fun (name, chord) =>
+                (clipLeft byKey name chord "foo |bar" "" { held := some "before" }).map
+                    (fun left => (left.1.shown, left.2.1)) ==
+                  some ("foo |bar", some "before") }]
 
 /-- What the watch model answers a start of `target` coalesced as
 `coalescing`, made at `now`. -/
@@ -21820,6 +22839,476 @@ def fileWatchRunnerChecks : List Check :=
         let allEnded ← eventually (return (← watches.watching) == 0)
         return annasEnded && one && allEnded }]
 
+/-! ## A child's environment, looked up for its directory -/
+
+/-- What `mise env --json` prints, in its layout: one name a line, indented
+two spaces, with a `PATH` of 400 characters. -/
+def miseOutput : String :=
+  let path := String.ofList (List.replicate 400 'p')
+  "{\n  \"PATH\": \"" ++ path ++
+    "\",\n  \"MACOSX_DEPLOYMENT_TARGET\": \"27.2\",\n  \"RUST\": \"1.98\"\n}\n"
+
+/-- Whether `parseVariables` reads `bytes` as `expected`. -/
+def readsVariables (bytes : ByteArray) (expected : Array (String × String)) : Bool :=
+  match Process.parseVariables bytes with
+  | .ok variables => variables == expected
+  | .error _ => false
+
+/-- Whether `parseVariables` refuses `text` with `why`. -/
+def refusesVariables (text : String) (why : String) : Bool :=
+  match Process.parseVariables text.toUTF8 with
+  | .error said => said == why
+  | .ok _ => false
+
+/-- An entry of a lookup that failed with `failure`, its config files' stamps
+`stamps`. -/
+def failedEntry (failure : Process.Failure) (stamps : Array (Option File.Stamp) := #[]) :
+    Process.Entry :=
+  { stamps, found := .failed failure }
+
+/-- The checks of the pure part of a child's environment
+(`Editor/Process/Environment.lean`): the parser of what mise prints, how the
+lookup's variables and a command's own environment combine, the config files
+whose stamps keep an entry, the shared state's answers and the messages. -/
+def processEnvironmentChecks : List Check :=
+  [{  name :=
+        "parseVariables reads mise's layout, a multi-line object with a PATH of 400 characters"
+      run :=
+        pure
+          (readsVariables miseOutput.toUTF8
+            #[("PATH", String.ofList (List.replicate 400 'p')),
+              ("MACOSX_DEPLOYMENT_TARGET", "27.2"), ("RUST", "1.98")]) },
+    { name :=
+        "parseVariables reads every escape, a surrogate pair among them, and the empty object; the last of a name that comes twice wins"
+      run :=
+        pure
+          (readsVariables
+              "{\"A\":\"\\\" \\\\ \\/ \\b \\f \\n \\r \\t \\u00e9 \\ud83d\\ude00\",\"B\":\"1\",\"B\":\"2\"}".toUTF8
+              #[("A", "\" \\ / \x08 \x0c \n \r \t é 😀"), ("B", "2")] &&
+            readsVariables " { } ".toUTF8 #[]) },
+    { name :=
+        "parseVariables refuses a number, null, a nested object, an array, trailing text, bytes that are not UTF-8, a name holding =, an empty name and a NUL, each with its reason"
+      run :=
+        pure
+          (refusesVariables "{\"A\":1}" "a value is not a string" &&
+            refusesVariables "{\"A\":null}" "a value is not a string" &&
+            refusesVariables "{\"A\":{}}" "a value is not a string" &&
+            refusesVariables "[\"A\"]" "it is not an object" &&
+            refusesVariables "{\"A\":\"a\"} x" "there is more after the object" &&
+            (match Process.parseVariables ⟨#[0x7B, 0xFF, 0x7D]⟩ with
+            | .error why => why == "it is not UTF-8"
+            | .ok _ => false) &&
+            refusesVariables "{\"A=B\":\"a\"}" "the name A=B holds =" &&
+            refusesVariables "{\"\":\"a\"}" "a name is empty" &&
+            refusesVariables "{\"A\":\"a\\u0000\"}" "a string holds a NUL" &&
+            refusesVariables "{\"A\":\"a\nb\"}" "a string holds a control character" &&
+            refusesVariables "{\"A\":\"\\ud83d\"}"
+              "a high surrogate is not followed by a low one") },
+    { name :=
+        "a lookup's variables are set over the editor's, the command's own set wins over one of the same name, its unset removes one, and clear drops them all"
+      run :=
+        let variables := #[("PATH", "/m/bin"), ("A", "mise"), ("DROP", "x")]
+        pure
+          (Process.Environment.over variables {} == { set := variables } &&
+            Process.Environment.over variables { set := #[("A", "own")], unset := #["DROP"] } ==
+              { set := #[("PATH", "/m/bin"), ("A", "own")], unset := #["DROP"] } &&
+            Process.Environment.over variables { clear := true, set := #[("ONLY", "x")] } ==
+              { clear := true, set := #[("ONLY", "x")] }) },
+    { name := "configPaths of /p/d is mise's four config names in /p/d, then in /p, then in /"
+      run :=
+        let four (directory : String) : Array System.FilePath :=
+          #[s!"{directory}mise.toml", s!"{directory}.mise.toml", s!"{directory}.tool-versions",
+                s!"{directory}mise.local.toml"].map
+            System.FilePath.mk
+        pure
+          (Process.configPaths "/p/d" == four "/p/d/" ++ four "/p/" ++ four "/" &&
+            Process.configPaths "/p/d/" == Process.configPaths "/p/d") },
+    { name :=
+        "the shared state gives back the entry a record kept; a failure recorded says its message once, the same failure again says nothing, and with new stamps it says it again"
+      run :=
+        let state : Process.Environments := {}
+        let failure := Process.Failure.exited 1 "untrusted"
+        let first := failedEntry failure #[none]
+        let message := Process.failureMessage "/p/d" failure
+        let ((), state, said) := state.handle (.record "/p/d" first)
+        let (cached, state, quiet) := state.handle (.cached "/p/d")
+        let cached : Option Process.Entry := cached
+        let ((), state, again) := state.handle (.record "/p/d" first)
+        let ((), _, renewed) :=
+          state.handle (.record "/p/d" (failedEntry failure #[some ⟨1, 0, 3⟩]))
+        let variables : Process.Entry := { stamps := #[], found := .variables #[("A", "a")] }
+        let ((), _, found) := ({} : Process.Environments).handle (.record "/p/e" variables)
+        pure
+          (said == some message && cached == some first && quiet.isNone && again.isNone &&
+            renewed == some message &&
+            found.isNone) },
+    { name := "install drops what was resolved and every entry, and keeps the mode and the limit"
+      run :=
+        let state : Process.Environments :=
+          { host := .window (some "/u"), limit := 7, resolved := some (.mise "/m")
+            entries := #[("/p", failedEntry (.signalled 9))] }
+        let ((), after, said) := state.handle (.install .inherited)
+        pure
+          (after ==
+              { setting := .inherited, host := .window (some "/u"), limit := 7, resolved := none
+                entries := #[] } &&
+            said.isNone) },
+    { name := "the policy is the setting, the mode, what was resolved and the limit"
+      run :=
+        let state : Process.Environments := { setting := .mise none, resolved := some .inherited }
+        let (policy, after, said) := state.handle .policy
+        let policy : Process.Policy := policy
+        pure
+          (policy ==
+              { setting := .mise none, host := .headless, resolved := some .inherited
+                limit := 5000 } &&
+            after == state &&
+            said.isNone) },
+    { name := "each failure's message has its own words"
+      run :=
+        let say := Process.failureMessage "/p/d"
+        let tail := "; its children get the editor's environment"
+        pure
+          (say (.exited 1 "not trusted") ==
+              "environment: /p/d: mise exited with status 1: not trusted" ++ tail &&
+            say (.exited 2 "") == "environment: /p/d: mise exited with status 2" ++ tail &&
+            say (.signalled 9) == "environment: /p/d: mise was ended by signal 9" ++ tail &&
+            say (.unparsable "it is not an object") ==
+              "environment: /p/d: mise's output is not a JSON object of strings: it is not an object" ++
+                tail &&
+            say (.timedOut 5000) ==
+              "environment: /p/d: mise did not finish within 5000 ms and was killed" ++ tail &&
+            say (.refused (.denied "Permission denied")) ==
+              "environment: /p/d: mise could not be run: the system does not allow it: Permission denied" ++
+                tail &&
+            say (.missing (Process.miseCandidates (some "/u"))) ==
+              "environment: /p/d: mise is not at /u/.local/bin/mise, /opt/homebrew/bin/mise or /usr/local/bin/mise" ++
+                tail) },
+    { name :=
+        "what a lookup's run came to: variables for status 0 and an object, and else the failure, with the first line of standard error"
+      run :=
+        let ran (exit : Process.Exit) (stdout stderr : String) : Except ProcessError Process.Ran :=
+          .ok { exit, stdout := stdout.toUTF8, stderr := stderr.toUTF8 }
+        pure
+          (Process.foundOf (ran (.code 0) "{\"A\":\"a\"}" "") == .variables #[("A", "a")] &&
+            Process.foundOf (ran (.code 1) "" "first\nsecond\n") == .failed (.exited 1 "first") &&
+            Process.foundOf (ran (.signal 9) "" "") == .failed (.signalled 9) &&
+            Process.foundOf (ran (.code 0) "[1]" "") ==
+              .failed (.unparsable "it is not an object") &&
+            Process.foundOf (.error .noSuchProcess) == .failed (.refused .noSuchProcess) &&
+            Process.foundOf (.error (.timedOut 5000)) == .failed (.timedOut 5000)) }]
+
+/-- The requests `job` makes when it runs against the job port's model from
+`model`, in order. -/
+def requestsOf {α : Type} (job : JobM α) (model : JobModel) : Array JobRequest :=
+  go 10000 job.run model #[]
+where
+  /-- The requests of `program` from `model`, with `fuel` steps at most. -/
+  go : Nat → Program jobPort (Except String α) → JobModel → Array JobRequest → Array JobRequest
+    | 0, _, _, seen => seen
+    | _, .done _, _, seen => seen
+    | fuel + 1, .step request next, model, seen =>
+      let (reply, after) := JobModel.handle request model
+      go fuel (next reply) after (seen.push request)
+
+/-- A run that ends with the status 0 and prints `stdout`. -/
+def printed (stdout : String) : Except ProcessError Process.Ran :=
+  .ok { exit := .code 0, stdout := stdout.toUTF8, stderr := .empty }
+
+/-- The command the lookup checks start in `/p/d`: a bare `lake`, with a
+variable of its own set and one unset. -/
+def lakeBuild : Process.Command :=
+  { program := "lake", arguments := #["build"]
+    environment := { set := #[("A", "own")], unset := #["DROP"] }, directory := "/p/d" }
+
+/-- What the lookup prints for `/p/d`: a `PATH`, a variable the command sets
+too, one it unsets, and one of its own. -/
+def lookupJson : String :=
+  "{\"PATH\":\"/m/bin:/usr/bin\",\"A\":\"mise\",\"DROP\":\"x\",\"B\":\"b\"}"
+
+/-- `command` with the lookup's variables of `lookupJson` set under its own. -/
+def mergedOf (command : Process.Command) : Process.Command :=
+  { command with
+    environment :=
+      { set := #[("PATH", "/m/bin:/usr/bin"), ("B", "b"), ("A", "own")], unset := #["DROP"] } }
+
+/-- `command` in `directory`. -/
+def movedTo (command : Process.Command) (directory : System.FilePath) : Process.Command :=
+  { command with directory }
+
+/-- A file model holding each of `paths`, written in that order. -/
+def filesAt (paths : List System.FilePath) : FileModel :=
+  paths.foldl (fun model path => model.withFile path "x".toUTF8) {}
+
+/-- `model` with the file at `path` gone. -/
+def withoutFile (model : FileModel) (path : System.FilePath) : FileModel :=
+  { model with files := model.files.filter (·.path != path) }
+
+/-- Whether `requests` read the stamp of any of `paths`. -/
+def stampsAny (requests : Array JobRequest) (paths : List System.FilePath) : Bool :=
+  requests.any fun request =>
+    match request with
+    | .file (.stamp path) => paths.contains path
+    | _ => false
+
+/-- The job model the lookup checks start from: the files `files`, the
+scripts of `mise` at `executable` printing `lookupJson` in each of
+`directories` and of each command merged there, and the environments with
+`setting` and `host`. -/
+def lookupModel (setting : Process.Setting) (host : Process.Host) (files : FileModel)
+    (executable : System.FilePath := "/opt/mise") (directories : List System.FilePath := ["/p/d"])
+    (reply : Except ProcessError Process.Ran := printed lookupJson) (takes : Nat := 0) : JobModel :=
+  let scripts : Array Process.Script :=
+    directories.toArray.flatMap fun directory =>
+      #[{ command := Process.lookupCommand executable directory, reply, takes },
+        { command := mergedOf (movedTo lakeBuild directory), reply := printed "built" },
+        { command := movedTo lakeBuild directory, reply := printed "built inherited" }]
+  { files, processes := { scripts }, environments := { setting, host } }
+
+/-- A run of `command` that the model answers. -/
+def runsOn (command : Process.Command) : JobM Bool := do
+  return (← Process.run command 1000) matches .ok _
+
+/-- Runs `job` on the model, and gives the model after it. -/
+def after {α : Type} (job : JobM α) (model : JobModel) : JobModel :=
+  (job.runModel model).2
+
+/-- The checks of a child's environment on the models (AC 1 to 5 of
+`docs/design/concurrency.md`, "A child's environment, as built"): each runs
+jobs with `JobM.runModel` on one `JobModel`, carried from job to job. -/
+def environmentLookupChecks : List Check :=
+  let candidates := ["/opt/homebrew/bin/mise", "/usr/local/bin/mise"].map System.FilePath.mk
+  [{  name :=
+        "auto in the window mode runs the first candidate that exists: Homebrew's, with nothing under the home directory, and the home directory's once it is there"
+      run :=
+        let homebrew :=
+          lookupModel .auto (.window (some "/u")) (filesAt candidates) "/opt/homebrew/bin/mise"
+        let home :=
+          lookupModel .auto (.window (some "/u")) (filesAt ("/u/.local/bin/mise" :: candidates))
+            "/u/.local/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) homebrew).processes.started ==
+              #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            (after (runsOn lakeBuild) home).processes.started ==
+              #[Process.lookupCommand "/u/.local/bin/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "auto in the window mode keeps what it resolved until a reload: with Homebrew's mise gone, a start in another directory still runs it and reads no candidate's stamp, and after install the next start resolves again"
+      run :=
+        let all : List System.FilePath := "/u/.local/bin/mise" :: candidates
+        let model :=
+          lookupModel .auto (.window (some "/u")) (filesAt candidates) "/opt/homebrew/bin/mise"
+            (directories := ["/p/d", "/p/e"])
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                scripts :=
+                  model.processes.scripts.push
+                    { command := Process.lookupCommand "/usr/local/bin/mise" "/p/d"
+                      reply := printed lookupJson } } }
+        let inE := movedTo lakeBuild "/p/e"
+        let once := after (runsOn lakeBuild) model
+        let gone := { once with files := withoutFile once.files "/opt/homebrew/bin/mise" }
+        let second := after (runsOn inE) gone
+        let installed := { second with environments := second.environments.install .auto }
+        let third := after (runsOn lakeBuild) installed
+        pure
+          (second.processes.started ==
+              #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild,
+                Process.lookupCommand "/opt/homebrew/bin/mise" "/p/e", mergedOf inE] &&
+            !stampsAny (requestsOf (runsOn inE) gone) all &&
+            stampsAny (requestsOf (runsOn lakeBuild) installed) all &&
+            third.processes.started ==
+              second.processes.started ++
+                #[Process.lookupCommand "/usr/local/bin/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "mise with no path runs the first candidate that exists, in the headless mode and in the window mode"
+      run :=
+        let headless :=
+          lookupModel (.mise none) .headless (filesAt candidates) "/opt/homebrew/bin/mise"
+        let window :=
+          lookupModel (.mise none) (.window (some "/u"))
+            (filesAt ("/u/.local/bin/mise" :: candidates)) "/u/.local/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) headless).processes.started ==
+              #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            (after (runsOn lakeBuild) window).processes.started ==
+              #[Process.lookupCommand "/u/.local/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            (after (runsOn lakeBuild) headless).reported.isEmpty) },
+    { name :=
+        "auto in the window mode with none of the candidates starts the child as it would have"
+      run :=
+        pure
+          ((after (runsOn lakeBuild)
+                (lookupModel .auto (.window (some "/u")) {})).processes.started ==
+            #[lakeBuild]) },
+    { name := "auto in the headless mode starts the child as it would have and reads no stamp"
+      run :=
+        let model :=
+          lookupModel .auto .headless (filesAt ("/u/.local/bin/mise" :: candidates))
+            "/opt/homebrew/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) model).processes.started == #[lakeBuild] &&
+            !(requestsOf (runsOn lakeBuild) model).any fun request =>
+                request matches .file (.stamp _)) },
+    { name :=
+        "with mise at a path, a run first runs mise env --json in its directory, then the command with the lookup's variables under its own: the bare name keeps its name and gets the lookup's PATH"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {}
+        pure
+          ((after (runsOn lakeBuild) model).processes.started ==
+            #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
+    { name := "with mise at a path, a streaming start gets the lookup's variables the same way"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {}
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                streams :=
+                  #[{ command := mergedOf lakeBuild, steps := #[.write .out "built\n".toUTF8] }] } }
+        let starts : JobM Bool := do
+          return (← Process.start lakeBuild { bound := 64 }) matches .ok _
+        pure
+          ((starts.runModel model).1 == .finished true &&
+            (after starts model).processes.started ==
+              #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "a second start in the directory runs no lookup; after mise.toml there or a parent's .tool-versions is rewritten, or a config file appears, the next one looks up again"
+      run :=
+        let model :=
+          lookupModel (.mise (some "/opt/mise")) .headless
+            (filesAt ["/p/d/mise.toml", "/p/.tool-versions"])
+        let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        let rewritten :=
+          after (runsOn lakeBuild)
+            { twice with files := twice.files.withFile "/p/d/mise.toml" "y".toUTF8 }
+        let parent :=
+          after (runsOn lakeBuild)
+            { rewritten with files := rewritten.files.withFile "/p/.tool-versions" "y".toUTF8 }
+        let appeared :=
+          after (runsOn lakeBuild)
+            { parent with files := parent.files.withFile "/.mise.toml" "y".toUTF8 }
+        let merged := mergedOf lakeBuild
+        pure
+          (once.processes.started == #[lookup, merged] &&
+            twice.processes.started == #[lookup, merged, merged] &&
+            rewritten.processes.started == #[lookup, merged, merged, lookup, merged] &&
+            parent.processes.started == #[lookup, merged, merged, lookup, merged, lookup, merged] &&
+            appeared.processes.started ==
+              #[lookup, merged, merged, lookup, merged, lookup, merged, lookup, merged]) },
+    { name :=
+        "a start in another directory runs its own lookup, and a reload's install drops every entry"
+      run :=
+        let model :=
+          lookupModel (.mise (some "/opt/mise")) .headless {} (directories := ["/p/d", "/p/e"])
+        let inD := after (runsOn lakeBuild) model
+        let inE := after (runsOn (movedTo lakeBuild "/p/e")) inD
+        let installed :=
+          { inE with environments := inE.environments.install (.mise (some "/opt/mise")) }
+        let again := after (runsOn lakeBuild) installed
+        pure
+          (inE.processes.started ==
+              #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild,
+                Process.lookupCommand "/opt/mise" "/p/e", mergedOf (movedTo lakeBuild "/p/e")] &&
+            again.processes.started ==
+              inE.processes.started ++
+                #[Process.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "a lookup that exits non-zero starts the child inherited and reports once for the directory; a second start looks up nothing and says nothing"
+      run :=
+        let model :=
+          lookupModel (.mise (some "/opt/mise")) .headless {} (reply :=
+            .ok { exit := .code 1, stdout := .empty, stderr := "not trusted\n".toUTF8 })
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        pure
+          (once.processes.started.back? == some lakeBuild &&
+            once.reported == #[Process.failureMessage "/p/d" (.exited 1 "not trusted")] &&
+            twice.processes.started == once.processes.started.push lakeBuild &&
+            twice.reported == once.reported) },
+    { name :=
+        "a lookup whose output is not a JSON object of strings starts the child inherited and reports once for the directory"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {} (reply := printed "[1]")
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        pure
+          (once.processes.started.back? == some lakeBuild &&
+            once.reported == #[Process.failureMessage "/p/d" (.unparsable "it is not an object")] &&
+            twice.processes.started == once.processes.started.push lakeBuild &&
+            twice.reported == once.reported) },
+    { name :=
+        "a lookup that outlives the default limit of 5000 ms is killed at its start plus the limit, the child starts inherited, and the directory is reported once"
+      run :=
+        let model :=
+          { lookupModel (.mise (some "/opt/mise")) .headless {} (takes := 6000) with now := 100 }
+        let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        pure
+          (once.processes.started == #[lookup, lakeBuild] && once.processes.killed == #[lookup] &&
+            once.now == 5100 &&
+            once.reported == #[Process.failureMessage "/p/d" (.timedOut 5000)] &&
+            twice.processes.started == #[lookup, lakeBuild, lakeBuild] &&
+            twice.reported == once.reported) },
+    { name :=
+        "with the inherited setting, a run and a start start their command exactly, read no stamp, and make only the policy request beyond the process request"
+      run :=
+        let model :=
+          lookupModel .inherited (.window (some "/u"))
+            (filesAt ("/u/.local/bin/mise" :: candidates))
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                streams := #[{ command := lakeBuild, steps := #[.write .out "built\n".toUTF8] }] } }
+        let starts : JobM Bool := do
+          return (← Process.start lakeBuild { bound := 64 }) matches .ok _
+        pure
+          ((after (runsOn lakeBuild) model).processes.started == #[lakeBuild] &&
+            (after starts model).processes.started == #[lakeBuild] &&
+            (after (runsOn lakeBuild) model).files == model.files &&
+            requestsOf (runsOn lakeBuild) model ==
+              #[.environment .policy, .process (.run lakeBuild 1000)]) },
+    { name :=
+        "a command that clears its environment runs no lookup, and a relative directory or program is refused as before, with no lookup"
+      run :=
+        let model := lookupModel (.mise (some "/opt/mise")) .headless {}
+        let cleared := { lakeBuild with environment := { clear := true } }
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                scripts :=
+                  model.processes.scripts.push { command := cleared, reply := printed "" } } }
+        let relative := movedTo lakeBuild "p/d"
+        let program := { lakeBuild with program := "bin/lake" }
+        let refused (command : Process.Command) (error : ProcessError) : Bool :=
+          match (Process.run command 1000).runModel model with
+          | (.finished (.error refusal), after) =>
+            refusal == error && after.processes.started.isEmpty
+          | _ => false
+        pure
+          ((after (runsOn cleared) model).processes.started == #[cleared] &&
+            refused relative .relativeDirectory &&
+            refused program .relativeProgram) },
+    { name :=
+        "mise with no path and none of the candidates reports mise is not at them once for each directory, and runs no lookup"
+      run :=
+        let model :=
+          lookupModel (.mise none) (.window (some "/u")) {} (directories := ["/p/d", "/p/e"])
+        let once := after (runsOn lakeBuild) model
+        let twice := after (runsOn lakeBuild) once
+        let other := after (runsOn (movedTo lakeBuild "/p/e")) twice
+        let missing := Process.Failure.missing (Process.miseCandidates (some "/u"))
+        pure
+          (other.processes.started == #[lakeBuild, lakeBuild, movedTo lakeBuild "/p/e"] &&
+            other.reported ==
+              #[Process.failureMessage "/p/d" missing, Process.failureMessage "/p/e" missing]) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -21832,6 +23321,8 @@ def checks : List Check :=
     ownerChecks ++
     fileRunnerChecks ++
     processChecks ++
+    processEnvironmentChecks ++
+    environmentLookupChecks ++
     fileWatchModelChecks ++
     fileWatchRunnerChecks ++
     setupChecks ++
@@ -21893,6 +23384,7 @@ def checks : List Check :=
     fileCommandChecks ++
     openFilesChecks ++
     dispatchQuitChecks ++
+    systemQuitChecks ++
     exChecks ++
     themeChecks ++
     appearanceChecks ++
@@ -21911,7 +23403,9 @@ def checks : List Check :=
     evilRepeatChecks ++
     viewChecks ++
     frameCommandChecks ++
-    titleChecks
+    titleChecks ++
+    menuChecks ++
+    clipboardCommandChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

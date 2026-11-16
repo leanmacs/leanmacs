@@ -50,7 +50,12 @@ the resize after it. What the loop does with them is `Editor/Loop.lean`'s.
 ## Where an addition goes
 
 Two roadmaps build on these events. The display pipeline owns producing them
-from winit in Rust; the command loop owns what Lean does with them.
+from winit in Rust; the command loop owns what Lean does with them. The
+macOS integration roadmap owns both sides of the system's quit
+(`quitRequested`): the application delegate that reports it, and the loop's
+`quit` that answers it; and both sides of a menu item chosen (`menu`): the
+menu bar's target that reports it, and the loop's invocation of its
+command.
 
 | Addition | Lean (command loop) | Rust (display pipeline) |
 |---|---|---|
@@ -339,6 +344,14 @@ inductive Event where
   /-- The system asked for these files to be opened, absolute, in its
   order. -/
   | openFiles (paths : List String)
+  /-- The system asked the program to quit: Command-Q, Quit from the Dock,
+  a logout, restart or shutdown. The editor puts it through its `quit`, and
+  answers the frame `keepRunning` when it does not quit. Not `quit`, which
+  is the queue's end. -/
+  | quitRequested
+  /-- A command item of the menu bar was chosen: the command of this name
+  runs, as an invocation no key yielded (`Editor/Menu.lean`). -/
+  | menu (command : String)
   /-- The queue has been quit: the loop pulling it must return. -/
   | quit
   deriving BEq, Repr

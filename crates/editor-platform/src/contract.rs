@@ -11,14 +11,20 @@
 //!   ([`Violation::FirstInputNotOpened`]).
 //! - **A close ends the run.** Once [`Platform::close`] has been called, from
 //!   a thread other than the one in [`Platform::run`], the run returns `Ok`
-//!   within a bound.
+//!   within a bound. The check asks the system for no quit, so its close
+//!   comes with none pending; a close with one pending may end the process
+//!   instead ([`Platform::close`]), which no check inside the process can
+//!   see. [`ScriptedPlatform`](crate::ScriptedPlatform) models it, and the
+//!   real adapter shows it in a process of its own.
 //! - **Nothing is reported once the run has returned.**
 //! - **A close with no run in progress is harmless**: before a run it does
 //!   not end the run that follows, and after one it reports nothing.
 //! - **A request with no run in progress is harmless**: one asked before a
 //!   run is not reported first by the run that follows, and one asked after
 //!   a run reports nothing. The check asks for a title, which is harmless
-//!   on a real desktop.
+//!   on a real desktop, to keep running ([`Request::KeepRunning`]), with
+//!   no quit pending, and for a menu bar with no menu in it
+//!   ([`Request::Menu`]).
 //! - **The drawer is told the window opened before anyone hears of it.**
 //!   The first thing a run tells its [`Drawer`] is [`Canvas::Opened`], and it
 //!   tells it before it reports its first input: whoever learns of the
@@ -74,7 +80,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{CannotOpen, Canvas, Drawer, Input, Platform, Report, Request, Resize, WindowOptions};
+use crate::{
+    CannotOpen, Canvas, Drawer, Input, Menu, Platform, Report, Request, Resize, WindowOptions,
+};
 
 /// A rule of the contract that a platform broke. It is `PartialEq` only, as
 /// [`Input`] is.
@@ -355,9 +363,14 @@ impl Check {
         // remembered, the run below would end before the close that is
         // meant for it, which the settling time below is there to see; were
         // the request, the run would report it before `Opened`. A title is
-        // asked because it is harmless on a real desktop.
+        // asked because it is harmless on a real desktop; keeping running
+        // is asked because it answers a quit, and none is pending; a menu
+        // bar with no menu in it, because it is the application's and
+        // would outlive a window that remembered it.
         platform.close();
         platform.request(Request::Title(STRAY_TITLE.into()));
+        platform.request(Request::KeepRunning);
+        platform.request(Request::Menu(Menu::default()));
 
         self.progress
             .update(|progress| progress.started = Some(Instant::now()));
@@ -383,6 +396,8 @@ impl Check {
         // Anything these make the platform report is reported after its run.
         platform.close();
         platform.request(Request::Title(STRAY_TITLE.into()));
+        platform.request(Request::KeepRunning);
+        platform.request(Request::Menu(Menu::default()));
         self.progress.update(|progress| progress.finished = true);
     }
 
@@ -1040,6 +1055,88 @@ mod tests {
         assert_eq!(
             check(
                 Arc::new(RemembersRequests::default()),
+                WindowOptions::default(),
+                GENEROUS
+            ),
+            Err(Violation::FirstInputNotOpened(Input::Resized(
+                ScriptedPlatform::SIZE
+            )))
+        );
+    }
+
+    /// A platform that remembers only a [`Request::KeepRunning`] made with
+    /// no run in progress, as an adapter would whose pending quit outlives
+    /// its window, and reports it as [`RemembersRequests`] does.
+    #[derive(Default)]
+    struct RemembersKeepRunning(RemembersRequests);
+
+    impl Platform for RemembersKeepRunning {
+        fn run(
+            &self,
+            options: WindowOptions,
+            report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
+            self.0.run(options, report, drawer)
+        }
+
+        fn close(&self) {
+            self.0.close();
+        }
+
+        fn request(&self, request: Request) {
+            if request == Request::KeepRunning {
+                self.0.request(request);
+            }
+        }
+    }
+
+    #[test]
+    fn a_platform_that_remembers_a_keep_running_asked_before_its_run_is_refused() {
+        assert_eq!(
+            check(
+                Arc::new(RemembersKeepRunning::default()),
+                WindowOptions::default(),
+                GENEROUS
+            ),
+            Err(Violation::FirstInputNotOpened(Input::Resized(
+                ScriptedPlatform::SIZE
+            )))
+        );
+    }
+
+    /// A platform that remembers only a [`Request::Menu`] made with no run
+    /// in progress, as an adapter would whose menu bar outlives its window,
+    /// and reports it as [`RemembersRequests`] does.
+    #[derive(Default)]
+    struct RemembersMenus(RemembersRequests);
+
+    impl Platform for RemembersMenus {
+        fn run(
+            &self,
+            options: WindowOptions,
+            report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
+            self.0.run(options, report, drawer)
+        }
+
+        fn close(&self) {
+            self.0.close();
+        }
+
+        fn request(&self, request: Request) {
+            if matches!(request, Request::Menu(_)) {
+                self.0.request(request);
+            }
+        }
+    }
+
+    #[test]
+    fn a_platform_that_remembers_a_menu_asked_before_its_run_is_refused() {
+        assert_eq!(
+            check(
+                Arc::new(RemembersMenus::default()),
                 WindowOptions::default(),
                 GENEROUS
             ),

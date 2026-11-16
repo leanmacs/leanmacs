@@ -43,6 +43,11 @@ here.
   running is recorded as killed, and every one is forgotten
   (`ProcessModel.endAll`): the model of the runner's cancelling them.
 
+- An environment request is answered by the environments the host's jobs
+  share (`JobModel.environments`, `Editor/Process/Environment.lean`), at
+  once, without moving the clock; a message one says for the echo area is
+  appended to `JobModel.reported`, as the host would say it.
+
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities
 only, and what needs equality is checked against the model alone
@@ -64,6 +69,11 @@ structure JobModel where
   processes : ProcessModel := {}
   /-- What the job's watches see (`Editor/FileWatch/Model.lean`). -/
   fileWatches : FileWatchModel := {}
+  /-- The environments the host's jobs share
+  (`Editor/Process/Environment.lean`). -/
+  environments : Process.Environments := {}
+  /-- What the environments said for the echo area, oldest first. -/
+  reported : Array String := #[]
   deriving DecidableEq
 
 namespace JobModel
@@ -80,7 +90,8 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     -- A run changes the disk as its command does, when it ends.
     let fileWatches :=
       match request with
-      | .run command _ => model.fileWatches.touch (model.fileWatches.effectsOf command) now
+      | .run command _ | .runWithin command _ _ =>
+        model.fileWatches.touch (model.fileWatches.effectsOf command) now
       | _ => model.fileWatches
     (reply,
       { model with
@@ -90,6 +101,11 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     (reply,
       { model with
         fileWatches, now })
+  | .environment request, model =>
+    let (reply, environments, said) := model.environments.handle request
+    (reply,
+      { model with
+        environments, reported := model.reported ++ said.toArray })
 
 /-- The model once the job has ended: every streaming child it started is
 ended (`ProcessModel.endAll`), as the runner cancels them, and every watch

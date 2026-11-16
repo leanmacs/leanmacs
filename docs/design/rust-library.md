@@ -238,8 +238,15 @@ job reads as it comes and whose standard input it writes to (phase 2;
   buffers) and a readout of whether it is held, for tests. In Lean a run is
   a request of the job port (`lean/Editor/Process.lean`, `Process.run`),
   with a pure model that scripts commands; cancelling a job withdraws its
-  wait, which cancels the run in the library and so kills the child. The
-  headless and window mains call the shutdown before they quit the queues.
+  wait, which cancels the run in the library and so kills the child. A run
+  with a time limit (`Process.runWithin`) is a run here: Lean's adapter
+  arms an alarm on the timer service and cancels the run when the alarm
+  comes first, so the library has no deadline of its own. Before a child
+  starts, Lean looks up the environment of its directory, a run of
+  `mise env --json` there with such a limit, and sets its variables under
+  the command's own ([concurrency.md](concurrency.md), "A child's
+  environment, as built"). The headless and window mains call the shutdown
+  before they quit the queues.
 
 ## Files and watching
 
@@ -344,15 +351,24 @@ file with a watch yet: a change is found when a save is asked for.
   over the file. It is checked when a save is asked for and at no other
   time. A change that keeps the size inside one tick of the file system's
   clock is not seen; a test pins that.
+- **A stamp alone** (`editor_text::file::stamp`): the stamp of the file at
+  a path, or none when nothing is there, from one stat, with nothing read;
+  a path that is not absolute is refused before the file system is asked,
+  and what is not a file is refused as not a file. It is how a caller tells
+  whether a file changed without loading it: Lean's lookup of a child's
+  environment keeps a directory's entry by the stamps of mise's config
+  files.
 - **The service** (`editor-ffi`, `src/files.rs`), in the timer service's
-  shape: a load or a save is started with the caller's id and returns at
-  once; **one thread works the requests in the order they were started**,
+  shape: a load, a save or a stamp is started with the caller's id and
+  returns at once; **one thread works the requests in the order they were started**,
   so two saves of one file land in order; one completion is queued; the
   result is then taken once by its id, as a status, a snapshot handle for a
   load, words and a detail string. Cancelling a request that waits means it
   is never worked; a save being worked reads the flag before it replaces
   the file. The statuses: done, not absolute, not found, not a file,
-  denied, binary, too large, changed, no temporary name, failed.
+  denied, binary, too large, changed, no temporary name, failed. A stamp
+  request's result is done with four words: present or not, then the
+  stamp.
 - **How the tests are kept off the disk.** `editor-text`'s tests, and the
   service's unit tests, run on the fake. That is held by the gate, not by
   review: a `clippy.toml` beside each of the two crates lists `std::fs`,
@@ -758,10 +774,54 @@ built"):
   Lean knows the state whether a request or the green button made it.
   The window's title follows the scene Lean publishes: the presenter
   sends it as a `Request::Title` when it changes. The event loop is built
-  without winit's default menu, so there is no menu item for any of this
-  and Lean's own bindings (`C-s-f`, `s-m`) reach the window. Nobody has
-  seen a window of ours in fullscreen ([concurrency.md](concurrency.md),
-  "Still to verify").
+  without winit's default menu: the menu bar is the editor's ("The menu
+  bar", below), whose Window menu runs `toggle-fullscreen` and
+  `minimise-window` with Lean's own chords (`C-s-f`, `s-m`) as its key
+  equivalents. Nobody has seen a window of ours in fullscreen
+  ([concurrency.md](concurrency.md), "Still to verify").
+- **The menu bar** (`Request::Menu`, `Input::Menu`). The port carries it
+  as plain data (`editor_platform::menu`): menus with a title, a role
+  (the application's menu, the windows menu, or none) and items, each a
+  separator or a title, an optional key equivalent (a character and the
+  port's `Modifiers`) and an action, an editor command by name or a thing
+  the system does itself (About, Services, Hide, Hide Others, Show All,
+  Quit). The port lists every system action (`System::ALL`). Each crate
+  that gives one a word or a selector of its own (`editor-ffi`'s tag,
+  winit's selector) does it in an exhaustive match, so a new action fails
+  to compile there until it has one, and reads it back by searching that
+  list, which its tests round-trip. The menu bar is a field of the
+  scene, as the title is: Lean publishes it,
+  the presenter sends it as a `Request::Menu` only when it changed, and a
+  scene that names none leaves it. The winit adapter takes it out of the
+  requests once the window has opened, since the menu bar is the
+  application's, and a pure module (`menu.rs`) plans what to build: each
+  system action's standard selector, sent to the first responder; a
+  command item's action the one method of a target object of the crate's,
+  with its index among the command items as its tag; the key string and
+  the modifier mask; the application's menu first; and which submenus
+  become `servicesMenu` and `windowsMenu`. `menu_bar.rs` builds the plan
+  in AppKit and decides nothing. The target is kept alive for the run,
+  since an item holds its target weakly, and the main menu is cleared
+  before it goes. Each item built is marked with an identifier, so a
+  reading tells it from the items AppKit adds of its own (Emoji &
+  Symbols, the window list); the plan's model of what AppKit holds is
+  read back in the crate's tests, and the contract example reads the real
+  one back through a `#[doc(hidden)]` probe, performs each command item
+  and Quit, and sees `Input::Menu` and `QuitRequested`. The delegate
+  registers `NSFullScreenMenuItemEverywhere = NO`, so AppKit adds no
+  fullscreen item that would bypass `toggle-fullscreen`. A command item's
+  key equivalent comes from the keymap (`Config.Registry.keyEquivalent?`,
+  in Lean): AppKit runs a key equivalent before the window's view sees
+  the key, so a chord the menu shows never reaches Lean as a key, and the
+  menu and the keymap must agree. A chord a system item already shows
+  (Quit's `s-q`, Hide's `s-h`, Hide Others' `M-s-h`) is shown on no
+  command item, since AppKit matches the system item first and the
+  command would never run by it. On the queue the input is the kind 12,
+  code 0, the command's name as the text and no words; Lean runs it as an
+  invocation no key yielded, so config's command of the name runs in its
+  place. Elsewhere than macOS winit has no menu bar, and a menu changes
+  nothing shown, as the port's request contract lets a platform with
+  none.
 - **Files the system asks the app to open** (`Input::OpenFiles`). When
   Finder opens a file with the app ("Open With", a double-click on a
   document of a type it claims, a drop on its Dock icon), macOS calls the
@@ -788,6 +848,57 @@ built"):
   kind `OpenFiles`, code 0, no text, and the words `[n, then for each of
   the n paths: m, m scalars]`. Nobody has seen it arrive from Finder or the
   Dock yet ([concurrency.md](concurrency.md), "Still to verify").
+- **The system's quit** (`Input::QuitRequested`, `Request::KeepRunning`).
+  macOS asks an app to quit in one way, whatever the user chose:
+  Command-Q's `terminate:`, Quit from the Dock's menu, a logout, restart
+  or shutdown. The Dock and loginwindow send the quit Apple Event, whose
+  handler in AppKit calls `terminate:`, which asks the application
+  delegate's `applicationShouldTerminate:`. The same delegate answers
+  every ask `NSTerminateLater`, so AppKit waits inside `terminate:` for a
+  reply, and hands the ask on through a channel and a wake of the loop. It
+  decides nothing. The pure module `terminate.rs` does: the first ask once
+  the window has opened is reported once (one held before it opened is
+  reported after `Opened`, the `Resized` and the files); an ask while one
+  is pending is not reported again; `KeepRunning` with one pending replies
+  `replyToApplicationShouldTerminate:NO`, once, and is otherwise nothing;
+  a close with one pending, one held or one still on the channel replies
+  `YES`, once, after the drawer is told the window is closing, so nothing
+  is left unanswered, unless a `KeepRunning` came with the close (found
+  among the requests the closing wake-up drops), when it replies `NO` and
+  the run returns; and a window that could not be opened replies `NO`
+  to an ask held or waiting, so that the run returns with the failure.
+  That a close with a quit pending may end the process inside the run,
+  and that a keep running just before it refuses the quit, is the window
+  port's rule (`Platform::close`), which the fake models
+  (`ScriptedPlatform::quit_let_go`); the editor's window mode keeps it by
+  doing all it must before the close, and by asking keep running first
+  when its loop failed ([concurrency.md](concurrency.md), "Quit").
+  The editor decides in Lean
+  ([concurrency.md](concurrency.md), "Quit"). On the queue the input is the
+  kind `QuitRequested` (11), code 0, no text and no words; the request is
+  tag 4 of `editor_ffi_window_request`.
+
+  What the contract example showed (`examples/contract/`, on macOS):
+  winit's loop handles its wake-ups and the requests they carry while
+  AppKit waits, since winit adds its run-loop sources and observers in
+  the common modes, which hold AppKit's modal-panel mode; a reply made
+  from the loop lets `terminate:` return within a few milliseconds; and an
+  ask made in those milliseconds is folded into the terminate AppKit is
+  finishing (a quit Apple Event is answered and dropped, and a nested
+  `terminate:` ends the process). With a terminate pending, a close
+  leaves winit's run unable to return, since AppKit's wait is under it,
+  and once the close replies `YES`, AppKit ends the process (`exit(0)`)
+  inside the run. So what must come before the end is done first: the
+  editor's window mode shuts down before it asks for the close
+  ([concurrency.md](concurrency.md), "Quit"), and the adapter tells the
+  drawer the window is closing before it replies. The check's own close
+  comes with a keep running asked just before it, with the scenario's
+  third `terminate:` left pending: the close cancels it, `terminate:`
+  returns and the run returns. The example runs a close with no keep
+  running in a process of its own (`examples/contract/pending.rs`), which
+  records its verdict before the close and must then be ended by AppKit,
+  inside the run, with status 0; an exit handler fails any end before the
+  verdict.
 - **What a window tells whatever draws in it** (`Canvas`): that it
   opened, with its native window (`NativeWindow`: an AppKit view, an Xlib
   window or a Wayland surface, as plain data that names no library), its

@@ -16,9 +16,11 @@ runs while config binds them.
   in that order, each a plain command.
 - **`FrameCommands.bindings`**: `C-s-f` (Control and the system key,
   Command on macOS, with `f`: the macOS shortcut for fullscreen) runs
-  `toggle-fullscreen`, and `s-m` (Command-M) runs `minimise-window`. The
-  window's event loop is built without winit's default menu, so neither
-  chord is a menu item's and both reach the window.
+  `toggle-fullscreen`, and `s-m` (Command-M) runs `minimise-window`. Both
+  chords are the key equivalents of the Window menu's Enter Full Screen and
+  Minimise (`Editor/Menu/Compiled.lean`), which the menu bar takes from
+  these bindings: on macOS AppKit runs the item before the key reaches the
+  window, and the item runs the same command.
 
 This module is apart from `Editor/FrameCommands.lean` because it names the
 registry, which is the config session's.

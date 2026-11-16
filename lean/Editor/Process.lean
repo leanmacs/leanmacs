@@ -33,6 +33,11 @@ Starting, waiting for, killing and reaping a child are the library's
   the editor's policy, and there is no default. A stream past it ends the
   run with `outputTooLarge`, and the child's process group is killed: output
   is never cut short, which a parser would misread.
+- **A run with a time limit** (`ProcessRequest.runWithin`) is a run whose
+  child, with its process group, is killed and reaped if it has not ended
+  that many milliseconds after it was started, and which then answers
+  `timedOut`. The limit is measured on the job clock. A run that ends just
+  as its limit comes may be answered either way.
 - **What a run answers** (`Process.Ran`): how the child ended, by a status
   or a signal, and its standard output and standard error as bytes, kept as
   they were written.
@@ -120,6 +125,13 @@ structure Command where
   /-- The directory the child runs in: an absolute path. -/
   directory : System.FilePath
   deriving DecidableEq, Repr
+
+/-- Whether `command`'s program names a directory without being absolute: a
+command every process service refuses with `ProcessError.relativeProgram`
+before anything is started. This is the rule, and the model and the editor's
+lookup (`Process.prepared`) both ask it. -/
+def Command.namesRelative (command : Command) : Bool :=
+  command.program.contains '/' && !command.program.startsWith "/"
 
 /-- How a child ended. -/
 inductive Exit where
@@ -232,6 +244,9 @@ inductive ProcessError where
   /-- No streaming child of the job's has this id: another job's, or one whose
   last delivery has been taken. -/
   | noSuchProcess
+  /-- The run did not end within its time limit of `limit` milliseconds, and
+  the child's group was killed. -/
+  | timedOut (limit : Nat)
   /-- Anything else; `detail` says what. -/
   | failed (detail : String)
   deriving DecidableEq, Repr
@@ -247,6 +262,7 @@ def ProcessError.describe : ProcessError → String
   | .outputTooLarge .err limit => s!"the standard error was over the limit of {limit} bytes"
   | .inputClosed detail => s!"the child's standard input is closed: {detail}"
   | .noSuchProcess => "the job has no such process"
+  | .timedOut limit => s!"the run did not end within {limit} ms and was killed"
   | .failed detail => s!"the process request failed: {detail}"
 
 /-- What a job may ask of processes. A new process request is a constructor
@@ -255,6 +271,9 @@ inductive ProcessRequest where
   /-- Run `command` to its end, collecting each stream unless it is longer
   than `limit` bytes. -/
   | run (command : Process.Command) (limit : Nat)
+  /-- Run `command` as `run` does, but kill it, with its group, if it has not
+  ended `time` milliseconds after it was started. -/
+  | runWithin (command : Process.Command) (limit : Nat) (time : Nat)
   /-- Start `command` as a streaming child, as `streaming` says: the child,
   named for the job. -/
   | start (command : Process.Command) (streaming : Process.Streaming)
@@ -273,6 +292,8 @@ instance : Repr ProcessRequest where
   reprPrec request _ :=
     match request with
     | .run command limit => "ProcessRequest.run " ++ repr command ++ " " ++ repr limit
+    | .runWithin command limit time =>
+      "ProcessRequest.runWithin " ++ repr command ++ " " ++ repr limit ++ " " ++ repr time
     | .start command streaming => "ProcessRequest.start " ++ repr command ++ " " ++ repr streaming
     | .read process => "ProcessRequest.read " ++ repr process
     | .write process bytes => "ProcessRequest.write " ++ repr process ++ s!" ({bytes.size} bytes)"
@@ -282,6 +303,7 @@ instance : Repr ProcessRequest where
 A refusal is a value, never a throw. -/
 def ProcessRequest.Reply : ProcessRequest → Type
   | .run .. => Except ProcessError Process.Ran
+  | .runWithin .. => Except ProcessError Process.Ran
   | .start .. => Except ProcessError Process.Id
   | .read .. => Except ProcessError Process.Delivery
   | .write .. => Except ProcessError Unit
@@ -291,6 +313,7 @@ def ProcessRequest.Reply : ProcessRequest → Type
 request: for a service that answers without asking anyone. -/
 def ProcessRequest.refused (error : ProcessError) : (request : ProcessRequest) → request.Reply
   | .run .. => .error error
+  | .runWithin .. => .error error
   | .start .. => .error error
   | .read .. => .error error
   | .write .. => .error error

@@ -36,8 +36,10 @@ use editor_layout::Layout;
 use editor_layout::frame::Frame;
 use editor_layout::scene::{Rect, Scene};
 use editor_layout::shaper::fake::CellShaper;
+use editor_platform::menu::Submenu;
 use editor_platform::{
-    CannotOpen, Canvas, Drawer, Input, Platform, Request, Resize, ScriptedPlatform, WindowOptions,
+    CannotOpen, Canvas, Drawer, Input, Menu, Platform, Request, Resize, ScriptedPlatform,
+    WindowOptions,
 };
 use editor_render::clock::FakeClock;
 use editor_render::fake::RecordingRenderer;
@@ -497,4 +499,71 @@ fn a_published_scenes_title_reaches_the_scripted_window_as_the_title_it_sets_onc
             Request::Title("todo.txt".into())
         ]
     );
+}
+
+/// A menu bar of one empty menu titled `title`.
+fn menu_titled(title: &str) -> Menu {
+    Menu {
+        menus: vec![Submenu {
+            title: title.to_owned(),
+            role: None,
+            items: vec![],
+        }],
+    }
+}
+
+/// Publishes to `display` a scene of no view titled `scratch` whose menu
+/// bar is `menu`.
+fn publish_menu(display: &Display, menu: Option<Menu>) {
+    let wire = WireScene {
+        size: [80, 32],
+        title: "scratch".to_owned(),
+        menu,
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(display.publish(&words, &strings, &[]));
+}
+
+#[test]
+fn a_published_scenes_menu_reaches_the_scripted_window_as_one_request_for_each_change() {
+    let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+    let presenter = Presenter::new();
+    let asker: Asker = {
+        let platform = Arc::clone(&platform);
+        Arc::new(move |request| platform.request(request))
+    };
+    let session: Session<RecordingRenderer> = Session::new(
+        Arc::new(FakeClock::new()),
+        |_, _| Ok(RecordingRenderer::new()),
+        Arc::clone(&presenter),
+    )
+    .asking(asker);
+    let display = Display::cells(8, 16);
+    display.present_to(Arc::clone(&presenter));
+    let queue = Arc::new(Queue::new());
+
+    // Named before the window opens: sent when it does, after the title.
+    publish_menu(&display, Some(menu_titled("File")));
+    let done = run_on_a_thread(&platform, &queue, session.drawer());
+    assert_eq!(kinds(&queue, 1), [EventKind::WindowOpened]);
+    // The same menu again is not sent again, nor is a scene that names
+    // none; another menu is.
+    publish_menu(&display, Some(menu_titled("File")));
+    publish_menu(&display, None);
+    publish_menu(&display, Some(menu_titled("Edit")));
+    let shown = platform.shown().menu;
+    platform.close();
+    let (result, _) = done.recv_timeout(BOUND).expect("the run returns");
+    assert_eq!(result, Ok(()));
+
+    assert_eq!(
+        platform.asked(),
+        [
+            Request::Title("scratch".into()),
+            Request::Menu(menu_titled("File")),
+            Request::Menu(menu_titled("Edit"))
+        ]
+    );
+    assert_eq!(shown, Some(menu_titled("Edit")));
 }

@@ -185,13 +185,14 @@ def dataChecks (_ : Unit) : List Check :=
     { name := "the tags of a window's events and of the window source are known"
       run :=
         pure
-          ((([3, 4, 5, 6, 7, 8, 9, 10] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
+          ((([3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
               [some .windowOpened, some .windowFocus, some .key, some .composition, some .pointer,
-                some .closeRequested, some .resize, some .openFiles] &&
+                some .closeRequested, some .resize, some .openFiles, some .quitRequested,
+                some .menu] &&
             Editor.Ffi.SourceKind.ofTag? 3 == some .window) },
     { name := "a tag the bindings do not know is refused"
       run :=
-        pure ((Editor.Ffi.EventKind.ofTag? 11).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
+        pure ((Editor.Ffi.EventKind.ofTag? 13).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
 
 /-- An hour, in milliseconds: a deadline no check reaches. -/
 def hour : UInt64 :=
@@ -470,10 +471,21 @@ def fileChecks (_ : Unit) : List Check :=
             decodedFile 8 [] == (none, some .noTemporaryName) &&
             decodedFile 9 [] "the disk is full" == (none, some (.failed "the disk is full"))) },
     { name :=
+        "a stamp request's result decodes as four words: present or not, then the stamp, its seconds before 1970 negative"
+      run :=
+        let stamped (values : List UInt64) : Option (Option Editor.Ffi.FileStamp) :=
+          match Editor.Ffi.FileResult.decode 0 none (wordBytes values) "" with
+          | .ok (.stamped stamp) => some stamp
+          | _ => none
+        pure
+          (stamped [1, 0xFFFFFFFFFFFFFFFF, 5, 9] ==
+              some (some { seconds := -1, nanoseconds := 5, size := 9 }) &&
+            stamped [0, 0, 0, 0] == some none) },
+    { name :=
         "a file result the bindings cannot read is an error: a status the table does not have, words that are not the status's, and a load with no snapshot"
       run :=
         pure
-          (([(10, []), (0, []), (0, [1, 2]), (0, [1, 2, 3, 4]), (0, [1, 2, 3, 4, 5]), (5, []),
+          (([(10, []), (0, []), (0, [1, 2]), (0, [2, 0, 0, 0]), (0, [1, 2, 3, 4, 5]), (5, []),
                   (6, [1]), (7, [1, 2, 3]), (7, [2, 0, 0, 0]), (2, [1])].all
               fun ((status, values) : UInt64 × List UInt64) =>
               (Editor.Ffi.FileResult.decode status none (wordBytes values) "").toOption.isNone) &&
@@ -1439,12 +1451,47 @@ def runScriptedAsking (requests : List Editor.Ffi.WindowRequest) : IO AskedRun :
     for request in requests do
       Editor.Ffi.windowRequest .scripted request
 
-/-- The requests in `asked`, without the titles: a title is the presenter's,
-sent when the window opens if a scene bound to it named one. -/
+/-- The requests in `asked`, without the titles and the menu bars: each is
+the presenter's, sent when the window opens if a scene bound to it named
+one. -/
 def requestsOf (asked : Array Editor.Ffi.WindowAsked) : Array Editor.Ffi.WindowRequest :=
   asked.filterMap fun
     | .request request => some request
-    | .title _ => none
+    | .title _ | .menu _ => none
+
+/-- What the window mode's closer (`Editor.Window.closeOnceEnded`) did once a
+loop that ended with `ended` had: whether it said the loop ended well, the
+lines it said, the requests the scripted window was asked, and how many
+times the shutdown ran. -/
+structure Closed where
+  /-- What the closer returned. -/
+  well : Bool
+  /-- The lines it said. -/
+  said : Array String
+  /-- What the scripted window was asked in its run, without titles. -/
+  asked : Array Editor.Ffi.WindowRequest
+  /-- How many times the shutdown ran. -/
+  shutdowns : Nat
+
+/-- Runs the scripted window on a dedicated task, pulls its sample, and runs
+the window mode's closer on a loop that ended with `ended`, with a shutdown
+that counts its runs; `none` if the window's run did not return once the
+closer had closed it, in which case it is closed again so that no run is
+left behind. -/
+def closedOnceEnded (ended : Except IO.Error Unit) : IO (Option Closed) := do
+  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun .scripted true)
+  for _ in [0:(windowSample true).length] do
+    discard <| pull .editor
+  let said ← IO.mkRef #[]
+  let shutdowns ← IO.mkRef 0
+  let well ←
+    Editor.Window.closeOnceEnded .scripted (Task.pure ended) (shutdowns.modify (· + 1)) (say :=
+        fun line => said.modify (·.push line))
+  unless ← eventually (IO.hasFinished run) do
+    Editor.Ffi.windowClose .scripted
+    return none
+  let asked := requestsOf ((← Editor.Ffi.windowAsked .scripted).getD #[])
+  return some { well, said := ← said.get, asked, shutdowns := ← shutdowns.get }
 
 /-- Whether `events` are those of `windowSample composition`, in order, each
 from the window source of the window number 1. -/
@@ -1591,6 +1638,28 @@ def windowChecks (_ : Unit) : List Check :=
             resized &&
             ran.ran.result matches some (.ok _) },
     { name :=
+        "asked while the scripted window runs, keeping running crosses as its own tag and is what the window was asked, before the fullscreen request after it"
+      run := do
+        -- Keeping running reports nothing; the enter after it gives the run
+        -- the resize it waits for.
+        let ran ← runScriptedAsking [.keepRunning, .enterFullscreen]
+        return isWindowSample true ran.ran.events &&
+            (ran.asked.map requestsOf) == some #[.keepRunning, .enterFullscreen] &&
+            ran.ran.result matches some (.ok _) },
+    { name :=
+        "once the editor loop has ended with an error, the window mode's closer says so, runs the shutdown once and asks the window to keep running before it closes it, so that a system quit pending is refused and the run returns; once it has ended well, the closer says nothing and asks nothing"
+      run := do
+        let some failed ← closedOnceEnded (.error (IO.userError "the loop broke")) | return false
+        let some fine ← closedOnceEnded (.ok ()) | return false
+        return !failed.well &&
+            failed.said == #["editor: the editor loop ended with an error: the loop broke"] &&
+            failed.asked == #[.keepRunning] &&
+            failed.shutdowns == 1 &&
+            fine.well &&
+            fine.said == #[] &&
+            fine.asked == #[] &&
+            fine.shutdowns == 1 },
+    { name :=
         "a frame request asked of the real display binding made over the scripted platform, directly and through the window mode's host display, is what the scripted window was asked, in order"
       run := do
         let table ← Editor.Snapshots.new
@@ -1605,14 +1674,16 @@ def windowChecks (_ : Unit) : List Check :=
               discard <| (Editor.Display.askFrame .enterFullscreen).runReal real
               hosted.handle (.frame .leaveFullscreen)
               hosted.handle (.frame .minimise)
+              hosted.handle (.frame .keepRunning)
         return (ran.asked.map requestsOf) ==
-              some #[.enterFullscreen, .leaveFullscreen, .minimise] &&
+              some #[.enterFullscreen, .leaveFullscreen, .minimise, .keepRunning] &&
             ran.ran.result matches some (.ok _) },
     { name :=
         "a request to a window that is not running is not recorded, and the real platform records nothing"
       run := do
         Editor.Ffi.windowRequest .scriptedFailing .enterFullscreen
         Editor.Ffi.windowRequest .scriptedFailing .minimise
+        Editor.Ffi.windowRequest .scriptedFailing .keepRunning
         return (← Editor.Ffi.windowAsked .scriptedFailing) == some #[] &&
             (← Editor.Ffi.windowAsked .winit) == none },
     { name := "the input clock is never 0 and does not go back"
@@ -1800,11 +1871,24 @@ delivers decodes to its own variant, with its fields, and what cannot be read
 is refused. They are on events built by hand: they call no binding and need
 no window. -/
 def eventDecodeChecks (_ : Unit) : List Check :=
-  [{ name := "a message decodes with its source, its code and its text, whatever its words",
-     run :=
-       pure
-         ((decodedEvent { message 5 6 "hi" with words := #[1, 2] }).map (·.event) ==
-           some (.message { kind := .lean, id := 5 } 6 "hi")) },
+  [{  name :=
+        "the modifier bits are shift 1, control 2, alt 4 and super 8: each of the 16 sets round trips, and a bit past super reads as none"
+      run :=
+        pure
+          (Editor.Ffi.modifierBits { shift := true } == 1 &&
+            Editor.Ffi.modifierBits { control := true } == 2 &&
+            Editor.Ffi.modifierBits { alt := true } == 4 &&
+            Editor.Ffi.modifierBits { superKey := true } == 8 &&
+            (List.range 16).all
+              (fun bits =>
+                (Editor.Ffi.modifiersOfBits? bits.toUInt64).map Editor.Ffi.modifierBits ==
+                  some bits.toUInt64) &&
+            [16, 17, 32, UInt64.ofNat (2 ^ 63)].all (Editor.Ffi.modifiersOfBits? · == none)) },
+    { name := "a message decodes with its source, its code and its text, whatever its words"
+      run :=
+        pure
+          ((decodedEvent { message 5 6 "hi" with words := #[1, 2] }).map (·.event) ==
+            some (.message { kind := .lean, id := 5 } 6 "hi")) },
     { name := "a completion decodes with its source and its id, and a quit to quit"
       run :=
         pure
@@ -1886,6 +1970,22 @@ def eventDecodeChecks (_ : Unit) : List Check :=
               some (.resize { width := 1440, height := 900, scale := 2.0, fullscreen := true }) &&
             decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 16] == none &&
             decodedWindow .closeRequested 0 == some .closeRequested) },
+    { name :=
+        "a quit the system asked decodes to itself, and is refused with a code, with a word and with text"
+      run :=
+        pure
+          (decodedWindow .quitRequested 0 == some .quitRequested &&
+            (decodedWindow .quitRequested 1).isNone &&
+            (decodedWindow .quitRequested 0 #[0]).isNone &&
+            (decodedWindow .quitRequested 0 #[] "x").isNone) },
+    { name :=
+        "a menu item chosen decodes to its command's name, an empty name as it is, and is refused with a code and with a word"
+      run :=
+        pure
+          (decodedWindow .menu 0 #[] "undo" == some (.menu "undo") &&
+            decodedWindow .menu 0 == some (.menu "") &&
+            (decodedWindow .menu 1 #[] "undo").isNone &&
+            (decodedWindow .menu 0 #[0] "undo").isNone) },
     { name :=
         "files to open decode with their paths in order, each its count of characters and its characters, and no path to none"
       run :=
@@ -2001,7 +2101,7 @@ def eventChecks (_ : Unit) : List Check :=
             events.head? == some (.windowOpened "scripted") &&
             events.getLast? == some .closeRequested },
     { name :=
-        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, files to open, none to open, and a request to close posted as a window would come back from the library equal"
+        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize out of fullscreen and one in it, files to open, none to open, a request to close, a quit the system asked and two menu items chosen posted as a window would come back from the library equal"
       run := do
         let events : List Editor.Event :=
           [.windowOpened "x", .focus true, .focus false,
@@ -2016,7 +2116,8 @@ def eventChecks (_ : Unit) : List Check :=
             .pointer (pointerAt (.wheel (.pixels 0.25 8)) none),
             .resize { width := 1920, height := 1080, scale := 1.25 },
             .resize { width := 1920, height := 1080, scale := 1.25, fullscreen := true },
-            .openFiles ["/Users/me/notes.txt", "/tmp/é x.lean"], .openFiles [], .closeRequested]
+            .openFiles ["/Users/me/notes.txt", "/tmp/é x.lean"], .openFiles [], .closeRequested,
+            .quitRequested, .menu "undo", .menu "é"]
         events.allM fun event => return (← roundTrip event) == some event },
     { name := "an event no window reports is not posted: a message, a completion and a quit"
       run := do
@@ -2277,13 +2378,34 @@ def sceneFixture (theme : Editor.Theme := #[]) : IO SceneFixture := do
 def SceneFixture.own (index : Nat) : Editor.MarkerId :=
   { text := ⟨0⟩, index }
 
+/-- A menu bar with each kind of item, each role and a key with every
+modifier: the menu `crates/editor-ffi/src/display/wire.rs`'s own round trip
+crosses. -/
+def fixtureMenu : Editor.Menu :=
+  {
+    menus :=
+      #[{ title := "Ap", role := some .app
+          items :=
+            #[.item "Q" (some { character := 'q', modifiers := { superKey := true } })
+                (.system .quit),
+              .item "S" none (.system .services), .separator] },
+        { title := "é", role := some .window
+          items :=
+            #[.item "U"
+                (some
+                  { character := 'Z'
+                    modifiers :=
+                      { shift := true, control := true, alt := true, superKey := true } })
+                (.command "undo")] },
+        { title := "" }] }
+
 /-- A scene that takes the branches of the binding's encoding the display
-fixture does not: a pending prefix and a preedit, and an echo padding; view
-1, of a snapshot the table does not hold and padded, before view 2, of the one it holds, scrolled to its
-second row with a selection, a right status field with a padding and a
-status face; and view 3, of the same snapshot, whose scroll
-marker is `scroll` and whose selection markers are `selections`. Each view
-is 4 columns by 3 rows. -/
+fixture does not: a pending prefix, a preedit, an echo padding and a menu
+bar; view 1, of a snapshot the table does not hold and padded, before view
+2, of the one it holds, scrolled to its second row with a selection, a
+right status field with a padding and a status face; and view 3, of the
+same snapshot, whose scroll marker is `scroll` and whose selection markers
+are `selections`. Each view is 4 columns by 3 rows. -/
 def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
     (selections : Array Editor.MarkerId) : Editor.Scene :=
   let rect (y : Nat) : Editor.Rect := { x := 0, y, width := 32, height := 48 }
@@ -2305,7 +2427,7 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
         { id := ⟨3⟩, rect := rect 96, snapshot := fixture.snapshot, scroll, selections
           cursor := { shape := .underline, face := ⟨"c3"⟩ }, decorations := #[], status := #[] }]
     focused := some ⟨2⟩, echo := "fixture", echoPadding := 14, pending := "g"
-    preedit := some "é", title := "notes.txt" }
+    preedit := some "é", title := "notes.txt", menu := some fixtureMenu }
 
 /-- The fixture's scene with view 3's markers of two texts: its scroll
 marker is the text's anchor at offset 3, and its selection marker is a
@@ -2368,7 +2490,7 @@ and a frame with another frame, never with a colour or a size written
 here. -/
 def sceneChecks (_ : Unit) : List Check :=
   [{  name :=
-        "a scene with a pending prefix, a preedit, a title, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
+        "a scene with a pending prefix, a preedit, a title, a menu bar with each kind of item, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
       run := do
         let fixture ← sceneFixture
         let encoded ← fixture.real.encode fixture.mixed none
@@ -2376,7 +2498,14 @@ def sceneChecks (_ : Unit) : List Check :=
         let selection := fixture.selection.toUInt64
         -- The echo's padding after its length, and the title's length after
         -- the preedit's presence and length.
-        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 14, 1, 1, 2, 9, 3]
+        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 14, 1, 1, 2, 9]
+        -- The menu's presence and three menus: "Ap", the application's,
+        -- with Quit (s-q), Services and a separator; "é", the windows
+        -- menu, with the command undo on every modifier and Z; and an
+        -- untitled plain menu with no item. Then the count of views.
+        let menu : Array UInt64 :=
+          #[1, 3, 2, 1, 3, 2, 1, 1, 0x71, 8, 5, 2, 1, 0, 0, 0, 1, 0, 2, 2, 1, 1, 1, 1, 0x5a, 15, 4,
+            0, 0, 0, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor; no
         -- status field and no status face; padded 8 across, 4 down and 28
         -- at the top.
@@ -2393,8 +2522,8 @@ def sceneChecks (_ : Unit) : List Check :=
         let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0]
         -- No faces: as last published.
         let faces : Array UInt64 := #[0]
-        return encoded.words == scene ++ first ++ second ++ third ++ faces &&
-            encoded.strings == "fixturegénotes.txtc1c2kwNORMALmode1:1posdimc3" &&
+        return encoded.words == scene ++ menu ++ first ++ second ++ third ++ faces &&
+            encoded.strings == "fixturegénotes.txtApQSéUundoc1c2kwNORMALmode1:1posdimc3" &&
             encoded.snapshots.size == 2 },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
@@ -2440,7 +2569,7 @@ def sceneChecks (_ : Unit) : List Check :=
         let fixture ← sceneFixture everyTheme
         let real := fixture.real
         let encoded ← real.encode emptyScene (some everyTheme)
-        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- Present, and seven definitions.
         let faces : Array UInt64 := #[1, 7]
         -- Its name; a family; 20 pixels; weight 700; italic; a foreground
@@ -3452,8 +3581,9 @@ scripted platform, on the absolute path `file`, or with no file, on the
 editor's one empty buffer, when it is `none`: a cells display bound to the
 presenter, a clipboard of its own, no config, and the report asked for. The
 sample window opens, reports its fixed input and asks to close, which ends
-the host's loop and closes the window, and the report is printed to stderr.
-0 when the window ran, the latest render session's counters, read once
+the host's loop, runs the window mode's shutdown and closes the window, and
+the report is printed to stderr. 0 when the window ran, the shutdown ran
+once and while the window still ran, the latest render session's counters, read once
 `windowRun` has returned (the presenter's last handle), show a frame drawn,
 no surface said what it offered, the window was opened with the themed
 title bar and asked for the dark appearance of the built-in paper and for
@@ -3464,11 +3594,27 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   let options : Editor.Window.Options :=
     { file, config := none, configGiven := false, sysroot := none, oleans := ""
       composition := true, report := true }
+  -- The window mode's shutdown, which first asks the window to minimise: a
+  -- scripted window records that only while it runs, and runs until it is
+  -- closed, so the record shows the shutdown ran before the close. It asks
+  -- a moment later, by which a window closed first has ended its run.
+  let shutdowns ← IO.mkRef 0
+  let shutdown := do
+    shutdowns.modify (· + 1)
+    IO.sleep 100
+    Editor.Ffi.windowRequest .scripted .minimise
+    Editor.Window.shutdown
   let status ←
     Editor.Window.host .scripted options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[]
+        (← Editor.Clipboard.InProcess.new).handle #[] shutdown .headless
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host: the window mode ended with status {status}"
+    return 1
+  unless (← shutdowns.get) == 1 do
+    IO.eprintln s!"ffi-test window-host: the shutdown ran {← shutdowns.get} times, not once"
+    return 1
+  unless ((← Editor.Ffi.windowAsked .scripted).getD #[]).contains (.request .minimise) do
+    IO.eprintln "ffi-test window-host: the shutdown did not run before the window was closed"
     return 1
   let some counters ← Editor.Ffi.renderCounters |
     IO.eprintln "ffi-test window-host: no render session was started"
@@ -3483,17 +3629,17 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     return 1
   -- With no config the window opens with the themed title bar, and once it
   -- has opened it is asked for the appearance of the built-in theme's
-  -- paper, which is dark.
+  -- paper, which is dark; the shutdown's minimise comes last.
   unless (← Editor.Ffi.windowOpenedWith .scripted) == some (true, .themed) do
     IO.eprintln "ffi-test window-host: the window was not opened with the themed title bar"
     return 1
   let requests :=
     ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
       | .request request => some request
-      | .title _ => none
-  unless requests == #[.darkAppearance] do
+      | .title _ | .menu _ => none
+  unless requests == #[.darkAppearance, .minimise] do
     IO.eprintln
-        s!"ffi-test window-host: the window was asked {repr requests}, not the dark appearance alone"
+        s!"ffi-test window-host: the window was asked {repr requests}, not the dark appearance and then the shutdown's minimise"
     return 1
   -- With no file the selected buffer is the one empty buffer, whose name is
   -- the window's title. With a file, its load may not finish before the
@@ -3502,10 +3648,25 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     let titles :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .title text => some text
-        | .request _ => none
+        | .request _ | .menu _ => none
     unless titles.back? == some "scratch" do
       IO.eprintln
           s!"ffi-test window-host: the window was last asked for the title {titles.back?}, not scratch"
+      return 1
+    -- The menu bar crossed whole, from Lean through the scene to the
+    -- scripted window's record and back: the standard one, with the keys
+    -- the compiled bindings give it, asked once, since it never changed.
+    let menus :=
+      ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
+        | .menu menu => some menu
+        | .request _ | .title _ => none
+    let compiled :=
+      ({} : Editor.Config.Registry).replaceBindings .compiled
+        (Editor.FrameCommands.bindings ++ Editor.Menu.bindings)
+    let expected := compiled.menuOf Editor.Menu.standard
+    unless menus == #[expected] do
+      IO.eprintln
+          s!"ffi-test window-host: the window was asked for {menus.size} menu bars, not the standard one once: {repr menus}"
       return 1
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
   return 0
@@ -3525,7 +3686,8 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
       oleans := oleanDir, composition := true }
   let status ←
     Editor.Window.host .scripted options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] (patience := none)
+        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
+        none)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-config: the window mode ended with status {status}"
     return 1
@@ -3551,7 +3713,7 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
       composition := true }
   let status ←
     Editor.Window.host .scriptedUndrawn options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[]
+        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless
   unless status == 1 do
     IO.eprintln s!"ffi-test window-host-undrawn: the window mode ended with status {status}, not 1"
     return 1

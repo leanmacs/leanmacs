@@ -4,6 +4,7 @@ import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Config.Stores
 import Editor.Event
+import Editor.Ex
 import Editor.Files
 import Editor.InputScheme
 import Editor.Key.Notation
@@ -359,6 +360,19 @@ request sets a flag of the editor state (`EditorState.quitting`,
   the command ("Rollback").
 - **A close request is not this.** It stops the loop whatever is unsaved,
   and publishes nothing ("What each event does").
+- **The system's quit is put through `quit`** (`Event.quitRequested`:
+  Command-Q, the Dock's Quit, a logout). The step remembers it
+  (`EditorState.systemQuit`) and runs the command named `quit`
+  (`Ex.quitName`) as an invocation no key yielded, so the rules above hold
+  of it: config's command of that name runs in its place, and the step
+  says stop when the editor leaves, as for `:q`. When the editor does not
+  quit, because `quit` was refused or did not ask, or a quit that waited is
+  withdrawn, the publish asks the frame `keepRunning` once
+  (`EditorState.answerSystemQuit`, `Display.askFrame`), and the system's
+  quit is forgotten. While it waits for a save, nothing is asked. A quit
+  typed in the editor asks the frame nothing.
+
+Pinned by `ModelTest.systemQuitChecks`.
 
 Pinned by `ModelTest.dispatchQuitChecks`.
 
@@ -541,6 +555,8 @@ is queued, and marks that event. What the loop does with the flag is here
 | `focus gained` | Sets whether the frame has the keyboard focus |
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
 | `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
+| `quitRequested` | Remembers that the system asked to quit (`EditorState.systemQuit`) and runs `quit` (`Ex.quitName`) with no arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The step says stop when the editor leaves; otherwise the publish asks the frame `keepRunning` once ("Quit") |
+| `menu name` | Tells the scheme that a menu item named the command `name`, with no arguments, for the focused view (`InputScheme.invoked`), and runs the invocation it hands back as one no key yielded, in the focused window, with the report of the scheme's state it hands back: guarded, rolled back and published as every command is, and config's command of the name runs in its place. A name no command is registered under says so, as an invocation does. The scheme's states are then as after a key: a command that runs to its end keeps the state handed back, which is the state at rest when nothing is pending, and one that does not puts the scheme back at rest. A scheme that treats no menu item apart hands back the invocation and the state as they were, so the command `name` runs |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
 
@@ -824,6 +840,10 @@ structure Loop (scheme : InputScheme) where
   and no command had just failed. It is what the scheme goes back to when
   the invocation a key yields does not run to its end. -/
   atRest : scheme.State := scheme.init
+  /-- The menu bar the scenes name: the one the last step, invocation or
+  delivery was handed (`Keys.menu`, `keyedBy`), with its key equivalents
+  as the registry's bindings then were; `none` until one is. -/
+  menu : Option Menu := none
 
 /-- What the loop does after a step. -/
 inductive Loop.Next where
@@ -876,6 +896,11 @@ structure Loop.Keys (scheme : InputScheme) where
   (`framePadding`, `Editor/Setup.lean`), so a loop handed none draws and
   scrolls as with no padding. -/
   padding : Nat := 0
+  /-- The menu bar the scene names, its key equivalents filled from the
+  registry's bindings as they are now (`Config.Registry.menuOf`,
+  `Editor/Menu/Compiled.lean`); `none` for a host with no menu bar, whose
+  scenes name none. -/
+  menu : Option Menu := none
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1095,12 +1120,13 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
 /-- The scene of `state` over `views`: what the state says of the frame, the
 echo area, inset by the bottom row's inset (`EditorState.bottomInset`), and
 the preedit, around the views made of its windows, with `pending` as the
-keys typed of a sequence not yet completed. -/
-def scene (state : EditorState) (views : Array View) (pending : String) : Scene :=
+keys typed of a sequence not yet completed and `menu` as the menu bar. -/
+def scene (state : EditorState) (views : Array View) (pending : String)
+    (menu : Option Menu := none) : Scene :=
   let frame := state.frame
   { size := frame.size, views, focused := if frame.hasFocus then some frame.focused else none
     echo := state.echo, echoPadding := state.bottomInset, pending, preedit := state.preedit
-    title := state.title }
+    title := state.title, menu }
 
 /-- The keys the scheme reports as pending in the loop's state, as a key
 string (`Key.notations`): what the scene shows of a sequence begun and not
@@ -1193,6 +1219,11 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
+  -- A system quit that was refused or withdrawn is answered, once: the
+  -- system stops waiting for the editor to quit ("Quit", in the module docs).
+  let (state, keepRunning) := state.answerSystemQuit
+  if keepRunning then
+    Display.askFrame .keepRunning
   let (state, unlisted) ← listed state
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
@@ -1206,7 +1237,7 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   -- asked with its height less its bottom row.
   followed state.scrollMargin state.bottomRow views
   let state := state.refusedBy (unrecorded <|> unlisted <|> unshown)
-  Display.publish (scene state views loop.pending)
+  Display.publish (scene state views loop.pending loop.menu)
   let mut unreleased := none
   for was in loop.shown do
     unless shown.any (·.snapshot == was.snapshot) do
@@ -1621,6 +1652,12 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
   else
     return ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
 
+/-- `loop` with the menu bar `keys` names (`Keys.menu`) as the one its
+scenes name: how a step, an invocation and a delivery start, so that a
+reload's bindings move the menu's shortcuts from the next one. -/
+def keyedBy (keys : Keys scheme) (loop : Loop scheme) : Loop scheme :=
+  { loop with menu := keys.menu }
+
 /-- `stepped`, a step whose scene is not yet published, once it is
 (`publish`), its views' status lines drawn by `modeLine`: its loop is the
 one the publish left, and it says stop when the editor then leaves
@@ -1639,6 +1676,7 @@ and what the scheme reports of the focused view in the state it is in. The
 scheme's states are left as they are, but for a view the command closed. -/
 def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     EditorM (Stepped scheme) := do
+  let loop := loop.keyedBy keys
   let report := scheme.report loop.input loop.state.frame.focused
   (loop.ranInto (← run keys loop.state invocation [] report)).published keys.modeLine keys.padding
 
@@ -1657,6 +1695,7 @@ the user was reading. When it does not run to its end the echo area reads
 and the reason it gave up with. -/
 def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command : EditorM Unit) :
     EditorM (Stepped scheme) := do
+  let loop := loop.keyedBy keys
   let ran ←
     dispatch keys loop.state label do
         command
@@ -1671,6 +1710,7 @@ state as it was, with the refusal in the echo area. The step itself is not
 refused: the publish puts a refusal of its own in the echo area too ("When
 publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
+  let loop := loop.keyedBy keys
   if let some pressed := stepped? event then
     return ← (← loop.key keys pressed).published keys.modeLine keys.padding
   match event with
@@ -1680,6 +1720,29 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     -- An invocation no key yielded, run as every command is, in the
     -- focused window: config's command of the name runs in its place.
     loop.invoke keys { command := Files.openName, arguments := (path :: rest).map .str }
+  | .quitRequested =>
+    -- The system's quit is remembered first, so that a `quit` that is
+    -- refused or interrupted rolls back to a state that still holds it,
+    -- and the publish answers it.
+    ({ loop with state := { loop.state with systemQuit := true } }).invoke keys
+        { command := Ex.quitName }
+  | .menu name =>
+    -- An invocation no key yielded, as a file to open is: config's
+    -- command of the name runs in its place. The scheme says what it runs
+    -- as in the focused view's state, and the state it leaves.
+    let focused := loop.state.frame.focused
+    let (input, invocation) := scheme.invoked focused loop.input { command := name }
+    let ran ← run keys loop.state invocation [] (scheme.report input focused)
+    if ran.finished then
+      let atRest := if (scheme.pending input).isEmpty then input else loop.atRest
+      (({ loop with
+                    input, atRest } :
+                  Loop scheme).ranInto
+              ran).published
+          keys.modeLine keys.padding
+    else
+      (({ loop with input := loop.atRest } : Loop scheme).ranInto ran).published keys.modeLine
+          keys.padding
   | _ =>
     let focused := loop.state.frame.focused
     let report := scheme.report loop.input focused

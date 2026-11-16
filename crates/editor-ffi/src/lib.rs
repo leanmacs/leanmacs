@@ -224,14 +224,15 @@
 //! [`editor_text::fs::Fs`], with [`editor_text::fs::FakeFs`] published for
 //! tests and the real adapter in a crate of its own (`editor-fs-std`),
 //! which only the process's instance names; which request is worked when
-//! is the pure [`files::Requests`]; what a load and a save do is
+//! is the pure [`files::Requests`]; what a load, a save and a stamp do is
 //! [`editor_text::file`]'s. A request has a result as well as a
 //! completion, which the caller takes by the request's id once the
 //! completion has arrived ([`files::editor_ffi_files_take`]): a record of a
 //! status, a snapshot handle, words and a detail string. Its other C
 //! functions are [`files::editor_ffi_files_load`],
-//! [`files::editor_ffi_files_save`], [`files::editor_ffi_files_cancel`]
-//! and, as a readout for tests, [`files::editor_ffi_files_pending`].
+//! [`files::editor_ffi_files_save`], [`files::editor_ffi_files_stamp`],
+//! [`files::editor_ffi_files_cancel`] and, as a readout for tests,
+//! [`files::editor_ffi_files_pending`].
 //!
 //! Tests: the unit tests of `files.rs`, on the fake file system (the
 //! requests alone; the service loop, where the fake holds the service's
@@ -362,10 +363,11 @@
 //!   own loop, not the main-thread service, which still answers nothing
 //!   else while the window runs. Whether the window is in fullscreen comes
 //!   back on every resize, as bit 0 of its code.
-//! - **The window's title is the scene's.** A display bound to the
-//!   presenter hands it the title of each scene it publishes, and the
-//!   presenter sends it to the open window when it changes
-//!   ([`render`], "What reaches the window: the title").
+//! - **The window's title and the menu bar are the scene's.** A display
+//!   bound to the presenter hands it the title of each scene it publishes,
+//!   and the menu bar of each that names one, and the presenter sends each
+//!   to the open window when it changes ([`render`], "What reaches the
+//!   window: the title and the menu").
 //! - **The platform is named by a tag** ([`window::PlatformId`]), checked
 //!   like a queue's. The two scripted platforms, the one that reports a
 //!   sample and the one that cannot open a window, are reachable for the
@@ -502,6 +504,7 @@ pub mod inverse;
 pub mod log;
 pub mod main_thread;
 pub mod marker;
+mod menu;
 pub mod motion;
 pub mod processes;
 pub mod render;

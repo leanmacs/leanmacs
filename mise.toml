@@ -141,8 +141,10 @@ run = [
   # The same properties `lean-test` runs against the pure models, here against
   # the Rust library: the text port's, and the job port's over the timer
   # service. Its check of Lean's task pool pins no size, so LEAN_NUM_THREADS
-  # in the developer's shell does it no harm.
-  ".lake/build/bin/contract-test",
+  # in the developer's shell does it no harm. Its one argument is the
+  # directory of the fixtures that stand in for mise in the checks of a
+  # child's environment (tests/process-environment).
+  ".lake/build/bin/contract-test ../tests/process-environment",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment.
@@ -439,8 +441,9 @@ run = '''dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print
 #
 # It builds `lean/.lake/build/Leanmacs.app` with Lake (`editorApp` in
 # lean/lakefile.lean): the editor executable, the `.olean` files of the
-# modules `Editor` imports, Info.plist and a placeholder icon, ad-hoc
-# signed as a whole, last. Lake rebuilds it only when an input changed, so a
+# modules `Editor` imports, Info.plist with the version from
+# lean/app/version, and the icon made from lean/app/Leanmacs.png with sips
+# and iconutil, ad-hoc signed as a whole, last. Lake rebuilds it only when an input changed, so a
 # second run with nothing changed copies and signs nothing, and prints no
 # `Built editorApp` line. It waits for `lean` so that the Lake builds in
 # lean/ run in one chain, and sets LEAN_CC as `lean` does, since the
@@ -459,13 +462,18 @@ run = "lake build --wfail editorApp"
 #
 # tools/app-check.sh copies the built bundle into a temporary directory
 # removed by a trap, verifies its signature with `codesign --verify
-# --strict --deep`, reads its Info.plist (its document types among its keys)
-# and icon as the system does, runs
-# its headless mode on tests/headless/bundle with no directory argument, an
-# empty environment and / as the working directory, which must print
-# exactly `expected`, and builds `editorApp` again to show that copies and
-# signs nothing. It ends `app-check: ok`. It opens no window and needs no
-# person.
+# --strict --deep`, reads its Info.plist (its document types and its
+# version keys, which must be the line of lean/app/version, among its keys)
+# and icon (the ten standard sizes, 16 to 1024 pixels) as the system does,
+# runs its headless mode on tests/headless/bundle with no directory
+# argument, an empty environment and / as the working directory, which must
+# print exactly `expected`, and builds `editorApp` again to show that copies
+# and signs nothing. In a clone of lean/ it shows that a failed rebuild
+# leaves the old bundle, that changing the version or the artwork rebuilds
+# it, that a malformed version or artwork other than a 1024x1024 PNG fails
+# the build, and that the build and the check both take a version file
+# with no final newline. It ends `app-check: ok`.
+# It opens no window and needs no person.
 [tasks.app-check]
 description = "Opt-in, never part of ci; macOS on arm64 only: verify the built Leanmacs.app's signature and run its headless mode from a copy in a temporary directory, with no directory argument, an empty environment and / as the working directory (tools/app-check.sh, tests/headless/bundle)"
 depends = ["app"]
@@ -650,10 +658,17 @@ run = "tools/milestone-bench.sh lean"
 # desktop, one after the other, so it needs a display.
 #
 # First it runs the winit adapter's example (`crates/editor-platform-winit/
-# examples/contract.rs`): the real window held to the window port's contract
-# (`editor_platform::contract`). The window opens, is asked to close from
-# another thread, and the run must return. It prints one line, and its exit
-# status is the result.
+# examples/contract/main.rs`): the real window held to the window port's
+# contract (`editor_platform::contract`). The window opens, is asked to
+# close from another thread, and the run must return. On macOS it is also
+# asked to quit as the system asks (`terminate:` and the quit Apple Event,
+# examples/contract/terminate.rs), and must report each ask once, keep
+# handling requests while AppKit waits, and keep running when it is told
+# to; then, in a second process and a second window
+# (examples/contract/pending.rs), a close with a terminate pending must let
+# AppKit end the process, with status 0, only after the verdict. It needs
+# no key or pointer input. It prints one line, and its exit status is the
+# result.
 #
 # Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/
 # window.rs`): the window that draws. The wgpu renderer draws a fixture
@@ -677,7 +692,7 @@ run = "tools/milestone-bench.sh lean"
 # under Xvfb, with no desktop, gives the second its input with xdotool,
 # and requires its picture.
 [tasks.window-contract]
-description = "Opt-in, never part of ci: hold the winit window to the window port's contract, then draw a fixture frame in a window and check the picture, that nothing is drawn while idle, and that input arrives. Opens two windows on this desktop; the second fails without a key or pointer input"
+description = "Opt-in, never part of ci: hold the winit window to the window port's contract, then draw a fixture frame in a window and check the picture, that nothing is drawn while idle, and that input arrives. Opens two windows on this desktop (three on macOS); the last fails without a key or pointer input"
 run = [
   "cargo run --locked --package editor-platform-winit --example contract",
   "cargo run --locked --package editor-ffi --example window",

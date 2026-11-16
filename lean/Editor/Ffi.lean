@@ -1,3 +1,5 @@
+import Editor.Menu
+
 /-!
 # Bindings to the Rust library
 
@@ -163,14 +165,15 @@ for.
 The timer service is the first: `timersNow`, `timersStart`, `timersCancel`,
 and `timersPending`, a readout for tests.
 
-The file service is the second: `filesLoad` and `filesSave` start a request,
+The file service is the second: `filesLoad`, `filesSave` and `filesStamp`
+start a request,
 `filesTake` hands its result over once its completion has arrived,
 `filesCancel` cancels, and `filesPending` is a readout for tests. A request
 has a result, which a timer's has not, so there is one more step: the
 completion says only that the request `id` is done, and the result is taken
 by that id, once, as one record (`FileResult`): a loaded file's text as a
 `Snapshot` handle with its stamp and its line endings, a saved file's stamp,
-or a refusal (`FileRefusal`). A file's content never crosses as a Lean
+a file's stamp or none, or a refusal (`FileRefusal`). A file's content never crosses as a Lean
 string or a byte array: a load hands back a handle, and a save borrows one.
 A path crosses as the bytes of a Lean string, which the library does not
 decode. What a save expects on disk (`FileExpect`) crosses as a tag and a
@@ -258,8 +261,11 @@ arrives on the editor queue.
   | `pointer` | 0 press, 1 drag, 2 release, 3 wheel | `[x, y, button tag, other, modifiers, delta tag, dx, dy]`; button 0 none, 1 primary, 2 secondary, 3 middle, 4 back, 5 forward, 6 another (its number in `other`); delta 0 none, 1 lines, 2 pixels |
   | `resize` | Bit 0 in fullscreen | `[width, height, scale, corner clearance, top inset]`; the corner clearance and the top inset in whole logical points |
   | `openFiles` | 0 | `[n, then for each of the n paths: m, m scalars]`; the text is empty |
+  | `quitRequested` | 0 | None, and no text: the system asked the program to quit |
+  | `menu` | 0 | None; the text is the chosen item's command name |
 
-  The modifiers are bits: shift 1, control 2, alt 4, super 8. A float
+  The modifiers are bits: shift 1, control 2, alt 4, super 8
+  (`modifierBits`, `modifiersOfBits?`). A float
   crosses as its IEEE 754 bits (`Float.ofBits`). These bindings carry the
   words as they are; the one place on the Lean side that reads them is
   `Editor/Event/Queue.lean`.
@@ -267,10 +273,12 @@ arrives on the editor queue.
   `closeRequested` and stays open until `windowClose`, which any thread may
   call.
 - Lean asks things of the window with `windowRequest`: enter or leave
-  fullscreen, minimise, or the light or the dark appearance of its title
-  and buttons (`WindowRequest`, tags 0 to 4). It never
-  blocks, and it goes through the window's own loop, not the main-thread
-  service, which still answers nothing else while the window runs. Whether
+  fullscreen, minimise, keep running, the answer to a quit the system
+  asked when the editor does not quit, or the light or the dark
+  appearance of its title and buttons (`WindowRequest`, tags 0, 1, 2, 4,
+  6 and 7). It never blocks, and it goes through the window's own loop,
+  not the main-thread service, which still answers nothing else while the
+  window runs. Whether
   the window is in fullscreen comes back on every resize, bit 0 of its
   code, how far in its rounded corners reach as its fourth word, and how
   far down its title bar covers it as its fifth. The title is no request: it is the scene's (`Scene.title`), and the
@@ -1372,6 +1380,13 @@ inductive EventKind where
   empty; the words are the paths: their count, then each path's count of
   characters and its characters ("The window" in the module docs). -/
   | openFiles
+  /-- The system asked the program to quit: Command-Q, Quit from the Dock,
+  a logout, restart or shutdown. The code is 0, and there is no text and no
+  word. -/
+  | quitRequested
+  /-- A command item of the menu bar was chosen. The code is 0, the text
+  the command's name, and there is no word. -/
+  | menu
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
@@ -1387,6 +1402,8 @@ def EventKind.ofTag? : UInt64 → Option EventKind
   | 8 => some .closeRequested
   | 9 => some .resize
   | 10 => some .openFiles
+  | 11 => some .quitRequested
+  | 12 => some .menu
   | _ => none
 
 /-- What kind of thing an event came from. -/
@@ -1589,6 +1606,8 @@ inductive FileResult where
   | loaded (snapshot : Snapshot) (stamp : FileStamp) (lineFeeds crlfs : UInt64)
   /-- A file was saved, and has this stamp. -/
   | saved (stamp : FileStamp)
+  /-- A stamp was read: the file's, or `none` when nothing is there. -/
+  | stamped (stamp : Option FileStamp)
   /-- The request was refused. -/
   | refused (refusal : FileRefusal)
 
@@ -1614,6 +1633,14 @@ def FileResult.decode (status : UInt64) (snapshot : Option Snapshot) (words : By
     return .loaded snapshot (stampAt words 0) words[3]! words[4]!
   | 0, 3, none =>
     return .saved (stampAt words 0)
+  | 0, 4, none =>
+    match words[0]! with
+    | 0 =>
+      return .stamped none
+    | 1 =>
+      return .stamped (some (stampAt words 1))
+    | present =>
+      throw s!"a stamped file is present or not, and the word says {present}"
   | 1, 0, none =>
     return .refused .relativePath
   | 2, 0, none =>
@@ -1653,6 +1680,16 @@ The path crosses as its bytes, with no decoding. `false`, with nothing
 started, if `id` is in use or the service could not start its thread. -/
 @[extern "editor_glue_files_load"]
 opaque filesLoad (id : UInt64) (path : @& String) (limit : UInt64) : IO Bool
+
+/-- Asks the library's file service for the stamp of the file at `path`, as
+the request `id`, and returns whether it was accepted. It returns at once,
+and nothing of the file is read. The completion and the result are as
+`filesLoad`'s: the result is `stamped`, or a refusal.
+
+`false`, with nothing started, if `id` is in use or the service could not
+start its thread. -/
+@[extern "editor_glue_files_stamp"]
+opaque filesStamp (id : UInt64) (path : @& String) : IO Bool
 
 /-- `filesSave` as it crosses: what the save expects as a tag (0 whatever, 1
 absent, 2 unchanged) and a stamp's three numbers, its seconds as a two's
@@ -1830,13 +1867,23 @@ def windowRun (platform : Platform) (composition : Bool) (presentMode : Option P
     | _ => .error raw.reason
 
 /-- Asks the window `platform` is running to close, so that `windowRun`
-returns. Any thread may call it, and it does nothing when that platform runs
-no window. -/
+ends. Any thread may call it, and it does nothing when that platform runs
+no window.
+
+With the system's quit pending (`EventKind.quitRequested`) the close lets
+the quit go ahead, and the platform may end the process inside `windowRun`,
+which then never returns (the window port's rule, `Platform::close` in
+`editor-platform`; AppKit's terminate on macOS). So whatever must happen
+before the program ends happens before this is called. A
+`WindowRequest.keepRunning` asked just before it refuses the quit instead,
+and `windowRun` returns. -/
 @[extern "editor_glue_window_close"]
 opaque windowClose (platform : Platform) : IO Unit
 
-/-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0 to
-4, in this order). The title is not one: it is a field of the scene. -/
+/-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0, 1,
+2, 4, 6 and 7: `WindowRequest.tag`). The title is not one: it is a field of
+the scene, and the tag 3 is the title's in what a scripted window was
+asked, as 5 is a menu bar's. -/
 inductive WindowRequest where
   /-- Put the window in the system's fullscreen; one in it stays there. -/
   | enterFullscreen
@@ -1845,6 +1892,12 @@ inductive WindowRequest where
   | leaveFullscreen
   /-- Minimise the window. -/
   | minimise
+  /-- The editor refused, or withdrew, the quit the system asked
+  (`EventKind.quitRequested`). It changes nothing the window shows, and a
+  platform with no quit pending does nothing with it. Asked just before
+  `windowClose`, it refuses a quit pending as the window closes, so that
+  `windowRun` returns. -/
+  | keepRunning
   /-- Draw the window's title and buttons in the system's light
   appearance, for a light paper. -/
   | lightAppearance
@@ -1853,30 +1906,161 @@ inductive WindowRequest where
   | darkAppearance
   deriving DecidableEq, Repr
 
+/-- The library's number for `request`: 0, 1, 2, 4, 6 and 7. It is not the
+constructor's index, which for `keepRunning` would be the title's 3, and
+for the appearances 4 and 5, keep running's and a menu bar's. -/
+def WindowRequest.tag : WindowRequest → UInt8
+  | .enterFullscreen => 0
+  | .leaveFullscreen => 1
+  | .minimise => 2
+  | .keepRunning => 4
+  | .lightAppearance => 6
+  | .darkAppearance => 7
+
+/-- `windowRequest` as it crosses: the request's tag. -/
+@[extern "editor_glue_window_request"]
+private opaque windowRequestRaw (platform : Platform) (tag : UInt8) : IO Unit
+
 /-- Asks the window `platform` is running to do what `request` says. Any
 thread may call it, it never blocks, and it does nothing when that platform
 runs no window. It goes through the window's own loop, not the main-thread
 service. Whether the window is then in fullscreen comes back on the editor
 queue, as a resize. -/
-@[extern "editor_glue_window_request"]
-opaque windowRequest (platform : Platform) (request : WindowRequest) : IO Unit
+def windowRequest (platform : Platform) (request : WindowRequest) : IO Unit :=
+  windowRequestRaw platform request.tag
 
-/-- One thing a scripted window was asked: a request, or a title the
-presenter sent it from a scene. -/
+/-- One thing a scripted window was asked: a request, or a title or a menu
+bar the presenter sent it from a scene. -/
 inductive WindowAsked where
   /-- A request Lean made. -/
   | request (request : WindowRequest)
   /-- A title. -/
   | title (text : String)
+  /-- A menu bar. -/
+  | menu (menu : Menu)
   deriving DecidableEq, Repr
+
+/-- The word of `modifiers` as the library reads it ("The window", in the
+module docs): shift 1, control 2, alt 4, the system key 8. The one encoding
+on the Lean side, for an event posted (`EventWords`), a menu's key
+equivalent in a scene (`RealDisplay.encodeMenu`) and what a window was
+asked (`askedOf`). -/
+def modifierBits (modifiers : Modifiers) : UInt64 :=
+  (if modifiers.shift then 1 else 0) ||| (if modifiers.control then 2 else 0) |||
+    (if modifiers.alt then 4 else 0) |||
+    (if modifiers.superKey then 8 else 0)
+
+/-- The modifiers the word `bits` holds (`modifierBits`); `none` when it has
+a bit past the system key's. -/
+def modifiersOfBits? (bits : UInt64) : Option Modifiers :=
+  if bits &&& ~~~15 != 0 then none
+  else
+    some
+      { shift := bits &&& 1 != 0, control := bits &&& 2 != 0, alt := bits &&& 4 != 0,
+        superKey := bits &&& 8 != 0 }
+
+/-- Reads the words of what a window was asked, from an index on: each
+reader gives what it read and the index after it, or `none` when the
+words spell nothing. -/
+private abbrev AskedReader :=
+  StateT Nat Option
+
+/-- The next word. -/
+private def AskedReader.word (words : Array UInt64) : AskedReader UInt64 := fun at_ =>
+  words[at_]?.map (·, at_ + 1)
+
+/-- A count of things, each at least one word, that the words left can
+hold. -/
+private def AskedReader.count (words : Array UInt64) : AskedReader Nat := do
+  let count := (← AskedReader.word words).toNat
+  if count ≤ words.size - (← get) then
+    pure count
+  else
+    failure
+
+/-- The character the scalar value `scalar` numbers, if it is one. -/
+private def AskedReader.char? (scalar : UInt64) : Option Char :=
+  if scalar < 0x110000 && Nat.isValidChar scalar.toNat then some (Char.ofNat scalar.toNat) else none
+
+/-- A text: the count of its scalar values, and each of them. -/
+private def AskedReader.text (words : Array UInt64) : AskedReader String := do
+  let count ← AskedReader.count words
+  let chars ←
+    (List.range count).mapM fun _ => do
+        let some char := AskedReader.char? (← AskedReader.word words) | failure
+        pure char
+  return String.ofList chars
+
+/-- A menu bar in the layout of `editor-ffi`'s `menu.rs`: its menus, each
+with its title, its role and its items. -/
+private def AskedReader.menu (words : Array UInt64) : AskedReader Menu := do
+  let word := AskedReader.word words
+  let menus ←
+    (List.range (← AskedReader.count words)).mapM fun _ => do
+        let title ← AskedReader.text words
+        let role ←
+          match ← word with
+          | 0 =>
+            pure none
+          | 1 =>
+            pure (some MenuRole.app)
+          | 2 =>
+            pure (some MenuRole.window)
+          | _ =>
+            failure
+        let items ←
+          (List.range (← AskedReader.count words)).mapM fun _ => do
+              match ← word with
+              | 0 =>
+                pure MenuItem.separator
+              | kind@(1 : UInt64) | kind@2 =>
+                do
+                  let title ← AskedReader.text words
+                  let (present, scalar, bits) := (← word, ← word, ← word)
+                  let key ←
+                    match present with
+                    | 0 =>
+                      pure none
+                    | 1 =>
+                      do
+                        let some character := AskedReader.char? scalar | failure
+                        let some modifiers := modifiersOfBits? bits | failure
+                        pure (some { character, modifiers })
+                    | _ =>
+                      failure
+                  let action ←
+                    if kind == 1 then
+                      MenuAction.command <$> AskedReader.text words
+                    else
+                      match ← word with
+                      | 0 =>
+                        pure (.system .about)
+                      | 1 =>
+                        pure (.system .services)
+                      | 2 =>
+                        pure (.system .hide)
+                      | 3 =>
+                        pure (.system .hideOthers)
+                      | 4 =>
+                        pure (.system .showAll)
+                      | 5 =>
+                        pure (.system .quit)
+                      | _ =>
+                        failure
+                  pure (MenuItem.item title key action)
+              | _ =>
+                failure
+        pure { title, role, items := items.toArray }
+  return { menus := menus.toArray }
 
 /-- `windowAsked` as it crosses. -/
 @[extern "editor_glue_window_asked"]
 private opaque windowAskedRaw (platform : Platform) : IO RawWords
 
 /-- What the words of `windowAsked` spell from the index `at_` on, each
-thing asked in order: a request's tag, or the tag 5, a count and the
-scalar values of a title's characters. `none` when they spell nothing. -/
+thing asked in order: a request's tag, the tag 3, a count and the scalar
+values of a title's characters, or the tag 5 and a menu bar's layout
+(`AskedReader.menu`). `none` when they spell nothing. -/
 private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     (asked : Array WindowAsked := #[]) : Option (Array WindowAsked) :=
   if at_ >= words.size then some asked
@@ -1885,9 +2069,10 @@ private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
     | 0 => askedOf words (at_ + 1) (asked.push (.request .enterFullscreen))
     | 1 => askedOf words (at_ + 1) (asked.push (.request .leaveFullscreen))
     | 2 => askedOf words (at_ + 1) (asked.push (.request .minimise))
-    | 3 => askedOf words (at_ + 1) (asked.push (.request .lightAppearance))
-    | 4 => askedOf words (at_ + 1) (asked.push (.request .darkAppearance))
-    | 5 => do
+    | 4 => askedOf words (at_ + 1) (asked.push (.request .keepRunning))
+    | 6 => askedOf words (at_ + 1) (asked.push (.request .lightAppearance))
+    | 7 => askedOf words (at_ + 1) (asked.push (.request .darkAppearance))
+    | 3 => do
       let count := (← words[at_ + 1]?).toNat
       let scalars ← (List.range count).mapM fun index => words[at_ + 2 + index]?
       let chars ←
@@ -1896,6 +2081,9 @@ private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
               some (Char.ofNat scalar.toNat)
             else none
       askedOf words (at_ + 2 + count) (asked.push (.title (String.ofList chars)))
+    | 5 => do
+      let (menu, next) ← (AskedReader.menu words).run (at_ + 1)
+      askedOf words next (asked.push (.menu menu))
     | _ => none
 
 /-- What the scripted window of `platform` was asked in its latest run, in

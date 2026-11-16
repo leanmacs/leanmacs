@@ -77,7 +77,10 @@ library.
   whose child is running ends the job and has the child reaped, and that a
   run the library does not take, its id being in use there, is refused at
   once as `failed`, the job going on, with the refusal kept until it is
-  taken and erased when its wait is withdrawn.
+  taken and erased when its wait is withdrawn. It also shows that a run with
+  a time limit, taken within the limit, cancelled before it or timed out,
+  leaves no run in the adapter's table of armed limits and no alarm in the
+  table of waits, and its child reaped.
   `model-test` runs the same list against the model of processes and
   against the runner over the fake of the process service.
 
@@ -574,6 +577,23 @@ check cancels it before it ends. Whether the library took it. -/
 def occupy (id : UInt64) (directory : System.FilePath) : IO Bool :=
   Ffi.processesRun id "/bin/sleep" #["600"] false #[] #[] directory.toString 10
 
+/-- Runs `check` in a temporary directory of its own, removed whatever
+happened, on `services` with a real process service whose table of the runs
+with a time limit armed is one the check holds, so it can read how many
+there are. -/
+def timedCheck (services : Job.Services)
+    (check : System.FilePath → Job.Services → Job.TimedRuns → IO Bool) : IO Bool := do
+  let directory ← IO.FS.createTempDir
+  let timed ← Job.TimedRuns.new
+  let services :=
+    { services with
+      processes :=
+        Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers timed }
+  try
+    check directory services timed
+  finally
+    IO.FS.removeDirAll directory
+
 /-- What only the real process service can show: that cancelling a job
 whose child is running kills the child, which the service then reaps; and
 that a run the library does not take is refused at once by the adapter,
@@ -591,7 +611,15 @@ Seen to bite once by hand, on 2026-11-15, each with one line of
 `realProcesses` taken out: without the completion of a run not taken, both
 not-taken checks fail, the job waiting for ever; without keeping its
 refusal, the first fails, the job getting no result instead; and without
-the erasing in `cancel`, the second fails, the take finding the refusal. -/
+the erasing in `cancel`, the second fails, the take finding the refusal.
+
+The last three are the runs with a time limit, each on a table of the runs
+whose alarm is armed that the check holds (`timedCheck`): taken within the
+limit, cancelled before it, and timed out. Seen to bite once by hand, on
+2026-11-16: without the disarming in the take, the first fails, its alarm
+left in the table of waits; without the take and disarming in `cancel`, the
+second fails; and with a timed-out run put back in the table at its take,
+the third fails. -/
 def processChecks (services : Job.Services) : List Check :=
   [{  name :=
         "a job whose child sleeps for ten minutes is cancelled: it ends cancelled, and the process service reaps the child, so nothing is pending that was not before"
@@ -619,7 +647,9 @@ def processChecks (services : Job.Services) : List Check :=
         let directory ← IO.FS.createTempDir
         let refused ← Job.RefusedRuns.new
         let services :=
-          { services with processes := Job.realProcesses services.completions refused }
+          { services with
+            processes :=
+              Job.realProcesses services.completions refused services.timers (← Job.TimedRuns.new) }
         let (probe, _) ← services.completions.register
         services.completions.finish probe .completed
         let taken := probe + 1
@@ -652,7 +682,9 @@ def processChecks (services : Job.Services) : List Check :=
         "a run the library does not take completes its wait at once, and withdrawing the wait erases the refusal kept for it"
       run := do
         let directory ← IO.FS.createTempDir
-        let processes := Job.realProcesses services.completions (← Job.RefusedRuns.new)
+        let processes :=
+          Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers
+            (← Job.TimedRuns.new)
         let (id, wait) ← services.completions.register
         let before ← Ffi.processesPending
         let request := ProcessRequest.run (JobContract.sh directory "exit 0") 10
@@ -668,7 +700,57 @@ def processChecks (services : Job.Services) : List Check :=
         finally
           discard <| Ffi.processesCancel id
           services.completions.finish id .completed
-          IO.FS.removeDirAll directory }]
+          IO.FS.removeDirAll directory },
+    { name :=
+        "a run with a time limit that ends well inside it, once taken, leaves no run in the table of time limits and its alarm disarmed: the table of waits is as it was"
+      run :=
+        timedCheck services fun directory services timed => do
+          let waiting ← services.completions.waiting
+          let outcome ←
+            runOnTimers services do
+                return (← Process.runWithin (JobContract.sh directory "exit 0") 10 hour) matches
+                    .ok { exit := .code 0, .. }
+          let disarmed ←
+            eventually do
+                return (← timed.size) == 0 && (← services.completions.waiting) == waiting
+          return outcome == .finished true && disarmed },
+    { name :=
+        "a run with a time limit cancelled with its job before the limit leaves no run in the table of time limits and its alarm disarmed, and its child is reaped"
+      run :=
+        timedCheck services fun directory services timed => do
+          let waiting ← services.completions.waiting
+          let before ← Ffi.processesPending
+          let handle ←
+            Job.spawn services
+                (reporting fun _ => do
+                  discard <| Process.runWithin (JobContract.sh directory "/bin/sleep 600") 10 hour
+                  return true)
+                (pure ())
+          let armed ←
+            eventually do
+                return (← Ffi.processesPending) == before + 1 && (← timed.size) == 1
+          handle.cancel
+          let cancelled ← endedAs handle .cancelled
+          let disarmed ←
+            eventually do
+                return (← timed.size) == 0 && (← services.completions.waiting) == waiting
+          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          return armed && cancelled && disarmed && reaped },
+    { name :=
+        "a run with a time limit that outlives it answers timed out, and then leaves no run in the table of time limits and nothing in the table of waits, and its child is reaped"
+      run :=
+        timedCheck services fun directory services timed => do
+          let waiting ← services.completions.waiting
+          let before ← Ffi.processesPending
+          let outcome ←
+            runOnTimers services do
+                return refusedAs (.timedOut 200)
+                    (← Process.runWithin (JobContract.sh directory "/bin/sleep 600") 10 200)
+          let disarmed ←
+            eventually do
+                return (← timed.size) == 0 && (← services.completions.waiting) == waiting
+          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          return outcome == .finished true && disarmed && reaped }]
 
 /-- `count` jobs that each sleep for an hour. -/
 def sleepers (services : Job.Services) (count : Nat) : IO (Array Job.Handle) := do
@@ -1411,6 +1493,116 @@ def watchChecks (timers : Job.Timers) : List Check :=
         finally
           discard <| Event.setInterruptKey none }]
 
+/-! ## A child's environment over the real process service -/
+
+/-- The standard output of `command` run through `services`, as text; a
+refusal, a status other than 0 or output that is not UTF-8 fails the job. -/
+def outputOf (command : Process.Command) : JobM String := do
+  let ran ← JobContract.ranOk command
+  unless ran.exit == .code 0 do
+    throw s!"{command.program} ended with {repr ran.exit}"
+  let some text := String.fromUTF8? ran.stdout | throw s!"{command.program} wrote what is not UTF-8"
+  return text
+
+/-- `services` whose jobs share environments over a state of their own with
+`setting`, the headless mode and a limit of `limit` milliseconds, which
+report into `said`. -/
+def withEnvironment (services : Job.Services) (setting : Process.Setting) (limit : Nat)
+    (said : IO.Ref (Array String)) : IO Job.Services := do
+  let state ← IO.mkRef ({ setting, host := .headless, limit } : Process.Environments)
+  return { services with
+      environments := Job.sharedEnvironments state fun text => said.modify (·.push text) }
+
+/-- A temporary directory of its own for `check`, holding the file
+`fixture-path` with the line `<directory>/tools:/usr/bin:/bin`, the `PATH`
+the mise fixture prints there; removed afterwards, whatever happened. -/
+def withFixturePath (check : System.FilePath → String → IO Bool) : IO Bool := do
+  let directory ← IO.FS.createTempDir
+  try
+    let path := s!"{directory}/tools:/usr/bin:/bin"
+    IO.FS.writeFile (directory / "fixture-path") s!"{path}\n"
+    check directory path
+  finally
+    IO.FS.removeDirAll directory
+
+/-- What `command` prints when a job runs it through `services`; `none`
+when the job did not finish with it. -/
+def printedThrough (services : Job.Services) (command : Process.Command) : IO (Option String) := do
+  let handle ← Job.spawn services (reporting fun _ => outputOf command) (pure ())
+  unless ← eventually handle.ended do
+    handle.cancel
+    return none
+  handle.settle
+  match (← handle.outcome?).map texts with
+  | some (.finished #[text]) =>
+    return some text
+  | _ =>
+    return none
+
+/-- What the job port shows only over the real process service: the lookup
+of a child's environment with mise standing in as the fixtures under
+`fixtures` (`tests/process-environment`). Each check works in temporary
+directories of its own, which it removes, and none sets a variable of the
+test process or changes its working directory. -/
+def environmentChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
+  let printenv (directory : System.FilePath) (program := "/usr/bin/printenv") : Process.Command :=
+    { program, arguments := #["PATH"], directory }
+  [{  name :=
+        "with mise standing in as a fixture, a child started in each of two directories, by its path and by a bare name, gets that directory's fixture PATH, and nothing is reported"
+      run :=
+        withFixturePath fun first firstPath =>
+          withFixturePath fun second secondPath => do
+            let said ← IO.mkRef #[]
+            let services ← withEnvironment services (.mise (some (fixtures / "mise"))) 1000 said
+            let before ← Ffi.processesPending
+            let outcome ←
+              runOnTimers services do
+                  let byPath ← [first, second].mapM fun directory => outputOf (printenv directory)
+                  let bare ←
+                    [first, second].mapM fun directory => outputOf (printenv directory "printenv")
+                  return byPath == [firstPath ++ "\n", secondPath ++ "\n"] && bare == byPath
+            let reaped ← eventually (return (← Ffi.processesPending) == before)
+            return outcome == .finished true && (← said.get).isEmpty && reaped },
+    { name :=
+        "with a mise that sleeps past a limit of 1 s, the lookup is killed within 2 s of its start, its group reaped, the child gets the inherited environment, and the timeout is reported once"
+      run :=
+        withFixturePath fun directory _ => do
+          let some inherited ← printedThrough services (printenv directory) | return false
+          let said ← IO.mkRef #[]
+          let services ← withEnvironment services (.mise (some (fixtures / "slow-mise"))) 1000 said
+          let before ← Ffi.processesPending
+          let outcome ←
+            runOnTimers services do
+                -- The lookup starts after this reading.
+                let start ← now
+                let path ← outputOf (printenv directory)
+                let ended ← now
+                return ended - start < 2000 && path == inherited
+          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          return outcome == .finished true &&
+              (← said.get) == #[Process.failureMessage directory (.timedOut 1000)] &&
+              reaped }]
+
+/-- The names of the environment checks that fail over the real process
+service, and, when the environment a child of the test process gets is not
+the same after them as before, that: `/usr/bin/env` run with the inherited
+setting, in a temporary directory, before the first and after the last. -/
+def environmentFailures (services : Job.Services) (fixtures : System.FilePath) : IO (List String) :=
+  do
+  let env (directory : System.FilePath) : Process.Command :=
+    { program := "/usr/bin/env", directory }
+  let directory ← IO.FS.createTempDir
+  try
+    let before ← printedThrough services (env directory)
+    let failed ← checkFailures (environmentChecks services fixtures)
+    let after ← printedThrough services (env directory)
+    return failed ++
+        if before.isSome && before == after then []
+        else
+          ["the test process's environment after the environment checks is what it was before them"]
+  finally
+    IO.FS.removeDirAll directory
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
@@ -1419,22 +1611,37 @@ timer service, the display interface's against the recorder and the watch
 port's against its real binding, then shuts down: exits 0 when everything
 holds, and 1 after naming on stderr what does not.
 
+Its one argument is the directory of the fixtures a child's environment is
+looked up with (`tests/process-environment`), made absolute here; any other
+command line is status 2, with the usage on stderr.
+
 The pool's threads are learnt first, by warming it, before anything else
 runs: the check that the pump is not one of the pool's tasks compares
 against them. Then the completion pump runs on a dedicated task for the rest
 of the run. Shutdown is quit, which must end the pump, then an explicit
 exit: a task that failed a check may still be blocked in the library. -/
-def main : IO UInt32 := do
+def main (arguments : List String) : IO UInt32 := do
+  -- The fixtures of the environment checks, made absolute here, at the edge.
+  let fixtures ←
+    match arguments with
+    | [directory] =>
+      IO.FS.realPath directory
+    | _ =>
+      IO.eprintln "usage: contract-test <the directory of the process-environment fixtures>"
+      return 2
   let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
   let completions ← Editor.Job.Completions.new
   -- No command of this run publishes a snapshot to these services: the file
   -- properties save what their own jobs loaded.
   let published ← Editor.Snapshots.new
   let held ← Editor.Job.HeldSnapshots.new
+  let timers := Editor.Job.realTimers completions
   let services : Editor.Job.Services :=
-    { completions, timers := Editor.Job.realTimers completions
+    { completions, timers
       files := Editor.Job.realFiles completions published.reader held
-      processes := Editor.Job.realProcesses completions (← Editor.Job.RefusedRuns.new)
+      processes :=
+        Editor.Job.realProcesses completions (← Editor.Job.RefusedRuns.new) timers
+          (← Editor.Job.TimedRuns.new)
       fileWatches := Editor.Job.realFileWatches completions (← Editor.Job.RealWatches.new) }
   let pump ← IO.asTask (prio := .dedicated) (Editor.Job.pump completions)
   let properties := Editor.TextContract.properties
@@ -1448,6 +1655,8 @@ def main : IO UInt32 := do
   let processFailed ← ContractTest.processFailures services
   let processChecks := ContractTest.processChecks services
   let processCheckFailed ← ContractTest.checkFailures processChecks
+  let environmentChecks := ContractTest.environmentChecks services fixtures
+  let environmentFailed ← ContractTest.environmentFailures services fixtures
   let fileWatchFailed ← ContractTest.fileWatchFailures services
   let fileWatchChecks := ContractTest.fileWatchChecks services
   let fileWatchCheckFailed ← ContractTest.checkFailures fileWatchChecks
@@ -1478,6 +1687,7 @@ def main : IO UInt32 := do
   let failed :=
     textFailed.map (s!"the real text binding: {·}") ++ jobFailed ++ fileFailed ++ processFailed ++
       processCheckFailed ++
+      environmentFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
       checkFailed ++
@@ -1500,6 +1710,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

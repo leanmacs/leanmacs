@@ -3,6 +3,7 @@ import Editor.Command.Dispatch
 import Editor.Config.Owner
 import Editor.Ex.Line
 import Editor.InputScheme
+import Editor.Menu
 import Editor.Mode
 import Editor.Setup
 import Editor.State
@@ -59,6 +60,21 @@ owners that bind one sequence the later owner's binding is the keymap's, as
 `Keymap.ofList` has it. The name is not looked up here: a binding to a name
 nobody registered is kept, and the name is looked up when the keys are
 typed.
+
+**The menu bar shows a command's key from these bindings**
+(`keyEquivalent?`): of the sequences the bindings, as one keymap, bind to
+the command's name, the one bound last that is a single chord of one
+character with the system key held, as a menu's key equivalent must be (a
+key equivalent with no Command would take a plain key from typing, and a
+named key has none). So config's binding is shown over a compiled one, a
+sequence config binds to another command shows for that one, and a
+command bound only to a longer sequence, a named key or a chord without
+the system key shows none. A chord one of the menu's system items already
+shows (`s-q` Quit, `s-h` Hide, `M-s-h` Hide Others) is skipped: AppKit
+matches the system item first, so the command would never run by it, and
+the command shows its next chord, or none. Mode-local bindings and an
+input scheme's own keys are not looked at: the menu bar is the
+application's.
 
 ## Modes
 
@@ -278,6 +294,9 @@ structure Registry where
   themes : Array ThemeEntry := #[]
   /-- The segment entries. -/
   segments : Array SegmentEntry := #[]
+  /-- Where a child's environment comes from, as config set it; `none` when
+it did not, which a host reads as `auto`. -/
+  environment : Option Process.Setting := none
 
 namespace Registry
 
@@ -402,6 +421,28 @@ def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding 
     (registry.bindings.toList.map fun entry =>
       (entry.binding.keys, scheme.command entry.binding.command))
 
+/-- The key equivalent the menu bar shows for the command `command`: the
+last chord the bindings bind to it alone that is one character with the
+system key held and is none of `taken`, the keys the menu's system items
+already show ("Key bindings", in the module docs); `none` when no binding
+is such a chord. -/
+def keyEquivalent? (registry : Registry) (command : String) (taken : List KeyEquivalent := []) :
+    Option KeyEquivalent :=
+  let keymap : Keymap String :=
+    Keymap.ofList
+      (registry.bindings.toList.map fun entry => (entry.binding.keys, entry.binding.command))
+  (keymap.keysFor (· == command)).reverse.findSome? fun
+    | [chord] =>
+      match chord.logical, chord.modifiers.superKey with
+      | .character text, true =>
+        match text.toList with
+        | [character] =>
+          let key : KeyEquivalent := { character, modifiers := chord.modifiers }
+          if taken.contains key then none else some key
+        | _ => none
+      | _, _ => none
+    | _ => none
+
 /-- `registry` with every mode entry of `owner` removed and `modes` added as
 its mode entries. -/
 def replaceModes (registry : Registry) (owner : Owner) (modes : Array Mode) : Registry :=
@@ -507,6 +548,9 @@ accepted names at most one (`theme`). -/
   /-- The title bars `setup` chose (`titleBar`), in order: more than one is
   refused, so a `setup` that is accepted chooses at most one (`titleBar`). -/
   titleBars : Array Window.TitleBar := #[]
+  /-- Each setting of where a child's environment comes from, in the order
+they were made: one at most, in a `setup` that is not refused. -/
+  environments : Array Process.Setting := #[]
 
 namespace Registrations
 
@@ -558,6 +602,13 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with framePaddings := collected.framePaddings.push points })
   | .titleBar style, collected =>
     ((), { collected with titleBars := collected.titleBars.push style })
+  | .processEnvironment setting, collected =>
+    ((), { collected with environments := collected.environments.push setting })
+
+/-- Where a child's environment comes from, as the `setup` set it, or `none`
+when it did not. -/
+def environment (collected : Registrations) : Option Process.Setting :=
+  collected.environments[0]?
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -571,8 +622,8 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 twice, a command name or a job name registered twice, a face set twice, a
 theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
-twice, a key
-sequence bound twice, a binding of no keys, an ex name bound twice, a
+twice, the title bar chosen twice, a key sequence bound twice, a binding of
+no keys, an ex name bound twice, the process environment set twice, a
 command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named.
@@ -610,6 +661,8 @@ def problem? (collected : Registrations) : Option String := do
     return "the frame padding is set twice"
   if collected.titleBars.size > 1 then
     return "the title bar is chosen twice"
+  if collected.environments.size > 1 then
+    return "the process environment is set twice"
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command

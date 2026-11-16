@@ -65,9 +65,11 @@ binding:
 
 The display is also how a command asks the platform's window to do
 something (`Display.askFrame`, a `FrameRequest`): enter or leave the system's
-fullscreen, minimise, or draw the window's title and buttons in the light
+fullscreen, or minimise; draw the window's title and buttons in the light
 or the dark appearance (`Editor/Appearance.lean`), which the reload reducer
-asks for from the paper. A frame request answers nothing and changes no
+asks for from the paper; or keep running, which tells the system the editor
+refused or withdrew the quit it asked (`Loop.publish`), and changes nothing
+the window shows. A frame request answers nothing and changes no
 answer of layout. Whether the window is then in fullscreen comes back as a
 resize (`Event.Resize.fullscreen`), which the loop keeps in the frame
 (`Frame.fullscreen`), whether a request or the user made the change. It is
@@ -185,6 +187,10 @@ inductive FrameRequest where
   | leaveFullscreen
   /-- Minimise the window. -/
   | minimise
+  /-- The editor refused, or withdrew, the quit the system asked
+  (`Event.quitRequested`), so the system stops waiting for it to quit. It
+  changes nothing the window shows. -/
+  | keepRunning
   /-- Draw the window's title and buttons in this appearance, so that they
   contrast with the paper under them. -/
   | appearance (appearance : Appearance)

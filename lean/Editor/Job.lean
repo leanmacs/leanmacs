@@ -2,6 +2,7 @@ import Editor.Command
 import Editor.File
 import Editor.FileWatch
 import Editor.Process
+import Editor.Process.Environment
 
 /-!
 # Jobs
@@ -31,8 +32,8 @@ the instant of its next tick and its period. A job may also fail: `JobM` has
 an error layer of messages, so a job has `throw`, `try` and `catch`.
 
 A job reaches files through one request, `file`, which carries a
-`FileRequest` (`Editor/File.lean`): `File.load` loads a file and `File.save`
-saves a snapshot as one. Each waits, as a wait on the clock does, and
+`FileRequest` (`Editor/File.lean`): `File.load` loads a file, `File.save`
+saves a snapshot as one, and `File.stamp` reads a file's stamp. Each waits, as a wait on the clock does, and
 replies with a result or a refusal: an `Except FileError`, a value, which
 the job matches on. Nothing about a file ends a job or cancels it. A load
 replies with the name of a snapshot the job then holds (`JobSnapshotId`):
@@ -64,6 +65,13 @@ its job: the runner ends every watch the job holds when the job ends,
 however it ends (`Editor/Job/Runner.lean`, "A watch does not outlive its
 job"). It is not the interrupt port `Editor/Watch.lean`.
 
+A job reaches the environments its host shares through one request,
+`environment`, which carries an `EnvironmentRequest`
+(`Editor/Process/Environment.lean`) and is answered at once, as `now` is:
+the setting config chose, what it resolved to, and each directory's cached
+lookup. The process operations ask it before they start a child, so a
+child gets its directory's environment (`Process.prepared`).
+
 No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
 something a job names.
@@ -92,6 +100,14 @@ says what it needs). Its model is `Editor/Process/Model.lean`, its fake
 `FakeProcesses` and its real implementation `realProcesses`; withdrawing a
 wait also tells the process service (`Handle.withdraw`), which is how a
 cancelled job's child is killed.
+
+The environments are the fourth, and answer at once: `JobRequest.environment`,
+whose requests are `EnvironmentRequest`s, so a new question of the shared
+state is a constructor there (`Editor/Process/Environment.lean` says what it
+needs) and not here. Its model is `JobModel.environments`, with what it said
+in `JobModel.reported`; the runner's port is `Job.Environments`, whose
+default answers as the default state does and whose shared form,
+`Job.sharedEnvironments`, is that state behind a reference.
 
 The file-watch service is the third, beside it: `JobRequest.fileWatch`,
 whose requests are `FileWatchRequest`s, so a `stop` that ends a watch early
@@ -146,6 +162,9 @@ inductive JobRequest where
   /-- Watch a file or a directory, or wait for a watch's next delivery
   (`Editor/FileWatch.lean`). -/
   | fileWatch (request : FileWatchRequest)
+  /-- Ask the environments the host's jobs share
+  (`Editor/Process/Environment.lean`): answered at once. -/
+  | environment (request : EnvironmentRequest)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -157,6 +176,7 @@ def JobRequest.Reply : JobRequest → Type
   | .file request => request.Reply
   | .process request => request.Reply
   | .fileWatch request => request.Reply
+  | .environment request => request.Reply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -218,21 +238,127 @@ def File.save (source : File.Source) (path : System.FilePath) (expect : File.Exp
     JobM (Except FileError File.Stamp) :=
   ExceptT.lift (Program.request (port := jobPort) (.file (.save source path expect)))
 
+/-- The stamp of the file at `path`, or `none` when nothing is there, and
+waits for it; nothing of the file is read. A directory is refused as
+`notAFile`. The refusal is a value: the job goes on. `Editor/File.lean` has
+the rules. -/
+def File.stamp (path : System.FilePath) : JobM (Except FileError (Option File.Stamp)) :=
+  ExceptT.lift (Program.request (port := jobPort) (.file (.stamp path)))
+
+/-- Asks the environments every job of the host shares: the setting, what it
+resolved to, and each directory's cached lookup (`EnvironmentRequest`). It is
+answered at once, as `now` is, and never waits. -/
+def Process.askEnvironment (request : EnvironmentRequest) : JobM request.Reply :=
+  ExceptT.lift (Program.request (port := jobPort) (.environment request))
+
+/-- Makes the process request `request` as it is, with no lookup: for the
+process operations, and for the lookup itself, which so never looks itself
+up. -/
+def Process.request (request : ProcessRequest) : JobM request.Reply :=
+  ExceptT.lift (Program.request (port := jobPort) (.process request))
+
+/-- The output limit of a lookup's run, in bytes: a mebibyte. -/
+def Process.lookupOutput : Nat :=
+  1024 * 1024
+
+/-- The stamp of the file at `path`, or `none` when there is none or it
+cannot be read: what an entry of the cache is kept by. -/
+def Process.stampOrNone (path : System.FilePath) : JobM (Option File.Stamp) := do
+  match ← File.stamp path with
+  | .ok stamp =>
+    return stamp
+  | .error _ =>
+    return none
+
+/-- The first of `candidates` that has a stamp: a file is there. -/
+def Process.firstStamped (candidates : Array System.FilePath) : JobM (Option System.FilePath) := do
+  for candidate in candidates do
+    if (← Process.stampOrNone candidate).isSome then
+      return some candidate
+  return none
+
+/-- What the setting resolves to, as the shared state has it: resolved by an
+earlier job, at once when the setting needs no file, or else from the
+candidates' stamps, which is then kept for every job until a reload. -/
+def Process.lookup (policy : Process.Policy) : JobM Process.Lookup := do
+  if let some lookup := policy.resolved then
+    return lookup
+  if let some lookup := policy.setting.resolveNow policy.host then
+    return lookup
+  let found ← Process.firstStamped policy.host.candidates
+  let lookup := policy.setting.resolveWith policy.host found
+  Process.askEnvironment (.resolved lookup)
+  return lookup
+
+/-- The entry of `directory` for `executable`: the cached one while its
+config files' stamps are what they were, and else a new lookup's, run with
+the time limit `limit`, which is recorded. The stamps are read before the
+lookup runs. -/
+def Process.entryOf (executable directory : System.FilePath) (limit : Nat) : JobM Process.Entry :=
+  do
+  let stamps ← (Process.configPaths directory).mapM Process.stampOrNone
+  let cached : Option Process.Entry ← Process.askEnvironment (.cached directory)
+  if let some entry := cached then
+    if entry.stamps == stamps then
+      return entry
+  let ran ←
+    Process.request
+        (.runWithin (Process.lookupCommand executable directory) Process.lookupOutput limit)
+  let entry : Process.Entry := { stamps, found := Process.foundOf ran }
+  Process.askEnvironment (.record directory entry)
+  return entry
+
+/-- `command` with the environment its directory's lookup gives it
+(`Editor/Process/Environment.lean`): the lookup's variables under its own. It
+is returned unchanged when the process service would refuse it, a directory
+or a program that is not absolute; when it clears the editor's environment;
+when the setting is `inherited`; and when the lookup failed, which the
+shared state reports once for the directory. -/
+def Process.prepared (command : Process.Command) : JobM Process.Command := do
+  if !command.directory.isAbsolute || command.namesRelative || command.environment.clear then
+    return command
+  let policy : Process.Policy ← Process.askEnvironment .policy
+  match ← Process.lookup policy with
+  | .inherited =>
+    return command
+  | .missing candidates =>
+    let cached : Option Process.Entry ← Process.askEnvironment (.cached command.directory)
+    if cached.isNone then
+      Process.askEnvironment
+          (.record command.directory { stamps := #[], found := .failed (.missing candidates) })
+    return command
+  | .mise executable =>
+    match (← Process.entryOf executable command.directory policy.limit).found with
+    | .variables variables =>
+      return { command with environment := Process.Environment.over variables command.environment }
+    | .failed _ =>
+      return command
+
 /-- Runs `command` to its end and waits for it, collecting each output stream
 unless it is longer than `limit` bytes: how the child ended and both its
 streams, or why it was refused. The refusal is a value: the job goes on. A
-cancelled job's child is killed, with its process group.
+cancelled job's child is killed, with its process group. The child gets the
+environment its directory's lookup gives it (`Process.prepared`).
 `Editor/Process.lean` has the rules. -/
 def Process.run (command : Process.Command) (limit : Nat) :
-    JobM (Except ProcessError Process.Ran) :=
-  ExceptT.lift (Program.request (port := jobPort) (.process (.run command limit)))
+    JobM (Except ProcessError Process.Ran) := do
+  Process.request (.run (← Process.prepared command) limit)
+
+/-- Runs `command` as `Process.run` does, and kills it, with its process
+group, if it has not ended `time` milliseconds after it was started: then the
+reply is `timedOut`. The child gets the environment its directory's lookup
+gives it (`Process.prepared`). `Editor/Process.lean` has the rules. -/
+def Process.runWithin (command : Process.Command) (limit : Nat) (time : Nat) :
+    JobM (Except ProcessError Process.Ran) := do
+  Process.request (.runWithin (← Process.prepared command) limit time)
 
 /-- Starts `command` as a streaming child, as `streaming` says, and waits for
 it to start: the child, named for this job, or why it was refused. The child
-does not outlive the job. `Editor/Process.lean` has the rules. -/
+does not outlive the job. The child gets the environment its directory's
+lookup gives it (`Process.prepared`). `Editor/Process.lean` has the rules. -/
 def Process.start (command : Process.Command) (streaming : Process.Streaming) :
-    JobM (Except ProcessError Process.Id) :=
-  ExceptT.lift (Program.request (port := jobPort) (.process (.start command streaming)))
+    JobM (Except ProcessError Process.Id) := do
+  Process.request (.start (← Process.prepared command) streaming)
 
 /-- Waits for the next delivery of `process`'s output: every frame read and
 not yet taken, and in the last one how the child ended. -/

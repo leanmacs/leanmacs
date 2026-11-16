@@ -1,10 +1,11 @@
-//! The file service: loads and saves, completed through the completion
-//! queue.
+//! The file service: loads, saves and stamps, completed through the
+//! completion queue.
 //!
 //! This is the second service behind the completion queue, in the timer
 //! service's shape (the crate docs, "Services and completions"). A job in
-//! Lean asks for a load or a save with an id. [`Files::start_load`] and
-//! [`Files::start_save`] return at once; the service's thread does the
+//! Lean asks for a load, a save or a stamp with an id.
+//! [`Files::start_load`], [`Files::start_save`] and [`Files::start_stamp`]
+//! return at once; the service's thread does the
 //! work, keeps the result under the request's id and completes the
 //! request: for the process's instance, by queueing an
 //! [`EventKind::Completion`](crate::events::EventKind::Completion) whose
@@ -70,6 +71,7 @@
 //! |---|---|---|
 //! | Loaded | 0 | seconds, nanoseconds, size, lone line feeds, CRLF pairs |
 //! | Saved | 0 | seconds, nanoseconds, size |
+//! | Stamped | 0 | present (0 or 1), seconds, nanoseconds, size |
 //! | The path is not absolute | 1 | |
 //! | Not found | 2 | |
 //! | Not a file | 3 | |
@@ -90,6 +92,7 @@
 //! |---|---|
 //! | [`editor_ffi_files_load`] | Starts a load. False, starting nothing, for an id in use, or when the service has no thread |
 //! | [`editor_ffi_files_save`] | Starts a save of the snapshot behind a handle, which it clones. What it expects on disk is a [`RawExpect`] |
+//! | [`editor_ffi_files_stamp`] | Starts a stamp request: the stamp of the file at a path, or none. False, starting nothing, as for a load |
 //! | [`editor_ffi_files_take`] | Fills a [`RawFileResult`] and returns true, or returns false when the service keeps no result for the id |
 //! | [`editor_ffi_files_cancel`] | Cancels, and says whether there was anything to cancel |
 //! | [`editor_ffi_files_pending`] | Requests waiting or being worked, and results not taken |
@@ -186,6 +189,11 @@ pub enum Request {
         /// What the save expects to find there.
         expect: Expect,
     },
+    /// Read the stamp of the file at `path`.
+    Stamp {
+        /// Where the file is.
+        path: PathBuf,
+    },
 }
 
 /// What a request came to.
@@ -201,6 +209,8 @@ pub enum FileResult {
     },
     /// A file was saved, and has this stamp.
     Saved(Stamp),
+    /// A stamp was read: the file's, or none when nothing is there.
+    Stamped(Option<Stamp>),
     /// A load was refused.
     NotLoaded(LoadError),
     /// A save was refused.
@@ -215,6 +225,15 @@ impl From<Result<Loaded, LoadError>> for FileResult {
                 stamp: loaded.stamp,
                 endings: loaded.endings,
             },
+            Err(error) => Self::NotLoaded(error),
+        }
+    }
+}
+
+impl From<Result<Option<Stamp>, LoadError>> for FileResult {
+    fn from(stamped: Result<Option<Stamp>, LoadError>) -> Self {
+        match stamped {
+            Ok(stamp) => Self::Stamped(stamp),
             Err(error) => Self::NotLoaded(error),
         }
     }
@@ -307,6 +326,14 @@ impl FileResult {
                 words: stamp_words(*stamp).to_vec(),
                 ..Encoded::bare(FileStatus::Done)
             },
+            Self::Stamped(found) => {
+                let mut words = vec![u64::from(found.is_some())];
+                words.extend(found.map_or([0; 3], stamp_words));
+                Encoded {
+                    words,
+                    ..Encoded::bare(FileStatus::Done)
+                }
+            }
             Self::NotLoaded(error) => match error {
                 LoadError::Relative => Encoded::bare(FileStatus::Relative),
                 LoadError::NotFound => Encoded::bare(FileStatus::NotFound),
@@ -492,6 +519,13 @@ impl<F: Fs> Files<F> {
         )
     }
 
+    /// Asks for the stamp of the file at `path`, as the request `id`, and
+    /// returns whether it was accepted. It returns at once and touches no
+    /// file. An id in use is refused.
+    pub fn start_stamp(&self, id: u64, path: PathBuf) -> bool {
+        self.start(id, Request::Stamp { path })
+    }
+
     /// Adds `request` as `id`, unless the id is in use.
     fn start(&self, id: u64, request: Request) -> bool {
         let mut state = self.state();
@@ -600,6 +634,7 @@ impl<F: Fs> Files<F> {
                 cancelled.load(Ordering::SeqCst)
             })
             .into(),
+            Request::Stamp { path } => file::stamp(&self.fs, &path).into(),
         }
     }
 
@@ -724,6 +759,26 @@ pub unsafe extern "C" fn editor_ffi_files_save(
     service_started() && FILES.start_save(id, snapshot, path, expect)
 }
 
+/// Asks the process's file service for the stamp of the file whose path is
+/// the `path_len` bytes at `path`, as the request `id`, and returns whether
+/// it was accepted. It returns at once and never blocks. Nothing of the file
+/// is read.
+///
+/// The completion and the result are as [`editor_ffi_files_load`]'s.
+///
+/// Returns false, starting nothing, if `id` is in use, or if the operating
+/// system refused the service its thread.
+///
+/// # Safety
+///
+/// `path` points to `path_len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_files_stamp(id: u64, path: *const u8, path_len: usize) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let path = unsafe { path_of(path, path_len) };
+    service_started() && FILES.start_stamp(id, path)
+}
+
 /// The result of a file request as it crosses the boundary: one record,
 /// filled in one call. The module docs have the table of statuses and
 /// words.
@@ -767,9 +822,10 @@ pub unsafe extern "C" fn editor_ffi_files_take(id: u64, out: *mut RawFileResult)
     let encoded = result.encoded();
     let snapshot = match result {
         FileResult::Loaded { snapshot, .. } => Snapshot::hand_out(Snapshot::loaded(snapshot)),
-        FileResult::Saved(_) | FileResult::NotLoaded(_) | FileResult::NotSaved(_) => {
-            ptr::null_mut()
-        }
+        FileResult::Saved(_)
+        | FileResult::Stamped(_)
+        | FileResult::NotLoaded(_)
+        | FileResult::NotSaved(_) => ptr::null_mut(),
     };
     let mut writer = Writer::with_capacity(encoded.words.len());
     for word in encoded.words {
@@ -1314,6 +1370,78 @@ mod tests {
     }
 
     #[test]
+    fn a_stamp_answers_what_editor_text_answers_for_that_path() {
+        let asked = [FILE, OTHER, MISSING, "/dir", "relative.txt"];
+        let mut answers = Vec::new();
+        for path in asked {
+            let fs = fake();
+            fs.directory("/dir");
+            let rig = Rig::over(fs);
+
+            assert!(rig.files.start_stamp(1, path.into()));
+            assert_eq!(rig.next(), 1);
+            let Some(answer) = rig.files.take(1) else {
+                panic!("no result was kept for {path}");
+            };
+
+            let reference = fake();
+            reference.directory("/dir");
+            let expected = FileResult::from(file::stamp(&reference, Path::new(path)));
+            assert_eq!(said(&answer), said(&expected), "{path}");
+            answers.push(said(&answer));
+            rig.stop();
+        }
+        // The five answers differ, so the path was the one forwarded.
+        for (index, one) in answers.iter().enumerate() {
+            for other in &answers[index + 1..] {
+                assert_ne!(one, other);
+            }
+        }
+    }
+
+    #[test]
+    fn a_stamp_is_worked_in_order_with_loads_and_saves() {
+        let rig = Rig::over(fake());
+        let parked = rig.park();
+        assert!(rig.files.start_load(1, OTHER.into(), NO_LIMIT));
+        parked.entered();
+        assert!(
+            rig.files
+                .start_save(2, snapshot("saved first\n"), FILE.into(), Expect::Whatever)
+        );
+        assert!(rig.files.start_stamp(3, FILE.into()));
+        parked.release();
+
+        assert_eq!([rig.next(), rig.next(), rig.next()], [1, 2, 3]);
+        let Some(FileResult::Saved(saved)) = rig.files.take(2) else {
+            panic!("the save did not save");
+        };
+        // The stamp is the saved file's: it was worked after the save.
+        let Some(FileResult::Stamped(stamped)) = rig.files.take(3) else {
+            panic!("the stamp did not answer one");
+        };
+        assert_eq!(stamped, Some(saved));
+        rig.stop();
+    }
+
+    #[test]
+    fn a_stamp_cancelled_while_it_waits_is_never_worked_and_never_completed() {
+        let rig = Rig::over(fake());
+        let parked = rig.park();
+        assert!(rig.files.start_load(1, OTHER.into(), NO_LIMIT));
+        parked.entered();
+        assert!(rig.files.start_stamp(2, FILE.into()));
+
+        assert!(rig.files.cancel(2));
+        parked.release();
+
+        assert_eq!(rig.next(), 1);
+        rig.nothing_else_completed(3);
+        assert!(rig.files.take(2).is_none());
+        rig.stop();
+    }
+
+    #[test]
     fn each_result_is_its_status_and_its_words() {
         // Seconds before 1970 cross as a two's complement word.
         let stamp = Stamp {
@@ -1343,6 +1471,18 @@ mod tests {
                 FileResult::Saved(stamp),
                 FileStatus::Done,
                 vec![before_1970, 999_999_999, 42],
+                String::new(),
+            ),
+            (
+                FileResult::Stamped(Some(stamp)),
+                FileStatus::Done,
+                vec![1, before_1970, 999_999_999, 42],
+                String::new(),
+            ),
+            (
+                FileResult::Stamped(None),
+                FileStatus::Done,
+                vec![0, 0, 0, 0],
                 String::new(),
             ),
             (

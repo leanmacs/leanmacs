@@ -23,8 +23,10 @@ the model tests run it with outcomes built by hand
   segments (`Registry.replace`, `Registry.replaceJobs`,
   `Registry.replaceBindings`, `Registry.replaceModes`, `Registry.replaceEx`,
   `Registry.replaceFaces`, `Registry.replaceThemes`,
-  `Registry.replaceSegments`, never an append) and meets the config's stores with the cells there are
-  (`Cells.install`). A rejected outcome changes none of them: the config that
+  `Registry.replaceSegments`, never an append), sets the registry's process
+  environment to the one the config set, `none` when it set none
+  (`Registry.environment`), and meets the config's stores with the cells
+  there are (`Cells.install`). A rejected outcome changes none of them: the config that
   was loaded stays.
 - **The theme follows the registry and the theme in force.** The theme in
   force is a name (`State.themeName`), `default` to start with, and
@@ -273,14 +275,16 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { state with
         chunks := built.chunks,
         registry :=
-          (((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                                    built.registrations.jobs).replaceBindings
-                                .config built.registrations.bindings).replaceModes
-                            .config built.registrations.modes).replaceEx
-                        .config built.registrations.ex).replaceFaces
-                    .config built.registrations.faces).replaceThemes
-                .config built.registrations.themes).replaceSegments
-            .config built.registrations.segments,
+          {
+            (((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                                      built.registrations.jobs).replaceBindings
+                                  .config built.registrations.bindings).replaceModes
+                              .config built.registrations.modes).replaceEx
+                          .config built.registrations.ex).replaceFaces
+                      .config built.registrations.faces).replaceThemes
+                  .config built.registrations.themes).replaceSegments
+              .config built.registrations.segments with
+            environment := built.registrations.environment },
         cells }
     let (themeName, unknownTheme) :=
       chooseAt state.registry state.themeName built.registrations.theme

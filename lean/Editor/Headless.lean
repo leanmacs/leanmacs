@@ -16,6 +16,7 @@ import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Loop
+import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.Text.Real
 import Editor.Themes.Compiled
@@ -208,6 +209,16 @@ as before, so reload and job completion work as they did.
   through `Running.attempt` all the same, which prints one that is,
   `loop: refused: <error>`, and keeps the frame it had. With no frame made,
   the event is dropped and the next window event tries again.
+- **A child's environment** (`Editor/Process/Environment.lean`): the host's
+  jobs share one state of environments (`Job.Services.environments`), which
+  the executable makes for its mode in `shipped`
+  (`reportedEnvironments`): `.headless` for the headless mode, `.window`
+  with the home directory for the window mode. What it reports, a failed
+  lookup once for a directory, is posted under the Lean source id
+  `Collaborators.environment`, and said in the echo area for the next scene
+  (`Running.said`). A reload that installs asks it to `install` config's
+  setting, `auto` when config sets none, which drops every directory's
+  cached environment. Pinned by `ConfigTest.environmentHostChecks`.
 - **The host is handed its display** (`Collaborators.display`), a maker
   over the table of snapshots the text binding publishes, and holds what it
   makes as a `Host.Display`: what answers the loop's requests, wrapped so
@@ -729,6 +740,9 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The Lean source id the wake-up of a job that has ended is posted under,
   with the job's id as its code. -/
   jobs : UInt64
+  /-- The Lean source id what the jobs' environments report is posted under,
+  with the text to say in the echo area (`reportedEnvironments`). -/
+  environment : UInt64
   /-- The compiled commands: registered for the owner `compiled` when the
   loop starts, before any config. -/
   commands : Array Config.Registration := #[]
@@ -739,6 +753,10 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The compiled key bindings: registered for the owner `compiled` when
   the loop starts, before any config. -/
   bindings : Array Config.KeyBinding := #[]
+  /-- The menu bar the loop's scenes name, before its command items' keys
+  are filled from the registry at each step (`Config.Registry.menuOf`);
+  `none` for a host with no menu bar. -/
+  menu : Option Menu := none
   /-- The compiled modes: registered for the owner `compiled` when the loop
   starts, before any config. -/
   modes : Array Mode := #[]
@@ -952,6 +970,10 @@ def reduce (collaborators : Collaborators σ scheme) (running : Running σ schem
     (event : Config.Event σ) : IO (Running σ scheme) := do
   let (config, effects) := Config.step running.config event
   Config.retheme running.display.setTheme config effects
+  -- A reload that installs is config's setting of a child's environment,
+  -- and drops every directory's cached one.
+  if Config.installed effects then
+    collaborators.services.environments.ask (.install (config.registry.environment.getD .auto))
   let mut running := { running with config }
   for effect in effects do
     match effect with
@@ -1056,16 +1078,18 @@ its own state; the lookup an invocation uses (`Config.State.command?`);
 the host's threshold for a slow command; and what a command's state
 requests are told of the registry (`Config.Registry.registered`: the modes
 whose on-enter actions a major mode runs, the jobs' names and the ex
-bindings); and the mode line, config's listing or the default order
-resolved over the registry's segments, a name nobody registered left out
-(`Config.Registry.resolve`); and the frame padding config set, or the
-editor's 8 (`Loop.padding`). It is made for each window event, so a reload
-changes it between two events. -/
+bindings); the mode line, config's listing or the default order resolved
+over the registry's segments, a name nobody registered left out
+(`Config.Registry.resolve`); the frame padding config set, or the editor's
+8 (`Loop.padding`); and the host's menu bar with its key equivalents filled
+from the registry's bindings (`Config.Registry.menuOf`). It is made for
+each window event, so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
     slowAfter := collaborators.slowAfter, registered := running.config.registry.registered
     modeLine := (running.config.registry.resolve (running.config.modeLine.getD .standard)).1
-    padding := running.config.framePadding.getD Loop.padding }
+    padding := running.config.framePadding.getD Loop.padding
+    menu := collaborators.menu.map running.config.registry.menuOf }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what
@@ -1394,6 +1418,8 @@ def other (collaborators : Collaborators σ scheme) (running : Running σ scheme
       return ← running.finish collaborators
     if event.source.id == collaborators.jobs then
       return ← running.ended collaborators event.code.toNat
+    if event.source.id == collaborators.environment then
+      return running.said event.text
     unless event.source.id == collaborators.requests do
       return running
     match Signal.decode? event.code event.text with
@@ -2020,9 +2046,10 @@ the real elaborator over the toolchain in `sysroot` and the editor's
 source, `emit` as the output and stderr as the log, and, as its compiled
 ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
-the frame's commands with their bindings, and the command that loads a
-theme with the themes that ship. Its display is the recorder
-and its clipboard its own, as a host's are by default.
+the frame's commands with their bindings, the command that loads a theme
+with the themes that ship, and the menu bar (`Menu.standard`) with its
+items' bindings (`Menu.bindings`). Its display is the recorder and its
+clipboard its own, as a host's are by default.
 
 It is apart from `shipped`, which makes what it is over, so that what the
 hosts are handed as compiled code can be read with no pump started
@@ -2032,24 +2059,34 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     Collaborators Config.Elaborate.State Vim.Default.scheme :=
   { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
     source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
-    wakeups := 2, jobs := 3
+    wakeups := 2, jobs := 3, environment := 4
     commands :=
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++
         FrameCommands.commands ++
         Themes.commands
-    bindings := FrameCommands.bindings
+    bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
     compiledJobs := Files.jobs
     modes := Minibuffer.modes, ex := Ex.bindings, themes := Themes.shipped
     segments := ModeLine.shipped, log := IO.eprintln }
 
+/-- The environments every job of a host shares, over `state`
+(`Job.sharedEnvironments`), which report what they have to say by posting it
+to the editor queue under the Lean source id `source`: the host's editor
+thread then says it in the echo area (`Collaborators.environment`). -/
+def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64) :
+    Job.Environments :=
+  Job.sharedEnvironments state fun text =>
+    (discard <| Ffi.postEvent .editor source 0 text : IO Unit).catchExceptions fun _ => pure ()
+
 /-- The collaborators the executable's hosts are made of, the headless
 mode's and the window mode's: `shippedOver` the library's timer service,
-file service, process service and watch service for the jobs.
+file service, process service and watch service for the jobs, and the
+environments they share for the mode `host` (`reportedEnvironments`).
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
-def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
+def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (host : Process.Host) :
     IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
@@ -2059,12 +2096,16 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
   let refused ← Job.RefusedRuns.new
+  let timed ← Job.TimedRuns.new
   let watches ← Job.RealWatches.new
+  let timers := Job.realTimers completions
+  let environments ← IO.mkRef ({ host } : Process.Environments)
   return shippedOver sysroot oleanDir configDir emit
-      { completions, timers := Job.realTimers completions,
+      { completions, timers
         files := Job.realFiles completions published.reader held
-        processes := Job.realProcesses completions refused
-        fileWatches := Job.realFileWatches completions watches } published held
+        processes := Job.realProcesses completions refused timers timed
+        fileWatches := Job.realFileWatches completions watches
+        environments := reportedEnvironments environments 4 } published held
 
 /-- The headless mode of the executable, handed the command line after
 `headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>
@@ -2119,7 +2160,7 @@ def main (arguments : List String) : IO UInt32 := do
     if let .error reason← Ffi.renderHeadless then
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
-  let shipped ← shipped sysroot oleanDir configDir IO.println
+  let shipped ← shipped sysroot oleanDir configDir IO.println .headless
   let failure ←
     run
         { shipped with

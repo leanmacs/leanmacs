@@ -123,6 +123,17 @@ order:
 | `delete` | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was | The register is the lines, line-wise. They are deleted. The cursor goes to the first non-blank of the line now where the first was |
 | `yank` | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays | The register is the lines, line-wise. The cursor goes to the operand's `rest`, rested |
 | `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
+| `replace` | The text of the register the call names (`fetch`) goes in place of the cells, as it is, line breaks included. The cursor goes on the last cell put, or on the first when the text holds a line break, as a character-wise `P` leaves it. The unnamed register is the cells' text | The text is put where the cells would start, as for cells | The text goes in place of the lines, with the buffer's line ending added to a character-wise one; below a last line with no line break its last line break is left out, so the text ends the way it ended. The cursor goes to the first non-blank of the first line put. The unnamed register is the lines, line-wise |
+
+- **`replace` is the visual Paste** (`Editor/Evil/Clipboard.lean`), which
+  no default key binds. It fetches the register first, before any edit,
+  so with nothing to put (`nothingToPut`, `clipboardUnavailable`) it gives
+  up having changed nothing. It sets the unnamed register directly and
+  never through `store`, so the text it replaces never reaches the
+  clipboard: its one request of the clipboard is that first read. As in
+  Vim, the register it put from is otherwise as it was. A line-wise text
+  put in place of a character-wise selection goes in as it is, where Vim
+  would split the line.
 
 - **In the empty text `delete` and `change` do nothing to the text or the
   register**, and `change` still leaves its bar; `yank` follows the table,
@@ -358,10 +369,51 @@ def yank : Vocabulary.Operator :=
         settle call operand.rest
         store operand.register { text := lines.taken, linewise := true } }
 
+/-- The operator that puts the register its call names in place of what it
+is handed, a visual Paste ("What an operator does", in the module docs).
+The register is fetched first (`fetch`), before any edit, so with nothing to
+put it gives up having changed nothing. The text it replaces goes to the
+unnamed register alone, never through `store`, so a Paste in place of a
+selection never writes the clipboard: its one request of the clipboard is
+the read, made first. -/
+def replace : Vocabulary.Operator :=
+  { name := "replace"
+    act := fun call operand => do
+      let put ← fetch operand.register
+      let text := call.target.buffer.text
+      match operand.stretch with
+      | .cells extent _ =>
+        let taken ← text.slice extent.start extent.stop
+        let start := extent.start
+        let stop := start + put.text.utf8ByteSize
+        if put.text.any (· == '\n') then
+          call.target.replaceCarrying extent put.text operand.before (cursorAt call start)
+          settle call start
+        else
+          -- On the last cell put, as a character-wise `P` leaves it.
+          let last := stop - put.text.back.utf8Size
+          call.target.replaceCarrying extent put.text operand.before (cursorAt call last)
+          settle call (← text.motion .previousCell stop)
+        setRegister unnamed { text := taken }
+      | .lines first last =>
+        let lines ← linesOf call.target first last
+        let body :=
+          if put.linewise then put.text else put.text ++ call.target.buffer.lineEnding.text
+        -- Below a last line with no line break the text ends the way it
+        -- ended: the replacement's last line break is left out.
+        let body := if lines.stop == lines.content then withoutLastBreak body else body
+        let indent := (body.takeWhile fun char => char == ' ' || char == '\t').utf8ByteSize
+        let cursor := lines.start + indent
+        call.target.replaceCarrying ⟨lines.start, lines.stop⟩ body operand.before
+            (cursorAt call cursor)
+        settle call cursor
+        setRegister unnamed { text := lines.taken, linewise := true } }
+
 /-- The table the operate command looks an operator's name up in: one entry
-for each name the Vim scheme's default tables bind a key to. -/
+for each name the Vim scheme's default tables bind a key to, and `replace`,
+which the clipboard commands' run tables name (`Editor/Evil/Clipboard.lean`). -/
 def operators : Array Vocabulary.Operator :=
-  #[delete, change, yank]
+  #[delete, change, yank, replace]
 
 /-- The operate command over the vocabulary `operators` and `motions`, as it
 is called ("The operate command", in the module docs): its arguments name

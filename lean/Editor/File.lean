@@ -3,8 +3,8 @@ import Editor.Text
 /-!
 # Files, as a job asks for them
 
-The data of the two file requests a job can make: load a file, and save a
-snapshot as a file. It is plain data, and it imports only the text port, for
+The data of the file requests a job can make: load a file, save a snapshot
+as a file, and read a file's stamp. It is plain data, and it imports only the text port, for
 the two kinds of id a save names its source by. The requests themselves are
 requests of the job port (`Editor/Job.lean`, `JobRequest.file`): a command
 may not wait and a job may, so loading and saving are things a job does, and
@@ -46,6 +46,11 @@ names a snapshot.
   a command released, and a `JobSnapshotId` this job does not hold, another
   job's included. Nothing is translated on the way out: the bytes of a file
   loaded and saved without an edit are the bytes it had.
+- **A stamp request** (`FileRequest.stamp`) answers the stamp of the file at
+  a path, or `none` when nothing is there, and reads nothing of the file. A
+  directory, or anything else that is not a file, is refused with
+  `notAFile`. It is how a job tells whether a file changed without loading
+  it.
 - **A stamp** (`File.Stamp`) is when a file was last modified and how long it
   is. Two stamps are compared for equality and never ordered: a file put
   back from a backup has changed.
@@ -207,6 +212,8 @@ inductive FileRequest where
   /-- Save what `source` holds as the file at `path`, if what is there is
   what `expect` says. -/
   | save (source : File.Source) (path : System.FilePath) (expect : File.Expect)
+  /-- The stamp of the file at `path`, or `none` when nothing is there. -/
+  | stamp (path : System.FilePath)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each file request: a refusal or the result. A
@@ -214,5 +221,6 @@ refusal is a value, never a throw. -/
 def FileRequest.Reply : FileRequest → Type
   | .load .. => Except FileError File.Loaded
   | .save .. => Except FileError File.Stamp
+  | .stamp _ => Except FileError (Option File.Stamp)
 
 end Editor

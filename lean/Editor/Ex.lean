@@ -87,6 +87,11 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   file.
 - **It quits the editor, not a window.** Vim's `q` closes the current
   window and quits when it is the last.
+- **The system's quit runs it.** Command-Q, Quit from the Dock's menu, a
+  logout, restart or shutdown reach the loop as `Event.quitRequested`,
+  which runs the command named `quit` by these rules (`Editor/Loop.lean`,
+  "Quit"). When it does not quit, the system is told to keep the editor
+  running.
 
 ## Save and quit
 

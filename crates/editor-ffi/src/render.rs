@@ -55,7 +55,7 @@
 //! not bound presents nothing, and a presenter with no target lets the
 //! frame go and spends the stamp.
 //!
-//! # What reaches the window: the title
+//! # What reaches the window: the title and the menu
 //!
 //! The scene's title is the window's ([`crate::display::WireScene`]'s
 //! `title`): a display bound to a presenter hands it the title of each
@@ -69,8 +69,15 @@
 //! opens, and the platform counts its window as running before it tells
 //! `Opened`, so the first title is never dropped. Once the window closes
 //! ([`Presenter::close_window`]) a title named is kept for the next one.
+//!
+//! The scene's menu bar (`WireScene`'s `menu`) goes the same way, as a
+//! `editor_platform::Request::Menu` ([`Presenter::menu`]), with one
+//! difference: a scene that names no menu bar, as a scene no command loop
+//! made names none, changes nothing, so the menu bar named last stays. A
+//! window that opens is sent the title, then the menu bar.
+//!
 //! These rules are pinned here on a recording asker; that a published
-//! title reaches the scripted window is wiring, in
+//! title and menu bar reach the scripted window is wiring, in
 //! `tests/render_session.rs`.
 //!
 //! The presenter is a value, handed explicitly to whatever uses it, and
@@ -123,7 +130,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use editor_layout::frame::Frame;
-use editor_platform::{Canvas, Drawer, NativeWindow, Request, Resize};
+use editor_platform::{Canvas, Drawer, Menu, NativeWindow, Request, Resize};
 use editor_render::clock::Clock;
 use editor_render::journal::Entry;
 use editor_render::port::{Renderer, Target};
@@ -282,29 +289,49 @@ pub struct Presenter {
     scale: AtomicU32,
     /// The stamp the next frame answers.
     answering: Answering,
-    /// The title the scenes name, and the open window it goes to.
-    titles: Mutex<Titles>,
+    /// The title and the menu bar the scenes name, and the open window
+    /// they go to.
+    named: Mutex<Named>,
 }
 
-/// What [`Presenter::titles`] guards.
+/// What [`Presenter::named`] guards.
 #[derive(Default)]
-struct Titles {
+struct Named {
     /// The title the last scene published names, if one has been.
-    named: Option<String>,
-    /// The open window, and the title last sent to it.
-    window: Option<(Asker, Option<String>)>,
+    title: Option<String>,
+    /// The menu bar the last scene that named one named, if one has.
+    menu: Option<Menu>,
+    /// The open window, and what was last sent to it.
+    window: Option<(Asker, Sent)>,
 }
 
-impl Titles {
+/// What was last sent to the open window.
+#[derive(Default)]
+struct Sent {
+    /// The title, if one has been.
+    title: Option<String>,
+    /// The menu bar, if one has been.
+    menu: Option<Menu>,
+}
+
+impl Named {
     /// Sends the title named to the open window, when there is one and it
-    /// is not the title last sent there.
+    /// is not the title last sent there; then the same of the menu bar.
     fn send(&mut self) {
-        let (Some(named), Some((asker, sent))) = (&self.named, &mut self.window) else {
+        let Some((asker, sent)) = &mut self.window else {
             return;
         };
-        if sent.as_ref() != Some(named) {
-            *sent = Some(named.clone());
-            asker(Request::Title(named.clone()));
+        if let Some(title) = &self.title
+            && sent.title.as_ref() != Some(title)
+        {
+            sent.title = Some(title.clone());
+            asker(Request::Title(title.clone()));
+        }
+        if let Some(menu) = &self.menu
+            && sent.menu.as_ref() != Some(menu)
+        {
+            sent.menu = Some(menu.clone());
+            asker(Request::Menu(menu.clone()));
         }
     }
 }
@@ -318,7 +345,7 @@ impl Presenter {
             last: Mutex::new(None),
             scale: AtomicU32::new(1.0_f32.to_bits()),
             answering: Answering::default(),
-            titles: Mutex::default(),
+            named: Mutex::default(),
         })
     }
 
@@ -367,23 +394,33 @@ impl Presenter {
     /// does not ask the window per key. The asker is called under the
     /// lock, so titles reach the window in the order they were named.
     pub fn name(&self, title: &str) {
-        let mut titles = locked(&self.titles);
-        titles.named = Some(title.to_owned());
-        titles.send();
+        let mut named = locked(&self.named);
+        named.title = Some(title.to_owned());
+        named.send();
+    }
+
+    /// Keeps `menu` as the menu bar the scenes name, and sends it to the
+    /// open window when it is not the menu bar last sent there, as
+    /// [`name`](Self::name) does a title.
+    pub fn menu(&self, menu: &Menu) {
+        let mut named = locked(&self.named);
+        named.menu = Some(menu.clone());
+        named.send();
     }
 
     /// Makes `asker` the open window's, and sends it the title named so
-    /// far, if one has been: a window opens with the platform's own title.
+    /// far, then the menu bar, if each has been: a window opens with the
+    /// platform's own title and no menu bar of the editor's.
     pub fn open_window(&self, asker: Asker) {
-        let mut titles = locked(&self.titles);
-        titles.window = Some((asker, None));
-        titles.send();
+        let mut named = locked(&self.named);
+        named.window = Some((asker, Sent::default()));
+        named.send();
     }
 
-    /// Lets the open window go: a title named from now on is kept, and
-    /// goes to the next window that opens.
+    /// Lets the open window go: a title or a menu bar named from now on is
+    /// kept, and goes to the next window that opens.
     pub fn close_window(&self) {
-        locked(&self.titles).window = None;
+        locked(&self.named).window = None;
     }
 
     /// Presents `frame`, laid out from a scene `size` across and down: the
@@ -1375,6 +1412,91 @@ mod tests {
         presenter.name("todo.txt");
 
         assert_eq!(held(&asked), [title("scratch"), title("notes.txt")]);
+    }
+
+    /// A menu bar of one empty menu titled `title`.
+    fn menu_titled(title: &str) -> editor_platform::Menu {
+        editor_platform::Menu {
+            menus: vec![editor_platform::menu::Submenu {
+                title: title.to_owned(),
+                role: None,
+                items: vec![],
+            }],
+        }
+    }
+
+    /// The request for the menu bar [`menu_titled`] `title`.
+    fn menu(title: &str) -> Request {
+        Request::Menu(menu_titled(title))
+    }
+
+    #[test]
+    fn a_menu_named_before_the_window_opens_is_sent_when_it_opens_after_the_title() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        presenter.menu(&menu_titled("A"));
+        presenter.name("scratch");
+        presenter.menu(&menu_titled("B"));
+
+        presenter.open_window(asker);
+
+        assert_eq!(held(&asked), [title("scratch"), menu("B")]);
+    }
+
+    #[test]
+    fn a_menu_is_sent_to_the_open_window_only_when_it_changes() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        presenter.open_window(asker);
+
+        for named in ["A", "A", "B", "B", "A"] {
+            presenter.menu(&menu_titled(named));
+        }
+        presenter.name("scratch");
+        presenter.menu(&menu_titled("A"));
+
+        assert_eq!(
+            held(&asked),
+            [menu("A"), menu("B"), menu("A"), title("scratch")]
+        );
+    }
+
+    #[test]
+    fn once_the_window_closes_a_menu_goes_nowhere_and_is_kept_for_the_next() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        presenter.open_window(asker);
+        presenter.menu(&menu_titled("A"));
+        presenter.close_window();
+
+        presenter.menu(&menu_titled("B"));
+
+        assert_eq!(held(&asked), [menu("A")]);
+        let (again, asked_again) = recording_asker();
+        presenter.open_window(again);
+        assert_eq!(held(&asked_again), [menu("B")]);
+    }
+
+    #[test]
+    fn a_window_nothing_can_draw_in_is_still_sent_its_menu() {
+        let presenter = Presenter::new();
+        let (asker, asked) = recording_asker();
+        let session: Session<RecordingRenderer> = Session::new(
+            Arc::new(FakeClock::new()),
+            |_, _| Err("no adapter".to_owned()),
+            Arc::clone(&presenter),
+        )
+        .asking(asker);
+        presenter.menu(&menu_titled("A"));
+        let drawer = session.drawer();
+
+        drawer(opened());
+        assert_eq!(session.failure().as_deref(), Some("no adapter"));
+        presenter.menu(&menu_titled("B"));
+        drawer(Canvas::Closing);
+        presenter.menu(&menu_titled("C"));
+
+        assert_eq!(held(&asked), [menu("A"), menu("B")]);
     }
 
     #[test]

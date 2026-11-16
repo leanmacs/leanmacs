@@ -539,7 +539,10 @@ driver does not need it. The tests of the pool pin no size, so they pass
 whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, `config-test`, and
+linked against the real library, then `contract-test`, handed the directory
+`tests/process-environment` as its one argument (the fixtures that stand in
+for mise in the checks of a child's environment, which must stay
+executable), `config-test`, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must

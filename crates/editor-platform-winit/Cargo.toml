@@ -16,20 +16,36 @@ editor-platform = { path = "../editor-platform" }
 winit = "=0.31.0-beta.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# AppKit for two things. The first is the application delegate that
-# receives the files the system asks the app to open (src/delegate.rs).
-# winit 0.31 registers no delegate and leaves this to the application
-# (winit-appkit's crate docs, "Custom NSApplicationDelegate"). The second
-# is the window's corner clearance, read from its content view's safe-area
-# layout region adapted to the corners (src/corner.rs, macOS 26 and later).
-# Pinned exactly, at the versions winit-appkit =0.31.0-beta.4 already
-# resolves to, so no crate is added to the graph. The features are the
-# bindings the two name: `NSUserDefaults` and `NSViewLayoutRegion` are the
-# ones winit-appkit does not already enable, and each is a module of its
-# crate, not a crate (the `objc2-core-foundation` that `NSViewLayoutRegion`
-# enables is in the graph already). `NSView`, and Foundation's `NSGeometry`
-# for `NSEdgeInsets`, are enabled by winit-appkit too, and named here for
-# the corner's reading.
+# AppKit for three things. The first is the application delegate that
+# receives the files the system asks the app to open and its asks to
+# terminate (src/delegate.rs). winit 0.31 registers no delegate and leaves
+# this to the application (winit-appkit's crate docs, "Custom
+# NSApplicationDelegate"). The second is the menu bar the editor asks for
+# (src/menu_bar.rs). The third is the window's corner clearance, read from
+# its content view's safe-area layout region adapted to the corners
+# (src/corner.rs, macOS 26 and later). Pinned exactly, at the versions
+# winit-appkit =0.31.0-beta.4 already resolves to, so no crate is added to
+# the graph. The features are the bindings the three name. `NSMenu`,
+# `NSMenuItem` and `NSEvent` (for `NSEventModifierFlags`) are winit-appkit's
+# already; `NSUserDefaults`, `NSUserInterfaceItemIdentification` and
+# `NSViewLayoutRegion` are the ones it does not enable, and each is a module
+# of its crate, not a crate (the `objc2-core-foundation` that
+# `NSViewLayoutRegion` enables is in the graph already). `NSView`, and
+# Foundation's `NSGeometry` for `NSEdgeInsets`, are enabled by winit-appkit
+# too, and named here for the corner's reading.
 objc2 = "=0.6.5"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSGeometry", "NSString", "NSURL", "NSUserDefaults"] }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSViewLayoutRegion"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSUserInterfaceItemIdentification", "NSView", "NSViewLayoutRegion"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# For the contract example alone (examples/contract/terminate.rs and
+# menu.rs), which asks the app to terminate as the system does, reads the
+# window's title back on the main thread, and performs the menu bar's
+# items. Each is already in the resolved graph at this version, through
+# winit-appkit, so no crate is added: `dispatch2` for `run_on_main` (its
+# `objc2` feature), and the bindings the example names
+# (`NSAppleEventDescriptor` and `NSThread`'s `performSelectorOnMainThread:`,
+# `NSWindow`'s title, and `NSMenu`'s and `NSMenuItem`'s items).
+dispatch2 = { version = "=0.3.1", default-features = false, features = ["std", "objc2"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSAppleEventDescriptor", "NSThread"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow", "NSMenu", "NSMenuItem"] }
