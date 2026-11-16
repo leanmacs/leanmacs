@@ -110,7 +110,15 @@ fn the_grammars_compiled_in_cross_as_a_list_of_strings() {
     // SAFETY: the call filled the record.
     let names = strings(unsafe { raw.assume_init() });
 
-    assert_eq!(names, ["json", "rust"]);
+    // The adapter's own list, which its crate pins: every name crosses,
+    // in order.
+    let compiled: Vec<String> = TreeSitter
+        .grammars()
+        .into_iter()
+        .map(|grammar| grammar.0)
+        .collect();
+    assert_eq!(names, compiled);
+    assert!(names.contains(&"rust".to_owned()));
 }
 
 #[test]
