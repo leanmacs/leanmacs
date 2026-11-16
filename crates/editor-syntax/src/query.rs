@@ -33,6 +33,14 @@ pub fn overlaps(node: Range<usize>, range: Range<usize>) -> bool {
     }
 }
 
+/// `range`, unless its ends are not two positions of `text` in order.
+pub fn positions(text: &Snapshot, range: Range<usize>) -> Result<Range<usize>, BadRange> {
+    let ordered = range.start <= range.end
+        && text.is_char_boundary(range.start)
+        && text.is_char_boundary(range.end);
+    if ordered { Ok(range) } else { Err(BadRange) }
+}
+
 /// The captures of `query` in `tree`, the tree of `text`, whose nodes are
 /// in `range` ([`overlaps`]): each once, by start, then the longer first,
 /// then by pattern, then by capture.
@@ -48,12 +56,7 @@ pub fn captures_in<S: Syntax>(
     text: &Snapshot,
     range: Range<usize>,
 ) -> Result<Vec<Capture>, BadRange> {
-    let positions = range.start <= range.end
-        && text.is_char_boundary(range.start)
-        && text.is_char_boundary(range.end);
-    if !positions {
-        return Err(BadRange);
-    }
+    let range = positions(text, range)?;
     // The port is asked a byte wider on each side: a library may leave out
     // a node that only touches an end of the range, and answer nothing of
     // an empty range (tree-sitter does both). What it answers beyond the

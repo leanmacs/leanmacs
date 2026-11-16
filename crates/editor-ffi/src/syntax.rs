@@ -6,10 +6,13 @@
 //! (`editor-syntax-treesitter`), one worker thread named `syntax`, started
 //! at the first attach and blocked while it has nothing to parse, and a
 //! table of the documents being parsed, by their key, each with its
-//! session (`editor_syntax::Session`). Which tree is handed out, and when a
-//! document is reparsed and how, are `editor-syntax`'s rules, pinned by its
-//! own tests; what a query answers of a range is its
-//! `query::captures_in`. This module forwards.
+//! session (`editor_syntax::Session`). Which tree is handed out, when a
+//! document is reparsed and how, and what a question of captures answers or
+//! why it is refused (`Session::captures`, over `query::captures_in`) are
+//! `editor-syntax`'s rules, pinned by its own tests. This module keeps the
+//! table of documents, refuses a question about a document not in it
+//! ([`CapturesStatus::NotAttached`], checked first), and otherwise forwards
+//! to the document's session.
 //!
 //! **Documents tell the service of their edits.** Every edit path of a
 //! document ([`crate::document`]) calls `touched` with the document's key
@@ -42,7 +45,8 @@
 //! [`editor_ffi_syntax_captures`] answers only when the last tree the
 //! document's session delivered is of the snapshot's revision, and is
 //! otherwise [`CapturesStatus::NotParsed`]: the editor thread never waits
-//! for a parse. A caller asks again after the next delivery.
+//! for a parse. A caller asks again after the next delivery. The rule and
+//! the order of the refusals are the session's (`Session::captures`).
 //!
 //! # Layouts
 //!
@@ -62,8 +66,9 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-use editor_syntax::query::captures_in;
-use editor_syntax::{Capture, GrammarName, Handle, QueryErrorKind, Session, Syntax, Worker};
+use editor_syntax::{
+    Capture, CapturesRefusal, GrammarName, Handle, QueryErrorKind, Session, Syntax, Worker,
+};
 use editor_syntax_treesitter::TreeSitter;
 use editor_text::Revision;
 
@@ -102,6 +107,18 @@ pub enum CapturesStatus {
     WrongGrammar = 3,
     /// The range is not two positions of the snapshot's text in order.
     BadRange = 4,
+}
+
+impl From<CapturesRefusal> for CapturesStatus {
+    /// The status of a session's refusal. Every refusal crosses the
+    /// boundary as a status of its own, so this matches each one.
+    fn from(refusal: CapturesRefusal) -> Self {
+        match refusal {
+            CapturesRefusal::WrongGrammar => Self::WrongGrammar,
+            CapturesRefusal::BadRange => Self::BadRange,
+            CapturesRefusal::NotParsed => Self::NotParsed,
+        }
+    }
 }
 
 /// How making a query ended, as it crosses the boundary.
@@ -250,8 +267,9 @@ impl Syntaxes {
         }
     }
 
-    /// The captures of `query` in `range` of `snapshot`'s text, from the
-    /// tree delivered of its revision.
+    /// The captures of `query` in `range` of `snapshot`'s text, as the
+    /// session of its document answers them (`Session::captures`); not
+    /// attached when it has none.
     pub fn captures(
         &self,
         snapshot: &Snapshot,
@@ -261,28 +279,15 @@ impl Syntaxes {
         let session = self
             .session(snapshot.key())
             .ok_or(CapturesStatus::NotAttached)?;
-        if *session.grammar() != query.grammar {
-            return Err(CapturesStatus::WrongGrammar);
-        }
-        let text = snapshot.text();
-        let positions = range.start <= range.end
-            && text.is_char_boundary(range.start)
-            && text.is_char_boundary(range.end);
-        if !positions {
-            return Err(CapturesStatus::BadRange);
-        }
-        let parsed = session
-            .parsed()
-            .filter(|parsed| parsed.revision == text.revision())
-            .ok_or(CapturesStatus::NotParsed)?;
-        captures_in(
-            &*self.syntax,
-            &query.query,
-            &parsed.tree,
-            &parsed.snapshot,
-            range,
-        )
-        .map_err(|_| CapturesStatus::BadRange)
+        session
+            .captures(
+                &self.syntax,
+                &query.grammar,
+                &query.query,
+                snapshot.text(),
+                range,
+            )
+            .map_err(CapturesStatus::from)
     }
 
     /// Waits up to `bound` for a tree of `snapshot`'s revision, or a newer

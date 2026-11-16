@@ -40,7 +40,7 @@
 //! |---|---|---|
 //! | Something more asked of a parsing library | A method of [`Syntax`], answered in plain data | A property of [`contract`], with a broken implementation that it catches, and the fake |
 //! | A rule of what a range answers, or of the order | [`query`] | Its unit tests, on a syntax that answers out of order; and the same rule in the Lean model (`lean/Editor/SyntaxTree/Model.lean`) |
-//! | A rule of when a text is reparsed, or which result is handed out | [`session`] | Its unit tests, on the fake and a recording mock, single-threaded |
+//! | A rule of when a text is reparsed, which result is handed out, or when a question of captures is refused | [`session`] | Its unit tests, on the fake and a recording mock, single-threaded |
 //! | A rule of what runs next | [`worker`] | Its unit tests, stepped by hand, and `tests/worker.rs` on a real thread |
 //! | A grammar | The real adapter's table, with a corpus its contract test runs | That crate's `tests/contract.rs` |
 
@@ -52,5 +52,5 @@ pub mod session;
 pub mod worker;
 
 pub use port::{Capture, GrammarName, Node, QueryError, QueryErrorKind, Syntax};
-pub use session::{Consumer, Latest, Outcome, Parsed, Session, Source};
+pub use session::{CapturesRefusal, Consumer, Latest, Outcome, Parsed, Session, Source};
 pub use worker::{Handle, Worker};

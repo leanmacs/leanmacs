@@ -1301,10 +1301,14 @@ is called under the session's state lock and must not call back into it.
 attached documents by key, the tree-sitter adapter, and one worker thread
 named `syntax`, started at the first attach. Every edit path of a document
 (a replace, a transaction, an inverse) touches it, and freeing a document
-detaches it. A question of captures is answered at once from the tree the
-document's session last delivered, if that tree is of the snapshot's
-revision, and is otherwise refused as not parsed: the editor thread never
-waits for a parse. The wiring tests run on the process's registry, which
+detaches it. A question of captures is refused as not attached for a
+document not in the registry, and otherwise forwarded to the document's
+session (`Session::captures`), whose rule it is, pinned on the fake: it is
+answered at once from the tree the session last delivered, if that tree
+is of the snapshot's revision, and is otherwise refused as not parsed, so
+the editor thread never waits for a parse; the refusals are checked in the
+order not attached, wrong grammar, bad range, not parsed, which the Lean
+model reproduces. The wiring tests run on the process's registry, which
 the edit paths reach; keys are given out once in the process, so tests in
 parallel never share a session.
 

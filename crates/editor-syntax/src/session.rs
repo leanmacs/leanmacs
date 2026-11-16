@@ -38,6 +38,20 @@
 //!    tagged with a revision older than the current one is never handed
 //!    out.
 //!
+//! # A question of captures ([`Session::captures`])
+//!
+//! A question of a query's captures in a range of a snapshot is answered
+//! from the tree delivered, never parsed for, so it never waits. It is
+//! refused, checked in this order, when the query is of another grammar
+//! than the session's ([`CapturesRefusal::WrongGrammar`]), when the range
+//! is not two positions of the snapshot's text in order
+//! ([`CapturesRefusal::BadRange`]), and when the tree delivered last is not
+//! of the snapshot's revision, older or newer
+//! ([`CapturesRefusal::NotParsed`]): a caller asks again after the next
+//! delivery. Otherwise it answers what [`crate::query::captures_in`]
+//! answers of that tree. The order is what the Lean model of the syntax
+//! interface reproduces.
+//!
 //! # Locks
 //!
 //! A session has two: the *work* lock, over the parser and the base, which
@@ -49,13 +63,15 @@
 //! parses, so an edit's touch never waits for a parse. A consumer is
 //! called under the state lock and must not call back into the session.
 
+use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use editor_text::{Patch, Revision, Snapshot};
 
-use crate::port::{GrammarName, Syntax};
+use crate::port::{Capture, GrammarName, Syntax};
+use crate::query::{captures_in, positions};
 
 /// How the session reaches its text: the text as it is now and, when the
 /// log can still say, what changed since a revision.
@@ -110,6 +126,18 @@ pub enum Outcome {
     UpToDate,
     /// The text is gone: the session has nothing more to do.
     Gone,
+}
+
+/// Why a question of captures was refused ([`Session::captures`]), in the
+/// order the refusals are checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapturesRefusal {
+    /// The query is of another grammar than the session parses with.
+    WrongGrammar,
+    /// The range is not two positions of the snapshot's text in order.
+    BadRange,
+    /// No tree of the snapshot's revision is the one delivered last.
+    NotParsed,
 }
 
 /// A tree as a round makes it ([`reparse`]).
@@ -257,6 +285,31 @@ impl<S: Syntax> Session<S> {
         }
     }
 
+    /// The captures of `query`, compiled for `grammar`, in `range` of
+    /// `text`, from the tree delivered last when it is of `text`'s
+    /// revision; or why not, as the module docs say.
+    pub fn captures(
+        &self,
+        syntax: &S,
+        grammar: &GrammarName,
+        query: &S::Query,
+        text: &Snapshot,
+        range: Range<usize>,
+    ) -> Result<Vec<Capture>, CapturesRefusal> {
+        if *grammar != self.grammar {
+            return Err(CapturesRefusal::WrongGrammar);
+        }
+        let range = positions(text, range).map_err(|_| CapturesRefusal::BadRange)?;
+        let parsed = self
+            .parsed()
+            .filter(|parsed| parsed.revision == text.revision())
+            .ok_or(CapturesRefusal::NotParsed)?;
+        // The tree's text is of the same revision, so the range is one of
+        // its positions too.
+        captures_in(syntax, query, &parsed.tree, &parsed.snapshot, range)
+            .map_err(|_| CapturesRefusal::BadRange)
+    }
+
     /// One round, as the module docs say.
     pub fn parse_once(&self, syntax: &S) -> Outcome {
         let mut work = lock(&self.work);
@@ -309,14 +362,13 @@ impl<S: Syntax> Session<S> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::ops::Range;
     use std::sync::Weak;
 
     use editor_text::{InputEdit, Text};
 
     use super::*;
     use crate::fake::{GRAMMAR, Parens, ParensParser, ParensQuery, ParensTree};
-    use crate::port::{Capture, Node, QueryError};
+    use crate::port::{Node, QueryError};
 
     /// A text behind a lock, as a document holds one, read as a source.
     pub(crate) struct TextSource(pub(crate) Weak<Mutex<Text>>);
@@ -716,6 +768,100 @@ pub(crate) mod tests {
                 .session
                 .wait_for(Revision::new(1), Duration::ZERO)
                 .is_none()
+        );
+    }
+
+    /// The captures of every atom and list, in `range` of `snapshot`, as
+    /// the session answers them with a query compiled for its grammar,
+    /// said to be of `grammar`.
+    fn captures(
+        fixture: &Fixture,
+        grammar: &str,
+        snapshot: &Snapshot,
+        range: Range<usize>,
+    ) -> Result<Vec<Capture>, CapturesRefusal> {
+        let query = Parens
+            .compile(&GrammarName::new(GRAMMAR), "atom @atom\nlist @list")
+            .unwrap();
+        fixture.session.captures(
+            &fixture.syntax,
+            &GrammarName::new(grammar),
+            &query,
+            snapshot,
+            range,
+        )
+    }
+
+    #[test]
+    fn a_question_of_captures_is_refused_for_its_grammar_then_its_range_then_a_tree_not_parsed() {
+        let fixture = Fixture::new("(é)");
+        let snapshot = lock(&fixture.text).snapshot();
+
+        assert_eq!(
+            captures(&fixture, "rust", &snapshot, 2..4),
+            Err(CapturesRefusal::WrongGrammar)
+        );
+        assert_eq!(
+            captures(&fixture, GRAMMAR, &snapshot, 2..4),
+            Err(CapturesRefusal::BadRange)
+        );
+        assert_eq!(
+            captures(&fixture, GRAMMAR, &snapshot, Range { start: 3, end: 1 }),
+            Err(CapturesRefusal::BadRange)
+        );
+        assert_eq!(
+            captures(&fixture, GRAMMAR, &snapshot, 0..5),
+            Err(CapturesRefusal::BadRange)
+        );
+        assert_eq!(
+            captures(&fixture, GRAMMAR, &snapshot, 0..4),
+            Err(CapturesRefusal::NotParsed)
+        );
+        fixture.session.parse_once(&fixture.syntax);
+        assert_eq!(
+            captures(&fixture, "rust", &snapshot, 0..4),
+            Err(CapturesRefusal::WrongGrammar)
+        );
+        assert_eq!(
+            captures(&fixture, GRAMMAR, &snapshot, 0..5),
+            Err(CapturesRefusal::BadRange)
+        );
+    }
+
+    #[test]
+    fn captures_are_answered_only_from_a_delivered_tree_of_the_snapshots_own_revision() {
+        let fixture = Fixture::new("(a b)");
+        let first = lock(&fixture.text).snapshot();
+        fixture.session.parse_once(&fixture.syntax);
+        let ranges = |answer: Result<Vec<Capture>, CapturesRefusal>| {
+            answer.map(|captures| captures.iter().map(Capture::range).collect::<Vec<_>>())
+        };
+
+        assert_eq!(
+            ranges(captures(&fixture, GRAMMAR, &first, 0..5)),
+            Ok(vec![0..5, 1..2, 3..4])
+        );
+        fixture.replace(5..5, " c");
+        let second = lock(&fixture.text).snapshot();
+        // The tree delivered is of the first revision still.
+        assert_eq!(
+            captures(&fixture, GRAMMAR, &second, 0..7),
+            Err(CapturesRefusal::NotParsed)
+        );
+        assert_eq!(
+            ranges(captures(&fixture, GRAMMAR, &first, 3..4)),
+            Ok(vec![0..5, 3..4])
+        );
+        fixture.session.parse_once(&fixture.syntax);
+        // Now it is of the second: a tree newer than the snapshot answers
+        // nothing either.
+        assert_eq!(
+            captures(&fixture, GRAMMAR, &first, 0..5),
+            Err(CapturesRefusal::NotParsed)
+        );
+        assert_eq!(
+            ranges(captures(&fixture, GRAMMAR, &second, 3..7)),
+            Ok(vec![0..5, 3..4, 6..7])
         );
     }
 
