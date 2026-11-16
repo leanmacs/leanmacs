@@ -2670,7 +2670,30 @@ def setupChecks : List Check :=
         pure
           (refusal (processEnvironment (.mise (some "bin/mise"))) ==
               some "the path to mise must be absolute: bin/mise" &&
-            refusal twice == some "the process environment is set twice") }]
+            refusal twice == some "the process environment is set twice") },
+    { name :=
+        "a setup's workspace roots are collected in the order it declared them, each with the project it names, if any; a setup that declares none collects none"
+      run :=
+        let setup : SetupM Unit := do
+          workspace "/r/tools" (some "tools")
+          workspace "/notes"
+        pure
+          (match Config.Registrations.ofSetup setup,
+            Config.Registrations.ofSetup (command "first" (makes "1")) with
+          | .ok collected, .ok bare =>
+            collected.workspaceRoots ==
+                #[{ root := "/r/tools", project := some "tools" }, { root := "/notes" }] &&
+              bare.workspaceRoots.isEmpty
+          | _, _ => false) },
+    { name :=
+        "a setup that declares a workspace root that is not absolute, or one root twice, is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          workspace "/r/tools" (some "tools")
+          workspace "/r/tools/"
+        pure
+          (refusal (workspace "tools") == some (relativeWorkspace "tools") &&
+            refusal twice == some (Config.Registrations.workspaceTwice "/r/tools")) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -3708,6 +3731,20 @@ def reloadChecks : List Check :=
             loaded.registry.environment == some .inherited &&
             kept.registry.environment == some .inherited &&
             bare.registry.environment == none) },
+    { name :=
+        "an installed reload puts config's workspace roots in the registry, which tells the loop of them with the config generation; every install bumps the generation, a rejected reload changes neither, and with nothing installed the generation is 0"
+      run :=
+        let roots : Array Workspace.ConfigRoot := #[{ root := "/r/tools", project := some "tools" }]
+        let (loaded, _) :=
+          reduce [.requested, .finished (accepted ["a"] (workspace "/r/tools" (some "tools")))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let told (state : Config.State Elaborated) : Array Workspace.ConfigRoot × Nat :=
+          let registered := state.registry.registered
+          (registered.workspaceRoots, registered.generation)
+        pure
+          (told (reduce []).1 == (#[], 0) && told loaded == (roots, 1) && told kept == (roots, 1) &&
+            told bare == (#[], 2)) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -26342,6 +26379,17 @@ def workspaceStateChecks : List Check :=
     { name :=
         "with no loop to answer, the workspace settings are config's defaults under generation 0"
       run := pure ((EditorState.none.handle .workspaceSettings).1 == ({}, 0)) },
+    { name :=
+        "a dispatched command that asks for the workspace settings is answered config's roots and the config generation the loop was told of"
+      run :=
+        let roots : Array Workspace.ConfigRoot := #[{ root := "/r/tools", project := some "tools" }]
+        let registered : Loop.Registered := { workspaceRoots := roots, generation := 3 }
+        let program : EditorM (Guarded (Workspace.Settings × Nat) × EditorState) := do
+          (EditorState.ask .workspaceSettings).dispatched registered (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => answer == ({ roots }, 3)
+          | _ => false },
     { name :=
         "from a command: a buffer whose local value names a workspace has that workspace and its project; one that inherits from it has the same, and its working directory is the workspace's root; a buffer with none has no workspace and no working directory, and a store's value reads as its initial until it is set"
       run :=

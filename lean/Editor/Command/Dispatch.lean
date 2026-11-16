@@ -154,6 +154,11 @@ from the next command.
   under, with the state as it was. Otherwise the name is kept in the state,
   for the loop to hand to its host once the command has run to its end
   (`Editor/Loop.lean`, "A theme switch from a command").
+- **Asking for the workspace settings** (`StateRequest.workspaceSettings`)
+  is answered config's workspace roots and the config generation the loop
+  was told of (`Loop.Registered.workspaceRoots`, `generation`), the state
+  not read and not changed. A file's open asks, for its directory's
+  workspace (`Editor/Workspace/Attach.lean`).
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -266,6 +271,13 @@ structure Loop.Registered where
   /-- Whether config's setting turns auto-reload on (`autoReload`,
   `Editor/Setup.lean`): what decides while no command has chosen. -/
   autoReload : Bool := false
+  /-- The workspace roots config declares (`workspace`, `Editor/Setup.lean`),
+  which the finder is handed. -/
+  workspaceRoots : Array Workspace.ConfigRoot := #[]
+  /-- The config generation: how many configs have been installed. A
+  directory's cached workspace is an answer only under the generation it
+  was found under (`Editor/Workspace.lean`). -/
+  generation : Nat := 0
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -324,6 +336,9 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     else dispatched registered state (next (.error (.noSuchTheme name)))
   | state, .step (.state .autoReloadMode) next =>
     dispatched registered state (next (state.autoReload.getD registered.autoReload))
+  | state, .step (.state .workspaceSettings) next =>
+    dispatched registered state
+      (next ({ roots := registered.workspaceRoots }, registered.generation))
   | state, .step (.state (.runCommand name call)) next =>
     match registered.command name with
     | none => dispatched registered state (next false)

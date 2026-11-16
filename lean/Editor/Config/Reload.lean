@@ -82,6 +82,13 @@ the model tests run it with outcomes built by hand
   window after the start-up reload (`Window.titleBarAtOpen`), so a reload
   that changes it takes effect at the next start. A rejected outcome
   changes none of it.
+- **Every install is a new config generation.** An install sets config's
+  workspace roots in the registry (`Registry.workspaceRoots`) and bumps
+  its generation (`Registry.generation`), which a directory's cached
+  workspace is stamped with (`Editor/Workspace.lean`): so the next file
+  opened after an install asks its directory's workspace again, as an
+  install drops every directory's cached environment. A rejected outcome
+  changes neither.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -286,7 +293,9 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
               .config
               built.registrations.segments with
             environment := built.registrations.environment
-            autoReload := built.registrations.autoReload.back?.getD false },
+            autoReload := built.registrations.autoReload.back?.getD false
+            workspaceRoots := built.registrations.workspaceRoots
+            generation := state.registry.generation + 1 },
         cells }
     let (themeName, unknownTheme) :=
       chooseAt state.registry state.themeName built.registrations.theme
