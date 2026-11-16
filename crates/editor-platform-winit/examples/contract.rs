@@ -8,9 +8,11 @@
 //!
 //! It prints the verdict on one line, and then each resize the window
 //! reported, in order, one line apiece: its size, scale, whether it was in
-//! fullscreen and its corner clearance
-//! (`window-contract: resized 1600x1200 scale 2 fullscreen false corner 16`).
-//! That is how what a real window says of its corners is seen. Its exit
+//! fullscreen, its corner clearance and its top inset (`window-contract:
+//! resized 1600x1200 scale 2 fullscreen false corner 16 top 28`). That is
+//! how what a real window says of its corners and its title bar is seen.
+//! The window opens with the options' default, the themed title bar. Its
+//! exit
 //! status is the result: 0 when the platform keeps the contract, 1 when it
 //! does not, which includes a window that could not be opened.
 
@@ -53,8 +55,13 @@ fn main() {
         }
         for size in judge.resizes() {
             println!(
-                "window-contract: resized {}x{} scale {} fullscreen {} corner {}",
-                size.width, size.height, size.scale, size.fullscreen, size.corner_clearance
+                "window-contract: resized {}x{} scale {} fullscreen {} corner {} top {}",
+                size.width,
+                size.height,
+                size.scale,
+                size.fullscreen,
+                size.corner_clearance,
+                size.top_inset
             );
         }
         exit(i32::from(verdict.is_err()));

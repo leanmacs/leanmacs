@@ -225,7 +225,8 @@ reports in fullscreen says a corner clearance. The window opens for about
 a second. It is the example of `crates/editor-platform-winit`, and it
 prints the verdict on one line and then each resize the window reported,
 one line apiece: `window-contract: resized <w>x<h> scale <s> fullscreen
-<bool> corner <n>`.
+<bool> corner <n> top <n>`. Its window opens with the themed title bar,
+the options' default.
 
 **The second** is the window that draws: the example `window` of
 `crates/editor-ffi` (`examples/window.rs`). The real window is run onto a
@@ -241,10 +242,11 @@ is closed; `cargo run --locked --package editor-ffi --example window --
 
 The first prints `window-contract: the winit platform keeps the window
 port's contract`, then its resizes. On macOS each of them must say
-`fullscreen false` and a corner above 0: the run never asks for
-fullscreen, so it shows nothing of the fullscreen case, which rests on the
-adapter's own tests (`corner.rs`, `translate.rs`). How the corner's
-fallback was measured is below ("The corner clearance, measured"). The
+`fullscreen false`, a corner above 0 and a top above 0: the run never
+asks for fullscreen, so it shows nothing of the fullscreen case, which
+rests on the adapter's own tests (`corner.rs`, `title_bar.rs`,
+`translate.rs`). How the two fallbacks were measured is below ("The
+corner clearance, measured", "The title bar's top inset, measured"). The
 second fails, with a line beginning `window:
 FAILED:` and exit status 1, unless all of these hold:
 
@@ -362,6 +364,35 @@ That is winit's window, which has a title bar and no toolbar; the system
 gives a window with a toolbar larger corners. To measure it again, set
 the constant to 0, run the task, read the `corner` of the resizes, and
 set it back to what they say.
+
+The window's content view has extended under its title bar since the
+themed title bar (theming phase 7), and the reading changed with it. On
+2026-11-16, on the same machine and system, with the constant set to 0
+for the run and the insets printed, the corner-adapted region read left
+78, right 16, top 32 and bottom 0: the left inset now takes in the
+window's buttons, at the top left, and the run printed `corner 78`. The
+adapter now takes the nearer of the two sides (`corner::reach`), and the
+run printed `corner 16` on every resize with the constant at 0 and at 16
+alike. The constant stays 16.
+
+### The title bar's top inset, measured
+
+With the themed title bar the adapter reports how far down the title bar
+covers the content view (`crates/editor-platform-winit/src/title_bar.rs`):
+the top of winit's `Window::safe_area`, which winit-appkit reads from the
+content view's `safeAreaInsets`, over the scale factor and rounded up to a
+whole point, and a fallback, `FALLBACK_POINTS`, when the system gives no
+reading above 0. The fallback was measured on 2026-11-16 on a Mac17,7
+(arm64) running macOS 27.2 (26B123): with the constant set to 0 for the
+run, and a line printing the insets the system gave added for the run,
+`mise run window-contract` read `safeAreaInsets` top 32 and left, right
+and bottom 0, printed two resizes, both `resized 1600x1200 scale 2
+fullscreen false corner 16 top 32`, and passed. The constant is 32. With
+it restored the run printed the same. To measure it again, set the
+constant to 0, run the task, read the `top` of the resizes, and set it
+back to what they say. A standard title bar (`titleBar .standard` in
+config) reports 0 whatever the system reads, and so does a window in
+fullscreen.
 
 ### The window at the macOS weight
 

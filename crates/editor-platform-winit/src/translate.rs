@@ -128,16 +128,17 @@
 //! asks at no other time: reading the monitor on every key would be work
 //! for nothing.
 //!
-//! # Fullscreen and the corners
+//! # Fullscreen, the corners and the title bar
 //!
 //! Every resize the port carries says whether the window is in the
-//! system's fullscreen and how far in its rounded bottom corners reach:
-//! the shape last read, which [`Seen`] keeps, with the corner clearance
-//! decided from it by the module `corner`. winit has no event for either,
-//! so the shape is read, through a function the handler supplies
-//! (`fullscreen().is_some()`, and on macOS the system's reading of the
-//! corners, `corner::system`), after the events that may come with a
-//! change of it:
+//! system's fullscreen, how far in its rounded bottom corners reach and
+//! how far down its title bar covers it: the shape last read, which
+//! [`Seen`] keeps, with the corner clearance decided from it by the module
+//! `corner` and the top inset by the module `title_bar`. winit has no
+//! event for any of them, so the shape is read, through a function the
+//! handler supplies (`fullscreen().is_some()`, on macOS the system's
+//! reading of the corners, `corner::system`, and the top of winit's safe
+//! area), after the events that may come with a change of it:
 //!
 //! - **A window that opens** says the shape it opens in ([`Seen::opened`]).
 //! - **A resize and a change of scale** read it, and their `Resized`
@@ -145,7 +146,8 @@
 //!   winit-appkit sets its state in `window_will_enter_fullscreen` when the
 //!   user enters by the button, before the window grows.
 //! - **A move and an occlusion** read it, and a reading that changes
-//!   fullscreen or the corner clearance is reported as a `Resized` at the
+//!   fullscreen, the corner clearance or the top inset is reported as a
+//!   `Resized` at the
 //!   size and scale last known with the new shape, and told to the drawer
 //!   as one. This is the way out on
 //!   macOS: winit-appkit clears its state in `restore_state_from_fullscreen`
@@ -170,7 +172,7 @@ use winit::event::{
 use winit::keyboard;
 
 use crate::corner::{self, Shape};
-use crate::names;
+use crate::{names, title_bar};
 
 /// The parts of winit's key event that the port's key is made of.
 #[derive(Debug, Clone, Copy)]
@@ -223,6 +225,9 @@ pub(crate) struct Seen {
     /// The window's corner clearance, in whole logical points, as decided
     /// from the shape last read; 0 until it has been.
     corner: u32,
+    /// How far down the window's title bar covers it, in whole logical
+    /// points, as decided from the shape last read; 0 until it has been.
+    top: u32,
 }
 
 impl Default for Seen {
@@ -237,6 +242,7 @@ impl Default for Seen {
             refresh: None,
             fullscreen: false,
             corner: 0,
+            top: 0,
         }
     }
 }
@@ -262,9 +268,10 @@ impl Seen {
     /// `display` reads how often the display the window is on refreshes,
     /// in thousandths of a hertz. It is asked only after an event that may
     /// have put the window on another display. `shape` reads whether the
-    /// window is in fullscreen and the system's reading of its corners, and
-    /// is asked only after a resize, a move or an occlusion (the module
-    /// docs, "Fullscreen and the corners").
+    /// window is in fullscreen and the system's reading of its corners and
+    /// its title bar, and is asked only after a resize, a move or an
+    /// occlusion (the module docs, "Fullscreen, the corners and the title
+    /// bar").
     pub(crate) fn window_event(
         &mut self,
         event: &WindowEvent,
@@ -442,13 +449,13 @@ impl Seen {
 
     /// Takes in that the window now reads as `shape`, as after a request
     /// is carried out, and gives what it comes to: a resize at the size and
-    /// scale last known with the new fullscreen state and corner
-    /// clearance, told and reported, when either is not the one last
+    /// scale last known with the new fullscreen state, corner clearance
+    /// and top inset, told and reported, when any is not the one last
     /// known; nothing otherwise.
     pub(crate) fn reread(&mut self, shape: Shape) -> Told {
-        let was = (self.fullscreen, self.corner);
+        let was = (self.fullscreen, self.corner, self.top);
         self.take(shape);
-        if (self.fullscreen, self.corner) == was {
+        if (self.fullscreen, self.corner, self.top) == was {
             return Told::default();
         }
         Told {
@@ -458,11 +465,12 @@ impl Seen {
     }
 
     /// Takes in that the window reads as `shape`: whether it is in
-    /// fullscreen, and its corner clearance as the module `corner` decides
-    /// it.
+    /// fullscreen, its corner clearance as the module `corner` decides it,
+    /// and its top inset as the module `title_bar` decides it.
     fn take(&mut self, shape: Shape) {
         self.fullscreen = shape.fullscreen;
         self.corner = corner::clearance(shape);
+        self.top = title_bar::top_inset(shape);
     }
 
     /// The window's size and scale as last known, as the port reports them.
@@ -478,7 +486,7 @@ impl Seen {
             scale: self.scale,
             fullscreen: self.fullscreen,
             corner_clearance: self.corner,
-            top_inset: 0,
+            top_inset: self.top,
         }
     }
 
@@ -539,6 +547,7 @@ fn text(pressed: bool, held: Modifiers, given: Option<&str>) -> String {
 mod tests {
     use super::{KeyParts, Seen, Told};
     use crate::corner::{Shape, clearance};
+    use editor_platform::TitleBar;
     use editor_platform::{Button, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey};
     use editor_platform::{Canvas, NativeWindow, Pointer, PointerAction, Resize, WheelDelta};
     use std::cell::Cell;
@@ -1155,11 +1164,13 @@ mod tests {
     fn a_resize_is_the_new_size_at_the_scale_last_known() {
         let mut seen = Seen::default();
         // Before winit has said what the scale is, it is 1, and before the
-        // shape has been read the corners are square.
+        // shape has been read the corners are square and no title bar
+        // covers the window.
         assert_eq!(
             seen.input(&WindowEvent::SurfaceResized(PhysicalSize::new(800, 600))),
             Some(Input::Resized(Resize {
                 corner_clearance: 0,
+                top_inset: 0,
                 ..size(800, 600, 1.0)
             }))
         );
@@ -1217,12 +1228,15 @@ mod tests {
         None
     }
 
-    /// A window that reads as not in fullscreen, with the system reading
-    /// its corners as reaching 14.2 points in.
+    /// A window that reads as not in fullscreen, with the themed title
+    /// bar, the system reading its corners as reaching 14.2 points in and
+    /// its title bar as covering 27.5 points.
     fn windowed() -> Shape {
         Shape {
             fullscreen: false,
             corner: Some(14.2),
+            top: Some(27.5),
+            title_bar: TitleBar::Themed,
         }
     }
 
@@ -1230,12 +1244,16 @@ mod tests {
     /// on macOS, and 0 elsewhere (the module `corner`'s tests).
     const ROUNDED: u32 = if cfg!(target_os = "macos") { 15 } else { 0 };
 
+    /// The top inset a window that reads as [`windowed`] has: 28 on
+    /// macOS, and 0 elsewhere (the module `title_bar`'s tests).
+    const COVERED: u32 = if cfg!(target_os = "macos") { 28 } else { 0 };
+
     /// A window that reads as in fullscreen, whatever the system reads of
-    /// its corners.
+    /// its corners and its title bar.
     fn in_fullscreen() -> Shape {
         Shape {
             fullscreen: true,
-            corner: Some(14.2),
+            ..windowed()
         }
     }
 
@@ -1245,8 +1263,8 @@ mod tests {
     }
 
     /// The port's size `width` by `height` at `scale`, in fullscreen or not,
-    /// with the corner clearance of a window that reads as [`windowed`] or
-    /// [`in_fullscreen`].
+    /// with the corner clearance and the top inset of a window that reads
+    /// as [`windowed`] or [`in_fullscreen`].
     fn sized(width: u64, height: u64, scale: f64, fullscreen: bool) -> Resize {
         Resize {
             width,
@@ -1254,7 +1272,7 @@ mod tests {
             scale,
             fullscreen,
             corner_clearance: if fullscreen { 0 } else { ROUNDED },
-            top_inset: 0,
+            top_inset: if fullscreen { 0 } else { COVERED },
         }
     }
 
@@ -1366,9 +1384,83 @@ mod tests {
     /// reaching `corner` points in.
     fn cornered(corner: f64) -> Shape {
         Shape {
-            fullscreen: false,
             corner: Some(corner),
+            ..windowed()
         }
+    }
+
+    /// A window out of fullscreen whose title bar the system reads as
+    /// covering `top` points.
+    fn covered(top: f64) -> Shape {
+        Shape {
+            top: Some(top),
+            ..windowed()
+        }
+    }
+
+    /// [`sized`] out of fullscreen, with the top inset `top`.
+    fn covered_by(width: u64, height: u64, scale: f64, top: u32) -> Resize {
+        Resize {
+            top_inset: top,
+            ..sized(width, height, scale, false)
+        }
+    }
+
+    #[test]
+    fn a_window_that_opens_says_the_top_inset_it_opens_with() {
+        let (opened, size) =
+            Seen::default().opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
+        assert_eq!(size, Input::Resized(covered_by(800, 600, 2.0, COVERED)));
+        assert_eq!(
+            opened,
+            Canvas::Opened {
+                window: None,
+                size: covered_by(800, 600, 2.0, COVERED),
+                refresh_millihertz: None,
+            }
+        );
+        // A window that opens in fullscreen has no title bar over it.
+        let (_, size) = Seen::default().opened(
+            PhysicalSize::new(800, 600),
+            2.0,
+            None,
+            None,
+            in_fullscreen(),
+        );
+        assert_eq!(size, Input::Resized(sized(800, 600, 2.0, true)));
+        assert_eq!(sized(800, 600, 2.0, true).top_inset, 0);
+    }
+
+    #[test]
+    fn entering_fullscreen_by_a_request_says_a_top_inset_of_0_and_leaving_it_the_windows_own() {
+        let mut seen = Seen::default();
+        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
+
+        let entered = seen.reread(in_fullscreen());
+        assert_eq!(entered, told_resize(sized(800, 600, 2.0, true)));
+        assert_eq!(
+            seen.reread(windowed()),
+            told_resize(covered_by(800, 600, 2.0, COVERED))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_move_whose_reading_changed_the_top_inset_alone_is_a_resize_at_the_size_last_known() {
+        let mut seen = Seen::default();
+        seen.opened(PhysicalSize::new(800, 600), 2.0, None, None, windowed());
+
+        assert_eq!(
+            seen.window_event(
+                &WindowEvent::Moved(PhysicalPosition::new(10, 20)),
+                &unknown,
+                &|| covered(32.0)
+            ),
+            told_resize(covered_by(800, 600, 2.0, 32))
+        );
+        // A reading that rounds up to the inset already known is no
+        // change.
+        assert_eq!(seen.reread(covered(31.2)), Told::default());
     }
 
     /// [`sized`] out of fullscreen, with the corner clearance `corner`.

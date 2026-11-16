@@ -12,8 +12,9 @@
 //! `names` and the window's native handles in `native`: every key with its
 //! logical key, physical key and modifiers; the pointer's press, drag,
 //! release and wheel; a resize with the size, the scale, whether the
-//! window is in fullscreen and its corner clearance (the module `corner`
-//! decides it); the focus; a
+//! window is in fullscreen, its corner clearance (the module `corner`
+//! decides it) and its top inset (the module `title_bar` decides it); the
+//! focus; a
 //! composition; a request to close; and, for whatever draws in the window,
 //! its native window, its size, its display's refresh rate, damage, and
 //! whether it is hidden. Their docs say what is decided where winit and the
@@ -37,6 +38,10 @@
 //!   before it touches winit: winit panics there. Whether the calling thread
 //!   is the main one is asked of a function the caller supplies, since the
 //!   check belongs to whoever owns the main thread.
+//! - **It opens the window as the options' title bar says**
+//!   (`title_bar::attributes`): on macOS a themed window has a
+//!   transparent title bar over a full-size content view, and a standard
+//!   one winit's defaults. The choice is kept for the run.
 //! - **It allows an input method to compose exactly when the options say
 //!   so.** With composition not allowed, a dead key arrives as a key.
 //! - **It asks for the keyboard focus once**, when the window opens. The
@@ -57,8 +62,8 @@
 //!   request on the channel (`wake`): when a close has been asked they are
 //!   dropped, since the window is going; otherwise each is carried out on
 //!   the window, in order, by the module `asked`'s translation, and then
-//!   the window's fullscreen and corners are read and a change of either
-//!   reported as a resize. A request asked with no window running does nothing, and one
+//!   the window's fullscreen, corners and title bar are read and a change
+//!   of any reported as a resize. A request asked with no window running does nothing, and one
 //!   that arrives before the window is made is dropped.
 //! - **It receives the files the system asks the app to open (macOS)**,
 //!   through an application delegate of its own (the module `delegate`),
@@ -92,6 +97,8 @@
 //!   change of scale cannot be built outside winit. winit 0.31's key event
 //!   can be, and is still taken apart here, so that the key's translation
 //!   keeps its parts (`KeyParts`);
+//! - creating the window with the attributes `title_bar::attributes`
+//!   gives, which are tested;
 //! - the readings of the window as it opens: its size and scale, its raw
 //!   handles (`native_window`), and its display's refresh rate
 //!   (`refresh_rate`, which reads `current_monitor`, its
@@ -107,21 +114,23 @@
 //!   wake-up comes to is `wake`'s, and tested;
 //! - reporting the files to open that `files` gives, when the loop is woken
 //!   and when the window opens. What it gives is `files`'s, and tested;
-//! - the four lines of `Control` for winit's window, which carry out a
+//! - the five lines of `Control` for winit's window, which carry out a
 //!   request: reading `fullscreen().is_some()`, and calling
 //!   `set_fullscreen` with `Fullscreen::Borderless(None)` or `None`,
-//!   `set_minimized(true)` and `set_title`. Which is called, and when, is
-//!   `asked`'s, and tested;
+//!   `set_minimized(true)`, `set_title` and `set_theme`. Which is called,
+//!   and when, is `asked`'s, and tested;
 //! - the reading of the window's shape (`shape`) as the window opens and
 //!   when the translation asks for it, after a resize, a change of scale, a
 //!   move or an occlusion, and after requests are carried out: whether it
-//!   is in fullscreen, and on macOS the system's reading of its corners
+//!   is in fullscreen, on macOS the system's reading of its corners
 //!   (`corner_reading`, over the view of `native_window`, and
-//!   `corner::system`, one call into AppKit). When it is read and what is
-//!   reported of it are the translation's, and what the reading comes to
-//!   is `corner::clearance`'s, and both are tested. `mise run
-//!   window-contract` runs the reading and prints the clearance each
-//!   resize said;
+//!   `corner::system`, one call into AppKit), and the reading of its title
+//!   bar (`title_reading`, the top of winit's `safe_area` over the scale
+//!   factor). When it is read and what is reported of it are the
+//!   translation's, and what the readings come to is `corner::clearance`'s
+//!   and `title_bar::top_inset`'s, and all are tested. `mise run
+//!   window-contract` runs the readings and prints the clearance and the
+//!   top inset each resize said;
 //! - telling the drawer the window is closing once the loop has ended;
 //! - on macOS, the application delegate's one method, which reads each
 //!   URL's file path and hands the list to `Handing::hand`, and
@@ -155,6 +164,7 @@ mod delegate;
 mod files;
 mod names;
 mod native;
+mod title_bar;
 mod translate;
 
 use std::num::NonZeroU32;
@@ -163,7 +173,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 
 use editor_platform::{
-    CannotOpen, Canvas, Drawer, Input, NativeWindow, Platform, Report, Request, WindowOptions,
+    CannotOpen, Canvas, Drawer, Input, NativeWindow, Platform, Report, Request, TitleBar,
+    WindowOptions,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -173,7 +184,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{
     ImeCapabilities, ImeEnableRequest, ImeHint, ImePurpose, ImeRequest, ImeRequestData, Window,
-    WindowAttributes, WindowId,
+    WindowId,
 };
 
 use crate::asked::{Asked, Control};
@@ -420,8 +431,7 @@ impl ApplicationHandler for App {
         if self.window.is_some() || self.failure.is_some() {
             return;
         }
-        let attributes = WindowAttributes::default().with_title(WinitPlatform::TITLE);
-        match event_loop.create_window(attributes) {
+        match event_loop.create_window(title_bar::attributes(self.options)) {
             Ok(window) => {
                 // What it comes to is seen in the events the window sends,
                 // as with the call this replaces, which returned nothing.
@@ -432,7 +442,7 @@ impl ApplicationHandler for App {
                     window.scale_factor(),
                     native_window(window.as_ref()),
                     refresh_rate(window.as_ref()),
-                    shape(window.as_ref()),
+                    shape(window.as_ref(), self.options.title_bar),
                 );
                 self.window = Some(window);
                 // The drawer hears of the window before anyone else does.
@@ -479,7 +489,7 @@ impl ApplicationHandler for App {
         }
         // What carrying them out did to fullscreen and the corners, as the
         // drawer and the report hear of a window event's.
-        let told = self.seen.reread(shape(window));
+        let told = self.seen.reread(shape(window, self.options.title_bar));
         for canvas in told.canvas {
             (self.drawer)(canvas);
         }
@@ -493,9 +503,10 @@ impl ApplicationHandler for App {
         // translation asks: it decides after which events to.
         let window = self.window.as_deref();
         let display = || window.and_then(refresh_rate);
-        // Whether it is in fullscreen, and how its corners read, when the
-        // translation asks.
-        let shape = || window.map_or(Shape::default(), shape);
+        // Whether it is in fullscreen, and how its corners and its title
+        // bar read, when the translation asks.
+        let title_bar = self.options.title_bar;
+        let shape = || window.map_or(Shape::default(), |window| shape(window, title_bar));
         // A change of scale cannot be built in a test, and a key is
         // translated from its parts, so each is taken apart here. These two
         // arms are all this handler decides.
@@ -535,15 +546,26 @@ fn native_window(window: &dyn Window) -> Option<NativeWindow> {
     native::native(handle, display)
 }
 
-/// What `window` reads as, for its fullscreen state and its corner
-/// clearance: whether it is in fullscreen, and on macOS the system's
-/// reading of its corners over its AppKit view. Each is a reading with no
-/// decision in it; what they come to is the module `corner`'s.
-fn shape(window: &dyn Window) -> Shape {
+/// What `window`, opened with `title_bar`, reads as, for its fullscreen
+/// state, its corner clearance and its top inset: whether it is in
+/// fullscreen, on macOS the system's reading of its corners over its
+/// AppKit view, and the system's reading of how far down its title bar
+/// covers it. Each is a reading with no decision in it; what they come to
+/// is the modules `corner`'s and `title_bar`'s.
+fn shape(window: &dyn Window, title_bar: TitleBar) -> Shape {
     Shape {
         fullscreen: window.in_fullscreen(),
         corner: corner_reading(window),
+        top: title_reading(window),
+        title_bar,
     }
+}
+
+/// The system's reading of how far down `window`'s title bar covers its
+/// drawable area, in logical points: the top of winit's safe area, which
+/// is in physical pixels, over the scale factor. winit reads 0 off macOS.
+fn title_reading(window: &dyn Window) -> Option<f64> {
+    Some(f64::from(window.safe_area().top) / window.scale_factor())
 }
 
 /// The system's reading of how far in `window`'s corners reach, in logical
