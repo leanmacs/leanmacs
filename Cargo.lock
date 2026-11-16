@@ -408,6 +408,8 @@ dependencies = [
  "editor-render",
  "editor-render-wgpu",
  "editor-shape-parley",
+ "editor-syntax",
+ "editor-syntax-treesitter",
  "editor-text",
  "editor-watch",
  "editor-watch-notify",

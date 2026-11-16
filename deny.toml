@@ -269,7 +269,12 @@
 # `streaming-iterator`, a crate in the graph, and that crate's own entry
 # taken out ("crate 'streaming-iterator = 0.1.9' is explicitly banned").
 # `editor-syntax-treesitter` itself had no entry while nothing depended on
-# it.
+# it. Its entry came in the commit in which `editor-ffi` came to depend on
+# it, for the process's syntax service: with the entry's wrapper naming
+# another crate, it fails ("crate 'editor-syntax-treesitter = 0.1.0' is
+# explicitly banned"); and in that commit `editor-ffi` joined the wrappers
+# of `editor-syntax`'s entry: with the wrapper not yet there, it fails on
+# that edge ("crate 'editor-syntax = 0.1.0' is explicitly banned").
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -318,7 +323,8 @@ deny = [
   { crate = "nucleo-matcher", wrappers = ["editor-fuzzy-nucleo"], reason = "the matching library stays behind the Scorer port: only its adapter crate may name its types" },
   { crate = "editor-fuzzy", wrappers = ["editor-fuzzy-nucleo", "editor-ffi"], reason = "the Scorer port and the ranking rule have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose one C function asks the ranking rule over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-fuzzy-nucleo", wrappers = ["editor-ffi"], reason = "the scorer's real adapter is linked only by the crate that wires the library together; everything else reaches a scorer through the port, and its tests through the port's fake" },
-  { crate = "editor-syntax", wrappers = ["editor-syntax-treesitter"], reason = "the Syntax port, its contract and the worker that reparses have one user, the port's adapter, which implements it and runs its contract; another is a decision, so it is made here" },
+  { crate = "editor-syntax", wrappers = ["editor-syntax-treesitter", "editor-ffi"], reason = "the Syntax port, its contract and the worker that reparses have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the syntax service over the adapter; a third is a decision, so it is made here" },
+  { crate = "editor-syntax-treesitter", wrappers = ["editor-ffi"], reason = "the syntax adapter is linked only by the crate that wires the library together, for the process's syntax service; everything else reaches a parser through the port, and editor-syntax's tests through its fake" },
   { crate = "tree-sitter", wrappers = ["editor-syntax-treesitter"], reason = "tree-sitter stays behind the Syntax port: only its adapter crate may name its types" },
   { crate = "tree-sitter-rust", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
   { crate = "tree-sitter-json", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },

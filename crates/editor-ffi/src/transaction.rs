@@ -236,7 +236,11 @@ impl Document {
     /// returns the revision it produced ([`editor_text::Text::apply`]). A
     /// refused transaction changes nothing.
     pub fn apply(&self, transaction: &Transaction, origin: Origin) -> Result<Revision, ApplyError> {
-        self.lock().apply(transaction, origin)
+        let applied = self.lock().apply(transaction, origin);
+        if let Ok(revision) = applied {
+            crate::syntax::touched(self.key(), revision);
+        }
+        applied
     }
 }
 

@@ -36,6 +36,13 @@
 //! its text is shared, weakly, with the snapshots taken of it
 //! ([`crate::snapshot`]), so a snapshot handle is enough to reach the
 //! document's log and markers while the document lives.
+//!
+//! **Every edit tells the syntax service.** Each path that changes the
+//! text, the replace here, applying a transaction and applying an inverse,
+//! calls `crate::syntax::touched` with the document's key and the
+//! revision the edit produced, once the edit is made and the lock let go;
+//! it does nothing for a document nobody parses. Freeing a document
+//! detaches it (`crate::syntax::detach`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
@@ -102,7 +109,14 @@ impl Document {
     /// ([`Text::replace`]): unless both offsets are character boundaries of
     /// the document's text, within it, and `start <= end`.
     pub fn replace(&self, start: usize, end: usize, text: &str) -> bool {
-        self.lock().replace(start..end, text).is_ok()
+        let mut locked = self.lock();
+        let replaced = locked.replace(start..end, text).is_ok();
+        let revision = locked.current().revision();
+        drop(locked);
+        if replaced {
+            crate::syntax::touched(self.key, revision);
+        }
+        replaced
     }
 
     /// A copy of the whole text.
@@ -232,7 +246,9 @@ pub unsafe extern "C" fn editor_ffi_document_read(document: *const Document, out
 pub unsafe extern "C" fn editor_ffi_document_free(document: *mut Document) {
     // SAFETY: the caller guarantees `document` is a box one of the
     // functions that hand a document out gave up, taken back this once.
-    drop(unsafe { Box::from_raw(document) });
+    let document = unsafe { Box::from_raw(document) };
+    crate::syntax::detach(document.key());
+    drop(document);
     LIVE.fetch_sub(1, Ordering::Relaxed);
 }
 

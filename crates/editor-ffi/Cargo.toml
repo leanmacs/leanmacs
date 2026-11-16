@@ -70,6 +70,16 @@ editor-fuzzy = { path = "../editor-fuzzy" }
 # call. Through it the static library Lean links holds nucleo-matcher,
 # which has no system dependency.
 editor-fuzzy-nucleo = { path = "../editor-fuzzy-nucleo" }
+# Syntax trees: the Syntax port, the rule for a query's captures in a
+# range, and the session and worker that reparse a document from its edit
+# log, which the C functions of `src/syntax.rs` forward to.
+editor-syntax = { path = "../editor-syntax" }
+# The real syntax: tree-sitter, with its grammars compiled in. This is the
+# crate that wires the library together, so it is the one that links the
+# adapter: the syntax service parses with it. Through it the static library
+# Lean links holds tree-sitter and the grammars' parsers, compiled C with
+# no system dependency.
+editor-syntax-treesitter = { path = "../editor-syntax-treesitter" }
 # The process service: the Processes port, its fake, and the service that
 # runs a command to its end, cancels it and shuts down, which the C
 # functions of `src/processes.rs` forward to.
