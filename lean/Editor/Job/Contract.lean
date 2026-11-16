@@ -975,14 +975,17 @@ def fileWatchProperties : List FileWatchProperty :=
       scripts :=
         #[{ script := "printf x > f", touches := #[("f", .created), ("f", .written)] },
           { script := "printf y > g && mv g f"
-            touches := #[("g", .created), ("g", .written), ("g", .renamed), ("f", .renamed)] }]
+            touches := #[("g", .created), ("g", .written), ("g", .renamed), ("f", .renamed)] },
+          { script := "printf z >> f", touches := #[("f", .written)] }]
       holds := fun root => do
         let watch ← watching (.file (root / "f"))
         changes root "printf x > f"
         let made ← readUntil watch (toldIn · (root / "f") .created)
         changes root "printf y > g && mv g f"
         let saved ← readUntil watch (toldIn · (root / "f") .renamed)
-        return made && saved },
+        changes root "printf z >> f"
+        let written ← readUntil watch (toldIn · (root / "f") .written)
+        return made && saved && written },
     { name :=
         "a watch of a directory that is not there is refused as not found, a relative path as not absolute, and the job goes on"
       holds := fun root => do
