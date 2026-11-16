@@ -768,6 +768,33 @@ def jobModelChecks : List Check :=
           (outcome == .finished 9 && after.now == 8 &&
             after.posted == #[JobContract.posting "first", JobContract.posting "second" [.nat 2]]) },
     { name :=
+        "in the job model, a run that parks parks at each post, with it recorded and the clock where it was, and resumes from there to its end"
+      run :=
+        let job : JobM Nat := do
+          post (JobContract.posting "first")
+          sleep 5
+          post (JobContract.posting "second" [.nat 2])
+          return 9
+        let parkedAt {α : Type} : JobModel.Ran α → Option (Invocation × Array Invocation × Nat)
+          | .posted invocation model _ => some (invocation, model.posted, model.now)
+          | _ => none
+        let first := JobModel.runParking job.run { now := 3 }
+        let second :=
+          match first with
+          | .posted _ model resume => some (JobModel.runParking (resume ()) model)
+          | _ => none
+        let third :=
+          match second with
+          | some (.posted _ model resume) => some (JobModel.runParking (resume ()) model)
+          | _ => none
+        pure
+          (parkedAt first == some (JobContract.posting "first", #[JobContract.posting "first"], 3) &&
+            (second.bind parkedAt).map (·.1) == some (JobContract.posting "second" [.nat 2]) &&
+            (second.bind parkedAt).map (·.2.2) == some 8 &&
+            (match third with
+            | some (.ended (some (.ok 9)) model) => model.posted.size == 2
+            | _ => false)) },
+    { name :=
         "in the job model, a run that parks does not park at a post once a cancel is due: the job is cancelled at its wait"
       run :=
         let job : JobM Unit := do
@@ -15055,9 +15082,17 @@ def apiStateChecks : List Check :=
 abbrev TestDriver :=
   Loop.Driver TestScheme.scheme
 
+/-- The streaming child the driver checks' `streamer` starts: one that waits
+for its input, which is never written. -/
+def streamed : Process.Command :=
+  { program := "/bin/cat", directory := "/p/d" }
+
 /-- The jobs of the driver checks, by name. `double` doubles the number it
 is started with, and its command inserts the result, in brackets, at the
-cursor of view 0. `bad` finishes with a command that inserts and is then
+cursor of view 0. `poster` posts `mark` with `p1`, sleeps 10 ms, posts `mark`
+with `p2`, and finishes with a command that inserts `[end]`. `streamer`
+starts `streamed` as a streaming child, posts `mark` with `s` and reads
+the child, and finishes with a command that inserts `[streamed]`. `bad` finishes with a command that inserts and is then
 refused. `chain` finishes with a command that starts `double` with 5.
 
 Four reach files, in `fileRoot`. `load` loads the file it is named and
@@ -15116,6 +15151,25 @@ def driverJobs (name : String) : Option (List Argument → Work) :=
     some fun _ =>
       Work.of (fun _ => Process.run { program := "/bin/true", directory := "/p/d" } 10) fun _ =>
         pure ()
+  | "poster" =>
+    some fun _ =>
+      Work.of
+        (fun _ => do
+          post { command := "mark", arguments := [.str "p1"] }
+          sleep 10
+          post { command := "mark", arguments := [.str "p2"] })
+        fun _ => inserts "[end]"
+  | "streamer" =>
+    some fun _ =>
+      Work.of
+        (fun _ => do
+          match ← Process.start streamed { input := true, bound := 64 } with
+          | .ok child =>
+            post { command := "mark", arguments := [.str "s"] }
+            discard <| Process.read child
+          | .error _ =>
+            throw "streamer: refused")
+        fun _ => inserts "[streamed]"
   | _ => none
 
 /-- The commands of the driver checks, bound under `C-c`: `ask` (`a`)
@@ -15129,7 +15183,10 @@ takes a snapshot of its buffer's text and starts `save` with its index, and
 `/bin/true` in `/p/d`. `keyed` (`k`) starts `double` with 21 under the key
 `k`, `cancel` (`x`) cancels the key `k`, `cancelFails` (`y`) cancels it
 and is then refused, and `cancelAfterRead` (`z`) reads its buffer's text
-and then cancels it. -/
+and then cancels it. `post` (`p`) starts `poster` under the key `p`,
+`stream` (`r`) starts `streamer` under the key `s`, and `cancelStream` (`v`)
+cancels the key `s`; `mark`, which no key runs, inserts its argument at the
+cursor of view 0, for the jobs' posts. -/
 def driverKeys : Loop.Keys TestScheme.scheme :=
   let starts (name : String) (arguments : List Argument := []) : Dispatched := fun _ => do
     discard <| startJob name arguments
@@ -15140,7 +15197,8 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
       ("C-c l", invoke "load"), ("C-c s", invoke "adopt"), ("C-c w", invoke "save"),
       ("C-c t", invoke "lose"), ("C-c e", invoke "build"), ("C-c k", invoke "keyed"),
       ("C-c x", invoke "cancel"), ("C-c y", invoke "cancelFails"),
-      ("C-c z", invoke "cancelAfterRead")]
+      ("C-c z", invoke "cancelAfterRead"), ("C-c p", invoke "post"), ("C-c r", invoke "stream"),
+      ("C-c v", invoke "cancelStream")]
     [("ask", fun _ => do
         message "asked"
         discard <| startJob "double" [.nat 21]
@@ -15169,6 +15227,19 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
         -- a command of state requests alone cannot be interrupted.
         discard <| call.target.buffer.text.read
         cancelJob "k"
+        return none),
+      ("post", fun _ => do
+        discard <| startJob "poster" (key := some "p")
+        return none),
+      ("stream", fun _ => do
+        discard <| startJob "streamer" (key := some "s")
+        return none),
+      ("cancelStream", fun _ => do
+        cancelJob "s"
+        return none),
+      ("mark", fun call => do
+        if let [.str text] := call.arguments then
+          discard <| (⟨0⟩ : ViewId).insertAtSelections text
         return none)]
 
 /-- A driver over the initial state, with the commands and the jobs of the
@@ -15205,6 +15276,54 @@ def driverChecks : List Check :=
     steps.flatMap fun step => (step.map (·.starts)).getD #[]
   let echoOf (driver : TestDriver) : Option String := driver.model.display.scenes.back?.map (·.echo)
   [{  name :=
+        "a job that posts is held at each post until it arrives: the post runs as a command labelled with the job, the job then goes on to its next post, and its own command runs after its posts"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c p")
+            let (first, firstStep) := asked.posted 1
+            let (typed, _) := fedTo first [.commit "-"]
+            let (second, _) := typed.posted 1
+            let (finished, _) := second.finish 1
+            asked.posting.map (fun job => (job.id, job.invocation)) ==
+                #[(1, { command := "mark", arguments := [.str "p1"] })] &&
+              asked.pending.isEmpty && driverText asked == some "" &&
+              (firstStep.map (·.ended)) == some (some .finished) &&
+              driverText first == some "p1" &&
+              first.posting.map (fun job => (job.id, job.invocation)) ==
+                #[(1, { command := "mark", arguments := [.str "p2"] })] &&
+              first.jobs.now == 10 &&
+              driverText typed == some "p1-" &&
+              driverText second == some "p1-p2" &&
+              second.posting.isEmpty && second.pending.map (·.id) == #[1] &&
+              driverText finished == some "p1-p2[end]" &&
+              (asked.posted 2).2.isNone },
+    { name :=
+        "a job held at a post keeps its streaming child: another job that ends meanwhile leaves the child running, and a cancel of the held job's key drops it, its post never runs, and its child is recorded killed"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let driver :=
+              { driver with
+                jobs := { processes := { streams := #[{ command := streamed, steps := #[.awaitClosed] }] } } }
+            let (streaming, _) := fedTo driver (presses "C-c r")
+            let (other, _) := fedTo streaming (presses "C-c a")
+            let (cancelled, steps) := fedTo other (presses "C-c v")
+            let (after, delivered) := cancelled.posted 1
+            streaming.posting.map (fun job => (job.id, job.children.size)) == #[(1, 1)] &&
+              streaming.jobs.processes.children.isEmpty &&
+              other.pending.map (·.id) == #[2] &&
+              other.jobs.processes.killed.isEmpty &&
+              other.posting.map (fun job => job.children.size) == #[1] &&
+              steps.flatMap (fun step => (step.map (·.cancels)).getD #[]) == #["s"] &&
+              cancelled.posting.isEmpty &&
+              cancelled.jobs.processes.killed == #[streamed] &&
+              delivered.isNone && driverText after == some "" },
+    { name :=
         "a job whose directory's lookup fails leaves the loop's echo area saying why, as the host says it"
       run :=
         pure <|

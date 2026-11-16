@@ -26,6 +26,9 @@ operations take it on:
   headless host labels one. A job that failed or was cancelled has no
   command, and nothing is delivered. The jobs a delivered command starts
   are run as a fed step's are.
+- **`posted id`** is the job's next post arriving: the loop is handed what
+  it posted (`runPosted`), labelled `job <id> <name>` as its command is,
+  and then the job goes on, so it ends, parks or posts again.
 
 Each step is taken in as a host takes one in (`took`): the jobs it asked
 for are started, and each invocation it answered, the continuation of a
@@ -43,6 +46,17 @@ handled after the answer's command.
   feeds events between a start and its `finish`, and what it sees is what
   the queue's order guarantees a host: each of them handled before the
   result's command.
+- **A job that posts is held at each post until the test says it
+  arrives** (`posted`), as a job is held at its end until `finish`: a
+  real job's post is queued behind whatever arrived before it, so a test
+  feeds events between two posts. A job's posts arrive in the order it
+  made them, and all before its command: it makes no request after a post
+  until the post has arrived.
+- **A held job keeps its own streaming children**, out of the shared
+  process model, as it keeps its own watches: so another job's end, which
+  ends every child in the model (`JobModel.ended`), leaves them running. A
+  cancel of a held job's key records each of its children still running
+  as killed, as the runner's cancel kills them.
 - **One job model for every job**, whose clock each job's waits move on.
 - **A step that says stop is recorded** (`stopped`), whichever step it
   was: one fed, a delivery, or one the driver ran for an invocation a
@@ -122,9 +136,32 @@ structure Loop.Driver.Parked where
   watch : Nat
   /-- Its own watches: a job sees only its own. -/
   watches : Array FileWatchModel.Watch
+  /-- Its own streaming children, out of the shared process model while it
+  is held. -/
+  children : Array ProcessModel.Child := #[]
   /-- The rest of the job, given the reply to its `next`. -/
   resume :
     Except FileWatchError (Array FileWatch.Change) → Program jobPort (Except String (EditorM Unit))
+
+/-- A job the driver holds at a post (`JobModel.Ran.posted`): the editor has
+not run what it posted, and the job goes on only once it has
+(`Loop.Driver.posted`). -/
+structure Loop.Driver.Posting where
+  /-- The job's id. -/
+  id : Nat
+  /-- The name it was started under. -/
+  name : String
+  /-- The key it was started with, if any. -/
+  key : Option String := none
+  /-- What it posted. -/
+  invocation : Invocation
+  /-- Its own watches. -/
+  watches : Array FileWatchModel.Watch := #[]
+  /-- Its own streaming children, out of the shared process model while it
+  is held, so that another job's end does not end them. -/
+  children : Array ProcessModel.Child := #[]
+  /-- The rest of the job. -/
+  resume : Unit → Program jobPort (Except String (EditorM Unit))
 
 /-- The command loop on the editor's models, with the jobs its commands
 start run on the job model, for a loop that runs the input scheme
@@ -146,6 +183,8 @@ structure Loop.Driver (scheme : InputScheme) where
   pending : Array Loop.Driver.Pending := #[]
   /-- The jobs held waiting at a watch, oldest first. -/
   parked : Array Loop.Driver.Parked := #[]
+  /-- The jobs held at a post, oldest first. -/
+  posting : Array Loop.Driver.Posting := #[]
   /-- The id the next job started gets. -/
   next : Nat := 1
   /-- Whether a step the driver took in said stop (`Loop.Next.stop`): a
@@ -195,19 +234,28 @@ def handing (driver : Loop.Driver scheme) (arrived : Array (JobSnapshotId × Tex
   { driver with model := { driver.model with texts := { driver.model.texts with arrived } } }
 
 /-- The driver once the job `id`, called `name`, has run `program` on the
-job model from where the driver's is, seeing only its own watches: kept as
-not delivered when it ended, and as parked when it waits at a watch with
-nothing recorded. What its environments said is said in the echo area, in
-order, as the host says it (`Running.said`). The watches' ids come from the
-one shared counter. -/
+job model from where the driver's is, seeing only its own watches and its
+own streaming children: kept as not delivered when it ended, as parked when
+it waits at a watch with nothing recorded, and as posting when it posted.
+What its environments said is said in the echo area, in order, as the host
+says it (`Running.said`). The watches' and the children's ids come from the
+shared counters. -/
 def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option String)
     (program : Program jobPort (Except String (EditorM Unit)))
-    (own : Array FileWatchModel.Watch := #[]) : Loop.Driver scheme :=
+    (own : Array FileWatchModel.Watch := #[]) (children : Array ProcessModel.Child := #[]) :
+    Loop.Driver scheme :=
   let files := { driver.jobs.files with snapshots := driver.model.texts.snapshots }
   let shared := driver.jobs.fileWatches
+  let sharedChildren := driver.jobs.processes.children
   let start :=
     { driver.jobs with
-      files, fileWatches := { shared with watches := own } }
+      files, fileWatches := { shared with watches := own }
+      processes := { driver.jobs.processes with children } }
+  -- A job held at a watch or a post takes its children out with it.
+  let apart (jobs : JobModel) : JobModel :=
+    { jobs with
+      fileWatches := { jobs.fileWatches with watches := #[] }
+      processes := { jobs.processes with children := sharedChildren } }
   let saidBy (jobs : JobModel) : Loop scheme :=
     let said := jobs.reported.extract driver.jobs.reported.size jobs.reported.size
     said.foldl (fun loop text => { loop with state := { loop.state with echo := text } })
@@ -223,7 +271,7 @@ def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option
     let loaded : Array JobSnapshotId :=
       (Array.range (jobs.files.held.size - files.held.size)).map (⟨files.held.size + ·⟩)
     let finished := outcome matches .finished _
-    let jobs := { jobs with fileWatches := { jobs.fileWatches with watches := #[] } }
+    let jobs := apart jobs
     { driver with
       jobs := if finished then jobs else releasing jobs loaded
       pending :=
@@ -231,23 +279,45 @@ def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option
   | .parked watch jobs resume =>
     { driver with
       loop := saidBy jobs
-      jobs := { jobs with fileWatches := { jobs.fileWatches with watches := #[] } }
+      jobs := apart jobs
       parked :=
-        driver.parked.push { id, name, key, watch, watches := jobs.fileWatches.watches, resume } }
+        driver.parked.push
+          { id, name, key, watch, watches := jobs.fileWatches.watches
+            children := jobs.processes.children, resume } }
+  | .posted invocation jobs resume =>
+    { driver with
+      loop := saidBy jobs
+      jobs := apart jobs
+      posting :=
+        driver.posting.push
+          { id, name, key, invocation, watches := jobs.fileWatches.watches
+            children := jobs.processes.children, resume } }
 
-/-- Ends the job of `key`, parked or finished and not delivered: its command
-never runs, and a parked job's watches are recorded as ended. Nothing for a
-key no such job has. -/
+/-- Ends the job of `key`, parked, posting or finished and not delivered: its
+command never runs, nor do the posts it has not made, a held job's watches
+are recorded as ended, and each of its streaming children still running as
+killed (`ProcessModel.killed`), as the runner's cancel kills it. Nothing for
+a key no such job has. -/
 def cancel (driver : Loop.Driver scheme) (key : String) : Loop.Driver scheme :=
   let ending := driver.parked.filter (·.key == some key)
+  let posting := driver.posting.filter (·.key == some key)
   let shared := driver.jobs.fileWatches
+  let children := ending.flatMap (·.children) ++ posting.flatMap (·.children)
+  let processes := driver.jobs.processes
   { driver with
     parked := driver.parked.filter (·.key != some key)
+    posting := driver.posting.filter (·.key != some key)
     pending := driver.pending.filter (·.key != some key)
     jobs :=
       { driver.jobs with
         fileWatches :=
-          { shared with ended := shared.ended ++ ending.flatMap (·.watches.map (·.id)) } } }
+          { shared with
+            ended :=
+              shared.ended ++ ending.flatMap (·.watches.map (·.id)) ++
+                posting.flatMap (·.watches.map (·.id)) }
+        processes :=
+          { processes with
+            killed := processes.killed ++ (children.filter (!·.done)).map (·.script.command) } } }
 
 /-- How many watches the parked jobs hold open. -/
 def openWatches (driver : Loop.Driver scheme) : Nat :=
@@ -272,7 +342,7 @@ def touch (driver : Loop.Driver scheme) (changes : Array (System.FilePath × Fil
       else
         let (reply, answered, now) := watches.handle driver.jobs.now none (.next ⟨job.watch⟩)
         let driver := { driver with jobs := { driver.jobs with now } }
-        driver.ranOn job.id job.name job.key (job.resume reply) answered.watches)
+        driver.ranOn job.id job.name job.key (job.resume reply) answered.watches job.children)
     driver
 
 /-- The driver once each of `starts` is started: the job registered under
@@ -374,6 +444,29 @@ def finish (driver : Loop.Driver scheme) (id : Nat) :
       (({ driver with jobs := releasing driver.jobs job.held } : Loop.Driver scheme).handing #[],
         stepped.toOption)
     | .failed _ | .cancelled => (driver, none)
+
+/-- The job `id`'s post arrives: the loop is handed what it posted, as a
+command labelled `job <id> <name>` (`Loop.deliver`, `runPosted`), and the
+step is taken in as `finish` takes one in; then the job goes on, with its
+own watches and children, and ends, parks or posts again. The step the
+delivery handed back; `none`, with nothing delivered, for an id no job held
+at a post has, and for a delivery that was refused. A delivery whose step
+cancels the job's own key leaves it cancelled, and it does not go on. -/
+def posted (driver : Loop.Driver scheme) (id : Nat) :
+    Loop.Driver scheme × Option (Loop.Stepped scheme) :=
+  match driver.posting.find? (·.id == id) with
+  | none => (driver, none)
+  | some job =>
+    let (driver, stepped) :=
+      driver.stepped
+        (driver.loop.deliver driver.handed s!"job {job.id} {job.name}" (runPosted job.invocation))
+    -- The job is held through its delivery, so the delivery's own cancel
+    -- of its key reaches it.
+    if driver.posting.any (·.id == id) then
+      (({ driver with posting := driver.posting.filter (·.id != id) } : Loop.Driver scheme).ranOn
+          job.id job.name job.key (job.resume ()) job.watches job.children,
+        stepped.toOption)
+    else (driver, stepped.toOption)
 
 end Loop.Driver
 
