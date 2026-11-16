@@ -61,6 +61,9 @@ pub mod session;
 pub mod worker;
 
 pub use highlight::{BadFaces, HighlightSpan, Highlighter, Highlights};
-pub use port::{Capture, GrammarName, Node, QueryError, QueryErrorKind, QueryKind, Syntax};
+pub use port::{
+    Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
+    Setting, Syntax,
+};
 pub use session::{CapturesRefusal, Consumer, Latest, Outcome, Parsed, Session, Source};
 pub use worker::{Handle, Worker};

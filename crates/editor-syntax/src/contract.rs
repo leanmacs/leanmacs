@@ -23,7 +23,7 @@ use editor_text::{ChangeSet, Origin, Revision, Snapshot, Text, Transaction};
 
 use crate::highlight::Highlighter;
 use crate::port::{Capture, GrammarName, Node, QueryErrorKind, QueryKind, Syntax};
-use crate::query::{captures_in, overlaps};
+use crate::query::{captures_in, flatten, overlaps, widened};
 use crate::session::reparse;
 
 /// What is language-specific in the contract: a grammar, texts of it, and
@@ -44,6 +44,13 @@ pub struct Corpus {
     pub bad_queries: &'static [(&'static str, QueryErrorKind)],
     /// A query that names a node kind the grammar does not have.
     pub unknown_kind_query: &'static str,
+    /// The kinds of query the grammar ships ([`Syntax::shipped_query`]).
+    pub shipped: &'static [QueryKind],
+    /// A query whose patterns have `#set!` settings.
+    pub settings_query: &'static str,
+    /// The settings of each pattern of `settings_query`, in order: each a
+    /// key and its value, if it has one.
+    pub settings: &'static [&'static [(&'static str, Option<&'static str>)]],
 }
 
 /// The corpus's grammar is listed and opens a parser; a grammar that is not
@@ -91,11 +98,37 @@ pub const RANGE: &str = "a range answers the whole text's captures that overlap 
 pub const ORDER: &str =
     "every capture names a capture of the query and is a node's range, in the core's order, once";
 
-/// The grammar is published with a highlights query
-/// ([`Syntax::shipped_query`]) that compiles for it, and a grammar that is
-/// not listed ships none.
-pub const SHIPPED: &str =
-    "the corpus's grammar ships a highlights query that compiles, and one not listed ships none";
+/// The grammar is published with a query of each kind the corpus lists
+/// ([`Corpus::shipped`], [`Syntax::shipped_query`]), each compiling for
+/// it, and with none of any other kind; and a grammar that is not listed
+/// ships none of any kind.
+pub const SHIPPED: &str = "the corpus's grammar ships a query of each kind the corpus lists, which compiles, and none of another kind, and one not listed ships none";
+
+/// Over three sets of ranges of each text (the whole text, its second
+/// half, and its first and last thirds together, each end moved back to a
+/// position): a parse in the whole text equals a fresh parse; every node
+/// but the root lies within the hull of the ranges, and every leaf with
+/// width starts in a range and ends in one; two parses in the same ranges
+/// are equal; and a parse of the whole text after one in ranges equals a
+/// fresh parse, so the parser parses the whole of a text again.
+///
+/// A leaf may run from one range into the next: tree-sitter's lexer goes
+/// on reading a token at the next range's start (a `type_identifier` of
+/// Rust from byte 205 to 415, over ranges `0..206` and `413..619`, seen on
+/// 2026-11-16). What a leaf holds of the gap is not the layer's, and
+/// highlights are cut to a layer's ranges ([`crate::highlight`]).
+pub const IN_RANGES: &str = "a parse in ranges reads only the ranges, equals a fresh parse over the whole text, is the same twice, and leaves the parser parsing whole texts";
+
+/// A range's matches ([`Syntax::matches`]), flattened and put through the
+/// rule of [`captures_in`], are the captures [`captures_in`] answers of it;
+/// and each captured node's named children are in order, apart, within it,
+/// and the named children of a node of its range in the tree.
+pub const MATCHES: &str =
+    "a range's matches, flattened, are its captures, each with the named children of its node";
+
+/// The corpus's settings query answers its settings, pattern by pattern,
+/// and none for a pattern it does not have.
+pub const SETTINGS: &str = "each pattern's settings are the ones its source sets, in order";
 
 /// Over the same edits as [`INCREMENTAL`], the cases and the sweep, the
 /// spans the grammar's shipped highlights query draws
@@ -107,7 +140,7 @@ pub const HIGHLIGHTS_AFTER_EDITS: &str =
     "after an edit, the shipped highlights of the reparsed tree equal those of a fresh full parse";
 
 /// Every property, by name.
-pub const PROPERTIES: [&str; 11] = [
+pub const PROPERTIES: [&str; 14] = [
     GRAMMARS,
     WHOLE,
     DETERMINISTIC,
@@ -119,6 +152,9 @@ pub const PROPERTIES: [&str; 11] = [
     ORDER,
     SHIPPED,
     HIGHLIGHTS_AFTER_EDITS,
+    IN_RANGES,
+    MATCHES,
+    SETTINGS,
 ];
 
 /// How many random edit sequences the sweep runs from each text.
@@ -147,8 +183,11 @@ pub fn check<S: Syntax>(syntax: &S, corpus: &Corpus) -> Vec<&'static str> {
         (QUERY_NAMES, query_names(syntax, &grammar, corpus)),
         (RANGE, parses(range)),
         (ORDER, parses(order)),
-        (SHIPPED, shipped(syntax, &grammar)),
+        (SHIPPED, shipped(syntax, &grammar, corpus)),
         (HIGHLIGHTS_AFTER_EDITS, parses(highlights_after_edits)),
+        (IN_RANGES, parses(in_ranges)),
+        (MATCHES, parses(matches)),
+        (SETTINGS, settings(syntax, &grammar, corpus)),
     ];
     results
         .into_iter()
@@ -167,14 +206,178 @@ fn grammars<S: Syntax>(syntax: &S, grammar: &GrammarName) -> bool {
 }
 
 /// [`SHIPPED`].
-fn shipped<S: Syntax>(syntax: &S, grammar: &GrammarName) -> bool {
+fn shipped<S: Syntax>(syntax: &S, grammar: &GrammarName, corpus: &Corpus) -> bool {
     let other = GrammarName::new(format!("{grammar}-that-is-not-listed"));
-    syntax
-        .shipped_query(grammar, QueryKind::Highlights)
-        .is_some_and(|source| syntax.compile(grammar, &source).is_ok())
+    QueryKind::ALL.iter().all(|&kind| {
+        let source = syntax.shipped_query(grammar, kind);
+        let as_listed = if corpus.shipped.contains(&kind) {
+            source.is_some_and(|source| syntax.compile(grammar, &source).is_ok())
+        } else {
+            source.is_none()
+        };
+        as_listed && syntax.shipped_query(&other, kind).is_none()
+    })
+}
+
+/// `ranges` with the empty ones dropped, sorted, and those that touch or
+/// overlap made one.
+fn apart(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    ranges.retain(|range| !range.is_empty());
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged
+}
+
+/// The sets of ranges [`IN_RANGES`] parses `text` in: the whole text, its
+/// second half, and its first and last thirds together, each end moved
+/// back to a position; a set left with no range is not asked.
+fn range_sets(text: &Snapshot) -> Vec<Vec<Range<usize>>> {
+    let len = text.len();
+    let third = len / 3;
+    [
+        std::iter::once(0..len).collect(),
+        std::iter::once(middle(text)..len).collect(),
+        vec![0..boundary(text, third), boundary(text, len - third)..len],
+    ]
+    .into_iter()
+    .map(apart)
+    .filter(|ranges| !ranges.is_empty())
+    .collect()
+}
+
+/// Whether the node at `index` of `nodes`, a tree in pre-order, has no
+/// children.
+fn is_leaf(nodes: &[Node], index: usize) -> bool {
+    nodes
+        .get(index + 1)
+        .is_none_or(|next| next.depth <= nodes[index].depth)
+}
+
+/// [`IN_RANGES`].
+fn in_ranges<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> bool {
+    corpus.texts.iter().all(|text| {
+        let snapshot = snapshot_of(text);
+        let fresh = syntax.nodes(&syntax.parse(parser, &snapshot, None));
+        range_sets(&snapshot).into_iter().all(|ranges| {
+            let nodes = syntax.nodes(&syntax.parse_in(parser, &snapshot, &ranges));
+            let again = syntax.nodes(&syntax.parse_in(parser, &snapshot, &ranges));
+            let whole_again = syntax.nodes(&syntax.parse(parser, &snapshot, None));
+            let hull = ranges[0].start..ranges[ranges.len() - 1].end;
+            let within_hull = nodes
+                .iter()
+                .skip(1)
+                .all(|node| hull.start <= node.start && node.end <= hull.end);
+            let leaves_within = (0..nodes.len()).all(|index| {
+                let node = &nodes[index];
+                let starts_in = ranges
+                    .iter()
+                    .any(|range| range.start <= node.start && node.start < range.end);
+                let ends_in = ranges
+                    .iter()
+                    .any(|range| range.start < node.end && node.end <= range.end);
+                !is_leaf(&nodes, index) || node.start == node.end || starts_in && ends_in
+            });
+            let whole = ranges.len() == 1 && ranges[0] == (0..snapshot.len());
+            (!whole || nodes == fresh)
+                && within_hull
+                && leaves_within
+                && nodes == again
+                && whole_again == fresh
+        })
+    })
+}
+
+/// The ranges of the named children of the node at `index` of `nodes`, a
+/// tree in pre-order.
+fn named_children_of(nodes: &[Node], index: usize) -> Vec<Range<usize>> {
+    let depth = nodes[index].depth;
+    nodes[index + 1..]
+        .iter()
+        .take_while(|node| node.depth > depth)
+        .filter(|node| node.depth == depth + 1 && node.named)
+        .map(|node| node.start..node.end)
+        .collect()
+}
+
+/// [`MATCHES`]: from every text, the whole text and each row; and at least
+/// one capture with named children, so the children are never held only
+/// by captures that have none.
+fn matches<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> bool {
+    let grammar = GrammarName::new(corpus.grammar);
+    let Ok(query) = syntax.compile(&grammar, corpus.query) else {
+        return false;
+    };
+    let mut with_children = false;
+    let every = corpus.texts.iter().all(|text| {
+        let snapshot = snapshot_of(text);
+        let tree = syntax.parse(parser, &snapshot, None);
+        let nodes = syntax.nodes(&tree);
+        let rows = (0..snapshot.row_count()).filter_map(|row| snapshot.row_range(row));
+        let ranges: Vec<Range<usize>> = std::iter::once(0..snapshot.len()).chain(rows).collect();
+        ranges.into_iter().all(|range| {
+            let found = syntax.matches(&query, &tree, &snapshot, widened(&snapshot, &range));
+            let mut flat: Vec<Capture> = flatten(&found)
+                .into_iter()
+                .filter(|capture| overlaps(capture.range(), range.clone()))
+                .collect();
+            crate::query::sort(&mut flat);
+            let children_hold = found
+                .iter()
+                .flat_map(|found| &found.captures)
+                .all(|capture| {
+                    with_children |= !capture.named_children.is_empty();
+                    let in_order = capture
+                        .named_children
+                        .windows(2)
+                        .all(|pair| pair[0].end <= pair[1].start);
+                    let within = capture
+                        .named_children
+                        .iter()
+                        .all(|child| capture.start <= child.start && child.end <= capture.end);
+                    let of_a_node = (0..nodes.len()).any(|index| {
+                        nodes[index].start == capture.start
+                            && nodes[index].end == capture.end
+                            && named_children_of(&nodes, index) == capture.named_children
+                    });
+                    in_order && within && of_a_node
+                });
+            captures_in(syntax, &query, &tree, &snapshot, range) == Ok(flat) && children_hold
+        })
+    });
+    every && with_children
+}
+
+/// [`SETTINGS`].
+fn settings<S: Syntax>(syntax: &S, grammar: &GrammarName, corpus: &Corpus) -> bool {
+    let Ok(query) = syntax.compile(grammar, corpus.settings_query) else {
+        return false;
+    };
+    let as_set = corpus
+        .settings
+        .iter()
+        .enumerate()
+        .all(|(pattern, expected)| {
+            let found = syntax.pattern_settings(&query, pattern);
+            found.len() == expected.len()
+                && found
+                    .iter()
+                    .zip(expected.iter())
+                    .all(|(found, (key, value))| {
+                        found.key == *key && found.value.as_deref() == *value
+                    })
+        });
+    let some = corpus.settings.iter().any(|settings| !settings.is_empty());
+    as_set
+        && some
         && syntax
-            .shipped_query(&other, QueryKind::Highlights)
-            .is_none()
+            .pattern_settings(&query, corpus.settings.len())
+            .is_empty()
 }
 
 /// The snapshot of `text`.
@@ -709,14 +912,14 @@ mod tests {
 
     use super::*;
     use crate::fake::{GRAMMAR, PARENS_CORPUS, Parens, ParensParser, ParensQuery, ParensTree};
-    use crate::port::QueryError;
+    use crate::port::{Match, QueryError, Setting};
 
     #[test]
-    fn the_properties_are_eleven_and_each_is_named_once() {
+    fn the_properties_are_fourteen_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 11);
+        assert_eq!(names.len(), 14);
     }
 
     /// One rule a broken syntax breaks; everything else it answers as the
@@ -756,6 +959,14 @@ mod tests {
         /// A reparse handed an old tree answers the fresh tree, but marked,
         /// and a marked tree's captures leave out the first.
         StaleCaptures,
+        /// A match's captures come without their named children.
+        MatchesWithoutChildren,
+        /// A pattern's last setting is dropped.
+        DropsSetting,
+        /// A parse in ranges reads the whole text.
+        ParsesOutsideRanges,
+        /// It ships its highlights query as a query of every kind.
+        ShipsEveryKind,
     }
 
     /// The fake with one flaw.
@@ -833,6 +1044,7 @@ mod tests {
         fn shipped_query(&self, grammar: &GrammarName, kind: QueryKind) -> Option<String> {
             match self.flaw {
                 Flaw::BrokenShipped => Some("((".to_owned()),
+                Flaw::ShipsEveryKind => Parens.shipped_query(grammar, QueryKind::Highlights),
                 Flaw::ShipsForAny => Parens.shipped_query(&GrammarName::new(GRAMMAR), kind),
                 _ => Parens.shipped_query(grammar, kind),
             }
@@ -869,6 +1081,55 @@ mod tests {
                 _ => {}
             }
             captures
+        }
+
+        fn matches(
+            &self,
+            query: &ParensQuery,
+            tree: &ParensTree,
+            text: &Snapshot,
+            range: Range<usize>,
+        ) -> Vec<Match> {
+            // The fake's, cut to its own captures, so a flaw of those is a
+            // flaw of these too.
+            let own = self.captures(query, tree, text, range.clone());
+            let mut matches = Parens.matches(query, tree, text, range);
+            for found in &mut matches {
+                for capture in &mut found.captures {
+                    if self.flaw == Flaw::BadIndex {
+                        capture.capture += 100;
+                    }
+                    if self.flaw == Flaw::MatchesWithoutChildren {
+                        capture.named_children.clear();
+                    }
+                }
+            }
+            matches.retain(|found| {
+                crate::query::flatten(std::slice::from_ref(found))
+                    .iter()
+                    .all(|capture| own.contains(capture))
+            });
+            matches
+        }
+
+        fn pattern_settings(&self, query: &ParensQuery, pattern: usize) -> Vec<Setting> {
+            let mut settings = Parens.pattern_settings(query, pattern);
+            if self.flaw == Flaw::DropsSetting {
+                settings.pop();
+            }
+            settings
+        }
+
+        fn parse_in(
+            &self,
+            parser: &mut ParensParser,
+            text: &Snapshot,
+            ranges: &[Range<usize>],
+        ) -> ParensTree {
+            if self.flaw == Flaw::ParsesOutsideRanges {
+                return Parens.parse(parser, text, None);
+            }
+            Parens.parse_in(parser, text, ranges)
         }
 
         fn nodes(&self, tree: &ParensTree) -> Vec<Node> {
@@ -984,6 +1245,35 @@ mod tests {
     #[test]
     fn a_syntax_whose_captures_of_a_reparsed_tree_differ_from_a_fresh_ones_is_reported() {
         assert_eq!(failed(Flaw::StaleCaptures), [HIGHLIGHTS_AFTER_EDITS]);
+    }
+
+    #[test]
+    fn a_syntax_whose_matches_lack_their_named_children_is_reported() {
+        assert_eq!(failed(Flaw::MatchesWithoutChildren), [MATCHES]);
+    }
+
+    #[test]
+    fn a_syntax_that_drops_a_setting_is_reported() {
+        assert_eq!(failed(Flaw::DropsSetting), [SETTINGS]);
+    }
+
+    #[test]
+    fn a_syntax_that_parses_outside_its_ranges_is_reported() {
+        assert_eq!(failed(Flaw::ParsesOutsideRanges), [IN_RANGES]);
+    }
+
+    #[test]
+    fn a_syntax_that_ships_a_kind_its_corpus_does_not_list_is_reported() {
+        assert_eq!(failed(Flaw::ShipsEveryKind), [SHIPPED]);
+    }
+
+    #[test]
+    fn a_syntax_whose_table_loses_a_kind_its_corpus_lists_is_reported() {
+        let corpus = Corpus {
+            shipped: &[QueryKind::Highlights, QueryKind::Indents],
+            ..PARENS_CORPUS
+        };
+        assert_eq!(check(&Parens, &corpus), [SHIPPED]);
     }
 
     #[test]

@@ -11,8 +11,8 @@
 //! The texts are the fixtures checked in under `tests/syntax/`, read with
 //! `include_str!`, and a few written here.
 
-use editor_syntax::QueryErrorKind;
 use editor_syntax::contract::{self, Corpus};
+use editor_syntax::{QueryErrorKind, QueryKind};
 use editor_syntax_treesitter::TreeSitter;
 
 /// The Rust grammar's corpus.
@@ -55,6 +55,21 @@ const RUST: Corpus = Corpus {
         ("(identifier (identifier)) @x", QueryErrorKind::Structure),
     ],
     unknown_kind_query: "(function_item) @f\n(no_such_kind) @x\n",
+    shipped: &[
+        QueryKind::Highlights,
+        QueryKind::Injections,
+        QueryKind::TextObjects,
+        QueryKind::Indents,
+    ],
+    settings_query: "((macro_invocation (token_tree) @injection.content)\n (#set! injection.language \"rust\")\n (#set! injection.include-children))\n(identifier) @name\n((line_comment) @c (#set! priority 2))\n",
+    settings: &[
+        &[
+            ("injection.language", Some("rust")),
+            ("injection.include-children", None),
+        ],
+        &[],
+        &[("priority", Some("2"))],
+    ],
 };
 
 /// The JSON grammar's corpus.
@@ -80,6 +95,9 @@ const JSON: Corpus = Corpus {
         ("(pair nope: (string)) @x", QueryErrorKind::Field),
     ],
     unknown_kind_query: "(no_such_kind) @x",
+    shipped: &[QueryKind::Highlights],
+    settings_query: "((pair) @p (#set! key value))\n(number) @n\n",
+    settings: &[&[("key", Some("value"))], &[]],
 };
 
 #[test]

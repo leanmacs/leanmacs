@@ -17,22 +17,29 @@
 //! A tree is kept as its nodes. [`Syntax::edit`] records the edit in the
 //! tree and [`Syntax::parse`] always parses the whole text, so a reparse
 //! that is handed an old tree equals a fresh one trivially.
+//! [`Syntax::parse_in`] reads every byte outside its ranges as a blank (a
+//! line feed as itself, so rows stay where they are) and the text as ending
+//! where the last range ends, so a list still open closes there; the root
+//! is still over the whole text.
 //!
 //! **Queries** are one pattern a line: `kind @name`, for a named node of
 //! that kind (`document`, `list`, `atom`, `ERROR`), or `"(" @name` and
-//! `")" @name` for the anonymous parens. Blank lines are skipped. A word
+//! `")" @name` for the anonymous parens, then any number of settings, each
+//! `#set! key` or `#set! key value` ([`Syntax::pattern_settings`]). Blank
+//! lines are skipped. A word
 //! that names no kind is refused with [`QueryErrorKind::NodeType`] at its
 //! offset; any other line that is not a pattern with
 //! [`QueryErrorKind::Syntax`] at the line's. A capture's name is numbered
 //! where it first appears. A query answers every capture of the tree,
 //! whatever range it is asked: [`crate::query::captures_in`] keeps what the
-//! range holds.
+//! range holds. Each capture is a match of its own ([`Syntax::matches`]),
+//! and a captured node's named children are its child lists and atoms.
 //!
 //! **The grammar's shipped highlights** are [`PARENS_HIGHLIGHTS`]
 //! ([`Syntax::shipped_query`]): each paren a `punctuation.bracket`, each
 //! atom a `variable` (and, by a later pattern of the same node, a
 //! `constant`, which the first pattern wins over), each list a `list`, and
-//! each stray paren an `error`.
+//! each stray paren an `error`. It ships no query of any other kind.
 //!
 //! It is public, not `cfg(test)`, so the tests of any crate above the port
 //! run on it. [`PARENS_CORPUS`] is what [`crate::contract::check`] holds it
@@ -44,7 +51,10 @@ use std::sync::Arc;
 use editor_text::{InputEdit, Point, Snapshot};
 
 use crate::contract::Corpus;
-use crate::port::{Capture, GrammarName, Node, QueryError, QueryErrorKind, QueryKind, Syntax};
+use crate::port::{
+    Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
+    Setting, Syntax,
+};
 
 /// The fake: the `parens` grammar.
 #[derive(Debug, Default, Clone, Copy)]
@@ -90,8 +100,9 @@ impl ParensTree {
 /// A compiled query of the `parens` grammar.
 #[derive(Debug, Clone)]
 pub struct ParensQuery {
-    /// Each pattern: what node it matches, and the index of its capture.
-    patterns: Vec<(Kind, u32)>,
+    /// Each pattern: what node it matches, the index of its capture, and
+    /// its settings.
+    patterns: Vec<(Kind, u32, Vec<Setting>)>,
     /// The names of the captures, by index.
     names: Vec<String>,
 }
@@ -130,7 +141,33 @@ impl Syntax for Parens {
 
     fn parse(&self, _: &mut ParensParser, text: &Snapshot, _: Option<&ParensTree>) -> ParensTree {
         ParensTree {
-            nodes: Arc::new(parse(text)),
+            nodes: Arc::new(parse(&text.to_string(), text)),
+            edits: Vec::new(),
+        }
+    }
+
+    fn parse_in(
+        &self,
+        _: &mut ParensParser,
+        text: &Snapshot,
+        ranges: &[Range<usize>],
+    ) -> ParensTree {
+        let end = ranges.last().map_or(0, |range| range.end);
+        let source: String = text
+            .to_string()
+            .char_indices()
+            .take_while(|(offset, _)| *offset < end)
+            .map(|(offset, c)| {
+                let inside = ranges.iter().any(|range| range.contains(&offset));
+                match c {
+                    _ if inside => c.to_string(),
+                    '\n' => "\n".to_owned(),
+                    _ => " ".repeat(c.len_utf8()),
+                }
+            })
+            .collect();
+        ParensTree {
+            nodes: Arc::new(parse(&source, text)),
             edits: Vec::new(),
         }
     }
@@ -150,11 +187,8 @@ impl Syntax for Parens {
     }
 
     fn shipped_query(&self, grammar: &GrammarName, kind: QueryKind) -> Option<String> {
-        match kind {
-            QueryKind::Highlights => {
-                (grammar.as_str() == GRAMMAR).then(|| PARENS_HIGHLIGHTS.to_owned())
-            }
-        }
+        (kind == QueryKind::Highlights && grammar.as_str() == GRAMMAR)
+            .then(|| PARENS_HIGHLIGHTS.to_owned())
     }
 
     fn capture_names(&self, query: &ParensQuery) -> Vec<String> {
@@ -170,7 +204,7 @@ impl Syntax for Parens {
     ) -> Vec<Capture> {
         let mut captures = Vec::new();
         for node in tree.nodes.iter() {
-            for (pattern, (kind, capture)) in query.patterns.iter().enumerate() {
+            for (pattern, (kind, capture, _)) in query.patterns.iter().enumerate() {
                 if kind.matches(node) {
                     captures.push(Capture {
                         pattern,
@@ -182,6 +216,40 @@ impl Syntax for Parens {
             }
         }
         captures
+    }
+
+    fn matches(
+        &self,
+        query: &ParensQuery,
+        tree: &ParensTree,
+        _: &Snapshot,
+        _: Range<usize>,
+    ) -> Vec<Match> {
+        let mut matches = Vec::new();
+        for (index, node) in tree.nodes.iter().enumerate() {
+            for (pattern, (kind, capture, _)) in query.patterns.iter().enumerate() {
+                if kind.matches(node) {
+                    matches.push(Match {
+                        pattern,
+                        captures: vec![MatchCapture {
+                            capture: *capture,
+                            start: node.start,
+                            end: node.end,
+                            named_children: named_children(&tree.nodes, index),
+                        }],
+                    });
+                }
+            }
+        }
+        matches
+    }
+
+    fn pattern_settings(&self, query: &ParensQuery, pattern: usize) -> Vec<Setting> {
+        query
+            .patterns
+            .get(pattern)
+            .map(|(_, _, settings)| settings.clone())
+            .unwrap_or_default()
     }
 
     fn nodes(&self, tree: &ParensTree) -> Vec<Node> {
@@ -258,9 +326,23 @@ fn is_blank(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\r' | '\n')
 }
 
-/// The nodes of `text` in the `parens` grammar, in pre-order.
-fn parse(text: &Snapshot) -> Vec<Node> {
-    let source = text.to_string();
+/// The ranges of the lists and atoms that are children of the node at
+/// `at` in `nodes`, a tree in pre-order.
+fn named_children(nodes: &[Node], at: usize) -> Vec<Range<usize>> {
+    let depth = nodes[at].depth;
+    nodes[at + 1..]
+        .iter()
+        .take_while(|node| node.depth > depth)
+        .filter(|node| node.depth == depth + 1 && (node.kind == "list" || node.kind == "atom"))
+        .map(|node| node.start..node.end)
+        .collect()
+}
+
+/// The nodes of `source` in the `parens` grammar, in pre-order, with points
+/// of `text`: a text `source` is a prefix of byte for byte, or a version of
+/// one with only blanks in place of some bytes. A list still open closes
+/// where `source` ends, and the root is over the whole of `text`.
+fn parse(source: &str, text: &Snapshot) -> Vec<Node> {
     // The children of the root, and of each list still open, innermost
     // last, with where each list opened.
     let mut root: Vec<Built> = Vec::new();
@@ -327,7 +409,7 @@ fn parse(text: &Snapshot) -> Vec<Node> {
     }
     let document = Built {
         children: root,
-        ..Built::leaf("document", true, None, 0..end)
+        ..Built::leaf("document", true, None, 0..text.len())
     };
     let mut nodes = Vec::new();
     document.flatten(0, text, &mut nodes);
@@ -352,9 +434,10 @@ fn compile(source: &str) -> Result<ParensQuery, QueryError> {
             kind: QueryErrorKind::Syntax,
             offset: at,
         };
-        let [(kind_at, kind), (_, name)] = words[..] else {
+        let [(kind_at, kind), (_, name), ref rest @ ..] = words[..] else {
             return Err(syntax);
         };
+        let settings = settings(rest).ok_or(syntax)?;
         let Some(name) = name.strip_prefix('@').filter(|name| !name.is_empty()) else {
             return Err(syntax);
         };
@@ -379,9 +462,29 @@ fn compile(source: &str) -> Result<ParensQuery, QueryError> {
         };
         query
             .patterns
-            .push((kind, u32::try_from(capture).unwrap_or(u32::MAX)));
+            .push((kind, u32::try_from(capture).unwrap_or(u32::MAX), settings));
     }
     Ok(query)
+}
+
+/// The settings the words after a pattern's capture spell: each `#set!`,
+/// its key, and its value unless the next word is another `#set!` or there
+/// is none. `None` when they spell no settings.
+fn settings(words: &[(usize, &str)]) -> Option<Vec<Setting>> {
+    let mut settings = Vec::new();
+    let mut words = words.iter().map(|(_, word)| *word).peekable();
+    while let Some(word) = words.next() {
+        if word != "#set!" {
+            return None;
+        }
+        let key = words.next().filter(|key| *key != "#set!")?;
+        let value = words.next_if(|value| *value != "#set!");
+        settings.push(Setting {
+            key: key.to_owned(),
+            value: value.map(str::to_owned),
+        });
+    }
+    Some(settings)
 }
 
 /// The words of `line`, split at blanks, each with its offset in the line.
@@ -416,6 +519,16 @@ pub const PARENS_CORPUS: Corpus = Corpus {
         ("nope @x", QueryErrorKind::NodeType),
     ],
     unknown_kind_query: "atom @a\nvector @v\n",
+    shipped: &[QueryKind::Highlights],
+    settings_query: "list @l #set! injection.language parens #set! injection.include-children\natom @a\n\"(\" @p #set! key\n",
+    settings: &[
+        &[
+            ("injection.language", Some("parens")),
+            ("injection.include-children", None),
+        ],
+        &[],
+        &[("key", None)],
+    ],
 };
 
 #[cfg(test)]
@@ -551,6 +664,100 @@ mod tests {
                 .unwrap_err()
                 .kind,
             QueryErrorKind::Language
+        );
+    }
+
+    #[test]
+    fn each_capture_is_a_match_of_its_own_with_its_child_lists_and_atoms_as_named_children() {
+        let query = Parens
+            .compile(&GrammarName::new(GRAMMAR), "list @l\n\"(\" @p")
+            .unwrap();
+        let snapshot = Text::from("(a (b) )").snapshot();
+        let tree = Parens.parse(&mut ParensParser, &snapshot, None);
+
+        let matches = Parens.matches(&query, &tree, &snapshot, 0..8);
+        let at = |pattern, capture, range: Range<usize>, children: Vec<Range<usize>>| Match {
+            pattern,
+            captures: vec![MatchCapture {
+                capture,
+                start: range.start,
+                end: range.end,
+                named_children: children,
+            }],
+        };
+        assert_eq!(
+            matches,
+            [
+                at(0, 0, 0..8, vec![1..2, 3..6]),
+                at(1, 1, 0..1, vec![]),
+                at(0, 0, 3..6, std::iter::once(4..5).collect()),
+                at(1, 1, 3..4, vec![]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_pattern_line_may_end_in_settings_each_a_key_and_maybe_a_value() {
+        let query = Parens
+            .compile(
+                &GrammarName::new(GRAMMAR),
+                "list @l #set! injection.language parens #set! injection.include-children\natom @a\n\"(\" @p #set! key\n",
+            )
+            .unwrap();
+        let setting = |key: &str, value: Option<&str>| Setting {
+            key: key.to_owned(),
+            value: value.map(str::to_owned),
+        };
+
+        assert_eq!(Parens.capture_names(&query), ["l", "a", "p"]);
+        assert_eq!(
+            Parens.pattern_settings(&query, 0),
+            [
+                setting("injection.language", Some("parens")),
+                setting("injection.include-children", None)
+            ]
+        );
+        assert_eq!(Parens.pattern_settings(&query, 1), []);
+        assert_eq!(Parens.pattern_settings(&query, 2), [setting("key", None)]);
+        assert_eq!(Parens.pattern_settings(&query, 3), []);
+        assert_eq!(
+            Parens
+                .compile(&GrammarName::new(GRAMMAR), "atom @a #set!")
+                .unwrap_err()
+                .kind,
+            QueryErrorKind::Syntax
+        );
+    }
+
+    #[test]
+    fn a_parse_in_ranges_reads_the_bytes_outside_them_as_blanks_and_keeps_the_texts_offsets() {
+        let snapshot = Text::from("(a)\n(é b) c").snapshot();
+        let tree = Parens.parse_in(&mut ParensParser, &snapshot, &[1..3, 4..9]);
+
+        let shape: Vec<_> = Parens
+            .nodes(&tree)
+            .into_iter()
+            .map(|node| {
+                (
+                    node.kind,
+                    node.depth,
+                    node.start..node.end,
+                    node.start_point,
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("document".to_owned(), 0, 0..12, Point::new(0, 0)),
+                ("atom".to_owned(), 1, 1..2, Point::new(0, 1)),
+                ("ERROR".to_owned(), 1, 2..3, Point::new(0, 2)),
+                ("list".to_owned(), 1, 4..9, Point::new(1, 0)),
+                ("(".to_owned(), 2, 4..5, Point::new(1, 0)),
+                ("atom".to_owned(), 2, 5..7, Point::new(1, 1)),
+                ("atom".to_owned(), 2, 8..9, Point::new(1, 4)),
+                (")".to_owned(), 2, 9..9, Point::new(1, 5)),
+            ]
         );
     }
 

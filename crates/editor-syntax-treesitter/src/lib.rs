@@ -16,7 +16,23 @@
 //! Cargo builds this crate; the objects end up in the static library Lean
 //! links. Nothing is fetched, generated or loaded at run time, and the
 //! grammars are the private table `GRAMMARS`: a name, the language of the
-//! grammar's crate, and the highlights query that crate exports.
+//! grammar's crate, and the queries it ships, each with its kind.
+//!
+//! # Where each query comes from
+//!
+//! A grammar crate's own query is used wherever the crate is published with
+//! one, pinned by the same exact version as the grammar it was written for.
+//! Rust's crate ships no `indents.scm` or `textobjects.scm`, so those two
+//! are this repository's, under `queries/rust/`, each opening with a comment
+//! naming the Lean rule that reads it; their capture names follow
+//! nvim-treesitter's, and no third-party query set is used, since each is
+//! written for its own editor's rules (`docs/design/rust-library.md`,
+//! "Injections, indentation and text objects, as built").
+//!
+//! | Grammar | Highlights | Injections | Text objects | Indents |
+//! |---|---|---|---|---|
+//! | `json` | the crate's | none | none | none |
+//! | `rust` | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
 //!
 //! The other two ways were set aside (the decision is in
 //! `docs/design/README.md`'s table and `docs/design/rust-library.md`,
@@ -47,14 +63,20 @@
 //!   fields and points carried over one for one.
 //! - [`Syntax::compile`]: the library's query, its refusal carried over
 //!   with its kind and offset.
-//! - [`Syntax::shipped_query`]: the query the grammar's crate exports
-//!   (`HIGHLIGHTS_QUERY`, its `queries/highlights.scm`), from the table, so
-//!   a query is pinned by the same exact version as the grammar it was
-//!   written for.
+//! - [`Syntax::shipped_query`]: the query of that kind in the table, the
+//!   grammar crate's export (`HIGHLIGHTS_QUERY`, `INJECTIONS_QUERY`) or one
+//!   of `queries/`.
 //! - [`Syntax::captures`]: a query cursor set to the range, whose
 //!   predicates (`#eq?`, `#match?`) read the snapshot's chunks of a node.
 //!   The library answers every match that meets the range, captures
 //!   outside it included; `editor_syntax::query::captures_in` decides.
+//! - [`Syntax::matches`]: the same cursor's matches, with each captured
+//!   node's named children read with a tree cursor.
+//! - [`Syntax::pattern_settings`]: the library's `#set!` properties of the
+//!   pattern.
+//! - [`Syntax::parse_in`]: the parser's included ranges set to the ranges,
+//!   with their points from the snapshot, a parse with no old tree, and the
+//!   included ranges set back to the whole text.
 //! - [`Syntax::nodes`]: a walk of the tree with the library's cursor, in
 //!   pre-order, with each node's field read from the cursor.
 //!
@@ -72,7 +94,10 @@
 
 use std::ops::Range;
 
-use editor_syntax::{Capture, GrammarName, Node, QueryError, QueryErrorKind, QueryKind, Syntax};
+use editor_syntax::{
+    Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
+    Setting, Syntax,
+};
 use editor_text::{InputEdit, Point, Snapshot};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
@@ -90,8 +115,10 @@ struct Grammar {
     name: &'static str,
     /// How to make its language.
     language: MakeLanguage,
-    /// The highlights query its crate is published with, pinned with it.
-    highlights: &'static str,
+    /// The queries it ships, each with its kind: its crate's own, pinned
+    /// with it, where the crate is published with one, and otherwise this
+    /// crate's, under `queries/`. A kind not here it ships none of.
+    queries: &'static [(QueryKind, &'static str)],
 }
 
 /// The grammars compiled in.
@@ -99,12 +126,23 @@ const GRAMMARS: [Grammar; 2] = [
     Grammar {
         name: "json",
         language: || Language::new(tree_sitter_json::LANGUAGE),
-        highlights: tree_sitter_json::HIGHLIGHTS_QUERY,
+        queries: &[(QueryKind::Highlights, tree_sitter_json::HIGHLIGHTS_QUERY)],
     },
     Grammar {
         name: "rust",
         language: || Language::new(tree_sitter_rust::LANGUAGE),
-        highlights: tree_sitter_rust::HIGHLIGHTS_QUERY,
+        queries: &[
+            (QueryKind::Highlights, tree_sitter_rust::HIGHLIGHTS_QUERY),
+            (QueryKind::Injections, tree_sitter_rust::INJECTIONS_QUERY),
+            (
+                QueryKind::TextObjects,
+                include_str!("../queries/rust/textobjects.scm"),
+            ),
+            (
+                QueryKind::Indents,
+                include_str!("../queries/rust/indents.scm"),
+            ),
+        ],
     },
 ];
 
@@ -225,10 +263,11 @@ impl Syntax for TreeSitter {
     }
 
     fn shipped_query(&self, name: &GrammarName, kind: QueryKind) -> Option<String> {
-        let grammar = grammar(name)?;
-        match kind {
-            QueryKind::Highlights => Some(grammar.highlights.to_owned()),
-        }
+        grammar(name)?
+            .queries
+            .iter()
+            .find(|(shipped, _)| *shipped == kind)
+            .map(|(_, source)| (*source).to_owned())
     }
 
     fn capture_names(&self, query: &TreeSitterQuery) -> Vec<String> {
@@ -268,6 +307,91 @@ impl Syntax for TreeSitter {
             }
         }
         captures
+    }
+
+    fn matches(
+        &self,
+        query: &TreeSitterQuery,
+        tree: &TreeSitterTree,
+        text: &Snapshot,
+        range: Range<usize>,
+    ) -> Vec<Match> {
+        let mut cursor = QueryCursor::new();
+        cursor.set_byte_range(range);
+        let node_text = |node: tree_sitter::Node<'_>| {
+            text.chunks_in(node.byte_range())
+                .into_iter()
+                .flatten()
+                .map(str::as_bytes)
+        };
+        let mut found = cursor.matches(&query.0, tree.0.root_node(), node_text);
+        let mut matches = Vec::new();
+        while let Some(found) = found.next() {
+            let captures = found
+                .captures()
+                .iter()
+                .map(|capture| {
+                    let mut walk = capture.node.walk();
+                    MatchCapture {
+                        capture: capture.index,
+                        start: capture.node.start_byte(),
+                        end: capture.node.end_byte(),
+                        named_children: capture
+                            .node
+                            .named_children(&mut walk)
+                            .map(|child| child.byte_range())
+                            .collect(),
+                    }
+                })
+                .collect();
+            matches.push(Match {
+                pattern: found.pattern_index,
+                captures,
+            });
+        }
+        matches
+    }
+
+    fn pattern_settings(&self, query: &TreeSitterQuery, pattern: usize) -> Vec<Setting> {
+        if pattern >= query.0.pattern_count() {
+            return Vec::new();
+        }
+        query
+            .0
+            .property_settings(pattern)
+            .iter()
+            .map(|property| Setting {
+                key: property.key.to_string(),
+                value: property.value.as_deref().map(str::to_owned),
+            })
+            .collect()
+    }
+
+    fn parse_in(
+        &self,
+        parser: &mut TreeSitterParser,
+        text: &Snapshot,
+        ranges: &[Range<usize>],
+    ) -> TreeSitterTree {
+        let point = |offset| point_to(text.offset_to_point(offset).unwrap_or(Point::new(0, 0)));
+        let included: Vec<tree_sitter::Range> = ranges
+            .iter()
+            .map(|range| tree_sitter::Range {
+                start_byte: range.start,
+                end_byte: range.end,
+                start_point: point(range.start),
+                end_point: point(range.end),
+            })
+            .collect();
+        // The library refuses ranges that are not sorted and apart, which
+        // the port's caller never hands; it then keeps the ranges it had,
+        // the whole text.
+        let _ = parser.0.set_included_ranges(&included);
+        let tree = self.parse(parser, text, None);
+        // No ranges is the whole text again, which the library never
+        // refuses.
+        let _ = parser.0.set_included_ranges(&[]);
+        tree
     }
 
     fn nodes(&self, tree: &TreeSitterTree) -> Vec<Node> {

@@ -2,8 +2,9 @@
 //! plain data it answers in.
 //!
 //! Everything a [`Syntax`] hands back is in the port's own terms: a tree is
-//! read as a list of [`Node`]s, a query's answer as [`Capture`]s, and a
-//! query that is refused as a [`QueryError`]. The tree, the parser and a
+//! read as a list of [`Node`]s, a query's answer as [`Capture`]s or, match
+//! by match, as [`Match`]es, a pattern's `#set!` settings as [`Setting`]s,
+//! and a query that is refused as a [`QueryError`]. The tree, the parser and a
 //! compiled query are the implementation's own types, which nothing above
 //! the port looks inside.
 
@@ -90,12 +91,74 @@ impl Capture {
     }
 }
 
+/// One match of a query: the pattern that matched, and its captures in
+/// the order the pattern names them ([`Syntax::matches`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Match {
+    /// The index of the pattern that matched, in the query's text.
+    pub pattern: usize,
+    /// Its captures, in order.
+    pub captures: Vec<MatchCapture>,
+}
+
+/// A node a match captured: which of the query's captures, its range, and
+/// the ranges of its named children, in order.
+///
+/// The named children are what an injection leaves out of its content
+/// unless its pattern says `injection.include-children`
+/// ([`crate::inject`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MatchCapture {
+    /// The index of the capture's name in [`Syntax::capture_names`].
+    pub capture: u32,
+    /// The offset the captured node starts at.
+    pub start: usize,
+    /// The offset the captured node ends at, not included.
+    pub end: usize,
+    /// The ranges of the node's named children, in order.
+    pub named_children: Vec<Range<usize>>,
+}
+
+impl MatchCapture {
+    /// The captured node's range.
+    pub fn range(&self) -> Range<usize> {
+        self.start..self.end
+    }
+}
+
+/// One `#set!` of a pattern: its key and its value, if it has one
+/// ([`Syntax::pattern_settings`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Setting {
+    /// The key: `injection.language`.
+    pub key: String,
+    /// The value, if the setting has one: `rust`.
+    pub value: Option<String>,
+}
+
 /// Which of a grammar's own queries: the queries a grammar is published
 /// with, each for one job ([`Syntax::shipped_query`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum QueryKind {
     /// What to draw in which face: `highlights.scm`.
     Highlights,
+    /// Which nodes hold text of another language: `injections.scm`.
+    Injections,
+    /// Which nodes are a function, a class or an argument, around and
+    /// inside: `textobjects.scm`.
+    TextObjects,
+    /// Which nodes indent the rows they hold: `indents.scm`.
+    Indents,
+}
+
+impl QueryKind {
+    /// Every kind.
+    pub const ALL: [Self; 4] = [
+        Self::Highlights,
+        Self::Injections,
+        Self::TextObjects,
+        Self::Indents,
+    ];
 }
 
 /// Why a query was refused.
@@ -199,6 +262,36 @@ pub trait Syntax: Send + Sync + 'static {
         text: &Snapshot,
         range: Range<usize>,
     ) -> Vec<Capture>;
+
+    /// The matches of `query` in `tree`, the tree of `text`, for nodes in
+    /// or around `range`, its predicates applied: each match with its
+    /// captures, and each captured node with the ranges of its named
+    /// children. It may answer more than the range, in any order; the
+    /// captures of every match, flattened, are what
+    /// [`captures`](Self::captures) answers ([`crate::contract::MATCHES`]).
+    fn matches(
+        &self,
+        query: &Self::Query,
+        tree: &Self::Tree,
+        text: &Snapshot,
+        range: Range<usize>,
+    ) -> Vec<Match>;
+
+    /// The `#set!` settings of pattern `pattern` of `query`, in order;
+    /// none for a pattern it does not have.
+    fn pattern_settings(&self, query: &Self::Query, pattern: usize) -> Vec<Setting>;
+
+    /// The tree of the bytes of `text` in `ranges` only, parsed whole with
+    /// no old tree: what lies outside them is not read. `ranges` are one or
+    /// more, sorted and apart, each two positions of the text. Nodes
+    /// keep the text's offsets and points. The parser parses the whole of
+    /// a text again afterwards.
+    fn parse_in(
+        &self,
+        parser: &mut Self::Parser,
+        text: &Snapshot,
+        ranges: &[Range<usize>],
+    ) -> Self::Tree;
 
     /// The whole tree as plain data, in pre-order.
     fn nodes(&self, tree: &Self::Tree) -> Vec<Node>;

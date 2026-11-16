@@ -103,6 +103,26 @@ impl Syntax for Gated {
     ) -> Vec<Capture> {
         Parens.captures(query, tree, text, range)
     }
+    fn matches(
+        &self,
+        query: &ParensQuery,
+        tree: &ParensTree,
+        text: &Snapshot,
+        range: Range<usize>,
+    ) -> Vec<editor_syntax::Match> {
+        Parens.matches(query, tree, text, range)
+    }
+    fn pattern_settings(&self, query: &ParensQuery, pattern: usize) -> Vec<editor_syntax::Setting> {
+        Parens.pattern_settings(query, pattern)
+    }
+    fn parse_in(
+        &self,
+        parser: &mut ParensParser,
+        text: &Snapshot,
+        ranges: &[Range<usize>],
+    ) -> ParensTree {
+        Parens.parse_in(parser, text, ranges)
+    }
     fn nodes(&self, tree: &ParensTree) -> Vec<Node> {
         Parens.nodes(tree)
     }

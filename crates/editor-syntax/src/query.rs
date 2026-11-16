@@ -8,7 +8,7 @@ use std::ops::Range;
 
 use editor_text::Snapshot;
 
-use crate::port::{Capture, Syntax};
+use crate::port::{Capture, Match, Syntax};
 
 /// A range refused: its ends are not two positions of the text in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,11 +57,7 @@ pub fn captures_in<S: Syntax>(
     range: Range<usize>,
 ) -> Result<Vec<Capture>, BadRange> {
     let range = positions(text, range)?;
-    // The port is asked a byte wider on each side: a library may leave out
-    // a node that only touches an end of the range, and answer nothing of
-    // an empty range (tree-sitter does both). What it answers beyond the
-    // range is filtered out below.
-    let asked = range.start.saturating_sub(1)..range.end.saturating_add(1).min(text.len());
+    let asked = widened(text, &range);
     let mut captures: Vec<Capture> = syntax
         .captures(query, tree, text, asked)
         .into_iter()
@@ -69,6 +65,31 @@ pub fn captures_in<S: Syntax>(
         .collect();
     sort(&mut captures);
     Ok(captures)
+}
+
+/// What the port is asked of `range` of `text`: a byte wider on each side,
+/// within the text. A library may leave out a node that only touches an end
+/// of the range, and answer nothing of an empty range (tree-sitter does
+/// both); what it answers beyond the range is the caller's to filter out.
+pub fn widened(text: &Snapshot, range: &Range<usize>) -> Range<usize> {
+    range.start.saturating_sub(1)..range.end.saturating_add(1).min(text.len())
+}
+
+/// The captures of `matches`, each match's in order, as captures of their
+/// match's pattern: what [`Syntax::captures`] answers of the same matches,
+/// in no particular order.
+pub fn flatten(matches: &[Match]) -> Vec<Capture> {
+    matches
+        .iter()
+        .flat_map(|found| {
+            found.captures.iter().map(|capture| Capture {
+                pattern: found.pattern,
+                capture: capture.capture,
+                start: capture.start,
+                end: capture.end,
+            })
+        })
+        .collect()
 }
 
 /// Puts `captures` in the core's order, by start, then the longer first,
@@ -224,6 +245,30 @@ mod tests {
             range: Range<usize>,
         ) -> Vec<Capture> {
             (self.0)(Parens.captures(query, tree, text, range.clone()), range)
+        }
+        fn matches(
+            &self,
+            query: &Self::Query,
+            tree: &Self::Tree,
+            text: &Snapshot,
+            range: Range<usize>,
+        ) -> Vec<crate::port::Match> {
+            Parens.matches(query, tree, text, range)
+        }
+        fn pattern_settings(
+            &self,
+            query: &Self::Query,
+            pattern: usize,
+        ) -> Vec<crate::port::Setting> {
+            Parens.pattern_settings(query, pattern)
+        }
+        fn parse_in(
+            &self,
+            parser: &mut ParensParser,
+            text: &Snapshot,
+            ranges: &[Range<usize>],
+        ) -> Self::Tree {
+            Parens.parse_in(parser, text, ranges)
         }
         fn nodes(&self, tree: &Self::Tree) -> Vec<crate::Node> {
             Parens.nodes(tree)
