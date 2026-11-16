@@ -79,9 +79,8 @@ before the file:
 config unless given `--sysroot <dir>`, the Lean toolchain's directory
 (`lean --print-prefix`).
 
-On macOS on arm64, `mise run app` builds `lean/.lake/build/Leanmacs.app`,
-ad-hoc signed, which holds its own toolchain modules
-([building.md](docs/dev-practices/building.md), "The app bundle").
+On macOS on arm64 the editor also builds as an app; see "Installing the
+macOS app" below.
 
 ```sh
 mise run ci
@@ -89,6 +88,30 @@ mise run ci
 
 This runs every check a change must pass
 ([`docs/dev-practices/the-gate.md`](docs/dev-practices/the-gate.md)).
+
+### Installing the macOS app
+
+On macOS on arm64:
+
+```sh
+mise run app          # builds lean/.lake/build/Leanmacs.app, ad-hoc signed
+mise run app-check    # checks the built bundle
+ditto lean/.lake/build/Leanmacs.app /Applications/Leanmacs.app
+```
+
+`mise run finder-session-prepare` does the same, on a checkout with no
+uncommitted changes, after moving any existing app and config aside to
+timestamped backups, and installs a small config to try
+([finder-session.md](docs/dev-practices/finder-session.md)).
+
+- The app holds its own toolchain modules
+  ([building.md](docs/dev-practices/building.md), "The app bundle").
+- It reads config from `~/.config/leanmacs`, or `$XDG_CONFIG_HOME/leanmacs`
+  when that is set, never from `~/Library/Application Support`. A config
+  chunk may import only what `Editor` imports.
+- Finder offers it under Open With for plain text and source code, and it
+  opens a file dropped on its Dock icon. `.lean` files are not offered yet.
+- Its signature is ad-hoc, for this machine only.
 
 ## Licence
 
