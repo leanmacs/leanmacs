@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::{
-    Button, CannotOpen, Canvas, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
+    Button, CannotOpen, Canvas, Composition, Drawer, Input, Key, LogicalKey, Menu, Modifiers,
     PhysicalKey, Platform, Pointer, PointerAction, Report, Request, Resize, WindowOptions,
 };
 
@@ -22,14 +22,16 @@ pub struct Shown {
     pub minimised: bool,
     /// The title asked last; `None` until one is.
     pub title: Option<String>,
+    /// The menu bar asked last; `None` until one is.
+    pub menu: Option<Menu>,
 }
 
 impl Shown {
     /// Carries out `request` on the window.
     ///
     /// Entering and leaving fullscreen set it, and are not toggles; a
-    /// minimise minimises; a title replaces the title; keeping running
-    /// changes nothing shown.
+    /// minimise minimises; a title replaces the title, and a menu the menu
+    /// bar; keeping running changes nothing shown.
     ///
     /// The match is exhaustive: this is the model every request is held
     /// to, so a new request must say here what it does.
@@ -40,6 +42,7 @@ impl Shown {
             Request::Minimise => self.minimised = true,
             Request::Title(title) => self.title = Some(title.clone()),
             Request::KeepRunning => {}
+            Request::Menu(menu) => self.menu = Some(menu.clone()),
         }
     }
 }
@@ -64,7 +67,8 @@ impl Shown {
 ///
 /// It records what each run is asked ([`asked`](Self::asked)), while the
 /// run is in progress only, and carries each request out on its model,
-/// [`Shown`]. A request that takes the window into fullscreen or out of it
+/// [`Shown`], which it shows ([`shown`](Self::shown)). It has a menu bar:
+/// a menu asked is the menu it shows. A request that takes the window into fullscreen or out of it
 /// is told to the drawer and reported as a [`Input::Resized`] at the size
 /// the run last reported (its [`SIZE`](Self::SIZE), or the script's last
 /// resize) carrying the new state, on the run's thread and before the
@@ -215,6 +219,14 @@ impl ScriptedPlatform {
         self.state().asked.clone()
     }
 
+    /// What its window shows now, as the requests of the run in progress
+    /// have left it ([`Shown`]); once the run has returned, what that
+    /// run's window last showed. Nothing before any run: a request asked
+    /// with no run in progress changes nothing shown.
+    pub fn shown(&self) -> Shown {
+        self.state().shown.clone()
+    }
+
     /// Whether the latest run's close came with the system's quit pending:
     /// the run reported [`Input::QuitRequested`] and was not asked
     /// [`Request::KeepRunning`] after it. A real platform may end the
@@ -349,6 +361,7 @@ impl Platform for ScriptedPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::menu::{Action, Item, Menu, Submenu};
     use std::sync::Arc;
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
     use std::thread;
@@ -986,7 +999,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fullscreen_request_that_changes_nothing_a_minimise_a_title_and_keep_running_report_nothing()
+    fn a_fullscreen_request_that_changes_nothing_a_minimise_a_title_keep_running_and_a_menu_report_nothing()
      {
         let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
         let run = start(&platform, COMPOSING);
@@ -996,6 +1009,7 @@ mod tests {
         platform.request(Request::Minimise);
         platform.request(Request::Title("notes.txt".into()));
         platform.request(Request::KeepRunning);
+        platform.request(Request::Menu(Menu::default()));
         assert!(run.is_waiting(), "none of these changes fullscreen");
 
         platform.request(Request::EnterFullscreen);
@@ -1007,6 +1021,63 @@ mod tests {
         assert_eq!(run.result(), Ok(()));
     }
 
+    /// A menu bar of one menu, titled `title`, with one command item.
+    fn menu(title: &str) -> Menu {
+        Menu {
+            menus: vec![Submenu {
+                title: title.into(),
+                role: None,
+                items: vec![Item::Entry {
+                    title: "Undo".into(),
+                    key: None,
+                    action: Action::Command("undo".into()),
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn a_menu_asked_while_a_window_runs_is_the_menu_it_shows_and_the_last_wins() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(1), [opened()]);
+
+        platform.request(Request::Menu(menu("File")));
+        platform.request(Request::Menu(menu("Edit")));
+
+        assert_eq!(platform.shown().menu, Some(menu("Edit")));
+        assert_eq!(
+            platform.asked(),
+            [Request::Menu(menu("File")), Request::Menu(menu("Edit"))]
+        );
+        assert!(run.is_waiting(), "a menu reports nothing");
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+        assert_eq!(
+            platform.shown().menu,
+            Some(menu("Edit")),
+            "what the latest run's window last showed"
+        );
+    }
+
+    #[test]
+    fn a_menu_asked_with_no_window_running_is_not_remembered() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        platform.request(Request::Menu(menu("before")));
+        assert_eq!(platform.shown(), Shown::default(), "nothing before any run");
+
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(1), [opened()]);
+        assert_eq!(platform.shown().menu, None);
+        assert_eq!(platform.asked(), []);
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
+
+        platform.request(Request::Menu(menu("after")));
+        assert_eq!(platform.shown().menu, None);
+        assert_eq!(platform.asked(), []);
+    }
+
     #[test]
     fn the_model_carries_out_each_request() {
         let mut shown = Shown::default();
@@ -1016,8 +1087,13 @@ mod tests {
                 fullscreen: false,
                 minimised: false,
                 title: None,
+                menu: None,
             }
         );
+        shown.carry_out(&Request::Menu(menu("File")));
+        shown.carry_out(&Request::Menu(menu("Edit")));
+        assert_eq!(shown.menu, Some(menu("Edit")), "the last menu wins");
+        shown.menu = None;
 
         shown.carry_out(&Request::EnterFullscreen);
         shown.carry_out(&Request::EnterFullscreen);
@@ -1037,6 +1113,7 @@ mod tests {
                 fullscreen: false,
                 minimised: true,
                 title: Some("b".into()),
+                menu: None,
             }
         );
     }

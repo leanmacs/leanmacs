@@ -502,6 +502,7 @@ pub mod inverse;
 pub mod log;
 pub mod main_thread;
 pub mod marker;
+mod menu;
 pub mod motion;
 pub mod processes;
 pub mod render;

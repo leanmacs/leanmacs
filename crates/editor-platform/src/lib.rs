@@ -21,8 +21,9 @@
 //! its action, position, button and modifiers; a resize ([`Resize`]) with
 //! the size, the scale factor and whether the window is in fullscreen; the
 //! focus; an input method's composition; files the system asks the program
-//! to open ([`Input::OpenFiles`]); that the window opened; a request to
-//! close; and that the system asked the program to quit
+//! to open ([`Input::OpenFiles`]); that the window opened; a command item
+//! of the menu bar chosen ([`Input::Menu`]), with its command's name; a
+//! request to close; and that the system asked the program to quit
 //! ([`Input::QuitRequested`]), which the editor answers by closing or with
 //! [`Request::KeepRunning`]. A close with that quit pending lets it go
 //! ahead, and may end the process inside the run ([`Platform::close`]).
@@ -72,9 +73,12 @@
 //!
 //! The editor asks things of the running window with [`Platform::request`]:
 //! a [`Request`], one variant for each thing asked (enter or leave
-//! fullscreen, minimise, a title, keep running). Keep running is the
-//! editor's answer to a quit the system asked when it does not quit: it
-//! changes nothing the window shows. A request asked with no window running
+//! fullscreen, minimise, a title, keep running, the menu bar). Keep running
+//! is the editor's answer to a quit the system asked when it does not quit:
+//! it changes nothing the window shows. The menu bar ([`menu`]) is the
+//! application's: a platform with no menu bar changes nothing shown when it
+//! is asked for one, and the rule is [`contract::requests`]'. A request
+//! asked with no window running
 //! does nothing and is not remembered. [`Platform::close`] stays a method
 //! of its own: it ends the run, which no request does, and with the
 //! system's quit pending it may end the process too; keep running asked
@@ -105,8 +109,8 @@
 //!
 //! The port grows by data, not by methods. A new thing Lean asks of a
 //! window crosses as a tag of `editor-ffi`'s `editor_ffi_window_request`
-//! (the title does not: it is a field of the scene). Each addition to what
-//! a window reports crosses to Lean as a row of the table in `editor-ffi`'s
+//! (the title and the menu bar do not: each is a field of the scene). Each
+//! addition to what a window reports crosses to Lean as a row of the table in `editor-ffi`'s
 //! `window.rs` and a case in Lean's `Editor/Event/Queue.lean`;
 //! `Editor/Event.lean` says which roadmap owns each side. An addition to
 //! what a window tells the drawer crosses nothing: it becomes a call on the
@@ -116,6 +120,7 @@
 //! |---|---|---|
 //! | Something more a window reports | A variant of [`Input`] (as [`Input::Pointer`] and [`Input::Resized`] were), or a field of one | The fake's tests in [`scripted`], and the adapter's translation tests |
 //! | Something more a window is asked | A variant of [`Request`] | The fake's tests in [`scripted`], [`contract::requests`], the adapter's translation tests, and `editor-ffi`'s request tags |
+//! | Something more the menu bar shows | A field of [`menu::Submenu`] or [`menu::Item`], or a [`menu::System`] variant | The fake's tests, [`contract::requests`], `editor-platform-winit`'s `menu.rs` tests, `editor-ffi`'s wire tests |
 //! | Something more a window tells what draws in it | A variant of [`Canvas`], or a field of one | The fake's tests in [`scripted`], the adapter's translation tests, and `editor-ffi`'s tests of what each becomes |
 //! | A new key attribute | A field of [`Key`] or of [`Modifiers`] | The same |
 //! | A new named key or physical key | Nothing here: the adapter produces its W3C name in [`LogicalKey::Named`] or [`PhysicalKey::Code`] | The adapter's translation tests |
@@ -140,6 +145,7 @@
 
 pub mod clipboard;
 pub mod contract;
+pub mod menu;
 pub mod scripted;
 
 use std::error::Error;
@@ -148,6 +154,7 @@ use std::fmt;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
+pub use menu::Menu;
 pub use scripted::ScriptedPlatform;
 
 /// One thing a window reports.
@@ -161,6 +168,11 @@ pub enum Input {
         /// The name the platform gives itself: `winit`, `scripted`.
         platform: String,
     },
+    /// A command item of the menu bar was chosen
+    /// ([`menu::Action::Command`]), with its command's name. A platform
+    /// shows no menu before its window has opened, so this comes after
+    /// `Opened`.
+    Menu(String),
     /// The window gained (`true`) or lost (`false`) the keyboard focus.
     Focus(bool),
     /// A key was pressed or released.
@@ -390,6 +402,10 @@ pub enum Request {
     /// before [`Platform::close`], it refuses a quit pending as the window
     /// closes, so that the run returns.
     KeepRunning,
+    /// Show this as the application's menu bar, in place of the one shown.
+    /// It changes nothing else the window shows. A platform with no menu
+    /// bar shows none, whatever it is asked ([`contract::requests`]).
+    Menu(Menu),
 }
 
 /// A step of an input method's composition (IME).

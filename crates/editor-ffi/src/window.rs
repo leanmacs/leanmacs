@@ -20,6 +20,7 @@
 //! | `CloseRequested` | `CloseRequested` | 0 | Empty | None |
 //! | `OpenFiles` | `OpenFiles` | 0 | Empty | The paths |
 //! | `QuitRequested` | `QuitRequested` | 0 | Empty | None |
+//! | `Menu` | `Menu` | 0 | The chosen item's command name | None |
 //!
 //! The words (`words.rs`) of each kind that has them:
 //!
@@ -156,6 +157,9 @@ const REQUEST_TITLE: u64 = 3;
 /// The tag of keeping running: the editor's answer to a quit the system
 /// asked, when it does not quit. It is 4 and not 3, which is the title's.
 const REQUEST_KEEP_RUNNING: u8 = 4;
+/// The tag of a menu bar in what a scripted window was asked. No request
+/// from Lean has it: the menu is a field of the scene, as the title is.
+const REQUEST_MENU: u64 = 5;
 
 /// The bit of a modifier word that is set when shift is held.
 pub const MODIFIER_SHIFT: u64 = 1;
@@ -323,6 +327,7 @@ pub fn event(input: Input, stamp: u64) -> Event {
         }
         Input::CloseRequested => (EventKind::CloseRequested, 0, String::new(), Vec::new()),
         Input::QuitRequested => (EventKind::QuitRequested, 0, String::new(), Vec::new()),
+        Input::Menu(command) => (EventKind::Menu, 0, command, Vec::new()),
     };
     Event {
         source: Source {
@@ -484,6 +489,10 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
             (code == 0).then_some(())?;
             Input::QuitRequested
         }
+        EventKind::Menu => {
+            (code == 0).then_some(())?;
+            Input::Menu(text.to_owned())
+        }
         EventKind::OpenFiles => {
             no_text()?;
             (code == 0).then_some(())?;
@@ -502,7 +511,7 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
 
 /// The modifiers the word `bits` holds; `None` with a bit past the system
 /// key's.
-fn read_modifiers(bits: u64) -> Option<Modifiers> {
+pub(crate) fn read_modifiers(bits: u64) -> Option<Modifiers> {
     (bits & !MODIFIERS == 0).then_some(Modifiers {
         shift: bits & MODIFIER_SHIFT != 0,
         control: bits & MODIFIER_CONTROL != 0,
@@ -1146,27 +1155,43 @@ pub extern "C" fn editor_ffi_window_request(platform: u8, request: u8) -> bool {
 }
 
 /// The words of what a window was asked, oldest first: for each request its
-/// tag, and for a title the tag 3 followed by the count and the scalar
-/// values of its characters.
+/// tag, for a title the tag 3 followed by the count and the scalar values
+/// of its characters, and for a menu bar the tag 5 followed by its layout
+/// ([`crate::menu`]), each text in it written as a title's is.
 ///
 /// The match on [`WindowRequest`] is exhaustive on purpose: this crate must
 /// give every variant its words, since a request with none could not be
 /// read back by Lean's tests, and a new one would cross unseen.
 pub fn asked_words(asked: &[WindowRequest]) -> Vec<u64> {
-    let mut words = Vec::new();
+    use crate::menu::Sink;
+    /// The words, with each text as its count and its scalar values.
+    struct Asked(Vec<u64>);
+    impl Sink for Asked {
+        fn word(&mut self, word: u64) {
+            self.0.push(word);
+        }
+        fn text(&mut self, text: &str) {
+            push_scalars(&mut self.0, text);
+        }
+    }
+    let mut words = Asked(Vec::new());
     for request in asked {
         match request {
-            WindowRequest::EnterFullscreen => words.push(u64::from(REQUEST_ENTER_FULLSCREEN)),
-            WindowRequest::LeaveFullscreen => words.push(u64::from(REQUEST_LEAVE_FULLSCREEN)),
-            WindowRequest::Minimise => words.push(u64::from(REQUEST_MINIMISE)),
-            WindowRequest::KeepRunning => words.push(u64::from(REQUEST_KEEP_RUNNING)),
+            WindowRequest::EnterFullscreen => words.word(u64::from(REQUEST_ENTER_FULLSCREEN)),
+            WindowRequest::LeaveFullscreen => words.word(u64::from(REQUEST_LEAVE_FULLSCREEN)),
+            WindowRequest::Minimise => words.word(u64::from(REQUEST_MINIMISE)),
+            WindowRequest::KeepRunning => words.word(u64::from(REQUEST_KEEP_RUNNING)),
             WindowRequest::Title(title) => {
-                words.push(REQUEST_TITLE);
-                push_scalars(&mut words, title);
+                words.word(REQUEST_TITLE);
+                words.text(title);
+            }
+            WindowRequest::Menu(menu) => {
+                words.word(REQUEST_MENU);
+                crate::menu::write(&mut words, menu);
             }
         }
     }
-    words
+    words.0
 }
 
 /// Writes to `out` what the scripted window of `platform` was asked in its
@@ -1800,6 +1825,77 @@ mod tests {
     }
 
     #[test]
+    fn a_menu_choice_crosses_as_kind_12_code_0_with_its_name_as_the_text() {
+        assert_eq!(
+            encoded(Input::Menu("undo".into())),
+            (EventKind::Menu, 0, "undo".to_owned(), vec![])
+        );
+        assert_eq!(EventKind::Menu.tag(), 12);
+        assert_eq!(
+            read(EventKind::Menu, 0, "undo", &[]),
+            Some(Input::Menu("undo".into()))
+        );
+        assert_eq!(
+            read(EventKind::Menu, 0, "", &[]),
+            Some(Input::Menu(String::new())),
+            "an empty name crosses as it is"
+        );
+        assert_eq!(read(EventKind::Menu, 1, "undo", &[]), None);
+        assert_eq!(read(EventKind::Menu, 0, "undo", &[0]), None);
+    }
+
+    #[test]
+    fn the_words_of_a_menu_asked_are_tag_5_and_its_structure() {
+        use editor_platform::menu::{Action, Item, KeyEquivalent, Role, Submenu, System};
+        let menu = editor_platform::Menu {
+            menus: vec![
+                Submenu {
+                    title: "A".into(),
+                    role: Some(Role::App),
+                    items: vec![
+                        Item::Entry {
+                            title: "Q".into(),
+                            key: Some(KeyEquivalent {
+                                character: 'q',
+                                modifiers: held(false, false, false, true),
+                            }),
+                            action: Action::System(System::Quit),
+                        },
+                        Item::Separator,
+                    ],
+                },
+                Submenu {
+                    title: "é".into(),
+                    role: Some(Role::Window),
+                    items: vec![Item::Entry {
+                        title: String::new(),
+                        key: None,
+                        action: Action::Command("u".into()),
+                    }],
+                },
+                Submenu {
+                    title: String::new(),
+                    role: None,
+                    items: vec![],
+                },
+            ],
+        };
+        assert_eq!(
+            asked_words(&[WindowRequest::Menu(menu), WindowRequest::Minimise]),
+            [
+                5, 3, // the tag, and three menus
+                1, 0x41, 1, 2, // "A", the app's, two items
+                2, 1, 0x51, 1, 0x71, 8, 5, // Quit, "Q", s-q
+                0, // a separator
+                1, 0xe9, 2, 1, // "é", the windows menu, one item
+                1, 0, 0, 0, 0, 1, 0x75, // command "u", untitled, no key
+                0, 0, 0, // untitled, plain, no items
+                2, // then the minimise
+            ]
+        );
+    }
+
+    #[test]
     fn a_quit_asked_by_the_system_crosses_as_its_kind_with_no_code_text_or_words() {
         assert_eq!(
             encoded(Input::QuitRequested),
@@ -1893,6 +1989,7 @@ mod tests {
             Input::OpenFiles(vec![]),
             Input::CloseRequested,
             Input::QuitRequested,
+            Input::Menu("toggle-fullscreen".into()),
         ]
     }
 

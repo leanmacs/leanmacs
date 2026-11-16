@@ -78,6 +78,9 @@ impl Asked {
             // Not the window's: it answers the system's quit, which
             // `terminate.rs` decides. The handler never sends it here.
             Request::KeepRunning => None,
+            // Not the window's: the menu bar is the application's. The
+            // handler never sends it here.
+            Request::Menu(_) => None,
         }
     }
 }
@@ -233,6 +236,9 @@ mod tests {
     }
 
     impl Carries for Carried {
+        /// The window alone has no menu bar: the menu is the application's.
+        const MENU_BAR: bool = false;
+
         fn carry_out(&mut self, request: Request) {
             carry_out(&mut self.asked, &self.window, request);
         }
@@ -257,6 +263,7 @@ mod tests {
             Request::Title("notes.txt".into()),
             Request::Title("notes.txt".into()),
             Request::KeepRunning,
+            Request::Menu(editor_platform::Menu::default()),
             Request::LeaveFullscreen,
             Request::Minimise,
         ] {
