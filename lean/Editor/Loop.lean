@@ -682,8 +682,11 @@ session is one step of the history
 - **A session's boundary is the state change itself.** The scene published
   after the command of the key that ends the session finds no view of the
   buffer in one, and closes the group: one node for everything edited
-  meanwhile. The loop keeps nothing of its own for a session, and no
-  command sets or clears anything.
+  meanwhile. The loop keeps nothing of its own for a session. A command
+  may still set a boundary inside one itself, with `BufferId.closeGroup`
+  (`Editor/Api.lean`, "Undo"): evil's arrow keys of insert state do, once
+  they moved (`Editor/Evil.lean`, "Editing keys"), so the session is then
+  more than one step.
 - **A session with nothing edited makes no node**: closing a group with
   nothing pending makes none.
 - **A buffer shown in two windows is held while either view is in a

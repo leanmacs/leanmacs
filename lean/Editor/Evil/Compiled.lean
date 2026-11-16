@@ -34,6 +34,8 @@ they hold when config fails to load, and a reload does not replace them.
   | `scroll-down`, `scroll-up` | `Evil.scroll .half`, down and up: the view and its cursor by half the rows the view fits, or by the count (`Editor/Evil/Scroll.lean`) |
   | `scroll-page-down`, `scroll-page-up` | `Evil.scroll .page`, down and up: the view and its cursor by the rows the view fits |
   | `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | `Evil.scrollLineTo`, with `.top`, `.middle` and `.bottom`: the view placed so that the cursor's row is the first row shown, the middle one or the last, with nothing else changed |
+  | `insert-delete-backward`, `insert-newline`, `insert-tab` | `Evil.deleteBackward`, `Evil.newline`, `Evil.insertTab`: insert state's `<Backspace>`, `RET` and `TAB` (`Editor/Evil.lean`, "Editing keys") |
+  | `insert-left`, `insert-right`, `insert-up`, `insert-down` | `Evil.insertMove` over `Evil.motions`, by the motions `left`, `right`, `up` and `down`: insert state's arrow keys, each a move that starts a new step of the history once it moved |
 
   The seven of the second and third rows enter a state only when a key
   that enters it runs them: the scheme enters the state, at the key, and
@@ -81,6 +83,13 @@ def commands : Array Config.Registration :=
     { name := "scroll-page-up", action := .call (scroll .page false) },
     { name := "scroll-line-to-top", action := .call (scrollLineTo .top) },
     { name := "scroll-line-to-center", action := .call (scrollLineTo .middle) },
-    { name := "scroll-line-to-bottom", action := .call (scrollLineTo .bottom) }]
+    { name := "scroll-line-to-bottom", action := .call (scrollLineTo .bottom) },
+    { name := "insert-delete-backward", action := .call deleteBackward },
+    { name := "insert-newline", action := .call newline },
+    { name := "insert-tab", action := .call insertTab },
+    { name := "insert-left", action := .call (insertMove motions left.name) },
+    { name := "insert-right", action := .call (insertMove motions right.name) },
+    { name := "insert-up", action := .call (insertMove motions up.name) },
+    { name := "insert-down", action := .call (insertMove motions down.name) }]
 
 end Editor.Evil

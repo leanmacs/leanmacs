@@ -12025,7 +12025,7 @@ def vimDefaultChecks : List Check :=
             fun table =>
             !table.isEmpty && (Vim.Default.keymap table).bindings.length == table.length },
     { name :=
-        "each of the default keys C-d C-u C-f C-b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; a count typed before one is that command's count; after an operator's key each yields nothing and drops the operator; and in the state i enters and in the minibuffer's state none runs a command"
+        "each of the default keys C-d C-u C-f C-b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; a count typed before one is that command's count; after an operator's key each yields nothing and drops the operator; in the state i enters none runs a command; and in the minibuffer's state C-d C-f C-b run none and C-u runs the minibuffer's command that deletes to the input's start"
       run :=
         let scrollKeys := ["C-d", "C-u", "C-f", "C-b"]
         let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ Vim.Default.scheme.init
@@ -12049,8 +12049,45 @@ def vimDefaultChecks : List Check :=
                 vimDefaultEdit s!"d {text} w" == vimDefaultEdit "w" &&
                 (vimDefaultEdit "w").isSome &&
                 runsNone (vimDefault s!"i {text}").2 &&
-                runsNone
-                  (vimParsedFrom told text (view := ⟨5⟩) (states := Vim.Default.states)).2) },
+                let inMinibuffer :=
+                  (vimParsedFrom told text (view := ⟨5⟩) (states := Vim.Default.states)).2
+                if text == "C-u" then
+                  match inMinibuffer.getLast? with
+                  | some (.edit (.run command none none)) =>
+                    command.name == Minibuffer.deleteToStartName
+                  | _ => false
+                else runsNone inMinibuffer) },
+    { name :=
+        "in the minibuffer's state <ArrowLeft> and <ArrowRight> yield a move by the motions left and right, with no count"
+      run :=
+        let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ Vim.Default.scheme.init
+        let moved (text : String) : Option Vim.Edit :=
+          match
+            (vimParsedFrom told text (view := ⟨5⟩) (states := Vim.Default.states)).2.getLast? with
+          | some (.edit edit) => some edit
+          | _ => none
+        pure
+          (moved "<ArrowLeft>" == some (.move "left" none) &&
+            moved "<ArrowRight>" == some (.move "right" none)) },
+    { name :=
+        "each of the default keys <Backspace> RET TAB <ArrowLeft> <ArrowRight> <ArrowUp> <ArrowDown>, after i, runs a command of its own that leaves the view in the state i enters, does not replace the last change, and keeps the text typed in the session for a repeat"
+      run :=
+        let editingKeys :=
+          ["<Backspace>", "RET", "TAB", "<ArrowLeft>", "<ArrowRight>", "<ArrowUp>", "<ArrowDown>"]
+        pure
+          (vimDefaultCommands (editingKeys.map (s!"i {·}")) &&
+            editingKeys.all fun text =>
+              (vimDefault s!"i {text}").1.current == (vimDefault "i").1.current &&
+                (vimDefault s!"i {text}").1.lastChange == (vimDefault "i").1.lastChange &&
+                (vimDefault s!"i x {text} y").1.inserted == some "xy") },
+    { name :=
+        "every command a key of insert state's table or of the minibuffer's state's table runs is registered under its name by evil's commands or the minibuffer's"
+      run :=
+        let registered := (Evil.commands ++ Minibuffer.commands).map (·.name)
+        pure
+          ((Vim.Default.insertCommands ++ Vim.Default.minibufferCommands).all fun
+            | (_, .command command) => registered.contains command.name
+            | _ => true) },
     { name :=
         "each of the default key sequences z t, z z and z b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; z alone yields nothing and is pending; and in the state i enters and in the minibuffer's state z is typed text"
       run :=
@@ -13988,13 +14025,14 @@ def promptModeChecks : List Check :=
               closed accepted ⟨1⟩ &&
               accepted.loop.state.windows.map (·.id) == #[⟨1⟩] },
     { name :=
-        "the minibuffer's commands are registered under their five names, each another; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
+        "the minibuffer's commands are registered under their six names, each another; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
           (Minibuffer.commands.map (·.name) ==
               #[Minibuffer.acceptName, Minibuffer.cancelName, Minibuffer.nextName,
-                Minibuffer.previousName, Minibuffer.deleteBackwardName] &&
-            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 5 &&
+                Minibuffer.previousName, Minibuffer.deleteBackwardName,
+                Minibuffer.deleteToStartName] &&
+            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 6 &&
             Minibuffer.modes.map (·.name) == #[Prompt.mode] &&
             Minibuffer.modes.map (·.roles) ==
               #[[(Role.activate, Minibuffer.acceptName), (Role.quit, Minibuffer.cancelName),
@@ -17434,6 +17472,103 @@ def countedInsertRows : List (String × String × String) :=
   [("3 i X <Escape>", "ab|c", "ab|Xc"), ("3 a X <Escape>", "a|bc", "ab|Xc"),
     ("2 I X <Escape>", "  ab|c", "  |Xabc"), ("2 A X <Escape>", "a|bc", "abc|X")]
 
+/-- The rows of the oracle table for `<Backspace>` in insert state, Vim
+9.1's `i_<BS>` under its default `backspace=indent,eol,start`: the
+character before the bar goes, a character of two bytes whole; at a line's
+start the line break before it, a carriage return and line feed whole, so
+the line is joined to the one above; at the text's start nothing; and past
+where the insert began. -/
+def insertBackspaceRows : List (String × String × String) :=
+  [("i <Backspace> <Escape>", "ab|c", "|ac"), ("i <Backspace> <Escape>", "ab\n|cd", "a|bcd"),
+    ("i <Backspace> <Escape>", "ab\r\n|cd", "a|bcd"), ("i <Backspace> <Escape>", "|abc", "|abc"),
+    ("i <Backspace> <Escape>", "aé|b", "|ab"),
+    ("a x <Backspace> <Backspace> <Escape>", "a|bc", "|ac")]
+
+/-- The rows of the oracle table for `RET` in insert state: the line is
+broken at the bar, with no indent, and the bar is at the new line's
+start. -/
+def insertEnterRows : List (String × String × String) :=
+  [("i RET <Escape>", "ab|c", "ab\n|c"), ("A RET x <Escape>", "a|b", "ab\n|x"),
+    ("i RET <Escape>", "  a|b", "  a\n|b")]
+
+/-- The rows of the oracle table for `TAB` in insert state: a tab character
+at the bar, Vim 9.1's default under `noexpandtab` and `softtabstop=0`. -/
+def insertTabRows : List (String × String × String) :=
+  [("i TAB <Escape>", "a|b", "a|\tb"), ("i TAB x <Escape>", "|a", "\t|xa")]
+
+/-- The rows of the oracle table for `<ArrowLeft>` and `<ArrowRight>` in
+insert state: one cell left or right, and no further than the line's start
+or where its content ends, so neither wraps (Vim 9.1's default
+`whichwrap=b,s`). -/
+def insertSideRows : List (String × String × String) :=
+  [("i <ArrowLeft> X <Escape>", "ab|c", "a|Xbc"),
+    ("i <ArrowLeft> X <Escape>", "ab\n|cd", "ab\n|Xcd"),
+    ("i <ArrowRight> X <Escape>", "a|bc", "ab|Xc"),
+    ("i <ArrowRight> <ArrowRight> X <Escape>", "a|b\ncd", "ab|X\ncd")]
+
+/-- The rows of the oracle table for `<ArrowUp>` and `<ArrowDown>` in insert
+state: a line up or down, with the column clamped to a shorter line and
+kept through one, and nothing on the first line up or the last line
+down. -/
+def insertVerticalRows : List (String × String × String) :=
+  [("A <ArrowUp> X <Escape>", "ab\nabc|d", "ab|X\nabcd"),
+    ("A <ArrowUp> <ArrowUp>", "abcd\nx\nabc|d", "abcd|\nx\nabcd"),
+    ("i <ArrowUp> X <Escape>", "a|b\ncd", "a|Xb\ncd"),
+    ("A <ArrowDown> X <Escape>", "abc|d\nab", "abcd\nab|X"),
+    ("A <ArrowDown> <ArrowDown>", "abc|d\nx\nabcd", "abcd\nx\nabcd|"),
+    ("i <ArrowDown> X <Escape>", "ab\nc|d", "ab\nc|Xd")]
+
+/-- Whether the keys `typed`, pressed from the fixture `fixture`, leave
+`text` and the steps of the history an arrow key's rule says: when `moves`
+the history has gained two nodes, and two undo requests give first
+`between` and then the fixture's text; otherwise it has gained one, and one
+undo request gives the fixture's text. -/
+def arrowStep (fixture typed text between : String) (moves : Bool) : Bool :=
+  match evilDriver fixture with
+  | none => false
+  | some driver =>
+    let typed := evilFed driver typed
+    let original := (barred fixture).1
+    let nodes := ((evilHistory driver).map (·.1)).getD 0
+    evilText typed == some text &&
+      if moves then
+        evilHistory typed == some (nodes + 2, false) &&
+          evilText (evilUndone typed) == some between &&
+          evilText (evilUndone (evilUndone typed)) == some original
+      else
+        evilHistory typed == some (nodes + 1, false) && evilText (evilUndone typed) == some original
+
+/-- The prompts the checks of a prompt's editing keys run in, each from the
+fixture `a|bc` with the prompt opened and nothing typed: the minibuffer of
+a prompt a command opened, whose continuation `greet` says `hello` and the
+answer, and the ex line, opened with `:`, whose continuation is the ex
+command, which says that a name is no ex command. Each with the name of
+its continuation's command, and what the echo area says once the answer is
+accepted. -/
+def evilPrompts : List (Option EvilDriver × String × (String → String)) :=
+  let ask : Dispatched := fun _ => do
+    discard <| prompt "Name: " { command := "greet" }
+    return none
+  let greet : Dispatched := fun call => do
+    message s!"hello {" ".intercalate (call.arguments.map argumentText)}"
+    return none
+  let asked :=
+    (evilDriver "a|bc" (evilHanded Minibuffer.commands [("ask", ask), ("greet", greet)])).map
+      fun driver => (driver.stepped (driver.loop.runNamed driver.handed "ask")).1
+  let ex :=
+    (evilDriver "a|bc" (evilHanded (Ex.commands ++ Minibuffer.commands))).map (evilFed · ":")
+  [(asked, "greet", fun answer => s!"hello {answer}"), (ex, Ex.name, Ex.unknown)]
+
+/-- Whether `check` holds of each prompt of `evilPrompts`, each opened as
+its continuation says, with the asking view left as it was. -/
+def evilPromptsHold (check : EvilDriver → (String → String) → Bool) : Bool :=
+  evilPrompts.all fun
+    | (some asking, command, answered) =>
+      asking.loop.state.prompt.map (·.continuation.command) == some command &&
+        evilShown asking == "a|bc" &&
+        check asking answered
+    | (none, _, _) => false
+
 /-- The checks of evil's insert state (`Editor/Evil.lean`) on the loop's
 driver over the editor's models, under the Vim scheme that ships with
 evil's commands: the keys that begin an insert, typed text, and `<Escape>`,
@@ -17448,6 +17583,62 @@ def evilInsertChecks : List Check :=
     { name :=
         "a count typed before i, a, I or A changes nothing: the text typed is inserted once, where the key with no count inserts it"
       run := evilRows countedInsertRows },
+    { name :=
+        "<Backspace> in insert state deletes the character before the bar, a character of two bytes whole; at a line's start it joins the line to the one above, a carriage return and line feed whole; at the text's start it deletes nothing; it deletes past where the insert began; and it is one step of the history with the text typed around it"
+      run := do
+        let rows ← evilRows insertBackspaceRows
+        let step :=
+          match evilDriver "a|b" with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "i x <Backspace> y <Escape>"
+            evilText typed == some "ayb" && evilHistory typed == some (2, false) &&
+              evilText (evilUndone typed) == some "ab"
+        return rows && step },
+    { name :=
+        "RET in insert state breaks the line at the bar with the buffer's line ending, a line feed or, in a buffer whose lines end in a carriage return and line feed, that, with no indent; and it is one step of the history with the text typed around it"
+      run := do
+        let rows ← evilRows insertEnterRows
+        let crlf :=
+          let start : TextM EditorState := do
+            let state ← evilState "abc" 2
+            return { state with
+                buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) }
+          match (Loop.Driver.over evilHanded (fun _ => none) start editorModel).toOption with
+          | none => false
+          | some driver => evilShown (evilFed driver "i RET") == "ab\r\n|c"
+        let step :=
+          match evilDriver "a|b" with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "i x RET y <Escape>"
+            evilText typed == some "ax\nyb" && evilHistory typed == some (2, false) &&
+              evilText (evilUndone typed) == some "ab"
+        return rows && crlf && step },
+    { name :=
+        "TAB in insert state inserts a tab character at the bar, and is one step of the history with the text typed around it"
+      run := do
+        let rows ← evilRows insertTabRows
+        return rows && arrowStep "a|b" "i x TAB y <Escape>" "ax\tyb" "" false },
+    { name :=
+        "<ArrowLeft> and <ArrowRight> in insert state move the bar one cell, and stop at the line's start and where its content ends: neither wraps"
+      run := evilRows insertSideRows },
+    { name :=
+        "<ArrowUp> and <ArrowDown> in insert state move the bar a line, with the column clamped to a shorter line and kept through one, and move nothing on the first line up and on the last line down"
+      run := evilRows insertVerticalRows },
+    { name :=
+        "an arrow key in insert state that moves starts a new step of the history, as in Vim 9.1: what was typed before it and after it are undone separately; one that fails, <ArrowLeft> at a line's start, <ArrowRight> where its content ends, <ArrowUp> on the first line and <ArrowDown> on the last, does not break the session's step"
+      run :=
+        pure <|
+          arrowStep "a|b" "i x <ArrowLeft> y <Escape>" "ayxb" "axb" true &&
+            arrowStep "a|bc" "i x <ArrowRight> y <Escape>" "axbyc" "axbc" true &&
+            arrowStep "ab\na|b" "i x <ArrowUp> y <Escape>" "aby\naxb" "ab\naxb" true &&
+            arrowStep "a|b\nab" "i x <ArrowDown> y <Escape>" "axb\naby" "axb\nab" true &&
+            arrowStep "ab\n|cd" "i <ArrowLeft> x <Escape>" "ab\nxcd" "" false &&
+            arrowStep "ab|c" "i RET <ArrowLeft> x <Escape>" "ab\nxc" "" false &&
+            arrowStep "a|b" "A x <ArrowRight> y <Escape>" "abxy" "" false &&
+            arrowStep "a|b\ncd" "i x <ArrowUp> y <Escape>" "axyb\ncd" "" false &&
+            arrowStep "ab\nc|d" "i x <ArrowDown> y <Escape>" "ab\ncxyd" "" false },
     { name :=
         "i, typed text and <Escape>: the text is inserted at the cursor, the history has gained one node for the whole session and none inside it, one undo request gives the text from before the session, and a second finds nothing to undo"
       run :=
@@ -17569,6 +17760,58 @@ def evilInsertChecks : List Check :=
               closed.loop.state.frame.focused == ⟨0⟩ &&
               closed.loop.state.echo == "" &&
               evilShown closed == "a|bc" },
+    { name :=
+        "<ArrowLeft>, typed while a prompt is open, the minibuffer's and the ex line's, moves the minibuffer's bar one character back, and no further than the input's start; text typed then is inserted there, and RET accepts the whole input; the asking view is as it was"
+      run :=
+        pure <|
+          evilPromptsHold fun asking answered =>
+            let moved := evilFed asking "A d a <ArrowLeft> <ArrowLeft>"
+            let answer := evilFed moved "x RET"
+            let atStart := evilFed moved "<ArrowLeft> <ArrowLeft>"
+            evilShown moved ⟨1⟩ == "A|da" && evilShown moved == "a|bc" &&
+              evilShown atStart ⟨1⟩ == "|Ada" &&
+              atStart.loop.state.prompt.isSome &&
+              answer.loop.state.prompt.isNone &&
+              answer.loop.state.echo == answered "Axda" &&
+              evilShown answer == "a|bc" },
+    { name :=
+        "<ArrowRight>, typed while a prompt is open, the minibuffer's and the ex line's, moves the minibuffer's bar one character on, and no further than the input's end; text typed then is inserted there, and RET accepts the whole input"
+      run :=
+        pure <|
+          evilPromptsHold fun asking answered =>
+            let back := evilFed asking "A d a <ArrowLeft> <ArrowLeft>"
+            let moved := evilFed back "<ArrowRight>"
+            let atEnd := evilFed back "<ArrowRight> <ArrowRight> <ArrowRight>"
+            let answer := evilFed moved "y RET"
+            evilShown moved ⟨1⟩ == "Ad|a" && evilShown atEnd ⟨1⟩ == "Ada|" &&
+              atEnd.loop.state.prompt.isSome &&
+              answer.loop.state.echo == answered "Adya" &&
+              evilShown answer == "a|bc" },
+    { name :=
+        "C-u, typed while a prompt is open, the minibuffer's and the ex line's, deletes from the minibuffer's bar to the input's start and keeps what is after the bar, and RET accepts what is left; with the bar at the start it deletes nothing; on an empty minibuffer it leaves the prompt open, unlike <Backspace>; its command run by name with no prompt open says so in the echo area"
+      run :=
+        pure <|
+          let held :=
+            evilPromptsHold fun asking answered =>
+              let cleared := evilFed asking "A d a <ArrowLeft> C-u"
+              let answer := evilFed cleared "RET"
+              let atStart := evilFed asking "A d a <ArrowLeft> <ArrowLeft> <ArrowLeft> C-u"
+              let empty := evilFed asking "C-u"
+              evilShown cleared ⟨1⟩ == "|a" && cleared.loop.state.prompt.isSome &&
+                answer.loop.state.prompt.isNone &&
+                answer.loop.state.echo == answered "a" &&
+                evilShown atStart ⟨1⟩ == "|Ada" &&
+                evilShown empty ⟨1⟩ == "|" &&
+                empty.loop.state.prompt.isSome &&
+                evilShown cleared == "a|bc"
+          let unasked :=
+            match evilDriver "a|bc" (evilHanded Minibuffer.commands) with
+            | none => false
+            | some driver =>
+              let (ran, _) :=
+                driver.stepped (driver.loop.runNamed driver.handed Minibuffer.deleteToStartName)
+              ran.loop.state.echo == Minibuffer.notOpen && evilShown ran == "a|bc"
+          held && unasked },
     { name :=
         "the command typed text runs, called with no string as its first argument, inserts nothing and says so in the echo area"
       run :=
