@@ -4,8 +4,10 @@
 //! `kAEQuitApplication`), as the Dock and loginwindow send it.
 //!
 //! The scenario runs on a thread of its own once the window has said it
-//! opened and how large it is. Each wait is bounded, and a scenario that
-//! does not see what it should is a failure, with the reason:
+//! opened and how large it is, after the module `menu`'s, whose Quit item
+//! left one `QuitRequested` reported: the counts below are of those
+//! reported since. Each wait is bounded, and a scenario that does not see
+//! what it should is a failure, with the reason:
 //!
 //! 1. `terminate:`, performed on the main thread from a run-loop source,
 //!    not from a main-queue block: a run loop nested inside a main-queue
@@ -251,12 +253,13 @@ pub fn opened(record: &Record) -> Result<(), String> {
     }
 }
 
-/// Runs the scenario on `platform`, whose report is `record`.
-pub fn scenario(platform: &impl Platform, record: &Record) -> Result<(), String> {
+/// Runs the scenario on `platform`, whose report is `record`, which has
+/// reported `base` quits already (the module `menu`'s).
+pub fn scenario(platform: &impl Platform, record: &Record, base: usize) -> Result<(), String> {
     opened(record)?;
 
     terminate();
-    reported(record, 1, "after `terminate:`")?;
+    reported(record, base + 1, "after `terminate:`")?;
     titled(
         platform,
         "window-contract: terminate pending",
@@ -271,7 +274,7 @@ pub fn scenario(platform: &impl Platform, record: &Record) -> Result<(), String>
     answered(1, "after keeping running")?;
 
     send_quit_event();
-    reported(record, 2, "after the quit Apple Event")?;
+    reported(record, base + 2, "after the quit Apple Event")?;
     titled(
         platform,
         "window-contract: quit event pending",
@@ -281,7 +284,7 @@ pub fn scenario(platform: &impl Platform, record: &Record) -> Result<(), String>
     platform.request(Request::KeepRunning);
     answered(2, "after keeping running again")?;
     terminate();
-    reported(record, 3, "after a third `terminate:`")?;
+    reported(record, base + 3, "after a third `terminate:`")?;
 
     if RETURNED.load(Ordering::SeqCst) != 2 {
         return Err("the third `terminate:` returned with no reply made".into());

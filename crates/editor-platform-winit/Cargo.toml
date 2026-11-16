@@ -16,26 +16,29 @@ editor-platform = { path = "../editor-platform" }
 winit = "=0.31.0-beta.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# AppKit for one thing only: the application delegate that receives the
-# files the system asks the app to open (src/delegate.rs). winit 0.31
-# registers no delegate and leaves this to the application (winit-appkit's
-# crate docs, "Custom NSApplicationDelegate"). Pinned exactly, at the
-# versions winit-appkit =0.31.0-beta.4 already resolves to, so no crate is
-# added to the graph. The features are the bindings the delegate names;
-# `NSUserDefaults` is the one winit-appkit does not already enable, and it
-# is a module of the crate, not a crate.
+# AppKit for two things: the application delegate that receives the files
+# the system asks the app to open (src/delegate.rs), and the menu bar the
+# editor asks for (src/menu_bar.rs). winit 0.31 registers no delegate and
+# leaves this to the application (winit-appkit's crate docs, "Custom
+# NSApplicationDelegate"). Pinned exactly, at the versions winit-appkit
+# =0.31.0-beta.4 already resolves to, so no crate is added to the graph. The
+# features are the bindings the two name. `NSMenu`, `NSMenuItem` and
+# `NSEvent` (for `NSEventModifierFlags`) are winit-appkit's already;
+# `NSUserDefaults` and `NSUserInterfaceItemIdentification` are the ones it
+# does not enable, and each is a module of its crate, not a crate.
 objc2 = "=0.6.5"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSString", "NSURL", "NSUserDefaults"] }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSUserInterfaceItemIdentification"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-# For the contract example alone (examples/contract/terminate.rs), which
-# asks the app to terminate as the system does and reads the window's title
-# back on the main thread. Each is already in the resolved graph at this
-# version, through winit-appkit, so no crate is added: `dispatch2` for
-# `run_on_main` (its `objc2` feature), and the bindings the example names
+# For the contract example alone (examples/contract/terminate.rs and
+# menu.rs), which asks the app to terminate as the system does, reads the
+# window's title back on the main thread, and performs the menu bar's
+# items. Each is already in the resolved graph at this version, through
+# winit-appkit, so no crate is added: `dispatch2` for `run_on_main` (its
+# `objc2` feature), and the bindings the example names
 # (`NSAppleEventDescriptor` and `NSThread`'s `performSelectorOnMainThread:`,
-# and `NSWindow`'s title).
+# `NSWindow`'s title, and `NSMenu`'s and `NSMenuItem`'s items).
 dispatch2 = { version = "=0.3.1", default-features = false, features = ["std", "objc2"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSAppleEventDescriptor", "NSThread"] }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow", "NSMenu", "NSMenuItem"] }

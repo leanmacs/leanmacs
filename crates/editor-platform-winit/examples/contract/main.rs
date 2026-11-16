@@ -6,12 +6,15 @@
 //! under Xvfb in a container, and `mise run window-contract`, on the desktop
 //! it is started from. The window opens and closes again in about a second.
 //!
-//! On macOS it also asks the running window to quit as the system does,
-//! while the check runs it (the module `terminate`): the window is run
-//! under the check through [`Probed`], which records what it reports and
-//! holds the check's close until that scenario has finished, then asks the
-//! window to keep running just before the close, so that the terminate the
-//! scenario leaves pending is cancelled and the run returns. Once the check
+//! On macOS it also asks the running window for a menu bar, reads it back
+//! from AppKit and performs its items (the module `menu`), and then asks
+//! the window to quit as the system does (the module `terminate`), while
+//! the check runs it: the window is run under the check through [`Probed`],
+//! which records what it reports and holds the check's close until those
+//! scenarios have finished, then asks the window to keep running just
+//! before the close, so that the terminate the second scenario leaves
+//! pending is cancelled and the run returns. On Linux a menu bar changes
+//! nothing shown, and nothing more is run. Once the check
 //! holds, it starts itself again, to see a close with the system's quit
 //! pending end the process by AppKit's terminate (the module `pending`),
 //! which a run that must return cannot show.
@@ -22,6 +25,8 @@
 //! and, on macOS, the process ending by any way but the verdict, as AppKit
 //! ends it when a terminate goes ahead.
 
+#[cfg(target_os = "macos")]
+mod menu;
 #[cfg(target_os = "macos")]
 mod pending;
 #[cfg(target_os = "macos")]
@@ -207,11 +212,19 @@ impl Platform for Probed {
             Arc::clone(&self.outcome),
         );
         self.started.store(true, Ordering::SeqCst);
-        thread::spawn(move || outcome.finish(terminate::scenario(platform, &record)));
+        // The menu bar's Quit item leaves one quit reported, which the
+        // terminate scenario counts from.
+        thread::spawn(move || {
+            outcome.finish(
+                menu::scenario(platform, &record)
+                    .and_then(|()| terminate::scenario(platform, &record, 1)),
+            );
+        });
         self.platform.run(options, tee, drawer)
     }
 
-    /// Waits for the scenario, which leaves a terminate pending, then asks
+    /// Waits for the scenarios, the last of which leaves a terminate
+    /// pending, then asks
     /// the window to keep running and, straight after, to close: the
     /// window port's way to refuse the system's quit as the window closes,
     /// so that the run returns.

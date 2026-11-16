@@ -253,6 +253,43 @@ mod tests {
         assert_eq!(requests::check(Carried::default), Ok(()));
     }
 
+    /// The adapter as the handler routes a request: a menu to the menu
+    /// bar, which on macOS is built from its plan and read back (the model
+    /// of what AppKit holds, `menu::Plan::built`), and is dropped
+    /// elsewhere; every other request to the window's translation.
+    #[derive(Default)]
+    struct WithMenuBar {
+        carried: Carried,
+        menu: Option<editor_platform::Menu>,
+    }
+
+    impl Carries for WithMenuBar {
+        const MENU_BAR: bool = cfg!(target_os = "macos");
+
+        fn carry_out(&mut self, request: Request) {
+            match request {
+                Request::Menu(menu) if Self::MENU_BAR => {
+                    let plan = crate::menu::plan(&menu);
+                    self.menu = Some(crate::menu::read(&plan.built(), &plan.commands).menu);
+                }
+                Request::Menu(_) => {}
+                request => self.carried.carry_out(request),
+            }
+        }
+
+        fn shown(&self) -> Shown {
+            Shown {
+                menu: self.menu.clone(),
+                ..self.carried.shown()
+            }
+        }
+    }
+
+    #[test]
+    fn the_request_contract_holds_of_the_adapter_with_its_menu_bar() {
+        assert_eq!(requests::check(WithMenuBar::default), Ok(()));
+    }
+
     #[test]
     fn each_request_that_changes_the_window_is_one_call_on_it_and_one_that_does_not_is_none() {
         let mut carried = Carried::default();
