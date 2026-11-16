@@ -920,7 +920,7 @@ mod tests {
     use editor_render::port::Target;
     use editor_render::render_loop::{RecordingPark, RenderHandle, RenderLoop, Step};
 
-    use editor_layout::face::{Color, Face};
+    use editor_layout::face::{Color, Face, Underline, UnderlineStyle};
 
     use super::{Display, WireFace, WireScene, WireView, text_ref};
     use crate::document::Document;
@@ -1069,6 +1069,63 @@ mod tests {
                 .iter()
                 .all(|pixel| *pixel == [0x12, 0x34, 0x56, 0xff])
         );
+    }
+
+    /// How many pixels of the column 4 pixels in of `display`'s picture
+    /// are ink, once it has published a scene, 80 by 64, of one view of
+    /// "ab" in a face of paper and ink, underlined: the underline's
+    /// thickness, which the renderer draws at the scale it is given.
+    fn underline_thickness(display: &Display) -> usize {
+        let (paper, ink) = (Color::rgb(0xff, 0xff, 0xff), Color::rgb(0, 0, 0));
+        let snapshot = Snapshot::of(&Document::new("ab"));
+        let wire = WireScene {
+            size: [80, 64],
+            views: vec![WireView {
+                id: 1,
+                rect: [0, 0, 80, 64],
+                snapshot: Some(0),
+                ..WireView::default()
+            }],
+            faces: Some(vec![WireFace {
+                name: "default".to_owned(),
+                face: Face {
+                    foreground: Some(ink),
+                    background: Some(paper),
+                    underline: Some(Underline {
+                        style: UnderlineStyle::Single,
+                        color: None,
+                    }),
+                    ..Face::default()
+                },
+            }]),
+            ..WireScene::default()
+        };
+        let (words, strings) = wire.encode();
+        assert!(display.publish(&words, &strings, &[&snapshot]));
+        let picture = display.picture();
+        assert_eq!((picture.width, picture.height), (80, 64));
+        (0..picture.height)
+            .filter(|&y| picture.pixel(4, y) == Some([0, 0, 0, 0xff]))
+            .count()
+    }
+
+    #[test]
+    fn a_picture_of_a_display_not_bound_is_drawn_at_the_scale_it_was_told() {
+        assert_eq!(underline_thickness(&Display::cells(8, 16)), 1);
+        let display = Display::cells(8, 16);
+        display.set_scale(2.0);
+        assert_eq!(underline_thickness(&display), 2);
+    }
+
+    #[test]
+    fn a_picture_of_a_bound_display_is_drawn_at_its_presenters_scale() {
+        // The presenter's scale wins over the one the display was told.
+        let presenter = Presenter::new();
+        presenter.set_scale(2.0);
+        let display = Display::cells(8, 16);
+        display.set_scale(3.0);
+        display.present_to(Arc::clone(&presenter));
+        assert_eq!(underline_thickness(&display), 2);
     }
 
     #[test]
