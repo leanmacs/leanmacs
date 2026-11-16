@@ -5837,11 +5837,13 @@ def fileModelChecks : List Check :=
             stampOf nothing == some none) },
     {
       name :=
-        "the file model decodes bytes to the text the library keeps them as, and encodes that text to the bytes again: thirteen byte strings, each against a text written out by hand",
+        "the store's escape rule decodes bytes to the text the library keeps them as, and encodes that text to the bytes again, and the file model uses it: thirteen byte strings, each against a text written out by hand",
       run :=
         pure
           (decodings.all fun (_, bytes, text) =>
-            FileModel.decode bytes == text && FileModel.encode text == bytes) },
+            File.decodeBytes bytes == text && File.encodeText text == bytes &&
+              FileModel.decode bytes == text &&
+              FileModel.encode text == bytes) },
     { name :=
         "the file model's load answers a snapshot under the next id, holding the file's text, with the file's length in bytes as the stamp's size and its line endings"
       run := do

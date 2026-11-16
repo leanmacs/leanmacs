@@ -39,13 +39,14 @@ runner's file service is this model behind a reference
 It answers by the library's rules and by its own route.
 
 - **The text of a file** is found by decoding its bytes a character at a
-  time (`FileModel.decode`): a byte that starts no valid character becomes
+  time (`FileModel.decode`, which is the store's rule, `File.decodeBytes`,
+  in `Editor/File.lean`): a byte that starts no valid character becomes
   its escape, the character `U+10DC00` plus the byte, and a character that
   is validly encoded but is itself one of the escapes becomes the escapes of
   its four bytes, so that the way back is one-to-one. What a save writes is
-  the reverse (`FileModel.encode`). The library finds the valid stretches of
-  the bytes and builds a rope; that the two agree is what the job port's
-  contract checks.
+  the reverse (`FileModel.encode`, `File.encodeText`). The library finds
+  the valid stretches of the bytes and builds a rope; that the two agree is
+  what the job port's contract checks.
 - **A load is refused in this order**: a path that is not absolute; nothing
   there, or a directory; a file over the limit; a NUL byte among the first
   8,000 bytes.
@@ -96,53 +97,21 @@ namespace FileModel
 def binaryWindow : Nat :=
   8000
 
-/-- The escape of `byte`: the character the text model keeps a byte that is
-not valid UTF-8 as, `U+10DC00` plus the byte. -/
+/-- The escape of `byte` (`File.escape`). -/
 def escape (byte : UInt8) : Char :=
-  Char.ofNat (0x10DC00 + byte.toNat)
+  File.escape byte
 
-/-- The byte `character` is the escape of, if it is one: the escapes are the
-128 characters from `U+10DC80` to `U+10DCFF`. -/
+/-- The byte `character` is the escape of, if it is one (`File.escaped?`). -/
 def escaped? (character : Char) : Option UInt8 :=
-  if 0x10DC80 ≤ character.toNat ∧ character.toNat ≤ 0x10DCFF then
-    some (character.toNat - 0x10DC00).toUInt8
-  else none
+  File.escaped? character
 
-/-- The text the library keeps `bytes` as: each valid character as it is,
-each byte that starts none as its escape, and a valid character that is
-itself an escape as the escapes of its four bytes.
-
-It walks the bytes a character at a time. Each step takes at least one byte,
-so the walk is over in at most as many steps as there are bytes. -/
+/-- The text the library keeps `bytes` as (`File.decodeBytes`). -/
 def decode (bytes : ByteArray) : String :=
-  Id.run do
-    let mut text := ""
-    let mut index := 0
-    for _ in [0:bytes.size] do
-      if index ≥ bytes.size then
-        break
-      match bytes.utf8DecodeChar? index with
-      | some character =>
-        if (escaped? character).isSome then
-          for offset in [0:character.utf8Size] do
-            text := text.push (escape (bytes.get! (index + offset)))
-        else
-          text := text.push character
-        index := index + character.utf8Size
-      | none =>
-        text := text.push (escape (bytes.get! index))
-        index := index + 1
-    return text
+  File.decodeBytes bytes
 
-/-- The bytes of `text` as a save writes them: an escape as the one byte it
-stands for, and every other character as its UTF-8. -/
+/-- The bytes of `text` as a save writes them (`File.encodeText`). -/
 def encode (text : String) : ByteArray :=
-  text.foldl
-    (fun bytes character =>
-      match escaped? character with
-      | some byte => bytes.push byte
-      | none => bytes ++ (String.singleton character).toUTF8)
-    ByteArray.empty
+  File.encodeText text
 
 /-- The line endings of `bytes`: the line feeds that stand alone, and those
 that follow a carriage return. -/
