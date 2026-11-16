@@ -10,6 +10,7 @@ import Editor.Ex
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
+import Editor.Process.Environment
 import Editor.Setup
 
 /-!

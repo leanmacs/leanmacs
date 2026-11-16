@@ -34,6 +34,7 @@ import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModuleLookup
+import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Role
 import Editor.Scene
@@ -21238,6 +21239,164 @@ def fileWatchRunnerChecks : List Check :=
         let allEnded ← eventually (return (← watches.watching) == 0)
         return annasEnded && one && allEnded }]
 
+/-! ## A child's environment, looked up for its directory -/
+
+/-- What `mise env --json` prints, in its layout: one name a line, indented
+two spaces, with a `PATH` of 400 characters. -/
+def miseOutput : String :=
+  let path := String.ofList (List.replicate 400 'p')
+  "{\n  \"PATH\": \"" ++ path ++
+    "\",\n  \"MACOSX_DEPLOYMENT_TARGET\": \"27.2\",\n  \"RUST\": \"1.98\"\n}\n"
+
+/-- Whether `parseVariables` reads `bytes` as `expected`. -/
+def readsVariables (bytes : ByteArray) (expected : Array (String × String)) : Bool :=
+  match Process.parseVariables bytes with
+  | .ok variables => variables == expected
+  | .error _ => false
+
+/-- Whether `parseVariables` refuses `text` with `why`. -/
+def refusesVariables (text : String) (why : String) : Bool :=
+  match Process.parseVariables text.toUTF8 with
+  | .error said => said == why
+  | .ok _ => false
+
+/-- An entry of a lookup that failed with `failure`, its config files' stamps
+`stamps`. -/
+def failedEntry (failure : Process.Failure) (stamps : Array (Option File.Stamp) := #[]) :
+    Process.Entry :=
+  { stamps, found := .failed failure }
+
+/-- The checks of the pure part of a child's environment
+(`Editor/Process/Environment.lean`): the parser of what mise prints, how the
+lookup's variables and a command's own environment combine, the config files
+whose stamps keep an entry, the shared state's answers and the messages. -/
+def processEnvironmentChecks : List Check :=
+  [{  name :=
+        "parseVariables reads mise's layout, a multi-line object with a PATH of 400 characters"
+      run :=
+        pure
+          (readsVariables miseOutput.toUTF8
+            #[("PATH", String.ofList (List.replicate 400 'p')),
+              ("MACOSX_DEPLOYMENT_TARGET", "27.2"), ("RUST", "1.98")]) },
+    { name :=
+        "parseVariables reads every escape, a surrogate pair among them, and the empty object; the last of a name that comes twice wins"
+      run :=
+        pure
+          (readsVariables
+              "{\"A\":\"\\\" \\\\ \\/ \\b \\f \\n \\r \\t \\u00e9 \\ud83d\\ude00\",\"B\":\"1\",\"B\":\"2\"}".toUTF8
+              #[("A", "\" \\ / \x08 \x0c \n \r \t é 😀"), ("B", "2")] &&
+            readsVariables " { } ".toUTF8 #[]) },
+    { name :=
+        "parseVariables refuses a number, null, a nested object, an array, trailing text, bytes that are not UTF-8, a name holding =, an empty name and a NUL, each with its reason"
+      run :=
+        pure
+          (refusesVariables "{\"A\":1}" "a value is not a string" &&
+            refusesVariables "{\"A\":null}" "a value is not a string" &&
+            refusesVariables "{\"A\":{}}" "a value is not a string" &&
+            refusesVariables "[\"A\"]" "it is not an object" &&
+            refusesVariables "{\"A\":\"a\"} x" "there is more after the object" &&
+            (match Process.parseVariables ⟨#[0x7B, 0xFF, 0x7D]⟩ with
+            | .error why => why == "it is not UTF-8"
+            | .ok _ => false) &&
+            refusesVariables "{\"A=B\":\"a\"}" "the name A=B holds =" &&
+            refusesVariables "{\"\":\"a\"}" "a name is empty" &&
+            refusesVariables "{\"A\":\"a\\u0000\"}" "a string holds a NUL" &&
+            refusesVariables "{\"A\":\"a\nb\"}" "a string holds a control character" &&
+            refusesVariables "{\"A\":\"\\ud83d\"}"
+              "a high surrogate is not followed by a low one") },
+    { name :=
+        "a lookup's variables are set over the editor's, the command's own set wins over one of the same name, its unset removes one, and clear drops them all"
+      run :=
+        let variables := #[("PATH", "/m/bin"), ("A", "mise"), ("DROP", "x")]
+        pure
+          (Process.Environment.over variables {} == { set := variables } &&
+            Process.Environment.over variables { set := #[("A", "own")], unset := #["DROP"] } ==
+              { set := #[("PATH", "/m/bin"), ("A", "own")], unset := #["DROP"] } &&
+            Process.Environment.over variables { clear := true, set := #[("ONLY", "x")] } ==
+              { clear := true, set := #[("ONLY", "x")] }) },
+    { name := "configPaths of /p/d is mise's four config names in /p/d, then in /p, then in /"
+      run :=
+        let four (directory : String) : Array System.FilePath :=
+          #[s!"{directory}mise.toml", s!"{directory}.mise.toml", s!"{directory}.tool-versions",
+                s!"{directory}mise.local.toml"].map
+            System.FilePath.mk
+        pure
+          (Process.configPaths "/p/d" == four "/p/d/" ++ four "/p/" ++ four "/" &&
+            Process.configPaths "/p/d/" == Process.configPaths "/p/d") },
+    { name :=
+        "the shared state gives back the entry a record kept; a failure recorded says its message once, the same failure again says nothing, and with new stamps it says it again"
+      run :=
+        let state : Process.Environments := {}
+        let failure := Process.Failure.exited 1 "untrusted"
+        let first := failedEntry failure #[none]
+        let message := Process.failureMessage "/p/d" failure
+        let ((), state, said) := state.handle (.record "/p/d" first)
+        let (cached, state, quiet) := state.handle (.cached "/p/d")
+        let cached : Option Process.Entry := cached
+        let ((), state, again) := state.handle (.record "/p/d" first)
+        let ((), _, renewed) :=
+          state.handle (.record "/p/d" (failedEntry failure #[some ⟨1, 0, 3⟩]))
+        let variables : Process.Entry := { stamps := #[], found := .variables #[("A", "a")] }
+        let ((), _, found) := ({} : Process.Environments).handle (.record "/p/e" variables)
+        pure
+          (said == some message && cached == some first && quiet.isNone && again.isNone &&
+            renewed == some message &&
+            found.isNone) },
+    { name := "install drops what was resolved and every entry, and keeps the mode and the limit"
+      run :=
+        let state : Process.Environments :=
+          { host := .window (some "/u"), limit := 7, resolved := some (.mise "/m")
+            entries := #[("/p", failedEntry (.signalled 9))] }
+        let ((), after, said) := state.handle (.install .inherited)
+        pure
+          (after ==
+              { setting := .inherited, host := .window (some "/u"), limit := 7, resolved := none
+                entries := #[] } &&
+            said.isNone) },
+    { name := "the policy is the setting, the mode, what was resolved and the limit"
+      run :=
+        let state : Process.Environments := { setting := .mise none, resolved := some .inherited }
+        let (policy, after, said) := state.handle .policy
+        let policy : Process.Policy := policy
+        pure
+          (policy ==
+              { setting := .mise none, host := .headless, resolved := some .inherited
+                limit := 5000 } &&
+            after == state &&
+            said.isNone) },
+    { name := "each failure's message has its own words"
+      run :=
+        let say := Process.failureMessage "/p/d"
+        let tail := "; its children get the editor's environment"
+        pure
+          (say (.exited 1 "not trusted") ==
+              "environment: /p/d: mise exited with status 1: not trusted" ++ tail &&
+            say (.exited 2 "") == "environment: /p/d: mise exited with status 2" ++ tail &&
+            say (.signalled 9) == "environment: /p/d: mise was ended by signal 9" ++ tail &&
+            say (.unparsable "it is not an object") ==
+              "environment: /p/d: mise's output is not a JSON object of strings: it is not an object" ++
+                tail &&
+            say (.timedOut 5000) ==
+              "environment: /p/d: mise did not finish within 5000 ms and was killed" ++ tail &&
+            say (.refused (.denied "Permission denied")) ==
+              "environment: /p/d: mise could not be run: the system does not allow it: Permission denied" ++
+                tail &&
+            say (.missing (Process.miseCandidates (some "/u"))) ==
+              "environment: /p/d: mise is not at /u/.local/bin/mise, /opt/homebrew/bin/mise or /usr/local/bin/mise" ++
+                tail) },
+    { name :=
+        "what a lookup's run came to: variables for status 0 and an object, and else the failure, with the first line of standard error"
+      run :=
+        let ran (exit : Process.Exit) (stdout stderr : String) : Except ProcessError Process.Ran :=
+          .ok { exit, stdout := stdout.toUTF8, stderr := stderr.toUTF8 }
+        pure
+          (Process.foundOf (ran (.code 0) "{\"A\":\"a\"}" "") == .variables #[("A", "a")] &&
+            Process.foundOf (ran (.code 1) "" "first\nsecond\n") == .failed (.exited 1 "first") &&
+            Process.foundOf (ran (.signal 9) "" "") == .failed (.signalled 9) &&
+            Process.foundOf (ran (.code 0) "[1]" "") ==
+              .failed (.unparsable "it is not an object") &&
+            Process.foundOf (.error .noSuchProcess) == .failed (.refused .noSuchProcess)) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -21250,6 +21409,7 @@ def checks : List Check :=
     ownerChecks ++
     fileRunnerChecks ++
     processChecks ++
+    processEnvironmentChecks ++
     fileWatchModelChecks ++
     fileWatchRunnerChecks ++
     setupChecks ++
