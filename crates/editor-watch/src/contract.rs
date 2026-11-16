@@ -11,7 +11,7 @@
 //! watch the check is given, on the clock it is given, so a real adapter
 //! shows them on real files. On a real file system they check that a kind
 //! is *present* in a change, never that the set is exactly something, and
-//! a property reads up to [`READS`] deliveries for the change it looks
+//! a property reads up to [`READS`] deliveries for each change it looks
 //! for: a platform can carry an earlier change's flag, or split what one
 //! step made across two deliveries. The exact sets are pinned on the fake,
 //! in the service's unit tests. [`COALESCED`] is the exception: it fails if
@@ -197,8 +197,10 @@ pub const PROPERTIES: [&str; 23] = [
     SHUTDOWN,
 ];
 
-/// How many deliveries a service property reads for the change it looks
-/// for, at most.
+/// How many deliveries a service property reads for each change it looks
+/// for, at most. With no window, each delivery is taken as soon as it is
+/// completed, so what one step made can come in several: inotify tells a
+/// new file's creation, its write and the write's close one by one.
 pub const READS: usize = 4;
 
 /// The window of [`COALESCED`], in milliseconds.
@@ -406,9 +408,21 @@ impl<W: Watch, C: Clock> Served<W, C> {
         &mut self,
         watch: u64,
         deadline: Duration,
+        done: impl FnMut(&[Change]) -> bool,
+    ) -> bool {
+        self.reads_for(watch, deadline, 1, done)
+    }
+
+    /// Reads deliveries of `watch`, up to [`READS`] for each of `wanted`
+    /// changes, until `done` holds of one, and says whether it did.
+    fn reads_for(
+        &mut self,
+        watch: u64,
+        deadline: Duration,
+        wanted: usize,
         mut done: impl FnMut(&[Change]) -> bool,
     ) -> bool {
-        for _ in 0..READS {
+        for _ in 0..READS * wanted {
             let Some(wait) = self.ask(watch) else {
                 return false;
             };
@@ -765,7 +779,7 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
         ];
         let mut seen = [false; 5];
         let mut deeper_told = false;
-        served.reads_until(1, self.deadline(), |changes| {
+        served.reads_for(1, self.deadline(), wanted.len(), |changes| {
             deeper_told |= names(changes, &deeper);
             for (index, (path, kind)) in wanted.iter().enumerate() {
                 seen[index] |= has(changes, path, *kind);
