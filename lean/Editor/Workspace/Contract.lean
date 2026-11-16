@@ -137,6 +137,10 @@ def properties (base : System.FilePath) : List Property :=
       world := { markers := #[at_ "m/Cargo.toml"] }
       asked := #[(at_ "m/src/deep", some (Found.ofMarker (at_ "m")))] },
     { name :=
+        "with git not answering for a directory, as in a repository with no commit, a .git directory is a marker: the nearest directory holding one is the workspace, its own project"
+      world := { markerDirectories := #[at_ "u/.git"] }
+      asked := #[(at_ "u/src", some (Found.ofMarker (at_ "u")))] },
+    { name :=
         "two worktrees of a repository with no origin are one project, identified by their common git directory"
       world :=
         { repositories := #[{ main with origin := none }, { worktree with origin := none }]
