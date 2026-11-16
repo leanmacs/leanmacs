@@ -28,6 +28,9 @@
 //!   that whatever was made on the window is let go while the window is
 //!   still there.
 //! - **A platform that cannot open a window tells the drawer nothing.**
+//! - **A window in fullscreen has no corners to keep clear of.** A
+//!   [`Input::Resized`] that says fullscreen says a corner clearance of 0
+//!   ([`Violation::CornerInFullscreen`]).
 //!
 //! What a window does with a request while it runs is the contract of
 //! [`requests`], which needs no platform.
@@ -54,6 +57,11 @@
 //! the [`Check::verdict`] on another thread. Neither waits for a platform
 //! without a bound: a run that never returns is a verdict, not a hang.
 //!
+//! The check keeps every resize the run reported, in order
+//! ([`Check::resizes`]), for whoever ran it to say what the window said of
+//! itself: `editor-platform-winit`'s example prints them, which is how a
+//! real window's corner clearance is seen.
+//!
 //! The crate docs say where the real adapter is held to this.
 
 pub mod requests;
@@ -63,7 +71,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{CannotOpen, Canvas, Drawer, Input, Platform, Report, Request, WindowOptions};
+use crate::{CannotOpen, Canvas, Drawer, Input, Platform, Report, Request, Resize, WindowOptions};
 
 /// A rule of the contract that a platform broke. It is `PartialEq` only, as
 /// [`Input`] is.
@@ -99,6 +107,9 @@ pub enum Violation {
     /// No window could be opened, and the drawer had been told this, by its
     /// variant's name, all the same.
     ToldThoughItCouldNotOpen(&'static str),
+    /// This resize said the window is in fullscreen and has a corner
+    /// clearance other than 0.
+    CornerInFullscreen(Resize),
 }
 
 impl fmt::Display for Violation {
@@ -135,6 +146,13 @@ impl fmt::Display for Violation {
                 write!(
                     f,
                     "no window could be opened, and the drawer was told `{told}`"
+                )
+            }
+            Self::CornerInFullscreen(size) => {
+                write!(
+                    f,
+                    "a resize in fullscreen said a corner clearance of {}",
+                    size.corner_clearance
                 )
             }
         }
@@ -196,6 +214,8 @@ struct Progress {
     started: Option<Instant>,
     /// The first input the run reported.
     first: Option<Input>,
+    /// Every resize the run reported before it returned, in order.
+    resizes: Vec<Resize>,
     /// When the run was asked to close, from the other thread. It is set
     /// only while the run has not returned.
     close_asked: Option<Instant>,
@@ -231,14 +251,19 @@ impl Shared {
         self.changed.notify_all();
     }
 
-    /// Takes one input from the platform: the first of the run, or one that
-    /// arrived after the run had returned. The inputs between are the
-    /// platform's own business.
+    /// Takes one input from the platform: the first of the run, a resize,
+    /// or one that arrived after the run had returned. The other inputs
+    /// between are the platform's own business.
     fn record(&self, input: Input) {
         self.update(|progress| {
             if progress.returned.is_some() {
                 progress.late.get_or_insert(input);
-            } else if progress.first.is_none() {
+                return;
+            }
+            if let Input::Resized(size) = input {
+                progress.resizes.push(size);
+            }
+            if progress.first.is_none() {
                 progress.first = Some(input);
                 progress.reported_untold = progress.first_told.is_none();
             }
@@ -380,6 +405,12 @@ impl Check {
         true
     }
 
+    /// Every [`Input::Resized`] the run has reported so far, in order: none
+    /// before it starts, and none it reported after it returned.
+    pub fn resizes(&self) -> Vec<Resize> {
+        self.progress.progress().resizes.clone()
+    }
+
     /// What the check found. It waits for [`run`](Self::run) to start and
     /// then to finish, but for a run that has started no longer than the
     /// bound allows the platform: a run that has not returned by then is a
@@ -448,6 +479,13 @@ impl Check {
         if let Some(told) = progress.told_late {
             return Err(Violation::ToldAfterClosing(told));
         }
+        if let Some(size) = progress
+            .resizes
+            .iter()
+            .find(|size| size.fullscreen && size.corner_clearance != 0)
+        {
+            return Err(Violation::CornerInFullscreen(*size));
+        }
         Ok(())
     }
 }
@@ -471,7 +509,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ScriptedPlatform;
+    use crate::{Resize, ScriptedPlatform};
 
     /// A bound no platform that keeps the contract comes near: a check that
     /// holds returns long before it, and one that fails for another reason
@@ -1060,6 +1098,70 @@ mod tests {
             check(platform, WindowOptions::default(), GENEROUS),
             Err(Violation::FirstInputNotOpened(files))
         );
+    }
+
+    #[test]
+    fn a_platform_whose_resize_in_fullscreen_says_a_corner_clearance_is_refused() {
+        // A window in fullscreen has no rounded corners to keep clear of.
+        let cornered = Resize {
+            fullscreen: true,
+            corner_clearance: 5,
+            ..ScriptedPlatform::SIZE
+        };
+        let platform = Reports::new(vec![opened("cornered"), Input::Resized(cornered)]);
+
+        assert_eq!(
+            check(platform, WindowOptions::default(), GENEROUS),
+            Err(Violation::CornerInFullscreen(cornered))
+        );
+    }
+
+    #[test]
+    fn a_platform_whose_windowed_resize_says_a_corner_clearance_keeps_the_contract() {
+        let windowed = Resize {
+            corner_clearance: 14,
+            ..ScriptedPlatform::SIZE
+        };
+        let square = Resize {
+            fullscreen: true,
+            ..ScriptedPlatform::SIZE
+        };
+        let platform = Reports::new(vec![
+            opened("cornered"),
+            Input::Resized(windowed),
+            Input::Resized(square),
+        ]);
+
+        assert_eq!(check(platform, WindowOptions::default(), GENEROUS), Ok(()));
+    }
+
+    #[test]
+    fn a_check_keeps_every_resize_the_run_reported_in_order() {
+        let first = Resize {
+            corner_clearance: 14,
+            ..ScriptedPlatform::SIZE
+        };
+        let second = Resize {
+            width: 1440,
+            height: 900,
+            ..first
+        };
+        let platform = ScriptedPlatform::new(vec![
+            Input::Resized(first),
+            Input::Focus(true),
+            Input::Resized(second),
+        ]);
+        let check = Check::new(WindowOptions::default(), GENEROUS);
+        assert_eq!(check.resizes(), [], "nothing before the run");
+
+        let verdict = std::thread::scope(|scope| {
+            let judge = scope.spawn(|| check.verdict());
+            check.run(&platform);
+            judge.join().expect("the verdict is given")
+        });
+
+        assert_eq!(verdict, Ok(()));
+        assert_eq!(check.resizes(), [first, second]);
     }
 
     #[test]

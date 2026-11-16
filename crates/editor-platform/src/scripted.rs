@@ -56,7 +56,9 @@ impl Shown {
 /// is told to the drawer and reported as a [`Input::Resized`] at the size
 /// the run last reported (its [`SIZE`](Self::SIZE), or the script's last
 /// resize) carrying the new state, on the run's thread and before the
-/// window closes. Any other request reports nothing.
+/// window closes. Its corner clearance is 0 in fullscreen, where the window
+/// has square corners, and out of it the one the script last said outside
+/// fullscreen (0 if none). Any other request reports nothing.
 pub struct ScriptedPlatform {
     /// What a run reports after [`Input::Opened`], or the reason no window
     /// can be opened.
@@ -84,6 +86,10 @@ struct State {
     /// The size the run last reported, with the fullscreen state it said;
     /// `None` before a run has said one, when it is [`ScriptedPlatform::SIZE`].
     size: Option<Resize>,
+    /// The corner clearance the run's script last said outside
+    /// fullscreen: what a request that takes the window out of fullscreen
+    /// says again. 0 until the script says one.
+    corner: u32,
     /// What requests have given the run to report, oldest first.
     to_report: VecDeque<Resize>,
 }
@@ -99,6 +105,7 @@ impl ScriptedPlatform {
         height: 480,
         scale: 1.0,
         fullscreen: false,
+        corner_clearance: 0,
     };
 
     /// A platform whose window reports `script` after [`Input::Opened`].
@@ -180,6 +187,7 @@ impl ScriptedPlatform {
                 height: 600,
                 scale: 2.0,
                 fullscreen: false,
+                corner_clearance: 0,
             }),
             Input::CloseRequested,
         ]
@@ -221,6 +229,7 @@ impl Platform for ScriptedPlatform {
             state.asked.clear();
             state.shown = Shown::default();
             state.size = None;
+            state.corner = 0;
             state.to_report.clear();
         }
 
@@ -239,6 +248,9 @@ impl Platform for ScriptedPlatform {
                         let mut state = self.state();
                         state.size = Some(*size);
                         state.shown.fullscreen = size.fullscreen;
+                        if !size.fullscreen {
+                            state.corner = size.corner_clearance;
+                        }
                     }
                     drawer(Canvas::Resized(*size));
                 }
@@ -290,8 +302,10 @@ impl Platform for ScriptedPlatform {
         state.asked.push(request);
         let fullscreen = state.shown.fullscreen;
         if fullscreen != was {
+            // In fullscreen the window has square corners.
             let size = Resize {
                 fullscreen,
+                corner_clearance: if fullscreen { 0 } else { state.corner },
                 ..state.size.unwrap_or(Self::SIZE)
             };
             state.size = Some(size);
@@ -474,6 +488,7 @@ mod tests {
                 height: 480,
                 scale: 1.0,
                 fullscreen: false,
+                corner_clearance: 0,
             }
         );
     }
@@ -485,12 +500,14 @@ mod tests {
             height: 120,
             scale: 1.0,
             fullscreen: false,
+            corner_clearance: 0,
         };
         let large = Resize {
             width: 800,
             height: 600,
             scale: 2.0,
             fullscreen: false,
+            corner_clearance: 0,
         };
         let script = vec![Input::Resized(small), press("a"), Input::Resized(large)];
         let platform = Arc::new(ScriptedPlatform::new(script));
@@ -732,6 +749,7 @@ mod tests {
                     height: 600,
                     scale: 2.0,
                     fullscreen: false,
+                    corner_clearance: 0,
                 }),
                 Input::CloseRequested,
             ]
@@ -838,6 +856,7 @@ mod tests {
             height: 600,
             scale: 2.0,
             fullscreen: false,
+            corner_clearance: 0,
         };
         let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(large)]));
         let run = start(&platform, COMPOSING);
@@ -868,6 +887,37 @@ mod tests {
                 Said::Returned,
             ]
         );
+    }
+
+    #[test]
+    fn it_reports_its_scripts_corner_clearance_and_none_in_the_fullscreen_a_request_makes() {
+        let cornered = Resize {
+            width: 800,
+            height: 600,
+            scale: 2.0,
+            fullscreen: false,
+            corner_clearance: 14,
+        };
+        let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(cornered)]));
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(2), [opened(), Input::Resized(cornered)]);
+
+        // A window in fullscreen has square corners; out of it, the corners
+        // are the script's again.
+        platform.request(Request::EnterFullscreen);
+        assert_eq!(
+            run.next(1),
+            [Input::Resized(Resize {
+                fullscreen: true,
+                corner_clearance: 0,
+                ..cornered
+            })]
+        );
+        platform.request(Request::LeaveFullscreen);
+        assert_eq!(run.next(1), [Input::Resized(cornered)]);
+
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
     }
 
     #[test]

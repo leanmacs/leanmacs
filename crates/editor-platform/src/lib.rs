@@ -19,7 +19,8 @@
 //! physical keys are W3C UI Events names, as strings, so a new one needs no
 //! number on either side of the Lean boundary. A pointer ([`Pointer`]) with
 //! its action, position, button and modifiers; a resize ([`Resize`]) with
-//! the size, the scale factor and whether the window is in fullscreen; the
+//! the size, the scale factor, whether the window is in fullscreen and how
+//! far in its rounded corners reach; the
 //! focus; an input method's composition; files the system asks the program
 //! to open ([`Input::OpenFiles`]); that the window opened; and a request to
 //! close.
@@ -58,6 +59,14 @@
 //!   changes fullscreen, or sees the window enter or leave it by other
 //!   means (the green button on macOS), reports a `Resized` carrying the
 //!   new state, at the size it last said if the size did not change.
+//! - **A resize says how far in the window's rounded bottom corners
+//!   reach** ([`Resize::corner_clearance`]), in whole logical points, so
+//!   that whatever lays out the bottom row can keep its first glyph clear
+//!   of the curve. It is data on the resize, as fullscreen is, and a
+//!   platform reports a `Resized` whenever it changes, by the same rule as
+//!   fullscreen. A window with square corners says 0, and so does one in
+//!   fullscreen. The fake reports what its script says, and 0 in the
+//!   fullscreen a request takes it into.
 //! - **Files to open come after `Opened`.** The system may ask a program
 //!   to open files before its window exists, as macOS does when a document
 //!   starts the app. A platform holds them until it has reported `Opened`
@@ -332,8 +341,8 @@ pub enum Button {
     Other(u16),
 }
 
-/// The window's new size and scale factor, and whether it is in the
-/// system's fullscreen.
+/// The window's new size and scale factor, whether it is in the system's
+/// fullscreen, and how far in its rounded bottom corners reach.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Resize {
     /// The drawable width, in physical pixels.
@@ -344,6 +353,12 @@ pub struct Resize {
     pub scale: f64,
     /// Whether the window is in the system's fullscreen.
     pub fullscreen: bool,
+    /// How far in from the window's left and right edges its rounded
+    /// bottom corners reach, in whole logical points, rounded up: what is
+    /// drawn closer to an edge than this along the bottom row may be cut
+    /// off by the curve. It is 0 for a window with square corners, and
+    /// in fullscreen ([`contract`] holds a platform to that).
+    pub corner_clearance: u32,
 }
 
 /// One thing the editor asks of the running window.

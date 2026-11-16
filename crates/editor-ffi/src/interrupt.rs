@@ -312,6 +312,7 @@ mod tests {
                 height: 1,
                 scale: 1.0,
                 fullscreen: false,
+                corner_clearance: 0,
             }),
             Input::CloseRequested,
         ] {

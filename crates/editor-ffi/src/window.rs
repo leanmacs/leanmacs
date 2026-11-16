@@ -466,6 +466,7 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
                 height: reader.word()?,
                 scale: f64::from_bits(reader.word()?),
                 fullscreen,
+                corner_clearance: 0,
             })
         }
         EventKind::CloseRequested => {
@@ -1368,6 +1369,7 @@ mod tests {
                 height: 600,
                 scale: 2.0,
                 fullscreen: false,
+                corner_clearance: 0,
             }),
             Input::CloseRequested,
         ];
@@ -1636,6 +1638,7 @@ mod tests {
                 height: 600,
                 scale: 2.0,
                 fullscreen: false,
+                corner_clearance: 0,
             })),
             (
                 EventKind::Resize,
@@ -1655,6 +1658,7 @@ mod tests {
                 height: 900,
                 scale: 2.0,
                 fullscreen: true,
+                corner_clearance: 0,
             })),
             (
                 EventKind::Resize,
@@ -1847,12 +1851,14 @@ mod tests {
                 height: 600,
                 scale: 2.0,
                 fullscreen: false,
+                corner_clearance: 0,
             }),
             Input::Resized(Resize {
                 width: 1440,
                 height: 900,
                 scale: 1.0,
                 fullscreen: true,
+                corner_clearance: 0,
             }),
             Input::OpenFiles(vec!["/Users/me/notes.txt".into(), "/tmp/é ü.lean".into()]),
             Input::OpenFiles(vec![]),
@@ -2006,6 +2012,7 @@ mod tests {
             height: 2,
             scale: 1.5,
             fullscreen: false,
+            corner_clearance: 0,
         });
         let posted = event(input, 0);
         let bytes = crate::words::tests::buffer(&posted.words);
@@ -2205,6 +2212,7 @@ mod tests {
             height: 120,
             scale: 2.0,
             fullscreen: false,
+            corner_clearance: 0,
         })]));
         let queue = Arc::new(Queue::new());
         // Which kind of thing the drawer was told, in order: the thing
@@ -2534,6 +2542,7 @@ mod tests {
             height: 600,
             scale: 2.0,
             fullscreen: false,
+            corner_clearance: 0,
         };
         let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(resized)]));
         let queue = Arc::new(Queue::new());

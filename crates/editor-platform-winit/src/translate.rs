@@ -458,6 +458,7 @@ impl Seen {
             height: u64::from(self.size.height),
             scale: self.scale,
             fullscreen: self.fullscreen,
+            corner_clearance: 0,
         }
     }
 
@@ -1130,6 +1131,7 @@ mod tests {
             height,
             scale,
             fullscreen: false,
+            corner_clearance: 0,
         })
     }
 
@@ -1217,6 +1219,7 @@ mod tests {
             height,
             scale,
             fullscreen,
+            corner_clearance: 0,
         }
     }
 
@@ -1372,6 +1375,7 @@ mod tests {
             height,
             scale,
             fullscreen: false,
+            corner_clearance: 0,
         }
     }
 
