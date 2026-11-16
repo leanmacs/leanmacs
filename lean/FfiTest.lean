@@ -1353,7 +1353,7 @@ def windowSample (composition : Bool) :
       [(.composition, 0, "", #[]), (.composition, 1, "´", #[]), (.composition, 2, "é", #[])]
     else []) ++
     [(.pointer, 0, "", #[(12.5 : Float).toBits, (40.0 : Float).toBits, 2, 0, 4, 0, 0, 0]),
-      (.resize, 0, "", #[800, 600, (2.0 : Float).toBits, 0]), (.closeRequested, 0, "", #[])]
+      (.resize, 0, "", #[800, 600, (2.0 : Float).toBits, 0, 0]), (.closeRequested, 0, "", #[])]
 
 /-- What one run of the scripted platform's window showed. -/
 structure WindowRun where
@@ -1374,9 +1374,11 @@ structure WindowRun where
 task, pulls as many events from the editor queue as its sample has, closes
 the window and waits for the run. It always closes the window, so a check
 that fails leaves no run behind to hold the main-thread service. -/
-def runScripted (composition : Bool) (platform : Editor.Ffi.Platform := .scripted) : IO WindowRun :=
-  do
-  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun platform composition)
+def runScripted (composition : Bool) (platform : Editor.Ffi.Platform := .scripted)
+    (titleBar : Editor.Ffi.TitleBar := .themed) : IO WindowRun := do
+  let run ←
+    IO.asTask (prio := .dedicated)
+        (Editor.Ffi.windowRun platform composition (titleBar := titleBar))
   let mut events := #[]
   let mut stamped := true
   let mut last : UInt64 := 0
@@ -1541,7 +1543,7 @@ def windowChecks (_ : Unit) : List Check :=
     { name :=
         "an input posted as a window would report it arrives on the editor queue as the window's event, stamped, and words that do not read as an input are refused and queue nothing"
       run := do
-        let words := #[1024, 768, (1.5 : Float).toBits, 16]
+        let words := #[1024, 768, (1.5 : Float).toBits, 16, 32]
         let short ← Editor.Ffi.postInput .resize 0 "" #[1024, 768]
         let notWindow ← Editor.Ffi.postInput .message 0 "" #[]
         let posted ← Editor.Ffi.postInput .resize 0 "" words
@@ -1551,6 +1553,17 @@ def windowChecks (_ : Unit) : List Check :=
             event.code == 0 &&
             event.words == words &&
             event.stamp > 0 },
+    { name :=
+        "the scripted window is opened with the composition and the title bar a run asks for, and the real platform records nothing"
+      run := do
+        let standard ← runScripted false (titleBar := .standard)
+        let afterStandard ← Editor.Ffi.windowOpenedWith .scripted
+        let themed ← runScripted true
+        let afterThemed ← Editor.Ffi.windowOpenedWith .scripted
+        return standard.result matches some (.ok _) && themed.result matches some (.ok _) &&
+            afterStandard == some (false, .standard) &&
+            afterThemed == some (true, .themed) &&
+            (← Editor.Ffi.windowOpenedWith .winit) == none },
     { name :=
         "asked while the scripted window runs, a fullscreen request and a minimise request are what the window was asked, in that order, and entering fullscreen arrives on the editor queue as a resize in fullscreen at the size the window last said"
       run := do
@@ -1861,15 +1874,17 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             decodedWindow .pointer 3 (pointerWords 0 0 2 7 0.5) ==
               some (.pointer (pointerAt (.wheel (.pixels 7 0.5)) none))) },
     { name :=
-        "a resize decodes with its size, its scale, whether it is in fullscreen and its corner clearance, and a request to close to itself"
+        "a resize decodes with its size, its scale, whether it is in fullscreen, its corner clearance and its top inset, and a request to close to itself"
       run :=
         pure
-          (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 0] ==
+          (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 0, 0] ==
               some (.resize { width := 800, height := 600, scale := 2.0 }) &&
-            decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 16] ==
-              some (.resize { width := 800, height := 600, scale := 2.0, corner := 16 }) &&
-            decodedWindow .resize 1 #[1440, 900, (2.0 : Float).toBits, 0] ==
+            decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 16, 32] ==
+              some
+                (.resize { width := 800, height := 600, scale := 2.0, corner := 16, top := 32 }) &&
+            decodedWindow .resize 1 #[1440, 900, (2.0 : Float).toBits, 0, 0] ==
               some (.resize { width := 1440, height := 900, scale := 2.0, fullscreen := true }) &&
+            decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits, 16] == none &&
             decodedWindow .closeRequested 0 == some .closeRequested) },
     { name :=
         "files to open decode with their paths in order, each its count of characters and its characters, and no path to none"
@@ -2277,7 +2292,7 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
       #[{ id := ⟨1⟩, rect := rect 0, snapshot := ⟨fixture.snapshot.index + 1⟩
           scroll := SceneFixture.own fixture.anchor, selections := #[]
           cursor := { shape := .block, face := ⟨"c1"⟩ }, decorations := #[], status := #[]
-          padding := { across := 8, down := 4 } },
+          padding := { across := 8, down := 4, top := 28 } },
         { id := ⟨2⟩, rect := rect 48, snapshot := fixture.snapshot
           scroll := SceneFixture.own fixture.anchor
           selections := #[SceneFixture.own fixture.selection]
@@ -2363,17 +2378,19 @@ def sceneChecks (_ : Unit) : List Check :=
         -- the preedit's presence and length.
         let scene : Array UInt64 := #[32, 144, 1, 2, 7, 14, 1, 1, 2, 9, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor; no
-        -- status field and no status face; padded 8 across and 4 down.
-        let first : Array UInt64 := #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4]
+        -- status field and no status face; padded 8 across, 4 down and 28
+        -- at the top.
+        let first : Array UInt64 :=
+          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28]
         -- The first handle; its scroll marker and its selection; a bar
         -- cursor; a decoration; a left status field with no padding and a
         -- right one padded 4; and a status face.
         let second : Array UInt64 :=
           #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 2, 6, 4, 0, 0, 3, 3,
-            1, 4, 1, 3, 0, 0]
+            1, 4, 1, 3, 0, 0, 0]
         -- The second handle; no scroll marker and no selection; an
         -- underline cursor.
-        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0]
+        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0]
         -- No faces: as last published.
         let faces : Array UInt64 := #[0]
         return encoded.words == scene ++ first ++ second ++ third ++ faces &&
@@ -3052,7 +3069,7 @@ def renderChecks (_ : Unit) : List Check :=
         unless (← Editor.Ffi.renderHeadless) matches .ok () do
           return false
         let before ← framesSubmitted
-        let posted ← Editor.Ffi.postInput .resize 0 "" #[64, 48, (1.0 : Float).toBits, 0]
+        let posted ← Editor.Ffi.postInput .resize 0 "" #[64, 48, (1.0 : Float).toBits, 0, 0]
         let some taken ← pull .editor | return false
         fixture.real.publish (fixture.scene (SceneFixture.own fixture.top) #[])
         let submitted := (← framesSubmitted) == before + 1

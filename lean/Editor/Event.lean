@@ -32,10 +32,11 @@ event (`Event.key`), because a key may have an identity and produce no text
 A pointer event is a press, a drag, a release or a wheel, with the position
 in the frame, the button and the modifiers (`Pointer`). A resize is the
 frame's new size and its scale factor, whether the window is in the
-system's fullscreen, and how far in its rounded bottom corners reach, in
-logical points (`Resize`): the window says so after every change of either,
-whether a request or the user (the green button) made it. Positions and sizes
-are in the frame's physical pixels; the corner is in points.
+system's fullscreen, how far in its rounded bottom corners reach, and how
+far down its title bar covers it, in logical points (`Resize`): the window
+says so after every change of any of them, whether a request or the user
+(the green button) made it. Positions and sizes are in the frame's physical
+pixels; the corner and the top are in points.
 
 ## Files to open
 
@@ -262,7 +263,8 @@ structure Pointer where
   deriving BEq, Repr
 
 /-- The frame's new size and scale factor, whether the window is in the
-system's fullscreen, and how far in its rounded bottom corners reach. -/
+system's fullscreen, how far in its rounded bottom corners reach, and how far
+down its title bar covers it. -/
 structure Resize where
   /-- The drawable width, in physical pixels. -/
   width : Nat
@@ -277,6 +279,10 @@ structure Resize where
   fullscreen. The window says it with every resize, as it says fullscreen
   (`editor-platform`'s `Resize::corner_clearance`). -/
   corner : Nat := 0
+  /-- How far down the window's title bar covers it, in whole logical
+  points: 0 in fullscreen and with the standard title bar
+  (`editor-platform`'s `Resize::top_inset`). -/
+  top : Nat := 0
   deriving BEq, Repr
 
 /-- What kind of thing an event came from. -/

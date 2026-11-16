@@ -127,6 +127,7 @@ def rows (real : RealDisplay) (query : Display.RowsQuery) :
   let answer ←
     real.display.rows snapshot (RealTexts.word query.width) (RealTexts.word query.height)
         (offset query.anchor) (paddingWord query.padding.across) (paddingWord query.padding.down)
+        (paddingWord query.padding.top)
   match answer with
   | some rows =>
     return .ok (rows.map fun row => { start := row.start.toNat, stop := row.stop.toNat })
@@ -236,7 +237,8 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
   encoded :=
     pushText { encoded with words := encoded.words.push view.statusFace.isSome.toUInt64 }
       ((view.statusFace.map (·.name)).getD "")
-  let padding := #[paddingWord view.padding.across, paddingWord view.padding.down]
+  let padding :=
+    #[paddingWord view.padding.across, paddingWord view.padding.down, paddingWord view.padding.top]
   return { encoded with words := encoded.words ++ padding }
 
 /-- The library's tag of a slant. -/

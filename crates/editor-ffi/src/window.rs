@@ -16,7 +16,7 @@
 //! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 a dead logical key, bit 3 the interrupt mark | What the key produced, or empty | The logical key, the physical key, the modifiers |
 //! | `Composition` | `Composition` | 0 enabled, 1 preedit, 2 commit, 3 disabled | The preedit or the committed text | None |
 //! | `Pointer` | `Pointer` | 0 press, 1 drag, 2 release, 3 wheel | Empty | The position, the button, the modifiers, the wheel's delta |
-//! | `Resized` | `Resize` | Bit 0 in fullscreen ([`RESIZE_FULLSCREEN`]) | Empty | The width, the height, the scale, the corner clearance |
+//! | `Resized` | `Resize` | Bit 0 in fullscreen ([`RESIZE_FULLSCREEN`]) | Empty | The width, the height, the scale, the corner clearance, the top inset |
 //! | `CloseRequested` | `CloseRequested` | 0 | Empty | None |
 //! | `OpenFiles` | `OpenFiles` | 0 | Empty | The paths |
 //!
@@ -33,9 +33,10 @@
 //!   5 forward and 6 another, whose number is `other` (0 for the rest). The
 //!   delta tags are 0 none (with `dx` and `dy` 0), 1 lines and 2 pixels, for
 //!   a wheel.
-//! - **Resize**: `[width, height, scale, corner clearance]`. The corner
-//!   clearance is in whole logical points (`editor-platform`'s
-//!   `Resize::corner_clearance`), and a word no `u32` holds is refused.
+//! - **Resize**: `[width, height, scale, corner clearance, top inset]`.
+//!   The corner clearance and the top inset are in whole logical points
+//!   (`editor-platform`'s `Resize::corner_clearance` and
+//!   `Resize::top_inset`), and a word no `u32` holds is refused.
 //! - **OpenFiles**: `[n, then for each of the n paths: m, m scalars]`, a
 //!   path's characters laid out as a key's names are. An empty list is `[0]`;
 //!   it is encoded and read back, though no platform reports one.
@@ -105,7 +106,7 @@ use std::time::Instant;
 use editor_platform::{
     Appearance, Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
     NativeWindow, PhysicalKey, Platform, Pointer, PointerAction, Report, Request as WindowRequest,
-    Resize, ScriptedPlatform, WheelDelta, WindowOptions,
+    Resize, ScriptedPlatform, TitleBar, WheelDelta, WindowOptions,
 };
 use editor_platform_winit::WinitPlatform;
 use editor_render::fake::RecordingRenderer;
@@ -156,6 +157,11 @@ const REQUEST_APPEARANCE_DARK: u8 = 4;
 /// The tag of a title in what a scripted window was asked. No request
 /// from Lean has it: the title is a field of the scene.
 const REQUEST_TITLE: u64 = 5;
+
+/// The tags of a title bar, as `editor_ffi_window_run` takes them and
+/// `editor_ffi_window_opened_with` writes them.
+const TITLE_BAR_THEMED: u8 = 0;
+const TITLE_BAR_STANDARD: u8 = 1;
 
 /// The bit of a modifier word that is set when shift is held.
 pub const MODIFIER_SHIFT: u64 = 1;
@@ -317,6 +323,7 @@ pub fn event(input: Input, stamp: u64) -> Event {
                 resize.height,
                 resize.scale.to_bits(),
                 u64::from(resize.corner_clearance),
+                u64::from(resize.top_inset),
             ],
         ),
         Input::OpenFiles(paths) => {
@@ -477,7 +484,7 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
                 scale: f64::from_bits(reader.word()?),
                 fullscreen,
                 corner_clearance: u32::try_from(reader.word()?).ok()?,
-                top_inset: 0,
+                top_inset: u32::try_from(reader.word()?).ok()?,
             })
         }
         EventKind::CloseRequested => {
@@ -1050,13 +1057,15 @@ pub const WINDOW_REFUSED: u8 = 1;
 pub const WINDOW_UNDRAWN: u8 = 2;
 
 /// Runs the process's window on the platform `platform`, with composition
-/// allowed or not, and blocks the calling thread until the window has
-/// closed: the main-thread service runs it. Returns how it went:
+/// allowed or not and the title bar tagged `title_bar` ([`title_bar_of`]),
+/// and blocks the calling thread until the window has closed: the
+/// main-thread service runs it. Returns how it went:
 ///
 /// - [`WINDOW_RAN`] when the window ran and something drew in it. `out` is
 ///   left alone.
 /// - [`WINDOW_REFUSED`], with `out` filled with the reason, when `platform`
-///   names no platform or the platform could not open a window.
+///   names no platform, `title_bar` names no title bar, or the platform
+///   could not open a window.
 /// - [`WINDOW_UNDRAWN`], with `out` filled with the reason, when the window
 ///   ran but nothing drew in it: its renderer could not be made, or the
 ///   render thread did not end well.
@@ -1070,19 +1079,24 @@ pub const WINDOW_UNDRAWN: u8 = 2;
 pub unsafe extern "C" fn editor_ffi_window_run(
     platform: u8,
     composition: bool,
+    title_bar: u8,
     present_mode: u8,
     frame_latency: u32,
     out: *mut RawRefusal,
 ) -> u8 {
-    let (status, reason) = match PlatformId::from_tag(platform) {
-        None => (
+    let (status, reason) = match (PlatformId::from_tag(platform), title_bar_of(title_bar)) {
+        (None, _) => (
             WINDOW_REFUSED,
             "the Rust library knows no such platform".to_owned(),
         ),
-        Some(platform) => {
+        (_, None) => (
+            WINDOW_REFUSED,
+            "the Rust library knows no such title bar".to_owned(),
+        ),
+        (Some(platform), Some(title_bar)) => {
             let options = WindowOptions {
                 composition,
-                ..WindowOptions::default()
+                title_bar,
             };
             let presentation = asked_presentation(present_mode, frame_latency);
             let request = Request::RunWindow {
@@ -1107,6 +1121,54 @@ pub unsafe extern "C" fn editor_ffi_window_run(
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(RawRefusal { reason, reason_len }) };
     status
+}
+
+/// The title bar Lean's tag `tag` names: 0 themed, 1 standard.
+pub fn title_bar_of(tag: u8) -> Option<TitleBar> {
+    match tag {
+        TITLE_BAR_THEMED => Some(TitleBar::Themed),
+        TITLE_BAR_STANDARD => Some(TitleBar::Standard),
+        _ => None,
+    }
+}
+
+/// The tag of `title_bar`, as [`title_bar_of`] reads it.
+fn title_bar_tag(title_bar: TitleBar) -> u8 {
+    match title_bar {
+        TitleBar::Themed => TITLE_BAR_THEMED,
+        TitleBar::Standard => TITLE_BAR_STANDARD,
+    }
+}
+
+/// Writes to `out` what the scripted window of `platform` was opened with
+/// in its latest run ([`ScriptedPlatform::runs`]): status 0 and the words
+/// `[composition, title bar]`, composition 1 when allowed and the title
+/// bar's tag ([`title_bar_of`]); no words before any run. For the real
+/// platform, which records nothing, and for a tag that names no platform,
+/// status 1 and no words. For tests.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawWords`](crate::log::RawWords).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_window_opened_with(
+    platform: u8,
+    out: *mut crate::log::RawWords,
+) {
+    let scripted = PlatformId::from_tag(platform).and_then(PlatformId::scripted);
+    let raw = match scripted {
+        None => crate::log::RawWords::with_status(1, Vec::new()),
+        Some(scripted) => {
+            let mut writer = words::Writer::with_capacity(2);
+            if let Some(options) = scripted.runs().last() {
+                writer.word(u64::from(options.composition));
+                writer.word(u64::from(title_bar_tag(options.title_bar)));
+            }
+            crate::log::RawWords::with_status(0, writer.finish())
+        }
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
 }
 
 /// Asks the window the platform `platform` is running to close, from any
@@ -1655,34 +1717,53 @@ mod tests {
     }
 
     #[test]
-    fn a_resize_is_its_width_its_height_the_bits_of_its_scale_and_its_corner_clearance() {
+    fn a_resize_is_its_width_its_height_the_bits_of_its_scale_its_corner_clearance_and_its_top_inset()
+     {
+        let resize = Resize {
+            width: 800,
+            height: 600,
+            scale: 2.0,
+            fullscreen: false,
+            corner_clearance: 16,
+            top_inset: 32,
+        };
         assert_eq!(
-            encoded(Input::Resized(Resize {
-                width: 800,
-                height: 600,
-                scale: 2.0,
-                fullscreen: false,
-                corner_clearance: 16,
-                top_inset: 0,
-            })),
+            encoded(Input::Resized(resize)),
             (
                 EventKind::Resize,
                 0,
                 String::new(),
-                vec![800, 600, bits(2.0), 16]
+                vec![800, 600, bits(2.0), 16, 32]
             )
+        );
+        assert_eq!(
+            read(EventKind::Resize, 0, "", &[800, 600, bits(2.0), 16, 32]),
+            Some(Input::Resized(resize))
         );
     }
 
     #[test]
-    fn a_resize_of_three_words_or_a_corner_clearance_past_a_u32_is_refused() {
+    fn a_resize_of_four_words_or_a_top_inset_past_a_u32_is_refused() {
         assert_eq!(read(EventKind::Resize, 0, "", &[800, 600, bits(2.0)]), None);
+        assert_eq!(
+            read(EventKind::Resize, 0, "", &[800, 600, bits(2.0), 16]),
+            None
+        );
         assert_eq!(
             read(
                 EventKind::Resize,
                 0,
                 "",
-                &[800, 600, bits(2.0), u64::from(u32::MAX) + 1]
+                &[800, 600, bits(2.0), u64::from(u32::MAX) + 1, 0]
+            ),
+            None
+        );
+        assert_eq!(
+            read(
+                EventKind::Resize,
+                0,
+                "",
+                &[800, 600, bits(2.0), 16, u64::from(u32::MAX) + 1]
             ),
             None
         );
@@ -1704,7 +1785,7 @@ mod tests {
                 EventKind::Resize,
                 RESIZE_FULLSCREEN,
                 String::new(),
-                vec![1440, 900, bits(2.0), 0]
+                vec![1440, 900, bits(2.0), 0, 0]
             )
         );
     }
@@ -1758,6 +1839,17 @@ mod tests {
         // No tag names a title: Lean never asks for one.
         assert_eq!(request_of(5), None);
         assert_eq!(request_of(u8::MAX), None);
+    }
+
+    #[test]
+    fn each_title_bar_is_its_tag_and_an_unknown_tag_is_refused() {
+        assert_eq!(title_bar_of(0), Some(TitleBar::Themed));
+        assert_eq!(title_bar_of(1), Some(TitleBar::Standard));
+        assert_eq!(title_bar_of(2), None);
+        assert_eq!(title_bar_of(u8::MAX), None);
+        for title_bar in [TitleBar::Themed, TitleBar::Standard] {
+            assert_eq!(title_bar_of(title_bar_tag(title_bar)), Some(title_bar));
+        }
     }
 
     #[test]

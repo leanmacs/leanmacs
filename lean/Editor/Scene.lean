@@ -145,6 +145,9 @@ structure Padding where
   /-- The inset of the text rows from the view's top and from the top of its
   status row (its bottom when it has none). -/
   down : Nat := 0
+  /-- The further inset of the text rows from the view's top, beyond `down`:
+  what a window's title bar covers of a view along the frame's top edge. -/
+  top : Nat := 0
   deriving DecidableEq, Repr
 
 /-- The name of a view in a scene. -/

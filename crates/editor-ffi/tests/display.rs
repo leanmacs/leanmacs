@@ -89,16 +89,16 @@ fn rows(
     height: u64,
     anchor: usize,
 ) -> Result<Vec<(usize, usize)>, u64> {
-    rows_padded(display, snapshot, width, height, (0, 0), anchor)
+    rows_padded(display, snapshot, width, height, (0, 0, 0), anchor)
 }
 
-/// [`rows`] of a view padded `padding` points across and down.
+/// [`rows`] of a view padded `padding` points across, down and top.
 fn rows_padded(
     display: *const editor_ffi::display::Display,
     snapshot: *const Snapshot,
     width: u64,
     height: u64,
-    padding: (u64, u64),
+    padding: (u64, u64, u64),
     anchor: usize,
 ) -> Result<Vec<(usize, usize)>, u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
@@ -111,6 +111,7 @@ fn rows_padded(
             height,
             padding.0,
             padding.1,
+            padding.2,
             anchor,
             raw.as_mut_ptr(),
         );
@@ -635,8 +636,31 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
         "the long line wraps at 128: {expected:?}"
     );
     assert_eq!(
-        rows_padded(display, padded, 160, 96, (8, 8), 0),
+        rows_padded(display, padded, 160, 96, (8, 8, 0), 0),
         Ok(expected)
+    );
+    // A top inset of 8 points takes 16 pixels more off the height, once:
+    // 48 holds one row of 32.
+    let under = layout
+        .rows_shown(
+            &direct,
+            160.0,
+            96.0,
+            Padding {
+                across: 8,
+                down: 8,
+                top: 8,
+            },
+            0,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.start, row.stop))
+        .collect::<Vec<_>>();
+    assert_eq!(under.len(), 1, "{under:?}");
+    assert_eq!(
+        rows_padded(display, padded, 160, 96, (8, 8, 8), 0),
+        Ok(under)
     );
     let along = layout.lines_from(&direct, 160.0, 8, 2, 1, None).unwrap();
     assert_eq!(

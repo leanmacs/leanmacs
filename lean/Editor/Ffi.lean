@@ -256,7 +256,7 @@ arrives on the editor queue.
   |---|---|---|
   | `key` | Bit 0 pressed, bit 1 repeat, bit 2 dead, bit 3 the interrupt mark ("The interrupt flag") | `[logical tag, n, n scalars, physical tag, m, m scalars, modifiers]`; logical 0 unidentified, 1 character, 2 named (a W3C UI Events `key` name), 3 dead (n is 0 or 1); physical 0 unidentified, 1 a W3C UI Events `code` |
   | `pointer` | 0 press, 1 drag, 2 release, 3 wheel | `[x, y, button tag, other, modifiers, delta tag, dx, dy]`; button 0 none, 1 primary, 2 secondary, 3 middle, 4 back, 5 forward, 6 another (its number in `other`); delta 0 none, 1 lines, 2 pixels |
-  | `resize` | Bit 0 in fullscreen | `[width, height, scale, corner clearance]`; the corner clearance in whole logical points |
+  | `resize` | Bit 0 in fullscreen | `[width, height, scale, corner clearance, top inset]`; the corner clearance and the top inset in whole logical points |
   | `openFiles` | 0 | `[n, then for each of the n paths: m, m scalars]`; the text is empty |
 
   The modifiers are bits: shift 1, control 2, alt 4, super 8. A float
@@ -272,7 +272,8 @@ arrives on the editor queue.
   blocks, and it goes through the window's own loop, not the main-thread
   service, which still answers nothing else while the window runs. Whether
   the window is in fullscreen comes back on every resize, bit 0 of its
-  code, and how far in its rounded corners reach as its fourth word. The title is no request: it is the scene's (`Scene.title`), and the
+  code, how far in its rounded corners reach as its fourth word, and how
+  far down its title bar covers it as its fifth. The title is no request: it is the scene's (`Scene.title`), and the
   library sends it to the window when it changes. `windowAsked` reads what
   a scripted window was asked, for tests.
 - The platform is an enumeration (`Platform`). The scripted ones are the
@@ -1770,11 +1771,23 @@ private structure RawWindowRun where
   /-- How the run ended. -/
   status : UInt64
 
-/-- `windowRun` as it crosses. The present mode is its tag and the frame
-latency a number, each 0 for none asked. -/
+/-- The title bar a window opens with (`editor_ffi_window_run`'s tags 0 and
+1, in this order). -/
+inductive TitleBar where
+  /-- The drawable area extends under a title bar that draws no background
+  of its own, so what is drawn there shows through: the window says how far
+  down it covers the drawable area on every resize. A platform with no such
+  title bar opens a standard one. -/
+  | themed
+  /-- The system's own title bar, above the drawable area. -/
+  | standard
+  deriving DecidableEq, Repr, Inhabited
+
+/-- `windowRun` as it crosses. The title bar is its tag, the present mode
+its tag and the frame latency a number, each 0 for none asked. -/
 @[extern "editor_glue_window_run"]
-private opaque windowRunRaw (platform : Platform) (composition : Bool) (presentMode : UInt8)
-    (frameLatency : UInt32) : IO RawWindowRun
+private opaque windowRunRaw (platform : Platform) (composition : Bool) (titleBar : TitleBar)
+    (presentMode : UInt8) (frameLatency : UInt32) : IO RawWindowRun
 
 /-- How a window that opened ran, once it has closed. -/
 structure WindowRan where
@@ -1786,7 +1799,8 @@ structure WindowRan where
   deriving DecidableEq, Repr
 
 /-- Runs the window on `platform`, with an input method allowed to compose
-or not, and returns once the window has closed: `.ok` when it ran, saying
+or not and the title bar `titleBar`, and returns once the window has
+closed: `.ok` when it ran, saying
 why nothing drew in it when nothing did, and `.error` with the reason when
 no window could be opened.
 
@@ -1806,9 +1820,10 @@ While the window is open, what a display bound to the presenter publishes
 ask for a present mode and a frame latency in place of the renderer's
 decision, to measure them; `none` is the decision. -/
 def windowRun (platform : Platform) (composition : Bool) (presentMode : Option PresentMode := none)
-    (frameLatency : Option Nat := none) : IO (Except String WindowRan) := do
+    (frameLatency : Option Nat := none) (titleBar : TitleBar := .themed) :
+    IO (Except String WindowRan) := do
   let latency := (frameLatency.getD 0).toUInt32
-  let raw ← windowRunRaw platform composition (PresentMode.tag presentMode) latency
+  let raw ← windowRunRaw platform composition titleBar (PresentMode.tag presentMode) latency
   return match raw.status with
     | 0 => .ok {}
     | 2 => .ok { nothingDrew := some raw.reason }
@@ -1894,6 +1909,36 @@ def windowAsked (platform : Platform) : IO (Option (Array WindowAsked)) := do
   let some words := wordsOf? raw.words | throw problem
   let some asked := askedOf words | throw problem
   return some asked
+
+/-- `windowOpenedWith` as it crosses. -/
+@[extern "editor_glue_window_opened_with"]
+private opaque windowOpenedWithRaw (platform : Platform) : IO RawWords
+
+/-- What the scripted window of `platform` was opened with in its latest
+run: whether an input method could compose, and its title bar. `none` for
+the real platform, which records nothing, and before any run. A readout for
+tests. -/
+def windowOpenedWith (platform : Platform) : IO (Option (Bool × TitleBar)) := do
+  let raw ← windowOpenedWithRaw platform
+  if raw.status != 0 then
+    return none
+  let problem := IO.userError "the library's record of a run is not its words"
+  let some words := wordsOf? raw.words | throw problem
+  match words with
+  | #[] =>
+    return none
+  | #[composition, titleBar] =>
+    let titleBar ←
+      match titleBar with
+      | 0 =>
+        pure TitleBar.themed
+      | 1 =>
+        pure .standard
+      | _ =>
+        throw problem
+    return some (composition == 1, titleBar)
+  | _ =>
+    throw problem
 
 /-- `postInput` as it crosses: the words as bytes. -/
 @[extern "editor_glue_window_post_input"]
@@ -2054,17 +2099,18 @@ private def rowsOf? (raw : RawWords) : IO (Option (Array DisplayRow)) := do
 /-- `Display.rows` as it crosses: the answer as words, and its status. -/
 @[extern "editor_glue_display_rows"]
 private opaque Display.rowsRaw (display : @& Display) (snapshot : @& Snapshot)
-    (width height across down : UInt64) (anchor : USize) : IO RawWords
+    (width height across down top : UInt64) (anchor : USize) : IO RawWords
 
 /-- The rows a view `width` pixels wide and `height` tall, its content inset
-`across` and `down` points from its edges, shows of `snapshot`, from the
-visual row that holds `anchor`: as many as fit whole, fewer at the end of
-the text. The library takes the padding off at the scale it lays out at,
-as its frames take it off; a padding no `u32` holds is the largest. `none`
-when `anchor` is not a position of the text. -/
+`across` and `down` points from its edges and its rows a further `top`
+points from its top, shows of `snapshot`, from the visual row that holds
+`anchor`: as many as fit whole, fewer at the end of the text. The library
+takes the padding off at the scale it lays out at, as its frames take it
+off; a padding no `u32` holds is the largest. `none` when `anchor` is not a
+position of the text. -/
 def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64) (anchor : USize)
-    (across down : UInt64 := 0) : IO (Option (Array DisplayRow)) := do
-  rowsOf? (← display.rowsRaw snapshot width height across down anchor)
+    (across down top : UInt64 := 0) : IO (Option (Array DisplayRow)) := do
+  rowsOf? (← display.rowsRaw snapshot width height across down top anchor)
 
 /-- `Display.move` as it crosses: the lines as a 64-bit two's complement
 number, the goal as a presence flag and a value, and the answer as words. -/

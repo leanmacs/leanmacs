@@ -59,8 +59,8 @@
 //! - where a move goes ([`editor_ffi_display_move`]): the position, and the
 //!   goal to pass to the next move, in whole pixels.
 //!
-//! Each question carries the view's padding in whole points (across and
-//! down for the rows, across for a move), because it is the view's and
+//! Each question carries the view's padding in whole points (across, down
+//! and top for the rows, across for a move), because it is the view's and
 //! not the display's: the scale is one for the display and set by the
 //! presenter, while a window and the minibuffer's view are padded
 //! differently. Layout takes the points off at the scale the display lays
@@ -736,8 +736,9 @@ pub unsafe extern "C" fn editor_ffi_display_define(
 }
 
 /// Fills `out` with the rows of `snapshot` a view `width` pixels wide and
-/// `height` tall, its content inset `across` and `down` points (taken off
-/// at the display's scale; [`Display::rows`]), shows from `anchor`: their
+/// `height` tall, its content inset `across` and `down` points and its
+/// rows a further `top` points from its top (taken off at the display's
+/// scale; [`Display::rows`]), shows from `anchor`: their
 /// count, then a start and a stop for each; or with
 /// [`DisplayStatus::BadPosition`]. A padding no `u32` holds is the
 /// largest.
@@ -755,6 +756,7 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
     height: u64,
     across: u64,
     down: u64,
+    top: u64,
     anchor: usize,
     out: *mut RawWords,
 ) {
@@ -763,7 +765,7 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
     let padding = Padding {
         across: points(across),
         down: points(down),
-        top: 0,
+        top: points(top),
     };
     let raw = answered(
         display.rows(snapshot, width, height, padding, anchor),
