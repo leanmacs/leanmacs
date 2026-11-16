@@ -18,8 +18,10 @@
 #    `$LEANMACS_APPLICATIONS` (for testing on a scratch prefix only);
 # 5. moves any existing config directory aside to `<dir>.backup-<ts>` and
 #    installs the fixture `tests/headless/finder-session/config` in its
-#    place: `$XDG_CONFIG_HOME/leanmacs`, or `$HOME/.config/leanmacs` when
-#    that variable is unset or empty, as the editor reads it;
+#    place, `$HOME/.config/leanmacs`. It refuses when this shell's
+#    `XDG_CONFIG_HOME` is set, not empty and not `$HOME/.config`: the app
+#    opened from Finder gets launchd's environment, not this shell's, and
+#    would not see it;
 # 6. prints what it did and the commands that undo it.
 #
 # It removes nothing, uses no `sudo`, and opens, registers or runs nothing:
@@ -53,8 +55,14 @@ echo "finder-session-prepare: commit $(git -C "$repo" rev-parse HEAD)"
 
 ts=$(date +%Y%m%d-%H%M%S)
 apps=${LEANMACS_APPLICATIONS:-/Applications}
-cfg_home=${XDG_CONFIG_HOME:-$HOME/.config}
-cfg="$cfg_home/leanmacs"
+# An app opened from Finder gets launchd's environment, not this shell's, so
+# it reads `$HOME/.config/leanmacs` even when this shell exports another
+# `XDG_CONFIG_HOME`: installing there would put the config where the app
+# never looks.
+if [ -n "${XDG_CONFIG_HOME:-}" ] && [ "$XDG_CONFIG_HOME" != "$HOME/.config" ]; then
+  fail "XDG_CONFIG_HOME is $XDG_CONFIG_HOME in this shell, but the app opened from Finder gets launchd's environment and will not see it: it reads $HOME/.config/leanmacs. Run \`unset XDG_CONFIG_HOME\`, or \`launchctl setenv XDG_CONFIG_HOME $XDG_CONFIG_HOME\` so the app sees it too, then run this again"
+fi
+cfg="$HOME/.config/leanmacs"
 app="$apps/Leanmacs.app"
 app_backup="$app.backup-$ts"
 cfg_backup="$cfg.backup-$ts"

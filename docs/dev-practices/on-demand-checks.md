@@ -123,8 +123,10 @@ mise run finder-session-prepare
 This prepares the owner's session with the installed app, on macOS on
 arm64 only. After `mise run app-check`, on a checkout with no uncommitted
 changes, `tools/prepare-finder-session.sh` moves any existing
-`/Applications/Leanmacs.app` and `~/.config/leanmacs` (or
-`$XDG_CONFIG_HOME/leanmacs`) aside to `<name>.backup-<timestamp>`, installs
+`/Applications/Leanmacs.app` and `~/.config/leanmacs` aside to
+`<name>.backup-<timestamp>` (it refuses while the shell exports an
+`XDG_CONFIG_HOME` other than `~/.config`, which an app opened from Finder,
+started with launchd's environment, would not see), installs
 the built bundle with `ditto` and verifies its signature, installs the
 config fixture `tests/headless/finder-session/config` (which the gate runs
 headless, [`the-gate.md`](the-gate.md)), and prints the commands that

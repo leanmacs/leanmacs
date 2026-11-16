@@ -67,15 +67,18 @@ the filled list into the phase body.
     fullscreen. **Seen:** ____
 11. Cmd-M, then click the window in the Dock. **Expect:** it minimises to
     the Dock, and comes back drawing its text. **Seen:** ____
-12. Look at the title, then `:e /tmp/finder-session-2.txt` Return.
-    **Expect:** the title is `finder-session.txt`, then
-    `finder-session-2.txt`. Then `:q` to close (`:q!` is not offered: save
-    or revert first). **Seen:** ____
+12. Look at the title, then `:w` Return, which saves the edits of steps 2
+    to 4 (`:q` refuses a buffer with unsaved changes, and there is no
+    `:q!`), then `:e /tmp/finder-session-2.txt` Return. **Expect:** the
+    title is `finder-session.txt`, then `finder-session-2.txt`. Then `:q`
+    Return. **Expect:** the window closes. **Seen:** ____
 
 ### Opening from Finder and the Dock (phase 5)
 
 With the installed `/Applications/Leanmacs.app`. Quit it before each step
-that starts with it not running.
+that starts with it not running: `:q` Return. No step from here to 19
+edits a buffer, so `:q` is never refused; after step 20 the edit is saved
+before anything quits.
 
 13. **First, the minos risk** (task `macos-app-minos-platform-version`: the
     executable records `minos 99.0` against `LSMinimumSystemVersion` 27.2).
@@ -121,7 +124,7 @@ On the bundle installed by step 0, with config from `~/.config/leanmacs`.
 21. The config command: `:finder-hello` Return; then, separately,
     Control-c then `h`. **Expect:** the echo area shows
     `finder-session: config loaded` each time, so config from
-    `~/.config/leanmacs` (or `$XDG_CONFIG_HOME/leanmacs`) loaded.
+    `~/.config/leanmacs` loaded.
     **Seen:** ____
 22. Ctrl-Cmd-F, then again. **Expect:** it enters fullscreen, then leaves
     it. **Seen:** ____
@@ -142,8 +145,7 @@ prints these commands with the real paths):
   `mv /Applications/Leanmacs.app.backup-<ts> /Applications/Leanmacs.app`.
 - Config: `mv ~/.config/leanmacs ~/.config/leanmacs.finder-session-<ts>`
   and, if a backup was made,
-  `mv ~/.config/leanmacs.backup-<ts> ~/.config/leanmacs` (with
-  `$XDG_CONFIG_HOME` in place of `~/.config` if it is set).
+  `mv ~/.config/leanmacs.backup-<ts> ~/.config/leanmacs`.
 
 Nothing is deleted by these steps; remove the set-aside copies by hand when
 satisfied.

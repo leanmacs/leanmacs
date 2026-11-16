@@ -106,8 +106,11 @@ timestamped backups, and installs a small config to try
 
 - The app holds its own toolchain modules
   ([building.md](docs/dev-practices/building.md), "The app bundle").
-- It reads config from `~/.config/leanmacs`, or `$XDG_CONFIG_HOME/leanmacs`
-  when that is set, never from `~/Library/Application Support`. A config
+- It reads config from `~/.config/leanmacs`, never from
+  `~/Library/Application Support`. Opened from Finder it gets launchd's
+  environment, not your shell's, so an `XDG_CONFIG_HOME` exported in the
+  shell does not reach it (`launchctl setenv` does);
+  `finder-session-prepare` refuses while one is exported. A config
   chunk may import only what `Editor` imports.
 - Finder offers it under Open With for plain text and source code, and it
   opens a file dropped on its Dock icon. `.lean` files are not offered yet.
