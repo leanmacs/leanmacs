@@ -133,9 +133,12 @@ does: the workspace is rooted right but is its own project, with no branch.
   as an install drops the cache of children's environments. Reloading a
   buffer from its file leaves its workspace.
 - **A buffer with no file** takes the workspace of the buffer it was made
-  from (`BufferId.inheritWorkspace`), or none. The buffers that are made
-  from buffers, the shell output and the compilation buffer, arrive with
-  the phases that make them.
+  from (`BufferId.inheritWorkspace`), or none. A workspace's shell output
+  buffer, `*shell output: <label>*`, is made with the workspace of the
+  buffer `:!` ran in (`lean/Editor/Shell.lean`), so a `:!` typed in it
+  runs in that workspace again; outside any workspace it is `*shell
+  output*`, with none. The compilation buffer arrives with the phase that
+  makes it.
 
 ## What lives where
 
@@ -186,10 +189,13 @@ open when the table has it: found or registered this session.
   new step of the finder (a step of `Workspace.find`, a clause of
   `World.find` and a contract property).
 - `acp-agents`: a session's workspace, registered when it is not local.
-- `shell-and-compile` phases 2 to 6: `:!` and `compile` run in the
-  workspace's root, and refuse to run locally for a location that cannot
-  run commands; their history is the project's, their buffers the
-  workspace's.
+- `shell-and-compile` phase 2 (built): `:!` runs in the workspace's root,
+  or the file's directory, or the editor's working directory, and refuses
+  to run for a location that cannot run commands; its history is the
+  project's (`Shell.historyStore`), its output buffer and what it runs the
+  workspace's (`Shell.outputStore`, `Shell.runningStore`), each in the
+  unscoped store for a buffer outside any workspace. Phases 3 to 6:
+  `compile`, the same way.
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)
   and `remote-workspace-execution` (running in a `reachable` location).
 

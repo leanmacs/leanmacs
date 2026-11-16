@@ -170,6 +170,11 @@ def rangeOf : List Char → Option (Range × List Char)
     | some start, rest => some ({ start, stop := start }, rest)
     | none, _ => none
 
+/-- `line` with the white space round it dropped. -/
+def trimmed (line : String) : String :=
+  let blank (char : Char) : Bool := char.isWhitespace
+  String.ofList ((line.toList.dropWhile blank).reverse.dropWhile blank).reverse
+
 /-- The ex line `line` is ("The line", in the module docs): its range, if it
 starts with one; then, for `!` first after it, the bang form, named `!`,
 with the rest as its argument; otherwise its first word as the name and the
@@ -177,7 +182,7 @@ rest as the argument, with the white space round each dropped. `none` for a
 line that is empty or all white space. -/
 def parse (line : String) : Option Line :=
   let blank (char : Char) : Bool := char.isWhitespace
-  let trimmed := ((line.toList.dropWhile blank).reverse.dropWhile blank).reverse
+  let trimmed := (Ex.trimmed line).toList
   if trimmed.isEmpty then none
   else
     let (range, rest) :=

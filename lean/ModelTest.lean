@@ -43,6 +43,7 @@ import Editor.Process.Model
 import Editor.Role
 import Editor.Scene
 import Editor.Scroll
+import Editor.Shell.Compiled
 import Editor.State
 import Editor.State.Request
 import Editor.Text.Contract
@@ -26687,53 +26688,65 @@ command checks' jobs. -/
 def workspaceJobs (name : String) : Option (List Argument → Work) :=
   if name == Workspace.findJob then some Workspace.findWork else fileJobs Files.limit name
 
-/-- What a step of the workspace driver checks is handed: `C-o a`, `C-o b`
+/-- The bindings of the workspace driver checks: `C-o a`, `C-o b`
 and `C-o c` open `a.lean`, `b.lean` and `c.lean` in `/r/src`, `C-o w`
 opens `/w/src/b.lean` and `C-o x` opens `/x/a.txt`; `C-o i` runs
 `workspace-current`; `C-o n` makes a buffer `made` that inherits the
 workspace of the window's buffer, and a buffer `bare` that does not. -/
-def workspaceKeys : Loop.Keys TestScheme.scheme :=
-  dispatchKeys
-    [("C-o a", opens "/r/src/a.lean"), ("C-o b", opens "/r/src/b.lean"),
-      ("C-o c", opens "/r/src/c.lean"), ("C-o w", opens "/w/src/b.lean"),
-      ("C-o x", opens "/x/a.txt"), ("C-o i", invoke Workspace.currentName),
-      ("C-o n", invoke "inherit")]
-    [(Files.openName, fun call => do
-        Files.openCommand call
-        return none),
-      (Workspace.currentName, fun call => do
-        Workspace.currentCommand call
-        return none),
-      ("inherit", fun call => do
-        if let .ok made← createBuffer "made" then
-          discard <| made.inheritWorkspace call.target.window.buffer
-        discard <| createBuffer "bare"
-        return none)]
+def workspaceBindings : List (String × Invocation) :=
+  [("C-o a", opens "/r/src/a.lean"), ("C-o b", opens "/r/src/b.lean"),
+    ("C-o c", opens "/r/src/c.lean"), ("C-o w", opens "/w/src/b.lean"), ("C-o x", opens "/x/a.txt"),
+    ("C-o i", invoke Workspace.currentName), ("C-o n", invoke "inherit")]
 
-/-- A driver with the keys of the workspace driver checks and the jobs
-`registered`, whose jobs meet the processes and the files of
-`workspaceWorld` for its three directories, with the files the keys open;
-`none` if making the state was refused. -/
-def workspaceDriver (registered : String → Option (List Argument → Work) := workspaceJobs) :
-    Option TestDriver :=
+/-- The commands of the workspace driver checks, by name: the open command,
+`workspace-current` and `inherit` (`workspaceBindings`). -/
+def workspaceCommands : List (String × Dispatched) :=
+  [(Files.openName, fun call => do
+      Files.openCommand call
+      return none),
+    (Workspace.currentName, fun call => do
+      Workspace.currentCommand call
+      return none),
+    ("inherit", fun call => do
+      if let .ok made← createBuffer "made" then
+        discard <| made.inheritWorkspace call.target.window.buffer
+      discard <| createBuffer "bare"
+      return none)]
+
+/-- The keys of the workspace driver checks (`workspaceBindings`,
+`workspaceCommands`). -/
+def workspaceKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys workspaceBindings workspaceCommands
+
+/-- A driver with the keys `keys`, those of the workspace driver checks by
+default, and the jobs `registered`, whose jobs meet the processes and the
+files of `workspaceWorld` for its three directories, with the files the
+keys open, and two more in `/r/src` for the shell checks' filters; `none`
+if making the state was refused. -/
+def workspaceDriver (registered : String → Option (List Argument → Work) := workspaceJobs)
+    (keys : Loop.Keys TestScheme.scheme := workspaceKeys) : Option TestDriver :=
   let model := workspaceWorld.jobModel "git" #["/r/src", "/w/src", "/x"]
   let files :=
     [("/r/src/a.lean", "a"), ("/r/src/b.lean", "b"), ("/r/src/c.lean", "c"), ("/w/src/b.lean", "w"),
-          ("/x/a.txt", "x")].foldl
+          ("/x/a.txt", "x"), ("/r/src/s.txt", "b\nc\na\n"), ("/r/src/t.txt", "d\nb\nc\na")].foldl
       (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
-  (Loop.Driver.over workspaceKeys registered (EditorState.initial ⟨640, 480⟩)
-        editorModel).toOption.map
+  (Loop.Driver.over keys registered (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := { model with files } }
 
-/-- `driver` once `keys` are pressed and every job they start, and every job
+/-- `driver` once `events` are fed and every job they start, and every job
 those jobs' commands start, is finished, oldest first. -/
-def settledAfter (driver : TestDriver) (keys : String) : TestDriver :=
+def settledOn (driver : TestDriver) (events : List Event) : TestDriver :=
   (List.range 8).foldl
     (fun driver _ =>
       match driver.pending[0]? with
       | some job => (driver.finish job.id).1
       | none => driver)
-    (fedTo driver (presses keys)).1
+    (fedTo driver events).1
+
+/-- `driver` once `keys` are pressed and every job they start, and every job
+those jobs' commands start, is finished, oldest first. -/
+def settledAfter (driver : TestDriver) (keys : String) : TestDriver :=
+  settledOn driver (presses keys)
 
 /-- The workspace of the buffer the view 0 of `driver` shows, and its
 project. -/
@@ -26916,6 +26929,292 @@ def workspaceChecks : List Check :=
               (Workspace.FindOrder.ofArguments? · == none) &&
             ((Workspace.findWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
 
+/-- The jobs of the shell checks: the workspace driver checks', and the
+shell's run job. -/
+def shellJobs (name : String) : Option (List Argument → Work) :=
+  if name == Shell.runJob then some Shell.runWork else workspaceJobs name
+
+/-- `/bin/sh -c text` in `directory`: the child a `:!` line runs. -/
+def shellCommand (directory : System.FilePath) (text : String) : Process.Command :=
+  { program := "/bin/sh", arguments := #["-c", text], directory }
+
+/-- A run of a shell checks' child that wrote `stdout` and `stderr` and
+ended as `exit`. -/
+def shellReply (stdout : String) (stderr : String := "") (exit : Process.Exit := .code 0) :
+    Except ProcessError Process.Ran :=
+  .ok { exit, stdout := stdout.toUTF8, stderr := stderr.toUTF8 }
+
+/-- What each child of the shell checks does. -/
+def shellScripts : Array Process.Script :=
+  #[{ command := shellCommand "/r" "make", reply := shellReply "" },
+    { command := shellCommand "/x" "make", reply := shellReply "" },
+    { command := shellCommand "/home/ada" "make", reply := shellReply "" },
+    { command := shellCommand "/r" "echo hi", reply := shellReply "hi\n" },
+    { command := shellCommand "/r" "fail", reply := shellReply "hi\n" "" (.code 3) },
+    { command := shellCommand "/r" "true", reply := shellReply "" },
+    { command := shellCommand "/r" "build", reply := shellReply "l1\nl2\n" "warn" (.code 2) },
+    { command := shellCommand "/r" "rebuild", reply := shellReply "again\nand again\n" },
+    { command := shellCommand "/r" "warn", reply := shellReply "one\n" "careful\n" },
+    { command := shellCommand "/w" "build", reply := shellReply "w1\nw2\n" },
+    { command := shellCommand "/x" "ls -l", reply := shellReply "a.txt\nb.txt\n" },
+    { command := shellCommand "/r" "sleep 40", reply := shellReply "", takes := 40000 }]
+
+/-- The keys of the shell checks: the workspace driver checks', and `C-e e`
+and `C-e y`, the ex line and its accept key (`exLine`); `C-e k` gives the
+window's buffer a workspace registered as reachable through `kube`, which
+cannot run commands; `C-e u` undoes in the window's buffer; and `C-o s`
+and `C-o t` open `/r/src/s.txt` and `/r/src/t.txt`. -/
+def shellKeys : Loop.Keys TestScheme.scheme :=
+  let compiled : List (String × Dispatched) :=
+    (Ex.commands ++ Minibuffer.commands ++ Shell.commands).toList.filterMap fun registration =>
+      match registration.action with
+      | .call run =>
+        some
+          (registration.name, fun call => do
+            run call
+            return none)
+      | _ => none
+  dispatchKeys
+    (workspaceBindings ++
+      [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName), ("C-e k", invoke "kube"),
+        ("C-e u", invoke "undo"), ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")])
+    (workspaceCommands ++ compiled ++
+      [("kube", fun call => do
+          let location := Location.reachable "kube" "pod" "/app"
+          discard <| Workspace.register location workspaceOrigin
+          Workspace.setBufferWorkspace call.target.window.buffer location
+          return none),
+        ("undo", fun call => do
+          discard <| call.target.window.buffer.undo
+          return none)])
+
+/-- A driver of the shell checks: the workspace driver's world, with the
+shell's keys and jobs, and the children of `shellScripts`; `none` if
+making the state was refused. -/
+def shellDriver : Option TestDriver :=
+  (workspaceDriver shellJobs shellKeys).map fun driver =>
+    { driver with
+      jobs :=
+        { driver.jobs with
+          processes :=
+            { driver.jobs.processes with
+              scripts := driver.jobs.processes.scripts ++ shellScripts } } }
+
+/-- `driver` once the ex line `line` is run and every job it starts is
+finished. -/
+def shellRan (driver : TestDriver) (line : String) : TestDriver :=
+  settledOn driver (exLine line)
+
+/-- The text of the buffer `id` in `driver`'s text model. -/
+def bufferText (driver : TestDriver) (id : BufferId) : Option String := do
+  let buffer ← driver.loop.state.buffer? id
+  (driver.model.texts.texts[buffer.text.index]?).join.map (·.contents)
+
+/-- The text of the buffer called `name` in `driver`. -/
+def namedText (driver : TestDriver) (name : String) : Option String := do
+  bufferText driver (← driver.loop.state.findBuffer name)
+
+/-- The names of `driver`'s buffers that are shell output buffers. -/
+def outputBuffers (driver : TestDriver) : Array String :=
+  (driver.loop.state.buffers.filterMap id).map (·.name) |>.filter (·.startsWith "*shell output")
+
+/-- The checks of `:!` (`Editor/Shell.lean`), on the loop's driver over the
+editor's models, the job model and the process model, in the world of the
+workspace driver checks: a main checkout `/r`, a linked worktree `/w` of one
+project, and `/x` in none. -/
+def shellChecks : List Check :=
+  let main : Option Location := some (.local "/r")
+  [{  name :=
+        "criterion 3: `:!make` runs /bin/sh -c make in the buffer's workspace root; in a buffer with no workspace, in its file's directory; in one with neither, in the editor's working directory"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let inR := shellRan (settledAfter driver "C-o a") "!make"
+            let inX := shellRan (settledAfter driver "C-o x") "!make"
+            let scratch :=
+              shellRan
+                { driver with
+                  loop :=
+                    { driver.loop with
+                      state := { driver.loop.state with workingDirectory := "/home/ada" } } }
+                "!make"
+            inR.jobs.processes.started.back? == some (shellCommand "/r" "make") &&
+              inX.jobs.processes.started.back? == some (shellCommand "/x" "make") &&
+              scratch.jobs.processes.started == #[shellCommand "/home/ada" "make"] },
+    { name :=
+        "criterion 4: one line of output and exit 0 puts the line in the echo area, and no output buffer is made; a status that is not 0 is said after the line, and no output says so"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let hi := shellRan opened "!echo hi"
+            echoOf hi == some "hi" && outputBuffers hi == #[] &&
+              (showing hi).map (·.buffer.name) == some "a.lean" &&
+              echoOf (shellRan opened "!fail") == some "hi [exit 3]" &&
+              echoOf (shellRan opened "!true") == some "!true: no output" },
+    { name :=
+        "criterion 5: two lines of output and anything on standard error open `*shell output: r@main*`, holding standard output, standard error and the exit status, with the workspace /r, shown in view 0; one line with standard error opens it too"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let built := shellRan opened "!build"
+            let warned := shellRan opened "!warn"
+            match built.loop.state.findBuffer "*shell output: r@main*", showing built with
+            | some id, some shown =>
+              shown.id == id && shown.text == some "l1\nl2\nwarn\n[exit 2]\n" &&
+                (built.loop.state.workspaceOf? id).map (·.1.location) == some (.local "/r") &&
+                namedText warned "*shell output: r@main*" == some "one\ncareful\n[exit 0]\n"
+            | _, _ => false },
+    { name :=
+        "criterion 6: a second run in the workspace replaces the text of the same output buffer, and makes no second one"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let first := shellRan (settledAfter driver "C-o a") "!build"
+            let second := shellRan (settledAfter first "C-o a") "!rebuild"
+            let id := first.loop.state.findBuffer "*shell output: r@main*"
+            id.isSome && second.loop.state.findBuffer "*shell output: r@main*" == id &&
+              (showing second).map (·.id) == id &&
+              namedText second "*shell output: r@main*" == some "again\nand again\n[exit 0]\n" &&
+              outputBuffers second == #["*shell output: r@main*"] },
+    { name :=
+        "criterion 7: in a buffer with no workspace, long output goes to `*shell output*` and the line to the editor-wide history; the project's history is left as it was"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let ran := shellRan (settledAfter (settledAfter driver "C-o a") "C-o x") "!ls -l"
+            let table := ran.loop.state.workspaces
+            namedText ran "*shell output*" == some "a.txt\nb.txt\n[exit 0]\n" &&
+              (showing ran).map (·.buffer.name) == some "*shell output*" &&
+              table.getUnscoped Shell.historyStore == #["!ls -l"] &&
+              table.getOfProject Shell.historyStore (.remote "github.com/o/r") == #[] },
+    { name :=
+        "criterion 8: runs in two worktrees of one repository open two output buffers, `*shell output: r@main*` and `*shell output: r@feature*`, each holding only its own run's output"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let inR := shellRan (settledAfter driver "C-o a") "!build"
+            let inW := shellRan (settledAfter inR "C-o w") "!build"
+            namedText inW "*shell output: r@main*" == some "l1\nl2\nwarn\n[exit 2]\n" &&
+              namedText inW "*shell output: r@feature*" == some "w1\nw2\n[exit 0]\n" &&
+              outputBuffers inW == #["*shell output: r@main*", "*shell output: r@feature*"] },
+    { name :=
+        "criterion 9: a `:!` line run in one worktree is offered first by the ex prompt in the other worktree's buffer, before the bound ex names; the history is the project's, newest first, each line once"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let ran := shellRan (shellRan (settledAfter driver "C-o a") "!make") "!echo hi"
+            let again := shellRan ran "!make"
+            let asked := (fedTo (settledAfter again "C-o w") (presses "C-e e")).1
+            (candidatesOf asked).map (·.all.toList.take 2) == some ["!make", "!echo hi"] &&
+              again.loop.state.workspaces.getOfProject Shell.historyStore
+                  (.remote "github.com/o/r") ==
+                #["!make", "!echo hi"] },
+    { name :=
+        "criterion 10: in a buffer of a workspace whose location cannot run commands, `:!` starts no job and no process, records nothing, and says why"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let kube := settledAfter (settledAfter driver "C-o a") "C-e k"
+            let ran := shellRan kube "!ls"
+            ran.jobs.processes.started == kube.jobs.processes.started && ran.next == kube.next &&
+              echoOf ran ==
+                some "!: r@app is reachable through kube pod at /app, where commands cannot run" &&
+              ran.loop.state.workspaces.getOfProject Shell.historyStore
+                  (.remote "github.com/o/r") ==
+                #[] },
+    { name :=
+        "criterion 15: a run past the time limit is killed and the echo area says so, naming the limit, 30 seconds by default or config's; what the workspace runs is cleared"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let running := (fedTo opened (exLine "!sleep 40")).1
+            let ran := shellRan opened "!sleep 40"
+            let limited :=
+              { opened with
+                keys :=
+                  { opened.keys with
+                    registered := { opened.keys.registered with shellTimeLimit := some 5000 } } }
+            let short := shellRan limited "!sleep 40"
+            Shell.scopedValue running.loop.state Shell.runningStore main == some "!sleep 40" &&
+              echoOf ran == some "!sleep 40: the run did not end within 30000 ms and was killed" &&
+              ran.jobs.processes.killed.contains (shellCommand "/r" "sleep 40") &&
+              Shell.scopedValue ran.loop.state Shell.runningStore main == none &&
+              echoOf short == some "!sleep 40: the run did not end within 5000 ms and was killed" },
+    { name :=
+        "`:!` with nothing after it says so and starts nothing; a `:!` whose job no one registered says the refusal and records nothing"
+      run :=
+        pure <|
+          match shellDriver, workspaceDriver workspaceJobs shellKeys with
+          | some driver, some unregistered =>
+            let bare := shellRan driver "!"
+            let opened := settledAfter unregistered "C-o a"
+            let refused := shellRan opened "!make"
+            echoOf bare == some Shell.noCommand && bare.next == driver.next &&
+              echoOf refused == some (Shell.notStarted "!make" (.noSuchJob Shell.runJob)) &&
+              refused.loop.state.workspaces.getOfProject Shell.historyStore
+                  (.remote "github.com/o/r") ==
+                #[]
+          | _, _ => false },
+    { name :=
+        "what the echo area says of a run of one line or none, and what the output buffer holds of a longer one: a last carriage return and line feed is dropped, a signal is said, a byte that is not UTF-8 keeps its byte"
+      run :=
+        let ran (stdout stderr : ByteArray) (exit : Process.Exit := .code 0) : Process.Ran :=
+          { exit, stdout, stderr }
+        pure
+          (Shell.echoText "!x" (ran "hi\r\n".toUTF8 .empty) == some "hi" &&
+            Shell.echoText "!x" (ran .empty .empty (.signal 9)) ==
+              some "!x: no output [killed by signal 9]" &&
+            Shell.echoText "!x" (ran "a\nb".toUTF8 .empty) == none &&
+            Shell.echoText "!x" (ran "a".toUTF8 "e".toUTF8) == none &&
+            Shell.echoText "!x" (ran ⟨#[0x61, 0xFF]⟩ .empty) ==
+              some ("a".push (File.escape 0xFF)) &&
+            Shell.outputText (ran "a".toUTF8 "b\n".toUTF8 (.signal 15)) ==
+              "a\nb\n[killed by signal 15]\n" &&
+            Shell.outputText (ran ⟨#[0x61, 0xFF, 0x0A]⟩ .empty (.code 1)) ==
+              ("a".push (File.escape 0xFF)) ++ "\n[exit 1]\n" &&
+            Shell.outputText (ran .empty .empty) == "[exit 0]\n") },
+    { name :=
+        "a shell order crosses as arguments and back, with a scope's location of each kind and with none, and arguments that are no order read as none; the run job started with them fails; each scope has its own job key"
+      run :=
+        let order : Shell.Order :=
+          { line := "!make", text := "make", directory := "/r", time := 30000, buffer := ⟨2⟩
+            view := ⟨0⟩ }
+        let scopes : List (Option Location) :=
+          [none, some (.local "/a b"), some (.reachable "kube" "pod" "/app"),
+            some (.branchOnly "git@h:o/r" "x")]
+        pure
+          (scopes.all
+              (fun scope =>
+                Shell.Order.ofArguments? { order with scope }.arguments ==
+                  some { order with scope }) &&
+            [[], [.str "!make"], order.arguments ++ [.nat 1]].all
+              (Shell.Order.ofArguments? · == none) &&
+            ((Shell.runWork [.nat 1] ()).runModel {}).1 matches .failed _ &&
+            Shell.keyOf (some (.local "/r")) == "shell local /r" &&
+            Shell.keyOf none == "shell outside" &&
+            Shell.keyOf (some (.local "/w")) != Shell.keyOf (some (.local "/r"))) }]
+
 /-- The names of the workspace finder's contract properties
 (`Editor/Workspace/Contract.lean`) that do not hold of the pure model
 (`World.find`), or of the real finder run on the job model of the
@@ -27044,7 +27343,8 @@ def checks : List Check :=
     workspaceDataChecks ++
     workspaceGitChecks ++
     workspaceStateChecks ++
-    workspaceChecks
+    workspaceChecks ++
+    shellChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

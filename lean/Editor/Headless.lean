@@ -19,6 +19,7 @@ import Editor.Job.Real
 import Editor.Loop
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
+import Editor.Shell.Compiled
 import Editor.Text.Real
 import Editor.Themes.Compiled
 import Editor.Watch.Real
@@ -2108,7 +2109,7 @@ ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
 the buffer commands, the frame's commands with their bindings, the command that loads a theme
 with the themes that ship, the workspace command with the job that finds a
-file's workspace, and the menu bar (`Menu.standard`) with its
+file's workspace, the shell's command with the job that runs `:!`, and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
 
@@ -2125,9 +2126,10 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
         FrameCommands.commands ++
         Themes.commands ++
-        Workspace.commands
+        Workspace.commands ++
+        Shell.commands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
-    compiledJobs := Files.jobs ++ Workspace.jobs
+    compiledJobs := Files.jobs ++ Workspace.jobs ++ Shell.jobs
     modes := Minibuffer.modes, ex := Ex.bindings, themes := Themes.shipped
     segments := ModeLine.shipped, log := IO.eprintln }
 

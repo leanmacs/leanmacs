@@ -141,6 +141,12 @@ imported. Its model and its contract
 (`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
 tests, and are not imported.
 
+`:!` is here too (`Editor/Shell.lean`, which comes with the ex line): a
+shell command run in the buffer's workspace as a job, and what comes of it
+said in the echo area or shown in the workspace's output buffer. Its
+registrations (`Editor/Shell/Compiled.lean`) name the registry and are not
+imported.
+
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports
 them, to run a command for real. So config, which sees this module and what

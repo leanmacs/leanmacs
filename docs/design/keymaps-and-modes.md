@@ -2869,32 +2869,94 @@ The ex line is a prompt whose answer is run as a named ex command. The
 command `ex` opens it, and the Vim scheme's default table binds `:` to
 that name, so the key opens the line.
 
-**A line is its first word and the rest.**
+**A line is a range, then its first word and the rest, or `!` and a shell
+command** (`:!` built by the shell-and-compile roadmap's phase 2,
+`lean/Editor/Shell.lean`).
 
 - **Parsing** (`Ex.parse`). Leading and trailing ASCII white space is
-  dropped. The *ex name* is everything up to the first white space. The
-  argument is the rest, with the white space before it dropped, kept
-  whole: the spaces inside it are part of it. A line that is empty or all
-  white space runs nothing and says nothing, as Vim's does.
+  dropped. **A range may come first**: `%`, the whole buffer; or one
+  address, or two with a comma between, where an address is `.` (the
+  cursor's line), `$` (the last line) or a line number. An address left
+  out beside the comma is the cursor's line, as in Vim (`,5` is `.,5`).
+  White space may follow it. **A line whose first character after the
+  range is `!` is the bang form**: the name `!`, and the rest, trimmed, its
+  argument. Otherwise the *ex name* is everything up to the first white
+  space, and the argument is the rest, with the white space before it
+  dropped, kept whole: the spaces inside it are part of it. A line that is
+  empty or all white space runs nothing and says nothing, as Vim's does.
 - **The argument is one string, handed on unchanged**: `e /tmp/my
   notes.txt` opens that path. Nothing is escaped or expanded.
-- **Set aside: Vim's rule, a run of letters and then the rest** (`w!`,
-  `e#`, `w>>file`). A name config registers may hold a hyphen or a digit,
-  and `!`, ranges and `#` are not built. So `w!` is an unknown name and
-  says so. The parser is one pure function, and the phase that builds `!`
-  replaces it there.
+- **Only a leading `!` starts the bang form**, so `w!` and `e!` are still
+  names of their own. Vim's rule for a name, a run of letters and then the
+  rest (`e#`, `w>>file`), is not built: a name config registers may hold
+  a hyphen or a digit after its first character.
+- **A name must read back as itself.** `exCommand` refuses a name the ex
+  line would not read as that name with no range, no bang and no argument
+  (`Ex.reachable`): one that is empty, holds white space, or starts with
+  `!`, `%`, `.`, `$`, `,` or a digit.
+- **A range before a name** is refused, `<name>: takes no range`: no name
+  that ships takes one. A range alone, which in Vim goes to that line,
+  says that is not built.
+- **Resolving a range** (`Range.resolve`) is the ex command's, against the
+  view the line was asked from: `.` is the primary cursor's line and `$`
+  the last. A buffer's lines are its rows, but for the empty row after a
+  last line feed (`b\nc\na\n` is three lines; the empty text is one).
+  Line 0, a range that runs backwards and a line past the end are refused,
+  the last as `line 7 is past the end of the buffer (3 lines)`.
 - **Set aside: a leading colon or a count.** Neither is dropped: `:w`
   typed on the ex line is the unknown name `:w`.
+
+**`:!cmd` runs a shell command in the focused buffer's workspace**
+(`lean/Editor/Shell.lean`; [projects.md](projects.md)).
+
+- **What runs**: `/bin/sh -c cmd`, as a job (`shell-run`), so the editor
+  stays responsive; not `$SHELL`, so a user's interactive set-up cannot
+  change what runs. The environment is the directory's, as every child's
+  is.
+- **Where**: the workspace's root; with no workspace, the directory of the
+  buffer's file; with neither, the editor's working directory, which the
+  host set from its own. A workspace whose location cannot run commands
+  runs nothing and says so: `!: <label> is <location>, where commands
+  cannot run`.
+- **For how long**: 30 seconds, or config's `shellTimeLimit`. A run past
+  it is killed, its process group with it, and the echo area says
+  `<line>: the run did not end within <n> ms and was killed`.
+- **What is shown**: one line of output or none, with nothing on standard
+  error, goes to the echo area, with ` [exit <n>]` after it when the
+  status is not 0; no output says `<line>: no output`. Anything longer, or
+  anything on standard error, replaces the text of the workspace's output
+  buffer, `*shell output: <workspace label>*`, with standard output, then
+  standard error, then a last line `[exit <n>]`, and it is shown in the
+  view the line was asked from. A second run in that workspace replaces
+  its text, as one edit `u` takes back; another workspace has a buffer of
+  its own. A buffer outside any workspace uses one editor-wide `*shell
+  output*`. A refusal, a program not there or output past 16 MiB among
+  them, is said as `<line>: ` and its sentence.
+- **One run a workspace**: each runs under its workspace's job key, so a
+  second `:!` there while one runs cancels the first, and one elsewhere is
+  left alone.
+- **History**: each line run is kept in the project's history, newest
+  first, each once, at most 100, so every worktree of a codebase offers the
+  same lines; a buffer outside any workspace keeps one editor-wide history.
+  The ex prompt's candidates are the history, then the bound ex names, so
+  typing `!` lists the earlier lines and the minibuffer's keys choose one.
+
+Where `:!` differs from Vim: `:!!` and `%` in the command are not
+expanded; output does not take over the screen, it goes to the echo area or
+a buffer; and the time limit is the editor's.
 
 **The ex line's editing keys are the minibuffer's.** It is a prompt, so it
 is typed in the minibuffer's view, in the Vim state `minibuffer`, and
 `<Backspace>`, `<ArrowLeft>`, `<ArrowRight>` and `C-u` edit it as they edit
 any prompt ("The minibuffer"; pinned on both by `evilInsertChecks`).
 
-**The ex line's candidates are the ex names that are bound** (built by the
-command loop's phase 14; "A prompt's candidates", under "The minibuffer").
+**The ex line's candidates are the `:!` history of the asking buffer, then
+the ex names that are bound** (built by the command loop's phase 14; "A
+prompt's candidates", under "The minibuffer"; the history by the
+shell-and-compile roadmap's phase 2).
 
-- `ex` asks for its line with the bound ex names as the prompt's
+- `ex` asks for its line with the asking buffer's `:!` lines, newest first
+  (`Shell.history`), then the bound ex names as the prompt's
   candidates: each name once, in the order they were first bound. A
   command asks for them (`exNames`), and the loop answers from the
   registry as it is when the line is asked for.
@@ -2954,7 +3016,8 @@ command an ex name runs is a step of its own.**
   `:`, whose continuation is `ex` itself. A key bound to it under the Vim
   scheme hands it a count and a register, so it asks. Where the prompt is
   refused, because one is open, it says so.
-- **Running a line**: parse it; ask which binding the name has; say
+- **Running a line**: parse it; hand a bang line to `shell-command`, which
+  runs after `ex` as a step of its own; ask which binding the name has; say
   `<name>: not an ex command` for none; say `<name>: takes no argument`
   for an argument the binding does not take; otherwise ask for the
   invocation to be run after this command.
@@ -2996,8 +3059,8 @@ command an ex name runs is a step of its own.**
 Where they differ from Vim:
 
 - **`q` does not refuse for a modified buffer with no file.** Such a
-  buffer cannot be saved, and `!` is not built, so the rule would leave no
-  way to quit once anything was typed in the scratch buffer. It refuses
+  buffer cannot be saved, and `:w !cmd` is not built, so the rule would
+  leave no way to quit once anything was typed in the scratch buffer. It refuses
   while a buffer that holds a file has unsaved changes.
 - **`q` quits the editor, not the current window.** No shipped command
   splits a window.
@@ -3007,7 +3070,7 @@ Where they differ from Vim:
   the diff kept the text, and `u` takes the reload back. On a buffer with
   no file it asks for a path.
 - **`e!` and `w!` are names of their own**, bound with a fixed argument;
-  `!` is not parsed.
+  only a leading `!` is parsed, as the shell's.
 - **`w` takes no file name.** Saving under another name is not built.
 - **`reload` is no Vim command.**
 - **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
@@ -3023,7 +3086,10 @@ Where they differ from Vim:
   by `b` or after a `bd`, has its cursor at the buffer's start; Vim gives
   back where the cursor last was in that buffer.
 
-Pinned by `ModelTest.exLineChecks` (the parser and the binding),
+Pinned by `ModelTest.exLineChecks` (the parser, ranges and the binding),
+`shellChecks` (`:!` on the models, in the workspaces of a main checkout,
+a linked worktree and a directory in none), `ContractTest.shellChecks`
+(over the real process service),
 `registryChecks`, `setupChecks` and `reloadChecks` (ex bindings by owner,
 from `setup`, and across an install), `exChecks` (the ex line and the
 first five names, and `bufferCommandChecks` the last three, on the loop's driver over the editor's models and the model of
@@ -3068,8 +3134,9 @@ which run the executable on a real file.
   `exCommand "greet" "greet-named" (takes := .text)`
   (`lean/Editor/Setup.lean`; "The ex command line"). By default the name
   takes nothing. The command's name is looked up when the line is run, as
-  a key binding's is. A name that is empty or holds white space is
-  refused, since it could not be typed as a line's first word, and a
+  a key binding's is. A name the ex line would not read back as itself is
+  refused (one that is empty, holds white space, or starts with `!`, `%`,
+  `.`, `$`, `,` or a digit), and a
   `setup` that binds one ex name twice is rejected. A reload replaces
   config's ex bindings and never the compiled ones.
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
