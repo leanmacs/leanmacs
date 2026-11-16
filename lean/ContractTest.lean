@@ -77,7 +77,10 @@ library.
   whose child is running ends the job and has the child reaped, and that a
   run the library does not take, its id being in use there, is refused at
   once as `failed`, the job going on, with the refusal kept until it is
-  taken and erased when its wait is withdrawn.
+  taken and erased when its wait is withdrawn. It also shows that a run with
+  a time limit, taken within the limit, cancelled before it or timed out,
+  leaves no run in the adapter's table of armed limits and no alarm in the
+  table of waits, and its child reaped.
   `model-test` runs the same list against the model of processes and
   against the runner over the fake of the process service.
 
@@ -574,6 +577,23 @@ check cancels it before it ends. Whether the library took it. -/
 def occupy (id : UInt64) (directory : System.FilePath) : IO Bool :=
   Ffi.processesRun id "/bin/sleep" #["600"] false #[] #[] directory.toString 10
 
+/-- Runs `check` in a temporary directory of its own, removed whatever
+happened, on `services` with a real process service whose table of the runs
+with a time limit armed is one the check holds, so it can read how many
+there are. -/
+def timedCheck (services : Job.Services)
+    (check : System.FilePath → Job.Services → Job.TimedRuns → IO Bool) : IO Bool := do
+  let directory ← IO.FS.createTempDir
+  let timed ← Job.TimedRuns.new
+  let services :=
+    { services with
+      processes :=
+        Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers timed }
+  try
+    check directory services timed
+  finally
+    IO.FS.removeDirAll directory
+
 /-- What only the real process service can show: that cancelling a job
 whose child is running kills the child, which the service then reaps; and
 that a run the library does not take is refused at once by the adapter,
@@ -591,7 +611,15 @@ Seen to bite once by hand, on 2026-11-15, each with one line of
 `realProcesses` taken out: without the completion of a run not taken, both
 not-taken checks fail, the job waiting for ever; without keeping its
 refusal, the first fails, the job getting no result instead; and without
-the erasing in `cancel`, the second fails, the take finding the refusal. -/
+the erasing in `cancel`, the second fails, the take finding the refusal.
+
+The last three are the runs with a time limit, each on a table of the runs
+whose alarm is armed that the check holds (`timedCheck`): taken within the
+limit, cancelled before it, and timed out. Seen to bite once by hand, on
+2026-11-16: without the disarming in the take, the first fails, its alarm
+left in the table of waits; without the take and disarming in `cancel`, the
+second fails; and with a timed-out run put back in the table at its take,
+the third fails. -/
 def processChecks (services : Job.Services) : List Check :=
   [{  name :=
         "a job whose child sleeps for ten minutes is cancelled: it ends cancelled, and the process service reaps the child, so nothing is pending that was not before"
@@ -672,7 +700,57 @@ def processChecks (services : Job.Services) : List Check :=
         finally
           discard <| Ffi.processesCancel id
           services.completions.finish id .completed
-          IO.FS.removeDirAll directory }]
+          IO.FS.removeDirAll directory },
+    { name :=
+        "a run with a time limit that ends well inside it, once taken, leaves no run in the table of time limits and its alarm disarmed: the table of waits is as it was"
+      run :=
+        timedCheck services fun directory services timed => do
+          let waiting ← services.completions.waiting
+          let outcome ←
+            runOnTimers services do
+                return (← Process.runWithin (JobContract.sh directory "exit 0") 10 hour) matches
+                    .ok { exit := .code 0, .. }
+          let disarmed ←
+            eventually do
+                return (← timed.size) == 0 && (← services.completions.waiting) == waiting
+          return outcome == .finished true && disarmed },
+    { name :=
+        "a run with a time limit cancelled with its job before the limit leaves no run in the table of time limits and its alarm disarmed, and its child is reaped"
+      run :=
+        timedCheck services fun directory services timed => do
+          let waiting ← services.completions.waiting
+          let before ← Ffi.processesPending
+          let handle ←
+            Job.spawn services
+                (reporting fun _ => do
+                  discard <| Process.runWithin (JobContract.sh directory "/bin/sleep 600") 10 hour
+                  return true)
+                (pure ())
+          let armed ←
+            eventually do
+                return (← Ffi.processesPending) == before + 1 && (← timed.size) == 1
+          handle.cancel
+          let cancelled ← endedAs handle .cancelled
+          let disarmed ←
+            eventually do
+                return (← timed.size) == 0 && (← services.completions.waiting) == waiting
+          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          return armed && cancelled && disarmed && reaped },
+    { name :=
+        "a run with a time limit that outlives it answers timed out, and then leaves no run in the table of time limits and nothing in the table of waits, and its child is reaped"
+      run :=
+        timedCheck services fun directory services timed => do
+          let waiting ← services.completions.waiting
+          let before ← Ffi.processesPending
+          let outcome ←
+            runOnTimers services do
+                return refusedAs (.timedOut 200)
+                    (← Process.runWithin (JobContract.sh directory "/bin/sleep 600") 10 200)
+          let disarmed ←
+            eventually do
+                return (← timed.size) == 0 && (← services.completions.waiting) == waiting
+          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          return outcome == .finished true && disarmed && reaped }]
 
 /-- `count` jobs that each sleep for an hour. -/
 def sleepers (services : Job.Services) (count : Nat) : IO (Array Job.Handle) := do
