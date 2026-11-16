@@ -22243,6 +22243,30 @@ def menuChecks : List Check :=
             let fed := (fedTo driver [.menu "nope"]).1
             fed.loop.state.echo == "nope: no such command" && fed.model.display.asked.isEmpty },
     { name :=
+        "a menu, a file to open and the system's quit publish with the padding and the mode line the step's keys carry: views padded 8 across and 8 down, the echo 8, and the status lines the handed segments', whether the command runs to its end or is refused"
+      run :=
+        let ran : Call → EditorM (Option Config.Write) := fun _ => pure none
+        let refused : Call → EditorM (Option Config.Write) := fun _ => throw .badRange
+        let handed : Loop.Keys TestScheme.scheme :=
+          { padding := 8
+            modeLine := { left := #[ModeLine.position], right := #[ModeLine.buffer] }
+            command? := fun
+              | "noop" => some ran
+              | "balk" => some refused
+              | name => if name == Files.openName || name == Ex.quitName then some ran else none }
+        let status : Array StatusField :=
+          #[{ text := "All", face := ModeLine.secondaryFace, padding := 4 },
+            { text := "scratch", face := ModeLine.bufferFace, side := .right, padding := 4 }]
+        let publishedBy (event : Event) : Bool :=
+          match dispatched handed [event] with
+          | some (_, #[scene], _) =>
+            scene.views.map (·.padding) == #[{ across := 8, down := 8 }] &&
+              scene.echoPadding == 8 &&
+              scene.views.map (·.status) == #[status]
+          | _ => false
+        pure
+          ([Event.menu "noop", .menu "balk", .openFiles ["a"], .quitRequested].all publishedBy) },
+    { name :=
         "on the compiled registry the published menu is the standard one with the chords bound to its commands: s-o, s-s, s-z, s-Z, s-x, s-c, s-v, s-a, s-m and C-s-f, and the system items' own"
       run :=
         pure
