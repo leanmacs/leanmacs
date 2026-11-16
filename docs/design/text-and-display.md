@@ -1368,7 +1368,10 @@ The agent list, pickers and review queues are text views over generated
 text, so evil motions and search work in them. A grid can also appear
 inside a text view, as a box.
 
-Windows are arranged in a split tree per frame, held in Lean. A view's
+A frame's windows are an ordered list, held in Lean, with the focus held by
+`ViewId`; a layout value turns the list and the tiled area into one
+rectangle per window shown. Master-and-stack is the default and monocle the
+second; manual splits come in window management's phase 2. A view's
 scroll position is an anchor. Layout invariants (for example, a minibuffer
 exists) are part of the data model, and operations that would break one
 return a typed refusal.
@@ -1467,12 +1470,45 @@ echo area, the preedit, and the prompt that is open, if one is.
 - **The first window's selection has the shape the input scheme reports**
   of the first view before any key: inclusive under the Vim scheme, whose
   first state is normal state.
-- The **split tree** is binary: a leaf is a window or the minibuffer's
-  place, and a split divides its rectangle between two children along an
-  axis, rows (stacked) or columns (side by side), the first taking half,
-  rounded down. A subtree with no view takes no space, and its sibling
-  takes all of it, so the minibuffer's place takes none while no prompt is
-  open, and the views tile the frame.
+- **The frame's windows are an ordered list** (`Frame.windows`, decided
+  2026-11-16 by window management's phase 1), the first being main, and
+  the focus is a `ViewId` (`Frame.focused`). The split tree it replaces
+  is gone: a tree beside the list would be a second record of which
+  windows exist.
+- **A layout is a value** (`Frame.layout`, `lean/Editor/Layout.lean`), and
+  `Layout.place` a pure, total function from the list, the selected view
+  and a rectangle to one rectangle per window shown, in drawing order. It
+  is no port, and knows nothing of the editor state, so layouts can be
+  composed later.
+  - **Master-and-stack**, the default, with main's share in percent and its
+    side as parameters (by default 50, on the left). One window takes the
+    whole area. With two or more, main takes `extent * min share 100 / 100`
+    pixels (rounded down) along columns for a left or right main, along
+    rows for a top or bottom one, and the stack divides the rest the other
+    way into equal parts, the first `extent % n` a pixel larger, so the
+    parts sum to the extent. Drawing order is main, then the stack.
+  - **Monocle** gives the whole area to the selected view
+    (`EditorState.selectedView`) when it is in the list, and to the first
+    window otherwise. The other windows get no rectangle and are not in
+    the scene, as xmonad's `Full`; a hidden window is still one of the
+    state's views, so it can be focused, which shows it. Its cursor is not
+    followed while it is hidden. While a prompt is open the selected view
+    is the asker, so monocle keeps showing it and not the minibuffer.
+  - Layouts cut in whole pixels and do not snap to text rows; each
+    window's padding is inside its rectangle.
+- **The tiled area is the frame above the minibuffer's strip**
+  (`EditorState.tiled`): the strip is the frame's bottom `message` height,
+  `text + message` while a prompt is open, or the whole frame when that is
+  shorter. `EditorState.rects` is the layout's rectangles in the tiled
+  area, then the minibuffer's view in the strip while a prompt is open.
+- **Config chooses the layout** with `layout`, a value with its
+  parameters (`layout (.masterStack { share := 60, side := .right })`,
+  `layout .monocle`), as it sets the frame padding; a reload changes it,
+  and choosing it twice or a share above 100 is refused. The host hands
+  it to the loop for each step (`Loop.Keys.layout`), whose publish sets
+  it on the frame before the views are laid out; a loop handed none keeps
+  the frame's own ([lean-runtime.md](lean-runtime.md), "The layout is
+  config's"). No command changes the layout yet.
 - **The minibuffer is a buffer and a window of the state** (built by the
   command loop's phase 10; [concurrency.md](concurrency.md), "Prompts").
   The open prompt is a field of the state (`EditorState.prompt`): its
@@ -1482,46 +1518,46 @@ echo area, the preedit, and the prompt that is open, if one is.
   window is in the state's windows, with a new view id. So a committed
   text is inserted there, the loop keeps and restores its markers and its
   history, and the scene has its view, with no rule of their own.
-  - **The tree does not change.** The minibuffer leaf says where the
-    minibuffer's place is, and the prompt says whether one is open and
-    which window stands there, so closing a prompt leaves the tree exactly
-    as it was. A view id on the leaf was set aside: the open prompt would
-    be in two places that an invariant must keep in step. So was a prompt
-    kept by the loop, outside the state: a rollback returns the state
-    from before a command, and would need a second one for it.
-  - **The place takes a strip while a prompt is open.** A split one of
-    whose children is the minibuffer's place gives that place 32 physical
-    pixels along its axis (`Split.minibufferHeight`), or the whole extent
-    when that is less, and its sibling the rest; the views still tile the
-    frame. 32 is two rows of a 16-pixel cell, one for the input and one
-    for the status line that carries the prompt text. It is a placeholder
-    with no font behind it, and it ignores the frame's scale: nothing in
-    Lean knows the height of a row, since layout is the display's.
+  - **The window list does not change.** The minibuffer's place is the
+    frame's bottom strip, outside the area a layout tiles, and the prompt
+    says whether one is open and which window stands there, so closing a
+    prompt leaves the list exactly as it was. A view id in the list was
+    set aside: the open prompt would be in two places that an invariant
+    must keep in step. So was a prompt kept by the loop, outside the
+    state: a rollback returns the state from before a command, and would
+    need a second one for it.
+  - **The strip is outside the tiled area.** With no prompt open it is the
+    frame's bottom row, the display's `message` height, and holds the
+    echo; with one open it is a text row and that row, and the
+    minibuffer's view fills it. A frame shorter than the strip is all
+    strip.
   - **The window commands do not have it.** Removing it, splitting it and
     showing another buffer in it are refused (`ofMinibuffer`), and so is
     showing its buffer in another window: it is closed by answering or
     cancelling its prompt, and only it shows its buffer. Focusing it is
     allowed, so the focus can leave the minibuffer and come back. The last
-    window of the tree cannot be removed while a prompt is open: the
+    window of the list cannot be removed while a prompt is open: the
     minibuffer's window does not count.
-- **The invariants** are over the state's views, the tree's windows and
-  then the open prompt's view: the focused window is one of them; there is
-  exactly one minibuffer leaf; the views' ids are distinct and are the
-  windows'; each window's buffer exists. The operations that can break one refuse
-  with a `LayoutRefusal` and the state unchanged: removing a window
-  (`onlyWindow` for the last window, `noSuchWindow` for one not in the
-  tree), focusing one, splitting one, and showing another buffer in one
-  (`noSuchBuffer` for a buffer there is none of, `markersOfAnotherText` for
-  a marker that is not of the buffer's text). The minibuffer's place has no
-  id, so none can remove it. When the focused window is removed, the focus moves to the first
-  window, in drawing order, of the subtree that took its place, or of the
-  tree when that has none.
+- **The invariants** are over the state's views, the list's windows and
+  then the open prompt's view: the focused window is one of them; the
+  views' ids are distinct and are the windows'; each window's buffer
+  exists. The operations that can break one refuse with a `LayoutRefusal`
+  and the state unchanged: removing a window (`onlyWindow` for the last
+  window, `noSuchWindow` for one not in the list), focusing one, splitting
+  one, and showing another buffer in one (`noSuchBuffer` for a buffer
+  there is none of, `markersOfAnotherText` for a marker that is not of the
+  buffer's text). The minibuffer's place is not in the list, so none can
+  remove it.
 - **A command reaches them as requests** (the command loop's phase 8,
   `lean/Editor/Api.lean`): `ViewId.split`, `close`, `focus` and `show`. A
-  split puts the new window second in a split with its source, below it or
-  to its right, on the same buffer, with markers of its own; closing it
-  gives back the tree from before the split, since a removed window's
-  sibling takes the place of their split. A view's id is never used again,
+  split takes no axis and puts the new window right after its source in
+  the list, on the same buffer, with markers of its own, and leaves the
+  focus: splitting main makes the new window the first of the stack.
+  Closing a window takes it out of the list, and the layout gives its
+  space to the rest; when it was focused, the focus goes to the window
+  that took its index, or to the new last window when it was last. So
+  splitting and closing the new window gives back the frame from before
+  the split. A view's id is never used again,
   and a buffer's is not either: buffers are kept in slots, and a removed
   buffer leaves its slot empty.
 - **No ambient context**: a handler is given the window it acts on and its
@@ -1697,6 +1733,10 @@ decided 2026-11-13 by its phase 2):
   scheme reports as in a session, its group is left open, so what is
   edited in the session is one step
   ([keymaps-and-modes.md](keymaps-and-modes.md), "Insert sessions").
+- A view's rectangle is the layout's (`EditorState.rects`): the frame's
+  layout, set from the step's keys before the views are laid out, places
+  the windows in the tiled area. A window monocle hides has no rectangle
+  and is not in the scene.
 - A view whose buffer's text is at the revision it was last shown at keeps
   the same snapshot; otherwise a new one is taken, and views of one buffer
   share it.
@@ -1801,7 +1841,7 @@ decided 2026-11-13 by its phase 2):
       display contract, with a Rust half that is the display pipeline's;
       and a view of their own over generated text, which is where a long
       list should go ("Tables, lists and pickers"), and needs a buffer, a
-      window and a place in the split tree made and unmade with the
+      window and a place in the window list made and unmade with the
       prompt. The listing in the editor state is what such a view would
       show.
   - **The input is the whole text of the minibuffer's buffer.** So the
@@ -2188,11 +2228,12 @@ part are in the module docs; these are the decisions.
   lays out as before. Lean puts the padding in the scene
   (`EditorState.paddingOf`, `EditorState.bottomInset`) and never a scale:
   the frame padding from config (default 8 points) for each window, each
-  window of a split its own with no gap between them; the bottom row (the
+  window its own with no gap between them; the bottom row (the
   echo, and the minibuffer's view across, not down) at least the
   window's corner clearance outside fullscreen and the padding alone in
-  it; and the views along the frame's top edge (the upper window of a rows
-  split, both windows of a columns split) the window's top inset beside
+  it; and the views along the frame's top edge (a window along the frame's
+  top edge: every window under master-and-stack with main left or right)
+  the window's top inset beside
   the padding, none in fullscreen. Whether layout should round a padding
   to whole pixels inside itself
   is the owner's open question of the Layout row in
@@ -3014,8 +3055,9 @@ frame journal and the renderer's counters.
   `agree`). The minibuffer's place takes `message`, and `text + message`
   while a prompt is open, in place of the 32-pixel placeholder. The rule
   that names the minibuffer's view by its reaching the bottom edge holds
-  while the minibuffer is the bottom leaf of the split tree; a layout that
-  put a window there would need a field of the scene.
+  because the minibuffer's place is always the frame's bottom strip,
+  outside the area a layout tiles; a layout that put a window there would
+  need a field of the scene.
 - **Sizes and the window's scale factor** (answered): a theme states its
   lengths in logical points, and layout multiplies them by the scale
   factor of the target it lays out for, before shaping ("Decorations", as

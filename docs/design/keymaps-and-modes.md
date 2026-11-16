@@ -2679,8 +2679,8 @@ As built, with nothing new for it:
 ### The minibuffer
 
 **Where it is drawn** (since the display pipeline's last phase). The
-minibuffer's place is the bottom leaf of the split tree, and always takes
-the frame's bottom row, as tall as the display's `message` height: with no
+minibuffer's place is the frame's bottom strip, outside the area the
+window layout tiles, and always takes the frame's bottom row, as tall as the display's `message` height: with no
 prompt open the scene's echo is drawn there, and while a prompt is open
 the place takes the input row above it too (`text + message`), the
 minibuffer's view fills both, and the prompt replaces the message in the
