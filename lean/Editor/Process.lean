@@ -126,6 +126,13 @@ structure Command where
   directory : System.FilePath
   deriving DecidableEq, Repr
 
+/-- Whether `command`'s program names a directory without being absolute: a
+command every process service refuses with `ProcessError.relativeProgram`
+before anything is started. This is the rule, and the model and the editor's
+lookup (`Process.prepared`) both ask it. -/
+def Command.namesRelative (command : Command) : Bool :=
+  command.program.contains '/' && !command.program.startsWith "/"
+
 /-- How a child ended. -/
 inductive Exit where
   /-- It exited with this status. -/

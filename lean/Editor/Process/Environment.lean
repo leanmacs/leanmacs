@@ -377,11 +377,6 @@ def foundOf : Except ProcessError Ran → Found
     let text := (String.fromUTF8? stderr).getD ""
     .failed (.exited status ((text.splitOn "\n").headD "").trimAsciiEnd.toString)
 
-/-- Whether `program` names a directory without being absolute: a command
-the process service refuses before anything is started. -/
-def namesRelative (program : String) : Bool :=
-  program.contains '/' && !program.startsWith "/"
-
 /-- What a job reads before it looks a directory up: the setting, the mode,
 the lookup the setting resolved to if it has been resolved, and the time
 limit of a lookup, in milliseconds. -/

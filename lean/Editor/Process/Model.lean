@@ -275,10 +275,6 @@ end ProcessModel.Child
 
 namespace ProcessModel
 
-/-- Whether `program` names a directory without being absolute. -/
-def relativeProgram (program : String) : Bool :=
-  program.contains '/' && !program.startsWith "/"
-
 /-- What a run of `command` under `limit` answers when the command is
 scripted to answer `reply`: a stream past the limit, standard output first,
 is too large. -/
@@ -301,7 +297,7 @@ def runFor (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) (command :
     (limit : Nat) (time : Option Nat) : Except ProcessError Process.Ran × ProcessModel × Nat :=
   if !command.directory.isAbsolute then (.error .relativeDirectory, model, now)
   else
-    if relativeProgram command.program then (.error .relativeProgram, model, now)
+    if command.namesRelative then (.error .relativeProgram, model, now)
     else
       match model.scripts.find? (·.command == command) with
       | none =>
@@ -340,7 +336,7 @@ def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
   | .start command streaming =>
     if !command.directory.isAbsolute then (.error .relativeDirectory, model, now)
     else
-      if relativeProgram command.program then (.error .relativeProgram, model, now)
+      if command.namesRelative then (.error .relativeProgram, model, now)
       else
         match model.streams.find? (·.command == command) with
         | none =>

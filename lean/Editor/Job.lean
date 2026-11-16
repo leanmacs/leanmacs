@@ -315,9 +315,7 @@ or a program that is not absolute; when it clears the editor's environment;
 when the setting is `inherited`; and when the lookup failed, which the
 shared state reports once for the directory. -/
 def Process.prepared (command : Process.Command) : JobM Process.Command := do
-  if
-      !command.directory.isAbsolute || Process.namesRelative command.program ||
-        command.environment.clear then
+  if !command.directory.isAbsolute || command.namesRelative || command.environment.clear then
     return command
   let policy : Process.Policy ← Process.askEnvironment .policy
   match ← Process.lookup policy with
