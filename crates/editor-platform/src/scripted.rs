@@ -132,6 +132,10 @@ impl ScriptedPlatform {
     /// commit `é`; the secondary button pressed at (12.5, 40) with alt held;
     /// the window resized to 800 by 600 at scale 2; and a request to close. The keys but the first two carry no physical
     /// key and no modifiers.
+    ///
+    /// It leaves out files to open ([`Input::OpenFiles`]): the sample drives
+    /// the Lean window-host scenarios, where files to open would start
+    /// loads. A script that needs them says them itself.
     pub fn sample_script() -> Vec<Input> {
         vec![
             Input::Focus(true),
@@ -556,6 +560,19 @@ mod tests {
 
         assert_eq!(run.result(), Ok(()));
         assert!(run.inputs.try_recv().is_err(), "nothing more was reported");
+    }
+
+    #[test]
+    fn files_to_open_in_a_script_are_reported_after_opened_in_order() {
+        let first = Input::OpenFiles(vec!["/Users/me/notes.txt".into()]);
+        let second = Input::OpenFiles(vec!["/tmp/a.lean".into(), "/tmp/b.lean".into()]);
+        let platform = Arc::new(ScriptedPlatform::new(vec![first.clone(), second.clone()]));
+
+        let run = start(&platform, COMPOSING);
+
+        assert_eq!(run.next(3), [opened(), first, second]);
+        platform.close();
+        assert_eq!(run.result(), Ok(()));
     }
 
     #[test]

@@ -1524,6 +1524,7 @@ fn described(input: &Input) -> String {
             "resized {} by {} at scale {}",
             size.width, size.height, size.scale
         ),
+        Input::OpenFiles(paths) => format!("open files: {}", paths.join(", ")),
         Input::CloseRequested => "close requested".to_owned(),
     }
 }

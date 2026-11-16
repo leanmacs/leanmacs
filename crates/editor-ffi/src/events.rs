@@ -78,6 +78,8 @@ pub enum EventKind {
     /// The window's drawable area changed size, or its scale factor did: its
     /// words are the new size and scale.
     Resize = 9,
+    /// The system asked for files to be opened: its words are the paths.
+    OpenFiles = 10,
 }
 
 impl EventKind {
@@ -99,6 +101,7 @@ impl EventKind {
             7 => Some(Self::Pointer),
             8 => Some(Self::CloseRequested),
             9 => Some(Self::Resize),
+            10 => Some(Self::OpenFiles),
             _ => None,
         }
     }
@@ -898,6 +901,7 @@ mod tests {
             (7, EventKind::Pointer),
             (8, EventKind::CloseRequested),
             (9, EventKind::Resize),
+            (10, EventKind::OpenFiles),
         ];
         for (tag, kind) in kinds {
             assert_eq!(EventKind::from_tag(tag), Some(kind));
@@ -907,7 +911,7 @@ mod tests {
 
     #[test]
     fn an_unknown_event_kind_tag_is_refused() {
-        assert_eq!(EventKind::from_tag(10), None);
+        assert_eq!(EventKind::from_tag(11), None);
         assert_eq!(EventKind::from_tag(u64::MAX), None);
     }
 

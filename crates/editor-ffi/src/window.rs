@@ -18,6 +18,7 @@
 //! | `Pointer` | `Pointer` | 0 press, 1 drag, 2 release, 3 wheel | Empty | The position, the button, the modifiers, the wheel's delta |
 //! | `Resized` | `Resize` | Bit 0 in fullscreen ([`RESIZE_FULLSCREEN`]) | Empty | The width, the height, the scale |
 //! | `CloseRequested` | `CloseRequested` | 0 | Empty | None |
+//! | `OpenFiles` | `OpenFiles` | 0 | Empty | The paths |
 //!
 //! The words (`words.rs`) of each kind that has them:
 //!
@@ -33,6 +34,13 @@
 //!   delta tags are 0 none (with `dx` and `dy` 0), 1 lines and 2 pixels, for
 //!   a wheel.
 //! - **Resize**: `[width, height, scale]`.
+//! - **OpenFiles**: `[n, then for each of the n paths: m, m scalars]`, a
+//!   path's characters laid out as a key's names are. An empty list is `[0]`;
+//!   it is encoded and read back, though no platform reports one.
+//!
+//! Files to open come from the window source like every input, after
+//! `Opened` (`editor-platform`'s crate docs, "Files to open come after
+//! `Opened`").
 //!
 //! The modifiers are one word of bits: shift [`MODIFIER_SHIFT`], control
 //! [`MODIFIER_CONTROL`], alt [`MODIFIER_ALT`] and the system key
@@ -301,6 +309,13 @@ pub fn event(input: Input, stamp: u64) -> Event {
             String::new(),
             vec![resize.width, resize.height, resize.scale.to_bits()],
         ),
+        Input::OpenFiles(paths) => {
+            let mut words = vec![words::word(paths.len())];
+            for path in &paths {
+                push_scalars(&mut words, path);
+            }
+            (EventKind::OpenFiles, 0, String::new(), words)
+        }
         Input::CloseRequested => (EventKind::CloseRequested, 0, String::new(), Vec::new()),
     };
     Event {
@@ -457,6 +472,17 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
             no_text()?;
             (code == 0).then_some(())?;
             Input::CloseRequested
+        }
+        EventKind::OpenFiles => {
+            no_text()?;
+            (code == 0).then_some(())?;
+            // Each path is at least its count of scalars, one word.
+            let count = reader.count(1)?;
+            Input::OpenFiles(
+                (0..count)
+                    .map(|_| read_scalars(&mut reader))
+                    .collect::<Option<_>>()?,
+            )
         }
     };
     reader.finish()?;
@@ -1640,6 +1666,39 @@ mod tests {
     }
 
     #[test]
+    fn files_to_open_cross_as_their_count_then_each_paths_scalars() {
+        assert_eq!(
+            encoded(Input::OpenFiles(vec!["a".into(), "bé".into()])),
+            (
+                EventKind::OpenFiles,
+                0,
+                String::new(),
+                vec![2, 1, 97, 2, 98, 233]
+            )
+        );
+        assert_eq!(EventKind::OpenFiles.tag(), 10);
+    }
+
+    #[test]
+    fn files_to_open_with_text_a_code_too_few_or_left_over_words_or_a_scalar_that_is_no_char_are_refused()
+     {
+        let words = [2, 1, 97, 2, 98, 233];
+        assert_eq!(
+            read(EventKind::OpenFiles, 0, "", &words),
+            Some(Input::OpenFiles(vec!["a".into(), "bé".into()]))
+        );
+        assert_eq!(read(EventKind::OpenFiles, 0, "x", &words), None);
+        assert_eq!(read(EventKind::OpenFiles, 1, "", &words), None);
+        // A count of paths past the words, and one of scalars past them.
+        assert_eq!(read(EventKind::OpenFiles, 0, "", &[2, 1, 97]), None);
+        assert_eq!(read(EventKind::OpenFiles, 0, "", &[u64::MAX]), None);
+        assert_eq!(read(EventKind::OpenFiles, 0, "", &[1, 5, 97]), None);
+        // A word left over, and a scalar that is no character.
+        assert_eq!(read(EventKind::OpenFiles, 0, "", &[1, 1, 97, 5]), None);
+        assert_eq!(read(EventKind::OpenFiles, 0, "", &[1, 1, 0xD800]), None);
+    }
+
+    #[test]
     fn each_request_is_its_tag_and_an_unknown_tag_is_refused() {
         assert_eq!(request_of(0), Some(WindowRequest::EnterFullscreen));
         assert_eq!(request_of(1), Some(WindowRequest::LeaveFullscreen));
@@ -1795,6 +1854,8 @@ mod tests {
                 scale: 1.0,
                 fullscreen: true,
             }),
+            Input::OpenFiles(vec!["/Users/me/notes.txt".into(), "/tmp/é ü.lean".into()]),
+            Input::OpenFiles(vec![]),
             Input::CloseRequested,
         ]
     }

@@ -20,8 +20,9 @@
 //! number on either side of the Lean boundary. A pointer ([`Pointer`]) with
 //! its action, position, button and modifiers; a resize ([`Resize`]) with
 //! the size, the scale factor and whether the window is in fullscreen; the
-//! focus; an input method's composition;
-//! that the window opened; and a request to close.
+//! focus; an input method's composition; files the system asks the program
+//! to open ([`Input::OpenFiles`]); that the window opened; and a request to
+//! close.
 //!
 //! The command loop fixed this shape (its phase 1), so that it and the
 //! display pipeline build on one. The winit adapter produces all of it.
@@ -57,6 +58,12 @@
 //!   changes fullscreen, or sees the window enter or leave it by other
 //!   means (the green button on macOS), reports a `Resized` carrying the
 //!   new state, at the size it last said if the size did not change.
+//! - **Files to open come after `Opened`.** The system may ask a program
+//!   to open files before its window exists, as macOS does when a document
+//!   starts the app. A platform holds them until it has reported `Opened`
+//!   and the `Resized` after it, then reports each list it was given as one
+//!   [`Input::OpenFiles`], in the order it was given them, never merging
+//!   two. The fake reports what its script says.
 //!
 //! # What a window is asked
 //!
@@ -160,6 +167,15 @@ pub enum Input {
     /// or the window says the size and scale it has, as it does when it
     /// opens and may do again.
     Resized(Resize),
+    /// The system asked the program to open these files: absolute paths, in
+    /// the order it gave them. On macOS this is Finder's "Open With", a
+    /// double-click on a document of a type the program claims, or a drop on
+    /// its icon in the Dock. A platform that is told of files before its
+    /// window has opened holds them, and reports them after `Opened` (and the
+    /// `Resized` that follows it), in the order it was told. A path that is
+    /// not UTF-8 is left out, since it cannot reach Lean as text; macOS's file
+    /// systems name files in UTF-8. A platform never reports an empty list.
+    OpenFiles(Vec<String>),
     /// The user asked for the window to be closed. The window stays open
     /// until [`Platform::close`] is called.
     CloseRequested,

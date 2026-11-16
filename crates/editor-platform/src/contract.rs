@@ -5,6 +5,10 @@
 //!
 //! - **`Opened` comes first, with a name.** The first thing a run reports is
 //!   [`Input::Opened`], and the platform's name in it is not empty.
+//! - **Files to open come after `Opened`.** This is the rule above, read
+//!   for [`Input::OpenFiles`]: a platform told of files before its window
+//!   opened holds them, and one that reports them first breaks it
+//!   ([`Violation::FirstInputNotOpened`]).
 //! - **A close ends the run.** Once [`Platform::close`] has been called, from
 //!   a thread other than the one in [`Platform::run`], the run returns `Ok`
 //!   within a bound.
@@ -1042,6 +1046,19 @@ mod tests {
         assert_eq!(
             check(platform, WindowOptions::default(), GENEROUS),
             Err(Violation::FirstInputNotOpened(Input::Focus(true)))
+        );
+    }
+
+    #[test]
+    fn a_platform_that_reports_files_to_open_before_opened_is_refused() {
+        // As an adapter would that reported the files of a cold start as
+        // they arrived, before its window had opened.
+        let files = Input::OpenFiles(vec!["/Users/me/notes.txt".into()]);
+        let platform = Reports::new(vec![files.clone(), opened("eager")]);
+
+        assert_eq!(
+            check(platform, WindowOptions::default(), GENEROUS),
+            Err(Violation::FirstInputNotOpened(files))
         );
     }
 
