@@ -214,6 +214,29 @@ come after the compiled ones, in config's order. The loop is told them
 A `setup` that defines a source name twice is refused
 (`Registrations.sourceTwice`).
 
+## Styles
+
+A completion style (`Completion.Style`, `Editor/Completion/Style.lean`) is
+held by owner like a source, in a `StyleEntry`, and replaced as a set
+(`replaceStyles`). The latest entry of a name is the one found (`style?`),
+so config's style of a shipped style's name is used in its place until a
+reload drops it. Every host registers the shipped styles, `fuzzy` and
+`orderless`, for the owner `compiled` (`Headless.Collaborators.styles`);
+`setup` registers more with `defineStyle` (`Editor/Setup.lean`).
+
+Which style a prompt is matched with is config's choice, by category, with a
+default for the rest (`useStyleFor`, `useStyle`): the choices are config's
+alone, set by each install (`styleChoices`), as its project commands are.
+`matching` resolves them for the loop: the default is the chosen default's
+registered style, else `fuzzy`; a category's is the style chosen for it
+when one is registered under that name, else the category falls to the
+default. A chosen name no style is registered under is reported at install
+(`unknownStyles`, `Report.unknownStyles`, `Editor/Config/Reload.lean`).
+
+A `setup` that defines a style name twice is refused
+(`Registrations.styleTwice`), and so is one that chooses the style of one
+category, or the default, twice (`Registrations.styleChosenTwice`).
+
 ## Compiled commands
 
 Compiled code is an owner too (`Owner.compiled`). A host registers its
@@ -350,6 +373,14 @@ structure SourceEntry where
   /-- The source. -/
   source : Completion.Source
 
+/-- A style entry of the registry: a completion style and who registered
+it. -/
+structure StyleEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The style. -/
+  style : Completion.Style
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -413,6 +444,12 @@ it did not, which a host reads as `auto`. -/
   projectCommands : Array Compile.ProjectCommands := #[]
   /-- The completion source entries ("Sources", in the module docs). -/
   sources : Array SourceEntry := #[]
+  /-- The completion style entries ("Styles", in the module docs). -/
+  styles : Array StyleEntry := #[]
+  /-- Config's choices of completion style (`useStyle`, `useStyleFor`,
+  `Editor/Setup.lean`), each a category, or `none` for the default, and a
+  style's name, in the order it made them: set at every install. -/
+  styleChoices : Array (Option String × String) := #[]
 
 namespace Registry
 
@@ -428,6 +465,36 @@ def replaceSources (registry : Registry) (owner : Owner) (sources : Array Comple
 name. -/
 def source? (registry : Registry) (name : String) : Option Completion.Source :=
   (registry.sources.findRev? (·.source.name == name)).map (·.source)
+
+/-- `registry` with every style entry of `owner` removed and `styles` added
+as its style entries, in their order. -/
+def replaceStyles (registry : Registry) (owner : Owner) (styles : Array Completion.Style) :
+    Registry :=
+  { registry with
+    styles := registry.styles.filter (·.owner != owner) ++ styles.map fun style => { owner, style } }
+
+/-- The completion style registered under `name`: the latest entry of that
+name. -/
+def style? (registry : Registry) (name : String) : Option Completion.Style :=
+  (registry.styles.findRev? (·.style.name == name)).map (·.style)
+
+/-- The style config chose for `category` (`none` for the default), when it
+chose one and a style is registered under its name. -/
+def chosenStyle? (registry : Registry) (category : Option String) : Option Completion.Style :=
+  (registry.styleChoices.find? (·.1 == category)).bind fun (_, name) => registry.style? name
+
+/-- The styles a prompt is matched with ("Styles", in the module docs): the
+default is the chosen default's registered style, else the fuzzy style;
+a category's is the style chosen for it when one is registered under that
+name, else none, so the category falls to the default. -/
+def matching (registry : Registry) : Completion.Matching :=
+  { default := (registry.chosenStyle? none).getD Completion.Styles.fuzzy
+    byCategory := fun category => registry.chosenStyle? (some category) }
+
+/-- The names config chose that no style is registered under, in the order
+chosen, each once. -/
+def unknownStyles (registry : Registry) : Array String :=
+  ((registry.styleChoices.map (·.2)).filter fun name => (registry.style? name).isNone).toList.eraseDups.toArray
 
 /-- The names of the completion sources registered in `category`: each name
 once, in the order it was first registered, kept only when its latest
@@ -778,6 +845,13 @@ they were made: one at most, in a `setup` that is not refused. -/
   projectCommands : Array Compile.ProjectCommands := #[]
   /-- The completion sources, in the order they were defined. -/
   sources : Array Completion.Source := #[]
+  /-- The completion styles, in the order they were defined. -/
+  styles : Array Completion.Style := #[]
+  /-- The choices of completion style (`useStyle`, `useStyleFor`), each a
+  category, or `none` for the default, and a style's name, in order: a
+  category, or the default, once at most in a `setup` that is not
+  refused. -/
+  styleChoices : Array (Option String × String) := #[]
 
 namespace Registrations
 
@@ -873,6 +947,9 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .projectCommands entry, collected =>
     ((), { collected with projectCommands := collected.projectCommands.push entry })
   | .source source, collected => ((), { collected with sources := collected.sources.push source })
+  | .style style, collected => ((), { collected with styles := collected.styles.push style })
+  | .useStyle category name, collected =>
+    ((), { collected with styleChoices := collected.styleChoices.push (category, name) })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -913,6 +990,17 @@ refused with. -/
 def sourceTwice (name : String) : String :=
   s!"the completion source `{name}` is registered twice"
 
+/-- What a `setup` that defines the completion style `name` twice is refused
+with. -/
+def styleTwice (name : String) : String :=
+  s!"the completion style `{name}` is registered twice"
+
+/-- What a `setup` that chooses the completion style of `category` twice, or
+with `none` the default style twice, is refused with. -/
+def styleChosenTwice : Option String → String
+  | some category => s!"the completion style of `{category}` is chosen twice"
+  | none => "the default completion style is chosen twice"
+
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
   for index in [0:items.size] do
@@ -931,7 +1019,9 @@ auto-reload set twice, a workspace root declared twice, the shell time limit set
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named, a language name defined twice, a language with a pattern no
 file name can be meant by (`Language.problems`), of which the first is
-named, or a completion source defined twice (`sourceTwice`).
+named, a completion source defined twice (`sourceTwice`), a completion
+style defined twice (`styleTwice`), or the style of a category, or the
+default style, chosen twice (`styleChosenTwice`).
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
@@ -1014,6 +1104,10 @@ def problem? (collected : Registrations) : Option String := do
       return s!"the language `{language.name}` cannot be meant: {problem}"
   if let some name := repeated? (collected.sources.map (·.name)) then
     return sourceTwice name
+  if let some name := repeated? (collected.styles.map (·.name)) then
+    return styleTwice name
+  if let some category := repeated? (collected.styleChoices.map (·.1)) then
+    return styleChosenTwice category
   none
 
 /-- What `setup` registers, or the message it is refused with: the one it

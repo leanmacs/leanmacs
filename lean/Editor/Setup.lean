@@ -1,6 +1,7 @@
 import Editor.Command.Call
 import Editor.Compile.Contribution
 import Editor.Completion
+import Editor.Completion.Styles
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.Face
@@ -133,7 +134,8 @@ cannot be meant: a command name or a job name registered twice (the first
 could never run), a key sequence bound twice (the first binding could never
 run), an ex name bound twice, a store name declared twice, a theme defined
 twice or named twice, a segment defined twice, the mode line listed twice,
-a completion source defined twice,
+a completion source defined twice, a completion style defined twice, the
+style of one category or the default style chosen twice,
 a command over a store the `setup`
 does not declare, a mode name defined twice, or a mode that cannot be meant
 under any scheme (`Mode.problems`: a role that is not registered, a suffix
@@ -187,6 +189,28 @@ def setup : SetupM Unit := do
 source of a compiled source's name is used in that one's place until a
 reload drops it. A `setup` that defines a source name twice is refused
 (`Config.Registrations.sourceTwice`).
+
+Config registers completion styles by name and chooses one for each
+category, with a default for the rest (`Editor/Completion/Style.lean`):
+
+```lean
+def setup : SetupM Unit := do
+  defineStyle (.keeping "starts" fun text candidate => candidate.startsWith text)
+  useStyle "starts"
+  useStyleFor "buffer" "orderless"
+```
+
+`defineStyle` registers a style for this config; the shipped styles,
+`fuzzy` and `orderless` (`Completion.Styles.shipped`), are registered by
+every host. `useStyleFor category name` chooses the style of the prompts of
+`category`, and `useStyle name` the default for the others; with none
+chosen the default is `fuzzy`. A name no style is registered under is not
+refused: it is looked up at install, the category falls to the default
+(the default to `fuzzy`), and the echo area says so
+(`Completion.Styles.unknown`). A `setup` that defines a style name twice
+is refused (`Config.Registrations.styleTwice`), and so is one that
+chooses the style of one category, or the default, twice
+(`Config.Registrations.styleChosenTwice`).
 
 Config defines segments of the mode line and lists them for each side
 (`Editor/ModeLine.lean`):
@@ -433,6 +457,13 @@ inductive SetupRequest where
   /-- Register `source` as a completion source, by its name
   (`Editor/Completion.lean`). -/
   | source (source : Completion.Source)
+  /-- Register `style` as a completion style, by its name
+  (`Editor/Completion/Style.lean`). -/
+  | style (style : Completion.Style)
+  /-- Choose the completion style registered under `name` for the prompts of
+  `category`, or, with `none`, for every prompt whose category has none
+  chosen. -/
+  | useStyle (category : Option String) (name : String)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -463,6 +494,8 @@ def SetupRequest.Reply : SetupRequest → Type
   | .compileContribution _ => Unit
   | .projectCommands _ => Unit
   | .source _ => Unit
+  | .style _ => Unit
+  | .useStyle .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -589,6 +622,31 @@ used in that one's place. The editor refuses the `setup` for a source name
 defined twice. -/
 def defineSource (source : Completion.Source) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.source source))
+
+/-- Registers `style` as a completion style, for this config, under its
+name (`Editor/Completion/Style.lean`): `useStyle` and `useStyleFor` can
+then choose it. Config's style of a compiled style's name is used in that
+one's place. The editor refuses the `setup` for a style name defined
+twice. -/
+def defineStyle (style : Completion.Style) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.style style))
+
+/-- Chooses the completion style registered under `name` as the default:
+the style of every prompt whose category has none chosen (`useStyleFor`),
+and of one with no category. The name is looked up when the config is
+installed; one no style is registered under leaves the fuzzy style and is
+said in the echo area. The editor refuses the `setup` for choosing the
+default twice. -/
+def useStyle (name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.useStyle none name))
+
+/-- Chooses the completion style registered under `name` for the prompts of
+`category`. The name is looked up when the config is installed; one no
+style is registered under leaves the category to the default and is said
+in the echo area. The editor refuses the `setup` for choosing one
+category's style twice. -/
+def useStyleFor (category name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.useStyle (some category) name))
 
 /-- Names the theme called `name` as the one in force once the config is
 installed: the compiled theme of that name, or one this `setup` defines.

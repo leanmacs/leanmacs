@@ -2905,6 +2905,43 @@ def setupChecks : List Check :=
             Config.Registrations.sourceTwice "picks" ==
               "the completion source `picks` is registered twice") },
     { name :=
+        "a setup's completion styles and its choices of them are collected in the order it made them; one that defines two styles under one name, or chooses the style of one category or the default twice, is refused with exactly the reason that names it"
+      run :=
+        let mine : Completion.Style := .keeping "mine" fun text candidate => candidate.startsWith text
+        let setup : SetupM Unit := do
+          defineStyle mine
+          useStyleFor "pick" "orderless"
+          useStyle "mine"
+          useStyleFor "other" "mine"
+        let twice : SetupM Unit := do
+          defineStyle mine
+          defineStyle (.keeping "mine" fun _ _ => true)
+        let pickTwice : SetupM Unit := do
+          useStyleFor "pick" "a"
+          useStyleFor "pick" "b"
+        let defaultTwice : SetupM Unit := do
+          useStyle "a"
+          useStyle "b"
+        let apart : SetupM Unit := do
+          useStyleFor "pick" "a"
+          useStyle "a"
+        pure
+          ((match Config.Registrations.ofSetup setup with
+            | .ok collected =>
+              collected.styles.map (·.name) == #["mine"] &&
+                collected.styleChoices == #[(some "pick", "orderless"), (none, "mine"), (some "other", "mine")]
+            | .error _ => false) &&
+            refusal twice == some (Config.Registrations.styleTwice "mine") &&
+            Config.Registrations.styleTwice "mine" ==
+              "the completion style `mine` is registered twice" &&
+            refusal pickTwice == some (Config.Registrations.styleChosenTwice (some "pick")) &&
+            refusal defaultTwice == some (Config.Registrations.styleChosenTwice none) &&
+            Config.Registrations.styleChosenTwice (some "pick") ==
+              "the completion style of `pick` is chosen twice" &&
+            Config.Registrations.styleChosenTwice none ==
+              "the default completion style is chosen twice" &&
+            refusal apart == none) },
+    { name :=
         "a setup's segments are collected in the order it defined them, with the mode line it lists; a setup that defines and lists none has none"
       run :=
         let setup : SetupM Unit := do
@@ -3472,6 +3509,38 @@ def registryChecks : List Check :=
             ["buffer", "other", "none"].all fun category =>
               registry.registered.categorySources category == registry.sourcesIn category &&
                 moved.registered.categorySources category == moved.sourcesIn category) },
+    { name :=
+        "the matching follows config's choices over the registered styles: a category's chosen style, the chosen default for a category with none, and the fuzzy style with no choice; a choice of a name nobody registered falls to the default and is reported once; config's style of a shipped name is the one found until config's styles are replaced"
+      run :=
+        let shipped : Config.Registry :=
+          ({} : Config.Registry).replaceStyles .compiled Completion.Styles.shipped
+        let mine : Completion.Style := .keeping "mine" fun _ _ => true
+        let chosen : Config.Registry :=
+          { shipped.replaceStyles .config #[mine] with
+            styleChoices := #[(some "pick", "orderless"), (none, "mine")] }
+        let unknown : Config.Registry :=
+          { shipped with
+            styleChoices := #[(some "pick", "nope"), (some "other", "nope"), (none, "gone")] }
+        let overridden : Config.Registry :=
+          { shipped.replaceStyles .config #[.keeping "fuzzy" fun _ _ => true] with
+            styleChoices := #[(none, "fuzzy")] }
+        let dropped := overridden.replaceStyles .config #[]
+        let nameOf (registry : Config.Registry) (category : Option String) : String :=
+          (registry.matching.styleFor category).name
+        let hitsOf (registry : Config.Registry) : Array Completion.Hit :=
+          (Program.run (port := fuzzyPort) FuzzyModel.handle
+              ((registry.matching.styleFor none).hits "z" #["a"]) ()).1
+        pure
+          (nameOf chosen (some "pick") == "orderless" && nameOf chosen (some "other") == "mine" &&
+            nameOf chosen none == "mine" &&
+            nameOf shipped (some "pick") == "fuzzy" &&
+            nameOf {} none == "fuzzy" &&
+            nameOf unknown (some "pick") == "fuzzy" &&
+            unknown.unknownStyles == #["nope", "gone"] &&
+            chosen.unknownStyles == #[] &&
+            (overridden.style? "fuzzy").isSome &&
+            hitsOf overridden == #[.ofIndex 0] &&
+            hitsOf dropped == #[]) },
     { name :=
         "completion sources are held by owner and replaced as a set: the latest entry of a name is the one found, config's source of a compiled source's name while config registers it and the compiled one again once it does not; the loop is told what the lookup answers"
       run :=
@@ -4115,6 +4184,38 @@ def reloadChecks : List Check :=
             dropped.modeLine == none &&
             kept.modeLine == state.modeLine &&
             (reportFrom segmented (accepted ["a"] (pure ()))).unknownSegments == #[]) },
+    { name :=
+        "an install sets config's style choices and replaces its styles; its report names each chosen style nobody registered, which the echo area says after the segments' sentences; a later install that chooses none clears them, and a rejected one changes nothing"
+      run :=
+        let styled : Config.State Elaborated :=
+          { themed with
+            registry := themed.registry.replaceStyles .compiled Completion.Styles.shipped }
+        let choosing : SetupM Unit := do
+          useStyleFor "pick" "orderless"
+          useStyle "nope"
+        let both : SetupM Unit := do
+          modeLine ["lost"] []
+          useStyle "nope"
+        let own : SetupM Unit := do
+          defineStyle (.keeping "mine" fun _ _ => true)
+          useStyle "mine"
+        let (state, _) := reduceFrom styled [.requested, .finished (accepted ["a"] choosing)]
+        let report := reportFrom styled (accepted ["a"] choosing)
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        let (owned, _) := reduceFrom styled [.requested, .finished (accepted ["a"] own)]
+        pure
+          (state.registry.styleChoices == #[(some "pick", "orderless"), (none, "nope")] &&
+            report.unknownStyles == #["nope"] &&
+            report.echo == some "reload: no completion style is registered under `nope`" &&
+            (reportFrom styled (accepted ["a"] both)).echo ==
+              some
+                "reload: no segment is registered as `lost`; no completion style is registered under `nope`" &&
+            dropped.registry.styleChoices == #[] &&
+            (reportFrom state (accepted ["a"] (pure ()))).unknownStyles == #[] &&
+            kept.registry.styleChoices == state.registry.styleChoices &&
+            (owned.registry.matching.styleFor none).name == "mine" &&
+            (owned.registry.style? "mine").isSome) },
     { name :=
         "a config's segments are replaced at every install: one it defines can be listed, and is gone once a reload no longer defines it"
       run :=

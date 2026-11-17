@@ -20,12 +20,15 @@ the model tests run it with outcomes built by hand
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the chunks, replaces the config's entries in the registry,
   commands, jobs, key bindings, modes, ex bindings, faces, themes,
-  segments, languages, compile contributions and completion sources
+  segments, languages, compile contributions, completion sources and
+  completion styles
   (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
   `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
   `Registry.replaceThemes`, `Registry.replaceSegments`,
   `Registry.replaceLanguages`, `Registry.replaceContributions`,
-  `Registry.replaceSources`, never an append), sets the registry's process
+  `Registry.replaceSources`, `Registry.replaceStyles`, never an append),
+  sets config's choices of completion style (`Registry.styleChoices`),
+  sets the registry's process
   environment to the one the config set, `none` when it set none
   (`Registry.environment`), and meets the config's stores with the cells
   there are (`Cells.install`). A rejected outcome changes none of them: the config that
@@ -60,6 +63,15 @@ the model tests run it with outcomes built by hand
   after the unknown theme's sentence. The host resolves the listing over
   the registry for each step (`Headless.keys`). A rejected outcome changes
   none of it.
+- **The completion styles follow the registry and config's choices.** An
+  install replaces config's styles and sets its choices, none for a config
+  that chooses none, so a reload that chooses none goes back to the fuzzy
+  style for every prompt. A chosen name no style is registered under
+  leaves its category to the default, and the default to the fuzzy style,
+  and the report names it (`Report.unknownStyles`), which the echo area
+  says after the segments' sentences. The host resolves the choices over
+  the registry for each step (`Registry.matching`, `Headless.keys`). A
+  rejected outcome changes none of it.
 - **The frame padding follows config.** An install sets the padding in
   force (`State.framePadding`) to the one the config set, or none for the
   editor's 8 (`Loop.padding`), so a reload that sets none goes back to it.
@@ -164,6 +176,10 @@ structure Report where
   segment is registered under, in order, each once: they are left out, and
   the rest are drawn. -/
   unknownSegments : Array String := #[]
+  /-- The completion style names the installed config chose that no style is
+  registered under, in order, each once: their categories fall to the
+  default, and the default to the fuzzy style. -/
+  unknownStyles : Array String := #[]
   /-- What is said of each display rule of the installed config whose target
   the layout it chose lacks, in order (`Report.leftOut`): those rules are
   left out, and the rest are kept. -/
@@ -179,16 +195,18 @@ error, `reload: <source>:<line>:<column>: error: ` and the first line of its
 message, then ` (and <n> more)` when it has more errors; for one rejected
 with no error to name, `reload: rejected`. A reload that installs says
 nothing, so a working config does not cover what a command said, unless its
-config named a theme or listed segments nobody registered, or made display
-rules whose targets do not exist: then `reload: ` and the sentences,
-`Theme.unknown`'s, then each `ModeLine.unknown` and then each rule left out
-(`unusableRules`), joined by `; `. The whole report is the host's to
+config named a theme, listed segments or chose completion styles nobody
+registered, or made display rules whose targets do not exist: then
+`reload: ` and the sentences, `Theme.unknown`'s, then each
+`ModeLine.unknown`, then each `Completion.Styles.unknown` and then each
+rule left out (`unusableRules`), joined by `; `. The whole report is the host's to
 print. -/
 def Report.echo (report : Report) : Option String :=
   if report.installed then
     let sentences :=
       report.unknownTheme.toArray.map Theme.unknown ++
         report.unknownSegments.map ModeLine.unknown ++
+        report.unknownStyles.map Completion.Styles.unknown ++
         report.unusableRules
     if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"
   else
@@ -338,7 +356,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         chunks := built.chunks,
         registry :=
           {
-            ((((((((((state.registry.replace .config built.registrations.commands).replaceJobs
+            (((((((((((state.registry.replace .config built.registrations.commands).replaceJobs
                                                   .config built.registrations.jobs).replaceBindings
                                               .config built.registrations.bindings).replaceModes
                                           .config built.registrations.modes).replaceEx
@@ -348,8 +366,10 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
                           .config built.registrations.segments).replaceLanguages
                       .config built.registrations.languages).replaceContributions
                   .config built.registrations.contributions).replaceSources
+              .config built.registrations.sources).replaceStyles
               .config
-              built.registrations.sources with
+              built.registrations.styles with
+            styleChoices := built.registrations.styleChoices
             environment := built.registrations.environment
             autoReload := built.registrations.autoReload.back?.getD false
             workspaceRoots := built.registrations.workspaceRoots
@@ -363,13 +383,14 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       chooseAt state.registry state.themeName built.registrations.theme
     let modeLine := built.registrations.modeLine
     let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
+    let unknownStyles := state.registry.unknownStyles
     ({ state with
         themeName, modeLine, framePadding := built.registrations.framePadding
         layout := built.registrations.layout, tabBar := built.registrations.tabBar
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments
-        unusableRules })
+        unknownStyles, unusableRules })
 
 /-- The appearance the window is to be asked for, and the state that
 remembers it: when the window is open and the paper of the theme now in

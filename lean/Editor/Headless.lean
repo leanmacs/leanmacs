@@ -840,6 +840,11 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   config. The default is none; the executable's hosts are handed the
   shipped ones (`shippedOver`). -/
   sources : Array Completion.Source := #[]
+  /-- The compiled completion styles (`Editor/Completion/Style.lean`):
+  registered for the owner `compiled` when the loop starts, before any
+  config. The default is the shipped set (`Completion.Styles.shipped`), so
+  every host's config can choose `fuzzy` and `orderless`. -/
+  styles : Array Completion.Style := Completion.Styles.shipped
   /-- Where a log entry goes: a command that took longer than `slowAfter`.
   The editor thread calls it. It is not `emit`: the output is what a test
   compares, and a log entry depends on how long the machine took. -/
@@ -949,8 +954,10 @@ def severityName : Config.Severity → String
 /-- The lines a reload's report is printed as: what it came to, then its
 diagnostics, then, when its config named a theme nobody registered, a line
 that says so, a `segment:` line for each segment its mode line listed
-that nobody registered, and a `rule:` line for each display rule left out
-because its target does not exist (`Config.Report.unusableRules`). -/
+that nobody registered, a `style:` line for each completion style it chose
+that nobody registered (`Config.Report.unknownStyles`), and a `rule:` line
+for each display rule left out because its target does not exist
+(`Config.Report.unusableRules`). -/
 def reportLines (report : Config.Report) : Array String :=
   let outcome :=
     if report.installed then
@@ -962,6 +969,7 @@ def reportLines (report : Config.Report) : Array String :=
   #[outcome] ++ diagnostics ++
     report.unknownTheme.toArray.map (fun name => s!"theme: {Theme.unknown name}") ++
     report.unknownSegments.map (fun name => s!"segment: {ModeLine.unknown name}") ++
+    report.unknownStyles.map (fun name => s!"style: {Completion.Styles.unknown name}") ++
     report.unusableRules.map fun sentence => s!"rule: {sentence}"
 
 /-- How a job that has ended is reported, after `job <id> <name>: `. -/
@@ -1190,8 +1198,10 @@ over the registry's segments, a name nobody registered left out
 (`Config.Registry.resolve`); the frame padding config set, or the editor's
 8 (`Loop.padding`); the layout config chose, or the default
 (`Layout.default`); when config chose the tab bar to be shown, or while
-there are two tabs or more (`TabBar.Shown.several`); and the host's menu bar with its key equivalents filled
-from the registry's bindings (`Config.Registry.menuOf`). It is made for
+there are two tabs or more (`TabBar.Shown.several`); the host's menu bar with its key equivalents filled
+from the registry's bindings (`Config.Registry.menuOf`); and the
+completion styles config chose by category over the registry's styles, or
+the fuzzy style (`Config.Registry.matching`). It is made for
 each window event, so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
@@ -1200,7 +1210,8 @@ def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     padding := running.config.framePadding.getD Loop.padding
     layout := some (running.config.layout.getD Layout.default)
     tabBar := some (running.config.tabBar.getD .several)
-    menu := collaborators.menu.map running.config.registry.menuOf }
+    menu := collaborators.menu.map running.config.registry.menuOf
+    matching := running.config.registry.matching }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what
@@ -1666,11 +1677,11 @@ structure Progress where
 
 /-- The registry a host starts with: what compiled code hands it, its
 commands, jobs, key bindings, modes, ex bindings, themes, segments and
-languages and compile contributions, for the owner `compiled`, before any
-config. -/
+languages, compile contributions, completion sources and completion
+styles, for the owner `compiled`, before any config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  (((((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
+  ((((((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
                                     collaborators.compiledJobs).replaceBindings
                                 .compiled collaborators.bindings).replaceModes
                             .compiled collaborators.modes).replaceEx
@@ -1679,7 +1690,8 @@ def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators �
                 .compiled collaborators.segments).replaceLanguages
             .compiled collaborators.languages).replaceContributions
         .compiled collaborators.contributions).replaceSources
-    .compiled collaborators.sources
+    .compiled collaborators.sources).replaceStyles
+    .compiled collaborators.styles
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of
