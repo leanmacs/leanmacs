@@ -712,17 +712,29 @@ changed the state or not (`Loop.publish`):
    is listed after every tile and docked window, so the display, which
    draws views in scene order each over its own background, draws it
    above them.
-5. **Publish** it through the display port.
-6. **Release** each snapshot the previous scene named that this one does
-   not, and each taken for a float closed in step 4. So a scene's handles
+5. **The tab bar** (`Loop.tabBarView`, `Editor/TabBar.lean`). While the
+   bar is shown (`EditorState.tabBarRect?`), its view is appended last, in
+   its strip above the minibuffer's: the one view of the scene that is not
+   a window. The first time, the publish makes its text, an anchor marker
+   at 0 and its view id, which the state keeps (`EditorState.tabBar`); when
+   the line of the tabs' labels changes, the text's content is replaced
+   with it, and a snapshot of it is taken or kept as for any view. Its
+   decorations are the chips' faces, it has no selection and no status
+   field, and it is appended after the follow and the decorations, so it
+   is never followed and gets no search match. It is never the scene's
+   focused view.
+6. **Publish** it through the display port.
+7. **Release** each snapshot the previous scene named that this one does
+   not, and each taken for a float closed in step 4: the tab bar's line
+   before a change among them. So a scene's handles
    are alive while it is the last one published, and a real binding
    resolves them when it is published.
-7. **What the closed floats held.** A float step 4 closed gives up its
+8. **What the closed floats held.** A float step 4 closed gives up its
    markers and its anchor marker (`Loop.gaveUp`), and the scheme is told
    its view closed (`Loop.forgetViews`, on both of the loop's states of
    the scheme), as for a window a command closed: only the publish knows
    what the follow scrolled.
-8. **The checks of files** (`Loop.fileJobs`): the loop compares what the
+9. **The checks of files** (`Loop.fileJobs`): the loop compares what the
    state shows with what it saw at the last publish (`Loop.Seen`) and
    starts one `check-files` for the files that are due ("Files that
    changed on disk", below).
@@ -861,6 +873,8 @@ least movement, with the state's scroll margin
 Layout is asked through the display port's two queries and nothing of it
 is kept here.
 
+- **The tab bar's view does not follow**: it is appended after the follow,
+  and its one line is always at its anchor (`Loop.tabBarView`).
 - **It runs in the publish, after the views are made and before the scene
   is published.** After the views, because a question of layout names a
   snapshot and `Loop.views` is what takes one of a text that changed: the
@@ -1553,6 +1567,64 @@ def spots (state : EditorState) (views : Array View) :
                 anchor := scroll.offset, padding := area.padding, position := anchor.offset }
     return some (float.view, (answer : Except TextError (Option Display.Spot)).toOption.join)
 
+/-- The tab bar's view of `state` while the bar is shown
+(`EditorState.tabBarRect?`, `Editor/TabBar.lean`), what it shows, and the
+state with the bar drawn. The first time, the text, its anchor marker at 0
+and the view's id (`EditorState.freshView`, with `nextView` past it) are
+made and kept in `EditorState.tabBar`; when the line of the tabs' labels
+(`TabBar.line`) differs from the one the text holds, the text's content is
+replaced with it. The snapshot is one of `shown` while the text is at its
+revision, and a new one otherwise. The view has no selection, so no cursor
+is drawn, no status field, so its whole strip is its one text row, and the
+bar's padding (`EditorState.paddingOf`). It is not refused: a refusal of the
+store is handed back, with no view. -/
+def tabBarView (state : EditorState) (shown : Array Shown) :
+    TextM (EditorState × Option (View × Shown) × Option TextError) := do
+  let some rect := state.tabBarRect? | return (state, none, none)
+  let made ←
+    observing do
+        match state.tabBar with
+        | some drawn =>
+          pure (state, drawn)
+        | none =>
+          let text ← createText ""
+          let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+          let view := state.freshView
+          let drawn : TabBar.Drawn := { view, text, scroll, line := "" }
+          pure
+              ({ state with
+                  tabBar := some drawn, nextView := view.index + 1 },
+                drawn)
+  let (state, drawn) ←
+    match made with
+    | .ok made =>
+      pure made
+    | .error error =>
+      return (state, none, some error)
+  let labels := (Array.range state.frame.tabs.size).map state.tabLabel
+  let (line, decorations) := TabBar.line labels state.frame.tabIndex
+  let taken ←
+    observing do
+        if line != drawn.line then
+          drawn.text.replaceRange 0 (← drawn.text.byteLength) line
+        let revision ← drawn.text.revision
+        match shown.find? fun was => was.text == drawn.text && was.revision == revision with
+        | some was =>
+          pure was
+        | none =>
+          return { text := drawn.text, revision, snapshot := ← drawn.text.snapshot }
+  match taken with
+  | .error error =>
+    return (state, none, some error)
+  | .ok was =>
+    let drawn := { drawn with line }
+    let state := { state with tabBar := some drawn }
+    let view : View :=
+      { id := drawn.view, rect, snapshot := was.snapshot, scroll := drawn.scroll
+        selections := #[], cursor := { shape := .hollow, face := ⟨"cursor"⟩ }, decorations
+        status := #[], padding := state.paddingOf drawn.view }
+    return (state, some (view, was), none)
+
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
 (`EditorState.settleQuit`), brings an open prompt's listing up to date
@@ -1561,7 +1633,8 @@ the one it last chose (`Frame.choose`), has
 each view but the floats follow its cursor (`followed`), places the floats
 anchored at a position where the display drew it and closes a transient
 one whose anchor is not drawn (`spots`, `EditorState.located`), has the
-floats follow their cursors, publishes a scene
+floats follow their cursors, appends the tab bar's view while the bar is
+shown (`tabBarView`), publishes a scene
 of the state, releases each
 snapshot the last scene named that this one does not, and gives up what
 the floats it closed held, telling the scheme they closed. It is not refused
@@ -1613,7 +1686,15 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   followed placed.scrollMargin placed.bottomRow (views.filter (floating placed))
   -- The matches are read from where each anchor now is.
   let views ← decorated placed views
-  let state := placed.refusedBy (unrecorded <|> unlisted <|> unshown)
+  -- The tab bar's view comes last, once the views are followed and
+  -- decorated: it is never followed and gets no search match.
+  let (placed, barred, unbarred) ← tabBarView placed (shown ++ loop.shown)
+  let (views, shown) :=
+    match barred with
+    | some (view, was) =>
+      (views.push view, if shown.any (·.snapshot == was.snapshot) then shown else shown.push was)
+    | none => (views, shown)
+  let state := placed.refusedBy (unrecorded <|> unlisted <|> unshown <|> unbarred)
   Display.publish (scene state views loop.pending loop.menu)
   -- A snapshot is kept while a view of the scene names it: one taken for a
   -- float that closed above is released with the last scene's others.

@@ -6,6 +6,7 @@ import Editor.Floating
 import Editor.Invocation
 import Editor.Layout
 import Editor.Scene
+import Editor.TabBar
 import Editor.UndoTree
 import Editor.Workspace
 
@@ -91,6 +92,15 @@ holds no view. With a prompt open it is a text row and that bottom row,
 `heights.text + heights.message`: the input, then the prompt, and the
 minibuffer's view is the strip's rectangle. A frame shorter than the strip
 is all strip, and the tiled area has no height.
+
+**The tab bar's strip** (`EditorState.tabBarRect?`, `Editor/TabBar.lean`)
+is cut off the bottom of the tiled area, directly above the minibuffer's,
+while the bar is shown (`EditorState.tabBarShown`: by default while there
+are two tabs or more): one text row, or what the minibuffer's strip leaves
+of the frame. Floats stay out of it, since they are placed in the tiled
+area. The bar's view (`EditorState.tabBar`) is no window: it has no
+target, no key reaches it and it is never focused; its rectangle and
+padding are read through `rect?` and `paddingOf` as a window's are.
 
 **The heights of the rows** are the display's (`Display.heights`):
 `EditorState.heights` holds what it last answered, which `Loop.publish`
@@ -1438,6 +1448,13 @@ structure EditorState where
   no workspace and no file runs ("Workspaces", in the module docs). A host
   sets it once, from its own; `/` until it does. -/
   workingDirectory : System.FilePath := "/"
+  /-- When the tab bar is shown (`Editor/TabBar.lean`): config's choice, as
+  the last publish was handed it (`Loop.publish`); while there are two tabs
+  or more before any. -/
+  tabBarShown : TabBar.Shown := .several
+  /-- The tab bar's view, text and line, once a publish has drawn it; kept
+  for the editor's life (`Editor/TabBar.lean`, "What it is"). -/
+  tabBar : Option TabBar.Drawn := none
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -1731,19 +1748,41 @@ above it while one is, for the input, with the prompt in the bottom row
 def minibufferPlace (state : EditorState) : Nat :=
   if state.prompt.isSome then state.heights.text + state.heights.message else state.heights.message
 
+/-- How tall the tab bar's strip is: a text row while the bar is shown over
+the frame's tabs (`TabBar.Shown.shows`), clamped to what the minibuffer's
+strip leaves of the frame, and 0 while it is not shown. -/
+def tabBarHeight (state : EditorState) : Nat :=
+  if state.tabBarShown.shows state.frame.tabs.size then
+    let height := state.frame.size.height
+    min state.heights.text (height - min state.minibufferPlace height)
+  else 0
+
 /-- The frame cut in two: the area a layout tiles, and below it the
 minibuffer's strip, `minibufferPlace` tall, or the whole frame when that
-is shorter. -/
+is shorter. While the tab bar is shown its strip (`tabBarHeight`) is cut
+off the bottom of the tiled area, directly above the minibuffer's
+(`tabBarRect?`). -/
 def cutFrame (state : EditorState) : Rect × Rect :=
   let frame := state.frame
   let height := frame.size.height
-  Layout.cut .rows { x := 0, y := 0, width := frame.size.width, height }
-    (height - min state.minibufferPlace height)
+  let (above, strip) :=
+    Layout.cut .rows { x := 0, y := 0, width := frame.size.width, height }
+      (height - min state.minibufferPlace height)
+  ({ above with height := above.height - state.tabBarHeight }, strip)
 
-/-- The area of the frame a layout tiles: the frame above the minibuffer's
-strip (`cutFrame`). -/
+/-- The area of the frame a layout tiles: the frame above the tab bar's
+strip and the minibuffer's (`cutFrame`). -/
 def tiled (state : EditorState) : Rect :=
   state.cutFrame.1
+
+/-- The tab bar's strip, directly above the minibuffer's, one text row tall
+or what the frame leaves of it; none while the bar is not shown or the
+frame leaves it no height. -/
+def tabBarRect? (state : EditorState) : Option Rect :=
+  let tiled := state.tiled
+  let height := state.tabBarHeight
+  if height == 0 then none
+  else some { x := 0, y := tiled.y + tiled.height, width := tiled.width, height }
 
 /-- The view monocle shows: the selected view (`selectedView`), and when
 that is a float, the window it is anchored to, by `window` or `position`,
@@ -1795,25 +1834,36 @@ this (`Scroll.Area.ofRect`), which is what the display's frame shows. -/
 def bottomRow (state : EditorState) (id : ViewId) : Nat :=
   if state.minibufferView? == some id then state.heights.message else state.heights.status
 
-/-- The rectangle of the view `id` in the frame (`rects`); none for a view
-that is not laid out: one with no window in the list, a window the layout
-does not show, and the minibuffer's when no prompt is open. -/
+/-- Whether `id` is the tab bar's view (`tabBar`). -/
+def isTabBar (state : EditorState) (id : ViewId) : Bool :=
+  state.tabBar.any (·.view == id)
+
+/-- The rectangle of the view `id` in the frame (`rects`), or the tab bar's
+strip for its view (`tabBarRect?`); none for a view that is not laid out:
+one with no window in the list, a window the layout does not show, the
+minibuffer's when no prompt is open, and the tab bar's while it is not
+shown. -/
 def rect? (state : EditorState) (id : ViewId) : Option Rect :=
-  (state.rects.find? (·.1 == id)).map (·.2)
+  (state.rects.find? (·.1 == id)).map (·.2) <|>
+    if state.isTabBar id then state.tabBarRect? else none
 
 /-- The padding of the view `id`, in points ("The padding of the views", in
 the module docs): the frame padding across and down for a window, with the
 top inset (`topInset`) at the top of a window along the frame's top edge;
 and for the minibuffer's view the bottom row's inset across
 (`bottomInset`) and none down, since its place is exactly a text row and
-the bottom row (`minibufferPlace`) and must stay that tall. Each window has
+the bottom row (`minibufferPlace`) and must stay that tall; and for the
+tab bar's view the frame padding across and none down, since its strip is
+exactly one text row. Each window has
 its own: two windows side by side are each padded, with no gap of their own
 between them. -/
 def paddingOf (state : EditorState) (id : ViewId) : Padding :=
   if state.minibufferView? == some id then { across := state.bottomInset, down := 0 }
   else
-    let top := if (state.rect? id).any (·.y == 0) then state.topInset else 0
-    { across := state.padding, down := state.padding, top }
+    if state.isTabBar id then { across := state.padding, down := 0 }
+    else
+      let top := if (state.rect? id).any (·.y == 0) then state.topInset else 0
+      { across := state.padding, down := state.padding, top }
 
 /-- Whether the state keeps the layout invariants ("The window list, the
 layout and their invariants" and "Tabs", in the module docs). For every tab
@@ -1827,9 +1877,9 @@ the state's views (`views`), and every other tab's is one of its own
 windows (`Tab.contains`). The ids of every window of every tab
 (`Frame.everyWindow`), then the open prompt's view, are distinct, are
 exactly the windows' ids, and each window's buffer exists. And whether an
-open prompt's choice, if it has one, is an index of its listing, and
-whether every buffer of the order they were used in (`recent`) is open and
-is there once. -/
+open prompt's choice, if it has one, is an index of its listing, whether
+every buffer of the order they were used in (`recent`) is open and is there
+once, and whether the tab bar's view, once drawn, is no window's. -/
 def wellFormed (state : EditorState) : Bool :=
   let ids := state.frame.everyWindow ++ state.minibufferView?.toArray
   let fits (tab : Tab) : Bool :=
@@ -1851,7 +1901,8 @@ def wellFormed (state : EditorState) : Bool :=
     (state.prompt.all fun asked =>
       asked.candidates.chosen.all (· < asked.candidates.listed.size)) &&
     state.recent.all (fun id => (state.buffer? id).isSome) &&
-    state.recent.toList.eraseDups.length == state.recent.size
+    state.recent.toList.eraseDups.length == state.recent.size &&
+    state.tabBar.all fun drawn => (state.window? drawn.view).isNone
 
 /-- The name the editor gives its empty buffer with no file: the initial
 state's buffer's, and the one left after the last buffer is closed

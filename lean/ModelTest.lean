@@ -7914,7 +7914,9 @@ def spoilings : List (String × (EditorState → EditorState)) :=
             windows := #[⟨0⟩]
             tabsAfter :=
               #[{ windows := #[⟨1⟩], floats := #[{ view := ⟨2⟩, anchor := .window ⟨0⟩ }]
-                  focused := ⟨1⟩ }] } })]
+                  focused := ⟨1⟩ }] } }),
+    ("with a tab bar whose view is a window's", fun state =>
+      { state with tabBar := some { view := ⟨2⟩, text := ⟨9⟩, scroll := ⟨⟨9⟩, 0⟩, line := "" } })]
 
 /-- `threeWindows` as three tabs: view 0 alone in the first, view 1 in the
 second, which is in view, and view 2 in the third, each focused on its one
@@ -29472,22 +29474,25 @@ def tabCommandChecks : List Check :=
             state (tabsAfter "C-w c C-w c C-w 1 C-c m C-c m C-c m"),
             state (tabsAfter "C-w c C-w c C-w 1 C-c M"), state (tabsAfter "C-w c C-w c C-c M") with
           | some right, some clamped, some still, some left =>
-            tabOrder right == [[1], [0], [2]] && right.frame.tabIndex == 1 &&
-              tabOrder clamped == [[1], [2], [0]] &&
+            -- The tab bar's view took the id 2 at the publish after the first
+            -- C-w c, so the third tab's window is 3.
+            tabOrder right == [[1], [0], [3]] && right.frame.tabIndex == 1 &&
+              tabOrder clamped == [[1], [3], [0]] &&
               clamped.frame.tabIndex == 2 &&
-              tabOrder still == [[0], [1], [2]] &&
-              tabOrder left == [[0], [2], [1]] &&
+              tabOrder still == [[0], [1], [3]] &&
+              tabOrder left == [[0], [3], [1]] &&
               left.frame.tabIndex == 1
           | _, _, _, _ => false },
     { name :=
-        "criterion 1 by key: after C-w s C-w c C-w s C-w z C-w p the first tab's windows, focus and rectangles are as they were before C-w c, and after C-w n the second tab is zoomed with its focus where it was left"
+        "criterion 1 by key: after C-w s C-w c C-w s C-w z C-w p the first tab's windows, focus and layout are as they were before C-w c, and its rectangles too in the area the tab bar leaves, and after C-w n the second tab is zoomed with its focus where it was left"
       run :=
         pure <|
           match state (tabsAfter "C-w s"), state (tabsAfter "C-w s C-w c C-w s C-w z"),
             state (tabsAfter "C-w s C-w c C-w s C-w z C-w p"),
             state (tabsAfter "C-w s C-w c C-w s C-w z C-w p C-w n") with
           | some split, some zoomed, some first, some second =>
-            windowOrder first == windowOrder split && windowRects first == windowRects split &&
+            windowOrder first == windowOrder split && first.frame.toTab == split.frame.toTab &&
+              windowRects first == windowRects { split with tabBarShown := .always } &&
               first.frame.tabIndex == 0 &&
               second.frame.tabIndex == 1 &&
               second.frame.layout == .monocle &&
@@ -29505,19 +29510,21 @@ def tabCommandChecks : List Check :=
               EditorM Unit := do
               let some target := (← editorState).target? ⟨view⟩ | giveUp "no window"
               discard <| runCommand name { target, arguments }
-            let closed := delivered driver (onView 2 TabCommands.closeName)
+            -- The tab bar's view took the id 2 at the publish after the first
+            -- C-w c, so the third tab's window is 3, and a new one is 4.
+            let closed := delivered driver (onView 3 TabCommands.closeName)
             let renamed := delivered driver (onView 1 TabCommands.renameName [.str "far"])
-            let moved := delivered driver (onView 2 TabCommands.moveLeftName)
+            let moved := delivered driver (onView 3 TabCommands.moveLeftName)
             let next := delivered driver (onView 1 TabCommands.nextName)
             let made := delivered driver (onView 1 TabCommands.newName)
             tabOrder closed.loop.state == [[0], [1]] && closed.loop.state.frame.tabIndex == 0 &&
               renamed.loop.state.frame.tabs.map (·.name) == #[none, some "far", none] &&
-              tabOrder moved.loop.state == [[0], [2], [1]] &&
+              tabOrder moved.loop.state == [[0], [3], [1]] &&
               moved.loop.state.frame.tabIndex == 0 &&
               next.loop.state.frame.tabIndex == 2 &&
-              tabOrder made.loop.state == [[0], [1], [3], [2]] &&
+              tabOrder made.loop.state == [[0], [1], [4], [3]] &&
               made.loop.state.frame.tabIndex == 2 &&
-              made.loop.state.frame.focused == ⟨3⟩ &&
+              made.loop.state.frame.focused == ⟨4⟩ &&
               [closed, renamed, moved, next, made].all (·.loop.state.wellFormed) },
     { name :=
         "criterion 2 in the loop: a publish handed another layout rearranges the tab in view only; after C-w p a publish handed the same layout keeps the first tab under its own; C-w c then makes a tab under it"
@@ -29539,6 +29546,134 @@ def tabCommandChecks : List Check :=
               made.loop.state.frame.tabIndex == 1 &&
               made.loop.state.frame.layout == .monocle &&
               [chosen, back, made].all (·.loop.state.wellFormed) }]
+
+/-- The checks of the tab bar (`Editor/TabBar.lean`): the line it shows,
+its strip above the minibuffer's (`EditorState.tabBarRect?`), and, on the
+loop's driver over the editor's models, the view a publish draws it in. -/
+def tabBarChecks : List Check :=
+  let rect (x y width height : Nat) : Rect := { x, y, width, height }
+  let chip (start stop : Nat) (selected : Bool := false) : Decoration :=
+    { start, stop, face := if selected then TabBar.selectedFace else TabBar.face }
+  let withTabs (state : EditorState) (count : Nat) : EditorState :=
+    { state with
+      frame :=
+        { state.frame with
+          tabsAfter :=
+            (Array.range (count - 1)).map fun _ => { windows := #[⟨0⟩], focused := ⟨0⟩ } } }
+  [{  name :=
+        "the line lists every tab as a chip of its number and label, joined by a space, each chip's bytes in the tab bar's face and the selected one's in its own; a label of several bytes a character is counted in bytes"
+      run :=
+        pure <|
+          TabBar.line #["scratch"] 0 == (" 1 scratch ", #[chip 0 11 true]) &&
+            TabBar.line #["scratch", "scratch"] 1 ==
+              (" 1 scratch   2 scratch ", #[chip 0 11, chip 12 23 true]) &&
+            TabBar.line #["scratch", "scratch"] 0 ==
+              (" 1 scratch   2 scratch ", #[chip 0 11 true, chip 12 23]) &&
+            TabBar.line #["a", "b", "c"] 0 ==
+              (" 1 a   2 b   3 c ", #[chip 0 5 true, chip 6 11, chip 12 17]) &&
+            TabBar.line #["a", "b", "c"] 1 ==
+              (" 1 a   2 b   3 c ", #[chip 0 5, chip 6 11 true, chip 12 17]) &&
+            TabBar.line #["a", "b", "c"] 2 ==
+              (" 1 a   2 b   3 c ", #[chip 0 5, chip 6 11, chip 12 17 true]) &&
+            TabBar.line #["é", "b"] 0 == (" 1 é   2 b ", #[chip 0 6 true, chip 7 12]) },
+    { name :=
+        "the tab bar's strip is a text row above the minibuffer's, cut from the tiled area, shown with two tabs or more by default: at 640 by 480 the tiled area is 640 by 448 and the bar 0,448 640 by 16; with a prompt open it sits above the minibuffer's taller strip; with one tab there is none and the tiled area is 640 by 464; always shows it with one tab, and never shows none with three"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some one =>
+            let two := withTabs one 2
+            let (_, asking) := prompted two
+            let three := withTabs one 3
+            two.tiled == rect 0 0 640 448 && two.tabBarRect? == some (rect 0 448 640 16) &&
+              two.cutFrame.2 == rect 0 464 640 16 &&
+              asking.tabBarRect? == some (rect 0 432 640 16) &&
+              asking.cutFrame.2 == rect 0 448 640 32 &&
+              asking.tiled == rect 0 0 640 432 &&
+              one.tabBarRect? == none &&
+              one.tiled == rect 0 0 640 464 &&
+              { one with tabBarShown := .always }.tabBarRect? == some (rect 0 448 640 16) &&
+              { three with tabBarShown := .never }.tabBarRect? == none &&
+              { three with tabBarShown := .never }.tiled == rect 0 0 640 464 },
+    { name :=
+        "a frame shorter than the two strips is clamped: the minibuffer's strip first, then the bar in what is left, and none when nothing is"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 20⟩),
+            onTextModel (EditorState.initial ⟨640, 10⟩) with
+          | some short, some shorter =>
+            let short := withTabs short 2
+            let shorter := withTabs shorter 2
+            short.tiled.height == 0 && short.tabBarRect? == some (rect 0 0 640 4) &&
+              short.cutFrame.2 == rect 0 4 640 16 &&
+              shorter.tabBarRect? == none &&
+              shorter.tiled.height == 0
+          | _, _ => false },
+    { name :=
+        "a float anchored to the frame is centred in the tiled area the bar leaves, and no float meets the bar's strip"
+      run :=
+        pure <|
+          match
+            onTextModel do
+              let state ← EditorState.initial ⟨640, 480⟩
+              withFloats state [(.frame, false)] with
+          | none => false
+          | some state =>
+            let two := withTabs state 2
+            two.rect? ⟨1⟩ == some (Floating.centred {} (rect 0 0 640 448)) &&
+              (two.rect? ⟨1⟩).any (fun float => float.y + float.height ≤ 448) },
+    { name :=
+        "criterion 5, in the loop: after C-w c the last view of the scene is the tab bar, its text the line of both tabs with the second's chip selected, in the bar's strip, padded across by the frame padding and not down, with no selection and no status field; after C-w p the chips' faces swap, the bar keeps its view, and the snapshot of the old line is released; it is never the focused view; after C-w & there is no bar and the tiled area is whole again"
+      run :=
+        pure <|
+          let handed : Loop.Keys Vim.Default.scheme :=
+            { tabHanded Layout.default with padding := 8 }
+          match (windowDriver 1 Layout.default (handed := handed)).map (evilFed · "C-w c") with
+          | none => false
+          | some tabbed =>
+            let back := evilFed tabbed "C-w p"
+            let closed := evilFed back "C-w &"
+            let barOf (driver : EvilDriver) : Option View :=
+              driver.model.display.scenes.back?.bind fun scene =>
+                scene.views.back?.bind fun view =>
+                  if driver.loop.state.tabBar.any (·.view == view.id) then some view else none
+            let focused (driver : EvilDriver) : Option ViewId :=
+              driver.model.display.scenes.back?.bind (·.focused)
+            match barOf tabbed, barOf back with
+            | some bar, some again =>
+              shownText tabbed.model bar == some " 1 scratch   2 scratch " &&
+                bar.decorations == #[chip 0 11, chip 12 23 true] &&
+                bar.rect == rect 0 448 640 16 &&
+                bar.padding == { across := 8, down := 0 } &&
+                bar.selections.isEmpty &&
+                bar.status.isEmpty &&
+                focused tabbed == some ⟨1⟩ &&
+                again.id == bar.id &&
+                again.decorations == #[chip 0 11 true, chip 12 23] &&
+                shownText back.model again == some " 1 scratch   2 scratch " &&
+                focused back == some ⟨0⟩ &&
+                (bar.snapshot == again.snapshot || releasedSnapshot back bar.snapshot) &&
+                barOf closed == none &&
+                closed.loop.state.tiled == rect 0 0 640 464 &&
+                [tabbed, back, closed].all (·.loop.state.wellFormed)
+            | _, _ => false },
+    { name :=
+        "renaming a tab changes the bar's line, and the snapshot of the line before is released"
+      run :=
+        pure <|
+          match tabsAfter "C-w c" with
+          | none => false
+          | some tabbed =>
+            let named := evilFed tabbed "C-c r n RET"
+            let barOf (driver : EvilDriver) : Option View :=
+              driver.model.display.scenes.back?.bind (·.views.back?)
+            match barOf tabbed, barOf named with
+            | some bar, some again =>
+              shownText named.model again == some " 1 scratch   2 n " && again.id == bar.id &&
+                bar.snapshot != again.snapshot &&
+                releasedSnapshot named bar.snapshot
+            | _, _ => false }]
 
 /-- The checks of the window commands (`Editor/WindowCommands.lean`), by
 key, on the loop's driver over the editor's models, under the Vim scheme
@@ -33154,6 +33289,7 @@ def checks : List Check :=
     evilRepeatChecks ++
     viewChecks ++
     floatViewChecks ++
+    tabBarChecks ++
     frameCommandChecks ++
     windowCommandChecks ++
     tabCommandChecks ++
