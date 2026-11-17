@@ -70,6 +70,8 @@ dark names, and `+` marks a definition appended after the shared ones
 | `minibuffer.prompt` | cyan, bold | + fg blue (bold kept) | Emacs `minibuffer-prompt` blue |
 | `minibuffer.candidate` | fg base01 | + fg base1 | Vim's wildmenu draws the other candidates in `StatusLine`, the status-line text (base1) |
 | `minibuffer.chosen` | base03 on cyan | + base02 on base2 | Vim `WildMenu` (fg base2 bg base02 reversed) |
+| `tab-bar` | base01 on base02 | + base0 on base02 | Vim `TabLine` fg base0 bg base02; its underline is not followed |
+| `tab-bar.selected` | base1 on base02, bold | + base2 on base01, bold | Vim `TabLineSel` (fg base01 bg base2 reversed, bold); its underline is not followed |
 | `syntax.attribute` | yellow | + orange | Vim `PreProc` |
 | `syntax.comment` | base01, italic | base01, italic | Vim `Comment`; Emacs `font-lock-comment-face` |
 | `syntax.constant` | violet | + cyan | Vim `Constant`; Emacs `font-lock-constant-face` |
@@ -205,12 +207,15 @@ def Colours.schoonover (c : Colours) : Theme :=
     { name := ⟨name⟩, face := { foreground := some foreground, background := some background } }
   #[on "mode-line.inactive" c.base0 c.base02, ink "echo-area" c.base0,
     ink "minibuffer.prompt" c.blue, ink "minibuffer.candidate" c.base1,
-    on "minibuffer.chosen" c.base02 c.base2, ink "syntax.attribute" c.orange,
-    ink "syntax.constant" c.cyan, ink "syntax.function" c.blue, ink "syntax.keyword" c.green,
-    ink "syntax.module" c.orange, ink "syntax.number" c.cyan, ink "syntax.operator" c.green,
-    ink "syntax.property" c.blue, ink "syntax.punctuation" c.red, ink "syntax.string" c.cyan,
-    ink "syntax.tag" c.red, ink "syntax.variable" c.blue, on "diff.added" c.green c.base02,
-    on "diff.removed" c.red c.base02, on "diff.changed" c.yellow c.base02]
+    on "minibuffer.chosen" c.base02 c.base2, on "tab-bar" c.base0 c.base02,
+    { name := ⟨"tab-bar.selected"⟩
+      face := { foreground := some c.base2, background := some c.base01, weight := some 700 } },
+    ink "syntax.attribute" c.orange, ink "syntax.constant" c.cyan, ink "syntax.function" c.blue,
+    ink "syntax.keyword" c.green, ink "syntax.module" c.orange, ink "syntax.number" c.cyan,
+    ink "syntax.operator" c.green, ink "syntax.property" c.blue, ink "syntax.punctuation" c.red,
+    ink "syntax.string" c.cyan, ink "syntax.tag" c.red, ink "syntax.variable" c.blue,
+    on "diff.added" c.green c.base02, on "diff.removed" c.red c.base02,
+    on "diff.changed" c.yellow c.base02]
 
 /-- The one mapping: the palette's theme (`Palette.theme`), then
 Schoonover's own definitions after it. -/

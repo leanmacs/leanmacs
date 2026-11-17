@@ -301,7 +301,9 @@ mode line and the echo area are padded 3 points above and below, the owner's
 picked look, so the bottom row is the same height whether it holds a
 window's mode line, a prompt or the echo. Each Vim state's badge
 (`mode-line.state.<state>`) is the paper on an accent, bold: normal blue,
-insert green, visual and visual-line magenta, the minibuffer's cyan. -/
+insert green, visual and visual-line magenta, the minibuffer's cyan. The tab
+bar's chips are faint on raised, and the selected one strong on selected,
+bold. -/
 def Palette.theme (palette : Palette) : Theme :=
   let on (name : String) (foreground background : Color) : FaceDefinition :=
     { name := ⟨name⟩, face := { foreground := some foreground, background := some background } }
@@ -332,6 +334,10 @@ def Palette.theme (palette : Palette) : Theme :=
       ink "mode-line.secondary" palette.faint, on "mode-line.inactive" palette.faint palette.raised,
       defined "minibuffer.prompt" { foreground := some palette.cyan, weight := some 700 },
       ink "minibuffer.candidate" palette.faint, on "minibuffer.chosen" palette.paper palette.cyan,
+      on "tab-bar" palette.faint palette.raised,
+      defined "tab-bar.selected"
+        { foreground := some palette.strong, background := some palette.selected
+          weight := some 700 },
       ink "syntax.attribute" palette.yellow,
       defined "syntax.comment" { foreground := some palette.faint, slant := some .italic },
       ink "syntax.constant" palette.violet, ink "syntax.constructor" palette.yellow,

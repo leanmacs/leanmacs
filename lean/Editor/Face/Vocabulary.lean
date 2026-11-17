@@ -20,8 +20,9 @@ check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
   the mode line's faces (`ModeLine.bufferFace`, `ModeLine.modifiedFace`,
   `ModeLine.changedFace`, `ModeLine.secondaryFace`, `ModeLine.inactiveFace`,
   `Editor/ModeLine.lean`), the loop's minibuffer fields
-  (`Loop.promptFace`, `Loop.candidateFace`, `Loop.chosenFace`), and the
-  matches of the last search (`Loop.searchMatchFace`).
+  (`Loop.promptFace`, `Loop.candidateFace`, `Loop.chosenFace`), the
+  matches of the last search (`Loop.searchMatchFace`), and the tab bar's
+  chips (`TabBar.face`, `TabBar.selectedFace`, `Editor/TabBar.lean`).
 - **What is declared ahead.** The faces of features not built yet, so a
   shipped theme colours them before the feature lands: one `syntax.` face
   for each top-level name of tree-sitter's
@@ -133,7 +134,13 @@ def vocabulary : Array Entry :=
           "A listed candidate in the minibuffer's status line, unless it is the chosen one (`Loop.candidateFace`)." },
       { name := ⟨"minibuffer.chosen"⟩
         meaning :=
-          "The chosen candidate in the minibuffer's status line, drawn by the loop (`Loop.chosenFace`)." }] ++
+          "The chosen candidate in the minibuffer's status line, drawn by the loop (`Loop.chosenFace`)." },
+      { name := ⟨"tab-bar"⟩
+        meaning :=
+          "Each tab's chip in the tab bar, its number and label, drawn by the loop (`TabBar.face`)." },
+      { name := ⟨"tab-bar.selected"⟩
+        meaning :=
+          "The chip of the tab in view in the tab bar, drawn by the loop (`TabBar.selectedFace`)." }] ++
     syntaxEntries ++
     #[{ name := ⟨"diff.added"⟩
         meaning := "Text a diff adds: drawn by a diff view, declared ahead." },

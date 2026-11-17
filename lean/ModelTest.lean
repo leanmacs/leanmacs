@@ -62,6 +62,7 @@ import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
 import Editor.WindowCheck
+import Editor.TabBar
 import Editor.TabCommands.Compiled
 import Editor.WindowCommands.Compiled
 import Editor.Workspace.Compiled
@@ -5582,6 +5583,15 @@ def faceVocabularyChecks : List Check :=
             (theme.merged ⟨"echo-area"⟩).verticalPadding == some 3 &&
             (theme.merged ⟨"default"⟩).verticalPadding == some 0
         pure (padded Theme.builtin && Themes.shipped.all (padded ·.theme)) },
+    { name :=
+        "the vocabulary lists the tab bar's faces, the chips' and the selected chip's, and every shipped theme defines them"
+      run :=
+        pure
+          ([TabBar.face, TabBar.selectedFace].all Face.vocabularyNames.contains &&
+            TabBar.face != TabBar.selectedFace &&
+            Themes.shipped.all fun shipped =>
+              [TabBar.face, TabBar.selectedFace].all fun name =>
+                shipped.theme.any (·.name == name)) },
     { name := "the vocabulary lists the four names layout reads by itself"
       run :=
         pure

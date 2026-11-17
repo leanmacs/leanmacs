@@ -1168,8 +1168,10 @@ scheme, `mode-line.buffer`, `mode-line.modified`, `mode-line.changed` for
 a file changed on disk, `mode-line.secondary` for the directory, the major
 mode, line:col and the position, and `mode-line.inactive` for every field
 and the row of a window that is not selected; the minibuffer's
-(`minibuffer.prompt`, `minibuffer.candidate`, `minibuffer.chosen`); and
-`search-match`, the matches of the last search. The status fields' faces
+(`minibuffer.prompt`, `minibuffer.candidate`, `minibuffer.chosen`);
+`search-match`, the matches of the last search; and the tab bar's
+(`tab-bar` for each chip and `tab-bar.selected` for the tab in view's,
+window management phase 5). The status fields' faces
 of before (`status.state`, `status.name`, `status.modified`, and
 `status.changed` of the daily-driver roadmap) were replaced by these, not
 kept as aliases: a config that defined them defines faces nothing draws.

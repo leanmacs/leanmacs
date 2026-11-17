@@ -105,6 +105,8 @@ a later definition's set attributes are over an earlier one's
 | `minibuffer.prompt` | mint, bold | the same | Not covered: shared mapping kept |
 | `minibuffer.candidate` | fg lavender | the same | Not covered: shared mapping kept |
 | `minibuffer.chosen` | background on mint | the same | Not covered: shared mapping kept |
+| `tab-bar` | lavender on lineHighlight | the same | Not covered: shared mapping kept |
+| `tab-bar.selected` | foreground on selection, bold | the same | Not covered: shared mapping kept |
 | `syntax.attribute` | lemon | the same | tmTheme `entity.other.attribute-name` l.208 |
 | `syntax.comment` | lavender, italic | + gold, upright | tmTheme `comment` l.38, no `fontStyle` |
 | `syntax.constant` | lavender | the same | tmTheme l.71, l.82 |
