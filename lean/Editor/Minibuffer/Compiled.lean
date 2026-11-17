@@ -11,10 +11,11 @@ before any config (`Editor/Config/Registry.lean`, "Compiled commands"), so
 they hold when config fails to load, and a reload does not replace them.
 
 - **`Minibuffer.commands`**: `minibuffer-accept`, `minibuffer-cancel`,
-  `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`
-  and `minibuffer-delete-to-start`, in that order,
-  each a command that is given what it was called with (`Action.call`) and
-  reads none of it: each acts on the open prompt.
+  `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`,
+  `minibuffer-delete-to-start`, `minibuffer-ask` and
+  `minibuffer-candidates`, in that order,
+  each a command that is given what it was called with (`Action.call`):
+  each acts on the open prompt, and the last two read their arguments.
 - **`Minibuffer.modes`**: the one mode, `minibuffer`, which the
   minibuffer's buffer is made with.
 
@@ -42,7 +43,8 @@ def commands : Array Config.Registration :=
     { name := previousName, action := .call previousCommand },
     { name := deleteBackwardName, action := .call deleteBackwardCommand },
     { name := deleteToStartName, action := .call deleteToStartCommand },
-    { name := askName, action := .call askCommand }]
+    { name := askName, action := .call askCommand },
+    { name := candidatesName, action := .call candidatesCommandOf }]
 
 /-- The minibuffer's mode, as a host registers it for the owner
 `compiled`. -/

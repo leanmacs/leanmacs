@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
+import Editor.Completion.Later
 import Editor.Mode
 import Editor.Role
 
@@ -96,6 +97,18 @@ loop runs the command with the focused window, which is the minibuffer's.
 | A command that acts on the open prompt | Here, with its name, over an operation of `Editor/Api.lean`; its registration in `Editor/Minibuffer/Compiled.lean` |
 | A key every scheme should have in the minibuffer | A role the mode fills |
 | A key one scheme has in the minibuffer | That scheme's own table |
+
+## Taking a batch
+
+`minibuffer-candidates` (`candidatesName`, `candidatesCommandOf`) is what a
+completion source's job posts each batch of its candidates as
+(`Editor/Completion/Later.lean`). It takes the batch into the open prompt,
+for the source and the generation the batch names
+(`StateRequest.addCandidates`): a stale job's batch, or one for a prompt
+that closed, is dropped. Arguments that are no batch say
+`minibuffer-candidates: malformed batch` in the echo area. It is a
+minibuffer command because it adds to the open prompt; a later phase's
+at-point session adds its own.
 
 ## Asking for the input scheme
 
@@ -228,6 +241,29 @@ def deleteToStartCommand (_ : Call) : EditorM Unit := do
   let selection ← minibuffer.selection
   let some range := selection.ranges[selection.primary]? | return
   minibuffer.replaceExtents selection #[⟨0, range.head⟩] ""
+
+/-- The name the command that takes a batch of a source's job is registered
+under: the one such a job posts (`Completion.candidatesCommand`). -/
+def candidatesName : String :=
+  Completion.candidatesCommand
+
+/-- What the command that takes a batch says in the echo area for arguments
+that are no batch. -/
+def malformedBatch : String :=
+  s!"{candidatesName}: malformed batch"
+
+/-- The command that takes a batch of a source's job, as it is called
+("Taking a batch", in the module docs): its arguments are the batch, with
+the view, the source's index and the generation it is for
+(`Completion.batchOfArguments?`), and the open prompt takes it when they are
+its own (`StateRequest.addCandidates`). Arguments that are no batch say
+`malformedBatch` in the echo area. -/
+def candidatesCommandOf (call : Call) : EditorM Unit := do
+  match Completion.batchOfArguments? call.arguments with
+  | some (view, index, generation, batch) =>
+    discard <| EditorState.ask (.addCandidates view index generation batch)
+  | none =>
+    message malformedBatch
 
 /-- The minibuffer's mode: the major mode the minibuffer's buffer is made
 with. It fills the role `activate` with the accept command, the role `quit`

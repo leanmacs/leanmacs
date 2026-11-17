@@ -20986,15 +20986,16 @@ def promptModeChecks : List Check :=
               closed accepted ⟨1⟩ &&
               accepted.loop.state.windows.map (·.id) == #[⟨1⟩] },
     { name :=
-        "the minibuffer's commands are registered under their seven names, each another, the one that asks for the input scheme under the name the Vim scheme yields; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
+        "the minibuffer's commands are registered under their eight names, each another, the one that asks for the input scheme under the name the Vim scheme yields and the one that takes a batch under the name a source's job posts; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
           (Minibuffer.commands.map (·.name) ==
               #[Minibuffer.acceptName, Minibuffer.cancelName, Minibuffer.nextName,
                 Minibuffer.previousName, Minibuffer.deleteBackwardName,
-                Minibuffer.deleteToStartName, Minibuffer.askName] &&
-            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 7 &&
+                Minibuffer.deleteToStartName, Minibuffer.askName, Minibuffer.candidatesName] &&
+            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 8 &&
             Minibuffer.askName == Vim.askCommand &&
+            Minibuffer.candidatesName == Completion.candidatesCommand &&
             Minibuffer.modes.map (·.name) == #[Prompt.mode] &&
             Minibuffer.modes.map (·.roles) ==
               #[[(Role.activate, Minibuffer.acceptName), (Role.quit, Minibuffer.cancelName),
@@ -21696,6 +21697,94 @@ def candidateChecks : List Check :=
               asked.candidates.all ==
                 #[{ text := "w", annotation := some (toString asked.asker.index),
                     group := some "echo" }] }]
+
+/-- What a source's job is started with in the checks of sources that
+answer later: the asking source 1 of the prompt in view 3, at its second
+generation, asked for `w` from view 0, after a pause of 30 ms. -/
+def laterOrder : Completion.Order :=
+  { view := ⟨3⟩, index := 1, generation := 2, query := { text := "w", view := ⟨0⟩ }, pause := 30 }
+
+/-- `driver` with the job that posted `arguments` delivering them, as the
+command `minibuffer-candidates`, as a host delivers a job's post
+(`runPosted`). -/
+def deliveredBatch (driver : TestDriver) (arguments : List Argument) : TestDriver :=
+  (driver.stepped
+      (driver.loop.deliver driver.handed "job 1 later"
+        (runPosted { command := Completion.candidatesCommand, arguments }))).1
+
+/-- The checks of a source that answers later (`Editor/Completion/Later.lean`):
+its order and its batches as arguments, its job on the job model, and the
+command that takes a batch into the open prompt. -/
+def laterChecks : List Check :=
+  [{  name :=
+        "an order and a batch round-trip through their arguments: a candidate with nothing beside its text, one with each optional field, all of them, and empty strings among them; malformed lists decode to none"
+      run :=
+        pure <|
+          let batch : Array Completion.Candidate :=
+            #[.ofText "a", { text := "", label := some "" }, { text := "b", annotation := some "n" },
+              { text := "c", kind := some "k" }, { text := "d", group := some "g" },
+              { text := "e", label := some "l", annotation := some "a", kind := some "k"
+                group := some "g" }]
+          Completion.Order.ofArguments? laterOrder.arguments == some laterOrder &&
+            Completion.batchOfArguments? (Completion.batchArguments ⟨3⟩ 1 2 batch) ==
+              some (⟨3⟩, 1, 2, batch) &&
+            Completion.batchOfArguments? (Completion.batchArguments ⟨3⟩ 1 2 #[]) ==
+              some (⟨3⟩, 1, 2, #[]) &&
+            Completion.Order.ofArguments? [] == none &&
+            Completion.Order.ofArguments? (laterOrder.arguments.drop 1) == none &&
+            Completion.batchOfArguments? [.nat 3, .nat 1, .nat 2, .str "a"] == none &&
+            Completion.batchOfArguments? [.nat 3, .nat 1, .nat 2, .nat 0, .bool false,
+                .bool false, .bool false, .bool false] == none &&
+            Completion.batchOfArguments? [.nat 3, .nat 1] == none },
+    { name :=
+        "a source's job on the job model, given two batches, posts a minibuffer-candidates invocation for each, whose arguments decode to the batch with the order's view, index and generation, and then finishes; it waits the order's pause before its first post; one that echoes posts a candidate of the text it was asked; a malformed order fails the job"
+      run :=
+        pure <|
+          let first := offered #["wq", "edit"]
+          let second := offered #["rewrite", "w"]
+          let work := Completion.Later.batches #[first, second]
+          let (outcome, model) := (work laterOrder.arguments ()).runModel {}
+          let (_, echoed) := (Completion.Later.echoing laterOrder.arguments ()).runModel {}
+          let (bad, _) := (work [] ()).runModel {}
+          let decoded (model : JobModel) :=
+            model.posted.map fun posted =>
+              (posted.command, Completion.batchOfArguments? posted.arguments)
+          let pausedFirst :=
+            match JobModel.runParking (work laterOrder.arguments ()).run {} with
+            | .posted _ model _ => model.now == 30 && model.posted.size == 1
+            | _ => false
+          (outcome matches .finished _) &&
+            decoded model ==
+              #[(Completion.candidatesCommand, some (⟨3⟩, 1, 2, first)),
+                (Completion.candidatesCommand, some (⟨3⟩, 1, 2, second))] &&
+            pausedFirst &&
+            decoded echoed == #[(Completion.candidatesCommand, some (⟨3⟩, 1, 2, offered #["w!"]))] &&
+            (bad matches .failed _) },
+    { name :=
+        "minibuffer-candidates, delivered as a job's post, takes its batch into the open prompt's asking source, in the source's group, and for arguments that are no batch says so in the echo area and takes nothing"
+      run :=
+        pure <|
+          match pickDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            match asking.loop.state.minibufferView? with
+            | none => false
+            | some view =>
+              let source : Completion.Asking :=
+                { source := "later", later := { job := "j" }, askedFor := "", generation := 1 }
+              let set :=
+                { asking with
+                  loop :=
+                    { asking.loop with
+                      state := (asking.loop.state.setCandidates { asking := #[source] }).2 } }
+              let added := deliveredBatch set (Completion.batchArguments view 0 1 (offered #["a"]))
+              let bad := deliveredBatch set [.str "x"]
+              (candidatesOf added).map (·.asking.map (·.answered)) ==
+                  some #[#[(Completion.Candidate.ofText "a").inGroup "later"]] &&
+                bad.model.display.scenes.back?.map (·.echo) ==
+                  some s!"{Completion.candidatesCommand}: malformed batch" &&
+                candidatesOf bad == candidatesOf set }]
 
 /-- The contract's runner on the editor's models (`Completion.Contract.Runner`):
 the source asked with `text` from the focused view of `twoBuffers`, dispatched
@@ -37947,6 +38036,7 @@ def checks : List Check :=
     driverChecks ++
     promptChecks ++
     candidateChecks ++
+    laterChecks ++
     sourceContractChecks ++
     fileCommandChecks ++
     openFilesChecks ++
