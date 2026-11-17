@@ -40,6 +40,16 @@
 //!   in its source, so the editor can tell which source an edit reaches
 //!   before it makes it.
 //!
+//! **A snapshot carries its list.** A snapshot of an excerpt document
+//! ([`Snapshot::of`]) takes, under the list's lock and then the text's,
+//! the order a catch-up takes them in, the text caught up and the list as
+//! it is then ([`Snapshot::placed`]): each excerpt's source, the source's
+//! snapshot it read and its ranges. So the list a later frame draws by is
+//! the one of the text it draws, whatever the sources did since. It
+//! crosses as words ([`editor_ffi_snapshot_excerpts`]): the count, then
+//! for each excerpt its start and its end in the snapshot's text and its
+//! start and its end in its source.
+//!
 //! **What hands an excerpt document out**: [`editor_ffi_excerpts_new`], a
 //! document handle like those [`crate::document`] lists, freed by
 //! [`editor_ffi_document_free`](crate::document::editor_ffi_document_free),
@@ -53,12 +63,14 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
-use editor_text::excerpt::{Edited, ExcerptError, Excerpts, SourceKey, Wanted};
+use editor_text::excerpt::{Edited, ExcerptError, Excerpts, Placed, SourceKey, Wanted};
 use editor_text::{Origin, Revision, Text, Transaction};
 
 use crate::document::{Document, ReplaceStatus, hand_out};
+use crate::log::RawWords;
+use crate::snapshot::Snapshot;
 use crate::transaction::ApplyStatus;
-use crate::words::Reader;
+use crate::words::{Reader, Writer};
 
 /// One source of an excerpt document: its document's key, its text, held
 /// strongly, and whether its document still lives
@@ -379,6 +391,67 @@ pub unsafe extern "C" fn editor_ffi_excerpts_locate(
     }
 }
 
+impl Document {
+    /// For an excerpt document, its text caught up and its list as it is
+    /// then, read under the list's lock and the text's, taken in a
+    /// catch-up's order; `None` for any other document.
+    pub(crate) fn snapshot_placed(&self) -> Option<(editor_text::Snapshot, Arc<[Placed]>)> {
+        let mut excerpted = self.excerpted()?;
+        let mut text = self.text_locked();
+        excerpted.refresh(&mut text);
+        let placed = excerpted.list.placed().cloned().collect();
+        Some((text.snapshot(), placed))
+    }
+}
+
+/// How asking a snapshot for its excerpt list ended, as it crosses the
+/// boundary ([`editor_ffi_snapshot_excerpts`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotExcerptsStatus {
+    /// Answered: the words hold the list.
+    Done = 0,
+    /// The snapshot is not of an excerpt document.
+    NotExcerpts = 1,
+}
+
+/// Fills `out` with the list `snapshot` carries ([`Snapshot::placed`]) in
+/// words: its count, then for each excerpt its start and its end in the
+/// snapshot's text and its start and its end in its source; and returns a
+/// [`SnapshotExcerptsStatus`] as its number, which is also the record's
+/// status. A snapshot of any document but an excerpt document is refused
+/// with [`SnapshotExcerptsStatus::NotExcerpts`] and no words.
+///
+/// # Safety
+///
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back ([`crate::snapshot`]), and `out` points to a writable
+/// [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_snapshot_excerpts(
+    snapshot: *const Snapshot,
+    out: *mut RawWords,
+) -> u64 {
+    // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
+    let raw = match unsafe { &*snapshot }.placed() {
+        Some(placed) => {
+            let mut writer = Writer::with_capacity(1 + 4 * placed.len());
+            writer.size(placed.len());
+            for excerpt in placed {
+                writer.size(excerpt.range.start);
+                writer.size(excerpt.range.end);
+                writer.size(excerpt.source_range.start);
+                writer.size(excerpt.source_range.end);
+            }
+            RawWords::with_status(SnapshotExcerptsStatus::Done as u64, writer.finish())
+        }
+        None => RawWords::with_status(SnapshotExcerptsStatus::NotExcerpts as u64, Vec::new()),
+    };
+    let status = raw.status;
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+    status
+}
+
 /// The excerpts `words` spell over `sources`, in the layout the module docs
 /// give, and the texts of the sources they name, sorted by key with no key
 /// twice. `None` when the words cannot be read or an index names no source.
@@ -524,6 +597,96 @@ mod tests {
             .expect("the excerpt document's log holds it");
         assert_eq!(patch.edits.len(), 1);
         assert_eq!((patch.edits[0].new.start, patch.edits[0].new.end), (1, 2));
+    }
+
+    /// The words `snapshot` answers [`editor_ffi_snapshot_excerpts`] with,
+    /// and its status.
+    fn excerpt_words(snapshot: &Snapshot) -> (u64, Vec<u64>) {
+        let mut raw = crate::log::RawWords {
+            status: u64::MAX,
+            words: std::ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: a live snapshot and a writable record.
+        let status = unsafe { editor_ffi_snapshot_excerpts(snapshot, &mut raw) };
+        assert_eq!(status, raw.status);
+        // SAFETY: the record's buffer is `len` bytes the library lent.
+        let bytes = unsafe { std::slice::from_raw_parts(raw.words, raw.len) }.to_vec();
+        // SAFETY: handed back once.
+        unsafe { crate::text::editor_ffi_text_free(raw.words, raw.len) };
+        (status, crate::words::tests::words_of(&bytes))
+    }
+
+    /// Each placed excerpt as its range and its source's range.
+    fn ranges(placed: &[editor_text::excerpt::Placed]) -> Vec<(usize, usize, usize, usize)> {
+        placed
+            .iter()
+            .map(|p| {
+                (
+                    p.range.start,
+                    p.range.end,
+                    p.source_range.start,
+                    p.source_range.end,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_snapshot_of_an_excerpt_document_carries_its_list_as_it_was_taken() {
+        let (one, two) = (Document::new(ONE), Document::new(TWO));
+        let excerpts = rows_of(&one, &two);
+        let snapshot = Snapshot::of(&excerpts);
+        let placed = snapshot.placed().expect("an excerpt document's list");
+        assert_eq!(ranges(placed), vec![(0, 4, 4, 8), (5, 11, 0, 6)]);
+        // It is the list at the snapshot's revision: what the document's
+        // list says now.
+        let now: Vec<_> = excerpts
+            .excerpted()
+            .unwrap()
+            .list
+            .placed()
+            .cloned()
+            .collect();
+        assert_eq!(ranges(placed), ranges(&now));
+        // A source edit moves the document's list, not the snapshot's.
+        assert!(one.replace(0, 0, "zero\n"));
+        let later = Snapshot::of(&excerpts);
+        assert_eq!(ranges(later.placed().unwrap())[0], (0, 4, 9, 13));
+        assert_eq!(ranges(snapshot.placed().unwrap())[0], (0, 4, 4, 8));
+        // The source snapshot each excerpt read is in its record.
+        assert_eq!(placed[0].snapshot.to_string(), ONE);
+    }
+
+    #[test]
+    fn a_snapshot_of_a_plain_document_or_a_loaded_one_carries_no_list() {
+        assert!(Snapshot::of(&Document::new(ONE)).placed().is_none());
+        assert!(
+            Snapshot::loaded(Document::new(ONE).snapshot())
+                .placed()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_snapshots_list_crosses_as_words() {
+        let (one, two) = (Document::new(ONE), Document::new(TWO));
+        let excerpts = rows_of(&one, &two);
+        assert_eq!(
+            excerpt_words(&Snapshot::of(&excerpts)),
+            (
+                SnapshotExcerptsStatus::Done as u64,
+                vec![2, 0, 4, 4, 8, 5, 11, 0, 6]
+            )
+        );
+        assert_eq!(
+            excerpt_words(&Snapshot::of(&Document::excerpts())),
+            (SnapshotExcerptsStatus::Done as u64, vec![0])
+        );
+        assert_eq!(
+            excerpt_words(&Snapshot::of(&one)),
+            (SnapshotExcerptsStatus::NotExcerpts as u64, vec![])
+        );
     }
 
     /// The transaction that replaces `range` of a text of `len` bytes with

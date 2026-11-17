@@ -103,12 +103,14 @@ use editor_layout::Layout;
 use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
 use editor_layout::query::{Moved, QueryError, RowRange, Spot};
-use editor_layout::scene::{Changes, Padding, Scene, TextKey, TextRef};
+use editor_layout::scene::{Changes, Padding, Scene, TextKey, TextRef, TextSpans};
 use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
+use editor_layout::translated::{Piece, TranslatedSpans};
 use editor_render::port::{DrawRequest, Renderer, Target};
 use editor_render_wgpu::{Antialiasing, HeadlessRenderer, Image, Settings};
 use editor_shape_parley::{FontSet, ParleyShaper};
+use editor_text::excerpt::Placed;
 use editor_text::{Patch, Revision};
 
 use crate::document::RawText;
@@ -141,18 +143,62 @@ impl Changes for Source {
 }
 
 /// The text a snapshot handle stands for, as layout takes it: its key, its
-/// text, its document's changes, and, when its document is attached to the
-/// syntax service, its highlights as its own spans
-/// ([`crate::syntax::Syntaxes::spans`]). A scene's views and the rows and
-/// move queries all make their text here, so a frame and a query of one
-/// snapshot see the same spans.
+/// text, its document's changes, and its own spans. A scene's views and the
+/// rows and move queries all make their text here, so a frame and a query
+/// of one snapshot see the same spans.
+///
+/// - A snapshot of a document attached to the syntax service has the
+///   document's highlights ([`crate::syntax::Syntaxes::spans`]).
+/// - A snapshot of an excerpt document, which is never itself attached,
+///   has its sources' highlights translated ([`TranslatedSpans`]): one
+///   piece for each excerpt whose source is attached, read at the source
+///   snapshot the excerpt was assembled from, so a highlight computed once
+///   on a source is drawn in every excerpt of it. It has none when no
+///   excerpt's source is attached. A source whose session cannot answer
+///   for the snapshot the excerpt read draws nothing there until a later
+///   frame, as a document between two deliveries does.
 pub fn text_ref(snapshot: &Snapshot) -> TextRef {
     let text = TextRef::fixed(TextKey(snapshot.key()), snapshot.text().clone())
         .with_changes(Arc::new(snapshot.source().clone()));
-    match syntaxes().spans(snapshot.key()) {
+    let spans = match snapshot.placed() {
+        Some(placed) => translated(snapshot, placed),
+        None => syntaxes().spans(snapshot.key()),
+    };
+    match spans {
         Some(spans) => text.with_spans(spans),
         None => text,
     }
+}
+
+/// The spans of an excerpt snapshot whose list is `placed`: each excerpt's
+/// source's highlights, translated ([`text_ref`]). Each source's spans are
+/// asked of the service once, so two excerpts of one source are one
+/// source to resolve.
+fn translated(snapshot: &Snapshot, placed: &[Placed]) -> Option<Arc<dyn TextSpans>> {
+    let mut sources: Vec<(u64, Option<Arc<dyn TextSpans>>)> = Vec::new();
+    let mut pieces = Vec::new();
+    for excerpt in placed {
+        let key = excerpt.source.0;
+        let spans = match sources.iter().find(|(known, _)| *known == key) {
+            Some((_, spans)) => spans.clone(),
+            None => {
+                let spans = syntaxes().spans(key);
+                sources.push((key, spans.clone()));
+                spans
+            }
+        };
+        if let Some(spans) = spans {
+            pieces.push(Piece {
+                range: excerpt.range.clone(),
+                source_start: excerpt.source_range.start,
+                source: excerpt.snapshot.clone(),
+                spans,
+            });
+        }
+    }
+    (!pieces.is_empty()).then(|| {
+        Arc::new(TranslatedSpans::new(snapshot.text().revision(), pieces)) as Arc<dyn TextSpans>
+    })
 }
 
 /// What a display asks of its layout, whatever shaper it measures with:
