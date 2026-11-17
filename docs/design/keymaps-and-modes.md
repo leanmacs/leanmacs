@@ -2362,11 +2362,11 @@ and `gk`; the mouse wheel; smooth scrolling; `scrolljump` and `sidescroll`.
 
 ### Window commands as built
 
-Status: built, by window management's phase 2
+Status: built, by window management's phases 2 and 3
 (`lean/Editor/WindowCommands.lean`, `lean/Editor/WindowCommands/Compiled.lean`;
 pinned by `windowCommandChecks`, and over the recorder by
-`tests/headless/manual-splits`, `insert-window-keys` and
-`insert-word-delete`).
+`tests/headless/manual-splits`, `insert-window-keys`,
+`insert-word-delete` and `edge-sidebar`).
 
 The window commands split, close, focus and arrange the frame's windows
 over the editor API's window requests ([text-and-display.md](text-and-display.md),
@@ -2406,6 +2406,7 @@ table `windowCommands`):
 | `C-w z` | `window-zoom` | Displaces `CTRL-W z` (close the preview window; there are no preview windows here). tmux's zoom key |
 | `C-w m`, `C-w M` | `window-promote`, `window-demote` | None: Vim binds no `CTRL-W m` or `M` |
 | `C-w ,`, `C-w .` | `window-main-more`, `window-main-fewer` | None: xmonad's `M-,` and `M-.` |
+| `C-w H`, `C-w J`, `C-w K`, `C-w L` | `window-edge-left`, `window-edge-bottom`, `window-edge-top`, `window-edge-right` | `CTRL-W H`: "Move the current window to be at the far left, using the full height of the screen", and `J`, `K`, `L` the same at the bottom, the top and the right. Here the window is docked at that edge of an edge layout, which is the far side at the full extent of the tiled area (window management's phase 3) |
 
 - **`C-w n`, `C-w p`, `C-w c` and `C-w w` are left unbound**, so tab pages
   (window management's phase 5) only add rows: until then each resets and
@@ -2431,6 +2432,24 @@ table `windowCommands`):
   gives up, where Vim beeps. The rest are `ViewId.arrange` with their
   change; resize and main's count take the count as steps, 1 for none,
   and exchange takes it as the Nth window.
+- **A window docked at an edge is a window** (window management's phase
+  3). The focus commands reach it, by direction and in the frame's order,
+  the tiles then the docked windows; `C-w C-c` closes it, and the strip
+  goes with the last window docked there; `C-w m` promotes it into the
+  tiles as main. `window-only` from a tile closes every other window, the
+  docked ones too, as Vim's `:only` does, and from a docked window it is
+  refused (`atEdge`: "a window at an edge cannot be the only window"), as
+  Emacs refuses a side window as the only window.
+- **`C-w H`, `J`, `K` and `L` move a window between an edge and the
+  tiles** (`Arrange.edge`): a tile is docked at that edge, a window docked
+  at another edge moves there, and a window already docked there goes
+  back to the end of the tiled list. Recorded departures: Vim restructures
+  its frames under any layout, and here the key is refused when the layout
+  has no such edge, the echo area saying
+  `window-edge-left: the layout has no left edge`; and on a window already
+  at that edge the key moves it back into the tiles, where Vim does
+  nothing. The last tile is refused (`lastTile`). Vim's `CTRL-W H` as tree
+  surgery under manual splits with no edge is not built.
 
 The Vim 9.1 behaviours pinned (`:help windows`, with the defaults
 `nosplitbelow`, `nosplitright`, `equalalways`, `eadirection=both`), each by
@@ -2489,7 +2508,7 @@ Which names have something behind them:
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
-| The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
+| The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
 | `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (`Evil.commands`, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
@@ -2503,7 +2522,7 @@ Which names have something behind them:
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
 | `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
 | `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
-| `windowCommands` | `windowKeys` as normal state's table, each key running its window command, which changes no text and enters no state: the table under "Window commands as built". It is not in normal state's pending keymaps, so `d C-w s` resets |
+| `windowCommands` | `windowKeys` as normal state's table, each key running its window command, which changes no text and enters no state: the table under "Window commands as built", `C-w H`, `J`, `K` and `L` among them (window management's phase 3). It is not in normal state's pending keymaps, so `d C-w s` resets |
 
 The run tables (`StateRecord.runs`), which say what a command name is
 completed as in a state, for a key bound to the name and a menu item that
@@ -3224,6 +3243,20 @@ which run the executable on a real file.
   that binds nothing under `C-w` keeps Vim's word delete. No switch is
   needed: which of the two insert state's `C-w` does is a matter of the
   bindings a config defines (window management's phase 2).
+- Built: edges and display rules (window management's phase 3). `setup`
+  wraps a layout in edges with `layout (.edge .left 25 Layout.default)`,
+  each edge giving the windows docked at its side a strip of its size in
+  percent; an edge above 100 percent, or a side given twice, is refused.
+  `setup` adds display rules, in order, with `displayRule`, such as
+  `displayRule { mode := some "notes", target := .edge .left }`: where a
+  buffer a command makes is shown, matched on its modes, its name and the
+  command that opened it ([text-and-display.md](text-and-display.md),
+  "Views as built"). A config command shows a buffer it made with
+  `BufferId.display buffer view "its-name"`. A rule whose target does not
+  exist under the layout config chose, a float, a new tab or an edge the
+  layout lacks, is left out at install, and the echo area says so,
+  `reload: display rule 1 is left out: there are no floating windows yet`,
+  as an unknown theme is said; the rest of the config is installed.
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
   a mistyped key is an error in config before it runs. It is not built. See
   the open questions for its cost.

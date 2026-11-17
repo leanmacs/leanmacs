@@ -1372,10 +1372,17 @@ A frame's windows are an ordered list, held in Lean, with the focus held by
 `ViewId`; a layout value turns the list and the tiled area into one
 rectangle per window shown. Master-and-stack is the default, monocle the
 second and manual splits, a tree of anonymous tiles the windows take in
-list order, the third. The window commands split, close, focus, reorder,
-zoom and resize the windows as the layout defines, and the Vim scheme binds
-them under `C-w` ([keymaps-and-modes.md](keymaps-and-modes.md), "Window
-commands as built"). A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
+list order, the third. An edge layout wraps any of them and gives the
+windows docked at one edge a strip, so a sidebar is an ordinary window
+that happens to be docked. The window commands split, close, focus,
+reorder, zoom and resize the windows as the layout defines, dock them at an
+edge and back, and the Vim scheme binds them under `C-w`
+([keymaps-and-modes.md](keymaps-and-modes.md), "Window commands as
+built"). Where a buffer a command makes is shown is config's: display
+rules, matched in order on the buffer's modes, its name and the command
+that opened it, send it to the focused window, main, the stack or an
+edge, and by default to the stack, so main keeps the buffer being
+edited. A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
 exists) are part of the data model, and operations that would break one
 return a typed refusal.
 
@@ -1496,8 +1503,8 @@ echo area, the preedit, and the prompt that is open, if one is.
     geometry phase 1 pinned. Drawing order is the list's (window
     management's phase 2 added the count).
   - **Monocle** gives the whole area to the selected view
-    (`EditorState.selectedView`) when it is in the list, and to the first
-    window otherwise. The other windows get no rectangle and are not in
+    (`EditorState.selectedView`) when it is in the list or docked at an
+    edge, and to the first window otherwise. The other windows get no rectangle and are not in
     the scene, as xmonad's `Full`; a hidden window is still one of the
     state's views, so it can be focused, which shows it. Its cursor is not
     followed while it is hidden. While a prompt is open the selected view
@@ -1541,8 +1548,97 @@ echo area, the preedit, and the prompt that is open, if one is.
       them. That fit is what a config's switch to splits does, since
       config knows no view ids and writes only a shape (`Layout.manual`,
       or any `Splits`).
+  - **An edge** (`Layout.edge side size inner`; window management's phase
+    3, decided 2026-11-16) wraps another layout. The windows docked at its
+    side, in order, take a strip on that side, `extent * min size 100 /
+    100` pixels along the side's axis (rounded down), divided the other
+    way, and `inner` lays out the rest with the other docked windows.
+    Edges compose, the outermost cutting first: under
+    `.edge .left 20 (.edge .bottom 30 Layout.manual)` a left strip is the
+    full height of the tiled area and a bottom strip inside it spans only
+    the width left. The size is a percent, as main's share is: Lean knows
+    no column width and handles no scale, so a size in pixels would change
+    with the display. **With no window docked at its side an edge reserves
+    no strip**, and the layout inside it has the whole area, so a config
+    with an edge looks like its tiling layout until something is docked.
+    The strip's rectangles come after the inner layout's, so main stays
+    first in the scene. The per-list operations (`inserted`, `removed`,
+    `balanced`, `resized`, `rotated`, `fits`, `fitted`) pass through an
+    edge to the layout inside it, so every rule above holds inside an edge,
+    and balance leaves a strip's size. `Layout.tiling` is the layout inside
+    every edge, `Layout.withTiling` replaces it, `Layout.edgeSides` lists
+    the edges, and `Layout.resizedEdge` moves one strip.
   - Layouts cut in whole pixels and do not snap to text rows; each
     window's padding is inside its rectangle.
+- **Docked windows are kept apart from the tiled list** (`Frame.docked`,
+  each with its side; window management's phase 3). Every operation of
+  the layout indexes the tiled list: the tree's tiles, main's count,
+  `Frame.inserted` and `Frame.removed`. Marks on entries of the list would
+  put an index translation at every edge. Kept apart, the layout's
+  operations and the tree's invariant are untouched, and "which windows
+  exist" has one reader, `Frame.all`, the tiled list then the docked
+  windows; `Frame.contains` asks of either. The state's views are
+  `Frame.all` then the minibuffer's.
+- **Config choosing a layout without an edge moves the windows docked
+  there** to the end of the tiled list, in order, before the layout is
+  fitted (`Frame.choose`), so a reload that drops an edge rearranges the
+  same windows and none is lost. Only config adds or drops an edge: the
+  window commands never do, and zoom keeps the edges in `zoomedFrom`.
+- **A docked window is not special** (window management's phase 3). It is
+  focused, split, closed, shown another buffer and arranged with the same
+  operations as a tile:
+  - focus by direction takes candidates from every window of the frame,
+    so `C-w h` from main reaches a left sidebar; cycling, top and bottom
+    walk `Frame.all`, the tiles then the docked windows; the last window
+    focused is kept across a docked window;
+  - splitting a docked window docks the new one at the same side, right
+    after it; closing one empties its place in the strip, which goes when
+    its side has none left, and the focus goes to the window of that side
+    that took its index, else the side's new last window, else the window
+    focused before it, else main;
+  - **the last tile cannot be closed or docked while windows are docked**
+    (`onlyWindow`, `lastTile`), and `C-w o` from a docked window is
+    refused (`atEdge`): a frame of sidebars has no area to tile, which is
+    Emacs's rule ("Attempt to make side window the only window");
+  - promote moves a docked window into the tiles as main, the old main
+    first of the stack; demote, exchange and rotate act on the windows
+    docked at its side, as a list; resize moves its edge's strip, and
+    across the side's axis is refused; balance and main's count act on the
+    layout inside the edges; zoom shows it over the tiled area;
+  - `Arrange.edge side` docks a tile at `side`, moves a window docked at
+    another side there, or moves one docked at `side` back to the end of
+    the tiled list; it is refused with `noSuchEdge` for a side the layout
+    has no edge at.
+- **A window is opened at a spot** (`EditorState.openWindow`,
+  `WindowSpot`): `stack` puts it after the last of the tiled list, as a
+  split of that window would, so under master-and-stack the stack grows and
+  main is untouched and under manual splits the last tile is split along
+  rows; `edge side` docks it after that side's windows. The focus stays.
+  Phases 4 and 5 add a float and a new tab as spots.
+- **Display rules say where a buffer a command makes is shown**
+  (`lean/Editor/DisplayRules.lean`, `EditorState.displaying`,
+  `BufferId.display`; window management's phase 3, decided 2026-11-16).
+  - A rule sets any of a mode (the buffer's major mode or one of its
+    minor modes), a name (exactly) and an opener (the asking command's
+    name, which the caller passes, since a call carries none), and a
+    target: the focused window, main, the stack, an edge, a float or a new
+    tab. It matches when every field it sets holds; the first that matches
+    is chosen, and with none the fallback, the stack, focused.
+  - **A window of the frame that shows the buffer already is used first**,
+    whatever the rules say (Emacs's `display-buffer-reuse-window`), so
+    `ls` twice reuses the list's window and the buffer being edited never
+    moves. A rule's `focus`, true by default, says whether that window is
+    focused.
+  - The focused window, asked from the minibuffer's view, is the window
+    the prompt was asked from, tiled or docked (`EditorState.shownIn`). An
+    edge the layout lacks goes to the stack, and so do floats and tabs
+    until phases 4 and 5, though install keeps config from naming any of
+    them.
+  - **What routes through them**: `list-buffers`'s list and the buffers
+    config's commands make. `open-file`, `switch-buffer`, `edit-file`,
+    `close-buffer`'s fallback and `window-new` still show in the window
+    they act on: a file opened or a buffer switched to is the one being
+    edited.
 - **The tiled area is the frame above the minibuffer's strip**
   (`EditorState.tiled`): the strip is the frame's bottom `message` height,
   `text + message` while a prompt is open, or the whole frame when that is
@@ -1590,10 +1686,11 @@ echo area, the preedit, and the prompt that is open, if one is.
     allowed, so the focus can leave the minibuffer and come back. The last
     window of the list cannot be removed while a prompt is open: the
     minibuffer's window does not count.
-- **The invariants** are over the state's views, the list's windows and
+- **The invariants** are over the state's views, the frame's windows and
   then the open prompt's view: the focused window is one of them; the
   views' ids are distinct and are the windows'; each window's buffer
-  exists. The operations that can break one refuse with a `LayoutRefusal`
+  exists; and every docked window's side is an edge of the layout out of
+  a zoom. The operations that can break one refuse with a `LayoutRefusal`
   and the state unchanged: removing a window (`onlyWindow` for the last
   window, `noSuchWindow` for one not in the list), focusing one, splitting
   one, and showing another buffer in one (`noSuchBuffer` for a buffer
@@ -1672,9 +1769,10 @@ echo area, the preedit, and the prompt that is open, if one is.
     (`LayoutRefusal.describe`), which a window command gives up with:
     `onlyWindow` (Vim's E444, "the last window cannot be closed"),
     `noSuchWindow`, `noSuchBuffer`, `markersOfAnotherText`,
-    `ofMinibuffer`, and since window management's phase 2
+    `ofMinibuffer`, since window management's phase 2
     `noPreviousWindow`, `notResizable` with its axis, `noMain` and
-    `monocleChosen`.
+    `monocleChosen`, and since phase 3 `noSuchEdge` with its side ("the
+    layout has no left edge"), `lastTile` and `atEdge`.
 - A view's id is never used again,
   and a buffer's is not either: buffers are kept in slots, and a removed
   buffer leaves its slot empty.

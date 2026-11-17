@@ -132,7 +132,11 @@ for one to eight windows at every sample size, share, side and count of
 main's, with its geometry pinned; monocle gives the whole area to the
 selected window; and the manual split layout's tiles the area for every
 tree its operations reach, with its geometry and its operations (insert,
-remove and its inheritor, balance, resize, fit) pinned.
+remove and its inheritor, balance, resize, fit) pinned; and an edge
+layout's strip is pinned at 25 percent, reserves nothing with no window
+docked, tiles the area under compositions of up to two edges round each
+layout, and passes the list's operations through to the layout inside
+it.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
@@ -144,7 +148,17 @@ one of its clauses. The operations the window commands are made of
 (`windowOperationChecks`, part of `stateChecks`) are checked there too: a
 split's placement, a removal's inheritor, zoom, the last window focused,
 each change of `EditorState.arrange`, focus by direction against a property
-over sample states of the three layouts, and focus in list order.
+over sample states of the three layouts, with and without docked windows,
+and focus in list order; and a docked window focused, closed, split,
+promoted, moved between an edge and the tiles, a layout chosen without its
+edge, and a window opened at a spot.
+
+Display rules (`Editor/DisplayRules.lean`) are checked by
+`displayRuleChecks`: which rule a buffer's facts choose, which targets a
+layout lacks, where `EditorState.displaying` puts a buffer, and, on the
+loop's driver over the editor's models, `ls` and a command's buffer going
+to the stack while main keeps the file, and a mode's buffer docked at the
+left edge by a rule.
 
 The window commands (`Editor/WindowCommands.lean`) are checked by key on
 the loop's driver over the editor's models, under the Vim scheme that ships

@@ -47,9 +47,17 @@ and the focus is held by `ViewId` (`Frame.focused`). A layout value turns
 the list into one rectangle per window shown (`Layout.place`):
 master-and-stack by default, monocle, which shows only the selected
 window, and manual splits, a tree of anonymous tiles the windows take in
-list order. The
+list order, each of which an edge may wrap. The
 list says which windows exist and in what order; the layout says only
 where each goes.
+
+**The windows docked at an edge are kept apart from the list**
+(`Frame.docked`, each with its side), which stays the tiled list the
+layout's operations index, so an edge layout leaves every rule of the list
+as it was; the layout gives the windows docked at each of its edges that
+edge's strip (`Layout.place`, `Layout.edge`). Which windows the frame has
+is read in one place, `Frame.all`, the tiled list then the docked windows,
+and `Frame.contains` asks whether a window is one of them.
 
 **The frame keeps three more things about its windows**, each changed only
 by the operations below:
@@ -57,8 +65,8 @@ by the operations below:
 | Field | What it holds |
 |---|---|
 | `Frame.zoomedFrom` | The layout a zoom left, to go back to: `some` while zoomed, when the layout is monocle |
-| `Frame.lastFocused` | Vim's `prevwin`: the window of the list focused before the current one. Set when the focus moves from one window of the list to another (`Frame.focusedOn`), by `focusWindow` and by an exchange; focusing the minibuffer's view or leaving it does not set it. It is never cleared, and ids are never used again, so a reader checks that it is still in the list |
-| `Frame.chosen` | The layout config chose that the last publish applied. A publish handed the same layout again leaves the frame's (`Loop.publish`), so a zoom, a resized share, a main count or a split tree a command made lasts until config chooses another layout; `Frame.choose` then sets the layout, fitted to the windows, and clears the zoom, so the same windows are rearranged and none is lost |
+| `Frame.lastFocused` | Vim's `prevwin`: the window of the frame focused before the current one. Set when the focus moves from one window of the frame to another, tiled or docked (`Frame.focusedOn`), by `focusWindow` and by an exchange; focusing the minibuffer's view or leaving it does not set it. It is never cleared, and ids are never used again, so a reader checks that it is still in the frame |
+| `Frame.chosen` | The layout config chose that the last publish applied. A publish handed the same layout again leaves the frame's (`Loop.publish`), so a zoom, a resized share, a main count or a split tree a command made lasts until config chooses another layout; `Frame.choose` then moves the windows docked at an edge the new layout lacks to the end of the list, sets the layout, fitted to the windows, and clears the zoom, so the same windows are rearranged and none is lost |
 
 Every change of the list is applied to the layout and to the one zoom
 returns to (`Frame.inserted`, `Frame.removed`), so a window split or closed
@@ -112,11 +120,14 @@ command's question about its view carries the view's padding
 
 The invariants are part of the model (`EditorState.wellFormed`). They are
 stated over the state's views (`EditorState.views`): the frame's windows,
-in list order, then the minibuffer's view while a prompt is open
-("Prompts", below).
+the tiled list in order and then the docked windows (`Frame.all`), then
+the minibuffer's view while a prompt is open ("Prompts", below).
 
 - the frame's layout, and the one zoom returns to, fit the list: a manual
   split tree has as many tiles as the list has windows (`Layout.fitted`);
+- every docked window's side is an edge of the layout out of a zoom
+  (`Frame.underlying`, `Layout.edgeSides`), so no docked window is left
+  without a strip;
 - the focused window is one of the views;
 - the views' ids are distinct, and they are exactly the windows' ids;
 - each window's buffer exists.
@@ -191,7 +202,17 @@ handler is these operations:
   in a direction, worked out from the rectangles the layout gave (so a
   window monocle hides has nothing in any direction, and the minibuffer's
   view is never one), and `cycled`, the next or previous window of the
-  list with wrap, or the Nth.
+  frame with wrap, or the Nth.
+- `openWindow` opens a new window on a buffer at a spot (`WindowSpot`):
+  after the last of the tiled list (`stack`), as a split of that window
+  with the default placement would, or docked at an edge, after that
+  side's windows. The focus stays. It refuses `noSuchEdge` for an edge the
+  layout has none at, and the minibuffer's buffer, a buffer there is none
+  of and markers of another text as `showBuffer` does.
+- `displaying` says where a buffer is to be shown, under display rules
+  (`Editor/DisplayRules.lean`): a window that shows it already, else the
+  target of the first rule that matches it, else the stack. It decides and
+  changes nothing; `BufferId.display` (`Editor/Api.lean`) carries it out.
 
 `LayoutRefusal.describe` says each refusal in a sentence, which a window
 command gives up with, so the echo area says, for the last window,
@@ -202,6 +223,31 @@ command gives up with, so the echo area says, for the last window,
   would break the last invariant), and `markersOfAnotherText`.
 - `setWanted` has a window keep a wanted column, or none ("The wanted
   column", below). It refuses `noSuchWindow` for a view with no window.
+
+**A window at an edge is not special.** Every operation above takes a
+docked window as it takes a tile, with these rules of its own:
+
+- `removeWindow` takes it out of `docked`, and the edge's strip goes when
+  no window is docked there; the layout is unchanged. The focus goes to the
+  window of its side that took its index, else that side's new last
+  window, else `lastFocused` while it is in the frame, else main.
+  `onlyWindow` counts the tiles alone, so the last tile cannot be closed
+  while windows are docked, as Emacs refuses to make a side window the
+  only window.
+- `splitWindow` docks the new window at the same side, right after it.
+- `arrange`'s `promote` moves it into the tiles as main; `demote`,
+  `rotate` and `exchange` act on the windows docked at its side, as a
+  list; `resize` moves its edge's strip, refused with `notResizable`
+  across the side's axis. `balance` and `mainCount` act on the layout as
+  from any window, `mainCount` on the one inside the edges
+  (`Layout.tiling`).
+- `arrange`'s `edge side`, on any window: a tile is docked at `side`
+  (refused with `lastTile` for the last one), a window docked at another
+  side moves there, and one docked at `side` goes back to the end of the
+  list. A side the layout has no edge at is refused with `noSuchEdge`.
+- The window a prompt was asked from (`askedFrom`), and so where the focus
+  goes when it closes and where `shownIn` shows a buffer, may be a docked
+  window.
 
 **A view's id is never used again.** A new window's id is the state's
 `nextView`, or one more than the greatest id a window has when that is

@@ -491,10 +491,32 @@ elaborator.
   resized share, main's count, a split tree) last until config chooses
   another layout (window management's phase 2). A loop handed none keeps
   the frame's own. `layout Layout.manual` chooses manual splits; config
-  writes only a shape, which is fitted to the windows. Choosing it twice,
-  or a master-and-stack share above 100, rejects the reload. It is chosen
-  as a value, not by a registered name as a theme is, until a command
-  switches layouts by name.
+  writes only a shape, which is fitted to the windows. Any layout may be
+  wrapped in edges, `layout (.edge .left 25 Layout.default)`, each giving
+  the windows docked at its side a strip of its size in percent (window
+  management's phase 3); a choice that drops an edge moves the windows
+  docked there to the end of the tiled list (`Frame.choose`), so none is
+  lost. Only config adds or drops an edge. Choosing it twice, a
+  master-and-stack share above 100, an edge above 100 or a side given
+  twice, at any depth (`Layout.problem?`), rejects the reload. It is
+  chosen as a value, not by a registered name as a theme is, until a
+  command switches layouts by name.
+- **Display rules are config's**: `displayRule { mode := some "notes",
+  target := .edge .left }` adds a rule, in order, that says where a buffer
+  a command makes is shown (window management's phase 3,
+  `lean/Editor/DisplayRules.lean`). At install each rule is checked against
+  the layout config chose (`DisplayTarget.missing?`): a rule whose target
+  does not exist, a float or a new tab, which are not built yet, or an
+  edge the layout lacks, is left out, its sentence is in the report
+  (`Report.unusableRules`, a headless `rule:` line) and the echo area says
+  it after an unknown theme's and the segments', as an unknown theme is
+  reported; the config is installed without it. The rest are kept in the
+  registry (`Registry.displayRules`), set at every install, so a config
+  that makes none clears them, and handed to the loop for each step as
+  `Loop.Registered.displayRules`, which answers a command's
+  `.displayRules` request (`BufferId.display`). Checking at install is
+  enough because commands never add or drop an edge; a state handed a rule
+  for an edge it lacks still places the buffer, in the stack.
 - **The title bar is config's, at the next start**: `titleBar .standard`
   keeps the system's standard title bar in place of the themed one, whose
   paper is the theme's (theming phase 7). It is the reducer's state

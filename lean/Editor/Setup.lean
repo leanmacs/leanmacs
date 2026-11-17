@@ -201,8 +201,20 @@ whose tree of tiles the window commands grow and which is fitted to the
 windows there are. A config that chooses none has master-and-stack with
 main taking half on the left (`Layout.default`), and a reload changes it,
 rearranging the same windows; a reload that chooses the same layout again
-leaves the changes the window commands made. Choosing it twice is refused,
-and so is a master-and-stack share above 100.
+leaves the changes the window commands made. Any of them may be wrapped in
+edges, `layout (.edge .left 25 Layout.default)`: the windows docked at an
+edge's side share a strip of its size in percent, and the layout inside it
+has the rest. Choosing it twice is refused, and so are a master-and-stack
+share above 100, an edge above 100 and a side given twice, at any depth
+(`Layout.problem?`).
+
+Config says where a buffer a command makes is shown with display rules
+(`displayRule`, `Editor/DisplayRules.lean`), matched in order on the
+buffer's modes, its name and the command that opened it:
+`displayRule { mode := some "notes", target := .edge .left }`. With none
+the buffer goes to the stack. Nothing about a rule is refused by `setup`:
+at install a rule whose target does not exist under the layout config
+chose is left out, and the echo area says so.
 
 The window commands are compiled and bound by the Vim scheme under `C-w`
 in normal state. A config puts them in every state, insert state included,

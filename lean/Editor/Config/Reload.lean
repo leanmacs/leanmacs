@@ -69,6 +69,15 @@ the model tests run it with outcomes built by hand
   host hands it to the loop for each step (`Headless.keys`,
   `Loop.Keys.layout`), so it changes with no restart. A rejected outcome
   changes none of it.
+- **The display rules follow config.** An install checks each display
+  rule the config made (`displayRule`) against the layout it chose, or the
+  editor's when it chose none (`DisplayTarget.missing?`): a rule whose
+  target does not exist is left out, and the report says so in a sentence
+  (`Report.unusableRules`, `Report.leftOut`), which the echo area says
+  after the segments'. The rest are set in the registry
+  (`Registry.displayRules`), so a reload that makes none clears them, and
+  the loop is handed them (`Registry.registered`). A rejected outcome
+  changes none of it.
 - **The window's appearance follows the paper.** Once the window has
   opened (`Event.windowOpened`), the reducer asks for the appearance that
   contrasts with the effective paper (`Theme.paper` of `State.theme`,

@@ -25,6 +25,15 @@ outside, so it is no port.
   and the tree is only the shape: list order is screen order, and the list
   operations (promote, demote, rotate, exchange) move windows between
   tiles while the shape stays.
+- **Edge** (`Layout.edge side size inner`): wraps another layout. The
+  windows docked at `side`, which `place` is handed apart from the list,
+  share a strip on that side of `size` percent of the extent along the
+  side's axis, and `inner` lays out the list, and any other docked windows,
+  in the rest. With no window docked at the side no strip is reserved.
+  Edges compose, the outermost cutting first. The size is a percent, as
+  main's share is: Lean knows no column width and handles no scale. Config
+  composes them (`layout (.edge .left 25 Layout.default)`), and
+  `problem?` refuses a size above 100 and a side given twice.
 
 ## The manual split tree, read as Vim's frames
 
@@ -68,22 +77,27 @@ its *group*.
 The editor state applies each change of its window list to the layout
 through these, so a layout's parameters follow its windows:
 
-| Operation | Master-and-stack | Monocle | Manual splits |
-|---|---|---|---|
-| `inserted index placement` | Unchanged | Unchanged | Tile `index` split along the placement's axis, then balanced along it |
-| `removed index` | Unchanged, and no inheritor | Unchanged, and no inheritor | `Splits.remove`, balanced along the group's axis, with its inheritor |
-| `balanced` | Main's share back to 50 | Unchanged | Balanced along both axes |
-| `resized index n axis grow steps` | Main's share by `5 * steps` along its side's axis only, with `n ≥ 2` and `0 < count < n`; none otherwise | None | `Splits.resize` |
-| `rotated windows forward` | The stack, the windows after main's, rotated; main stays | The whole list rotated | The whole list rotated |
-| `fits n` | Unchanged | Unchanged | Its tree fitted to `n` |
+| Operation | Master-and-stack | Monocle | Manual splits | Edge |
+|---|---|---|---|---|
+| `inserted index placement` | Unchanged | Unchanged | Tile `index` split along the placement's axis, then balanced along it | The inner layout's, wrapped |
+| `removed index` | Unchanged, and no inheritor | Unchanged, and no inheritor | `Splits.remove`, balanced along the group's axis, with its inheritor | The inner layout's, wrapped, with its inheritor |
+| `balanced` | Main's share back to 50 | Unchanged | Balanced along both axes | The inner layout's, wrapped; the strip's size stays |
+| `resized index n axis grow steps` | Main's share by `5 * steps` along its side's axis only, with `n ≥ 2` and `0 < count < n`; none otherwise | None | `Splits.resize` | The inner layout's, wrapped |
+| `rotated windows forward` | The stack, the windows after main's, rotated; main stays | The whole list rotated | The whole list rotated | The inner layout's |
+| `fits n` | Unchanged | Unchanged | Its tree fitted to `n` | The inner layout's, wrapped |
+
+The indices are the tiled list's under an edge too: a docked window is
+not in the list, so every rule above holds inside an edge. A docked
+window's strip is moved by `resizedEdge`, by `5 * steps` percent along its
+side's axis, clamped to 0 and 100.
 
 A split's placement (`Placement`) is read only under manual splits: under
 the other two a new window goes right after its source, so the stack grows
 and main is left alone.
 
 The layouts cut in whole pixels and do not snap to text rows. `place` is
-total and knows nothing of the editor state, so that layouts can later be
-composed. Pinned by `ModelTest.layoutChecks`.
+total and knows nothing of the editor state, so that layouts compose, as an
+edge composes with the layout inside it. Pinned by `ModelTest.layoutChecks`.
 -/
 
 namespace Editor
