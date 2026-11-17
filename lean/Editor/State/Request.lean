@@ -222,8 +222,10 @@ inductive StateRequest where
   /-- Make `history` the undo tree of the buffer `id`. -/
   | setHistory (id : BufferId) (history : UndoTree)
   /-- Add an excerpt buffer called `name` over the excerpt text `text`, whose
-  history is `history`. -/
-  | addExcerptBuffer (name : String) (text : TextId) (history : UndoTree)
+  history is `history` and whose excerpts are `entries`. -/
+  |
+  addExcerptBuffer (name : String) (text : TextId) (history : UndoTree)
+    (entries : Array Buffer.ExcerptEntry := #[])
   /-- Make `excerpts` what the excerpt buffer `id` keeps of its edits. -/
   | setExcerptHistory (id : BufferId) (excerpts : Buffer.Excerpts)
   /-- Have the buffer `id` keep `value` under `name`. -/
@@ -490,7 +492,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .removeBuffer id, state => state.removeBuffer id
   | .renameBuffer id name, state => state.renameBuffer id name
   | .setHistory id history, state => state.setHistory id history
-  | .addExcerptBuffer name text history, state => state.addExcerptBuffer name text history
+  | .addExcerptBuffer name text history entries, state =>
+    state.addExcerptBuffer name text history entries
   | .setExcerptHistory id excerpts, state => state.setExcerptHistory id excerpts
   | .setValue id name value, state => state.setValue id name value
   | .setMajorMode view name, state => state.setMajorModeOf view name

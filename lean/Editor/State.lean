@@ -646,9 +646,15 @@ A prompt is a request for one string, with a text to show beside the input
 An *excerpt buffer* is a buffer over an excerpt text (`createExcerpts`,
 `Editor/Text.lean`), whose edits are its sources' edits. It is added by
 `addExcerptBuffer`, which refuses as `addBuffer` does, and it keeps
-`Buffer.excerpts`, the history of what it edited, which `setExcerptHistory`
-replaces (refused with `noSuchBuffer`, and with `notExcerpts` for a buffer
-that is not one).
+`Buffer.excerpts`, the history of what it edited and an entry for each of
+its excerpts, which `setExcerptHistory` replaces whole (refused with
+`noSuchBuffer`, and with `notExcerpts` for a buffer that is not one).
+
+- **Each excerpt's entry** (`Buffer.ExcerptEntry`) is its source's text
+  and the header drawn above it, in list order. They are the editor's
+  display data, kept here and not in the store's list: a window over the
+  buffer draws each header as a block above its excerpt, and each source
+  buffer's spans at its excerpts (`Editor/ExcerptView.lean`).
 
 - **Its own `history`** is an undo tree over its text like any buffer's,
   told and closed by the loop and never moved: its text keeps no inverse, so
@@ -974,8 +980,18 @@ structure Buffer.ExcerptStep where
   sources : Array Buffer.ExcerptSource := #[]
   deriving DecidableEq, Repr
 
-/-- What an excerpt buffer keeps of what its edits reached ("Excerpt
+/-- One excerpt of an excerpt buffer as the editor keeps it beside the
+store's list: its source's text, and the header drawn above it ("Excerpt
 buffers", in the module docs). -/
+structure Buffer.ExcerptEntry where
+  /-- The text of its source. -/
+  source : TextId
+  /-- The header drawn above it; none when empty. -/
+  header : String := ""
+  deriving DecidableEq, Repr
+
+/-- What an excerpt buffer keeps of what its edits reached, and of each of
+its excerpts ("Excerpt buffers", in the module docs). -/
 structure Buffer.Excerpts where
   /-- The source buffers an edit reached since the last step was closed. -/
   touched : Array BufferId := #[]
@@ -983,6 +999,9 @@ structure Buffer.Excerpts where
   undos : Array Buffer.ExcerptStep := #[]
   /-- The steps to redo, the next one last. -/
   redos : Array Buffer.ExcerptStep := #[]
+  /-- One entry for each excerpt of its text, in list order: its source and
+  its header. -/
+  entries : Array Buffer.ExcerptEntry := #[]
   deriving DecidableEq, Repr
 
 /-- A buffer: a text and what the editor keeps about it. -/
@@ -2775,15 +2794,18 @@ def addBuffer (name : String) (text : TextId) (history : UndoTree) (state : Edit
           recent := state.recent.push ⟨state.buffers.size⟩ })
 
 /-- Adds an excerpt buffer called `name` over the excerpt text `text`, whose
-history is `history`, with nothing edited through it yet ("Excerpt
-buffers", in the module docs). Refused as `addBuffer` refuses. -/
-def addExcerptBuffer (name : String) (text : TextId) (history : UndoTree) (state : EditorState) :
+history is `history`, whose excerpts are `entries`, with nothing edited
+through it yet ("Excerpt buffers", in the module docs). Refused as
+`addBuffer` refuses. -/
+def addExcerptBuffer (name : String) (text : TextId) (history : UndoTree)
+    (entries : Array Buffer.ExcerptEntry) (state : EditorState) :
     Except BufferRefusal BufferId × EditorState :=
   match state.addBuffer name text history with
   | (.ok id, added) =>
     (.ok id,
       { added with
-        buffers := added.buffers.modify id.index (·.map ({ · with excerpts := some {} })) })
+        buffers :=
+          added.buffers.modify id.index (·.map ({ · with excerpts := some { entries } })) })
   | refused => refused
 
 /-- Removes the buffer `id`: its slot is empty from then on, its id is never

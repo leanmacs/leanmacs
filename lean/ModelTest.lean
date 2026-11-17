@@ -7426,6 +7426,141 @@ def lineToSweep (text : String) (width height : Nat) : Bool :=
         placed .top 0 && placed .middle ((fits - 1) / 2) (kept := whole) &&
           placed .bottom (fits - 1)
 
+/-- Blocks over `sixteen` ten cells wide: a block of one row before rows 3,
+6 and 7, and one of two rows before row 12 (its text is twelve cells). -/
+def sixteenBlocks : Array Block :=
+  #[{ before := 6, text := "H" }, { before := 12, text := "I" }, { before := 14, text := "J" },
+    { before := 24, text := "twelve-cells" }]
+
+/-- A view of `sixteen` ten cells wide and `height` rows tall, with
+`sixteenBlocks`. -/
+def blockedArea (height : Nat) : Scroll.Area :=
+  { snapshot := ⟨0⟩, width := 10, height, blocks := sixteenBlocks }
+
+/-- The rows of a view of `sixteen` with blocks (`blockedArea`) from
+`anchor`, as the display model answers them; none where it refuses. -/
+def blockedRows (height anchor : Nat) : Array Display.Row :=
+  (onDisplay sixteen ((blockedArea height).rows anchor)).getD #[]
+
+/-- Whether the cursor's row, that of `head`, is among `shown`, the rows of
+a view with blocks `height` rows tall, with `margin` rows after it as far as
+the rows shown from the cursor's row reach, which is where the follow's
+margin gives way below (`Editor/Scroll.lean`, "The margin"), or it is the
+first row shown (`Editor/Scroll.lean`, "Blocks": the settle holds the
+margin below). -/
+def blockedHolds (height : Nat) (shown : Array Display.Row) (head margin : Nat) : Bool :=
+  let below := (blockedRows height head).size - 1
+  match shown.findIdx? (·.start == head) with
+  | none => false
+  | some index => index == 0 || shown.size - 1 - index ≥ min margin below
+
+/-- Where the follow places the anchor of a view of `sixteen` with blocks
+`height` rows tall from `anchor`, with its cursor at `head`; none outside
+where the display refused. -/
+def blockedFollow (height margin anchor head : Nat) : Option (Option Nat) :=
+  onDisplay sixteen do
+    let area := blockedArea height
+    Scroll.follow area margin (← area.rows anchor) head
+
+/-- The anchors a view of `sixteen` with blocks `height` rows tall is left
+at, with the margin `margin`, by a cursor on every row from the first to
+the last and back, one row at a time, the follow asked after each from the
+anchor the one before left, from the text's start; and whether the cursor's
+row was shown with the margin in force below it (`blockedHolds`) each time. -/
+def blockedSweep (height margin : Nat) : Bool :=
+  Id.run do
+    let fits := (blockedRows height 0).size
+    let held := min margin ((fits - 1) / 2)
+    let mut anchor := 0
+    for row in List.range 16 ++ (List.range 16).reverse do
+      let head := 2 * row
+      let some moved := blockedFollow height margin anchor head | return false
+      anchor := moved.getD anchor
+      unless blockedHolds height (blockedRows height anchor) head held do
+        return false
+    return true
+
+/-- What the follow costs on the counting model for a view of `sixteen` ten
+characters wide and five rows tall whose first row shown is row `top` and
+whose cursor is on row `cursor`, with `blocks`: whether it placed an anchor,
+and how many requests it made after the rows shown. -/
+def blockedFollowCost (blocks : Array Block) (top cursor : Nat) : Option (Bool × Nat) :=
+  let program : EditorM (Bool × Nat) := do
+    let text ← createText sixteen
+    let area : Scroll.Area := { snapshot := ← text.snapshot, width := 10, height := 5, blocks }
+    let shown ← area.rows (2 * top)
+    let before ← Watch.now
+    let moved ← Scroll.follow area 0 shown (2 * cursor)
+    return (moved.isSome, (← Watch.now) - before)
+  (program.runModel countingModel).1.toOption
+
+/-- The checks of the follow and of the scrolls in a view with blocks
+(`Editor/Scroll.lean`, "Blocks"), on the display model alone, over
+`sixteen` with `sixteenBlocks`. -/
+def blockedScrollChecks : List Check :=
+  [{  name :=
+        "in a view with blocks, a cursor on every row of the text, reached down a row at a time and back up, is among the rows shown after the follow, with the margin in force below it as far as the rows from it reach, at margins 0, 1 and 2 and in views of 3, 5 and 7 rows"
+      run :=
+        pure <|
+          [3, 5, 7].all fun height => [0, 1, 2].all fun margin => blockedSweep height margin },
+    { name :=
+        "in a view with blocks, a jump to the text's end and back to its start shows the cursor's row"
+      run :=
+        pure <|
+          [3, 5, 7].all fun height =>
+            match blockedFollow height 0 0 30 with
+            | some (some down) =>
+              blockedHolds height (blockedRows height down) 30 0 &&
+                match blockedFollow height 0 down 0 with
+                | some (some up) => up == 0 && blockedHolds height (blockedRows height up) 0 0
+                | _ => false
+            | _ => false },
+    { name :=
+        "in a view with blocks, a scroll by a row, by half a view and up, and to the top, the middle and the bottom, followed by the follow, shows the cursor's row, from every row shown first and every row as the cursor"
+      run :=
+        pure <|
+          [3, 5, 7].all fun height =>
+            let area := blockedArea height
+            (List.range 16).all fun top =>
+              (List.range 16).all fun row =>
+                let head := 2 * row
+                let anchor := 2 * top
+                let scrolls : List (DisplayM (Option Nat)) :=
+                  [do
+                    Scroll.down area anchor 1 (← area.fits), do
+                    Scroll.down area anchor (Scroll.Amount.half.rows 0 (← area.fits)) (← area.fits),
+                    do
+                    Scroll.up area anchor 2 (← area.fits), Scroll.lineTo .top area head,
+                    Scroll.lineTo .middle area head, Scroll.lineTo .bottom area head]
+                scrolls.all fun scroll =>
+                  match onDisplay sixteen scroll with
+                  | some placed =>
+                    let anchor := placed.getD anchor
+                    match blockedFollow height 0 anchor head with
+                    | some moved =>
+                      blockedHolds height (blockedRows height (moved.getD anchor)) head 0
+                    | none => false
+                  | none => false },
+    { name :=
+        "a view with blocks shows the rows of the view without them that fit with the block rows above them: from the text's start, the first three rows and the fourth with its block"
+      run :=
+        pure <|
+          blockedRows 5 0 == (rowsFrom sixteen 10 5 0).extract 0 4 &&
+            (onDisplay sixteen ((areaOf 10 5).rows 0)) == some (rowsFrom sixteen 10 5 0) },
+    { name :=
+        "what the follow costs with blocks: one request more where it places an anchor that holds the cursor's row, one more for each row it settles, and nothing more where it keeps the anchor"
+      run :=
+        pure <|
+          -- Row 11 from row 0: the anchor placed, row 8, holds it.
+          blockedFollowCost #[] 0 11 == some (true, 2) &&
+            blockedFollowCost sixteenBlocks 0 11 == some (true, 3) &&
+            -- Row 15 from row 0: the anchor placed, row 12, shows its two
+            -- block rows and does not hold it; one step to row 13 does.
+            blockedFollowCost sixteenBlocks 0 15 == some (true, 4) &&
+            -- A cursor shown asks the rows from it alone.
+            blockedFollowCost sixteenBlocks 0 1 == some (false, 1) &&
+            blockedFollowCost #[] 0 1 == some (false, 1) }]
+
 /-- The checks of the policy by which a view follows its cursor and of the
 anchors a scroll places (`Editor/Scroll.lean`), on the display model alone,
 with the scroll anchor and the cursor as offsets. A row is one the display model answers
@@ -36914,17 +37049,25 @@ shows it; `insert-x` inserts `x` at the window's cursors; `one-changed` has
 `one` hold the file `one.txt`, at `excerptStamp`, and marks it changed on
 disk, the user not told; `edit-redo` inserts `x` at the start of the
 window's buffer and then redoes in it, saying `redo moved` unless the redo
-answered nothing; and `remove-one` removes `one`, which no window
-shows. -/
+answered nothing; `remove-one` removes `one`, which no window shows.
+For the display checks (`excerptDisplayChecks`): `make-six` makes an
+excerpt buffer `six` of six whole lines of two buffers, headed `h1` to
+`h6`, and shows it; `make-overlap` gives `one` the span `4..7` in
+`compilation.error`, makes an excerpt buffer `overlap` of `one` 0..8 and
+4..14, which show `two` twice, gives it a span `0..1` of its own, sets the
+last search to `w`, and shows it; `make-plain` shows a plain buffer `plain`
+of `ex`'s text; and `float-five` floats a buffer `note`, unfocused, at the
+position 5 of the window's view. -/
 def excerptRegistrations : Array Config.Registration :=
   #[{ name := "make-ex"
       action :=
         .call fun call => do
           let .ok one ← createBuffer "one" "one\ntwo\nthree\n" | return
           let .ok two ← createBuffer "two" "alpha\nbeta\n" | return
-          let .ok oneText ← one.text | return
-          let .ok twoText ← two.text | return
-          let .ok ex ← createExcerptBuffer "ex" #[⟨oneText, 4, 8⟩, ⟨twoText, 0, 6⟩] | return
+          let .ok ex ←
+            createExcerptBuffer "ex"
+                #[{ buffer := one, start := 4, stop := 8, header := "one" },
+                  { buffer := two, start := 0, stop := 6, header := "two" }] | return
           discard <| call.target.window.id.show ex },
     { name := "edit-both"
       action :=
@@ -36954,7 +37097,7 @@ def excerptRegistrations : Array Config.Registration :=
       action :=
         .call fun call => do
           let free ← createText "free\n"
-          let .ok ex ← createExcerptBuffer "ex2" #[⟨free, 0, 5⟩] | return
+          let .ok ex ← createExcerptBufferOf "ex2" #[⟨free, 0, 5⟩] | return
           discard <| call.target.window.id.show ex },
     { name := "insert-x", action := .call fun call => call.target.insertAtSelections "x" },
     { name := "one-changed"
@@ -36974,7 +37117,42 @@ def excerptRegistrations : Array Config.Registration :=
       action :=
         .call fun _ => do
           let some one ← findBuffer "one" | return
-          discard <| one.remove }]
+          discard <| one.remove },
+    { name := "make-six"
+      action :=
+        .call fun call => do
+          let .ok first ← createBuffer "first" "one\ntwo\nthree\n" | return
+          let .ok second ← createBuffer "second" "alpha\nbeta\nx\n" | return
+          let ranges :=
+            #[(first, 0, 4), (first, 4, 8), (first, 8, 14), (second, 0, 6), (second, 6, 11),
+              (second, 11, 13)]
+          let list :=
+            ranges.mapIdx fun index (buffer, start, stop) =>
+              { buffer, start, stop, header := s!"h{index + 1}" : BufferExcerpt }
+          let .ok six ← createExcerptBuffer "six" list | return
+          discard <| call.target.window.id.show six },
+    { name := "make-overlap"
+      action :=
+        .call fun call => do
+          let some one ← findBuffer "one" | return
+          discard <| one.setSpans #[⟨4, 7, ⟨"compilation.error"⟩⟩]
+          let .ok overlap ←
+            createExcerptBuffer "overlap"
+                #[{ buffer := one, start := 0, stop := 8 },
+                  { buffer := one, start := 4, stop := 14 }] | return
+          discard <| overlap.setSpans #[⟨0, 1, ⟨"own"⟩⟩]
+          setLastSearch { pattern := "w", forward := true }
+          discard <| call.target.window.id.show overlap },
+    { name := "make-plain"
+      action :=
+        .call fun call => do
+          let .ok plain ← createBuffer "plain" "two\n\nalpha\n" | return
+          discard <| call.target.window.id.show plain },
+    { name := "float-five"
+      action :=
+        .call fun call => do
+          let .ok note ← createBuffer "note" "n" | return
+          discard <| note.float (.position call.target.window.id 5) (focus := false) }]
 
 /-- `driver` once the command `name` has run, as an invocation no key
 yielded. -/
@@ -37241,6 +37419,147 @@ def excerptBufferChecks : List Check :=
             Change.ranges #[.delete 2, .insert "ab", .retain 3, .delete 1] == #[(0, 2), (5, 6)] &&
             Change.ranges #[.insert "a", .retain 0, .insert "b"] == #[(0, 0)] }]
 
+/-- The header blocks `ex` of `excerptRegistrations` has, its headers `one`
+and `two` before its excerpts' starts `first` and `second`. -/
+def exHeaders (first second : Nat) : Array Block :=
+  #[{ before := first, text := "one", decorations := #[⟨0, 3, ExcerptView.headerFace⟩] },
+    { before := second, text := "two", decorations := #[⟨0, 3, ExcerptView.headerFace⟩] }]
+
+/-- The view `view` of the last scene `driver` published. -/
+def lastView (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option View := do
+  (← driver.model.display.scenes.back?).views.find? (·.id == view)
+
+/-- Of the window's view in the last scene of `driver`: its scroll anchor's
+offset, the head of its selection's primary range, and whether the rows the
+display model answers from its anchor, asked with its blocks, hold the
+row of that head, also asked with them. -/
+def blockedSeen (driver : EvilDriver) : Option (Nat × Nat × Bool) := do
+  let shown ← lastView driver
+  let #[marker] := shown.selections | none
+  let program : EditorM (Nat × Nat × Bool) := do
+    let .anchor anchor ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
+    let .selection selection ← marker.text.marker marker | throw .noSuchMarker
+    let some range := selection.ranges[selection.primary]? | throw .badSelection
+    let area :=
+      Scroll.Area.ofRect shown.snapshot shown.rect driver.model.display.cells.heights.status
+        shown.padding shown.blocks
+    let rows ← area.rows anchor.offset
+    let own := (← area.rows range.head)[0]?
+    return (anchor.offset, range.head, own.any rows.contains)
+  (program.runModel driver.model).1.toOption
+
+/-- The rectangle's top of the first view of the last scene of `driver`
+that is not the window's: the float `float-five` opened. -/
+def floatTop (driver : EvilDriver) : Option Nat := do
+  let scene ← driver.model.display.scenes.back?
+  return (← scene.views.find? (·.id != ⟨0⟩)).rect.y
+
+/-- The checks of what a view of an excerpt buffer shows
+(`Editor/ExcerptView.lean`; `Editor/Loop.lean`, "Decorations"; the follow
+and the scroll commands over blocks, `Editor/Scroll.lean`, "Blocks"), on
+the loop's driver over the editor's models, with evil's keys, and of the
+pure functions that place what is drawn. -/
+def excerptDisplayChecks : List Check :=
+  [{  name :=
+        "the headers of an excerpt list are a block in block-header before each excerpt's start, none for an empty header, zipped to the shorter of the list and the entries"
+      run :=
+        pure <|
+          let placed : Array Excerpt.Placed := #[⟨0, 4, 4, 8⟩, ⟨5, 11, 0, 6⟩, ⟨12, 12, 3, 3⟩]
+          let entries : Array Buffer.ExcerptEntry :=
+            #[{ source := ⟨0⟩, header := "one" }, { source := ⟨1⟩ }]
+          ExcerptView.headers placed entries ==
+              #[{ before := 0, text := "one", decorations := #[⟨0, 3, ExcerptView.headerFace⟩] }] &&
+            ExcerptView.headers placed (entries.push { source := ⟨0⟩, header := "é" }) ==
+              #[{ before := 0, text := "one", decorations := #[⟨0, 3, ExcerptView.headerFace⟩] },
+                { before := 12, text := "é", decorations := #[⟨0, 2, ExcerptView.headerFace⟩] }] },
+    { name :=
+        "a source's spans are drawn at every excerpt of it, clipped to the excerpt and moved to where it is, and an empty excerpt draws none"
+      run :=
+        pure <|
+          let face : FaceName := ⟨"f"⟩
+          let overlap : Array Excerpt.Placed := #[⟨0, 8, 0, 8⟩, ⟨9, 19, 4, 14⟩]
+          ExcerptView.translated overlap (fun _ => #[⟨4, 7, face⟩]) ==
+              #[⟨4, 7, face⟩, ⟨9, 12, face⟩] &&
+            ExcerptView.translated overlap (fun _ => #[⟨6, 10, face⟩]) ==
+              #[⟨6, 8, face⟩, ⟨11, 15, face⟩] &&
+            ExcerptView.translated #[⟨0, 0, 3, 3⟩, ⟨1, 3, 0, 2⟩] (fun _ => #[⟨0, 14, face⟩]) ==
+              #[⟨1, 3, face⟩] &&
+            ExcerptView.translated overlap
+                (fun index => if index == 0 then #[] else #[⟨4, 5, face⟩]) ==
+              #[⟨9, 10, face⟩] },
+    { name :=
+        "the published view of an excerpt buffer has a header block above each excerpt, read from the snapshot it shows: an edit before an excerpt in a source keeps them, and one typed in the first excerpt moves the second's"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let edited := excerptInvoked driver "edit-one"
+            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            (lastView driver).map (·.blocks) == some (exHeaders 0 5) &&
+              (lastView edited).map (·.blocks) == some (exHeaders 0 5) &&
+              (lastView typed).map (·.blocks) == some (exHeaders 0 6) &&
+              -- A plain buffer's view has none.
+              (lastView (excerptInvoked driver "show-one")).map (·.blocks) == some #[] },
+    { name :=
+        "a source buffer's span is drawn at the same text in every excerpt of it, under the excerpt buffer's own span and the search's matches, in that order"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let made := excerptInvoked driver "make-overlap"
+            let error : FaceName := ⟨"compilation.error"⟩
+            (lastView made).map (·.decorations) ==
+              some
+                #[⟨4, 7, error⟩, ⟨9, 12, error⟩, ⟨0, 1, ⟨"own"⟩⟩, ⟨5, 6, Loop.searchMatchFace⟩,
+                  ⟨10, 11, Loop.searchMatchFace⟩] },
+    { name :=
+        "in a window four rows tall over six headed excerpts, after each of G, k and j across the headers, gg, C-f, C-b, C-d, C-u, z t, z z and z b, the rows the published view shows from its anchor, asked with its blocks, hold the cursor's row"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let six := viewResized (excerptInvoked driver "make-six") ⟨20, 4⟩
+            let keys :=
+              ["G", "k", "k", "k", "k", "k", "k", "j", "j", "j", "g g", "C-f", "C-f", "C-b", "C-d",
+                "C-d", "C-u", "G", "z t", "z z", "z b", "g g", "z b", "j", "j", "z z"]
+            let (_, held) :=
+              keys.foldl
+                (fun (driver, held) key =>
+                  let fed := evilFed driver key
+                  (fed, held && (blockedSeen fed).any (·.2.2)))
+                (six, true)
+            (lastView six).any (·.blocks.size == 6) && held },
+    { name :=
+        "the scroll commands ask the rows a view fits with its blocks: C-f from the start of six headed excerpts in four rows moves the anchor and the cursor two rows, the rows that fit with the headers, not four"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let six := viewResized (excerptInvoked driver "make-six") ⟨20, 4⟩
+            -- `one` and the separator fit with the first header; `two`, at
+            -- 5, is two rows down; without the headers `three`, at 10, is
+            -- four rows down.
+            (blockedSeen six).map (fun (anchor, head, _) => (anchor, head)) == some (0, 0) &&
+              (blockedSeen (evilFed six "C-f")).map (fun (anchor, head, _) => (anchor, head)) ==
+                some (5, 5) },
+    { name :=
+        "a float anchored at a position of an excerpt buffer's view sits lower by the header rows above the position than one over the same text with no header"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let blocked := floatTop (excerptInvoked driver "float-five")
+            let plain := floatTop (excerptInvoked (excerptInvoked driver "make-plain") "float-five")
+            -- `alpha`, at 5, is below both headers: two rows of one pixel.
+            match blocked, plain with
+            | some blocked, some plain => blocked == plain + 2
+            | _, _ => false }]
+
 /-- The names of the workspace finder's contract properties
 (`Editor/Workspace/Contract.lean`) that do not hold of the pure model
 (`World.find`), or of the real finder run on the job model of the
@@ -37326,6 +37645,7 @@ def checks : List Check :=
     syntaxTreeChecks ++
     guardChecks ++
     scrollChecks ++
+    blockedScrollChecks ++
     originChecks ++
     heightChecks ++
     layoutChecks ++
@@ -37412,6 +37732,7 @@ def checks : List Check :=
     shellChecks ++
     readOnlyChecks ++
     excerptBufferChecks ++
+    excerptDisplayChecks ++
     compileChecks ++
     compileErrorChecks ++
     compileLocationChecks ++

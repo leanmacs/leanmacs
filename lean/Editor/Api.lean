@@ -1,3 +1,4 @@
+import Editor.ExcerptView
 import Editor.Scroll
 import Editor.Store
 
@@ -32,11 +33,15 @@ nothing in it.
   already has is refused (`nameTaken`) with no text made.
 - `addBuffer name text` makes a buffer over a text the command already
   has: one it copied, or took in from a job's snapshot.
-- `createExcerptBuffer name list` makes an excerpt text of `list`
-  (`createExcerpts`) and an excerpt buffer of that name over it
-  (`Editor/State.lean`, "Excerpt buffers"), refused as `createBuffer` is.
-  `BufferId.setExcerpts id list` replaces its list, which is how an
-  emptied excerpt goes.
+- `createExcerptBuffer name list` makes an excerpt text of `list`, ranges
+  of buffers each with a header (`BufferExcerpt`), and an excerpt buffer of
+  that name over it (`Editor/State.lean`, "Excerpt buffers"), refused as
+  `createBuffer` is and with `noSuchBuffer`. A window shows it like any
+  buffer, each header drawn above its excerpt (`Editor/ExcerptView.lean`).
+  `createExcerptBufferOf name list headers` makes one of ranges of texts,
+  which a text no buffer holds may be among. `BufferId.setExcerpts id list`
+  replaces its list and its headers, which is how an emptied excerpt
+  goes.
 - `findBuffer name` is the buffer of that name, if there is one. Names are
   unique, so there is at most one.
 - `BufferId.remove` removes a buffer no window shows. Its text is released
@@ -1029,17 +1034,65 @@ has, with a new undo tree over it, and returns its id. Refused with
 def addBuffer (name : String) (text : TextId) : EditorM (Except BufferRefusal BufferId) := do
   EditorState.ask (.addBuffer name text (← UndoTree.over text))
 
-/-- Makes an excerpt buffer called `name` over a new excerpt text of `list`
-(`createExcerpts`), and returns its id: what an edit typed in it reaches is
-its sources' buffers (`Editor/State.lean`, "Excerpt buffers"). Refused with
-`nameTaken` for a name a buffer already has, with no text made; what the
-store refuses of the list is thrown, as `createText` would. -/
-def createExcerptBuffer (name : String) (list : Array Excerpt) :
+/-- One excerpt of an excerpt buffer, as it is asked for: the bytes of the
+buffer `buffer`'s text from `start` up to, not including, `stop`, as it is
+now, and the header drawn above it (none when empty). -/
+structure BufferExcerpt where
+  /-- The buffer whose text it is a range of. -/
+  buffer : BufferId
+  /-- Where the range starts. -/
+  start : Nat
+  /-- Where it stops, not included. -/
+  stop : Nat
+  /-- The header drawn above it; none when empty. -/
+  header : String := ""
+  deriving DecidableEq, Repr
+
+/-- The store's excerpts of `list`, each over its buffer's text, and the
+entries the excerpt buffer keeps of them; `noSuchBuffer` and the first
+buffer there is none of. -/
+def excerptsOf (list : Array BufferExcerpt) :
+    EditorM (Except BufferRefusal (Array Excerpt × Array Buffer.ExcerptEntry)) := do
+  let state ← editorState
+  let mut excerpts := #[]
+  let mut entries := #[]
+  for item in list do
+    let some buffer := state.buffer? item.buffer | return .error (.noSuchBuffer item.buffer)
+    excerpts := excerpts.push ⟨buffer.text, item.start, item.stop⟩
+    entries := entries.push { source := buffer.text, header := item.header }
+  return .ok (excerpts, entries)
+
+/-- Makes an excerpt buffer called `name` over a new excerpt text of the
+excerpts `list` (`createExcerpts`) of buffers' texts, each with its header,
+and returns its id: what an edit typed in it reaches is its sources'
+buffers, and a window over it draws each header above its excerpt
+(`Editor/State.lean`, "Excerpt buffers"; `Editor/ExcerptView.lean`).
+Refused, with no text made, with `nameTaken` for a name a buffer already
+has, and with `noSuchBuffer` for an excerpt of a buffer there is none of;
+what the store refuses of the list is thrown, as `createText` would. -/
+def createExcerptBuffer (name : String) (list : Array BufferExcerpt) :
+    EditorM (Except BufferRefusal BufferId) := do
+  if (← findBuffer name).isSome then
+    return .error (.nameTaken name)
+  match ← excerptsOf list with
+  | .error refusal =>
+    return .error refusal
+  | .ok (excerpts, entries) =>
+    let text ← createExcerpts excerpts
+    EditorState.ask (.addExcerptBuffer name text (← UndoTree.over text) entries)
+
+/-- `createExcerptBuffer` of excerpts of texts, `list`, which a text no
+buffer holds may be among, each with the header at its index of `headers`
+(none past its end). Refused with `nameTaken`, with no text made. -/
+def createExcerptBufferOf (name : String) (list : Array Excerpt) (headers : Array String := #[]) :
     EditorM (Except BufferRefusal BufferId) := do
   if (← findBuffer name).isSome then
     return .error (.nameTaken name)
   let text ← createExcerpts list
-  EditorState.ask (.addExcerptBuffer name text (← UndoTree.over text))
+  let entries :=
+    list.mapIdx fun index excerpt =>
+      { source := excerpt.source, header := headers[index]?.getD "" : Buffer.ExcerptEntry }
+  EditorState.ask (.addExcerptBuffer name text (← UndoTree.over text) entries)
 
 /-- Makes a buffer called `name` over a new text holding `contents`, and
 returns its id. Refused with `nameTaken` for a name a buffer already has,
@@ -1141,17 +1194,23 @@ boundaries within the text and a range that ends before it starts. -/
 def deleteRange (id : BufferId) (start stop : Nat) : EditorM (Except BufferRefusal Unit) :=
   id.replaceRange start stop ""
 
-/-- Replaces the list of the excerpt buffer `id`'s text with `list`
-(`TextId.setExcerpts`): how an emptied excerpt goes. Refused with
-`noSuchBuffer` for a buffer there is none of; what the store refuses is
-thrown. -/
-def setExcerpts (id : BufferId) (list : Array Excerpt) : EditorM (Except BufferRefusal Unit) := do
-  match ← id.text with
-  | .ok text =>
-    text.setExcerpts list
-    return .ok ()
-  | .error refusal =>
+/-- Replaces the list of the excerpt buffer `id`'s text with `list`, ranges
+of buffers' texts (`TextId.setExcerpts`), and its headers with theirs: how
+an emptied excerpt goes. Refused with `noSuchBuffer` for a buffer there is
+none of, `id` or one `list` names; what the store refuses is thrown, a
+buffer that is not an excerpt buffer as `notExcerpted`. -/
+def setExcerpts (id : BufferId) (list : Array BufferExcerpt) :
+    EditorM (Except BufferRefusal Unit) := do
+  match ← id.text, ← excerptsOf list with
+  | .error refusal, _ =>
     return .error refusal
+  | _, .error refusal =>
+    return .error refusal
+  | .ok text, .ok (excerpts, entries) =>
+    text.setExcerpts excerpts
+    let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+    let some kept := buffer.excerpts | return .error .notExcerpts
+    EditorState.ask (.setExcerptHistory id { kept with entries })
 
 end BufferId
 
@@ -1528,8 +1587,9 @@ def scrollTo (target : Target) (offset : Nat) : TextM Unit :=
   target.buffer.text.place target.window.scroll (.anchor { offset, bias := .before })
 
 /-- Runs `run` with what the display is asked about `target`'s view with
-(`Scroll.Area`): a snapshot of its buffer's text, taken here, and the
-view's rectangle in the frame. The snapshot is released when `run` has
+(`Scroll.Area`): a snapshot of its buffer's text, taken here, the view's
+rectangle in the frame, and its blocks, read of that snapshot, so a scroll
+command asks the rows the view shows with its blocks counted. The snapshot is released when `run` has
 ended, also when it was refused, and its refusal is then thrown: that is
 `TextId.withSnapshot` (`Editor/Command.lean`), and this is the rectangle's
 lookup and it. `none`, with nothing taken and nothing run, for a view that
@@ -1542,8 +1602,12 @@ def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : Ed
   let bottom := state.bottomRow target.window.id
   -- Its padding is the one the scene showing it has (`EditorState.paddingOf`).
   let padding := state.paddingOf target.window.id
+  -- Its blocks are those the scene showing it has: an excerpt buffer's
+  -- headers (`ExcerptView.blocksOf`), placed by the snapshot taken here.
   some <$>
-      target.buffer.text.withSnapshot fun snapshot => run (.ofRect snapshot rect bottom padding)
+      target.buffer.text.withSnapshot fun snapshot => do
+        let blocks ← ExcerptView.blocksOf target.buffer snapshot
+        run (.ofRect snapshot rect bottom padding blocks)
 
 end Target
 

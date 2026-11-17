@@ -852,13 +852,22 @@ service.
 
 ## Decorations
 
-A view's decorations come from two sources, in this order: its buffer's
-spans (`Buffer.spans`, `Editor/State.lean`, "Buffers"), each in the face
-its owner gave it, such as the compile mode's locations
-(`Editor/Compile.lean`, "Locations"); then the matches of the last search
-(`EditorState.lastSearch`), each in the face `search-match`
-(`searchMatchFace`, defined in the built-in theme, `Editor/Face.lean`). A
-later decoration is drawn over an earlier one, so a match is over a span.
+A view's decorations come from these sources, in this order: for an
+excerpt buffer, its sources' buffers' spans, each translated to every
+excerpt of its source (`ExcerptView.sourceSpansOf`,
+`Editor/ExcerptView.lean`); its buffer's spans (`Buffer.spans`,
+`Editor/State.lean`, "Buffers"), each in the face its owner gave it, such
+as the compile mode's locations (`Editor/Compile.lean`, "Locations"); then
+the matches of the last search (`EditorState.lastSearch`), each in the face
+`search-match` (`searchMatchFace`, defined in the built-in theme,
+`Editor/Face.lean`). A later decoration is drawn over an earlier one, so a
+match is over a span, and an excerpt buffer's own span (a review's mark,
+later) is over its sources'.
+
+A view of an excerpt buffer also has its headers as blocks
+(`View.blocks`, `ExcerptView.blocksOf`), read of the snapshot it shows when
+the view is made (`views`), so the follow and a float's spot ask with them
+(`follow`, `spots`).
 
 - **Every view but the minibuffer's** covers the range from the start of
   its scroll anchor's row to the start of the row `rows + 1` text rows
@@ -1390,12 +1399,15 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
       let report := scheme.report loop.input id
       let context ← contextOf state id target snapshot report.status
       let (status, statusFace) := statusOf modeLine state id context
+      -- An excerpt buffer's headers, placed by the snapshot shown, so the
+      -- follow asks with them (`ExcerptView.blocksOf`).
+      let blocks ← ExcerptView.blocksOf target.buffer snapshot
       views :=
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
             cursor := report.cursor, decorations := #[], status, statusFace
-            padding := state.paddingOf id }
+            padding := state.paddingOf id, blocks }
   return (views, shown, refusal)
 
 /-- The face the matches of the last search are drawn in. -/
@@ -1435,7 +1447,9 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
         snapshot.offsetOf ⟨row + rows + 1, 0⟩
       else
         snapshot.byteLength
-    let spans := spansIn target.buffer.spans start stop
+    -- An excerpt buffer's sources' spans come first, under its own.
+    let sources := spansIn (← ExcerptView.sourceSpansOf state target.buffer snapshot) start stop
+    let spans := sources ++ spansIn target.buffer.spans start stop
     let some search := state.lastSearch | return spans
     match ← snapshot.matches search.pattern start stop with
     | .ranges all =>
@@ -1531,7 +1545,7 @@ def follow (margin : Nat) (bottom : Nat) (view : View) : EditorM Unit := do
     return
   let text := view.scroll.text
   let .anchor anchor ← text.marker view.scroll | throw .noSuchMarker
-  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding
+  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding view.blocks
   let shown ← area.rows anchor.offset
   if shown.isEmpty then
     return
@@ -1624,9 +1638,8 @@ def spots (state : EditorState) (views : Array View) :
           let .anchor scroll ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
           let area :=
             Scroll.Area.ofRect shown.snapshot shown.rect (state.bottomRow view) shown.padding
-          Display.spotOf
-              { snapshot := area.snapshot, width := area.width, height := area.height
-                anchor := scroll.offset, padding := area.padding, position := anchor.offset }
+              shown.blocks
+          area.spot scroll.offset anchor.offset
     return some (float.view, (answer : Except TextError (Option Display.Spot)).toOption.join)
 
 /-- The tab bar's view of `state` while the bar is shown
