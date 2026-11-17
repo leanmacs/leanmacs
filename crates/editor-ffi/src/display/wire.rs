@@ -8,12 +8,14 @@
 //! | Part | Words |
 //! |---|---|
 //! | The scene | its width and height; the focus's presence and view id; the echo's length; the echo's padding in whole points; the pending prefix's length; the preedit's presence and length; the title's length; the menu bar's presence (0 or 1), and when present its layout (`crate::menu`: the count of menus, each menu's title's length, role and items); the count of views; each view |
-//! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length, face's length, side (0 left, 1 right) and padding in whole points; its status face's presence and length; its padding across, down and top, in whole points |
+//! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length, face's length, side (0 left, 1 right) and padding in whole points; its status face's presence and length; its padding across, down and top, in whole points; the count of its blocks and each block |
+//! | A block | the offset of the view's snapshot it is drawn before; its text's length; the count of its decorations and each one's start, stop and face's length, the offsets bytes of its text |
 //! | The dividers, after the last view | their count; each one's rectangle's x, y, width and height and its face's length |
 //! | The faces, after the last view | their presence (0: as last published); when present, the count of definitions and each definition |
 //! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a point; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 a length in 64ths of a point) followed by its value; the vertical padding in 64ths of a point |
 //!
-//! A view is at least 18 words, a divider 5, and a definition 24.
+//! A view is at least 19 words, a block 3, a divider 5, and a definition
+//! 24.
 //!
 //! A point is a logical one: a physical pixel at scale 1. A face's three
 //! lengths, a status field's padding, a view's padding and the echo's
@@ -27,7 +29,8 @@
 //! if present, the title, the menu bar's texts if present (each menu's
 //! title, then its items' titles and command names, in order), then for
 //! each view its cursor's face, its decorations' faces, its status
-//! fields' texts and faces and its status face if present, then each
+//! fields' texts and faces and its status face if present, then each of
+//! its blocks' text followed by that block's decorations' faces, then each
 //! divider's face, then for each definition its
 //! name and its family when present. A length that does not end on a
 //! character boundary, and text left over, are refusals.
@@ -40,6 +43,13 @@
 //! the ones it has, `editor_layout::scene::Scene::faces`), so a publish
 //! costs the definitions only when the binding has new ones; present with
 //! a count of 0 is "no definitions", which undefines every face.
+//!
+//! **A view's blocks also cross by themselves** ([`decode_blocks`],
+//! [`encode_blocks`]): the words and the string that follow a view's
+//! padding in a scene, the count of its blocks and each block, with
+//! nothing before or after. The rows and the spot queries are asked with
+//! them, so a question counts the blocks the frame will draw
+//! (`super::editor_ffi_display_rows`).
 //!
 //! **The definitions also cross by themselves**, ahead of the scene that
 //! will carry them ([`decode_definitions`], [`encode_definitions`]): the
@@ -73,8 +83,8 @@
 
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Cursor, CursorShape, Decoration, Divider, Padding, Rect, Scene, Side, Size, StatusField, View,
-    ViewId,
+    Block, Cursor, CursorShape, Decoration, Divider, Padding, Rect, Scene, Side, Size, StatusField,
+    View, ViewId,
 };
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
 use editor_platform::Menu;
@@ -109,6 +119,20 @@ pub struct WireView {
     pub status_face: Option<String>,
     /// Its padding across, down and top, in whole points.
     pub padding: Padding,
+    /// Its blocks.
+    pub blocks: Vec<WireBlock>,
+}
+
+/// A block of a view as it crossed: the offset it is drawn before, its
+/// text, and its decorations, each a start, a stop and a face.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WireBlock {
+    /// The offset of the view's snapshot it is drawn before.
+    pub before: u64,
+    /// What it says.
+    pub text: String,
+    /// Its decorations: start, stop and face, the offsets bytes of `text`.
+    pub decorations: Vec<(u64, u64, String)>,
 }
 
 /// A divider as it crossed: its rectangle and its face.
@@ -515,6 +539,7 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
         down: narrow(words.word()?)?,
         top: narrow(words.word()?)?,
     };
+    let blocks = read_blocks(words, texts)?;
     Some(WireView {
         id,
         rect,
@@ -527,7 +552,90 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
         status,
         status_face,
         padding,
+        blocks,
     })
+}
+
+/// Reads a view's blocks: their count, then each block.
+fn read_blocks(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<Vec<WireBlock>> {
+    // A block is at least three words.
+    let count = words.count(3)?;
+    let mut blocks = Vec::with_capacity(count);
+    for _ in 0..count {
+        let before = words.word()?;
+        let text = texts.take(words.size()?)?;
+        let count = words.count(3)?;
+        let mut decorations = Vec::with_capacity(count);
+        for _ in 0..count {
+            let (start, stop) = (words.word()?, words.word()?);
+            decorations.push((start, stop, texts.take(words.size()?)?));
+        }
+        blocks.push(WireBlock {
+            before,
+            text,
+            decorations,
+        });
+    }
+    Some(blocks)
+}
+
+/// Writes a view's blocks: their count, then each block.
+fn write_blocks(words: &mut Writer, strings: &mut String, blocks: &[WireBlock]) {
+    words.size(blocks.len());
+    for block in blocks {
+        words.word(block.before);
+        words.size(block.text.len());
+        strings.push_str(&block.text);
+        words.size(block.decorations.len());
+        for (start, stop, face) in &block.decorations {
+            words.word(*start);
+            words.word(*stop);
+            words.size(face.len());
+            strings.push_str(face);
+        }
+    }
+}
+
+/// `blocks` as layout takes them.
+fn layout_blocks(blocks: &[WireBlock]) -> Vec<Block> {
+    blocks
+        .iter()
+        .map(|block| Block {
+            before: crate::words::size(block.before),
+            text: block.text.clone(),
+            decorations: block
+                .decorations
+                .iter()
+                .map(|(start, stop, face)| Decoration {
+                    start: crate::words::size(*start),
+                    stop: crate::words::size(*stop),
+                    face: face.clone(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// The blocks `words` and `strings` spell, as layout takes them: the words
+/// and the string of a view's blocks in a scene, which follow its
+/// padding, with nothing before or after. `None` when they do not spell
+/// any. The rows and the spot queries are asked with a view's blocks so
+/// (`super::editor_ffi_display_rows`).
+pub fn decode_blocks(words: &[u8], strings: &str) -> Option<Vec<Block>> {
+    let mut words = Reader::new(words)?;
+    let mut texts = Texts { rest: strings };
+    let blocks = read_blocks(&mut words, &mut texts)?;
+    words.finish()?;
+    texts.rest.is_empty().then(|| layout_blocks(&blocks))
+}
+
+/// The words and the string that spell `blocks` by themselves
+/// ([`decode_blocks`]).
+pub fn encode_blocks(blocks: &[WireBlock]) -> (Vec<u8>, String) {
+    let mut words = Writer::with_capacity(1 + 6 * blocks.len());
+    let mut strings = String::new();
+    write_blocks(&mut words, &mut strings, blocks);
+    (words.finish(), strings)
 }
 
 impl WireScene {
@@ -554,8 +662,8 @@ impl WireScene {
         } else {
             None
         };
-        // A view is at least eighteen words.
-        let count = words.count(18)?;
+        // A view is at least nineteen words.
+        let count = words.count(19)?;
         let views = (0..count)
             .map(|_| view(&mut words, &mut texts))
             .collect::<Option<_>>()?;
@@ -658,6 +766,7 @@ impl WireScene {
             words.word(u64::from(view.padding.across));
             words.word(u64::from(view.padding.down));
             words.word(u64::from(view.padding.top));
+            write_blocks(&mut words, &mut strings, &view.blocks);
         }
         words.size(self.dividers.len());
         for divider in &self.dividers {
@@ -736,7 +845,7 @@ impl WireScene {
                         .collect(),
                     status_face: view.status_face.clone(),
                     padding: view.padding,
-                    blocks: Vec::new(),
+                    blocks: layout_blocks(&view.blocks),
                 }
             })
             .collect();
@@ -785,12 +894,13 @@ mod tests {
     use editor_platform::{Menu, Modifiers};
 
     use super::{
-        WireDivider, WireFace, WireField, WireScene, WireView, decode_definitions,
-        encode_definitions, pixels,
+        WireBlock, WireDivider, WireFace, WireField, WireScene, WireView, decode_blocks,
+        decode_definitions, encode_blocks, encode_definitions, pixels,
     };
     use crate::document::Document;
     use crate::snapshot::Snapshot;
     use crate::words::tests::buffer;
+    use editor_layout::scene::{Block, Decoration};
 
     /// A scene with every part present.
     fn full() -> WireScene {
@@ -825,6 +935,7 @@ mod tests {
                     down: 4,
                     top: 28,
                 },
+                blocks: vec![],
             }],
             dividers: vec![WireDivider {
                 rect: [94, 0, 2, 80],
@@ -846,6 +957,7 @@ mod tests {
                 1, 6, 4, 1, 8, // its status field: right, padded 8
                 1, 3, // its status face
                 8, 4, 28, // its padding across, down and top
+                0,  // no blocks
                 1, 94, 0, 2, 80, 4, // one divider: its rectangle and its face's length
                 0, // no faces
             ])
@@ -1014,14 +1126,15 @@ mod tests {
         let (words, strings) = empty.encode();
         assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         assert_eq!(WireScene::decode(&words, &strings), Some(empty));
-        // A view with nothing in it is its nineteen words, between the
-        // scene's twelve and the dividers' count and the faces' presence.
+        // A view with nothing in it is its twenty words, its count of
+        // blocks the last, between the scene's twelve and the dividers'
+        // count and the faces' presence.
         let bare = WireScene {
             views: vec![WireView::default()],
             ..WireScene::default()
         };
         let (words, strings) = bare.encode();
-        assert_eq!(words.len(), (12 + 19 + 2) * 8);
+        assert_eq!(words.len(), (12 + 20 + 2) * 8);
         assert_eq!(WireScene::decode(&words, &strings), Some(bare));
     }
 
@@ -1503,6 +1616,127 @@ mod tests {
             ]
         );
         assert!(WireScene::default().resolve(&[]).dividers.is_empty());
+    }
+
+    /// Two blocks: a header in its face, and a plain one of a character
+    /// of two bytes.
+    fn blocks() -> Vec<WireBlock> {
+        vec![
+            WireBlock {
+                before: 0,
+                text: "one.txt".to_owned(),
+                decorations: vec![(0, 7, "block-header".to_owned())],
+            },
+            WireBlock {
+                before: 5,
+                text: "é".to_owned(),
+                decorations: vec![],
+            },
+        ]
+    }
+
+    #[test]
+    fn a_views_blocks_cross_after_its_padding_and_come_back_as_sent() {
+        let scene = WireScene {
+            views: vec![WireView {
+                status_face: Some("dim".to_owned()),
+                blocks: blocks(),
+                ..WireView::default()
+            }],
+            ..WireScene::default()
+        };
+        let (words, strings) = scene.encode();
+        let words = crate::words::tests::words_of(&words);
+        // The view's padding, then its blocks: the count, then each one's
+        // offset, text's length and count of decorations, then each
+        // decoration's start, stop and face's length.
+        let view = &words[11..];
+        assert_eq!(&view[17..], [0, 0, 0, 2, 0, 7, 1, 0, 7, 12, 5, 2, 0, 0, 0]);
+        // In the string, after the status face: each block's text, then
+        // its decorations' faces.
+        assert_eq!(strings, "dimone.txtblock-headeré");
+        let (bytes, strings) = scene.encode();
+        assert_eq!(WireScene::decode(&bytes, &strings), Some(scene));
+    }
+
+    #[test]
+    fn a_views_blocks_reach_layout() {
+        let scene = WireScene {
+            views: vec![WireView {
+                blocks: blocks(),
+                ..WireView::default()
+            }],
+            ..WireScene::default()
+        }
+        .resolve(&[]);
+        assert_eq!(
+            scene.views[0].blocks,
+            vec![
+                Block {
+                    before: 0,
+                    text: "one.txt".to_owned(),
+                    decorations: vec![Decoration {
+                        start: 0,
+                        stop: 7,
+                        face: "block-header".to_owned(),
+                    }],
+                },
+                Block {
+                    before: 5,
+                    text: "é".to_owned(),
+                    decorations: vec![],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn blocks_cross_by_themselves_as_they_follow_a_views_padding() {
+        let (words, strings) = encode_blocks(&blocks());
+        assert_eq!(
+            crate::words::tests::words_of(&words),
+            [2, 0, 7, 1, 0, 7, 12, 5, 2, 0]
+        );
+        assert_eq!(strings, "one.txtblock-headeré");
+        let decoded = decode_blocks(&words, &strings).expect("blocks");
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[1].text, "é");
+        // No blocks is one word.
+        assert_eq!(decode_blocks(&buffer(&[0]), ""), Some(vec![]));
+    }
+
+    #[test]
+    fn words_that_spell_no_blocks_are_refused() {
+        let refused = [
+            // A count past the words.
+            (buffer(&[3, 0, 1, 0]), "a"),
+            // A text past the string.
+            (buffer(&[1, 0, 4, 0]), "abc"),
+            // A text that ends inside a character.
+            (buffer(&[1, 0, 1, 0]), "é"),
+            // Text left over.
+            (buffer(&[1, 0, 1, 0]), "ab"),
+            // Words left over.
+            (buffer(&[1, 0, 1, 0, 9]), "a"),
+            // A decoration whose face runs past the string.
+            (buffer(&[1, 0, 1, 1, 0, 1, 5]), "ab"),
+        ];
+        for (words, strings) in refused {
+            assert_eq!(decode_blocks(&words, strings), None, "{strings}");
+        }
+        // In a scene too: blocks past the string spell no scene.
+        let scene = WireScene {
+            views: vec![WireView {
+                blocks: blocks(),
+                ..WireView::default()
+            }],
+            ..WireScene::default()
+        };
+        let (words, strings) = scene.encode();
+        assert_eq!(
+            WireScene::decode(&words, &strings[..strings.len() - 2]),
+            None
+        );
     }
 
     #[test]

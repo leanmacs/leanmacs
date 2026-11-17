@@ -38,6 +38,31 @@ the first two (`Display/Contract.lean`): in cells, a spot's y is the
 padding plus `k` rows for the `k`-th row `rowsShown` answers, and its x
 is the padding plus the goal a move of no lines passes back.
 
+## Blocks
+
+A view's blocks (`Block`, `View.blocks`) are rows of text of their own
+between the rows of its text. They ride on the two questions that count
+heights, the rows a view shows and a spot (`RowsQuery.blocks`,
+`SpotQuery.blocks`), and on the scene; the move query takes none. Every
+binding answers by one rule:
+
+- A block is drawn above the first visual row of the line that holds its
+  `before`, which is moved back to a character boundary, and to the end of
+  the text from past it. Several before one line are drawn in the order
+  listed.
+- A block takes as many rows as its text wraps to at the view's width, and
+  each counts among the rows that fit, as a text row does.
+- A line's blocks are shown with its first row or not at all: the rows
+  stop before blocks whose row does not fit with them. The first row shown
+  is the anchor's: its blocks are shown above it only when they fit with
+  it, and are left out otherwise, so a view a row tall always shows its
+  anchor's row. An anchor on a wrapped row after a line's first has no
+  blocks above it.
+- The rows answered are text rows only, and a spot below a block is lower
+  by its rows.
+- **A block holds no position.** A move goes over it as if it were not
+  there, and a position converts to a row and back as without blocks.
+
 Lean keeps no layout of its own: what wraps where, and how tall a row is, is
 asked here every time. Xi's experience is the reason
 (`docs/design/text-and-display.md`, "The scene").
@@ -159,6 +184,10 @@ structure RowsQuery where
   width, and twice `down` and once `top` off the height, at the scale it
   lays out at, as its frame does. Lean subtracts nothing. -/
   padding : Padding := {}
+  /-- The view's blocks: their rows count among the rows that fit, by the
+  rule its frame draws them by (the module docs, "Blocks"). None by
+  default. -/
+  blocks : Array Block := #[]
   deriving DecidableEq, Repr
 
 /-- Where a position goes when it moves some visual lines. -/
@@ -203,6 +232,9 @@ structure SpotQuery where
   padding : Padding := {}
   /-- The byte offset of the position. -/
   position : Nat
+  /-- The view's blocks, as `RowsQuery.blocks`: a position below a block
+  is lower by the block's rows. -/
+  blocks : Array Block := #[]
   deriving DecidableEq, Repr
 
 /-- Where a position is drawn in a view, in whole pixels from the view's

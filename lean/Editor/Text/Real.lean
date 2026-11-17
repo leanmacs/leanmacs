@@ -642,9 +642,16 @@ def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextEr
       return .ok (.invalid reason)
     | .badRange =>
       return .error .badRange
-  -- A snapshot carries no list, and an excerpt text is answered before a
-  -- snapshot is taken (`locate`).
+  -- A snapshot carries no source by text id, and an excerpt text is
+  -- answered before a snapshot is taken (`locate`).
   | .locate _ => return .error .notExcerpted
+  -- A snapshot of an excerpt document carries its list as it was taken; a
+  -- text's question goes through the snapshot it takes, caught up.
+  | .excerpts => do
+    let some list ← snapshot.excerpts | return .error .notExcerpted
+    return .ok
+        (list.map fun (start, stop, sourceStart, sourceStop) =>
+          { start, stop, sourceStart, sourceStop })
 
 /-- The library's answer to where the position `offset` of the excerpt text
 `id` is: the excerpt the library names by its index, whose source is read off

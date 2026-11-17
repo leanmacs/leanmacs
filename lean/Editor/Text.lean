@@ -575,6 +575,14 @@ An *excerpt text* is a text made of ranges of other texts, its *sources*
   the source as the source is now; `none` for an empty list. It is asked of
   a text, after the catch-up: a plain text and any snapshot refuse it with
   `notExcerpted`, and an offset that is not a position is `badPosition`.
+- **Where each excerpt is** (`TextId.excerpts`, `SnapshotId.excerpts`):
+  each excerpt's range of the excerpt text and of its source, in list
+  order. Asked of a snapshot, it answers the list as it was when the
+  snapshot was taken, whatever its sources did since; asked of a text, it
+  answers after the catch-up. A plain text and a snapshot of one refuse it
+  with `notExcerpted`. It is how the editor places what it draws over an
+  excerpt text: a header above each excerpt, and a source's spans at every
+  excerpt of it (`Editor/ExcerptView.lean`).
 - **A source** is any text of the store that is not an excerpt text, a
   `copy` of a job's snapshot included; never a snapshot. Whether a source
   may be edited through an excerpt text is the editor's buffer policy, not
@@ -754,6 +762,20 @@ structure Excerpt where
   start : Nat
   /-- Where it stops, not included. -/
   stop : Nat
+  deriving DecidableEq, Repr
+
+/-- One excerpt of an excerpt text as it is placed (`TextId.excerpts`): its
+range of the excerpt text, and its range of its source as the excerpt last
+read it. -/
+structure Excerpt.Placed where
+  /-- Where its bytes start in the excerpt text. -/
+  start : Nat
+  /-- Where they stop, not included. -/
+  stop : Nat
+  /-- Where its range starts in its source. -/
+  sourceStart : Nat
+  /-- Where it stops there, not included. -/
+  sourceStop : Nat
   deriving DecidableEq, Repr
 
 /-- Where a position of an excerpt text is (`TextId.locate`). -/
@@ -967,6 +989,10 @@ inductive TextQuery where
   where in its source ("Excerpt texts", in the rules of the port). Only a
   text answers it, and only an excerpt text. -/
   | locate (offset : Nat)
+  /-- Each excerpt of an excerpt text, as it is placed: its range of the
+  excerpt text and of its source ("Excerpt texts", in the rules of the
+  port). A text and a snapshot of an excerpt text answer it. -/
+  | excerpts
 
 /-- The type of the answer to each question. It is an `abbrev` so that an
 answer's type unfolds where an instance is looked for: with a `def`,
@@ -987,6 +1013,7 @@ abbrev TextQuery.Answer : TextQuery → Type
   | .unmatched .. => Option Nat
   | .quoted .. => Option Extent
   | .locate _ => Option Located
+  | .excerpts => Array Excerpt.Placed
 
 /-- Who made an edit: a number the editor chooses and the text store keeps
 with the edit and never reads. What a number stands for is the editor's
@@ -1482,6 +1509,21 @@ Refused with `noSuchText`; with `notExcerpted` for a plain text; and with
 `badPosition` when `offset` is not a position of the text. -/
 def TextId.locate (text : TextId) (offset : Nat) : TextM (Option Located) :=
   (TextSource.text text).ask (.locate offset)
+
+/-- Each excerpt of the excerpt text `text`, as it is placed after the
+catch-up: its range of the text and of its source, in list order.
+
+Refused with `noSuchText`, and with `notExcerpted` for a plain text. -/
+def TextId.excerpts (text : TextId) : TextM (Array Excerpt.Placed) :=
+  (TextSource.text text).ask .excerpts
+
+/-- Each excerpt of the excerpt text `snapshot` was taken of, as it was
+placed when the snapshot was taken.
+
+Refused with `noSuchSnapshot`, and with `notExcerpted` for a snapshot of a
+plain text. -/
+def SnapshotId.excerpts (snapshot : SnapshotId) : TextM (Array Excerpt.Placed) :=
+  (TextSource.snapshot snapshot).ask .excerpts
 
 /-- Replaces the list of the excerpt text `text` with `list`: one revision
 more, after the excerpt text has caught up with its sources, and the text

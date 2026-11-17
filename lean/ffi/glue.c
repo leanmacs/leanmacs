@@ -445,6 +445,8 @@ typedef struct {
 } editor_ffi_raw_located;
 uint64_t editor_ffi_excerpts_locate(const editor_ffi_document *document,
                                     size_t offset, editor_ffi_raw_located *out);
+uint64_t editor_ffi_snapshot_excerpts(const editor_ffi_snapshot *snapshot,
+                                      editor_ffi_raw_words *out);
 
 // `Editor.Ffi.Document.excerptsNew : IO Document`. The third way a document
 // is made.
@@ -692,6 +694,14 @@ static lean_object *raw_words_take(editor_ffi_raw_words raw) {
   lean_ctor_set_uint64(words, uint64_field(1, 0), raw.status);
   editor_ffi_text_free(raw.words, raw.len);
   return words;
+}
+
+// `Editor.Ffi.Snapshot.excerptsRaw : @& Snapshot → IO RawWords`: the list a
+// snapshot of an excerpt document carries, as words.
+lean_obj_res editor_glue_snapshot_excerpts(b_lean_obj_arg snapshot) {
+  editor_ffi_raw_words raw;
+  editor_ffi_snapshot_excerpts(lean_get_external_data(snapshot), &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
 // `Editor.Ffi.Document.markRaw : @& Document → @& ByteArray → IO RawMarked`
@@ -1761,6 +1771,8 @@ void editor_ffi_display_rows(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
                              uint64_t width, uint64_t height, uint64_t across,
                              uint64_t down, uint64_t top, size_t anchor,
+                             const uint8_t *block_words, size_t block_words_len,
+                             const uint8_t *block_text, size_t block_text_len,
                              editor_ffi_raw_words *out);
 void editor_ffi_display_move(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
@@ -1771,7 +1783,9 @@ void editor_ffi_display_spot(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
                              uint64_t width, uint64_t height, uint64_t across,
                              uint64_t down, uint64_t top, size_t anchor,
-                             size_t position, editor_ffi_raw_words *out);
+                             size_t position, const uint8_t *block_words,
+                             size_t block_words_len, const uint8_t *block_text,
+                             size_t block_text_len, editor_ffi_raw_words *out);
 bool editor_ffi_display_publish(const editor_ffi_display *display,
                                 const uint8_t *words, size_t words_len,
                                 const uint8_t *strings, size_t strings_len,
@@ -1824,16 +1838,20 @@ lean_obj_res editor_glue_display_live(void) {
 }
 
 // `Editor.Ffi.Display.rowsRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// UInt64 → UInt64 → UInt64 → USize → IO RawWords`
+// UInt64 → UInt64 → UInt64 → USize → @& ByteArray → @& String → IO RawWords`.
+// The last two are the view's blocks, borrowed for the call.
 lean_obj_res editor_glue_display_rows(b_lean_obj_arg display,
                                       b_lean_obj_arg snapshot, uint64_t width,
                                       uint64_t height, uint64_t across,
                                       uint64_t down, uint64_t top,
-                                      size_t anchor) {
+                                      size_t anchor, b_lean_obj_arg block_words,
+                                      b_lean_obj_arg block_text) {
   editor_ffi_raw_words raw;
-  editor_ffi_display_rows(lean_get_external_data(display),
-                          lean_get_external_data(snapshot), width, height,
-                          across, down, top, anchor, &raw);
+  editor_ffi_display_rows(
+      lean_get_external_data(display), lean_get_external_data(snapshot), width,
+      height, across, down, top, anchor, byte_array_bytes(block_words),
+      byte_array_len(block_words), string_bytes(block_text),
+      string_len(block_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
@@ -1853,16 +1871,21 @@ lean_obj_res editor_glue_display_move(b_lean_obj_arg display,
 }
 
 // `Editor.Ffi.Display.spotRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// UInt64 → UInt64 → UInt64 → USize → USize → IO RawWords`
+// UInt64 → UInt64 → UInt64 → USize → USize → @& ByteArray → @& String →
+// IO RawWords`. The last two are the view's blocks, borrowed for the call.
 lean_obj_res editor_glue_display_spot(b_lean_obj_arg display,
                                       b_lean_obj_arg snapshot, uint64_t width,
                                       uint64_t height, uint64_t across,
                                       uint64_t down, uint64_t top,
-                                      size_t anchor, size_t position) {
+                                      size_t anchor, size_t position,
+                                      b_lean_obj_arg block_words,
+                                      b_lean_obj_arg block_text) {
   editor_ffi_raw_words raw;
-  editor_ffi_display_spot(lean_get_external_data(display),
-                          lean_get_external_data(snapshot), width, height,
-                          across, down, top, anchor, position, &raw);
+  editor_ffi_display_spot(
+      lean_get_external_data(display), lean_get_external_data(snapshot), width,
+      height, across, down, top, anchor, position,
+      byte_array_bytes(block_words), byte_array_len(block_words),
+      string_bytes(block_text), string_len(block_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 

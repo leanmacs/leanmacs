@@ -230,6 +230,11 @@ structure TextModel where
   /-- Each source that was released while an excerpt text read it, by text
   id: what it held and its markers when it was released. -/
   retired : Array (Option (TextContent × Array (Option Marker))) := #[]
+  /-- The list of the excerpt text each snapshot was taken of, by snapshot
+  id, as it was placed when the snapshot was taken: `none` for a snapshot
+  of a plain text, one adopted from a job, and one this array has no slot
+  for. -/
+  snapshotPlaced : Array (Option (Array Excerpt.Placed)) := #[]
   deriving Repr
 
 namespace TextModel
@@ -1144,6 +1149,9 @@ def answer (content : TextContent) : (query : TextQuery) → Except TextError qu
   -- Only a text answers it, and an excerpt text is answered before its
   -- content is reached (`TextModel.locate`).
   | .locate _ => .error .notExcerpted
+  -- An excerpt text and a snapshot of one are answered before their content
+  -- is reached (`TextModel.excerptsOf`).
+  | .excerpts => .error .notExcerpted
 
 end TextModel
 
@@ -1951,6 +1959,35 @@ def startsOf (pieces : Array ExcerptPiece) : Array Nat :=
   (pieces.foldl (init := (#[], 0)) fun (starts, here) piece =>
       (starts.push here, here + (piece.range.2 - piece.range.1) + 1)).1
 
+/-- Each of `pieces` as it is placed: its range of its excerpt text, by the
+walk `startsOf` takes, and its range of its source. -/
+def placedOf (pieces : Array ExcerptPiece) : Array Excerpt.Placed :=
+  (startsOf pieces).zipWith
+    (fun start piece =>
+      ⟨start, start + (piece.range.2 - piece.range.1), piece.range.1, piece.range.2⟩)
+    pieces
+
+/-- The model's answer to where each excerpt of `source` is: of an excerpt
+text, its pieces as they are placed after the catch-up; of a snapshot, the
+list it was taken with. A plain text and a snapshot of one are refused with
+`notExcerpted`. -/
+def excerptsOf (model : TextModel) (source : TextSource) :
+    Except TextError (Array Excerpt.Placed) × TextModel :=
+  match source with
+  | .text id =>
+    model.onText id fun model =>
+      match model.excerptOf? id, model.lookup (.text id) with
+      | some excerpt, .ok _ => (.ok (placedOf excerpt.pieces), model)
+      | _, .error refusal => (.error refusal, model)
+      | none, .ok _ => (.error .notExcerpted, model)
+  | .snapshot id =>
+    match model.lookup (.snapshot id) with
+    | .error refusal => (.error refusal, model)
+    | .ok _ =>
+      match (model.snapshotPlaced[id.index]?).join with
+      | some list => (.ok list, model)
+      | none => (.error .notExcerpted, model)
+
 /-- The piece of `pieces` that holds the position `offset` of its excerpt
 text, both its ends included, and where it starts there: the last that starts
 at or before `offset`, if it reaches it. `none` for an empty list, and past
@@ -2126,8 +2163,12 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
         (.ok ⟨model.snapshots.size⟩,
           { model with
             snapshots := model.snapshots.push (some content)
-            snapshotOf := (padded model.snapshotOf model.snapshots.size).push (some id) })
+            snapshotOf := (padded model.snapshotOf model.snapshots.size).push (some id)
+            snapshotPlaced :=
+              setSlot model.snapshotPlaced model.snapshots.size
+                ((model.excerptOf? id).map (placedOf ·.pieces)) })
   | .ask (.text id) (.locate offset), model => model.locate id offset
+  | .ask source .excerpts, model => model.excerptsOf source
   | .ask source query, model =>
     model.onSource source fun model =>
       match model.lookup source with

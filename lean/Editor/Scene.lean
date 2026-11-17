@@ -40,6 +40,11 @@ the last scene published, on its own thread, so painting never waits on Lean
   input scheme's to say (`InputScheme.report`, `Editor/InputScheme.lean`):
   the Vim scheme's is the cursor of the view's Vim state. The pending key
   prefix is rendered by Lean into a string.
+- **A block is text only.** A view's blocks (`View.blocks`) are rows of
+  text of their own between its rows, each in its own faces: which ones,
+  and where, is the command loop's choice (an excerpt buffer's headers,
+  `Editor/ExcerptView.lean`). Layout lays them out and counts them among
+  the rows that fit; they hold no position.
 - Sizes and rectangles are in the frame's physical pixels. Paddings (a
   view's `padding`, the scene's `echoPadding`, a status field's `padding`)
   are in whole points, as a face's lengths are: layout multiplies them by
@@ -96,6 +101,22 @@ structure Decoration where
   stop : Nat
   /-- The face it takes. -/
   face : FaceName
+  deriving DecidableEq, Repr
+
+/-- A block: rows of text of its own, drawn between two rows of a view, such
+as an excerpt's header. It is the view's, as a decoration is, and text only:
+it holds no position, so a position of the view's text is drawn and moved
+to as it is without it, and only the height of the rows a view shows counts
+its rows (`Editor/Display.lean`, "Blocks"). -/
+structure Block where
+  /-- A byte offset of the view's snapshot: the block is drawn above the
+  first visual row of the line that holds it. -/
+  before : Nat
+  /-- What it says. -/
+  text : String
+  /-- Spans of `text` drawn in a face, its offsets bytes of `text`: the
+  block's own faces, over the default face. -/
+  decorations : Array Decoration := #[]
   deriving DecidableEq, Repr
 
 /-- Which end of a view's status row a field is drawn from: the left fields
@@ -192,6 +213,10 @@ structure View where
   points (`EditorState.paddingOf`). The status row's background still spans
   the whole view, and the text's padding is the default face's paper. -/
   padding : Padding := {}
+  /-- Its blocks, drawn between the rows of its text in the order listed
+  where several are before one row: the header of each excerpt of an
+  excerpt buffer (`Editor/ExcerptView.lean`). None by default. -/
+  blocks : Array Block := #[]
   deriving DecidableEq, Repr
 
 /-- A divider: a strip of the frame between two tiled views, filled in the

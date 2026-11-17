@@ -2548,18 +2548,18 @@ def sceneChecks (_ : Unit) : List Check :=
             0, 0, 0, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor; no
         -- status field and no status face; padded 8 across, 4 down and 28
-        -- at the top.
+        -- at the top; no block.
         let first : Array UInt64 :=
-          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28]
+          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28, 0]
         -- The first handle; its scroll marker and its selection; a bar
         -- cursor; a decoration; a left status field with no padding and a
-        -- right one padded 4; and a status face.
+        -- right one padded 4; a status face; and no block.
         let second : Array UInt64 :=
           #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 2, 6, 4, 0, 0, 3, 3,
-            1, 4, 1, 3, 0, 0, 0]
+            1, 4, 1, 3, 0, 0, 0, 0]
         -- The second handle; no scroll marker and no selection; an
-        -- underline cursor.
-        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0]
+        -- underline cursor; no block.
+        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0]
         -- One divider: its rectangle and its face's length.
         let dividers : Array UInt64 := #[1, 0, 46, 32, 2, 4]
         -- No faces: as last published.
@@ -2567,6 +2567,40 @@ def sceneChecks (_ : Unit) : List Check :=
         return encoded.words == scene ++ menu ++ first ++ second ++ third ++ dividers ++ faces &&
             encoded.strings == "fixturegénotes.txtApQSéUundoc1c2kwNORMALmode1:1posdimc3rule" &&
             encoded.snapshots.size == 2 },
+    { name :=
+        "a view's blocks cross after its padding, each its offset, its text and its decorations, come back as sent, and are drawn as block rows above their rows, which the rows query, asked with them, leaves out"
+      run := do
+        let fixture ← sceneFixture
+        let real := fixture.real
+        let blocks : Array Editor.Block :=
+          #[{ before := 3, text := "hé",
+              decorations := #[{ start := 0, stop := 3, face := ⟨"h"⟩ }] }]
+        let scene := fixture.mixed
+        let scene :=
+          { scene with
+            views :=
+              scene.views.modify 2 fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, blocks } }
+        let encoded ← real.encode scene none
+        real.publish scene
+        let back ← real.display.scene
+        let frame ← real.display.frameText
+        let shown ← fixture.shown 3
+        -- From the start, three rows tall: `ab`, the block and `cd`.
+        let asked ←
+          real.rows { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0, blocks }
+        let wordsBlocks : Array UInt64 := #[1, 3, 3, 1, 0, 3, 1]
+        let held ← fixture.document.read
+        -- The blocks, then the divider and no faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 14) encoded.words.size
+        return tail == wordsBlocks ++ #[1, 0, 46, 32, 2, 4, 0] &&
+            encoded.strings.endsWith "héhrule" &&
+            back.map (·.1) == some ((← real.encode scene (some #[])).words) &&
+            (frame.splitOn "  block 0 row").length == 2 &&
+            shown == some #[(0, 2), (3, 5)] &&
+            asked.toOption.map (·.map fun row => (row.start, row.stop)) == some #[(0, 2), (3, 5)] &&
+            held == "ab\ncd\nef" },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
       run := do

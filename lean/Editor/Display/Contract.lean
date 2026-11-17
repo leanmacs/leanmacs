@@ -61,6 +61,17 @@ the position itself. That a row's height is a text row's is so in cells;
 at a scale, and where a face sets another height, it is
 `editor-layout`'s tests that pin the spot.
 
+## What blocks are held to
+
+Six properties hold every binding to the rule of blocks
+(`Editor/Display.lean`, "Blocks") in cells, each with texts that wrap with
+no space: a block takes the rows its text wraps to at the view's width,
+above the first row of the line that holds its offset; a line's blocks are
+shown with its row or not at all, but for the anchor's, which are left out
+when they do not fit with it; and a spot below a block is lower by its
+rows. A block's faces are not looked at: a face that sets another height
+is `editor-layout`'s to pin.
+
 ## What a caller that wants a column of a line relies on
 
 Two properties are for a caller that asks about a line and not about a view
@@ -145,6 +156,17 @@ def properties (cells : Display.Cells) : List Property :=
   let rows (snapshot : SnapshotId) (columns rows anchor : Nat) : DisplayM (Array Display.Row) :=
     Display.rowsShown
       { snapshot, width := columns * cells.advance, height := rows * cells.lineHeight, anchor }
+  let blocked (snapshot : SnapshotId) (columns rows anchor : Nat) (blocks : Array Block) :
+    DisplayM (Array Display.Row) :=
+    Display.rowsShown
+      { snapshot, width := columns * cells.advance, height := rows * cells.lineHeight, anchor
+        blocks }
+  let spotBlocked (snapshot : SnapshotId) (columns rows anchor position : Nat)
+    (blocks : Array Block) : DisplayM (Option Display.Spot) :=
+    Display.spotOf
+      { snapshot, width := columns * cells.advance, height := rows * cells.lineHeight, anchor
+        position, blocks }
+  let block (before : Nat) (text : String) : Block := { before, text }
   [{  name :=
         "a view r rows tall over lines no longer than its width shows r lines from its anchor",
       texts := #["ab\ncd\nef\ngh"]
@@ -305,6 +327,59 @@ def properties (cells : Display.Cells) : List Property :=
               some
                 { x := 4 * cells.advance, y := 3 * cells.lineHeight + 1
                   height := cells.lineHeight } },
+    { name := "a block of one row before a row takes a row of the view's height"
+      texts := #["a\nb\nc\nd"]
+      holds := fun snapshots => do
+        return (← blocked (nth snapshots 0) 4 3 0 #[block 2 "H"]) == #[⟨0, 1⟩, ⟨2, 3⟩] &&
+            (← rows (nth snapshots 0) 4 3 0) == #[⟨0, 1⟩, ⟨2, 3⟩, ⟨4, 5⟩] },
+    { name :=
+        "a block wider than the view takes the rows its text wraps to, and is shown with its row or not at all"
+      texts := #["a\nb\nc\nd"]
+      holds := fun snapshots => do
+        let wide := #[block 2 "HHHH"]
+        return (← blocked (nth snapshots 0) 2 4 0 wide) == #[⟨0, 1⟩, ⟨2, 3⟩] &&
+            (← blocked (nth snapshots 0) 2 3 0 wide) == #[⟨0, 1⟩] },
+    { name :=
+        "the blocks before the anchor's row are shown above it when they fit with it, and left out when they do not"
+      texts := #["a\nb\nc\nd"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        return (← blocked snapshot 4 2 2 #[block 2 "H"]) == #[⟨2, 3⟩] &&
+            (← blocked snapshot 4 1 2 #[block 2 "H"]) == #[⟨2, 3⟩] &&
+            (← blocked snapshot 4 1 2 #[block 2 "HHHHHHHH"]) == #[⟨2, 3⟩] &&
+            (← spotBlocked snapshot 4 2 2 2 #[block 2 "H"]) ==
+              some { x := 0, y := cells.lineHeight, height := cells.lineHeight } &&
+            (← spotBlocked snapshot 4 1 2 2 #[block 2 "H"]) ==
+              some { x := 0, y := 0, height := cells.lineHeight } },
+    { name :=
+        "a spot below a block is lower by the block's rows, its x and its height as without it"
+      texts := #["a\nb\nc\nd"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let bare ← spotBlocked snapshot 4 5 0 4 #[]
+        return bare == some { x := 0, y := 2 * cells.lineHeight, height := cells.lineHeight } &&
+            (← spotBlocked snapshot 4 5 0 4 #[block 2 "H"]) ==
+              some { x := 0, y := 3 * cells.lineHeight, height := cells.lineHeight } &&
+            (← spotBlocked snapshot 4 5 0 5 #[block 2 "H"]) ==
+              some { x := cells.advance, y := 3 * cells.lineHeight, height := cells.lineHeight } },
+    { name :=
+        "a block before an offset in the middle of a line is drawn above that line's first row, and a wrapped row after it has none"
+      texts := #["abcdefgh\nij"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        return (← blocked snapshot 4 2 0 #[block 6 "H"]) == #[⟨0, 4⟩] &&
+            (← blocked snapshot 4 2 4 #[block 6 "H"]) == #[⟨4, 8⟩, ⟨9, 11⟩] &&
+            (← spotBlocked snapshot 4 4 0 9 #[block 6 "H"]) ==
+              some { x := 0, y := 3 * cells.lineHeight, height := cells.lineHeight } },
+    { name := "two blocks before one row both take rows"
+      texts := #["a\nb\nc\nd"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let two := #[block 2 "H", block 3 "K"]
+        return (← blocked snapshot 4 4 0 two) == #[⟨0, 1⟩, ⟨2, 3⟩] &&
+            (← blocked snapshot 4 3 0 two) == #[⟨0, 1⟩] &&
+            (← spotBlocked snapshot 4 4 0 2 two) ==
+              some { x := 0, y := 3 * cells.lineHeight, height := cells.lineHeight } },
     { name := "each height of a row the display answers is at least one pixel"
       texts := #[]
       holds := fun _ => do

@@ -517,6 +517,7 @@ fn a_published_scene_draws_the_highlights() {
             status: vec![],
             status_face: None,
             padding: Padding::default(),
+            blocks: vec![],
         }],
         faces: Some(vec![WireFace {
             name: "syntax.keyword".to_owned(),
@@ -954,6 +955,7 @@ fn a_published_scene_draws_a_fenced_rust_keyword() {
             status: vec![],
             status_face: None,
             padding: Padding::default(),
+            blocks: vec![],
         }],
         faces: Some(vec![WireFace {
             name: "syntax.keyword".to_owned(),

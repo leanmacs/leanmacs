@@ -1835,6 +1835,33 @@ def Document.excerptsLocate (document : Document) (offset : USize) :
   | status =>
     throw (IO.userError s!"the library answered a locate with an unknown status {status}")
 
+/-- `Snapshot.excerpts` as it crosses: the list as words, and its status. -/
+@[extern "editor_glue_snapshot_excerpts"]
+private opaque Snapshot.excerptsRaw (snapshot : @& Snapshot) : IO RawWords
+
+/-- The list a snapshot of an excerpt document carries, as it was when the
+snapshot was taken: for each excerpt, its start and its end in the
+snapshot's text and its start and its end in its source. `none` for a
+snapshot of any other document. Words that do not spell a list are an
+error. -/
+def Snapshot.excerpts (snapshot : Snapshot) : IO (Option (Array (Nat × Nat × Nat × Nat))) := do
+  let raw ← snapshot.excerptsRaw
+  match raw.status with
+  | 0 =>
+    let some words := wordsOf? raw.words
+      | throw (IO.userError "the library's excerpt list is not whole words")
+    let count := (words[0]?.getD 0).toNat
+    unless words.size == 1 + 4 * count do
+      throw (IO.userError "the library's excerpt list does not spell its count")
+    return some <|
+        (Array.range count).map fun index =>
+          let word (field : Nat) := words[1 + 4 * index + field]!.toNat
+          (word 0, word 1, word 2, word 3)
+  | 1 =>
+    return none
+  | status =>
+    throw (IO.userError s!"the library answered an excerpt list with an unknown status {status}")
+
 /-- What the file service compares to tell whether a file changed: when it
 was last modified and how long it is. Two stamps are compared for equality
 and never ordered. -/
@@ -2618,10 +2645,12 @@ private def rowsOf? (raw : RawWords) : IO (Option (Array DisplayRow)) := do
       (Array.range count).map fun row =>
         { start := words[1 + 2 * row]!, stop := words[2 + 2 * row]! }
 
-/-- `Display.rows` as it crosses: the answer as words, and its status. -/
+/-- `Display.rows` as it crosses: the view's blocks as words and a string,
+and the answer as words, and its status. -/
 @[extern "editor_glue_display_rows"]
 private opaque Display.rowsRaw (display : @& Display) (snapshot : @& Snapshot)
-    (width height across down top : UInt64) (anchor : USize) : IO RawWords
+    (width height across down top : UInt64) (anchor : USize) (blockWords : @& ByteArray)
+    (blockText : @& String) : IO RawWords
 
 /-- The rows a view `width` pixels wide and `height` tall, its content inset
 `across` and `down` points from its edges and its rows a further `top`
@@ -2629,10 +2658,18 @@ points from its top, shows of `snapshot`, from the visual row that holds
 `anchor`: as many as fit whole, fewer at the end of the text. The library
 takes the padding off at the scale it lays out at, as its frames take it
 off; a padding no `u32` holds is the largest. `none` when `anchor` is not a
-position of the text. -/
+position of the text. `blockWords` and `blockText` are the view's blocks,
+in the layout a view's blocks take in a scene after its padding
+(`crates/editor-ffi/src/display/wire.rs`): the rows are those that fit
+with the blocks drawn between them. Words that spell no blocks are
+answered as a bad anchor is, `none`. None by default. -/
 def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64) (anchor : USize)
-    (across down top : UInt64 := 0) : IO (Option (Array DisplayRow)) := do
-  rowsOf? (← display.rowsRaw snapshot width height across down top anchor)
+    (across down top : UInt64 := 0) (blockWords : Array UInt64 := #[0]) (blockText : String := "") :
+    IO (Option (Array DisplayRow)) := do
+  rowsOf?
+      (←
+        display.rowsRaw snapshot width height across down top anchor
+            (blockWords.foldl pushWord ByteArray.empty) blockText)
 
 /-- `Display.move` as it crosses: the lines as a 64-bit two's complement
 number, the goal as a presence flag and a value, and the answer as words. -/
@@ -2673,20 +2710,25 @@ structure DisplaySpot where
   height : UInt64
   deriving DecidableEq, Repr
 
-/-- `Display.spot` as it crosses: the answer as words, and its status. -/
+/-- `Display.spot` as it crosses: the view's blocks as words and a string,
+and the answer as words, and its status. -/
 @[extern "editor_glue_display_spot"]
 private opaque Display.spotRaw (display : @& Display) (snapshot : @& Snapshot)
-    (width height across down top : UInt64) (anchor position : USize) : IO RawWords
+    (width height across down top : UInt64) (anchor position : USize) (blockWords : @& ByteArray)
+    (blockText : @& String) : IO RawWords
 
 /-- Where `position` of `snapshot` is drawn in a view `width` pixels wide
 and `height` tall, padded as for `Display.rows`, that shows from the visual
 row that holds `anchor`: `some none` when the view does not show it, and
 `none` when `anchor` or `position` is not a position of the text. Words
-that do not spell a spot are an error. -/
+that do not spell a spot are an error. The blocks are as for
+`Display.rows`: a position below a block is lower by the block's rows. -/
 def Display.spot (display : Display) (snapshot : Snapshot) (width height : UInt64)
-    (anchor position : USize) (across down top : UInt64 := 0) : IO (Option (Option DisplaySpot)) :=
-  do
-  let raw ← display.spotRaw snapshot width height across down top anchor position
+    (anchor position : USize) (across down top : UInt64 := 0) (blockWords : Array UInt64 := #[0])
+    (blockText : String := "") : IO (Option (Option DisplaySpot)) := do
+  let raw ←
+    display.spotRaw snapshot width height across down top anchor position
+        (blockWords.foldl pushWord ByteArray.empty) blockText
   if raw.status != 0 then
     return none
   match wordsOf? raw.words with

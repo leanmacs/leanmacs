@@ -103,7 +103,7 @@ use editor_layout::Layout;
 use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
 use editor_layout::query::{Moved, QueryError, RowRange, Spot};
-use editor_layout::scene::{Changes, Padding, Scene, TextKey, TextRef, TextSpans};
+use editor_layout::scene::{Block, Changes, Padding, Scene, TextKey, TextRef, TextSpans};
 use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::translated::{Piece, TranslatedSpans};
@@ -123,7 +123,10 @@ use crate::words::Writer;
 
 mod wire;
 
-pub use wire::{WireFace, WireField, WireScene, WireView, decode_definitions, encode_definitions};
+pub use wire::{
+    WireBlock, WireFace, WireField, WireScene, WireView, decode_blocks, decode_definitions,
+    encode_blocks, encode_definitions,
+};
 
 /// How a display call ended, as it crosses the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,7 +210,7 @@ fn translated(snapshot: &Snapshot, placed: &[Placed]) -> Option<Arc<dyn TextSpan
 trait Lays: Send {
     /// [`Layout::frame`].
     fn frame(&mut self, scene: &Scene) -> Frame;
-    /// [`Layout::rows_shown`].
+    /// [`Layout::rows_shown_with_blocks`].
     fn rows_shown(
         &mut self,
         text: &TextRef,
@@ -215,6 +218,7 @@ trait Lays: Send {
         height: f32,
         padding: Padding,
         anchor: usize,
+        blocks: &[Block],
     ) -> Result<Vec<RowRange>, QueryError>;
     /// [`Layout::lines_from`].
     fn lines_from(
@@ -226,7 +230,8 @@ trait Lays: Send {
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError>;
-    /// [`Layout::spot`].
+    /// [`Layout::spot_with_blocks`].
+    #[allow(clippy::too_many_arguments)]
     fn spot(
         &mut self,
         text: &TextRef,
@@ -235,6 +240,7 @@ trait Lays: Send {
         padding: Padding,
         anchor: usize,
         position: usize,
+        blocks: &[Block],
     ) -> Result<Option<Spot>, QueryError>;
     /// [`Layout::heights`].
     fn heights(&mut self) -> Heights;
@@ -261,8 +267,9 @@ where
         height: f32,
         padding: Padding,
         anchor: usize,
+        blocks: &[Block],
     ) -> Result<Vec<RowRange>, QueryError> {
-        Layout::rows_shown(self, text, width, height, padding, anchor)
+        Layout::rows_shown_with_blocks(self, text, width, height, padding, anchor, blocks)
     }
 
     fn lines_from(
@@ -285,8 +292,9 @@ where
         padding: Padding,
         anchor: usize,
         position: usize,
+        blocks: &[Block],
     ) -> Result<Option<Spot>, QueryError> {
-        Layout::spot(self, text, width, height, padding, anchor, position)
+        Layout::spot_with_blocks(self, text, width, height, padding, anchor, position, blocks)
     }
 
     fn heights(&mut self) -> Heights {
@@ -487,9 +495,9 @@ impl Display {
     }
 
     /// The rows of `snapshot` a view `width` pixels wide and `height` tall,
-    /// padded `padding` points, shows from `anchor`
-    /// ([`Layout::rows_shown`]): the padding is taken off at the scale the
-    /// display lays out at, as its frames take it off.
+    /// padded `padding` points, with `blocks` between its rows, shows from
+    /// `anchor` ([`Layout::rows_shown_with_blocks`]): the padding is taken
+    /// off at the scale the display lays out at, as its frames take it off.
     pub fn rows(
         &self,
         snapshot: &Snapshot,
@@ -497,6 +505,7 @@ impl Display {
         height: u64,
         padding: Padding,
         anchor: usize,
+        blocks: &[Block],
     ) -> Result<Vec<RowRange>, QueryError> {
         self.layout().rows_shown(
             &text_ref(snapshot),
@@ -504,6 +513,7 @@ impl Display {
             height as f32,
             padding,
             anchor,
+            blocks,
         )
     }
 
@@ -530,8 +540,10 @@ impl Display {
     }
 
     /// Where `position` of `snapshot` is drawn in a view `width` pixels
-    /// wide and `height` tall, padded `padding` points, that shows from
-    /// `anchor` ([`Layout::spot`]): none when it does not show it.
+    /// wide and `height` tall, padded `padding` points, with `blocks`
+    /// between its rows, that shows from `anchor`
+    /// ([`Layout::spot_with_blocks`]): none when it does not show it.
+    #[allow(clippy::too_many_arguments)]
     pub fn spot(
         &self,
         snapshot: &Snapshot,
@@ -540,6 +552,7 @@ impl Display {
         padding: Padding,
         anchor: usize,
         position: usize,
+        blocks: &[Block],
     ) -> Result<Option<Spot>, QueryError> {
         self.layout().spot(
             &text_ref(snapshot),
@@ -548,6 +561,7 @@ impl Display {
             padding,
             anchor,
             position,
+            blocks,
         )
     }
 }
@@ -555,6 +569,31 @@ impl Display {
 /// The `u32` of a padding in points, the largest for one no `u32` holds.
 fn points(count: u64) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+/// The blocks the `words_len` bytes at `words` and the `text_len` bytes
+/// at `text` spell ([`decode_blocks`]); words that spell none are refused
+/// as [`QueryError::BadPosition`], as a bad anchor is, with nothing laid
+/// out.
+///
+/// # Safety
+///
+/// `words` points to `words_len` readable bytes and `text` to `text_len`,
+/// each alive for the call.
+unsafe fn blocks_of(
+    words: *const u8,
+    words_len: usize,
+    text: *const u8,
+    text_len: usize,
+) -> Result<Vec<Block>, QueryError> {
+    // SAFETY: the caller guarantees both buffers.
+    let (words, text) = unsafe {
+        (
+            crate::words::borrow(words, words_len),
+            text::borrow(text, text_len),
+        )
+    };
+    decode_blocks(words, &text).ok_or(QueryError::BadPosition)
 }
 
 /// The record for `answer`: its words, or the status of its refusal.
@@ -864,6 +903,10 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
     down: u64,
     top: u64,
     anchor: usize,
+    block_words: *const u8,
+    block_words_len: usize,
+    block_text: *const u8,
+    block_text_len: usize,
     out: *mut RawWords,
 ) {
     // SAFETY: the caller guarantees both handles are live.
@@ -873,8 +916,10 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
         down: points(down),
         top: points(top),
     };
+    // SAFETY: the caller guarantees the blocks' buffers.
+    let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
     let raw = answered(
-        display.rows(snapshot, width, height, padding, anchor),
+        blocks.and_then(|blocks| display.rows(snapshot, width, height, padding, anchor, &blocks)),
         |rows, writer| {
             writer.size(rows.len());
             for row in rows {
@@ -945,6 +990,10 @@ pub unsafe extern "C" fn editor_ffi_display_spot(
     top: u64,
     anchor: usize,
     position: usize,
+    block_words: *const u8,
+    block_words_len: usize,
+    block_text: *const u8,
+    block_text_len: usize,
     out: *mut RawWords,
 ) {
     // SAFETY: the caller guarantees both handles are live.
@@ -954,8 +1003,12 @@ pub unsafe extern "C" fn editor_ffi_display_spot(
         down: points(down),
         top: points(top),
     };
+    // SAFETY: the caller guarantees the blocks' buffers.
+    let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
     let raw = answered(
-        display.spot(snapshot, width, height, padding, anchor, position),
+        blocks.and_then(|blocks| {
+            display.spot(snapshot, width, height, padding, anchor, position, &blocks)
+        }),
         |spot, writer| match spot {
             Some(spot) => {
                 writer.word(1);
@@ -1045,9 +1098,14 @@ pub unsafe extern "C" fn editor_ffi_display_frame_rows(
     let frame = unsafe { &*display }.latest();
     let raw = match frame.views.iter().find(|shown| shown.id.0 == view) {
         Some(shown) => {
-            let mut writer = Writer::with_capacity(1 + 2 * shown.rows.len());
-            writer.size(shown.rows.len());
-            for row in &shown.rows {
+            let rows: Vec<_> = shown
+                .rows
+                .iter()
+                .filter(|row| row.block.is_none())
+                .collect();
+            let mut writer = Writer::with_capacity(1 + 2 * rows.len());
+            writer.size(rows.len());
+            for row in rows {
                 writer.size(row.bytes.start);
                 writer.size(row.bytes.end);
             }

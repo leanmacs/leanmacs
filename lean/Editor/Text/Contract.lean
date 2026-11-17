@@ -3002,7 +3002,34 @@ def excerptEditProperties : List Property :=
           refusedWith .notExcerpted (discard <| (TextSource.snapshot snapshot).ask (.locate 0))
         let noText ← refusedWith .noSuchText (discard <| (TextId.mk 99).locate 0)
         return located == expected && (← empty.locate 0) == none && past && plain && ofSnapshot &&
-            noText }]
+            noText },
+    { name :=
+        "a snapshot of an excerpt text answers its list: each excerpt's range of the excerpt text and of its source"
+      holds := do
+        let (_, _, text) ← excerpted
+        let snapshot ← text.snapshot
+        let empty ← (← createExcerpts #[]).snapshot
+        return (← snapshot.excerpts) == #[⟨0, 4, 4, 8⟩, ⟨5, 11, 0, 6⟩] &&
+            (← text.excerpts) == #[⟨0, 4, 4, 8⟩, ⟨5, 11, 0, 6⟩] &&
+            (← empty.excerpts) == #[] },
+    { name :=
+        "a snapshot's list is the list when it was taken: after an insert into a source, the old snapshot answers as before and the text answers the excerpts moved"
+      holds := do
+        let (one, _, text) ← excerpted
+        let before ← text.snapshot
+        one.insert 0 "zero\n"
+        let after ← text.snapshot
+        return (← before.excerpts) == #[⟨0, 4, 4, 8⟩, ⟨5, 11, 0, 6⟩] &&
+            (← text.excerpts)[0]? == some ⟨0, 4, 9, 13⟩ &&
+            (← after.excerpts)[0]? == some ⟨0, 4, 9, 13⟩ },
+    { name := "a plain text and a snapshot of one refuse the list with notExcerpted"
+      holds := do
+        let (one, _, _) ← excerpted
+        let snapshot ← one.snapshot
+        let plain ← refusedWith .notExcerpted (discard <| one.excerpts)
+        let ofPlain ← refusedWith .notExcerpted (discard <| snapshot.excerpts)
+        let noText ← refusedWith .noSuchText (discard <| (TextId.mk 99).excerpts)
+        return plain && ofPlain && noText }]
 
 /-- The properties every implementation of the text port has: the read-only
 ones once over plain texts and once over excerpt texts of the same contents
