@@ -637,6 +637,11 @@ structure Check where
   /-- Observes the behaviour; `true` when it holds. -/
   run : IO Bool
 
+/-- A candidate of each of `texts`, in order, with nothing beside it: how
+the checks write a prompt's candidates. -/
+def offered (texts : Array String) : Array Completion.Candidate :=
+  texts.map Completion.Candidate.ofText
+
 /-- The requests of a small port, for the checks of the program type alone. -/
 inductive Ask where
   /-- Asks the handler for a number. -/
@@ -2861,6 +2866,26 @@ def setupChecks : List Check :=
             refusal named == some "the theme is named twice: `a`, then `b`" &&
             refusal (useTheme "nope") == none) },
     { name :=
+        "a setup's completion sources are collected in the order it defined them; one that defines two sources under one name is refused with exactly the reason that names it"
+      run :=
+        let setup : SetupM Unit := do
+          defineSource (.ofTexts "picks" "pick" #["wq"])
+          command "greet" (makes "1")
+          defineSource (.ofTexts "others" "other" #[])
+        let twice : SetupM Unit := do
+          defineSource (.ofTexts "picks" "pick" #["wq"])
+          defineSource (.ofTexts "picks" "other" #["w"])
+        pure
+          ((match Config.Registrations.ofSetup setup with
+            | .ok collected =>
+              collected.sources.map (fun source => (source.name, source.category)) ==
+                  #[("picks", "pick"), ("others", "other")] &&
+                collected.commands.map (·.name) == #["greet"]
+            | .error _ => false) &&
+            refusal twice == some (Config.Registrations.sourceTwice "picks") &&
+            Config.Registrations.sourceTwice "picks" ==
+              "the completion source `picks` is registered twice") },
+    { name :=
         "a setup's segments are collected in the order it defined them, with the mode line it lists; a setup that defines and lists none has none"
       run :=
         let setup : SetupM Unit := do
@@ -3400,6 +3425,28 @@ def registryChecks : List Check :=
             replaced.names == #["greet"] &&
             replaced.definitions.isEmpty &&
             ({} : Config.Registry).registered.themeNames == #[]) },
+    { name :=
+        "completion sources are held by owner and replaced as a set: the latest entry of a name is the one found, config's source of a compiled source's name while config registers it and the compiled one again once it does not; the loop is told what the lookup answers"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceSources .compiled
+                #[.ofTexts "buffers" "compiled-buffer" #["a"], .ofTexts "kept" "kept" #[]]).replaceSources
+            .config #[.ofTexts "buffers" "config-buffer" #["b"], .ofTexts "mine" "mine" #[]]
+        let replaced := registry.replaceSources .config #[]
+        let category (found : Option Completion.Source) : Option String :=
+          found.map (·.category)
+        let names := ["buffers", "kept", "mine", "nope"]
+        pure
+          (category (registry.source? "buffers") == some "config-buffer" &&
+            category (registry.source? "kept") == some "kept" &&
+            category (registry.source? "mine") == some "mine" &&
+            category (registry.source? "nope") == none &&
+            category (replaced.source? "buffers") == some "compiled-buffer" &&
+            category (replaced.source? "mine") == none &&
+            replaced.sources.size == 2 &&
+            names.all fun name =>
+              category (registry.registered.sources name) == category (registry.source? name) &&
+                category (replaced.registered.sources name) == category (replaced.source? name)) },
     { name :=
         "segments are held by owner and replaced as a set: the latest entry of a name is the one found; a mode line resolves in its listing's order, with the names nobody registered listed in order, each once"
       run :=
@@ -5773,7 +5820,8 @@ def drawnFaces : Array FaceName :=
   let asked : Prompt :=
     { label := "Theme: ", view := ⟨1⟩, asker := ⟨0⟩, continuation := { command := "load-theme" }
       candidates :=
-        { all := #["a", "b"], listedFor := some "", listed := #["a", "b"], chosen := some 0 } }
+        { all := offered #["a", "b"], listedFor := some "", listed := offered #["a", "b"]
+          chosen := some 0 } }
   reports.map (·.cursor.face) ++ reports.flatMap (·.status.map (·.face)) ++
     states.toArray.map (Vim.cursorFace ·.name) ++
     #[({} : InputScheme.Report).cursor.face] ++
@@ -8146,7 +8194,8 @@ def spoilings : List (String × (EditorState → EditorState)) :=
           asking.prompt.map
             ({ · with
               candidates :=
-                { all := #["a"], listedFor := some "", listed := #["a"], chosen := some 1 } }) }),
+                { all := offered #["a"], listedFor := some "", listed := offered #["a"]
+                  chosen := some 1 } }) }),
     ("with an order of use that names a buffer there is none of", fun state =>
       { state with recent := state.recent.push ⟨5⟩ }),
     ("with an order of use that names one buffer twice", fun state =>
@@ -8250,7 +8299,7 @@ def withCandidates (state : EditorState) (candidates : Candidates) : EditorState
 `w` and a listing of all three for the empty text, in that order, made with
 the state's own operations. -/
 def picking (state : EditorState) : EditorState :=
-  let (_, set) := state.setCandidates #["wq", "edit", "w"]
+  let (_, set) := state.setCandidates (offered #["wq", "edit", "w"])
   (set.listCandidates "" #[0, 1, 2]).2
 
 /-- States of the quit checks, each `twoBuffers` with its histories set by
@@ -10262,9 +10311,9 @@ def stateChecks : List Check :=
               | some state =>
                 let (_, asking) := prompted state
                 let (_, chosen) := (picking asking).chooseCandidate .next
-                let (set, replaced) := chosen.setCandidates #["x", "y"]
+                let (set, replaced) := chosen.setCandidates (offered #["x", "y"])
                 replied set == .inr () &&
-                  replaced.prompt.map (·.candidates) == some { all := #["x", "y"] } &&
+                  replaced.prompt.map (·.candidates) == some { all := offered #["x", "y"] } &&
                   withCandidates replaced {} == asking &&
                   replaced.wellFormed },
         { name :=
@@ -10281,11 +10330,11 @@ def stateChecks : List Check :=
                 replied listed == .inr () &&
                   after.prompt.map (·.candidates) ==
                     some
-                      { all := #["wq", "edit", "w"], listedFor := some "w",
-                        listed := #["w", "wq"] } &&
+                      { all := offered #["wq", "edit", "w"], listedFor := some "w",
+                        listed := offered #["w", "wq"] } &&
                   replied emptied == .inr () &&
                   unmatched.prompt.map (·.candidates) ==
-                    some { all := #["wq", "edit", "w"], listedFor := some "z" } &&
+                    some { all := offered #["wq", "edit", "w"], listedFor := some "z" } &&
                   withCandidates after {} == asking &&
                   after.wellFormed },
         { name :=
@@ -10302,7 +10351,7 @@ def stateChecks : List Check :=
                   (steps.foldl (fun state step => (state.chooseCandidate step).2) start).prompt.map
                     (·.candidates.chosen)
                 let (stepped, after) := listed.chooseCandidate .next
-                let (_, bare) := asking.setCandidates #["a"]
+                let (_, bare) := asking.setCandidates (offered #["a"])
                 replied stepped == .inr () && withCandidates after {} == asking &&
                   after.wellFormed &&
                   steps [.next] listed == some (some 0) &&
@@ -10322,14 +10371,14 @@ def stateChecks : List Check :=
           run :=
             pure <|
               let listed : Candidates :=
-                { all := #["wq", "edit", "w"], listedFor := some "w", listed := #["w", "wq"] }
+                { all := offered #["wq", "edit", "w"], listedFor := some "w", listed := offered #["w", "wq"] }
               ({ listed with chosen := some 1 } : Candidates).answer "w" == "wq" &&
                 ({ listed with chosen := some 0 } : Candidates).answer "w" == "w" &&
                 listed.answer "w" == "w" &&
                 ({ listed with chosen := some 1 } : Candidates).answer "wx" == "wx" &&
                 ({ listed with chosen := some 1 } : Candidates).answer "" == "" &&
                 ({} : Candidates).answer "typed" == "typed" &&
-                ({ all := #["a"], listedFor := some "z" } : Candidates).answer "z" == "z" },
+                ({ all := offered #["a"], listedFor := some "z" } : Candidates).answer "z" == "z" },
         { name :=
             "with no prompt open, setting candidates, listing them and choosing one are each refused with notOpen, and the state is as it was"
           run :=
@@ -10340,7 +10389,7 @@ def stateChecks : List Check :=
                 let refused : Except PromptRefusal Unit × EditorState → Bool
                   | (.error .notOpen, after) => after == state
                   | _ => false
-                refused (state.setCandidates #["a"]) && refused (state.listCandidates "a" #[0]) &&
+                refused (state.setCandidates (offered #["a"])) && refused (state.listCandidates "a" #[0]) &&
                   refused (state.chooseCandidate .next) &&
                   refused (state.chooseCandidate .previous) },
         { name :=
@@ -10690,7 +10739,7 @@ def stateRequests : List StateRequest :=
     .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
-    .closePrompt none, .closePrompt (some "typed"), .setCandidates #["one", "two"],
+    .closePrompt none, .closePrompt (some "typed"), .setCandidates (offered #["one", "two"]),
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
@@ -11284,13 +11333,13 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (_, asking) := prompted state
             let listed := picking asking
-            let (set, replaced) := listed.handle (.setCandidates #["x"])
+            let (set, replaced) := listed.handle (.setCandidates (offered #["x"]))
             let (next, first) := listed.handle (.chooseCandidate .next)
             let (previous, last) := listed.handle (.chooseCandidate .previous)
-            let (noSet, sameSet) := state.handle (.setCandidates #["x"])
+            let (noSet, sameSet) := state.handle (.setCandidates (offered #["x"]))
             let (noChoice, sameChoice) := state.handle (.chooseCandidate .next)
-            replied set == .inr () && replaced == (listed.setCandidates #["x"]).2 &&
-              replaced.prompt.map (·.candidates) == some { all := #["x"] } &&
+            replied set == .inr () && replaced == (listed.setCandidates (offered #["x"])).2 &&
+              replaced.prompt.map (·.candidates) == some { all := offered #["x"] } &&
               replied next == .inr () &&
               first == (listed.chooseCandidate .next).2 &&
               first.prompt.map (·.candidates.chosen) == some (some 0) &&
@@ -18987,7 +19036,7 @@ def apiStateChecks : List Check :=
             return #["wq", "edit", "w"]
           match dispatchedOn (prompt "Pick: " asked "w" (candidates := candidates)) with
           | some (.finished (.ok view), state, texts) =>
-            state.prompt.map (·.candidates) == some { all := #["wq", "edit", "w"] } &&
+            state.prompt.map (·.candidates) == some { all := offered #["wq", "edit", "w"] } &&
               state.prompt.map (·.view) == some view &&
               (texts.filter (· == made)).size == 1 &&
               texts.contains "w" &&
@@ -19036,13 +19085,13 @@ def apiStateChecks : List Check :=
         pure <|
           match
             dispatchedOn do
-              let closed ← setCandidates #["a"]
+              let closed ← setCandidates (offered #["a"])
               discard <| prompt "Pick: " asked (candidates := pure #["x", "y"])
               let before := (← editorState).prompt.map (·.candidates)
-              return (closed, before, ← setCandidates #["a", "b"]) with
+              return (closed, before, ← setCandidates (offered #["a", "b"])) with
           | some (.finished (.error .notOpen, before, .ok ()), state, _) =>
-            before == some { all := #["x", "y"] } &&
-              state.prompt.map (·.candidates) == some { all := #["a", "b"] }
+            before == some { all := offered #["x", "y"] } &&
+              state.prompt.map (·.candidates) == some { all := offered #["a", "b"] }
           | _ => false },
     { name :=
         "accepting a prompt answers with the chosen candidate when its listing is for the minibuffer's text; with the text when nothing is chosen, when the choice was made for another text than the minibuffer holds, and when there are no candidates; the continuation's own arguments follow the answer"
@@ -20317,8 +20366,9 @@ def candidatesOf (driver : TestDriver) : Option Candidates :=
 for `pattern`, with `chosen` as its choice: the listing is what the fuzzy
 model answers for the pattern, so no order is written out here. -/
 def pickListed (pattern : String) (chosen : Option Nat := none) : Candidates :=
-  { all := pickCandidates, listedFor := some pattern
-    listed := (FuzzyModel.rank pattern pickCandidates).filterMap (pickCandidates[·]?), chosen }
+  { all := offered pickCandidates, listedFor := some pattern
+    listed := (FuzzyModel.rank pattern pickCandidates).filterMap ((offered pickCandidates)[·]?)
+    chosen }
 
 /-- `driver` with the choice of its open prompt moved by `steps`, through
 the state and not by a command. -/
@@ -20346,7 +20396,7 @@ one at `chosen` of them, if any, in the chosen face. -/
 def pickFields (pattern : String) (chosen : Option Nat := none) : Array StatusField :=
   #[{ text := pickLabel, face := Loop.promptFace }] ++
     (pickListed pattern).listed.mapIdx fun index candidate =>
-      { text := candidate
+      { text := candidate.text
         face := if chosen == some index then Loop.chosenFace else Loop.candidateFace }
 
 /-- The editor's models, but that every read of a whole text is refused
@@ -20389,13 +20439,13 @@ def candidateChecks : List Check :=
             let (two, _) := fedTo one (presses "q")
             let (three, _) := fedTo two (presses "z")
             candidatesOf one == some (pickListed "w") &&
-              (candidatesOf one).map (·.listed[0]?) == some (some "w") &&
+              (candidatesOf one).map (·.listed[0]?.map (·.text)) == some (some "w") &&
               (candidatesOf one).map (·.listed.size) == some 3 &&
               pickCandidates.back? == some "w" &&
               candidatesOf two == some (pickListed "wq") &&
-              (candidatesOf two).map (·.listed) == some #["wq"] &&
+              (candidatesOf two).map (·.listed.map (·.text)) == some #["wq"] &&
               candidatesOf three == some (pickListed "wqz") &&
-              (candidatesOf three).map (·.listed) == some #[] &&
+              (candidatesOf three).map (·.listed.map (·.text)) == some #[] &&
               minibufferText three == some "wqz" },
     { name :=
         "a key whose command leaves the minibuffer's text as it was leaves the listing and a choice as they were, and a key typed after it forgets the choice with the listing it was made in"
@@ -20509,7 +20559,7 @@ def candidateChecks : List Check :=
             let (typed, _) := fedTo driver (presses "C-c a e")
             let (chosen, _) := fedTo typed (rolePresses Role.nextItem)
             let (accepted, _) := fedTo chosen (rolePresses Role.activate)
-            let first := (pickListed "e").listed[0]?
+            let first := (pickListed "e").listed[0]?.map (·.text)
             !(rolePresses Role.nextItem).isEmpty && first.isSome && first != some "e" &&
               candidatesOf chosen == some (pickListed "e" (some 0)) &&
               minibufferText chosen == some "e" &&
@@ -20583,7 +20633,7 @@ def candidateChecks : List Check :=
             let (accepted, _) := fedTo moved (rolePresses Role.activate)
             let label : Array StatusField := #[{ text := pickLabel, face := Loop.promptFace }]
             candidatesOf typed == some (pickListed "z") &&
-              (candidatesOf typed).map (·.listed) == some #[] &&
+              (candidatesOf typed).map (·.listed.map (·.text)) == some #[] &&
               pickStatus typed == some label &&
               candidatesOf moved == candidatesOf typed &&
               pickStatus moved == some label &&
@@ -22595,8 +22645,8 @@ bound names, and of them what the fuzzy model answers for the pattern. -/
 def exListed (pattern : String) (chosen : Option Nat := none)
     (bindings : Array Ex.Binding := exTestBindings) : Candidates :=
   let names := exNamesOf bindings
-  { all := names, listedFor := some pattern
-    listed := (FuzzyModel.rank pattern names).filterMap (names[·]?), chosen }
+  { all := offered names, listedFor := some pattern
+    listed := (FuzzyModel.rank pattern names).filterMap ((offered names)[·]?), chosen }
 
 /-- What a step of the ex checks is handed. The commands are the ones
 compiled code registers for the ex line, the minibuffer and files
@@ -23079,12 +23129,12 @@ def exChecks : List Check :=
             let (typed, _) := fedTo asking (presses "s")
             let names := exTestBindings.map (·.name)
             candidatesOf asking == some (exListed "") &&
-              (candidatesOf asking).map (·.all) == some names &&
+              (candidatesOf asking).map (·.all.map (·.text)) == some names &&
               (candidatesOf asking).map (·.listed.size) == some names.size &&
               candidatesOf typed == some (exListed "s") &&
               (candidatesOf typed).map (·.listed.size) == some 3 &&
               ((pickStatus typed).map fun fields => fields.map (·.text)) ==
-                some (#[Ex.label] ++ (exListed "s").listed) },
+                some (#[Ex.label] ++ (exListed "s").listed.map (·.text)) },
     { name :=
         "in the ex prompt, text that is no name is typed, the key that moves to the next candidate and the accept key are pressed: the command the first listed name is bound to runs, as the whole name typed and accepted runs it, and not as the typed text alone does, which is no ex name"
       run :=
@@ -23098,7 +23148,7 @@ def exChecks : List Check :=
             let (whole, _) := fedTo driver (exLine "plain")
             let (bare, _) := fedTo typed (presses "C-e y")
             candidatesOf typed == some (exListed "pl") &&
-              (candidatesOf typed).map (·.listed) == some #["plain"] &&
+              (candidatesOf typed).map (·.listed.map (·.text)) == some #["plain"] &&
               candidatesOf chosen == some (exListed "pl" (some 0)) &&
               minibufferText chosen == some "pl" &&
               promptEcho ran == promptEcho whole &&
@@ -23116,7 +23166,7 @@ def exChecks : List Check :=
             let (moved, _) := fedTo typed (presses "C-e t")
             let (ran, _) := fedTo moved (presses "C-e y")
             candidatesOf typed == some (exListed "say hello there") &&
-              (candidatesOf typed).map (·.listed) == some #[] &&
+              (candidatesOf typed).map (·.listed.map (·.text)) == some #[] &&
               ((pickStatus typed).map fun fields => fields.map (·.text)) == some #[Ex.label] &&
               candidatesOf moved == candidatesOf typed &&
               promptEcho ran == greeted hello &&
@@ -23131,7 +23181,7 @@ def exChecks : List Check :=
             let (typed, _) := fedTo driver (presses "C-e e e")
             let (opening, _) := fedTo typed (presses "C-e t C-e y")
             candidatesOf typed == some (exListed "e" none Ex.bindings) &&
-              (candidatesOf typed).map (·.listed) ==
+              (candidatesOf typed).map (·.listed.map (·.text)) ==
                 some
                   #["e", "e!", "autoread", "noautoread", "reload", "compile", "compile-command",
                     "recompile", "next-error", "previous-error"] &&
@@ -23791,11 +23841,11 @@ def bufferCommandChecks : List Check :=
               let minibuffer := (state.minibufferBuffer?.bind state.buffer?).map (·.name)
               state.prompt.map (fun asked => (asked.label, asked.continuation)) ==
                   some (Buffers.switchPrompt, { command := Buffers.switchName }) &&
-                (candidatesOf asking).map (·.all) ==
+                (candidatesOf asking).map (·.all.map (·.text)) ==
                   some #["crlf.txt", "note.txt", "scratch", "lf.txt"] &&
                 minibuffer.isSome &&
                 !((candidatesOf asking).any fun candidates =>
-                    minibuffer.any candidates.all.contains)
+                    minibuffer.any (candidates.all.map (·.text)).contains)
             asked (exLine "b") && asked (presses "C-b b") },
     { name :=
         "a pattern typed after b and accepted with nothing chosen shows the best match in the window: its status line names it and it is the most recently used; where more than one buffer matches, the one the fuzzy model ranks first"
@@ -23823,7 +23873,7 @@ def bufferCommandChecks : List Check :=
           | some opened =>
             let (chosen, _) := fedTo opened (exLine "b" ++ presses "C-e t")
             let (switched, _) := fedTo chosen (presses "C-e y")
-            let expected := (candidatesOf chosen).bind (·.listed[0]?)
+            let expected := (candidatesOf chosen).bind (·.listed[0]?.map (·.text))
             expected.isSome && (candidatesOf chosen).bind (·.chosen) == some 0 &&
               shownName switched == expected &&
               switched.loop.state.prompt == none },
@@ -24540,7 +24590,7 @@ def themeChecks : List Check :=
             let (asking, steps) := fedTo driver (presses "C-t t")
             asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
                 some (Themes.label, { command := Themes.loadName }) &&
-              (candidatesOf asking).map (·.all) == some #[Theme.defaultName, "second"] &&
+              (candidatesOf asking).map (·.all.map (·.text)) == some #[Theme.defaultName, "second"] &&
               steps.map (·.map (·.theme)) == #[some none, some none] },
     { name :=
         "the theme command with a registered name hands the name back with its step and says nothing; accepting its prompt with a name loads that one"
@@ -30844,7 +30894,7 @@ def tabCommandChecks : List Check :=
             state (tabsAfter "C-w c C-w p C-w w z q RET") with
           | some asking, some chosen, some missed =>
             asking.loop.state.prompt.map (·.label) == some TabCommands.switchPrompt &&
-              asking.loop.state.prompt.map (·.candidates.all) == some #["1 scratch", "2 scratch"] &&
+              asking.loop.state.prompt.map (·.candidates.all.map (·.text)) == some #["1 scratch", "2 scratch"] &&
               chosen.frame.tabIndex == 1 &&
               chosen.prompt.isNone &&
               missed.frame.tabIndex == 0 &&
@@ -33740,7 +33790,7 @@ def shellChecks : List Check :=
             let ran := shellRan (shellRan (settledAfter driver "C-o a") "!make") "!echo hi"
             let again := shellRan ran "!make"
             let asked := (fedTo (settledAfter again "C-o w") (presses "C-e e")).1
-            (candidatesOf asked).map (·.all.toList.take 2) == some ["!make", "!echo hi"] &&
+            (candidatesOf asked).map (·.all.toList.take 2 |>.map (·.text)) == some ["!make", "!echo hi"] &&
               again.loop.state.workspaces.getOfProject Shell.historyStore
                   (.remote "github.com/o/r") ==
                 #["!make", "!echo hi"] },
@@ -34370,7 +34420,7 @@ def compileChecks : List Check :=
             let again :=
               drained (pressedOn (pressedOn (pressedOn inW "C-o a") "C-k r") "C-o w C-k r")
             let started := again.jobs.processes.started
-            (candidatesOf asked).map (·.all) == some #["make"] &&
+            (candidatesOf asked).map (·.all.map (·.text)) == some #["make"] &&
               (showing asked asked.loop.state.frame.focused).bind (·.text) == some "" &&
               cancelled.loop.state.prompt.isNone &&
               inW.jobs.processes.started.back? == some (shellCommand "/w" "build") &&
@@ -35605,7 +35655,7 @@ def compileHookChecks : List Check :=
             let offered := pressedOn opened "C-k i"
             let built := (fedTo offered ([.commit "build (a-mode)"] ++ presses "C-e y")).1
             (showing asked asked.loop.state.frame.focused).bind (·.text) == some "config-build" &&
-              (candidatesOf offered).map (·.all) ==
+              (candidatesOf offered).map (·.all.map (·.text)) ==
                 some #["build (a-mode)", "test (a-mode)", "build (b-mode)", "check (b-mode)"] &&
               built.jobs.processes.started.back? ==
                 some (shellCommand "/r/hook/one/two" "config-build") },
@@ -35711,7 +35761,7 @@ def compileHookChecks : List Check :=
             asked.loop.state.prompt.map (·.label) == some Compile.commandPromptLabel &&
               Compile.commandPromptLabel == "Mode command: " &&
               (showing asked asked.loop.state.frame.focused).bind (·.text) == some "" &&
-              (candidatesOf asked).map (·.all) ==
+              (candidatesOf asked).map (·.all.map (·.text)) ==
                 some #["build (a-mode)", "test (a-mode)", "build (b-mode)", "check (b-mode)"] &&
               tested.jobs.processes.started.back? ==
                 some (shellCommand "/r/hook/one/two" "a-test") &&
@@ -35769,11 +35819,11 @@ def compileHookChecks : List Check :=
             let linted := (fedTo inR ([.commit "lint"] ++ presses "C-e y")).1
             let cargo := #["build (cargo-mode)", "test (cargo-mode)"]
             let dev : List (String × Value) := [("profile", .str "dev")]
-            (candidatesOf inR).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
+            (candidatesOf inR).map (·.all.map (·.text)) == some (cargo.push "lint (cargo-mode)") &&
               (shownWorkspace worktree).map (·.1.location) == some (.local "/w") &&
               shownOnModes worktree == some #[{ mode := "cargo-mode", root := "/w/crate" }] &&
-              (candidatesOf inW).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
-              (candidatesOf inO).map (·.all) == some cargo &&
+              (candidatesOf inW).map (·.all.map (·.text)) == some (cargo.push "lint (cargo-mode)") &&
+              (candidatesOf inO).map (·.all.map (·.text)) == some cargo &&
               linted.jobs.processes.started.back? ==
                 some (shellCommand "/r/crate" "cargo clippy") &&
               settingsIn linted (.remote "github.com/o/r") "cargo-mode" == some dev &&
@@ -35833,10 +35883,10 @@ def compileHookChecks : List Check :=
             let askedAgain := pressedOn dropped "C-k i"
             let cargo := #["build (cargo-mode)", "test (cargo-mode)"]
             linted.jobs.processes.started.back? == some (shellCommand "/r/crate" "cargo clippy") &&
-              (candidatesOf asked).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
+              (candidatesOf asked).map (·.all.map (·.text)) == some (cargo.push "lint (cargo-mode)") &&
               relinted.jobs.processes.started.back? ==
                 some (shellCommand "/r/crate" "cargo clippy -D warnings") &&
-              (candidatesOf askedAgain).map (·.all) == some cargo },
+              (candidatesOf askedAgain).map (·.all.map (·.text)) == some cargo },
     { name :=
         "chooseOffer takes a whole candidate first, then the first offer of a bare name, and none for anything else; an offer is shown as its name and its mode"
       run :=
@@ -36180,7 +36230,7 @@ def listingChecks : List Check :=
             let asked := pressedOn opened "C-k i"
             let built := drained (fedTo opened (exLine "compile-command build")).1
             let subbed := drained (fedTo opened (exLine "compile-command sub")).1
-            (candidatesOf asked).map (·.all) ==
+            (candidatesOf asked).map (·.all.map (·.text)) ==
                 some #["build (t-mode)", "check (t-mode)", "fmt (t-mode)", "sub (t-mode)"] &&
               built.jobs.processes.started.back? == some (shellCommand "/t" "t-build") &&
               subbed.jobs.processes.started.back? == some (shellCommand "/t/sub" "t-sub") &&
@@ -36215,7 +36265,7 @@ def listingChecks : List Check :=
             let opened := settledAfter driver "C-p 3"
             let asked := settledAfter opened "C-k i"
             echoOf opened == some "t-mode in /t2: t-list exited with status 3: t-list: broken" &&
-              (candidatesOf asked).map (·.all) == some #["build (t-mode)", "check (t-mode)"] &&
+              (candidatesOf asked).map (·.all.map (·.text)) == some #["build (t-mode)", "check (t-mode)"] &&
               startedCount asked (tList "/t2") == 1 },
     { name :=
         "a listing that could not be run, as mise is not found by an editor started from the Finder, offers none of its commands and says why once"
@@ -36238,7 +36288,7 @@ def listingChecks : List Check :=
             echoOf opened ==
                 some
                   "t-mode in /t2: t-list could not be run: the program or the directory is not there: t-list" &&
-              (candidatesOf asked).map (·.all) == some #["build (t-mode)", "check (t-mode)"] &&
+              (candidatesOf asked).map (·.all.map (·.text)) == some #["build (t-mode)", "check (t-mode)"] &&
               startedCount asked (tList "/t2") == 1 },
     { name :=
         "each end of a listing's run has its own words: a status with its first line of standard error, a status whose first line is empty, a signal, output its read refuses, a run that ran out of time, and one that could not be run"
@@ -36299,7 +36349,7 @@ def listingChecks : List Check :=
               (Compile.entriesOf opened.loop.state none).map
                   (fun entry => (entry.mode, entry.root.toString)) ==
                 #[("t-mode", "/u")] &&
-              (candidatesOf asked).map (·.all) ==
+              (candidatesOf asked).map (·.all.map (·.text)) ==
                 some #["build (t-mode)", "check (t-mode)", "u-only (t-mode)"] &&
               ran.jobs.processes.started.back? == some (shellCommand "/u" "u-only") },
     { name :=
@@ -36436,7 +36486,7 @@ def reloaded (driver : TestDriver) : TestDriver :=
 /-- The candidates `compile-command`'s prompt offers in `driver` once
 `keys` are pressed and their jobs settled. -/
 def offeredAfter (driver : TestDriver) (keys : String) : Option (Array String) :=
-  (candidatesOf (settledAfter driver keys)).map (·.all)
+  (candidatesOf (settledAfter driver keys)).map (·.all.map (·.text))
 
 /-- The checks of the shipped modes (`Editor/Compile/Shipped.lean`), on the
 loop's driver over the editor's models, the job model and the process
@@ -36599,9 +36649,9 @@ def projectModeChecks : List Check :=
             let twice := settledAfter (settledAfter opened "C-k i") "C-k q C-k i"
             let afterReload := settledAfter (reloaded (settledAfter opened "C-k i C-k q")) "C-k i"
             startedCount used (miseList "/m") == 2 &&
-              (candidatesOf used).map (·.all) ==
+              (candidatesOf used).map (·.all.map (·.text)) ==
                 some #["build (mise-mode)", "test (mise-mode)", "lint (mise-mode)"] &&
-              (candidatesOf again).map (·.all) == some #["fmt (mise-mode)"] &&
+              (candidatesOf again).map (·.all.map (·.text)) == some #["fmt (mise-mode)"] &&
               startedCount again (miseList "/m") == 2 &&
               startedCount twice (miseList "/m") == 1 &&
               startedCount afterReload (miseList "/m") == 2 }]

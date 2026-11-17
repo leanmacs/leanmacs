@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Completion
 import Editor.Highlight
 import Editor.Language
 import Editor.Mode
@@ -367,6 +368,10 @@ structure Loop.Registered where
   /-- The compile contributions, in registration order, and config's
   project commands (`Config.Registry.compileHook`). -/
   compile : Compile.Hook := {}
+  /-- The completion source registered under a name, for a prompt that asks
+  for it by name (`StateRequest.askSource`). `none` for a name no source is
+  registered under. -/
+  sources : String → Option Completion.Source := fun _ => none
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/

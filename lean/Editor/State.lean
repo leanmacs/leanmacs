@@ -1,4 +1,5 @@
 import Editor.Display
+import Editor.Completion.Candidate
 import Editor.DisplayRules
 import Editor.Face
 import Editor.File
@@ -572,8 +573,10 @@ A prompt is a request for one string, with a text to show beside the input
     end, as it does for any window that is closed and any buffer that is
     removed.
 - **A prompt may have candidates** (`Prompt.candidates`, a `Candidates`):
-  strings the answer may be chosen from. They are plain data, as the rest
-  of a prompt is. With them the prompt holds what it has shown of them:
+  records the answer may be chosen from (`Completion.Candidate`,
+  `Editor/Completion/Candidate.lean`), each with the text accepting it
+  gives and what a display may show beside it. They are plain data, as the
+  rest of a prompt is, whichever sources answered them. With them the prompt holds what it has shown of them:
   - **the listing**: the candidates the text typed so far matches, in the
     matcher's order, and the text the listing was made for (`listed`,
     `listedFor`). The state does not match: `listCandidates` is handed the
@@ -591,7 +594,7 @@ A prompt is a request for one string, with a text to show beside the input
     the listing it replaces.
   - **What the prompt answers with** is `Candidates.answer`, of the text in
     the minibuffer: the chosen candidate, when one is chosen and the
-    listing is for that text; otherwise the text. So a prompt with no
+    listing is for that text, its text; otherwise the text typed. So a prompt with no
     candidates, or with nothing chosen, answers what was typed.
   - Each of the three operations refuses `notOpen`, with the state as it
     was, when no prompt is open. A prompt opened with none has no
@@ -1267,12 +1270,12 @@ them ("Prompts", in the module docs). It is plain data. -/
 structure Candidates where
   /-- The candidates the prompt was asked with, in the order they came
   in. -/
-  all : Array String := #[]
+  all : Array Completion.Candidate := #[]
   /-- The text `listed` was made for; `none` when no listing has been made
   since the candidates were set. -/
   listedFor : Option String := none
   /-- The listing: the candidates that text matches, best first. -/
-  listed : Array String := #[]
+  listed : Array Completion.Candidate := #[]
   /-- The choice: an index of `listed`, or none. -/
   chosen : Option Nat := none
   deriving DecidableEq, Repr
@@ -1310,12 +1313,14 @@ def choose (candidates : Candidates) (step : Step) : Candidates :=
   { candidates with chosen }
 
 /-- What a prompt with these candidates answers with when the minibuffer
-holds `text`: the chosen candidate, when one is chosen and the listing is
-for `text`, and otherwise `text`. -/
+holds `text`: the chosen candidate's text, when one is chosen and the
+listing is for `text`, and otherwise `text`. -/
 def answer (candidates : Candidates) (text : String) : String :=
   match candidates.chosen with
   | some index =>
-    if candidates.listedFor == some text then candidates.listed[index]?.getD text else text
+    if candidates.listedFor == some text then
+      (candidates.listed[index]?.map (·.text)).getD text
+    else text
   | none => text
 
 end Candidates
@@ -1334,8 +1339,9 @@ structure Prompt where
   /-- The continuation: the command that receives the answer, and plain
   arguments of the asker's own, which follow the answer. -/
   continuation : Invocation
-  /-- The strings the answer may be chosen from, with their listing and the
-  choice; none of any, unless the prompt was asked with candidates. -/
+  /-- The candidates the answer may be chosen from, with their listing and
+  the choice; none of any, unless the prompt was asked with sources that
+  answered some. -/
   candidates : Candidates := {}
   deriving DecidableEq, Repr
 
@@ -3321,7 +3327,7 @@ def changeCandidates (change : Candidates → Candidates) (state : EditorState) 
 /-- Replaces the open prompt's candidates with `all`, and forgets the
 listing and the choice. Refused, with the state unchanged, with `notOpen`
 when no prompt is open. -/
-def setCandidates (all : Array String) (state : EditorState) :
+def setCandidates (all : Array Completion.Candidate) (state : EditorState) :
     Except PromptRefusal Unit × EditorState :=
   state.changeCandidates fun _ => { all }
 

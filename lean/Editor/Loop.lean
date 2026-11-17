@@ -1287,7 +1287,7 @@ in `chosenFace`. With nothing listed it is the label alone. -/
 def promptStatus (asked : Prompt) : Array StatusField :=
   #[{ text := asked.label, face := promptFace }] ++
     asked.candidates.listed.mapIdx fun index candidate =>
-      { text := candidate
+      { text := candidate.text
         face := if asked.candidates.chosen == some index then chosenFace else candidateFace }
 
 /-- The status line of the view `id` of `state`, whose window `context`
@@ -1473,7 +1473,7 @@ def listed (state : EditorState) : EditorM (EditorState × Option TextError) := 
   | .ok pattern =>
     if asked.candidates.listedFor == some pattern then
       return (state, none)
-    let ranked ← Fuzzy.rank pattern asked.candidates.all
+    let ranked ← Fuzzy.rank pattern (asked.candidates.all.map (·.text))
     return ((state.listCandidates pattern ranked).2, none)
 
 /-- Has `view`, a view of the scene about to be published, follow its cursor

@@ -674,7 +674,7 @@ def choosing (text : String) (all : Array String) (listedFor : String) (ranked :
   let selection ← minibuffer.mark (.selection { ranges := #[⟨0, 0⟩], shape := .exclusive })
   let (_, state) :=
     state.openPrompt "Pick: " greeting minibuffer (← UndoTree.over minibuffer) scroll selection
-  let (_, state) := state.setCandidates all
+  let (_, state) := state.setCandidates (all.map Completion.Candidate.ofText)
   let (_, state) := state.listCandidates listedFor ranked
   return steps.foldl (fun state step => (state.chooseCandidate step).2) state
 
@@ -716,7 +716,7 @@ def promptCases : List Case :=
         let .ok view ← prompt "Pick: " greeting "w" (candidates := lines) | return false
         let state ← editorState
         let some target := state.target? view | return false
-        return state.prompt.map (·.candidates) == some { all := #["wq", "édit", "w"] } &&
+        return state.prompt.map (·.candidates.all.map (·.text)) == some #["wq", "édit", "w"] &&
             (← target.buffer.text.read) == "w" &&
             state.frame.focused == view &&
             state.wellFormed },

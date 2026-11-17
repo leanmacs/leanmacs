@@ -923,7 +923,7 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
     return .error (.alreadyOpen asked.view)
   if state.focusedTarget?.isNone then
     return .error .noWindow
-  let all ← candidates
+  let all := (← candidates).map Completion.Candidate.ofText
   let text ← createText initial
   let scroll ← text.mark (.anchor { offset := 0, bias := .before })
   let cursor := initial.utf8ByteSize
@@ -938,7 +938,7 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
 /-- Replaces the open prompt's candidates with `all`, and forgets what it
 has listed and chosen ("Prompts", in the module docs). Refused with
 `notOpen` when no prompt is open. -/
-def setCandidates (all : Array String) : EditorM (Except PromptRefusal Unit) :=
+def setCandidates (all : Array Completion.Candidate) : EditorM (Except PromptRefusal Unit) :=
   EditorState.ask (.setCandidates all)
 
 /-- Moves the open prompt's choice by `step` through the candidates it has

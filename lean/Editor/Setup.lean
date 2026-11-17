@@ -1,5 +1,6 @@
 import Editor.Command.Call
 import Editor.Compile.Contribution
+import Editor.Completion
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.Face
@@ -132,6 +133,7 @@ cannot be meant: a command name or a job name registered twice (the first
 could never run), a key sequence bound twice (the first binding could never
 run), an ex name bound twice, a store name declared twice, a theme defined
 twice or named twice, a segment defined twice, the mode line listed twice,
+a completion source defined twice,
 a command over a store the `setup`
 does not declare, a mode name defined twice, or a mode that cannot be meant
 under any scheme (`Mode.problems`: a role that is not registered, a suffix
@@ -172,6 +174,19 @@ or names a theme twice, is refused. A name no theme is registered under is
 not refused: it is looked up when the config is installed, and the theme in
 force then stays, and the echo area says so (`Editor/Config/Reload.lean`).
 A config that names no theme keeps the theme in force.
+
+Config registers completion sources, by name (`Editor/Completion.lean`):
+
+```lean
+def setup : SetupM Unit := do
+  defineSource (.ofTexts "picks" "pick" #["wq", "edit", "w"])
+```
+
+`defineSource` registers a source for this config; a prompt asked with
+`.named "picks"` lists what it answers (`prompt`, `Editor/Api.lean`). Config's
+source of a compiled source's name is used in that one's place until a
+reload drops it. A `setup` that defines a source name twice is refused
+(`Config.Registrations.sourceTwice`).
 
 Config defines segments of the mode line and lists them for each side
 (`Editor/ModeLine.lean`):
@@ -415,6 +430,9 @@ inductive SetupRequest where
   /-- Give one project its own commands and settings for a mode
   (`Compile.ProjectCommands`). -/
   | projectCommands (entry : Compile.ProjectCommands)
+  /-- Register `source` as a completion source, by its name
+  (`Editor/Completion.lean`). -/
+  | source (source : Completion.Source)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -444,6 +462,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .language _ => Unit
   | .compileContribution _ => Unit
   | .projectCommands _ => Unit
+  | .source _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -562,6 +581,14 @@ can then name it (`useTheme`), and the command that loads a theme lists it.
 The editor refuses the `setup` for a theme name defined twice. -/
 def defineTheme (name : String) (theme : Theme) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.theme { name, theme }))
+
+/-- Registers `source` as a completion source, for this config, under its
+name: a prompt that asks for that name lists what it answers
+(`Editor/Completion.lean`). Config's source of a compiled source's name is
+used in that one's place. The editor refuses the `setup` for a source name
+defined twice. -/
+def defineSource (source : Completion.Source) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.source source))
 
 /-- Names the theme called `name` as the one in force once the config is
 installed: the compiled theme of that name, or one this `setup` defines.

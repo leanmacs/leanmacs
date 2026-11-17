@@ -89,7 +89,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   nothing: the loop gives up the minibuffer's markers and text once the
   command has run to its end.
 - **An open prompt's candidates are set by one request, and its choice is
-  moved by another**: `setCandidates`, with the strings, and
+  moved by another**: `setCandidates`, with the candidates, and
   `chooseCandidate`, with a step (`Editor/State.lean`, "Prompts"). Each is
   refused with a `PromptRefusal`, `notOpen`, when no prompt is open. The
   listing has no request: the loop makes it, between a command and the
@@ -304,7 +304,7 @@ inductive StateRequest where
   receives, or with `none` for a prompt that is cancelled. -/
   | closePrompt (answer : Option String)
   /-- Replace the open prompt's candidates with `all`. -/
-  | setCandidates (all : Array String)
+  | setCandidates (all : Array Completion.Candidate)
   /-- Move the open prompt's choice by `step` through its listing. -/
   | chooseCandidate (step : Candidates.Step)
   /-- Have the window `view` keep `wanted` as its wanted column, or none. -/

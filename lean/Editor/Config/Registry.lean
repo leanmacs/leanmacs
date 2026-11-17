@@ -42,8 +42,8 @@ whole of it: the registrations, or the message the `setup` is refused with.
 A `setup` is refused when it declares a store name twice, registers a
 command name twice or a job name twice, sets a face twice, defines a theme
 twice or names one twice, binds a key sequence twice or binds no keys,
-binds an ex name twice, or registers a command over a store it does not
-declare
+binds an ex name twice, defines a completion source twice, or registers a
+command over a store it does not declare
 (`Registrations.problem?`). So one owner's entries have different names, and
 the number of commands a config registers is the number of names it can be
 run by. Two owners may still register one name: a lookup then finds the
@@ -190,6 +190,22 @@ twice, or that gives project commands twice for one project and mode, or
 names a command twice in them, is refused (`Registrations.problem?`); one
 with no marker is refused by `compileContribution` itself.
 
+## Sources
+
+A completion source (`Completion.Source`, `Editor/Completion.lean`) is held
+by owner like a theme, in a `SourceEntry`, and replaced as a set
+(`replaceSources`). The latest entry of a name is the one found (`source?`),
+so config's source of a compiled source's name is used in its place until a
+reload drops it. Compiled code registers the shipped sources (through
+`Headless.Collaborators.sources`); `setup` registers more with
+`defineSource` (`Editor/Setup.lean`). The loop is told the lookup
+(`registered`, `Loop.Registered.sources`), and runs the source a prompt
+names inside the asking command (`StateRequest.askSource`,
+`Editor/Command/Dispatch.lean`).
+
+A `setup` that defines a source name twice is refused
+(`Registrations.sourceTwice`).
+
 ## Compiled commands
 
 Compiled code is an owner too (`Owner.compiled`). A host registers its
@@ -318,6 +334,14 @@ structure ContributionEntry where
   /-- The contribution. -/
   contribution : Compile.Contribution
 
+/-- A source entry of the registry: a completion source and who registered
+it. -/
+structure SourceEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The source. -/
+  source : Completion.Source
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -326,7 +350,8 @@ structure FaceEntry where
   definition : FaceDefinition
 
 /-- The editor's table of commands, of jobs, of key bindings, of modes, of
-ex bindings, of faces, of themes and of segments, oldest entry first. -/
+ex bindings, of faces, of themes, of segments and of completion sources,
+oldest entry first. -/
 structure Registry where
   /-- The command entries. -/
   entries : Array Entry := #[]
@@ -378,8 +403,22 @@ it did not, which a host reads as `auto`. -/
   /-- Config's project commands (`projectCommands`, `Editor/Setup.lean`), in
   the order it gave them. -/
   projectCommands : Array Compile.ProjectCommands := #[]
+  /-- The completion source entries ("Sources", in the module docs). -/
+  sources : Array SourceEntry := #[]
 
 namespace Registry
+
+/-- `registry` with every source entry of `owner` removed and `sources`
+added as its source entries, in their order. -/
+def replaceSources (registry : Registry) (owner : Owner) (sources : Array Completion.Source) :
+    Registry :=
+  { registry with
+    sources := registry.sources.filter (·.owner != owner) ++ sources.map fun source => { owner, source } }
+
+/-- The completion source registered under `name`: the latest entry of that
+name. -/
+def source? (registry : Registry) (name : String) : Option Completion.Source :=
+  (registry.sources.findRev? (·.source.name == name)).map (·.source)
 
 /-- `registry` with every contribution entry of `owner` removed and
 `contributions` added as its entries, in their order. -/
@@ -635,7 +674,9 @@ config's workspace roots and the config generation, for the finder;
 config's display rules, for a command that displays a buffer; config's
 shell time limit, for `:!`; the language table (`languageTable`), for a
 file's open and a mode's entry; and the compile contributions and config's
-project commands (`compileHook`), for the compile mode. Which command a
+project commands (`compileHook`), for the compile mode; and the
+completion source registered under a name (`source?`), for a prompt that
+asks for it. Which command a
 name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
@@ -647,7 +688,8 @@ def registered (registry : Registry) : Loop.Registered :=
     autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
     generation := registry.generation, displayRules := registry.displayRules
     shellTimeLimit := registry.shellTimeLimit, syntaxRefreshDelay := registry.syntaxRefreshDelay
-    languages := registry.languageTable, compile := registry.compileHook }
+    languages := registry.languageTable, compile := registry.compileHook
+    sources := registry.source? }
 
 end Registry
 
@@ -715,6 +757,8 @@ they were made: one at most, in a `setup` that is not refused. -/
   contributions : Array Compile.Contribution := #[]
   /-- The project commands, in the order they were given. -/
   projectCommands : Array Compile.ProjectCommands := #[]
+  /-- The completion sources, in the order they were defined. -/
+  sources : Array Completion.Source := #[]
 
 namespace Registrations
 
@@ -809,6 +853,7 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with contributions := collected.contributions.push contribution })
   | .projectCommands entry, collected =>
     ((), { collected with projectCommands := collected.projectCommands.push entry })
+  | .source source, collected => ((), { collected with sources := collected.sources.push source })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -844,6 +889,11 @@ def projectCommandsTwice (mode : String) (project : Project.Identity) : String :
 def projectCommandTwice (mode : String) (project : Project.Identity) (name : String) : String :=
   s!"the project commands of `{mode}` for {project.describe} name the command `{name}` twice"
 
+/-- What a `setup` that defines the completion source `name` twice is
+refused with. -/
+def sourceTwice (name : String) : String :=
+  s!"the completion source `{name}` is registered twice"
+
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
   for index in [0:items.size] do
@@ -860,9 +910,9 @@ twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen t
 no keys, an ex name bound twice, the process environment set twice,
 auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a compile contribution registered twice or naming a command twice, project commands given twice for one project and mode or naming a command twice, a command over a store that is not declared, a mode name defined twice, a
 mode with a problem under any scheme (`Mode.problems`), of which the first
-is named, a language name defined twice, or a language with a pattern no
+is named, a language name defined twice, a language with a pattern no
 file name can be meant by (`Language.problems`), of which the first is
-named.
+named, or a completion source defined twice (`sourceTwice`).
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
@@ -943,6 +993,8 @@ def problem? (collected : Registrations) : Option String := do
   for language in collected.languages do
     if let some problem := language.problems.head? then
       return s!"the language `{language.name}` cannot be meant: {problem}"
+  if let some name := repeated? (collected.sources.map (·.name)) then
+    return sourceTwice name
   none
 
 /-- What `setup` registers, or the message it is refused with: the one it
