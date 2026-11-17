@@ -512,8 +512,8 @@ An *excerpt text* is a text made of ranges of other texts, its *sources*
   or placed as a selection is kept as it was.
 - **It is caught up at every request that names it**: every request whose
   text, or whose source of a question, a snapshot, a copy or an edit script,
-  is the excerpt text, before the request is answered, but for the edits
-  refused below. When a source has an edit since the excerpt text last read
+  is the excerpt text, before the request is answered or refused, but for
+  the edits refused below. When a source has an edit since the excerpt text last read
   it, what changed in each excerpt of it is applied as one edit: one revision
   more and one entry of its log, however many sources moved and however many
   edits each made, with every marker of the excerpt text moved. What changed

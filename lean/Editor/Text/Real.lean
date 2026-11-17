@@ -51,7 +51,11 @@ added to the table only once the library accepts the list, so a refused list
 makes no text. The library catches it up whenever it is read, and refuses its
 edits: a refused edit or trace of it is told from a bad range by asking the
 library whether it is an excerpt document (`RealTexts.badRangeOf`), and an
-edit script is refused for one before the source is read.
+edit script is refused for one before the source is read. Any other request
+the binding refuses itself, before it reaches the library (a marker id with
+no number for the text's document, a revision no word holds), catches an
+excerpt text up first (`RealTexts.catchUp`), as the port says every request
+that names one does.
 
 A text's markers are the library's: the binding keeps no table of them,
 because a marker's id is its text and the library's number for it within
@@ -202,6 +206,15 @@ for an excerpt document, whose edits and traces are all refused, and
 def badRangeOf (document : Ffi.Document) : IO TextError :=
   return if ← document.isExcerpts then .excerpted else .badRange
 
+/-- Catches `document` up with its sources when it is an excerpt document, by
+taking a snapshot of it, which locks it, and nothing otherwise. A request
+that names an excerpt text catches it up before it is answered, refused
+edits and traces aside, so a request refused here before it reaches the
+library calls this first. -/
+def catchUp (document : Ffi.Document) : IO Unit := do
+  if ← document.isExcerpts then
+    discard document.snapshot
+
 /-- The library's answer to an edit of the text `id`, replacing its bytes
 from `start` up to `stop` by `s`.
 
@@ -307,10 +320,15 @@ def markerWord? (id : TextId) (held : MarkerId) : Option UInt64 :=
   | none => none
 
 /-- The library's answer to reading the marker `held` of the text `id`. An
-id with no number for that text's document names no marker. -/
+id with no number for that text's document names no marker; an excerpt text
+is caught up first (`catchUp`). -/
 def markerAt (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextError Marker) := do
   let some document ← document? id | return .error .noSuchText
-  let some number := markerWord? id held | return .error .noSuchMarker
+  let some number := markerWord? id held
+    |
+    do
+      catchUp document
+      return .error .noSuchMarker
   let some found ← document.marker number | return .error .noSuchMarker
   return .ok (markerOf found)
 
@@ -318,27 +336,35 @@ def markerAt (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextE
 the text `id`. The order of the refusals is the library's. An id with no
 number for that text's document names no marker; the library refuses a
 selection that is none before it looks an id up, so that is said here first
-for such an id. -/
+for such an id, after an excerpt text is caught up (`catchUp`). -/
 def place (id : TextId) (held : MarkerId) (next : Marker) :
     StateT RealTexts IO (Except TextError Unit) := do
   let some document ← document? id | return .error .noSuchText
   let some number := markerWord? id held
     |
-    match next with
-    | .selection ranges =>
-      return .error (if ranges.primary < ranges.ranges.size then .noSuchMarker else .badSelection)
-    | .anchor _ =>
-      return .error .noSuchMarker
+    do
+      catchUp document
+      match next with
+      | .selection ranges =>
+        return .error (if ranges.primary < ranges.ranges.size then .noSuchMarker else .badSelection)
+      | .anchor _ =>
+        return .error .noSuchMarker
   match ← document.place number (marker next) with
   | .ok () =>
     return .ok ()
   | .error refusal =>
     return .error (markRefusal refusal)
 
-/-- The library's answer to giving up the marker `held` of the text `id`. -/
+/-- The library's answer to giving up the marker `held` of the text `id`. An
+id with no number for that text's document names no marker; an excerpt text
+is caught up first (`catchUp`). -/
 def unmark (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextError Unit) := do
   let some document ← document? id | return .error .noSuchText
-  let some number := markerWord? id held | return .error .noSuchMarker
+  let some number := markerWord? id held
+    |
+    do
+      catchUp document
+      return .error .noSuchMarker
   if ← document.unmark number then
     return .ok ()
   return .error .noSuchMarker
@@ -386,10 +412,13 @@ def attribution (piece : Ffi.Attribution) : Attribution where
 The port's revisions and offsets are `Nat` and the library's are machine
 words. A revision no word holds is one no text has reached, and an offset no
 word holds is past the end of any text, so each is refused here as that:
-converted, it would wrap round to one the library might answer. -/
+converted, it would wrap round to one the library might answer. Such a
+revision is refused after an excerpt text is caught up (`catchUp`); a trace
+of one catches nothing up. -/
 def answerLog (document : Ffi.Document) : (query : LogQuery) → IO (Except TextError query.Answer)
   | .since revision => do
     unless revision < UInt64.size do
+      catchUp document
       return .error .unknownRevision
     match ← document.changesSince revision.toUInt64 with
     | .ok patch =>
@@ -409,10 +438,12 @@ def answerLog (document : Ffi.Document) : (query : LogQuery) → IO (Except Text
     return .ok (trace.map attribution)
 
 /-- The library's answer to forgetting the log of the text `id` up to
-`revision`. A revision no word holds is one no text has reached. -/
+`revision`. A revision no word holds is one no text has reached, refused
+after an excerpt text is caught up (`catchUp`). -/
 def forget (id : TextId) (revision : Nat) : StateT RealTexts IO (Except TextError Unit) := do
   let some document ← document? id | return .error .noSuchText
   unless revision < UInt64.size do
+    catchUp document
     return .error .unknownRevision
   if ← document.forget revision.toUInt64 then
     return .ok ()
@@ -442,13 +473,15 @@ def applyInverse (id : TextId) (first last : Nat) (origin : Origin) :
 
 /-- The library's answer to dropping the inverses the text `id` keeps for
 its revisions from `first` to `last`. A last revision no word holds is one
-no text has reached. A first one no word holds is sent as the largest word
-(`word`), which is after any last the library accepts, so nothing is
-dropped: what a run whose first is after its last drops. -/
+no text has reached, refused after an excerpt text is caught up (`catchUp`).
+A first one no word holds is sent as the largest word (`word`), which is
+after any last the library accepts, so nothing is dropped: what a run whose
+first is after its last drops. -/
 def dropInverses (id : TextId) (first last : Nat) : StateT RealTexts IO (Except TextError Unit) :=
   do
   let some document ← document? id | return .error .noSuchText
   unless last < UInt64.size do
+    catchUp document
     return .error .unknownRevision
   if ← document.dropInverses (word first) last.toUInt64 then
     return .ok ()

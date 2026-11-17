@@ -2612,6 +2612,18 @@ def excerpted : TextM (TextId × TextId × TextId) := do
   let text ← createExcerpts #[⟨one, 4, 8⟩, ⟨two, 0, 6⟩]
   return (one, two, text)
 
+/-- Whether `refused`, asked of the excerpt text of `excerpted` (handed its
+first source and itself) between two inserts into that source, holds and
+catches the excerpt text up first: the second insert is then a revision of
+its own, whose patch holds only that insert. -/
+def refusedCaughtUp (refused : TextId → TextId → TextM Bool) : TextM Bool := do
+  let (one, _, text) ← excerpted
+  one.insert 5 "X"
+  let refusal ← refused one text
+  one.insert 5 "Y"
+  return refusal && (← text.read) == "tYXwo\n\nalpha\n" && (← text.revision) == 3 &&
+      (← text.changesSince 2) == ⟨2, 3, #[⟨span 1 1 (0, 1) (0, 1), span 1 2 (0, 1) (0, 2)⟩]⟩
+
 /-- The properties of excerpt texts ("Excerpt texts", in the rules of the
 port). -/
 def excerptProperties : List Property :=
@@ -2773,6 +2785,32 @@ def excerptProperties : List Property :=
               ⟨1, 3, #[⟨span 4 11 (1, 0) (3, 0), span 4 10 (1, 0) (3, 0)⟩]⟩ &&
             (← one.marker ⟨one, 0⟩) == anchorAt 9 .before &&
             (← one.marker ⟨one, 1⟩) == anchorAt 13 .after },
+    { name :=
+        "a marker request with another text's marker id or one no word holds, and a patch, a forget and a drop of inverses with a revision no word holds, of an excerpt text are refused after it is caught up"
+      holds := do
+        let marker ←
+          refusedCaughtUp fun one text =>
+              refusedWith .noSuchMarker (discard <| text.marker ⟨one, 0⟩)
+        let huge ←
+          refusedCaughtUp fun _ text =>
+              refusedWith .noSuchMarker (discard <| text.marker ⟨text, 2 ^ 64⟩)
+        let place ←
+          refusedCaughtUp fun one text =>
+              refusedWith .noSuchMarker (text.place ⟨one, 0⟩ (anchorAt 0 .before))
+        let selection ←
+          refusedCaughtUp fun one text =>
+              refusedWith .badSelection (text.place ⟨one, 0⟩ (selected .exclusive #[(0, 0)] 1))
+        let unmark ←
+          refusedCaughtUp fun one text => refusedWith .noSuchMarker (text.unmark ⟨one, 0⟩)
+        let since ←
+          refusedCaughtUp fun _ text =>
+              refusedWith .unknownRevision (discard <| text.changesSince (2 ^ 64 + 1))
+        let forget ←
+          refusedCaughtUp fun _ text => refusedWith .unknownRevision (text.forget (2 ^ 64 + 1))
+        let drop ←
+          refusedCaughtUp fun _ text =>
+              refusedWith .unknownRevision (text.dropInverses 1 (2 ^ 64 + 1))
+        return marker && huge && place && selection && unmark && since && forget && drop },
     { name :=
         "an insert, a delete, a transaction, an inverse, an edit script and a trace of an excerpt text are refused with excerpted, first, change nothing and catch nothing up"
       holds := do
