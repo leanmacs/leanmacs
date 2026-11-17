@@ -244,6 +244,36 @@ A `setup` that defines a style name twice is refused
 (`Registrations.styleTwice`), and so is one that chooses the style of one
 category, or the default, twice (`Registrations.styleChosenTwice`).
 
+## Displays
+
+A completion display (`Completion.Display`, `Editor/Completion/Display.lean`)
+is held by owner like a style, in a `DisplayEntry`, and replaced as a set
+(`replaceDisplays`). The latest entry of a name is the one found
+(`display?`), so config's display of a shipped display's name is used in
+its place until a reload drops it: that is how config sets the rows the
+minibuffer's list shows, with `defineDisplay (Completion.Displays.minibuffer
+(rows := n))`. Every host registers the shipped display, `minibuffer`, for
+the owner `compiled` (`Headless.Collaborators.displays`); `setup` registers
+more with `defineDisplay` (`Editor/Setup.lean`).
+
+Which display a prompt is shown with is config's choice, by category, with
+a default for the rest (`useDisplayFor`, `useDisplay`): the choices are
+config's alone, set by each install (`displayChoices`). `displayEntry`
+resolves them as `styleEntry` does: the entry of the display chosen for the
+category when one is registered under that name, else the chosen
+default's, else the display registered under `minibuffer`, else the
+compiled minibuffer display, for a registry where none is. A chosen name no
+display is registered under is reported at install (`unknownDisplays`,
+`Report.unknownDisplays`, `Editor/Config/Reload.lean`). `displaying` hands
+the loop the result. A display runs only inside the publish and is looked
+up for every step, so no code of an old config runs after an install, and
+no owner is needed: unlike a style's match job, nothing of a display
+outlives the step.
+
+A `setup` that defines a display name twice is refused
+(`Registrations.displayTwice`), and so is one that chooses the display of
+one category, or the default, twice (`Registrations.displayChosenTwice`).
+
 ## Compiled commands
 
 Compiled code is an owner too (`Owner.compiled`). A host registers its
@@ -388,6 +418,14 @@ structure StyleEntry where
   /-- The style. -/
   style : Completion.Style
 
+/-- A display entry of the registry: a completion display and who
+registered it. -/
+structure DisplayEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The display. -/
+  display : Completion.Display
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -457,6 +495,13 @@ it did not, which a host reads as `auto`. -/
   `Editor/Setup.lean`), each a category, or `none` for the default, and a
   style's name, in the order it made them: set at every install. -/
   styleChoices : Array (Option String × String) := #[]
+  /-- The completion display entries ("Displays", in the module docs). -/
+  displays : Array DisplayEntry := #[]
+  /-- Config's choices of completion display (`useDisplay`,
+  `useDisplayFor`, `Editor/Setup.lean`), each a category, or `none` for the
+  default, and a display's name, in the order it made them: set at every
+  install. -/
+  displayChoices : Array (Option String × String) := #[]
 
 namespace Registry
 
@@ -517,6 +562,50 @@ chosen, each once. -/
 def unknownStyles (registry : Registry) : Array String :=
   ((registry.styleChoices.map (·.2)).filter fun name =>
       (registry.style? name).isNone).toList.eraseDups.toArray
+
+/-- `registry` with every display entry of `owner` removed and `displays`
+added as its display entries, in their order. -/
+def replaceDisplays (registry : Registry) (owner : Owner) (displays : Array Completion.Display) :
+    Registry :=
+  { registry with
+    displays :=
+      registry.displays.filter (·.owner != owner) ++
+        displays.map fun display => { owner, display } }
+
+/-- The completion display registered under `name`: the latest entry of
+that name. -/
+def display? (registry : Registry) (name : String) : Option Completion.Display :=
+  (registry.displays.findRev? (·.display.name == name)).map (·.display)
+
+/-- The display entry a prompt of `category` (`none` for one with no
+category) is shown with ("Displays", in the module docs): the latest entry
+registered under the name config chose for the category, when one is; else
+under the name chosen for the default, when one is; else under
+`minibuffer`, so config's display of that name is used in the shipped
+one's place; else, for a registry where none is, the compiled minibuffer
+display, as compiled's. `styleEntry`'s rule. -/
+def displayEntry (registry : Registry) (category : Option String) : DisplayEntry :=
+  let named (name : String) : Option DisplayEntry :=
+    registry.displays.findRev? (·.display.name == name)
+  let chosen (category : Option String) : Option DisplayEntry :=
+    (registry.displayChoices.find? (·.1 == category)).bind fun (_, name) => named name
+  ((category.bind fun category => chosen (some category)) <|>
+        chosen none <|> named Completion.Displays.minibuffer.name).getD
+    { owner := .compiled, display := Completion.Displays.minibuffer }
+
+/-- The displays a prompt is shown with ("Displays", in the module docs):
+the default is the entry's for no category, and a category's the entry's
+for it, which is the default's when config chose nothing for it
+(`displayEntry`). -/
+def displaying (registry : Registry) : Completion.Displaying :=
+  { default := (registry.displayEntry none).display
+    byCategory := fun category => some (registry.displayEntry (some category)).display }
+
+/-- The names config chose that no display is registered under, in the
+order chosen, each once. -/
+def unknownDisplays (registry : Registry) : Array String :=
+  ((registry.displayChoices.map (·.2)).filter fun name =>
+      (registry.display? name).isNone).toList.eraseDups.toArray
 
 /-- The names of the completion sources registered in `category`: each name
 once, in the order it was first registered, kept only when its latest
@@ -874,6 +963,13 @@ they were made: one at most, in a `setup` that is not refused. -/
   category, or the default, once at most in a `setup` that is not
   refused. -/
   styleChoices : Array (Option String × String) := #[]
+  /-- The completion displays, in the order they were defined. -/
+  displays : Array Completion.Display := #[]
+  /-- The choices of completion display (`useDisplay`, `useDisplayFor`),
+  each a category, or `none` for the default, and a display's name, in
+  order: a category, or the default, once at most in a `setup` that is not
+  refused. -/
+  displayChoices : Array (Option String × String) := #[]
 
 namespace Registrations
 
@@ -972,6 +1068,10 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .style style, collected => ((), { collected with styles := collected.styles.push style })
   | .useStyle category name, collected =>
     ((), { collected with styleChoices := collected.styleChoices.push (category, name) })
+  | .display display, collected =>
+    ((), { collected with displays := collected.displays.push display })
+  | .useDisplay category name, collected =>
+    ((), { collected with displayChoices := collected.displayChoices.push (category, name) })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -1023,6 +1123,17 @@ def styleChosenTwice : Option String → String
   | some category => s!"the completion style of `{category}` is chosen twice"
   | none => "the default completion style is chosen twice"
 
+/-- What a `setup` that defines the completion display `name` twice is
+refused with. -/
+def displayTwice (name : String) : String :=
+  s!"the completion display `{name}` is registered twice"
+
+/-- What a `setup` that chooses the completion display of `category` twice,
+or with `none` the default display twice, is refused with. -/
+def displayChosenTwice : Option String → String
+  | some category => s!"the completion display of `{category}` is chosen twice"
+  | none => "the default completion display is chosen twice"
+
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
   for index in [0:items.size] do
@@ -1042,8 +1153,10 @@ mode with a problem under any scheme (`Mode.problems`), of which the first
 is named, a language name defined twice, a language with a pattern no
 file name can be meant by (`Language.problems`), of which the first is
 named, a completion source defined twice (`sourceTwice`), a completion
-style defined twice (`styleTwice`), or the style of a category, or the
-default style, chosen twice (`styleChosenTwice`).
+style defined twice (`styleTwice`), the style of a category, or the
+default style, chosen twice (`styleChosenTwice`), a completion display
+defined twice (`displayTwice`), or the display of a category, or the
+default display, chosen twice (`displayChosenTwice`).
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
@@ -1130,6 +1243,10 @@ def problem? (collected : Registrations) : Option String := do
     return styleTwice name
   if let some category := repeated? (collected.styleChoices.map (·.1)) then
     return styleChosenTwice category
+  if let some name := repeated? (collected.displays.map (·.name)) then
+    return displayTwice name
+  if let some category := repeated? (collected.displayChoices.map (·.1)) then
+    return displayChosenTwice category
   none
 
 /-- What `setup` registers, or the message it is refused with: the one it

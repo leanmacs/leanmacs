@@ -20,8 +20,8 @@ the model tests run it with outcomes built by hand
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the chunks, replaces the config's entries in the registry,
   commands, jobs, key bindings, modes, ex bindings, faces, themes,
-  segments, languages, compile contributions, completion sources and
-  completion styles
+  segments, languages, compile contributions, completion sources,
+  completion styles and completion displays
   (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
   `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
   `Registry.replaceThemes`, `Registry.replaceSegments`,
@@ -72,6 +72,20 @@ the model tests run it with outcomes built by hand
   says after the segments' sentences. The host resolves the choices over
   the registry for each step (`Registry.matching`, `Headless.keys`). A
   rejected outcome changes none of it.
+- **The completion displays follow the registry and config's choices**, as
+  the styles do. An install replaces config's displays and sets its
+  choices, none for a config that chooses none, so a reload that chooses
+  none goes back to the minibuffer display for every prompt. A chosen name
+  no display is registered under leaves its category to the default, and
+  the default to the minibuffer display, and the report names it
+  (`Report.unknownDisplays`), which the echo area says after the styles'
+  sentences. The host resolves the choices over the registry for each step
+  and for every publish (`Registry.displaying`, `Headless.Running.keys`), so
+  the scene the install itself publishes draws an open prompt's list with
+  the new config's display. A display runs only inside the publish, on the
+  editor thread, and the state keeps only what it answered, so no code of
+  the old config runs after the install. A rejected outcome changes none of
+  it.
 - **The frame padding follows config.** An install sets the padding in
   force (`State.framePadding`) to the one the config set, or none for the
   editor's 8 (`Loop.padding`), so a reload that sets none goes back to it.
@@ -180,6 +194,10 @@ structure Report where
   registered under, in order, each once: their categories fall to the
   default, and the default to the fuzzy style. -/
   unknownStyles : Array String := #[]
+  /-- The completion display names the installed config chose that no
+  display is registered under, in order, each once: their categories fall
+  to the default, and the default to the minibuffer display. -/
+  unknownDisplays : Array String := #[]
   /-- What is said of each display rule of the installed config whose target
   the layout it chose lacks, in order (`Report.leftOut`): those rules are
   left out, and the rest are kept. -/
@@ -195,11 +213,12 @@ error, `reload: <source>:<line>:<column>: error: ` and the first line of its
 message, then ` (and <n> more)` when it has more errors; for one rejected
 with no error to name, `reload: rejected`. A reload that installs says
 nothing, so a working config does not cover what a command said, unless its
-config named a theme, listed segments or chose completion styles nobody
-registered, or made display rules whose targets do not exist: then
-`reload: ` and the sentences, `Theme.unknown`'s, then each
-`ModeLine.unknown`, then each `Completion.Styles.unknown` and then each
-rule left out (`unusableRules`), joined by `; `. The whole report is the host's to
+config named a theme, listed segments or chose completion styles or
+displays nobody registered, or made display rules whose targets do not
+exist: then `reload: ` and the sentences, `Theme.unknown`'s, then each
+`ModeLine.unknown`, then each `Completion.Styles.unknown`, then each
+`Completion.Displays.unknown` and then each rule left out
+(`unusableRules`), joined by `; `. The whole report is the host's to
 print. -/
 def Report.echo (report : Report) : Option String :=
   if report.installed then
@@ -207,6 +226,7 @@ def Report.echo (report : Report) : Option String :=
       report.unknownTheme.toArray.map Theme.unknown ++
         report.unknownSegments.map ModeLine.unknown ++
         report.unknownStyles.map Completion.Styles.unknown ++
+        report.unknownDisplays.map Completion.Displays.unknown ++
         report.unusableRules
     if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"
   else
@@ -356,7 +376,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         chunks := built.chunks,
         registry :=
           {
-            (((((((((((state.registry.replace .config built.registrations.commands).replaceJobs
+            ((((((((((((state.registry.replace .config built.registrations.commands).replaceJobs
                                                       .config
                                                       built.registrations.jobs).replaceBindings
                                                   .config built.registrations.bindings).replaceModes
@@ -369,8 +389,11 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
                       .config built.registrations.contributions).replaceSources
                   .config built.registrations.sources).replaceStyles
               .config
-              built.registrations.styles with
+              built.registrations.styles).replaceDisplays
+              .config
+              built.registrations.displays with
             styleChoices := built.registrations.styleChoices
+            displayChoices := built.registrations.displayChoices
             environment := built.registrations.environment
             autoReload := built.registrations.autoReload.back?.getD false
             workspaceRoots := built.registrations.workspaceRoots
@@ -385,13 +408,14 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
     let modeLine := built.registrations.modeLine
     let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
     let unknownStyles := state.registry.unknownStyles
+    let unknownDisplays := state.registry.unknownDisplays
     ({ state with
         themeName, modeLine, framePadding := built.registrations.framePadding
         layout := built.registrations.layout, tabBar := built.registrations.tabBar
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments
-        unknownStyles, unusableRules })
+        unknownStyles, unknownDisplays, unusableRules })
 
 /-- The appearance the window is to be asked for, and the state that
 remembers it: when the window is open and the paper of the theme now in

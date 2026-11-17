@@ -3042,6 +3042,42 @@ def setupChecks : List Check :=
               "the default completion style is chosen twice" &&
             refusal apart == none) },
     { name :=
+        "a setup's completion displays and its choices of them are collected in the order it made them; one that defines two displays under one name, or chooses the display of one category or the default twice, is refused with exactly the reason that names it"
+      run :=
+        let setup : SetupM Unit := do
+          defineDisplay (Completion.Display.plain "plain")
+          useDisplayFor "pick" "plain"
+          useDisplay "minibuffer"
+          defineDisplay (Completion.Displays.minibuffer (rows := 3))
+        let twice : SetupM Unit := do
+          defineDisplay (Completion.Display.plain "plain")
+          defineDisplay (Completion.Display.plain "plain")
+        let pickTwice : SetupM Unit := do
+          useDisplayFor "pick" "a"
+          useDisplayFor "pick" "b"
+        let defaultTwice : SetupM Unit := do
+          useDisplay "a"
+          useDisplay "b"
+        let apart : SetupM Unit := do
+          useDisplayFor "pick" "a"
+          useDisplay "a"
+        pure
+          ((match Config.Registrations.ofSetup setup with
+            | .ok collected =>
+              collected.displays.map (·.name) == #["plain", "minibuffer"] &&
+                collected.displayChoices == #[(some "pick", "plain"), (none, "minibuffer")]
+            | .error _ => false) &&
+            refusal twice == some (Config.Registrations.displayTwice "plain") &&
+            Config.Registrations.displayTwice "plain" ==
+              "the completion display `plain` is registered twice" &&
+            refusal pickTwice == some (Config.Registrations.displayChosenTwice (some "pick")) &&
+            refusal defaultTwice == some (Config.Registrations.displayChosenTwice none) &&
+            Config.Registrations.displayChosenTwice (some "pick") ==
+              "the completion display of `pick` is chosen twice" &&
+            Config.Registrations.displayChosenTwice none ==
+              "the default completion display is chosen twice" &&
+            refusal apart == none) },
+    { name :=
         "a setup's segments are collected in the order it defined them, with the mode line it lists; a setup that defines and lists none has none"
       run :=
         let setup : SetupM Unit := do
@@ -3696,6 +3732,38 @@ def registryChecks : List Check :=
             empty.owner == .compiled &&
             empty.style.name == Completion.Styles.fuzzy.name &&
             hitsOf empty.style == #[]) },
+    { name :=
+        "the displaying follows config's choices over the registered displays: a category's chosen display, the chosen default for a category with none, and the minibuffer display with no choice; config's display named minibuffer is used in the shipped one's place, so it sets the rows, until config's displays are replaced; a choice of a name nobody registered falls to the default and is reported once; with no entry, the compiled minibuffer display"
+      run :=
+        let shipped : Config.Registry :=
+          ({} : Config.Registry).replaceDisplays .compiled Completion.Displays.shipped
+        let plain := Completion.Display.plain "plain"
+        let chosen : Config.Registry :=
+          { shipped.replaceDisplays .config #[plain] with displayChoices := #[(some "pick", "plain")] }
+        let defaulted : Config.Registry :=
+          { shipped.replaceDisplays .config #[plain] with displayChoices := #[(none, "plain")] }
+        let three := shipped.replaceDisplays .config #[Completion.Displays.minibuffer 3]
+        let unknown : Config.Registry :=
+          { shipped with
+            displayChoices := #[(some "pick", "nope"), (some "other", "nope"), (none, "gone")] }
+        let showing : Completion.Showing :=
+          { listed := (Array.range 15).map fun index => .of (.ofText s!"c{index}") }
+        let nameOf (registry : Config.Registry) (category : Option String) : String :=
+          (registry.displaying.displayFor category).name
+        let rowsOf (registry : Config.Registry) (category : Option String) : Nat :=
+          ((registry.displaying.displayFor category).sheet showing).rows.size
+        pure
+          (nameOf chosen (some "pick") == "plain" && nameOf chosen (some "other") == "minibuffer" &&
+            nameOf chosen none == "minibuffer" && nameOf defaulted (some "pick") == "plain" &&
+            nameOf defaulted none == "plain" && rowsOf chosen (some "pick") == 15 &&
+            rowsOf shipped none == Completion.Displays.rows && rowsOf three none == 3 &&
+            rowsOf three (some "pick") == 3 && (three.displayEntry none).owner == .config &&
+            rowsOf (three.replaceDisplays .config #[]) none == Completion.Displays.rows &&
+            nameOf {} none == "minibuffer" && rowsOf {} none == Completion.Displays.rows &&
+            (({} : Config.Registry).displayEntry none).owner == .compiled &&
+            nameOf unknown (some "pick") == "minibuffer" &&
+            unknown.unknownDisplays == #["nope", "gone"] && chosen.unknownDisplays == #[] &&
+            (three.display? "minibuffer").isSome && (({} : Config.Registry).display? "plain").isNone) },
     { name :=
         "completion sources are held by owner and replaced as a set: the latest entry of a name is the one found, config's source of a compiled source's name while config registers it and the compiled one again once it does not; the loop is told what the lookup answers"
       run :=
@@ -4371,6 +4439,38 @@ def reloadChecks : List Check :=
             kept.registry.styleChoices == state.registry.styleChoices &&
             (owned.registry.matching.styleFor none).name == "mine" &&
             (owned.registry.style? "mine").isSome) },
+    { name :=
+        "an install sets config's display choices and replaces its displays; its report names each chosen display nobody registered, which the echo area says after the styles' sentences; a later install that chooses none clears them, and a rejected one changes nothing"
+      run :=
+        let shown : Config.State Elaborated :=
+          { themed with
+            registry := themed.registry.replaceDisplays .compiled Completion.Displays.shipped }
+        let choosing : SetupM Unit := do
+          useDisplayFor "pick" "minibuffer"
+          useDisplay "nope"
+        let both : SetupM Unit := do
+          useStyle "gone"
+          useDisplay "nope"
+        let own : SetupM Unit := do
+          defineDisplay (Completion.Display.plain "plain")
+          useDisplay "plain"
+        let (state, _) := reduceFrom shown [.requested, .finished (accepted ["a"] choosing)]
+        let report := reportFrom shown (accepted ["a"] choosing)
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        let (owned, _) := reduceFrom shown [.requested, .finished (accepted ["a"] own)]
+        pure
+          (state.registry.displayChoices == #[(some "pick", "minibuffer"), (none, "nope")] &&
+            report.unknownDisplays == #["nope"] &&
+            report.echo == some "reload: no completion display is registered under `nope`" &&
+            (reportFrom shown (accepted ["a"] both)).echo ==
+              some
+                "reload: no completion style is registered under `gone`; no completion display is registered under `nope`" &&
+            dropped.registry.displayChoices == #[] &&
+            (reportFrom state (accepted ["a"] (pure ()))).unknownDisplays == #[] &&
+            kept.registry.displayChoices == state.registry.displayChoices &&
+            (owned.registry.displaying.displayFor none).name == "plain" &&
+            (owned.registry.display? "plain").isSome) },
     { name :=
         "a config's segments are replaced at every install: one it defines can be listed, and is gone once a reload no longer defines it"
       run :=

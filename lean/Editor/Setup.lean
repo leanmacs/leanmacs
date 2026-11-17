@@ -2,6 +2,7 @@ import Editor.Command.Call
 import Editor.Compile.Contribution
 import Editor.Completion
 import Editor.Completion.Later
+import Editor.Completion.Displays
 import Editor.Completion.Styles
 import Editor.DisplayRules
 import Editor.Ex.Line
@@ -136,7 +137,9 @@ could never run), a key sequence bound twice (the first binding could never
 run), an ex name bound twice, a store name declared twice, a theme defined
 twice or named twice, a segment defined twice, the mode line listed twice,
 a completion source defined twice, a completion style defined twice, the
-style of one category or the default style chosen twice,
+style of one category or the default style chosen twice, a completion
+display defined twice, the display of one category or the default display
+chosen twice,
 a command over a store the `setup`
 does not declare, a mode name defined twice, or a mode that cannot be meant
 under any scheme (`Mode.problems`: a role that is not registered, a suffix
@@ -227,6 +230,33 @@ refused: it is looked up at install, the category falls to the default
 is refused (`Config.Registrations.styleTwice`), and so is one that
 chooses the style of one category, or the default, twice
 (`Config.Registrations.styleChosenTwice`).
+
+Config registers completion displays by name and chooses one for each
+category, with a default for the rest (`Editor/Completion/Display.lean`),
+as it does styles:
+
+```lean
+def setup : SetupM Unit := do
+  defineDisplay (Completion.Displays.minibuffer (rows := 15))
+  defineDisplay (Completion.Display.plain "plain")
+  useDisplayFor "file" "plain"
+```
+
+`defineDisplay` registers a display for this config; the shipped display,
+`minibuffer` (`Completion.Displays.shipped`), is registered by every host.
+Config's display of a shipped name is used in its place: the first line
+above replaces the shipped `minibuffer` with one that shows at most 15
+rows, which is how config sets the most rows the minibuffer's list shows
+(10 unless it does, `Completion.Displays.rows`). `useDisplayFor category
+name` chooses the display of the prompts of `category`, and `useDisplay
+name` the default for the others; with none chosen the default is
+`minibuffer`. A name no display is registered under is not refused: it is
+looked up at install, the category falls to the default (the default to
+`minibuffer`), and the echo area says so (`Completion.Displays.unknown`).
+A `setup` that defines a display name twice is refused
+(`Config.Registrations.displayTwice`), and so is one that chooses the
+display of one category, or the default, twice
+(`Config.Registrations.displayChosenTwice`).
 
 Config defines segments of the mode line and lists them for each side
 (`Editor/ModeLine.lean`):
@@ -480,6 +510,13 @@ inductive SetupRequest where
   `category`, or, with `none`, for every prompt whose category has none
   chosen. -/
   | useStyle (category : Option String) (name : String)
+  /-- Register `display` as a completion display, by its name
+  (`Editor/Completion/Display.lean`). -/
+  | display (display : Completion.Display)
+  /-- Choose the completion display registered under `name` for the prompts
+  of `category`, or, with `none`, for every prompt whose category has none
+  chosen. -/
+  | useDisplay (category : Option String) (name : String)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -512,6 +549,8 @@ def SetupRequest.Reply : SetupRequest → Type
   | .source _ => Unit
   | .style _ => Unit
   | .useStyle .. => Unit
+  | .display _ => Unit
+  | .useDisplay .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -675,6 +714,32 @@ in the echo area. The editor refuses the `setup` for choosing one
 category's style twice. -/
 def useStyleFor (category name : String) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.useStyle (some category) name))
+
+/-- Registers `display` as a completion display, for this config, under its
+name (`Editor/Completion/Display.lean`): `useDisplay` and `useDisplayFor`
+can then choose it. Config's display of a compiled display's name is used
+in that one's place, so `defineDisplay (Completion.Displays.minibuffer
+(rows := n))` sets the rows the minibuffer's list shows. The editor refuses
+the `setup` for a display name defined twice. -/
+def defineDisplay (display : Completion.Display) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.display display))
+
+/-- Chooses the completion display registered under `name` as the default:
+the display of every prompt whose category has none chosen
+(`useDisplayFor`), and of one with no category. The name is looked up when
+the config is installed; one no display is registered under leaves the
+minibuffer display and is said in the echo area. The editor refuses the
+`setup` for choosing the default twice. -/
+def useDisplay (name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.useDisplay none name))
+
+/-- Chooses the completion display registered under `name` for the prompts
+of `category`. The name is looked up when the config is installed; one no
+display is registered under leaves the category to the default and is said
+in the echo area. The editor refuses the `setup` for choosing one
+category's display twice. -/
+def useDisplayFor (category name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.useDisplay (some category) name))
 
 /-- Names the theme called `name` as the one in force once the config is
 installed: the compiled theme of that name, or one this `setup` defines.
