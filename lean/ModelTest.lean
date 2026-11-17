@@ -16614,7 +16614,13 @@ def vimDefaultChecks : List Check :=
           [("C-w H", WindowCommands.edgeLeftName), ("C-w J", WindowCommands.edgeBottomName),
                 ("C-w K", WindowCommands.edgeTopName), ("C-w L", WindowCommands.edgeRightName)].all
             fun (text, name) =>
-            vimDefaultCommand text == some { name } && (vimDefault text).2.head? == some .nothing }]
+            vimDefaultCommand text == some { name } && (vimDefault text).2.head? == some .nothing },
+    { name :=
+        "C-w F runs the command that moves a window between the tiles and the floating layer, changing no text and entering no state"
+      run :=
+        pure <|
+          vimDefaultCommand "C-w F" == some { name := WindowCommands.floatName } &&
+            (vimDefault "C-w F").2.head? == some .nothing }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/
@@ -28816,7 +28822,69 @@ def windowCommandChecks : List Check :=
   let manual (count : Nat) (typed : String) (focus : Nat := 0) : Option EditorState :=
     windowsAfter count Layout.manual typed focus
   let edged := Layout.edge .left 25 Layout.default
+  let floatsOf (state : EditorState) : List Nat := state.frame.floats.toList.map (·.view.index)
   [{  name :=
+        "criterion 4, by key: C-w F on a stack window floats it, pinned, centred in the tiled area, focused; C-w F again puts it back at the end of the list; C-w C-w reaches the float and leaves it, which stays; C-w C-c closes it and the focus goes back to the window focused before it"
+      run :=
+        pure <|
+          let after (typed : String) : Option EditorState := windowsAfter 3 Layout.default typed 1
+          match after "C-w j C-w F", after "C-w j C-w F C-w F", after "C-w j C-w F C-w C-w",
+            after "C-w j C-w F C-w C-w C-w C-w C-w C-w", after "C-w j C-w F C-w C-c" with
+          | some floated, some back, some left, some round, some closed =>
+            windowOrder floated == ([0, 1], 2) && floatsOf floated == [2] &&
+              floated.frame.floats.map (·.pinned) == #[true] &&
+              floated.rect? ⟨2⟩ == some { x := 128, y := 116, width := 384, height := 232 } &&
+              floated.wellFormed &&
+              windowOrder back == ([0, 1, 2], 2) &&
+              floatsOf back == [] &&
+              windowOrder left == ([0, 1], 0) &&
+              floatsOf left == [2] &&
+              round.frame.focused == ⟨2⟩ &&
+              windowOrder closed == ([0, 1], 1) &&
+              floatsOf closed == [] &&
+              closed.wellFormed
+          | _, _, _, _, _ => false },
+    { name :=
+        "C-w h from a float reaches the tile wholly left of it; C-w s and C-w o from a float are refused, and the echo area says a floating window is not in the layout; C-w F on the last tile is refused, and the echo area says it cannot leave the tiles"
+      run :=
+        pure <|
+          -- Main is 30 percent wide, and the float narrowed to 10 percent
+          -- of 640 is 64 wide at 288, right of main and over the stack.
+          let narrow := Layout.masterStack { share := 30 }
+          match windowsAfter 3 narrow "C-w F 1 0 C-w < C-w h" 2,
+            windowsAfter 2 Layout.default "C-w F C-w s" 1,
+            windowsAfter 2 Layout.default "C-w F C-w o" 1,
+            windowsAfter 1 Layout.default "C-w F" with
+          | some reached, some split, some only, some last =>
+            reached.frame.focused == ⟨0⟩ && floatsOf reached == [2] &&
+              (reached.frame.floating? ⟨2⟩).map (·.share.width) == some 10 &&
+              split.echo ==
+                s!"{WindowCommands.splitName}: {(LayoutRefusal.floating ⟨1⟩).describe}" &&
+              split.echo == "window-split: a floating window is not in the layout" &&
+              only.echo == s!"{WindowCommands.onlyName}: a floating window is not in the layout" &&
+              windowOrder only == ([0], 1) &&
+              floatsOf only == [1] &&
+              last.echo == "window-float: the last tiled window cannot leave the tiles" &&
+              windowOrder last == ([0], 0)
+          | _, _, _, _ => false },
+    { name :=
+        "C-w o from main closes every other window, floats among them: a pinned float, and a transient float anchored to a tile that closes with it"
+      run :=
+        pure <|
+          let start : TextM EditorState := do
+            let state ← windowsUnder 3 Layout.default
+            withFloats { state with frame := { state.frame with chosen := some Layout.default } }
+                [(.window ⟨2⟩, false), (.frame, true)]
+          match
+            (Loop.Driver.over (windowHanded Layout.default) (fun _ => none) start
+                (.over { advance := 8, lineHeight := 16 })).toOption with
+          | none => false
+          | some driver =>
+            let only := (evilFed driver "C-w o").loop.state
+            windowOrder only == ([0], 0) && floatsOf only == [] && only.windows.size == 1 &&
+              only.echo == "" &&
+              only.wellFormed },
+    { name :=
         "criterion 3, by key: under a layout with a left edge, C-w H docks the window at the left edge, in its strip, focused; C-w l and C-w h move between it and main; C-w C-c closes it and the strip goes; docked again, C-w m makes it main; C-w H again moves it back to the end of the list"
       run :=
         pure <|

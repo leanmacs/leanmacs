@@ -20,7 +20,8 @@ scheme binds them under `C-w` (`Vim.Default.windowKeys`,
   scheme lays one out, 0 for none.
 - **Each gives up with the refusal's sentence** (`LayoutRefusal.describe`),
   so the echo area says, for the last window,
-  `window-close: the last window cannot be closed`.
+  `window-close: the last window cannot be closed`, and for a split of a
+  float `window-split: a floating window is not in the layout`.
 
 | Command | Name | What it does |
 |---|---|---|
@@ -29,12 +30,13 @@ scheme binds them under `C-w` (`Vim.Default.windowKeys`,
 | `new` | `window-new` | Splits as `split` does, then shows a new empty buffer with no file in the new window, named `scratch` or the next free name, and focuses it: Vim's `:new` and `CTRL-W n` |
 | `close` | `window-close` | Closes the window (`ViewId.close`): `CTRL-W c` |
 | `quit` | `window-quit` | Closes the window, or on the last window runs `quit` (`Ex.quitName`), which asks the editor to quit: Vim's `:quit` and `CTRL-W q` |
-| `only` | `window-only` | Closes every other window of the frame, the docked ones too, and says `already only one window` when there is none, as Vim does: `CTRL-W o`. From a window docked at an edge it gives up with `atEdge`, as Emacs refuses a side window as the only window |
+| `only` | `window-only` | Closes every other window of the frame, the docked ones and the floats too, the floats first, and says `already only one window` when there is none, as Vim does: `CTRL-W o`. From a window docked at an edge it gives up with `atEdge`, as Emacs refuses a side window as the only window, and from a float with `floating` |
 | `focusToward side` | `window-focus-left`, `-down`, `-up`, `-right` | Focuses the window `count` steps that way (`EditorState.toward?`), and does nothing when none is there, as Vim is silent at an edge: `CTRL-W h j k l` |
-| `focusCycled forward` | `window-focus-next`, `window-focus-previous` | Focuses the next or the previous window of the frame, the tiles then the docked windows, wrapping, or the Nth with a count (`EditorState.cycled`): `CTRL-W w` and `W` |
-| `focusEnd last` | `window-focus-top`, `window-focus-bottom` | Focuses the first or the last window of the frame (`Frame.all`): `CTRL-W t` and `b` |
+| `focusCycled forward` | `window-focus-next`, `window-focus-previous` | Focuses the next or the previous window of the frame, the tiles, the docked windows, then the floats, wrapping, or the Nth with a count (`EditorState.cycled`): `CTRL-W w` and `W` |
+| `focusEnd last` | `window-focus-top`, `window-focus-bottom` | Focuses the first or the last window of the frame (`Frame.all`), so `CTRL-W b` reaches the top float: `CTRL-W t` and `b` |
 | `focusLast` | `window-focus-last` | Focuses the window of the frame focused before this one (`Frame.lastFocused`) while it is another window of the frame, and otherwise gives up with `noPreviousWindow`, where Vim beeps: `CTRL-W p` |
 | `arranging change` | `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer` | `ViewId.arrange` with its change (`Arrange`). Exchange takes the count as the Nth window, and resize and main's count take it as the steps, 1 when there is none |
+| `arranging fun _ => .float` | `window-float` | Floats a tile or a docked window, pinned, centred in the tiled area, on top, and puts a float back at the end of the tiled list, the stack (`Arrange.float`): `C-w F`, which displaces Vim's `CTRL-W F` (split and edit the file under the cursor), not built here. The last tile is refused with `lastTile` |
 | `arranging fun _ => .edge side` | `window-edge-left`, `-bottom`, `-top`, `-right` | Docks the window at that edge, moves a window docked at another edge there, or moves a window docked there back to the end of the tiled list (`Arrange.edge`): Vim's `CTRL-W H J K L`, which move a window to the far side at the full extent. Recorded departures: under a layout with no such edge it gives up with `noSuchEdge`, where Vim restructures its frames under any layout, and on a window already at that edge it moves it back into the tiles, where Vim does nothing |
 
 They are compiled: a host registers them for the owner `compiled`
@@ -175,6 +177,10 @@ def edgeTopName : String :=
 def edgeRightName : String :=
   "window-edge-right"
 
+/-- The name `arranging fun _ => .float` is registered under. -/
+def floatName : String :=
+  "window-float"
+
 /-- What `only` says when the window is the only one of the frame. -/
 def alreadyOnly : String :=
   "already only one window"
@@ -232,9 +238,13 @@ def quit (call : Call) : EditorM Unit := do
   | .error refusal =>
     giveUp refusal.describe
 
-/-- `window-only`: every other window of the frame, tiled or docked, is
-closed, or, when there is none, `alreadyOnly` is said. From a window docked
-at an edge it gives up with `atEdge`: the tiles would be gone. -/
+/-- `window-only`: every other window of the frame, tiled, docked or
+floating, is closed, or, when there is none, `alreadyOnly` is said. The
+floats are closed first: closing a tile closes the transient floats
+anchored to it, which are then gone, and a window that is no longer in the
+frame when its turn comes is passed over. From a window docked at an edge
+it gives up with `atEdge`, since the tiles would be gone, and from a float
+with `floating`. -/
 def only (call : Call) : EditorM Unit := do
   let view := call.target.window.id
   let state ← editorState
@@ -242,13 +252,17 @@ def only (call : Call) : EditorM Unit := do
     giveUp (LayoutRefusal.ofMinibuffer view).describe
   if (state.frame.sideOf? view).isSome then
     giveUp (LayoutRefusal.atEdge view).describe
+  if (state.frame.floating? view).isSome then
+    giveUp (LayoutRefusal.floating view).describe
   unless state.frame.windows.contains view do
     giveUp (LayoutRefusal.noSuchWindow view).describe
   let others := state.frame.all.filter (· != view)
   if others.isEmpty then
     message alreadyOnly
-  for other in others do
-    orGiveUp (← other.close)
+  let floats := state.frame.floats.map (·.view)
+  for other in floats ++ others.filter (!floats.contains ·) do
+    if (← editorState).frame.contains other then
+      orGiveUp (← other.close)
 
 /-- Focuses `view`, unless it is none: nothing happens then. -/
 def focusing (view : Option ViewId) : EditorM Unit := do
@@ -269,7 +283,8 @@ def focusCycled (forward : Bool) (call : Call) : EditorM Unit := do
 
 /-- `window-focus-top` and `window-focus-bottom`: the first window of the
 frame, or the last when `last`, is focused, in `Frame.all`'s order: the
-tiles, then the docked windows. -/
+tiles, the docked windows, then the floats, so the last is the top
+float. -/
 def focusEnd (last : Bool) (_ : Call) : EditorM Unit := do
   let windows := (← editorState).frame.all
   focusing (if last then windows.back? else windows[0]?)

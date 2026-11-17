@@ -64,6 +64,7 @@ def commands : Array Config.Registration :=
     { name := edgeLeftName, action := .call (arranging fun _ => .edge .left) },
     { name := edgeBottomName, action := .call (arranging fun _ => .edge .bottom) },
     { name := edgeTopName, action := .call (arranging fun _ => .edge .top) },
-    { name := edgeRightName, action := .call (arranging fun _ => .edge .right) }]
+    { name := edgeRightName, action := .call (arranging fun _ => .edge .right) },
+    { name := floatName, action := .call (arranging fun _ => .float) }]
 
 end Editor.WindowCommands
