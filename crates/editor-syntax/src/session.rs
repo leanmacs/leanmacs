@@ -142,7 +142,7 @@ use editor_text::{Patch, Revision, Snapshot};
 
 use crate::highlight::{Highlighter, Highlights};
 use crate::inject::{Injections, Language, Layer, layers};
-use crate::port::{Capture, GrammarName, QueryKind, Syntax};
+use crate::port::{Capture, GrammarName, QueryKind, ReparsePolicy, Syntax};
 use crate::query::{captures_in, positions};
 
 /// How the session reaches its text: the text as it is now and, when the
@@ -283,6 +283,8 @@ pub fn reparse<S: Syntax>(
 pub struct Session<S: Syntax> {
     /// The grammar it parses with.
     grammar: GrammarName,
+    /// How the grammar's texts are reparsed, read once.
+    policy: ReparsePolicy,
     /// Where the text is read.
     source: Box<dyn Source>,
     /// The parser and the base, which only a round takes.
@@ -369,11 +371,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 impl<S: Syntax> Session<S> {
     /// A session that parses the text `source` reads with `grammar`, which
     /// has been told of revision 0; `None` when `syntax` has no such
-    /// grammar.
+    /// grammar, opening no parser or declaring no reparse policy.
     pub fn new(syntax: &S, grammar: GrammarName, source: Box<dyn Source>) -> Option<Self> {
         let parser = syntax.parser(&grammar)?;
+        let policy = syntax.reparse_policy(&grammar)?;
         Some(Self {
             grammar,
+            policy,
             source,
             work: Mutex::new(Work {
                 parser,
@@ -398,6 +402,12 @@ impl<S: Syntax> Session<S> {
     /// The grammar it parses with.
     pub fn grammar(&self) -> &GrammarName {
         &self.grammar
+    }
+
+    /// How its grammar's texts are reparsed, as the grammar declared it
+    /// when the session was made.
+    pub fn policy(&self) -> ReparsePolicy {
+        self.policy
     }
 
     /// Hands `consumer` every result delivered from now on.
@@ -730,12 +740,27 @@ pub(crate) mod tests {
     /// library may: an incremental parse whose tree has an error or a
     /// missing node answers another tree than a fresh parse would, the
     /// tree of the text with one more atom.
-    #[derive(Default)]
+    ///
+    /// Its grammar's policy is `policy`: incremental by default, and none
+    /// for a test of a grammar that declares none.
     pub(crate) struct Recording {
         pub(crate) olds: Mutex<Vec<Option<Vec<InputEdit>>>>,
         pub(crate) asked: Mutex<Vec<Range<usize>>>,
         pub(crate) hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
         pub(crate) recovers_otherwise: bool,
+        pub(crate) policy: Option<ReparsePolicy>,
+    }
+
+    impl Default for Recording {
+        fn default() -> Self {
+            Self {
+                olds: Mutex::default(),
+                asked: Mutex::default(),
+                hook: Mutex::default(),
+                recovers_otherwise: false,
+                policy: Some(ReparsePolicy::Incremental),
+            }
+        }
     }
 
     impl Syntax for Recording {
@@ -748,6 +773,9 @@ pub(crate) mod tests {
         }
         fn parser(&self, grammar: &GrammarName) -> Option<ParensParser> {
             Parens.parser(grammar)
+        }
+        fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
+            Parens.reparse_policy(grammar).and(self.policy)
         }
         fn parse(
             &self,
@@ -899,6 +927,18 @@ pub(crate) mod tests {
         let source = Box::new(TextSource(Arc::downgrade(&text)));
 
         assert!(Session::new(&Parens, GrammarName::new("rust"), source).is_none());
+    }
+
+    #[test]
+    fn a_grammar_that_declares_no_reparse_policy_makes_no_session() {
+        let text = Arc::new(Mutex::new(Text::from("")));
+        let source = Box::new(TextSource(Arc::downgrade(&text)));
+        let syntax = Recording {
+            policy: None,
+            ..Recording::default()
+        };
+
+        assert!(Session::new(&syntax, GrammarName::new(GRAMMAR), source).is_none());
     }
 
     #[test]

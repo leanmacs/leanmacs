@@ -161,6 +161,22 @@ impl QueryKind {
     ];
 }
 
+/// How a grammar's texts are reparsed after an edit
+/// ([`Syntax::reparse_policy`]): a grammar declares it, and the core
+/// ([`crate::session`]) is the one reader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReparsePolicy {
+    /// Each round reuses the old tree, told the edits since: a reparse
+    /// costs what the edits touched. The grammar keeps
+    /// [`crate::contract::GRAMMAR_QUALITY`]: on a text without errors, an
+    /// incremental reparse equals a fresh parse.
+    Incremental,
+    /// Each round parses the text from scratch, handed no old tree: for a
+    /// grammar whose incremental reparses of error-free texts were seen to
+    /// differ from a fresh parse. It still ships.
+    Whole,
+}
+
 /// Why a query was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryErrorKind {
@@ -225,6 +241,12 @@ pub trait Syntax: Send + Sync + 'static {
 
     /// A parser for `grammar`; `None` for a grammar it does not have.
     fn parser(&self, grammar: &GrammarName) -> Option<Self::Parser>;
+
+    /// How `grammar`'s texts are reparsed after an edit, as the grammar
+    /// declares it; `None` for a grammar it does not have. Plain data: the
+    /// core ([`crate::session`]) decides what a round hands the parser by
+    /// it.
+    fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy>;
 
     /// The tree of `text`. With `old`, a tree of an earlier text that has
     /// been told every edit since ([`edit`](Self::edit)), the parse reuses

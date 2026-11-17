@@ -1000,6 +1000,10 @@ mod tests {
             Parens.parser(grammar)
         }
 
+        fn reparse_policy(&self, grammar: &GrammarName) -> Option<crate::port::ReparsePolicy> {
+            Parens.reparse_policy(grammar)
+        }
+
         fn parse(
             &self,
             parser: &mut ParensParser,

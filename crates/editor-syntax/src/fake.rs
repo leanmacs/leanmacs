@@ -53,7 +53,7 @@ use editor_text::{InputEdit, Point, Snapshot};
 use crate::contract::Corpus;
 use crate::port::{
     Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
-    Setting, Syntax,
+    ReparsePolicy, Setting, Syntax,
 };
 
 /// The fake: the `parens` grammar.
@@ -137,6 +137,10 @@ impl Syntax for Parens {
 
     fn parser(&self, grammar: &GrammarName) -> Option<ParensParser> {
         (grammar.as_str() == GRAMMAR).then_some(ParensParser)
+    }
+
+    fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
+        (grammar.as_str() == GRAMMAR).then_some(ReparsePolicy::Incremental)
     }
 
     fn parse(&self, _: &mut ParensParser, text: &Snapshot, _: Option<&ParensTree>) -> ParensTree {
@@ -556,6 +560,15 @@ mod tests {
     #[test]
     fn the_fake_keeps_the_ports_contract() {
         assert_eq!(contract::check(&Parens, &PARENS_CORPUS), [""; 0]);
+    }
+
+    #[test]
+    fn the_parens_grammar_is_reparsed_incrementally_and_an_unknown_grammar_has_no_policy() {
+        assert_eq!(
+            Parens.reparse_policy(&GrammarName::new(GRAMMAR)),
+            Some(ReparsePolicy::Incremental)
+        );
+        assert_eq!(Parens.reparse_policy(&GrammarName::new("rust")), None);
     }
 
     #[test]

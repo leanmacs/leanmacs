@@ -70,7 +70,7 @@ pub mod worker;
 pub use highlight::{BadFaces, HighlightSpan, Highlighter, Highlights};
 pub use port::{
     Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
-    Setting, Syntax,
+    ReparsePolicy, Setting, Syntax,
 };
 pub use session::{
     CapturesRefusal, Consumer, Kept, KeptRefusal, Latest, Outcome, Parsed, Session, Source,

@@ -71,6 +71,9 @@ impl Syntax for Gated {
     fn parser(&self, grammar: &GrammarName) -> Option<ParensParser> {
         Parens.parser(grammar)
     }
+    fn reparse_policy(&self, grammar: &GrammarName) -> Option<editor_syntax::ReparsePolicy> {
+        Parens.reparse_policy(grammar)
+    }
     fn parse(
         &self,
         parser: &mut ParensParser,

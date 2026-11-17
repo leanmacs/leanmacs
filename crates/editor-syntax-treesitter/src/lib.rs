@@ -103,7 +103,7 @@ use std::ops::Range;
 
 use editor_syntax::{
     Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
-    Setting, Syntax,
+    ReparsePolicy, Setting, Syntax,
 };
 use editor_text::{InputEdit, Point, Snapshot};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
@@ -122,6 +122,8 @@ struct Grammar {
     name: &'static str,
     /// How to make its language.
     language: MakeLanguage,
+    /// How its texts are reparsed after an edit.
+    policy: ReparsePolicy,
     /// The queries it ships, each with its kind: its crate's own, pinned
     /// with it, where the crate is published with one, and otherwise this
     /// crate's, under `queries/`. A kind not here it ships none of.
@@ -133,11 +135,13 @@ const GRAMMARS: [Grammar; 3] = [
     Grammar {
         name: "json",
         language: || Language::new(tree_sitter_json::LANGUAGE),
+        policy: ReparsePolicy::Incremental,
         queries: &[(QueryKind::Highlights, tree_sitter_json::HIGHLIGHTS_QUERY)],
     },
     Grammar {
         name: "rust",
         language: || Language::new(tree_sitter_rust::LANGUAGE),
+        policy: ReparsePolicy::Incremental,
         queries: &[
             (QueryKind::Highlights, tree_sitter_rust::HIGHLIGHTS_QUERY),
             (QueryKind::Injections, tree_sitter_rust::INJECTIONS_QUERY),
@@ -154,6 +158,7 @@ const GRAMMARS: [Grammar; 3] = [
     Grammar {
         name: "markdown",
         language: || Language::new(tree_sitter_md::LANGUAGE),
+        policy: ReparsePolicy::Incremental,
         queries: &[
             (QueryKind::Highlights, tree_sitter_md::HIGHLIGHT_QUERY_BLOCK),
             (QueryKind::Injections, tree_sitter_md::INJECTION_QUERY_BLOCK),
@@ -226,6 +231,10 @@ impl Syntax for TreeSitter {
             .iter()
             .map(|grammar| GrammarName::new(grammar.name))
             .collect()
+    }
+
+    fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
+        self::grammar(grammar).map(|grammar| grammar.policy)
     }
 
     fn parser(&self, grammar: &GrammarName) -> Option<TreeSitterParser> {
@@ -523,6 +532,16 @@ mod tests {
             found.iter().map(Capture::range).collect::<Vec<_>>(),
             vec![start..start + name.len()]
         );
+    }
+
+    #[test]
+    fn each_grammar_declares_the_reparse_policy_of_the_table_and_one_not_compiled_in_none() {
+        let policy = |name: &str| TreeSitter.reparse_policy(&GrammarName::new(name));
+
+        assert_eq!(policy("rust"), Some(ReparsePolicy::Incremental));
+        assert_eq!(policy("json"), Some(ReparsePolicy::Incremental));
+        assert_eq!(policy("markdown"), Some(ReparsePolicy::Incremental));
+        assert_eq!(policy("cobol"), None);
     }
 
     #[test]

@@ -213,6 +213,9 @@ mod tests {
         fn parser(&self, grammar: &GrammarName) -> Option<ParensParser> {
             Parens.parser(grammar)
         }
+        fn reparse_policy(&self, grammar: &GrammarName) -> Option<crate::ReparsePolicy> {
+            Parens.reparse_policy(grammar)
+        }
         fn parse(
             &self,
             parser: &mut ParensParser,

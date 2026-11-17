@@ -347,6 +347,9 @@ mod tests {
         fn parser(&self, _: &GrammarName) -> Option<()> {
             None
         }
+        fn reparse_policy(&self, _: &GrammarName) -> Option<crate::ReparsePolicy> {
+            None
+        }
         fn parse(&self, _: &mut (), _: &Snapshot, _: Option<&()>) {}
         fn edit(&self, _: &mut (), _: &InputEdit) {}
         fn compile(&self, _: &GrammarName, _: &str) -> Result<(), QueryError> {
