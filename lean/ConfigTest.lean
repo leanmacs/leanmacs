@@ -444,7 +444,7 @@ structure Stage (σ : Type) where
   log : IO.Ref (Array String)
 
 /-- What compiled code hands a host: its commands, its jobs, its key
-bindings, its modes, its ex bindings, how long a command may take before it
+bindings, its modes, its ex bindings, its themes, its languages, how long a command may take before it
 is logged, and the major mode the scratch buffer starts in. -/
 structure Compiled where
   /-- The compiled commands. -/
@@ -459,6 +459,8 @@ structure Compiled where
   ex : Array Ex.Binding := #[]
   /-- The compiled themes. -/
   themes : Array NamedTheme := #[]
+  /-- The compiled languages. -/
+  languages : Array Language := #[]
   /-- How long a command may take before it is logged, in milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
   /-- The major mode the scratch buffer starts in, if any: the host's frame
@@ -498,8 +500,8 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           posts := requests + 4
           commands := compiled.commands, compiledJobs := compiled.jobs,
           bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
-          themes := compiled.themes, log := fun entry => log.modify (·.push entry),
-          slowAfter := compiled.slowAfter,
+          themes := compiled.themes, languages := compiled.languages,
+          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
             match compiled.major with
@@ -1276,6 +1278,23 @@ def recordedRequest : SyntaxTreeRequest → String
   | .capturesOf _ kind .. => s!"capturesOf {kind.name}"
   | .refreshAfter milliseconds => s!"refreshAfter {milliseconds}"
 
+/-- The real syntax tree binding over the library's syntax service, with
+every request recorded (`recordedRequest`) in `asked`, which after an
+attach waits, with a bound, for the attached text's tree to be delivered. -/
+def recordingSyntaxTree (asked : IO.Ref (Array String)) (snapshots : SnapshotReader) :
+    IO SyntaxTreeHandler := do
+  let real ← RealSyntaxTree.new snapshots
+  return fun request => do
+    asked.modify (·.push (recordedRequest request))
+    let reply ← real.handle request
+    -- An attach waits for the attached text's tree, so the highlighter
+    -- set after it sees no delivery of that parse, and no `parsed`
+    -- event of it is left for a later check's host to take.
+    if let .attach snapshot _ := request then
+      if let some found← snapshots.find? snapshot then
+        discard (Ffi.syntaxSettle found 5000)
+    return reply
+
 /-- Runs `check` against a host over a config of `highlightChunk`, whose
 syntax tree collaborator is the real binding over the library's syntax
 service with every request recorded (`recordedRequest`) in the array `check`
@@ -1290,18 +1309,7 @@ def withRecordedSyntaxTree (context : Context)
     writeFiles directory [("10-setup.lean", highlightChunk)]
     let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
     let asked ← IO.mkRef #[]
-    let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
-      let real ← RealSyntaxTree.new snapshots
-      return fun request => do
-        asked.modify (·.push (recordedRequest request))
-        let reply ← real.handle request
-        -- An attach waits for the attached text's tree, so the highlighter
-        -- set after it sees no delivery of that parse, and no `parsed`
-        -- event of it is left for a later check's host to take.
-        if let .attach snapshot _ := request then
-          if let some found← snapshots.find? snapshot then
-            discard (Ffi.syntaxSettle found 5000)
-        return reply
+    let syntaxTree := recordingSyntaxTree asked
     let made : IO.Ref (Option Headless.Host.Display) ← IO.mkRef none
     let display (snapshots : SnapshotReader) : IO Headless.Host.Display := do
       let shown ← Headless.Host.Display.recorder Headless.cells snapshots
@@ -1324,12 +1332,12 @@ def withRecordedSyntaxTree (context : Context)
             watches := stage.watches, log := stage.log } asked published
 
 /-- The faces the shipped default draws the captures of the library's
-shipped JSON highlights query in, by name, `-` for none, as
+shipped highlights query for `grammar` in, by name, `-` for none, as
 `recordedRequest` writes a highlight: read from the library, so no check
 repeats its query. -/
-def jsonDefaultFaces : IO String := do
-  let .ok source ← Ffi.syntaxShippedQuery "json" 0 | return "none shipped"
-  let .ok query ← Ffi.SyntaxQuery.new "json" source | return "does not compile"
+def shippedDefaultFaces (grammar : String) : IO String := do
+  let .ok source ← Ffi.syntaxShippedQuery grammar 0 | return "none shipped"
+  let .ok query ← Ffi.SyntaxQuery.new grammar source | return "does not compile"
   let faces := Highlight.faces [] (← query.captureNames)
   return s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
 
@@ -1564,8 +1572,9 @@ def jobChecks (context : Context) : List Check :=
           return joined == .settled && (← session.output.get).contains "job 1 highlight: ok" &&
               (← asked.get) ==
                 #["refreshAfter 500", "attach json", "shippedQuery json highlights", "compile json",
-                  "captureNames", ← jsonDefaultFaces, "release", "shippedQuery json injections",
-                  "shippedQuery json textObjects", "shippedQuery json indents"] &&
+                  "captureNames", ← shippedDefaultFaces "json", "release",
+                  "shippedQuery json injections", "shippedQuery json textObjects",
+                  "shippedQuery json indents"] &&
               scene.any fun line =>
                 line.startsWith "scene " && (line.splitOn "highlights:").length == 1 },
     { name :=
@@ -3526,6 +3535,152 @@ def noteStatus (path : System.FilePath) (modified : Bool := false) (column : Nat
   statusOf (name := "note.txt") (modified := modified) (cursor := ⟨0, column⟩) (lines := 2) (file :=
     some path) (changed := changed)
 
+/-- A chunk whose `setup` registers `language-report`, which says in the
+echo area the language and the major mode of the buffer the focused window
+shows, each `none` when it has none (`rust code`, `none none`), and then
+runs `more`, lines of a `do` block indented by two spaces. -/
+def languageReportChunk (more : String := "") : String :=
+  "def report : EditorM Unit := do
+  let state ← editorState
+  match state.target? state.frame.focused with
+  | some target =>
+    message (target.buffer.language.getD \"none\" ++ \" \" ++ target.buffer.major.getD \"none\")
+  | none => message \"no window\"
+
+def setup : SetupM Unit := do
+  command \"language-report\" report
+" ++
+    more
+
+/-- Lines of a `setup` that define a language `rust` over the shipped one,
+whose highlights query is its own, `(identifier) @variable`. -/
+def rustOverride : String :=
+  "  defineLanguage
+    { Language.rust with
+      syntaxTree := { Language.rust.syntaxTree with highlights := some \"(identifier) @variable\" } }
+"
+
+/-- Runs `check` against a host over the library's file service
+(`Stage.overFiles`), with a config directory of its own holding
+`languageReportChunk` with `more` lines of its `setup`, that is handed the file commands and
+their jobs, the minibuffer's commands and its mode, the `code` mode and the
+languages that ship (`Language.modes`, `Language.shipped`), as the
+executable is, and, for each name and path of `opens`, a command of that
+name that opens that path (`opening`). Its syntax tree is the real binding
+with every request recorded in the array `check` is handed
+(`recordingSyntaxTree`). The config is loaded before `check` runs. Stops the
+host: `false` if the check did not hold or the host did not stop. -/
+def withLanguageHost (context : Context) (more : String) (opens : List (String × System.FilePath))
+    (check : Session → IO.Ref (Array String) → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory [("10-report.lean", languageReportChunk more)]
+    let asked ← IO.mkRef #[]
+    let stage ←
+      Stage.overFiles context (Config.Directory.source directory)
+          { commands :=
+              Files.commands ++ Minibuffer.commands ++
+                (opens.map fun (name, path) => opening name path).toArray
+            jobs := Files.jobs
+            modes := Minibuffer.modes ++ Language.modes
+            languages := Language.shipped }
+    onStage
+        { stage with
+          collaborators := { stage.collaborators with syntaxTree := recordingSyntaxTree asked } }
+        fun host stage => do
+        let session : Session :=
+          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
+            watches := stage.watches, log := stage.log }
+        session.ask [.reload]
+        check session asked
+
+/-- What the host's `language-report` says of the focused buffer once the
+command `name` has opened its file: its language and its major mode,
+quoted as the scene line has the echo area, or none when the open's jobs
+did not settle. -/
+def reportedAfter (session : Session) (name : String) : IO (Option String) := do
+  unless ← session.ran name do
+    return none
+  session.ask [.run "language-report"]
+  return some (← session.scene).1
+
+/-- Whether no line of the host's scene says a highlights refusal. -/
+def noHighlightsRefusal (session : Session) : IO Bool := do
+  return (← session.sceneLines).all fun line => (line.splitOn "highlights:").length == 1
+
+/-- The requests the entry of a buffer's mode makes of the syntax tree
+port before its injections, for a language parsed with `grammar` and
+highlighted with the grammar's shipped query, as `recordedRequest` writes
+them. -/
+def shippedHighlightRequests (grammar : String) : IO (Array String) :=
+  return #["refreshAfter 500", s!"attach {grammar}", s!"shippedQuery {grammar} highlights",
+      s!"compile {grammar}", "captureNames", ← shippedDefaultFaces grammar, "release"]
+
+/-- The checks of a file's language through the headless host
+(`Editor/Files.lean`, "Open"; `Editor/Language.lean`): the file commands
+and the languages that ship as compiled code registers them, on real files,
+with the real elaborator and the real syntax binding. They share the file
+checks' table of waits (`Stage.overFiles`). -/
+def languageChecks (context : Context) : List Check :=
+  [{  name :=
+        "opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted with Rust's shipped query in the default faces, with no refusal said"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "main.rs"
+          IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
+          withLanguageHost context "" [("open-rs", path)] fun session asked => do
+              let report ← reportedAfter session "open-rs"
+              let requests ← asked.get
+              return report == some "rust code".quote &&
+                  requests.extract 0 7 == (← shippedHighlightRequests "rust") &&
+                  (← noHighlightsRefusal session) },
+    { name :=
+        "opening a .json file and a .md file gives each buffer that language and the major mode code, and highlights its text with that grammar's shipped query; Markdown's inline grammar is injected"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let json := files / "data.json"
+          let markdown := files / "notes.md"
+          IO.FS.writeFile json "{\"a\": [1, true]}\n"
+          IO.FS.writeFile markdown "# Title\n\nSome *text* here.\n"
+          let jsonHeld ←
+            withLanguageHost context "" [("open-json", json)] fun session asked => do
+                let report ← reportedAfter session "open-json"
+                return report == some "json code".quote &&
+                    (← asked.get).extract 0 7 == (← shippedHighlightRequests "json") &&
+                    (← noHighlightsRefusal session)
+          let markdownHeld ←
+            withLanguageHost context "" [("open-md", markdown)] fun session asked => do
+                let report ← reportedAfter session "open-md"
+                let requests ← asked.get
+                return report == some "markdown code".quote &&
+                    requests.extract 0 7 == (← shippedHighlightRequests "markdown") &&
+                    requests.contains "injectLanguage markdown_inline" &&
+                    (← noHighlightsRefusal session)
+          return jsonHeld && markdownHeld },
+    { name :=
+        "opening a file whose name matches no language gives its buffer no language and no major mode, and asks the syntax tree port nothing"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "notes.txt"
+          IO.FS.writeFile path "plain\n"
+          withLanguageHost context "" [("open-txt", path)] fun session asked => do
+              let report ← reportedAfter session "open-txt"
+              return report == some "none none".quote && (← asked.get).isEmpty },
+    { name :=
+        "config's language rust, over the shipped one, with its own highlights query, is the one an opened .rs file is highlighted with: its query is compiled in place of the shipped one, and its one capture drawn in its default face"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "main.rs"
+          IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
+          withLanguageHost context rustOverride [("open-rs", path)] fun session asked => do
+              let report ← reportedAfter session "open-rs"
+              let requests ← asked.get
+              return report == some "rust code".quote &&
+                  requests.extract 0 6 ==
+                    #["refreshAfter 500", "attach rust", "compile rust", "captureNames",
+                      "highlight syntax.variable", "release"] &&
+                  !requests.contains "shippedQuery rust highlights" &&
+                  (← noHighlightsRefusal session) }]
+
 /-- The checks of files through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue, the real text binding and the
 library's file service: the checks of this executable whose hosts are over a
@@ -4437,6 +4592,20 @@ keymap of its bindings. Its services are a fake clock's over a table of
 waits of its own, which no pump reads: nothing here starts a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
+        "the executable's hosts start with the code mode and the languages rust, json and markdown, in that order, registered for the owner compiled"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return registry.modes.any
+              (fun entry => entry.mode.name == Language.codeName && entry.owner == .compiled) &&
+            (registry.mode? Language.codeName).any (·.syntaxTreeOfLanguage) &&
+            registry.languages.map (fun entry => (entry.language.name, entry.owner == .compiled)) ==
+              #[("rust", true), ("json", true), ("markdown", true)] },
+    { name :=
         "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, each registered for the owner compiled; with switch-buffer, list-buffers and close-buffer registered for it, and the ex names b, ls and bd bound to them"
       run := do
         let completions ← Job.Completions.new
@@ -4682,6 +4851,7 @@ def checks (context : Context) : List Check :=
     themeChecks context ++
     environmentHostChecks context ++
     fileChecks context ++
+    languageChecks context ++
     reloadChecks context ++
     autoReloadChecks context ++
     exScriptChecks context

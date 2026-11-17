@@ -152,8 +152,8 @@ as before, so reload and job completion work as they did.
   name. So a reload's modes, bindings and commands hold from the next key.
   What a command over a store asked to be written is written back to the
   stores.
-- **Compiled commands, jobs, bindings, modes, ex bindings, themes and
-  mode-line segments are registered when the loop starts** (`compiled`), for
+- **Compiled commands, jobs, bindings, modes, ex bindings, themes,
+  mode-line segments and languages are registered when the loop starts** (`compiled`), for
   the owner `compiled`,
   before any config: they are what the host's collaborators hand it. A reload replaces
   config's commands, jobs, bindings, modes and ex bindings and never these,
@@ -194,7 +194,11 @@ as before, so reload and job completion work as they did.
   command and the job that finds a file's workspace (`Workspace.commands`,
   `Workspace.jobs`, `Editor/Workspace/Compiled.lean`): `workspace-current`,
   and `find-workspace`, which a file's open starts for its directory when
-  no answer is cached, so a script that opens a file has that job too. The ex line is handed no key
+  no answer is cached, so a script that opens a file has that job too.
+  And it is handed the `code` mode and the languages that ship
+  (`Language.modes`, `Language.shipped`, `Editor/Language.lean`): `rust`,
+  `json` and `markdown`, so a file of one of them opens in `code`,
+  highlighted. The ex line is handed no key
   binding: the Vim scheme's keys are its states' own keymaps. The frame's
   bindings bind `s-q` to `quit`. Every default key names a command the host
   is handed.
@@ -811,6 +815,9 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The compiled themes (`Editor/Themes/Compiled.lean`): registered for
   the owner `compiled` when the loop starts, before any config. -/
   themes : Array NamedTheme := #[]
+  /-- The compiled languages (`Editor/Language.lean`): registered for the
+  owner `compiled` when the loop starts, before any config. -/
+  languages : Array Language := #[]
   /-- The compiled segments of the mode line (`Editor/ModeLine.lean`):
   registered for the owner `compiled` when the loop starts, before any
   config. The default is the shipped set, so every host draws the shipped
@@ -1633,17 +1640,18 @@ structure Progress where
   titleBar : Option Window.TitleBar := none
 
 /-- The registry a host starts with: what compiled code hands it, its
-commands, jobs, key bindings, modes, ex bindings, themes and segments, for
-the owner `compiled`, before any config. -/
+commands, jobs, key bindings, modes, ex bindings, themes, segments and
+languages, for the owner `compiled`, before any config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  ((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
-                        collaborators.compiledJobs).replaceBindings
-                    .compiled collaborators.bindings).replaceModes
-                .compiled collaborators.modes).replaceEx
-            .compiled collaborators.ex).replaceThemes
-        .compiled collaborators.themes).replaceSegments
-    .compiled collaborators.segments
+  (((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
+                            collaborators.compiledJobs).replaceBindings
+                        .compiled collaborators.bindings).replaceModes
+                    .compiled collaborators.modes).replaceEx
+                .compiled collaborators.ex).replaceThemes
+            .compiled collaborators.themes).replaceSegments
+        .compiled collaborators.segments).replaceLanguages
+    .compiled collaborators.languages
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of
@@ -2203,7 +2211,8 @@ mode, evil's commands, the ex line's commands with the ex names that ship,
 the buffer commands, the frame's commands with their bindings, the command that loads a theme
 with the themes that ship, the workspace command with the job that finds a
 file's workspace, the shell's command with the job that runs `:!`, the
-compile mode's commands, its job and its mode (`Editor/Compile.lean`), and the menu bar (`Menu.standard`) with its
+compile mode's commands, its job and its mode (`Editor/Compile.lean`), the
+`code` mode with the languages that ship (`Editor/Language.lean`), and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
 
@@ -2225,7 +2234,8 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         Compile.commands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
     compiledJobs := Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs
-    modes := Minibuffer.modes ++ Compile.modes, ex := Ex.bindings, themes := Themes.shipped
+    modes := Minibuffer.modes ++ Compile.modes ++ Language.modes, ex := Ex.bindings
+    themes := Themes.shipped, languages := Language.shipped
     segments := ModeLine.shipped, log := IO.eprintln }
 
 /-- The environments every job of a host shares, over `state`
