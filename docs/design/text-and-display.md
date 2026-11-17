@@ -874,10 +874,14 @@ origin, and its edits.
   to a parser in order: the start is the new start, and the old end is the
   new start moved on by the extent of the old range. This is checked
   against the texts, and against tree-sitter by the syntax adapter's
-  contract (`editor_syntax::contract::INCREMENTAL`, run by
+  contract (`editor_syntax::contract::GRAMMAR_QUALITY`, run by
   `editor-syntax-treesitter`'s `tests/contract.rs`): edits made through a
   real text, its patches told to a tree in order and the text reparsed,
-  equal to a fresh parse.
+  equal a fresh parse on a text without errors. On a text with errors an
+  incremental reparse may differ from a fresh parse, and the tree is made
+  exact by the idle refresh, which parses the text whole once it has gone
+  unchanged for the interval (`editor_syntax::contract::CONVERGES`;
+  [rust-library.md](rust-library.md), "The eventual guarantee").
 - The old points are read from the rope before the changes and the new ones
   from the rope after.
 
