@@ -883,16 +883,19 @@ pub unsafe extern "C" fn editor_ffi_display_define(
 /// Fills `out` with the rows of `snapshot` a view `width` pixels wide and
 /// `height` tall, its content inset `across` and `down` points and its
 /// rows a further `top` points from its top (taken off at the display's
-/// scale; [`Display::rows`]), shows from `anchor`: their
-/// count, then a start and a stop for each; or with
-/// [`DisplayStatus::BadPosition`]. A padding no `u32` holds is the
-/// largest.
+/// scale; [`Display::rows`]), shows from `anchor`, with the blocks that
+/// `block_words` and `block_text` spell ([`decode_blocks`]) drawn between
+/// its rows: their count, then a start and a stop for each; or with
+/// [`DisplayStatus::BadPosition`], which also refuses block words that
+/// spell no blocks. A padding no `u32` holds is the largest.
 ///
 /// # Safety
 ///
 /// `display` is a display handle this library handed out and has not taken
-/// back, `snapshot` a snapshot handle likewise ([`crate::snapshot`]), and
-/// `out` points to a writable [`RawWords`].
+/// back, `snapshot` a snapshot handle likewise ([`crate::snapshot`]),
+/// `block_words` points to `block_words_len` readable bytes and
+/// `block_text` to `block_text_len`, each alive for the call, and `out`
+/// points to a writable [`RawWords`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_display_rows(
     display: *const Display,
@@ -970,15 +973,21 @@ pub unsafe extern "C" fn editor_ffi_display_move(
 
 /// Fills `out` with where `position` of `snapshot` is drawn in a view
 /// `width` pixels wide and `height` tall, padded as for
-/// [`editor_ffi_display_rows`], that shows from `anchor`
-/// ([`Display::spot`]): four words, whether the view shows it (1 or 0),
-/// then the x and the y of it from the view's top left, rounded down, and
-/// its row's height, rounded up (all 0 when it is not shown); or with
-/// [`DisplayStatus::BadPosition`].
+/// [`editor_ffi_display_rows`], that shows from `anchor`, with the blocks
+/// that `block_words` and `block_text` spell ([`decode_blocks`]) drawn
+/// between its rows ([`Display::spot`]): four words, whether the view
+/// shows it (1 or 0), then the x and the y of it from the view's top left,
+/// rounded down, and its row's height, rounded up (all 0 when it is not
+/// shown); or with [`DisplayStatus::BadPosition`], which also refuses
+/// block words that spell no blocks.
 ///
 /// # Safety
 ///
-/// As [`editor_ffi_display_rows`].
+/// `display` is a display handle this library handed out and has not taken
+/// back, `snapshot` a snapshot handle likewise ([`crate::snapshot`]),
+/// `block_words` points to `block_words_len` readable bytes and
+/// `block_text` to `block_text_len`, each alive for the call, and `out`
+/// points to a writable [`RawWords`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_display_spot(
     display: *const Display,

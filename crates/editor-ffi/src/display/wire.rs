@@ -619,8 +619,9 @@ fn layout_blocks(blocks: &[WireBlock]) -> Vec<Block> {
 /// The blocks `words` and `strings` spell, as layout takes them: the words
 /// and the string of a view's blocks in a scene, which follow its
 /// padding, with nothing before or after. `None` when they do not spell
-/// any. The rows and the spot queries are asked with a view's blocks so
-/// (`super::editor_ffi_display_rows`).
+/// any. The rows and the spot queries take a view's blocks spelled this
+/// way ([`super::editor_ffi_display_rows`],
+/// [`super::editor_ffi_display_spot`]).
 pub fn decode_blocks(words: &[u8], strings: &str) -> Option<Vec<Block>> {
     let mut words = Reader::new(words)?;
     let mut texts = Texts { rest: strings };
