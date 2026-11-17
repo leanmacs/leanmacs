@@ -184,6 +184,18 @@ pub struct Padding {
     pub top: u32,
 }
 
+impl Padding {
+    /// A padding of `across`, `down` and `top` points, and nothing else.
+    ///
+    /// It is published for the tests and the decoders of other crates: a
+    /// padding built through it, or from one it returns with `..`, takes a
+    /// field added to it at its default, so the field breaks nothing
+    /// outside this crate.
+    pub const fn new(across: u32, down: u32, top: u32) -> Self {
+        Self { across, down, top }
+    }
+}
+
 /// Which text: a key the binding gives each text, unique in the process.
 /// Layout keeps its state per key, so two snapshots of one key at one
 /// revision must hold the same text: the binding gives a key to each

@@ -459,11 +459,7 @@ fn a_spot_crosses_as_whole_pixels_x_and_y_rounded_down_and_its_height_up() {
     // SAFETY: `document` is live.
     let snapshot = unsafe { editor_ffi_document_snapshot(document) };
     let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
-    let padding = Padding {
-        across: 3,
-        down: 1,
-        top: 2,
-    };
+    let padding = Padding::new(3, 1, 2);
     // At scale 1.1 every length is a fraction of a pixel.
     let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
     layout.set_scale(1.1);
@@ -869,17 +865,7 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
     // A key of its own: layout keeps what it laid out per key.
     let direct = TextRef::fixed(TextKey(1), Text::from(long).snapshot());
     let expected: Vec<(usize, usize)> = layout
-        .rows_shown(
-            &direct,
-            160.0,
-            96.0,
-            Padding {
-                across: 8,
-                down: 8,
-                top: 0,
-            },
-            0,
-        )
+        .rows_shown(&direct, 160.0, 96.0, Padding::new(8, 8, 0), 0)
         .unwrap()
         .into_iter()
         .map(|row| (row.start, row.stop))
@@ -905,17 +891,7 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
     // A top inset of 8 points takes 16 pixels more off the height, once:
     // 48 holds one row of 32.
     let under = layout
-        .rows_shown(
-            &direct,
-            160.0,
-            96.0,
-            Padding {
-                across: 8,
-                down: 8,
-                top: 8,
-            },
-            0,
-        )
+        .rows_shown(&direct, 160.0, 96.0, Padding::new(8, 8, 8), 0)
         .unwrap()
         .into_iter()
         .map(|row| (row.start, row.stop))
@@ -1371,21 +1347,13 @@ fn a_scene_published_with_faces_comes_back_with_them() {
 fn a_views_padding_and_the_echos_cross_reach_layout_and_come_back() {
     let _alone = alone();
     let (display, document, snapshot, mut wire) = published_scene();
-    wire.views[0].padding = Padding {
-        across: 8,
-        down: 4,
-        top: 0,
-    };
+    wire.views[0].padding = Padding::new(8, 4, 0);
     wire.echo_padding = 14;
     let (words, strings) = wire.encode();
     assert!(publish(display, &words, &strings, &[snapshot]));
     // Layout's frame of the same scene padded the same way.
     let mut direct_scene = scene_directly();
-    direct_scene.views[0].padding = Padding {
-        across: 8,
-        down: 4,
-        top: 0,
-    };
+    direct_scene.views[0].padding = Padding::new(8, 4, 0);
     direct_scene.echo_padding = 14;
     let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
     let direct = layout.frame(&direct_scene).describe();
