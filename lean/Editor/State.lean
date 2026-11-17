@@ -774,9 +774,14 @@ arranged in it. -/
 structure Frame where
   /-- Its size, in physical pixels. -/
   size : Size
-  /-- The editor's windows, by their views' names, in order: the first is
-  main. The minibuffer's window is not among them. -/
+  /-- The editor's tiled windows, by their views' names, in order: the first
+  is main. The minibuffer's window is not among them, nor are the windows
+  docked at an edge (`docked`). -/
   windows : Array ViewId
+  /-- The windows docked at an edge, each with its side, in order: they are
+  not in `windows`, which stays the tiled list the layout's operations
+  index. -/
+  docked : Array (ViewId × Side) := #[]
   /-- How its windows are arranged (`Editor/Layout.lean`). -/
   layout : Layout := Layout.default
   /-- The window that is focused within it. -/
@@ -800,10 +805,10 @@ structure Frame where
   /-- The layout a zoom left, to go back to: `some` while zoomed, when
   `layout` is monocle. -/
   zoomedFrom : Option Layout := none
-  /-- The window of the list focused before the current one, Vim's
-  `prevwin`: set when the focus moves from one window of the list to
-  another, and never cleared, so a reader checks that it is still in the
-  list. -/
+  /-- The window of the frame focused before the current one, Vim's
+  `prevwin`: set when the focus moves from one window of the frame to
+  another (`contains`), and never cleared, so a reader checks that it is
+  still in the frame. -/
   lastFocused : Option ViewId := none
   /-- The layout config chose that the last publish applied (`Frame.choose`,
   `Loop.publish`): a publish handed the same one again leaves the frame's
@@ -812,6 +817,37 @@ structure Frame where
   deriving DecidableEq, Repr
 
 namespace Frame
+
+/-- Every window of the frame: the tiled list, then the docked windows, in
+order. The minibuffer's window is not among them. -/
+def all (frame : Frame) : Array ViewId :=
+  frame.windows ++ frame.docked.map (·.1)
+
+/-- Whether `id` is a window of the frame: in the tiled list or docked at
+an edge. -/
+def contains (frame : Frame) (id : ViewId) : Bool :=
+  frame.windows.contains id || frame.docked.any (·.1 == id)
+
+/-- The side the window `id` is docked at; none for a window that is not
+docked. -/
+def sideOf? (frame : Frame) (id : ViewId) : Option Side :=
+  (frame.docked.find? (·.1 == id)).map (·.2)
+
+/-- The windows docked at `side`, in order. -/
+def atSide (frame : Frame) (side : Side) : Array ViewId :=
+  (frame.docked.filter (·.2 == side)).map (·.1)
+
+/-- The frame with the windows docked at `side` replaced, in their places,
+by `views` in order: `views` is a reorder of `atSide side`. -/
+def withSide (frame : Frame) (side : Side) (views : Array ViewId) : Frame :=
+  let (docked, _) :=
+    frame.docked.foldl
+      (fun (placed, left) (view, at_) =>
+        match at_ == side, left[0]? with
+        | true, some next => (placed.push (next, at_), left.extract 1 left.size)
+        | _, _ => (placed.push (view, at_), left))
+      ((#[] : Array (ViewId × Side)), views)
+  { frame with docked }
 
 /-- The layout the windows are arranged by out of a zoom: the one zoom
 returns to while zoomed, and the frame's own otherwise. -/
@@ -826,11 +862,17 @@ def withUnderlying (frame : Frame) (layout : Layout) : Frame :=
   | some _ => { frame with zoomedFrom := some layout }
   | none => { frame with layout }
 
-/-- The frame once config chose `layout`: its layout, fitted to the windows
-(`Layout.fits`), recorded as the one chosen, and no zoom. -/
+/-- The frame once config chose `layout`: the windows docked at a side the
+layout has no edge at join the end of the tiled list, in order, so none is
+lost; then its layout, fitted to the windows (`Layout.fits`), recorded as
+the one chosen, and no zoom. -/
 def choose (frame : Frame) (layout : Layout) : Frame :=
+  let sides := layout.edgeSides
+  let moved := (frame.docked.filter fun (_, side) => !sides.contains side).map (·.1)
+  let windows := frame.windows ++ moved
   { frame with
-    layout := layout.fits frame.windows.size, chosen := some layout, zoomedFrom := none }
+    windows, docked := frame.docked.filter fun (_, side) => sides.contains side
+    layout := layout.fits windows.size, chosen := some layout, zoomedFrom := none }
 
 /-- The frame's layouts once its window at `index` was split by
 `placement`: the layout and the one zoom returns to (`Layout.inserted`).
@@ -855,10 +897,10 @@ def removed (frame : Frame) (index : Nat) : Frame × Option Nat :=
   | none => ({ frame with layout }, inheritor)
 
 /-- The frame with `id` focused, and, when the focus moves from one window
-of the list to another, the one it leaves as the last focused. -/
+of the frame to another (`contains`), the one it leaves as the last
+focused. -/
 def focusedOn (frame : Frame) (id : ViewId) : Frame :=
-  let moves :=
-    frame.focused != id && frame.windows.contains frame.focused && frame.windows.contains id
+  let moves := frame.focused != id && frame.contains frame.focused && frame.contains id
   { frame with
     focused := id, lastFocused := if moves then some frame.focused else frame.lastFocused }
 
@@ -1125,13 +1167,26 @@ inductive Arrange where
   /-- Master-and-stack's count of main's windows up or down by `steps`, not
   below 0. -/
   | mainCount (more : Bool) (steps : Nat)
+  /-- A tiled window docked at `side`, a window docked at another side moved
+  to it, and a window docked at `side` back into the tiles, at the end of
+  the list. -/
+  | edge (side : Side)
+  deriving DecidableEq, Repr
+
+/-- Where a new window goes (`EditorState.openWindow`). -/
+inductive WindowSpot where
+  /-- After the last window of the tiled list: the stack, under
+  master-and-stack. -/
+  | stack
+  /-- Docked at `side`, after the windows docked there. -/
+  | edge (side : Side)
   deriving DecidableEq, Repr
 
 /-- Why an operation on the layout was refused. -/
 inductive LayoutRefusal where
   /-- It would remove the last window, leaving nothing to focus. -/
   | onlyWindow
-  /-- The window is not in the frame's list. -/
+  /-- The window is not one of the frame's windows. -/
   | noSuchWindow (id : ViewId)
   /-- The state has no buffer of this id for a window to show. -/
   | noSuchBuffer (id : BufferId)
@@ -1151,6 +1206,14 @@ inductive LayoutRefusal where
   /-- The layout is monocle, which config chose, and no zoom is there to
   leave. -/
   | monocleChosen
+  /-- The layout has no edge at `side` to dock a window at. -/
+  | noSuchEdge (side : Side)
+  /-- The window is the last of the tiled list, which cannot move to an
+  edge: a frame of docked windows has no area to tile. -/
+  | lastTile
+  /-- The window `view` is docked at an edge, and cannot be the only
+  window: the tiles would be gone. -/
+  | atEdge (view : ViewId)
   deriving DecidableEq, Repr
 
 /-- What a refusal of the layout says, as one sentence the echo area can
@@ -1166,6 +1229,9 @@ def LayoutRefusal.describe : LayoutRefusal → String
   | .notResizable .columns => "the window cannot be made wider or narrower in this layout"
   | .noMain => "only master-and-stack has main windows"
   | .monocleChosen => "the layout is monocle, and there is no zoom to leave"
+  | .noSuchEdge side => Layout.noEdge side
+  | .lastTile => "the last tiled window cannot move to an edge"
+  | .atEdge _ => "a window at an edge cannot be the only window"
 
 /-- Why an operation on the prompt was refused. -/
 inductive PromptRefusal where
@@ -1283,10 +1349,11 @@ prompt is open. -/
 def minibufferBuffer? (state : EditorState) : Option BufferId := do
   return (← state.window? (← state.minibufferView?)).buffer
 
-/-- The views of the state: the frame's windows, in list order, then the
-minibuffer's view while a prompt is open. -/
+/-- The views of the state: the frame's windows, the tiled list and then
+the docked windows (`Frame.all`), then the minibuffer's view while a prompt
+is open. -/
 def views (state : EditorState) : Array ViewId :=
-  state.frame.windows ++ state.minibufferView?.toArray
+  state.frame.all ++ state.minibufferView?.toArray
 
 /-- How tall the minibuffer's strip at the frame's bottom is: the frame's
 bottom row while no prompt is open, where the echo is drawn, and a text row
@@ -1317,7 +1384,7 @@ layout does not show has none. It is what a scene's views are laid out in
 (`Loop.views`, `Editor/Loop.lean`). -/
 def rects (state : EditorState) : Array (ViewId × Rect) :=
   let frame := state.frame
-  frame.layout.place frame.windows state.selectedView state.tiled ++
+  frame.layout.place frame.windows state.selectedView state.tiled frame.docked ++
     (state.minibufferView?.map (·, state.cutFrame.2)).toArray
 
 /-- How far the frame's bottom row, where the echo and a prompt are drawn,
@@ -1365,7 +1432,9 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
 /-- Whether the state keeps the layout invariants, over its views
 (`views`: the frame's windows, then the open prompt's view): the frame's
 layout, and the one a zoom returns to, fit its list of windows
-(`Layout.fitted`), the focused window is among them, the views' ids are distinct and are exactly the windows' ids, and each window's buffer
+(`Layout.fitted`), every docked window's side is an edge of the layout
+out of a zoom (`Frame.underlying`, `Layout.edgeSides`), the focused window
+is among them, the views' ids are distinct and are exactly the windows' ids, and each window's buffer
 exists. And whether an open prompt's choice, if it has one, is an index of
 its listing, and whether every buffer of the order they were used in
 (`recent`) is open and is there once. -/
@@ -1373,6 +1442,7 @@ def wellFormed (state : EditorState) : Bool :=
   let ids := state.views
   let count := state.frame.windows.size
   state.frame.layout.fitted count && state.frame.zoomedFrom.all (·.fitted count) &&
+    state.frame.docked.all (fun (_, side) => state.frame.underlying.edgeSides.contains side) &&
     ids.contains state.frame.focused &&
     ids.toList.eraseDups.length == ids.size &&
     ids.size == state.windows.size &&
@@ -1409,20 +1479,50 @@ def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := d
       frame := { size, windows := #[⟨0⟩], focused := ⟨0⟩ }
       recent := #[⟨0⟩] }
 
-/-- Removes the window `id` from the frame's list, and hands it back, its
-markers the caller's to give up; the layout gives its space to the rest
-(`Frame.removed`). A focused window's focus moves to the window that
-inherits its place when the layout says one, as manual splits do, and
-otherwise to the window that took its index, or to the new last window
-when it was last. Refused, with the state unchanged,
-with `ofMinibuffer` for the minibuffer's window, with `noSuchWindow` for a
-window not in the list and with `onlyWindow` for the last one of the list:
-the minibuffer's window does not count. -/
+/-- Removes the window `id` from the frame, and hands it back, its markers
+the caller's to give up.
+
+- **A tiled window** leaves the list, and the layout gives its space to the
+  rest (`Frame.removed`). A focused window's focus moves to the window that
+  inherits its place when the layout says one, as manual splits do, and
+  otherwise to the window that took its index, or to the new last window
+  when it was last.
+- **A docked window** leaves the edge, whose strip goes when no window is
+  docked there; the layout is unchanged. A focused window's focus moves to
+  the window of the same side that took its index, else to that side's new
+  last window, else to the window focused before it while that is still in
+  the frame (`Frame.lastFocused`), else to main.
+
+Refused, with the state unchanged, with `ofMinibuffer` for the
+minibuffer's window, with `noSuchWindow` for a window not in the frame and
+with `onlyWindow` for the last one of the tiled list: neither the
+minibuffer's window nor a docked window counts. -/
 def removeWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Window × EditorState :=
   let windows := state.frame.windows
-  match state.minibufferView? == some id, state.window? id, windows.findIdx? (· == id) with
-  | true, _, _ => (.error (.ofMinibuffer id), state)
-  | false, some window, some index =>
+  match state.minibufferView? == some id, state.window? id, windows.findIdx? (· == id),
+    state.frame.sideOf? id with
+  | true, _, _, _ => (.error (.ofMinibuffer id), state)
+  | false, some window, none, some side =>
+    let frame := state.frame
+    let ofSide := frame.atSide side
+    let index := (ofSide.findIdx? (· == id)).getD 0
+    let rest := ofSide.filter (· != id)
+    let focused :=
+      if frame.focused == id then
+        match rest[index]? <|> rest.back? with
+        | some view => view
+        | none =>
+          match frame.lastFocused with
+          | some last => if last != id && frame.contains last then last else windows[0]?.getD id
+          | none => windows[0]?.getD id
+      else frame.focused
+    (.ok window,
+      { state with
+        windows := state.windows.filter (·.id != id)
+        frame :=
+          { frame with
+            docked := frame.docked.filter (·.1 != id), focused } })
+  | false, some window, some index, _ =>
     let rest := windows.filter (· != id)
     if rest.isEmpty then (.error .onlyWindow, state)
     else
@@ -1439,9 +1539,9 @@ def removeWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Wind
           frame :=
             { frame with
               windows := rest, focused } })
-  | false, _, _ => (.error (.noSuchWindow id), state)
+  | false, _, _, _ => (.error (.noSuchWindow id), state)
 
-/-- Focuses the window `id`: a window of the list, or the minibuffer's while
+/-- Focuses the window `id`: a window of the frame, or the minibuffer's while
 a prompt is open (`Frame.focusedOn`, which keeps the window of the list
 focused before it). Its buffer is then the most recently used, unless it
 is the minibuffer's. Refused, with the state unchanged, with `noSuchWindow`
@@ -1896,16 +1996,34 @@ handed back. Under manual splits (while zoomed, when the layout zoom
 returns to is manual splits) it takes `id`'s index when `placement` says
 before and the index after it otherwise, and `id`'s tile is split along the
 placement's axis (`Frame.inserted`); under the other layouts the placement
-is ignored and it goes right after `id`. The focus stays. Refused, with the state
+is ignored and it goes right after `id`. A docked window's new window is
+docked at the same side, right after it, the placement ignored and the
+layout unchanged. The focus stays. Refused, with the state
 unchanged, with `ofMinibuffer` for the minibuffer's window, with
-`noSuchWindow` for a window not in the list, and with
+`noSuchWindow` for a window not in the frame, and with
 `markersOfAnotherText` when a marker is not of that buffer's text. -/
 def splitWindow (id : ViewId) (scroll selection : MarkerId) (placement : Placement := {})
     (state : EditorState) : Except LayoutRefusal ViewId × EditorState :=
   let windows := state.frame.windows
-  match state.minibufferView? == some id, state.target? id, windows.findIdx? (· == id) with
-  | true, _, _ => (.error (.ofMinibuffer id), state)
-  | false, some target, some index =>
+  let docked := state.frame.docked
+  match state.minibufferView? == some id, state.target? id, windows.findIdx? (· == id),
+    docked.findIdx? (·.1 == id) with
+  | true, _, _, _ => (.error (.ofMinibuffer id), state)
+  | false, some target, none, some at_ =>
+    if scroll.text != target.buffer.text || selection.text != target.buffer.text then
+      (.error .markersOfAnotherText, state)
+    else
+      let made := state.freshView
+      let side := (docked[at_]?.map (·.2)).getD .left
+      (.ok made,
+        { state with
+          windows :=
+            state.windows.push { id := made, buffer := target.window.buffer, scroll, selection }
+          frame :=
+            { state.frame with
+              docked := (docked.extract 0 (at_ + 1)).push (made, side) ++ docked.extract (at_ + 1) }
+          nextView := made.index + 1 })
+  | false, some target, some index, _ =>
     if scroll.text != target.buffer.text || selection.text != target.buffer.text then
       (.error .markersOfAnotherText, state)
     else
@@ -1913,7 +2031,7 @@ def splitWindow (id : ViewId) (scroll selection : MarkerId) (placement : Placeme
       -- Only manual splits read a placement; the others put the new window
       -- right after its source.
       let place :=
-        match state.frame.underlying with
+        match state.frame.underlying.tiling with
         | .splits _ => if placement.before then index else index + 1
         | _ => index + 1
       (.ok made,
@@ -1924,7 +2042,7 @@ def splitWindow (id : ViewId) (scroll selection : MarkerId) (placement : Placeme
             { state.frame.inserted index placement with
               windows := (windows.extract 0 place).push made ++ windows.extract place }
           nextView := made.index + 1 })
-  | false, _, _ => (.error (.noSuchWindow id), state)
+  | false, _, _, _ => (.error (.noSuchWindow id), state)
 
 /-- `windows` with the entries at `first` and `second` swapped. -/
 private def swapped (windows : Array ViewId) (first second : Nat) : Array ViewId :=
@@ -1932,7 +2050,8 @@ private def swapped (windows : Array ViewId) (first second : Nat) : Array ViewId
   | some one, some other => (windows.set! first other).set! second one
   | _, _ => windows
 
-/-- Makes `change` on the window `id` (`Arrange`):
+/-- Makes `change` on the window `id` (`Arrange`). On a window of the tiled
+list:
 
 - `promote` moves it to index 0, main, the others moving one on; main
   itself swaps with index 1. `demote` swaps it with the next of the list,
@@ -1944,33 +2063,88 @@ private def swapped (windows : Array ViewId) (first second : Nat) : Array ViewId
   the next, or with the previous when it is last, and focuses the other
   view, which now stands where it was (`Frame.focusedOn`). One window, an
   `nth` past the list or the window itself changes nothing.
+- `resize` is `Layout.resized`, refused with `notResizable` and its axis
+  where it gives none.
+- `edge side` docks it at `side`: it leaves the list (`Frame.removed`) and
+  is put after the windows docked there. It is refused with `noSuchEdge`
+  when the layout has no edge at `side`, and with `lastTile` for the last
+  window of the list.
+
+On a docked window ("A window at an edge is not special", in the module
+docs):
+
+- `promote` moves it into the tiles as main, index 0, split before tile 0
+  under manual splits (`Frame.inserted`); the old main is the first of the
+  stack.
+- `demote`, `rotate` and `exchange` act on the windows docked at its side,
+  as a list: the whole of it rotates.
+- `resize` grows or shrinks its edge's strip along the side's axis
+  (`Layout.resizedEdge`), and is refused with `notResizable` across it.
+- `edge side` moves it back into the tiles, at the end of the list
+  (`Frame.inserted` after the last), when it is docked at `side`; moves it
+  to `side`, after the windows docked there, when it is docked at another
+  side; and is refused with `noSuchEdge` when the layout has no edge at
+  `side`.
+
+On any window:
+
 - `zoom` goes back to the layout a zoom left while zoomed; otherwise it
   keeps the layout in `zoomedFrom` and makes the layout monocle, and under
   monocle with no zoom it is refused with `monocleChosen`.
-- `balance` is `Layout.balanced`, and `resize` is `Layout.resized`, refused
-  with `notResizable` and its axis where it gives none.
-- `mainCount` moves master-and-stack's count by `steps`, not below 0, and
-  is refused with `noMain` under any other layout.
+- `balance` is `Layout.balanced`, which leaves a strip's size.
+- `mainCount` moves master-and-stack's count by `steps`, not below 0, in
+  the layout inside the edges (`Layout.tiling`), and is refused with
+  `noMain` under any other layout.
 
-`balance`, `resize` and `mainCount` act on the layout a zoom returns to
-while zoomed (`Frame.underlying`), and the refusals are that layout's:
-monocle stays shown, and zoom again shows the change
+`balance`, `resize`, `mainCount` and `edge` act on the layout a zoom
+returns to while zoomed (`Frame.underlying`), and the refusals are that
+layout's: monocle stays shown, and zoom again shows the change
 (`Frame.withUnderlying`).
 
 Every change is refused, with the state unchanged, with `ofMinibuffer` for
 the minibuffer's window and with `noSuchWindow` for a window not in the
-list. -/
+frame. -/
 def arrange (id : ViewId) (change : Arrange) (state : EditorState) :
     Except LayoutRefusal Unit × EditorState :=
   let frame := state.frame
   let windows := frame.windows
   let set (frame : Frame) : Except LayoutRefusal Unit × EditorState :=
     (.ok (), { state with frame })
+  -- The index of the other window an exchange swaps the window at `index`
+  -- of `list` with.
+  let exchanged (list : Array ViewId) (index : Nat) (nth : Option Nat) : Nat :=
+    match nth with
+    | some nth => if 0 < nth && nth - 1 != index then nth - 1 else list.size
+    | none => if index + 1 < list.size then index + 1 else index - 1
+  let common : Except LayoutRefusal Unit × EditorState :=
+    match change with
+    | .zoom =>
+      match frame.zoomedFrom with
+      | some back =>
+        set
+          { frame with
+            layout := back, zoomedFrom := none }
+      | none =>
+        if frame.layout == .monocle then (.error .monocleChosen, state)
+        else
+          set
+            { frame with
+              layout := .monocle, zoomedFrom := some frame.layout }
+    | .balance => set (frame.withUnderlying frame.underlying.balanced)
+    | .mainCount more steps =>
+      match frame.underlying.tiling with
+      | .masterStack parameters =>
+        let count := if more then parameters.count + steps else parameters.count - steps
+        set
+          (frame.withUnderlying
+            (frame.underlying.withTiling (.masterStack { parameters with count })))
+      | _ => (.error .noMain, state)
+    | _ => (.ok (), state)
   if state.minibufferView? == some id then (.error (.ofMinibuffer id), state)
   else
-    match windows.findIdx? (· == id) with
-    | none => (.error (.noSuchWindow id), state)
-    | some index =>
+    match windows.findIdx? (· == id), frame.sideOf? id with
+    | none, none => (.error (.noSuchWindow id), state)
+    | some index, _ =>
       match change with
       | .promote =>
         set
@@ -1980,45 +2154,66 @@ def arrange (id : ViewId) (change : Arrange) (state : EditorState) :
       | .demote => set { frame with windows := swapped windows index (index + 1) }
       | .rotate forward => set { frame with windows := frame.underlying.rotated windows forward }
       | .exchange nth =>
-        let other :=
-          match nth with
-          | some nth => if 0 < nth && nth - 1 != index then nth - 1 else windows.size
-          | none => if index + 1 < windows.size then index + 1 else index - 1
+        let other := exchanged windows index nth
         match windows[other]? with
         | some view =>
           if other == index then set frame
           else set { frame.focusedOn view with windows := swapped windows index other }
         | none => set frame
-      | .zoom =>
-        match frame.zoomedFrom with
-        | some back =>
-          set
-            { frame with
-              layout := back, zoomedFrom := none }
-        | none =>
-          if frame.layout == .monocle then (.error .monocleChosen, state)
-          else
-            set
-              { frame with
-                layout := .monocle, zoomedFrom := some frame.layout }
-      | .balance => set (frame.withUnderlying frame.underlying.balanced)
       | .resize axis grow steps =>
         match frame.underlying.resized index windows.size axis grow steps with
         | some layout => set (frame.withUnderlying layout)
         | none => (.error (.notResizable axis), state)
-      | .mainCount more steps =>
-        match frame.underlying with
-        | .masterStack parameters =>
-          let count := if more then parameters.count + steps else parameters.count - steps
-          set (frame.withUnderlying (.masterStack { parameters with count }))
-        | _ => (.error .noMain, state)
+      | .edge side =>
+        if !frame.underlying.edgeSides.contains side then (.error (.noSuchEdge side), state)
+        else
+          if windows.size ≤ 1 then (.error .lastTile, state)
+          else
+            -- The focus stays on the window, so the inheritor is not read.
+            set
+              { (frame.removed index).1 with
+                windows := windows.eraseIdx! index, docked := frame.docked.push (id, side) }
+      | _ => common
+    | none, some at_ =>
+      let ofSide := frame.atSide at_
+      let index := (ofSide.findIdx? (· == id)).getD 0
+      let undocked := frame.docked.filter (·.1 != id)
+      match change with
+      | .promote =>
+        set
+          { frame.inserted 0 { before := true } with
+            windows := #[id] ++ windows, docked := undocked }
+      | .demote => set (frame.withSide at_ (swapped ofSide index (index + 1)))
+      -- The whole list rotates, as monocle rotates its list.
+      | .rotate forward => set (frame.withSide at_ (Layout.monocle.rotated ofSide forward))
+      | .exchange nth =>
+        let other := exchanged ofSide index nth
+        match ofSide[other]? with
+        | some view =>
+          if other == index then set frame
+          else set ((frame.focusedOn view).withSide at_ (swapped ofSide index other))
+        | none => set frame
+      | .resize axis grow steps =>
+        match frame.underlying.resizedEdge at_ axis grow steps with
+        | some layout => set (frame.withUnderlying layout)
+        | none => (.error (.notResizable axis), state)
+      | .edge side =>
+        if side == at_ then
+          set
+            { frame.inserted (windows.size - 1) {} with
+              windows := windows.push id, docked := undocked }
+        else
+          if !frame.underlying.edgeSides.contains side then (.error (.noSuchEdge side), state)
+          else set { frame with docked := undocked.push (id, side) }
+      | _ => common
 
 /-- The window `count` steps from the window `id` towards `side`, worked out
 from the rectangles the layout gave (`rects`), so it holds under every
 layout; none when no window lies that way, and for a window with no
 rectangle, which monocle hides.
 
-A step's candidates are the windows of the list whose rectangle lies
+A step's candidates are the windows of the frame (`Frame.contains`), tiled
+and docked, whose rectangle lies
 wholly on `side` of the window reached so far and overlaps it across
 (`Side.lies`). The nearest edge wins; among windows equally near, the one
 whose span holds the reference coordinate, the top of `id`'s rectangle for
@@ -2028,7 +2223,7 @@ same reference, and stops at the last window reached: Vim's "Nth window",
 which goes as far as it can. The minibuffer's view is never a candidate. -/
 def toward? (state : EditorState) (id : ViewId) (side : Side) (count : Nat) : Option ViewId :=
   Id.run do
-    let laid := state.rects.filter fun (view, _) => state.frame.windows.contains view
+    let laid := state.rects.filter fun (view, _) => state.frame.contains view
     let some (_, start) := laid.find? (·.1 == id) | return none
     let reference :=
       match side with
@@ -2052,12 +2247,13 @@ def toward? (state : EditorState) (id : ViewId) (side : Side) (count : Nat) : Op
         break
     return if reached.1 == id then none else some reached.1
 
-/-- The window of the list after the window `id` when `forward`, and before
+/-- The window of the frame after the window `id` when `forward`, and before
 it otherwise, wrapping at either end; or, with `nth` above 0, the `nth`
-window of the list, the last when `nth` is past it. None for a window not
-in the list. -/
+window of the frame, the last when `nth` is past it. The frame's windows
+are walked in `Frame.all`'s order: the tiles, then the docked windows.
+None for a window not in the frame. -/
 def cycled (state : EditorState) (id : ViewId) (forward : Bool) (nth : Nat) : Option ViewId := do
-  let windows := state.frame.windows
+  let windows := state.frame.all
   let index ← windows.findIdx? (· == id)
   if 0 < nth then
     windows[min nth windows.size - 1]?
@@ -2072,7 +2268,7 @@ means nothing in another. The buffer is then the most recently used
 (`recent`). Refused, with the state unchanged, with
 `ofMinibuffer`, and the minibuffer's view, for the minibuffer's window and
 for the minibuffer's buffer in another window, with `noSuchWindow` for a
-window not in the list, with `noSuchBuffer` for a buffer there is none of,
+window not in the frame, with `noSuchBuffer` for a buffer there is none of,
 and with `markersOfAnotherText` when a marker is not of that buffer's
 text. -/
 def showBuffer (id : ViewId) (buffer : BufferId) (scroll selection : MarkerId)
@@ -2087,8 +2283,7 @@ where
   /-- The state with the buffer shown, for a window and a buffer that are
   not the minibuffer's. -/
   showing : Except LayoutRefusal Unit × EditorState :=
-    if (state.window? id).isNone || !state.frame.windows.contains id then
-      (.error (.noSuchWindow id), state)
+    if (state.window? id).isNone || !state.frame.contains id then (.error (.noSuchWindow id), state)
     else
       match state.buffer? buffer with
       | none => (.error (.noSuchBuffer buffer), state)
@@ -2105,6 +2300,53 @@ where
                       buffer, scroll, selection, wanted := none }
                   else window
               recent := Recent.touch state.recent buffer })
+
+/-- Opens a new window on the buffer `buffer`, with `scroll` and `selection`
+as its markers, at `spot`, and hands its id back (`freshView`):
+
+- `stack` puts it after the last window of the tiled list, as a split of
+  that window with the default placement would (`Frame.inserted`): under
+  master-and-stack the stack grows and main is untouched, under monocle it
+  is appended, and under manual splits the last tile is split along rows;
+- `edge side` docks it at `side`, after the windows docked there.
+
+The focus stays. Refused, with the state unchanged, with `ofMinibuffer`,
+and the minibuffer's view, for the minibuffer's buffer, with
+`noSuchBuffer` for a buffer there is none of, with `markersOfAnotherText`
+when a marker is not of that buffer's text, and with `noSuchEdge` for an
+edge the layout has none at. -/
+def openWindow (buffer : BufferId) (scroll selection : MarkerId) (spot : WindowSpot)
+    (state : EditorState) : Except LayoutRefusal ViewId × EditorState :=
+  match state.minibufferView? with
+  | some view =>
+    if state.minibufferBuffer? == some buffer then (.error (.ofMinibuffer view), state) else opening
+  | none => opening
+where
+  /-- The state with the window opened, for a buffer that is not the
+  minibuffer's. -/
+  opening : Except LayoutRefusal ViewId × EditorState :=
+    let frame := state.frame
+    match state.buffer? buffer with
+    | none => (.error (.noSuchBuffer buffer), state)
+    | some shown =>
+      if scroll.text != shown.text || selection.text != shown.text then
+        (.error .markersOfAnotherText, state)
+      else
+        let made := state.freshView
+        let opened (frame : Frame) : Except LayoutRefusal ViewId × EditorState :=
+          (.ok made,
+            { state with
+              windows := state.windows.push { id := made, buffer, scroll, selection }
+              frame
+              nextView := made.index + 1 })
+        match spot with
+        | .stack =>
+          opened
+            { frame.inserted (frame.windows.size - 1) {} with windows := frame.windows.push made }
+        | .edge side =>
+          if frame.underlying.edgeSides.contains side then
+            opened { frame with docked := frame.docked.push (made, side) }
+          else (.error (.noSuchEdge side), state)
 
 /-- Opens a prompt, asked from the focused view: a buffer in the next slot
 over `text`, whose history is `history`, with the minibuffer's mode
@@ -2144,19 +2386,19 @@ def openPrompt (label : String) (continuation : Invocation) (text : TextId) (his
           -- Vim, and the row is empty once the prompt closes.
           echo := "" })
 
-/-- The window of the list that stands for the view the prompt `asked` was
-asked from: the asking view while it is a window of the list, and the first
-window of the list otherwise. For a list with no window it is the asking
-view. The focus goes there when the prompt closes
-(`closePrompt`), and a command that was handed the minibuffer's view to
-show a buffer in shows it there (`Editor/Files.lean`, "Open"). -/
+/-- The window of the frame that stands for the view the prompt `asked` was
+asked from: the asking view while it is a window of the frame, tiled or
+docked (`Frame.contains`), and the first window of the tiled list
+otherwise. For a list with no window it is the asking view. The focus goes
+there when the prompt closes (`closePrompt`), and a command that was
+handed the minibuffer's view to show a buffer in shows it there
+(`shownIn`). -/
 def askedFrom (state : EditorState) (asked : Prompt) : ViewId :=
-  let windows := state.frame.windows
-  if windows.contains asked.asker then asked.asker else windows[0]?.getD asked.asker
+  if state.frame.contains asked.asker then asked.asker else state.frame.windows[0]?.getD asked.asker
 
 /-- Closes the open prompt: the minibuffer's window is removed, its buffer's
 slot is emptied, and the focus goes to the asking view, or, when that view
-is no longer a window of the list, to the first window of the list
+is no longer a window of the frame, to the first window of the list
 (`askedFrom`). The window list is as it was. Given an answer, the
 prompt's continuation is recorded with the answer as its first argument,
 before its own (`answered`). The minibuffer's markers and text are the

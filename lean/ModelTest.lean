@@ -7346,7 +7346,12 @@ def spoilings : List (String × (EditorState → EditorState)) :=
       { state with
         frame :=
           { state.frame with
-            layout := .monocle, zoomedFrom := some (.splits .tile) } })]
+            layout := .monocle, zoomedFrom := some (.splits .tile) } }),
+    ("with a window docked at a side the layout has no edge for", fun state =>
+      { state with
+        frame :=
+          { state.frame with
+            windows := #[⟨0⟩, ⟨1⟩], docked := #[(⟨2⟩, .left)] } })]
 
 /-- `state` with a prompt asked for from its focused view, and the reply: the
 label `Name: `, the continuation `asked`, and a minibuffer over the text
@@ -7416,6 +7421,49 @@ def windowsUnder (count : Nat) (layout : Layout) : TextM EditorState := do
         { state.frame with
           windows := windowsUpTo count, layout := layout.fits count } }
 
+/-- The initial state at 640 by 480 with `tiles` windows in the frame's
+list, views 0 up to `tiles - 1`, and a window docked at each side of
+`docked`, in order, views `tiles` on, all over its one buffer and each with
+markers of its own, under `layout` fitted to the tiles. View 0 is
+focused. -/
+def dockedUnder (tiles : Nat) (docked : List Side) (layout : Layout) : TextM EditorState := do
+  let state ← windowsUnder (tiles + docked.length) layout
+  return { state with
+      frame :=
+        { state.frame with
+          windows := windowsUpTo tiles, layout := layout.fits tiles
+          docked := docked.toArray.mapIdx fun index side => (⟨tiles + index⟩, side) } }
+
+/-- `dockedUnder 2 [.left]` under `.edge .left 25 Layout.default`: views 0
+and 1 tiled, main and the stack, and view 2 docked at the left edge.
+
+```
++----+------+------+
+|    |      |      |
+| 2  |  0   |  1   |
+|    |      |      |
++----+------+------+
+```
+
+View 0 is focused. -/
+def sidebar : TextM EditorState :=
+  dockedUnder 2 [.left] (.edge .left 25 Layout.default)
+
+/-- The tiled list, the docked windows and the focus `state` is left with
+by a change that was not refused, when it is well formed; none
+otherwise. -/
+def dockedTo (result : Except LayoutRefusal Unit × EditorState) :
+    Option (List Nat × List (Nat × Side) × Nat) :=
+  match result with
+  | (.ok (), after) =>
+    if after.wellFormed then
+      some
+        (after.frame.windows.toList.map (·.index),
+          after.frame.docked.toList.map fun (view, side) => (view.index, side),
+          after.frame.focused.index)
+    else none
+  | (.error _, _) => none
+
 /-- The window list and the focus `state` is left with by a change that
 was not refused; none for a refused one. -/
 def arrangedTo (result : Except LayoutRefusal Unit × EditorState) : Option (List Nat × Nat) :=
@@ -7438,7 +7486,10 @@ def lies (side : Side) (start rect : Rect) : Bool :=
 /-- The sample states of the direction property: one to five windows under
 master-and-stack with main on the left and with two main windows on top,
 under monocle, and under every manual split tree reached by up to three
-splits and five even columns; each also with a prompt open. -/
+splits and five even columns; and one to four tiles with none to two
+windows docked at an edge, under a left edge round master-and-stack, a
+right edge round a bottom edge round manual splits, and a top edge round
+monocle; each also with a prompt open. -/
 def directionStates : List EditorState :=
   let layouts : List (Nat × Layout) :=
     (List.range 5).flatMap
@@ -7447,10 +7498,20 @@ def directionStates : List EditorState :=
             (index + 1, .monocle)]) ++
       (splitsReached 3).map (fun tree => (tree.size, .splits tree)) ++
       [(5, .splits (Splits.even .columns 5))]
-  layouts.flatMap fun (count, layout) =>
-    match onTextModel (windowsUnder count layout) with
+  let edged : List (Nat × List Side × Layout) :=
+    (List.range 4).flatMap fun index =>
+      [[], [Side.left], [.left, .left]].map
+          (fun docked => (index + 1, docked, Layout.edge .left 25 Layout.default)) ++
+        [[], [Side.right], [.bottom], [.right, .bottom]].map
+          (fun docked => (index + 1, docked, .edge .right 30 (.edge .bottom 20 Layout.manual))) ++
+        [[Side.top], [.top, .top]].map fun docked => (index + 1, docked, .edge .top 25 .monocle)
+  let withPrompt (made : Option EditorState) : List EditorState :=
+    match made with
     | none => []
     | some state => [state, (prompted state).2]
+  layouts.flatMap (fun (count, layout) => withPrompt (onTextModel (windowsUnder count layout))) ++
+    edged.flatMap fun (tiles, docked, layout) =>
+      withPrompt (onTextModel (dockedUnder tiles docked layout))
 
 /-- The checks of the operations on the frame's windows that the window
 commands are made of (`Editor/State.lean`): a split's placement, a
@@ -7829,18 +7890,18 @@ def windowOperationChecks : List Check :=
               [Side.left, .right, .top, .bottom].all fun side =>
                 state.toward? ⟨index⟩ side 1 == none },
     { name :=
-        "criterion 4: focus by direction reaches a window that lies wholly on that side and overlaps across, whenever one does, and never the minibuffer's view, for every window and side of one to five windows under master-and-stack, monocle and every manual split tree reached by up to three splits, with a prompt open and without"
+        "criterion 4: focus by direction reaches a window that lies wholly on that side and overlaps across, whenever one does, and never the minibuffer's view, for every window and side of one to five windows under master-and-stack, monocle and every manual split tree reached by up to three splits, and of one to four tiles with none to two windows docked at an edge, with a prompt open and without"
       run :=
         pure <|
           directionStates.all fun state =>
-            state.frame.windows.all fun window =>
+            state.frame.all.all fun window =>
               [Side.left, .right, .top, .bottom].all fun side =>
                 match state.rect? window with
                 | none => state.toward? window side 1 == none
                 | some start =>
                   let candidates :=
                     state.rects.filter fun (id, rect) =>
-                      state.frame.windows.contains id && id != window && lies side start rect
+                      state.frame.contains id && id != window && lies side start rect
                   match state.toward? window side 1 with
                   | some reached =>
                     state.minibufferView? != some reached && candidates.any (·.1 == reached)
@@ -7865,9 +7926,309 @@ def windowOperationChecks : List Check :=
         pure <|
           let all : List LayoutRefusal :=
             [.onlyWindow, .noSuchWindow ⟨1⟩, .noSuchBuffer ⟨1⟩, .markersOfAnotherText,
-              .ofMinibuffer ⟨1⟩, .noPreviousWindow, .notResizable .rows, .noMain, .monocleChosen]
+              .ofMinibuffer ⟨1⟩, .noPreviousWindow, .notResizable .rows, .noMain, .monocleChosen,
+              .noSuchEdge .left, .lastTile, .atEdge ⟨1⟩]
           all.all (!·.describe.isEmpty) &&
-            LayoutRefusal.onlyWindow.describe == "the last window cannot be closed" }]
+            LayoutRefusal.onlyWindow.describe == "the last window cannot be closed" &&
+            (LayoutRefusal.noSuchEdge .left).describe == "the layout has no left edge" &&
+            (LayoutRefusal.noSuchEdge .bottom).describe == Layout.noEdge .bottom },
+    { name :=
+        "a window docked at an edge is one of the frame's windows and of the state's views, and not of the tiled list; the layout gives it its strip, after the tiles"
+      run :=
+        pure <|
+          match onTextModel sidebar with
+          | none => false
+          | some state =>
+            let rect (x y width height : Nat) : Rect := { x, y, width, height }
+            state.wellFormed && state.frame.windows == #[⟨0⟩, ⟨1⟩] &&
+              state.frame.all == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
+              state.frame.contains ⟨2⟩ &&
+              !state.frame.contains ⟨7⟩ &&
+              state.views == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
+              state.rects ==
+                #[(⟨0⟩, rect 160 0 240 464), (⟨1⟩, rect 400 0 240 464), (⟨2⟩, rect 0 0 160 464)] },
+    { name :=
+        "criterion 3: a window docked at the left edge is reached by direction from main, and main from it; closing it empties the edge and the focus goes back to the window focused before it, or to main; the last tile cannot be closed while it is docked"
+      run :=
+        pure <|
+          match onTextModel sidebar with
+          | none => false
+          | some state =>
+            let onSidebar := (state.focusWindow ⟨2⟩).2
+            let viaStack := ((state.focusWindow ⟨1⟩).2.focusWindow ⟨2⟩).2
+            let unremembered := { state with frame := { state.frame with focused := ⟨2⟩ } }
+            let closed (from_ : EditorState) : Option (List (Nat × Side) × Nat) :=
+              match from_.removeWindow ⟨2⟩ with
+              | (.ok window, after) =>
+                if window.id == ⟨2⟩ && after.wellFormed && after.rects.size == 2 then
+                  some
+                    (after.frame.docked.toList.map (fun (view, side) => (view.index, side)),
+                      after.frame.focused.index)
+                else none
+              | _ => none
+            let (_, oneTile) := state.removeWindow ⟨1⟩
+            state.toward? ⟨0⟩ .left 1 == some ⟨2⟩ && state.toward? ⟨2⟩ .right 1 == some ⟨0⟩ &&
+              state.toward? ⟨1⟩ .left 2 == some ⟨2⟩ &&
+              closed onSidebar == some ([], 0) &&
+              closed viaStack == some ([], 1) &&
+              closed unremembered == some ([], 0) &&
+              closed state == some ([], 0) &&
+              oneTile.frame.windows == #[⟨0⟩] &&
+              match oneTile.removeWindow ⟨0⟩ with
+              | (.error .onlyWindow, after) => after == oneTile
+              | _ => false },
+    { name :=
+        "closing a focused window of two docked at one edge moves the focus to the window of that side that took its index, or, for the last, to the side's new last window"
+      run :=
+        pure <|
+          match onTextModel (dockedUnder 1 [.left, .left] (.edge .left 25 Layout.default)) with
+          | none => false
+          | some state =>
+            let focusAfter (focus gone : Nat) : Option Nat :=
+              match (state.focusWindow ⟨focus⟩).2.removeWindow ⟨gone⟩ with
+              | (.ok _, after) => if after.wellFormed then some after.frame.focused.index else none
+              | _ => none
+            focusAfter 1 1 == some 2 && focusAfter 2 2 == some 1 && focusAfter 1 2 == some 1 },
+    { name :=
+        "criterion 3: promote moves a docked window into the tiles as main, the old main first of the stack; the edge command docks a tile, moves a docked window back to the end of the list, and moves one docked at another side to its side; the focus stays"
+      run :=
+        pure <|
+          match onTextModel sidebar,
+            onTextModel
+              (dockedUnder 2 [.left] (.edge .left 25 (.edge .bottom 30 Layout.default))) with
+          | some state, some two =>
+            let onSidebar := (state.focusWindow ⟨2⟩).2
+            dockedTo (state.arrange ⟨2⟩ .promote) == some ([2, 0, 1], [], 0) &&
+              dockedTo (onSidebar.arrange ⟨2⟩ .promote) == some ([2, 0, 1], [], 2) &&
+              dockedTo (state.arrange ⟨2⟩ (.edge .left)) == some ([0, 1, 2], [], 0) &&
+              dockedTo (state.arrange ⟨1⟩ (.edge .left)) ==
+                some ([0], [(2, .left), (1, .left)], 0) &&
+              dockedTo ((state.focusWindow ⟨1⟩).2.arrange ⟨1⟩ (.edge .left)) ==
+                some ([0], [(2, .left), (1, .left)], 1) &&
+              dockedTo (two.arrange ⟨2⟩ (.edge .bottom)) == some ([0, 1], [(2, .bottom)], 0) &&
+              dockedTo (two.arrange ⟨0⟩ (.edge .bottom)) ==
+                some ([1], [(2, .left), (0, .bottom)], 0)
+          | _, _ => false },
+    { name :=
+        "the edge command refuses the last tile with lastTile, and a side the layout has no edge at with noSuchEdge, for a tile and for a docked window, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel sidebar, onTextModel (windowsUnder 2 Layout.default) with
+          | some state, some plain =>
+            let (_, oneTile) := state.removeWindow ⟨1⟩
+            let refused (from_ : EditorState) (view : Nat) (side : Side) (refusal : LayoutRefusal) :
+              Bool :=
+              match from_.arrange ⟨view⟩ (.edge side) with
+              | (.error got, after) => got == refusal && after == from_
+              | _ => false
+            refused oneTile 0 .left .lastTile && refused state 1 .right (.noSuchEdge .right) &&
+              refused state 2 .top (.noSuchEdge .top) &&
+              refused plain 1 .left (.noSuchEdge .left)
+          | _, _ => false },
+    { name :=
+        "demote, exchange and rotate on a docked window act on the windows of its side, as a list, and leave the tiles; one window at an edge stays"
+      run :=
+        pure <|
+          match onTextModel (dockedUnder 2 [.left, .left, .left] (.edge .left 25 Layout.default)),
+            onTextModel sidebar with
+          | some state, some alone =>
+            let onTwo := (state.focusWindow ⟨2⟩).2
+            let left (views : List Nat) : List (Nat × Side) := views.map (·, .left)
+            dockedTo (onTwo.arrange ⟨2⟩ .demote) == some ([0, 1], left [3, 2, 4], 2) &&
+              dockedTo (onTwo.arrange ⟨4⟩ .demote) == some ([0, 1], left [2, 3, 4], 2) &&
+              dockedTo (onTwo.arrange ⟨2⟩ (.exchange none)) == some ([0, 1], left [3, 2, 4], 3) &&
+              dockedTo (onTwo.arrange ⟨2⟩ (.exchange (some 3))) ==
+                some ([0, 1], left [4, 3, 2], 4) &&
+              dockedTo (onTwo.arrange ⟨2⟩ (.rotate true)) == some ([0, 1], left [4, 2, 3], 2) &&
+              dockedTo (onTwo.arrange ⟨2⟩ (.rotate false)) == some ([0, 1], left [3, 4, 2], 2) &&
+              dockedTo (alone.arrange ⟨2⟩ .demote) == some ([0, 1], left [2], 0) &&
+              dockedTo (alone.arrange ⟨2⟩ (.rotate true)) == some ([0, 1], left [2], 0)
+          | _, _ => false },
+    { name :=
+        "resize on a docked window moves its edge's strip by 5 percent a step along the side's axis, and across it is refused with notResizable, the state as it was; resize, balance and main's count on any window act on the layout inside the edges, and balance leaves a strip's size"
+      run :=
+        pure <|
+          match onTextModel sidebar,
+            onTextModel (dockedUnder 2 [.left] (.edge .left 25 (.masterStack { share := 70 }))) with
+          | some state, some wide =>
+            (state.arrange ⟨2⟩ (.resize .columns true 1)).2.frame.layout ==
+                .edge .left 30 Layout.default &&
+              (state.arrange ⟨2⟩ (.resize .columns false 2)).2.frame.layout ==
+                .edge .left 15 Layout.default &&
+              (match state.arrange ⟨2⟩ (.resize .rows true 1) with
+              | (.error (.notResizable .rows), after) => after == state
+              | _ => false) &&
+              (state.arrange ⟨0⟩ (.resize .columns true 1)).2.frame.layout ==
+                .edge .left 25 (.masterStack { share := 55 }) &&
+              (state.arrange ⟨2⟩ (.mainCount true 1)).2.frame.layout ==
+                .edge .left 25 (.masterStack { count := 2 }) &&
+              (wide.arrange ⟨2⟩ .balance).2.frame.layout == .edge .left 25 Layout.default &&
+              match onTextModel (dockedUnder 2 [.left] (.edge .left 25 Layout.manual)) with
+              | none => false
+              | some manual =>
+                match manual.arrange ⟨2⟩ (.mainCount true 1) with
+                | (.error .noMain, after) => after == manual
+                | _ => false
+          | _, _ => false },
+    { name :=
+        "zoom from a docked window shows it over the tiled area, and zoom again goes back; zoom from a tile shows the tile alone, and a docked window then has no rectangle"
+      run :=
+        pure <|
+          match onTextModel sidebar with
+          | none => false
+          | some state =>
+            let whole : Rect := { x := 0, y := 0, width := 640, height := 464 }
+            match ((state.focusWindow ⟨2⟩).2.arrange ⟨2⟩ .zoom), state.arrange ⟨0⟩ .zoom with
+            | (.ok (), fromSidebar), (.ok (), fromMain) =>
+              fromSidebar.wellFormed && fromSidebar.frame.layout == .monocle &&
+                fromSidebar.frame.zoomedFrom == some (.edge .left 25 Layout.default) &&
+                fromSidebar.rects == #[(⟨2⟩, whole)] &&
+                fromMain.rects == #[(⟨0⟩, whole)] &&
+                fromMain.rect? ⟨2⟩ == none &&
+                match fromSidebar.arrange ⟨2⟩ .zoom with
+                | (.ok (), back) => back.frame == (state.focusWindow ⟨2⟩).2.frame
+                | _ => false
+            | _, _ => false },
+    { name :=
+        "splitting a docked window docks the new one at the same side, right after it, whatever the placement; the tiles and the layout are as they were, and the focus stays"
+      run :=
+        pure <|
+          match onTextModel (dockedUnder 2 [.left, .left] (.edge .left 25 Layout.manual)) with
+          | none => false
+          | some state =>
+            match
+              state.splitWindow ⟨2⟩ (marker 8) (marker 9) { axis := .columns, before := true } with
+            | (.ok made, after) =>
+              made == ⟨4⟩ && after.wellFormed && after.frame.windows == state.frame.windows &&
+                after.frame.docked == #[(⟨2⟩, .left), (⟨4⟩, .left), (⟨3⟩, .left)] &&
+                after.frame.layout == state.frame.layout &&
+                after.frame.focused == ⟨0⟩
+            | _ => false },
+    { name := "a split under manual splits inside an edge reads the placement, as manual splits do"
+      run :=
+        pure <|
+          match onTextModel (dockedUnder 1 [.left] (.edge .left 25 Layout.manual)) with
+          | none => false
+          | some state =>
+            match
+              state.splitWindow ⟨0⟩ (marker 8) (marker 9) { axis := .columns, before := true } with
+            | (.ok made, after) =>
+              after.wellFormed && after.frame.windows == #[made, ⟨0⟩] &&
+                after.frame.layout == .edge .left 25 (.splits (.split .columns 1 1 .tile .tile))
+            | _ => false },
+    { name :=
+        "focus in list order walks the tiles and then the docked windows, wrapping; the Nth counts them too; the window focused before is kept across a docked window"
+      run :=
+        pure <|
+          match onTextModel sidebar with
+          | none => false
+          | some state =>
+            let (_, onSidebar) := state.focusWindow ⟨2⟩
+            let (_, back) := onSidebar.focusWindow ⟨1⟩
+            state.cycled ⟨1⟩ true 0 == some ⟨2⟩ && state.cycled ⟨2⟩ true 0 == some ⟨0⟩ &&
+              state.cycled ⟨0⟩ false 0 == some ⟨2⟩ &&
+              state.cycled ⟨0⟩ true 3 == some ⟨2⟩ &&
+              state.cycled ⟨2⟩ false 0 == some ⟨1⟩ &&
+              onSidebar.frame.lastFocused == some ⟨0⟩ &&
+              back.frame.lastFocused == some ⟨2⟩ },
+    { name := "a docked window shows another buffer as any window does"
+      run :=
+        pure <|
+          match onTextModel (dockedUnder 1 [.left] (.edge .left 25 Layout.default)) with
+          | none => false
+          | some state =>
+            -- The docked window, view 1, is shown its buffer with new
+            -- markers: the operation takes it, as it takes a tile.
+            match state.showBuffer ⟨1⟩ ⟨0⟩ (marker 8) (marker 9) with
+            | (.ok (), after) =>
+              after.wellFormed && (after.window? ⟨1⟩).map (·.scroll) == some (marker 8)
+            | _ => false },
+    { name := "a prompt asked from a docked window gives the focus back to it when it closes"
+      run :=
+        pure <|
+          match onTextModel sidebar with
+          | none => false
+          | some state =>
+            let (_, onSidebar) := state.focusWindow ⟨2⟩
+            let (_, asking) := prompted onSidebar
+            match asking.prompt, asking.closePrompt none with
+            | some asked, (.ok (), closed) =>
+              asking.askedFrom asked == ⟨2⟩ && closed.frame.focused == ⟨2⟩ && closed.wellFormed
+            | _, _ => false },
+    { name :=
+        "config choosing a layout without an edge moves the windows docked there to the end of the tiled list, in order, before fitting the layout: the same windows are there and none is lost; an edge the new layout keeps keeps its windows"
+      run :=
+        pure <|
+          match
+            onTextModel
+              (dockedUnder 2 [.left, .bottom, .left]
+                (.edge .left 25 (.edge .bottom 30 Layout.default))) with
+          | none => false
+          | some state =>
+            let chosen (layout : Layout) : Frame := state.frame.choose layout
+            let all (frame : Frame) : Array Nat := (frame.all.map (·.index)).qsort (· < ·)
+            (chosen Layout.default).windows == #[⟨0⟩, ⟨1⟩, ⟨2⟩, ⟨3⟩, ⟨4⟩] &&
+              (chosen Layout.default).docked == #[] &&
+              (chosen Layout.manual).layout == Layout.manual.fits 5 &&
+              (chosen Layout.manual).windows.size == 5 &&
+              (chosen (.edge .left 25 Layout.default)).windows == #[⟨0⟩, ⟨1⟩, ⟨3⟩] &&
+              (chosen (.edge .left 25 Layout.default)).docked == #[(⟨2⟩, .left), (⟨4⟩, .left)] &&
+              [Layout.default, Layout.manual, .monocle, .edge .left 25 Layout.default].all
+                fun layout =>
+                all (chosen layout) == all state.frame &&
+                  ({ state with frame := chosen layout } : EditorState).wellFormed },
+    { name :=
+        "a window opened into the stack goes after the last of the tiled list: under master-and-stack main keeps its side and the stack grows, under monocle it is appended, and under manual splits the last tile is split along rows; the focus stays"
+      run :=
+        pure <|
+          let rect (x y width height : Nat) : Rect := { x, y, width, height }
+          let opened (count : Nat) (layout : Layout) : Option EditorState :=
+            (onTextModel (windowsUnder count layout)).bind fun state =>
+              match state.openWindow ⟨0⟩ (marker 8) (marker 9) .stack with
+              | (.ok made, after) =>
+                if
+                    made == ⟨count⟩ && after.wellFormed && after.frame.focused == ⟨0⟩ &&
+                      after.frame.windows == windowsUpTo (count + 1) &&
+                      (after.window? made).map (fun window => (window.buffer, window.scroll)) ==
+                        some (⟨0⟩, marker 8) then
+                  some after
+                else none
+              | _ => none
+          (opened 1 Layout.default).map (·.rects) ==
+              some #[(⟨0⟩, rect 0 0 320 464), (⟨1⟩, rect 320 0 320 464)] &&
+            (opened 2 Layout.default).map (·.frame.layout) == some Layout.default &&
+            (opened 2 .monocle).map (·.frame.layout) == some .monocle &&
+            (opened 2 Layout.manual).map (·.frame.layout) ==
+              some (.splits (.split .rows 1 2 .tile (.split .rows 1 1 .tile .tile))) &&
+            (opened 1 Layout.manual).map (·.frame.layout) ==
+              some (.splits (.split .rows 1 1 .tile .tile)) },
+    { name :=
+        "a window opened at an edge is docked there, after that side's others; at a side the layout has no edge for it is refused with noSuchEdge; a buffer there is none of, markers of another text and the minibuffer's buffer are refused, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel sidebar, onTextModel (windowsUnder 1 Layout.default) with
+          | some state, some plain =>
+            let asking := (prompted state).2
+            let minibuffer := asking.minibufferBuffer?.getD ⟨9⟩
+            let refused (from_ : EditorState) (buffer : BufferId) (scroll : MarkerId)
+              (spot : WindowSpot) (refusal : LayoutRefusal) : Bool :=
+              match from_.openWindow buffer scroll (marker 9) spot with
+              | (.error got, after) => got == refusal && after == from_
+              | _ => false
+            (match state.openWindow ⟨0⟩ (marker 8) (marker 9) (.edge .left) with
+              | (.ok made, after) =>
+                made == ⟨3⟩ && after.wellFormed && after.frame.windows == #[⟨0⟩, ⟨1⟩] &&
+                  after.frame.docked == #[(⟨2⟩, .left), (⟨3⟩, .left)] &&
+                  after.frame.focused == ⟨0⟩
+              | _ => false) &&
+              refused plain ⟨0⟩ (marker 8) (.edge .left) (.noSuchEdge .left) &&
+              refused state ⟨0⟩ (marker 8) (.edge .right) (.noSuchEdge .right) &&
+              refused state ⟨9⟩ (marker 8) .stack (.noSuchBuffer ⟨9⟩) &&
+              refused state ⟨0⟩ ⟨⟨5⟩, 0⟩ .stack .markersOfAnotherText &&
+              match asking.minibufferView? with
+              | some view => refused asking minibuffer ⟨⟨7⟩, 0⟩ .stack (.ofMinibuffer view)
+              | none => false
+          | _, _ => false }]
 
 /-- The checks of the editor state and its layout invariants
 (`Editor/State.lean`), on the text model. -/
@@ -8732,7 +9093,12 @@ def stateRequests : List StateRequest :=
     .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
     .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
     .arrange ⟨0⟩ .promote, .arrange ⟨1⟩ (.exchange none), .arrange ⟨0⟩ .zoom, .arrange ⟨9⟩ .zoom,
-    .arrange ⟨0⟩ (.mainCount true 1)]
+    .arrange ⟨0⟩ (.mainCount true 1), .arrange ⟨1⟩ (.edge .left),
+    .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .stack,
+    .openWindow ⟨2⟩ (marker 2 8) (marker 2 9) .stack,
+    .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.edge .left),
+    .openWindow ⟨9⟩ (marker 0 8) (marker 0 9) .stack,
+    .openWindow ⟨0⟩ (marker 1 8) (marker 0 9) .stack]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -9370,7 +9736,26 @@ def stateRequestChecks : List Check :=
               replied made == .inr ⟨1⟩ &&
               split.frame.windows == #[⟨1⟩, ⟨0⟩] &&
               split.frame.layout == .splits (.split .columns 1 1 .tile .tile)
-          | _, _ => false }]
+          | _, _ => false },
+    { name :=
+        "the openWindow request reaches the state's openWindow with its spot, and a refused one leaves the state"
+      run :=
+        pure <|
+          match onTextModel sidebar with
+          | none => false
+          | some state =>
+            let (stacked, after) := state.handle (.openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .stack)
+            let (docked, edged) :=
+              state.handle (.openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.edge .left))
+            let (absent, same) :=
+              state.handle (.openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.edge .top))
+            replied stacked == .inr ⟨3⟩ &&
+              after == (state.openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .stack).2 &&
+              after.frame.windows == #[⟨0⟩, ⟨1⟩, ⟨3⟩] &&
+              replied docked == .inr ⟨3⟩ &&
+              edged.frame.docked == #[(⟨2⟩, .left), (⟨3⟩, .left)] &&
+              replied absent == .inl (.noSuchEdge .top) &&
+              same == state }]
 
 /-- The loop the model tests run: one over the test scheme. -/
 abbrev TestLoop :=
@@ -20108,18 +20493,21 @@ def autoReloadChecks : List Check :=
 ones compiled code registers for files, the minibuffer, the buffers and the
 ex line (`Files.commands`, `Minibuffer.commands`, `Buffers.commands`,
 `Ex.commands`), each under the name it is registered under, told of the ex
-names that ship (`Ex.bindings`), and two written here: `split`, which
-splits the window it is called with and leaves the focus, and
+names that ship (`Ex.bindings`), and three written here: `split`, which
+splits the window it is called with and leaves the focus,
 `edit-then-close`, which inserts `x` at its window's cursors and then runs
-`close-buffer` inside itself, so the edit and the close are one command.
+`close-buffer` inside itself, so the edit and the close are one command,
+and `dock-others`, which docks every other window of the tiled list at the
+left edge.
 
 One keymap, the same for every view: `C-e e` runs the ex command, `C-e y`
 and `C-e t` the minibuffer's accept command and its command that moves to
 the next candidate, `C-b b` runs `switch-buffer` with the arguments the Vim
 scheme gives a command a key is bound to, a count and a register, `C-b n`
 runs it with `note.txt`, `C-b s` runs `split`, `C-b x` runs
-`edit-then-close`, `C-b d` runs `close-buffer` with no argument and `C-b m`
-runs it with the name the minibuffer's buffer has (`Prompt.bufferName`). -/
+`edit-then-close`, `C-b d` runs `close-buffer` with no argument, `C-b m`
+runs it with the name the minibuffer's buffer has (`Prompt.bufferName`)
+and `C-b h` runs `dock-others`. -/
 def bufferKeys : Loop.Keys TestScheme.scheme :=
   let registrations := Files.commands ++ Minibuffer.commands ++ Buffers.commands ++ Ex.commands
   let compiled : List (String × Dispatched) :=
@@ -20138,6 +20526,11 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
       ("edit-then-close", fun call => do
         discard <| call.target.window.id.insertAtSelections "x"
         discard <| runCommand Buffers.closeName { call with arguments := [] }
+        return none),
+      ("dock-others", fun call => do
+        for view in (← editorState).frame.windows do
+          if view != call.target.window.id then
+            discard <| view.arrange (.edge .left)
         return none)]
   {
     dispatchKeys
@@ -20147,7 +20540,8 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         ("C-b n", { command := Buffers.switchName, arguments := [.str "note.txt"] }),
         ("C-b s", invoke "split"), ("C-b x", invoke "edit-then-close"),
         ("C-b d", invoke Buffers.closeName),
-        ("C-b m", { command := Buffers.closeName, arguments := [.str Prompt.bufferName] })]
+        ("C-b m", { command := Buffers.closeName, arguments := [.str Prompt.bufferName] }),
+        ("C-b h", invoke "dock-others")]
       (compiled ++ written) with
     registered :=
       { ex := fun name => Ex.bindings.findRev? (·.name == name),
@@ -20499,7 +20893,31 @@ def bufferCommandChecks : List Check :=
               bufferNamed driver "note.txt" != none && shownName driver == some "note.txt" &&
                 (showing driver).bind (·.text) == some text &&
                 echoOf driver == some (Buffers.notClosing "note.txt") &&
-                driver.loop.state.wellFormed }]
+                driver.loop.state.wellFormed },
+    { name :=
+        "bd on a buffer shown only in a window docked at an edge closes it: the docked window shows the buffer used before it, and stays docked"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let state := opened.loop.state
+            let edged :=
+              { opened with
+                loop :=
+                  { opened.loop with
+                    state :=
+                      { state with
+                        frame := { state.frame with layout := .edge .left 25 Layout.default } } } }
+            let (docked, _) := fedTo edged (presses "C-b s" ++ presses "C-b h")
+            let (closed, _) := fedTo docked (exLine "b note.txt" ++ exLine "bd lf.txt")
+            match docked.loop.state.frame.docked.toList with
+            | [(sidebar, .left)] =>
+              shownName docked sidebar == some "lf.txt" && bufferNamed closed "lf.txt" == none &&
+                shownName closed sidebar == some "note.txt" &&
+                closed.loop.state.frame.docked == #[(sidebar, .left)] &&
+                closed.loop.state.wellFormed
+            | _ => false }]
 
 /-- The command `other` of the theme command's checks: it says `other`. -/
 def saysOther : Dispatched := fun _ => do

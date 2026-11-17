@@ -198,6 +198,10 @@ inductive StateRequest where
   /-- Make `change` on the window `view` (`Arrange`): a reorder of the list or
   a change of the layout's parameters. -/
   | arrange (view : ViewId) (change : Arrange)
+  /-- Open a new window on the buffer `buffer`, with `scroll` and `selection`
+  as its markers, at `spot`: after the last of the tiled list, or docked at
+  an edge. -/
+  | openWindow (buffer : BufferId) (scroll selection : MarkerId) (spot : WindowSpot)
   /-- Remove the window `view`. -/
   | removeWindow (view : ViewId)
   /-- Focus the window `view`. -/
@@ -314,6 +318,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .removeMinorMode .. => Except BufferRefusal Unit
   | .split .. => Except LayoutRefusal ViewId
   | .arrange .. => Except LayoutRefusal Unit
+  | .openWindow .. => Except LayoutRefusal ViewId
   | .removeWindow _ => Except LayoutRefusal Window
   | .focus _ => Except LayoutRefusal Unit
   | .show .. => Except LayoutRefusal Unit
@@ -384,6 +389,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .split view scroll selection placement, state =>
     state.splitWindow view scroll selection placement
   | .arrange view change, state => state.arrange view change
+  | .openWindow buffer scroll selection spot, state => state.openWindow buffer scroll selection spot
   | .removeWindow view, state => state.removeWindow view
   | .focus view, state => state.focusWindow view
   | .show view buffer scroll selection, state => state.showBuffer view buffer scroll selection

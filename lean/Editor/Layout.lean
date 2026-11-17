@@ -383,6 +383,11 @@ a share is a percentage. -/
 def shareTooLarge (share : Nat) : String :=
   s!"main's share of a master-and-stack layout must be at most 100 percent, not {share}"
 
+/-- What is said of a side the layout has no edge at: a window cannot be
+docked there, and a display rule cannot send one there. -/
+def noEdge (side : Side) : String :=
+  s!"the layout has no {side.name} edge"
+
 /-- What an edge layout whose size is `size`, above 100, is refused with when
 config chooses it: a size is a percentage. -/
 def edgeTooLarge (size : Nat) : String :=
