@@ -1736,6 +1736,36 @@ only as a generic list's closing angle bracket (`type_arguments`,
 keeps that row's level (the plan review's advice; the Rust indent fixture
 has such a row).
 
+**Code being typed: `@indent.open` and `@indent.incomplete`** (language-modes
+phase 3). Two capture names of Rust's indents query are ours, not
+nvim's: `@indent.open`, an opening bracket the tree did not close (a bare
+`{`, `(` or `[` directly in an `ERROR`, or one whose partner is `MISSING`),
+which counts its row for every later row; and `@indent.incomplete`, an
+`ERROR` or a node with a `MISSING` child, which no rule reads. A question of
+the indents captures that answers an incomplete node is asked once more
+from its start (`Indent.widenedStart`, `lean/Editor/Indent.lean`), so the
+bare brackets it holds are seen. Valid code has neither, so the fixture's
+levels and the checks of them are unchanged. Spiked while planning over
+`tree-sitter` 0.27.2 and `tree-sitter-rust` 0.24.2: without them,
+`fn main() {` at the text's end is `(ERROR fn identifier parameters "{")`
+and a new line there got level 0, and `if a {` typed inside a function
+above its `}` got one level too few; with them, 26 cases all gave the
+expected level, asking a cell either side of the position plus the
+widening, and without the widening five of the end-of-text cases were
+wrong. The indents query over a whole 4,153-row Rust file takes 4.3 ms in
+tree-sitter alone, so a new line asks a narrow range and widens only
+inside an error, never the whole text before it.
+
+**A new line's level is asked before the break, so the port gains
+nothing.** `RET`, `o` and `O` ask the level of the new row at the position
+it opens at, of the text before the line break (`TextId.openingLevel`),
+whose tree is the one delivered last. The library's rule that a structural
+question is answered only of the revision whose tree is delivered last
+(`Session::kept_captures`) stands; carrying the delivered tree's indents
+captures through the patch to a newer revision, for a replay that types
+and breaks lines in one command, is an open question
+([keymaps-and-modes.md](keymaps-and-modes.md), "Open questions").
+
 **Markdown is `tree-sitter-md`'s two grammars.** `tree-sitter-md` 0.5.4
 (MIT, the tree-sitter-grammars project's, the one nvim, Helix and Zed use)
 is depended on with no features: its `parser` feature only adds a wrapper

@@ -1589,7 +1589,9 @@ edit or move inside the session.
   insert state runs it, and the cursor resting there when it is run by its
   name. The line ending is read from the buffer (`Buffer.lineEnding`), and
   the edit carries the selection from before the command ("Undo and
-  redo").
+  redo"). The new line starts at its indent level ("Indenting a new
+  line"): `o` inserts the line ending and then the indent, `O` the indent
+  and then the line ending, and the bar goes after the indent.
 - **Not built: a count before `i a I A o O`.** Vim repeats the inserted
   text. The six commands ignore their count and their register.
 
@@ -1601,7 +1603,7 @@ follows Vim 9.1 with its default options:
 | Key | Command | Behaviour, as Vim 9.1 documents it |
 |---|---|---|
 | `<Backspace>` | `insert-delete-backward` | Deletes the character before the bar; a carriage return and line feed, or a character of several bytes, goes whole. At a line's start it joins the line to the one above, and it deletes past where the insert began: `i_<BS>` under `backspace=indent,eol,start`, Vim 9.1's default. At the text's start it deletes nothing |
-| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent`. The primitive an indenting line break would call, each row's level from its mode's indents query (`TextId.indentLevels`, `lean/Editor/Indent.lean`), is built; indenting on `RET`, `o` and `O`, and the `=` operator, are task `syntax-done-signal-mode-and-indent-operator`'s |
+| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending, as `o` and `O` read it, and starts the new row at its indent level ("Indenting a new line", below): the blanks either side of the bar are replaced, so the row left keeps no trailing blanks and the rest starts at its level, and the bar goes after the indent. With no syntax tree or no indents query it inserts the line ending alone, as before indenting; a text not parsed yet gets the row's own indent. With several ranges it breaks the line at each (`Target.insertLineBreak`), with no indent |
 | `TAB` | `insert-tab` | Inserts a tab character: Vim's defaults `noexpandtab` and `softtabstop=0` |
 | `<ArrowLeft>` | `insert-left` | One cell back, no further than the line's start (`whichwrap=b,s`: no wrap) |
 | `<ArrowRight>` | `insert-right` | One cell on, no further than where the line's content ends |
@@ -1621,7 +1623,11 @@ follows Vim 9.1 with its default options:
   character, a line feed and a tab), and `.` runs them again, so it makes
   the session's result: after `i x <BS> y <Esc>` it inserts `y`, a
   `<Backspace>` past where the insert began deletes there too, and `RET`
-  breaks the line with the buffer's line ending. An arrow key that moved
+  is replayed by `RET`'s command (`Evil.newline`), so it breaks the line
+  and indents the new row as typing it does. The typed text holds no
+  indent, only the line feed, which is Vim's `.` under `autoindent`; a
+  line break after typed text inside one replay gets its row's own
+  indent, the text not being parsed yet. An arrow key that moved
   restarts the last change as `i` once something is typed after it, with
   the text typed from there on (`Command.restarts`), as
   `ins-special-special` says: "only the last change can be redone and
@@ -1634,6 +1640,46 @@ follows Vim 9.1 with its default options:
 - **Not built: the other keys of Vim's insert state**: `C-w`, `C-u`,
   `C-o`, `C-r`, `<Home>` and `<End>` do nothing there (the open
   questions).
+
+#### Indenting a new line
+
+Status: built, by language-modes phase 3 (`lean/Editor/Evil.lean`,
+`Evil.openingIndent`; `lean/Editor/Indent.lean`, "The opening rule"; pinned
+by `indentOpeningChecks`, `indentEditChecks`, `evilIndentChecks`,
+`ConfigTest.indentChecks` and `ContractTest`'s opening table).
+
+`RET`, `o` and `O` ask the level of the new row of the text the user sees,
+before the line break (`TextId.openingLevel`), at the offset the line opens
+at: the bar for `RET`, where the cursor's line's content ends for `o`, and
+the line's start for `O`. That text's tree is the one delivered last: keys
+come further apart than an incremental reparse, which is milliseconds, and
+the editor thread never waits for a parse. A position in the text before
+the break answers the new row's level, so nothing is asked of a revision
+that has no tree, and the syntax tree port gains nothing.
+
+| What the opening level is | The new line's whitespace |
+|---|---|
+| A level | That many of the buffer's indent unit |
+| None: inside a multi-line string or block comment | Nothing added |
+| Refused `notParsed`: keys faster than a reparse, or a replay | The opening row's own leading whitespace (Vim's `autoindent`) |
+| Refused otherwise: no language, a mode with no tree, a language with no indents query | Nothing added: the edit is the one before this phase, byte for byte |
+
+- **`RET` truncates the blanks at the split**: with something added, the
+  blanks just before the bar on its row and just after it go, replaced by
+  the line ending and the indent (`Indent.breakAt`), as Vim's `open_line`
+  does under `autoindent`. The row left keeps no trailing blanks (`RET RET`
+  leaves an empty row), and the rest of the line starts at the indent. A
+  closing bracket that moves to the new row leads it a level out.
+- **One undo step with the session**: `o`/`O` with their indent, and `RET`
+  with its, are part of the insert session's one step.
+- **Several ranges**: `RET` breaks the line at each with no indent, as
+  before; evil makes no multi-range insert today.
+- **A recorded departure**: Vim removes an indent left untouched when the
+  insert is left (`<Escape>` after `o` with nothing typed). Here the blanks
+  stay until `=`, or a `RET` on that row, which replaces them.
+- **No electric closing bracket**: typing `}` as a row's first character
+  does not re-indent the row, where Vim's `indentkeys` has `0}`; a later
+  `=` does.
 
 ### Motions as built
 
@@ -2038,7 +2084,9 @@ library as plain rows (`SyntaxTree.capturesOf`), the rule Lean's:
 Status: built, by the command loop's phase 13
 (`lean/Editor/Evil/Operators.lean`, `lean/Editor/Evil/Registers.lean`,
 `lean/Editor/Evil/Motions.lean`; pinned by `evilOperatorChecks`,
-`evilSelectionChecks`, `evilRegisterChecks` and `evilOpenChecks`).
+`evilSelectionChecks`, `evilRegisterChecks` and `evilOpenChecks`). `=`
+is built by language-modes phase 3 (pinned by `evilIndentChecks` and
+`ConfigTest.indentChecks`).
 
 **The oracle is Vim's documented behaviour, written out case by case; no
 test runs Vim.** The reference is Vim 9.1's `motion.txt`, `change.txt`,
@@ -2051,7 +2099,8 @@ register holds a sentinel before the keys, so a register left as it was
 is seen. Every row was run through Vim 9.1 by hand, outside the suite,
 when the phase was planned.
 
-- **The operator × motion table** is five situations of 45 cases: no
+- **The operator × motion table** is five situations of 66 cases, 22
+  motions under each of `d`, `c` and `y`, and `=` under each too: no
   count; a count of 2; the cursor on an empty line; and the cursor on the
   buffer's last character, on a text that ends in a line feed and on one
   that does not, because the empty last row makes those two cases here.
@@ -2059,7 +2108,11 @@ when the phase was planned.
   it with each operator (`ModelTest.operatorTable`). A check that reads
   the default tables holds it complete: the pairs of keys each situation's
   rows have are exactly the product of the operators' keys and the
-  motions'.
+  motions'. The situations' buffer has no language, so every `=` row is
+  the indent operator giving up (`Evil.cannotIndent`); what `=` does over
+  a motion with indent levels is `evilIndentChecks`'s, and the find,
+  search and text-object tables each have `=` rows over a JSON text the
+  model's tree indents.
 - **A sweep beside it** (`ModelTest.operatorSweep`) presses every operator
   key with every motion key, with no count and with a count of 2, from
   every resting position of a few texts: nothing is refused, the cursor
@@ -2133,6 +2186,42 @@ What each motion says of itself:
 | **`d`** | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was | The register is the lines, line-wise. They are deleted. The cursor goes to the first non-blank of the line now where the first was, or of the last line when there is none |
 | **`y`** | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays | The register is the lines, line-wise. The cursor goes to the operand's `rest`, rested |
 | **`c`** | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive`, when it is the empty text. The selection is a bar at the head | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
+
+**What `=` does** (`Evil.indent`, the operator `indent`; pinned by
+`evilIndentChecks` on the models and `ConfigTest.indentChecks` over the
+library's Rust grammar):
+
+- **It acts on whole rows**, as Vim's `=` does: lines from `==` (with a
+  count), a linewise motion (`=j`, `=G`, `gg=G`) or `V`; and for cells,
+  from a charwise motion, a text object (`=af`) or `v`, the rows of the
+  first cell through the last, or the first cell's row for an empty
+  stretch.
+- **Each row's leading whitespace becomes its level in the buffer's indent
+  unit** (`TextId.reindentEdits`, `Indent.reindent`, `lean/Editor/Indent.lean`):
+  a blank row's becomes nothing, as Vim's `=` and rustfmt leave one; a row
+  whose level is none, inside a multi-line string or block comment, keeps
+  its own; a row already right is not touched. The unit is the buffer's
+  language's (`Target.indentUnit`, through `indentUnitOf`, "Languages and
+  the code mode").
+- **One edit, one undo step.** Every row's edit is one transaction that
+  carries the selection from before the command
+  (`Target.replaceEachCarrying`), so one `u` gives back the text and the
+  cursor. With no edit there is no transaction, and only the cursor moves.
+- **The cursor** goes to the first non-blank of the first row, rested, as
+  Vim's `op_reindent` leaves it. The window keeps no wanted column.
+- **No register** is read or written; a register named before `=` is
+  taken and ignored, as in Vim.
+- **`.` replays it** over the same rows from the cursor, its count
+  replaced by one typed before `.`; over a visual selection it is not
+  repeated (`notRepeated overSelection`), as for any operator.
+- **With no levels to read it gives up** (`Evil.cannotIndent`), having
+  changed nothing, and is not the last change: a buffer with no syntax
+  tree (`indent: this buffer has no syntax tree`), a tree that keeps no
+  indents query (`indent: its language has no indents query`, JSON and
+  Markdown today), or a text whose last edit's tree is not delivered yet
+  (`indent: the syntax tree is not parsed yet`).
+- **A recorded departure**: Vim's own `=` reads `indentexpr` or `cindent`;
+  ours reads the language's indents query, so its levels are the query's.
 
 - **The empty-stretch column is Vim's**, quirks included: `yh` at a line's
   start empties the register, `dh` leaves it, and `c$` on an empty line
@@ -2395,7 +2484,7 @@ Which names have something behind them:
 | `self-insert`, which no table names: typed text | Built and registered |
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
 | `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
-| The operators (`delete`, `change`, `yank`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
+| The operators (`delete`, `change`, `yank`, `indent`, bound to `d`, `c`, `y` and `=`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
 | The twenty-two text objects of `objects` | Built: entries of `Evil.objects`, Vim's sixteen and the syntax tree's six, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
 | `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
@@ -2741,6 +2830,11 @@ structure Language where
   indentUnit : Language.IndentUnit := .spaces 4  -- spaces n, or tab
 ```
 
+`Language.IndentUnit` is a module of its own,
+`lean/Editor/Language/IndentUnit.lean`, which imports nothing, so the state
+requests can name it (`Language → Mode → Command → State.Request` would
+otherwise be a cycle).
+
 - **The shipped table** (`Language.shipped`) is `rust` (`*.rs`, four
   spaces), `json` (`*.json`, two) and `markdown` (`*.md`, two), each parsed
   with the grammar of its name and its shipped queries. Each is a named
@@ -2777,8 +2871,16 @@ structure Language where
 - **A grammar loaded at run time** (deferred) would be a registration that
   makes a name known to the syntax service; entries name grammars and need
   no new field.
+- **The indent unit is read by `=` and by the commands that open a
+  line** (`Target.indentUnit`): the unit of the buffer's language's entry,
+  which a command asks the loop for by name (`indentUnitOf`, answered from
+  the loop's table, config's entry first), or four spaces
+  (`Language.IndentUnit.default`) for a buffer with no language or one the
+  table has no entry of, which covers a mode with its own tree and an
+  indents query.
 - Not built: setting a language on a buffer with no file by command;
-  comment tokens; a formatter.
+  comment tokens; a formatter; indents queries for JSON, Markdown, TOML
+  and Lean, whose buffers' `=` says there is none.
 
 Pinned by `ModelTest.languageMatchChecks` (the rule and the table, pure),
 `ModelTest.modeRecordChecks` (`code`'s tree), `ModelTest.languageOpenChecks`
@@ -3545,6 +3647,9 @@ names a scheme's key:
 | `ConfigTest.languageChecks` | Through the headless host, the real elaborator and the real syntax binding: a `.rs`, a `.json` and a `.md` file opened into `code` and highlighted with their grammar's shipped query, a file of no language asking the syntax tree port nothing, and config's `rust` with its own highlights query used in place of the shipped one |
 | `treeObjectRuleChecks` | The syntax tree's text-object rule (`Evil.TreeObjects.choose`), pure, over hand-built rows: the smallest node first, a count, a node no bigger than a wider selection passed over, the inside as the longest inner row within, no inside, and no node round the cursor |
 | `indentRuleChecks`, `indentLevelChecks` | The indent rule (`Indent.rule`), pure, over hand-built rows; and the indent primitive (`TextId.indentLevels`) on the editor's models, under a test mode of the model's JSON grammar with an indents query of its own, refused for a text with no syntax tree or no indents query |
+| `indentOpeningChecks`, `indentEditChecks` | The opening rule (`Indent.openingCounts`, `Indent.levelOf`) and the widening (`Indent.widenedStart`), pure, over hand-built nodes; and levels as edits, pure: a level's whitespace in spaces or tabs, the re-indent's edits (a row already right left, a blank row emptied, a kept row untouched), what a new line gets for each answer, and `RET`'s edit (`Indent.breakAt`) |
+| `evilIndentChecks` | `=` and the indented new lines by key, in a JSON language whose model tree answers the indents query (`indentDriver`): `gg=G` over a mangled text, `=af`, counts, `=j`, `V j =`, one undo step, `.` over another range and with a new count, not over a selection, a config entry's tab unit; `RET` after an opening bracket and before a closing one, between blanks and twice, `o` and `O`, and `.` replaying them; and with no language or no indents query, `=` giving up with its sentence and `RET`, `o` and `O` as before |
+| `ConfigTest.indentChecks` | Through a headless host of the Vim scheme that ships and the library's Rust grammar: `gg=G` on the Rust indent fixture mangled in code gives the fixture back, its string and comment rows kept; `=af` on one of two functions, then `u` and `.`; `A RET` after an unclosed brace at the text's end and two deep, `o` then `if a {` and `RET`, `o` and `O` in a method; and a plain and a JSON buffer as before. The host waits for a text's tree before a question of its captures, so keys that edit and then ask are deterministic. `ContractTest` holds the opening rule's table over the real grammar through `TextId.openingLevel` |
 | `ConfigTest.modeChecks` | Through the headless host and the real elaborator: a config mode's role runs its store command, and once a reload drops the mode the role's key runs the global binding; a compiled mode's role runs its command before any reload and after a reload of a config that defines no mode |
 
 Beside them, `stateChecks` pin the three state operations, `registryChecks`
@@ -3801,6 +3906,16 @@ every build). The second is proved on the text model
   of a text that ends in a line feed is a place a normal-state cursor may
   rest, which removes the consequence after an insert and makes `G` on a
   file land one row below Vim's.
+- **Carried structural captures.** A new line's level is asked of the
+  text before the break, whose tree is delivered, so the syntax tree port
+  gains nothing ("Indenting a new line"). A replay or a macro that types
+  and breaks lines in one command asks of a revision with no tree, and
+  gets the row's own indent. Carrying the delivered tree's indents captures
+  through the patch to a newer revision, as highlights are carried, would
+  answer it; it is a Rust, FFI, model and contract addition, and sits
+  beside "a job's wait for a parse".
+- **An electric closing bracket.** `}` typed as a row's first character
+  does not re-indent the row (Vim's `indentkeys` `0}`); `=` does.
 - **Insert state's other editing keys** ("Insert state"). `<Backspace>`,
   `RET`, `TAB` and the arrow keys are built; `C-w`, `C-u`, `C-o`, `C-r`,
   `<Home>` and `<End>` are not. Dot repeat replays the built keys as Vim

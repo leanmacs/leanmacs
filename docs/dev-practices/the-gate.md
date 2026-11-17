@@ -1012,8 +1012,13 @@ job's command run by `Job.finishWith` reaching the syntax tree it is
 handed. Over the fixtures of `tests/syntax`, its third argument, it checks
 that the indent levels of `rust/indent.rs` are its own indentation and the
 tree's text objects of `rust/objects.rs` cover the ranges written by hand,
-each before and after an edit, and that the shipped Rust indents and text
-objects queries name only what their rules read.
+each before and after an edit, that the shipped Rust indents and text
+objects queries name only what their rules read, and that the opening
+level of Rust texts at unclosed brackets counts every bracket the tree did
+not close. `config-test` mangles `rust/indent.rs` (77 rustfmt-formatted
+rows; its two rows inside a multi-line string and a block comment are
+found by their content, not their number) and re-indents it with `gg=G`
+through a headless host.
 `ffi-test`'s own `syntaxChecks` pin that a list of strings out, a query
 handle with its refusals, captures with each of their refusals, a shipped
 query, a highlight, an injection, a language and a kept query with each
