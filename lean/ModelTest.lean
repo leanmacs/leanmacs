@@ -29487,6 +29487,29 @@ def tabCommandChecks : List Check :=
               missed.echo == TabCommands.noMatch "zq"
           | _, _, _ => false },
     { name :=
+        "C-w w resolves an answer as a candidate exactly, then the first tab whose label it is, then a number of a tab, then the fuzzy matcher's best candidate: from tab 1, a label notes, a candidate 2 scratch, a near miss nots, a label 1 over the number 1, and a candidate 2 scratch over tab 1's label 2 scratch each select tab 2"
+      run :=
+        pure <|
+          -- Each answer is typed in tab 1, so a selection of tab 2 is the
+          -- answer's doing; where two branches disagree, the earlier one
+          -- names tab 2 and the later one tab 1.
+          match state (tabsAfter "C-w c C-c r n o t e s RET C-w p C-w w n o t e s RET"),
+            state (tabsAfter "C-w c C-w p C-w w 2 SPC s c r a t c h RET"),
+            state (tabsAfter "C-w c C-c r n o t e s RET C-w p C-w w n o t s RET"),
+            state (tabsAfter "C-w c C-c r 1 RET C-w p C-w w 1 RET"),
+            state
+              (tabsAfter
+                "C-w c C-w p C-c r 2 SPC s c r a t c h RET C-w w 2 SPC s c r a t c h RET") with
+          | some labelled, some exact, some fuzzy, some labelOverNumber, some exactOverLabel =>
+            labelled.frame.tabIndex == 1 && exact.frame.tabIndex == 1 &&
+              fuzzy.frame.tabIndex == 1 &&
+              labelOverNumber.tabLabel 1 == "1" &&
+              labelOverNumber.frame.tabIndex == 1 &&
+              exactOverLabel.tabLabel 0 == "2 scratch" &&
+              exactOverLabel.frame.tabIndex == 1 &&
+              [labelled, exact, fuzzy, labelOverNumber, exactOverLabel].all (·.prompt.isNone)
+          | _, _, _, _, _ => false },
+    { name :=
         "tab-rename asks for a name, labelled Rename tab:, and names the tab of its window; an empty answer goes back to the generated label, its focused window's buffer's name"
       run :=
         pure <|
