@@ -5,6 +5,7 @@ import Editor.Clipboard.Model
 import Editor.Command.Append
 import Editor.Command.Dispatch
 import Editor.Command.Model
+import Editor.Compile.Compiled
 import Editor.Config.Display
 import Editor.Config.Reload
 import Editor.Display.Contract
@@ -766,7 +767,8 @@ def jobModelChecks : List Check :=
         let (outcome, after) := job.runModel { now := 3 }
         pure
           (outcome == .finished 9 && after.now == 8 &&
-            after.posted == #[JobContract.posting "first", JobContract.posting "second" [.nat 2]]) },
+            after.posted ==
+              #[JobContract.posting "first", JobContract.posting "second" [.nat 2]]) },
     { name :=
         "in the job model, a run that parks parks at each post, with it recorded and the clock where it was, and resumes from there to its end"
       run :=
@@ -788,7 +790,8 @@ def jobModelChecks : List Check :=
           | some (.posted _ model resume) => some (JobModel.runParking (resume ()) model)
           | _ => none
         pure
-          (parkedAt first == some (JobContract.posting "first", #[JobContract.posting "first"], 3) &&
+          (parkedAt first ==
+              some (JobContract.posting "first", #[JobContract.posting "first"], 3) &&
             (second.bind parkedAt).map (·.1) == some (JobContract.posting "second" [.nat 2]) &&
             (second.bind parkedAt).map (·.2.2) == some 8 &&
             (match third with
@@ -1986,7 +1989,8 @@ def runnerChecks : List Check :=
               sleep 1000
               post (JobContract.posting "second"))
             fun _ => pure ()
-        let handle ← Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
+        let handle ←
+          Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
         unless ← eventually (return (← rig.clock.waiting) == 1) do
           return false
         let before ← posts.get
@@ -15289,7 +15293,8 @@ def driverChecks : List Check :=
             let (finished, _) := second.finish 1
             asked.posting.map (fun job => (job.id, job.invocation)) ==
                 #[(1, { command := "mark", arguments := [.str "p1"] })] &&
-              asked.pending.isEmpty && driverText asked == some "" &&
+              asked.pending.isEmpty &&
+              driverText asked == some "" &&
               (firstStep.map (·.ended)) == some (some .finished) &&
               driverText first == some "p1" &&
               first.posting.map (fun job => (job.id, job.invocation)) ==
@@ -15297,7 +15302,8 @@ def driverChecks : List Check :=
               first.jobs.now == 10 &&
               driverText typed == some "p1-" &&
               driverText second == some "p1-p2" &&
-              second.posting.isEmpty && second.pending.map (·.id) == #[1] &&
+              second.posting.isEmpty &&
+              second.pending.map (·.id) == #[1] &&
               driverText finished == some "p1-p2[end]" &&
               (asked.posted 2).2.isNone },
     { name :=
@@ -15309,7 +15315,10 @@ def driverChecks : List Check :=
           | some driver =>
             let driver :=
               { driver with
-                jobs := { processes := { streams := #[{ command := streamed, steps := #[.awaitClosed] }] } } }
+                jobs :=
+                  {
+                    processes :=
+                      { streams := #[{ command := streamed, steps := #[.awaitClosed] }] } } }
             let (streaming, _) := fedTo driver (presses "C-c r")
             let (other, _) := fedTo streaming (presses "C-c a")
             let (cancelled, steps) := fedTo other (presses "C-c v")
@@ -15322,7 +15331,8 @@ def driverChecks : List Check :=
               steps.flatMap (fun step => (step.map (·.cancels)).getD #[]) == #["s"] &&
               cancelled.posting.isEmpty &&
               cancelled.jobs.processes.killed == #[streamed] &&
-              delivered.isNone && driverText after == some "" },
+              delivered.isNone &&
+              driverText after == some "" },
     { name :=
         "a job whose directory's lookup fails leaves the loop's echo area saying why, as the host says it"
       run :=
@@ -27203,6 +27213,53 @@ def withScript (driver : TestDriver) (script : Process.Script) : TestDriver :=
         processes :=
           { driver.jobs.processes with scripts := #[script] ++ driver.jobs.processes.scripts } } }
 
+/-- The compiled commands `registrations` as the dispatch checks run them. -/
+def dispatchedOf (registrations : Array Config.Registration) : List (String × Dispatched) :=
+  registrations.toList.filterMap fun registration =>
+    match registration.action with
+    | .call run =>
+      some
+        (registration.name, fun call => do
+          run call
+          return none)
+    | _ => none
+
+/-- The bindings of the shell checks (`shellKeys`). -/
+def shellBindings : List (String × Invocation) :=
+  workspaceBindings ++
+    [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName), ("C-e k", invoke "kube"),
+      ("C-e g", invoke Shell.interruptName), ("C-e u", invoke "undo"), ("C-e o", invoke "squat"),
+      ("C-e s", invoke "split"), ("C-e c", invoke "close"), ("C-e x", invoke "drop"),
+      ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")]
+
+/-- The commands of the shell checks (`shellKeys`). -/
+def shellCommands : List (String × Dispatched) :=
+  workspaceCommands ++ dispatchedOf (Ex.commands ++ Minibuffer.commands ++ Shell.commands) ++
+    [("kube", fun call => do
+        let location := Location.reachable "kube" "pod" "/app"
+        discard <| Workspace.register location workspaceOrigin
+        Workspace.setBufferWorkspace call.target.window.buffer location
+        return none),
+      ("undo", fun call => do
+        discard <| call.target.window.buffer.undo
+        return none),
+      ("squat", fun (_ : Call) => do
+        discard <| createBuffer "*shell output: r@main*"
+        return none),
+      ("split", fun call => do
+        if let .ok made← call.target.window.id.split .rows then
+          discard <| made.focus
+        return none),
+      ("close", fun call => do
+        discard <| call.target.window.id.close
+        return none),
+      ("drop", fun call => do
+        let window := call.target.window
+        if let .ok elsewhere← createBuffer "elsewhere" then
+          discard <| window.id.show elsewhere
+          discard <| window.buffer.remove
+        return none)]
+
 /-- The keys of the shell checks: the workspace driver checks', and `C-e e`
 and `C-e y`, the ex line and its accept key (`exLine`); `C-e g` runs the
 interrupt command, as `C-g` does under the Vim scheme; `C-e k` gives the
@@ -27214,46 +27271,7 @@ splits the window and focuses the new one, and `C-e c` closes the window;
 it showed; and `C-o s` and `C-o t` open `/r/src/s.txt` and
 `/r/src/t.txt`. -/
 def shellKeys : Loop.Keys TestScheme.scheme :=
-  let compiled : List (String × Dispatched) :=
-    (Ex.commands ++ Minibuffer.commands ++ Shell.commands).toList.filterMap fun registration =>
-      match registration.action with
-      | .call run =>
-        some
-          (registration.name, fun call => do
-            run call
-            return none)
-      | _ => none
-  dispatchKeys
-    (workspaceBindings ++
-      [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName), ("C-e k", invoke "kube"),
-        ("C-e g", invoke Shell.interruptName), ("C-e u", invoke "undo"), ("C-e o", invoke "squat"),
-        ("C-e s", invoke "split"), ("C-e c", invoke "close"), ("C-e x", invoke "drop"),
-        ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")])
-    (workspaceCommands ++ compiled ++
-      [("kube", fun call => do
-          let location := Location.reachable "kube" "pod" "/app"
-          discard <| Workspace.register location workspaceOrigin
-          Workspace.setBufferWorkspace call.target.window.buffer location
-          return none),
-        ("undo", fun call => do
-          discard <| call.target.window.buffer.undo
-          return none),
-        ("squat", fun (_ : Call) => do
-          discard <| createBuffer "*shell output: r@main*"
-          return none),
-        ("split", fun call => do
-          if let .ok made← call.target.window.id.split .rows then
-            discard <| made.focus
-          return none),
-        ("close", fun call => do
-          discard <| call.target.window.id.close
-          return none),
-        ("drop", fun call => do
-          let window := call.target.window
-          if let .ok elsewhere← createBuffer "elsewhere" then
-            discard <| window.id.show elsewhere
-            discard <| window.buffer.remove
-          return none)])
+  dispatchKeys shellBindings shellCommands
 
 /-- A driver of the shell checks: the workspace driver's world, with the
 shell's keys and jobs, and the children of `shellScripts`; `none` if
@@ -27666,6 +27684,374 @@ def shellChecks : List Check :=
             Shell.keyOf none == "shell outside" &&
             Shell.keyOf (some (.local "/w")) != Shell.keyOf (some (.local "/r"))) }]
 
+/-- The world of the compile checks: the workspace driver checks' world, and a
+second clone of the same origin at `/clone/r`, on `main`. -/
+def compileWorld : Workspace.World :=
+  { workspaceWorld with
+    repositories :=
+      workspaceWorld.repositories.push
+        { toplevel := "/clone/r", commonDir := "/clone/r/.git", origin := some workspaceOrigin }
+    markerDirectories := workspaceWorld.markerDirectories.push "/clone/r/.git" }
+
+/-- The jobs of the compile checks: the shell checks', and the compile's run
+job. -/
+def compileJobs (name : String) : Option (List Argument → Work) :=
+  if name == Compile.runJob then some Compile.runWork else shellJobs name
+
+/-- What `make` in `/r` does: writes `one`, pauses 100 ms, writes `two`,
+pauses 100 ms and writes `three` on its standard error. -/
+def makeSteps : Array Process.Step :=
+  #[.write .out "one\n".toUTF8, .pause 100, .write .out "two\n".toUTF8, .pause 100,
+    .write .err "three\n".toUTF8]
+
+/-- The streaming children of the compile checks, `make` in `/r` exiting as
+`exit`. -/
+def compileStreams (exit : Process.Exit := .code 0) : Array Process.StreamScript :=
+  #[{ command := shellCommand "/r" "make", steps := makeSteps, exit },
+    { command := shellCommand "/w" "make"
+      steps :=
+        #[.write .out "w1\n".toUTF8, .pause 100, .write .out "w2\n".toUTF8, .pause 100,
+          .write .out "w3\n".toUTF8] },
+    { command := shellCommand "/w" "build", steps := #[.write .out "b1\n".toUTF8] },
+    { command := shellCommand "/clone/r" "make", steps := #[.write .out "c1\n".toUTF8] },
+    { command := shellCommand "/x" "make", steps := #[.write .out "x1\n".toUTF8] }]
+
+/-- The place of the workspace `/r`. -/
+def placeR : Compile.Place :=
+  .workspace (.local "/r")
+
+/-- The bindings of the compile checks: the shell checks', and `C-k c`
+(`compile`), `C-k m` (`compile` with `make`), `C-k r` (`recompile`), `C-k k`
+(`kill-compilation`), `C-k t` (`insert-x`, which inserts `x` at the window's
+cursors), `C-k 0` (`to-start`, which puts the window's cursor at offset 0),
+`C-k o` (`focus-compilation`, which focuses the first view that shows a
+compilation buffer), `C-k s` (`squat`, which makes a buffer
+`*compilation: r@main (clone)*` the compile did not make), `C-k z` (a stale
+`compilation-output` of `/r`'s first run) and `C-o q`, which opens
+`/clone/r/src/a.lean`. -/
+def compileBindings : List (String × Invocation) :=
+  shellBindings ++
+    [("C-k c", invoke Compile.compileName),
+      ("C-k m", { command := Compile.compileName, arguments := [.str "make"] }),
+      ("C-k r", invoke "recompile"), ("C-k k", invoke Compile.killName),
+      ("C-k t", invoke "insert-x"), ("C-k 0", invoke "to-start"),
+      ("C-k o", invoke "focus-compilation"), ("C-k s", invoke "squat-clone"),
+      ("C-k z",
+        { command := Compile.outputName
+          arguments := placeR.arguments ++ [.nat 1, .str "stale"] }),
+      ("C-o q", opens "/clone/r/src/a.lean")]
+
+/-- The commands of the compile checks (`compileBindings`). -/
+def compileCommands : List (String × Dispatched) :=
+  let insertX : Dispatched := fun call => do
+    call.target.insertAtSelections "x"
+    return none
+  let toStart : Dispatched := fun call => do
+    discard <| call.target.window.id.select { ranges := #[⟨0, 0⟩] }
+    return none
+  let focusCompilation : Dispatched := fun _ => do
+    let state ← editorState
+    let shows (window : Window) : Bool :=
+      (state.buffer? window.buffer).any (·.name.startsWith "*compilation")
+    if let some window := state.windows.find? shows then
+      discard <| window.id.focus
+    return none
+  let squat : Dispatched := fun _ => do
+    discard <| createBuffer "*compilation: r@main (clone)*"
+    return none
+  shellCommands ++ dispatchedOf Compile.commands ++
+    [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
+      ("squat-clone", squat)]
+
+/-- The keys of the compile checks, with the compile mode registered. -/
+def compileKeys : Loop.Keys TestScheme.scheme :=
+  let keys := dispatchKeys compileBindings compileCommands
+  { keys with
+    registered :=
+      { keys.registered with
+        entering := fun name => (Compile.modes.find? (·.name == name)).map ([·]) } }
+
+/-- A driver of the compile checks: the world of `compileWorld`, with the
+compile checks' keys and jobs, the files the keys open, and the children of
+`compileStreams`, `make` in `/r` exiting as `exit`; `none` if making the
+state was refused. -/
+def compileDriver (exit : Process.Exit := .code 0)
+    (registered : String → Option (List Argument → Work) := compileJobs) : Option TestDriver :=
+  let model := compileWorld.jobModel "git" #["/r/src", "/w/src", "/x", "/clone/r/src"]
+  let files :=
+    [("/r/src/a.lean", "a"), ("/w/src/b.lean", "w"), ("/x/a.txt", "x"),
+          ("/clone/r/src/a.lean", "c")].foldl
+      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
+  (Loop.Driver.over compileKeys registered (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver =>
+    { driver with
+      jobs :=
+        { model with
+          files, processes := { model.processes with streams := compileStreams exit } } }
+
+/-- The text of the buffer called `name` in `driver`. -/
+def compiledText (driver : TestDriver) (name : String) : Option String :=
+  namedText driver name
+
+/-- `driver` with its editor clock, which commands read, at `milliseconds`. -/
+def withClock (driver : TestDriver) (milliseconds : Nat) : TestDriver :=
+  { driver with
+    model := { driver.model with watch := { driver.model.watch with clock := milliseconds } } }
+
+/-- `driver` once the oldest post held is delivered. -/
+def postedNext (driver : TestDriver) : TestDriver :=
+  match driver.posting[0]? with
+  | some job => (driver.posted job.id).1
+  | none => driver
+
+/-- `driver` once the post held of the job of `key` is delivered. -/
+def postedOf (driver : TestDriver) (key : String) : TestDriver :=
+  match driver.posting.find? (·.key == some key) with
+  | some job => (driver.posted job.id).1
+  | none => driver
+
+/-- `driver` once every post is delivered and every pending job finished,
+oldest first, a post before a job's end; bounded. -/
+def drained (driver : TestDriver) : TestDriver :=
+  (List.range 64).foldl
+    (fun driver _ =>
+      match driver.posting[0]? with
+      | some job => (driver.posted job.id).1
+      | none =>
+        match driver.pending[0]? with
+        | some job => (driver.finish job.id).1
+        | none => driver)
+    driver
+
+/-- `driver` once `compile` is asked, `line` typed in its prompt and the
+prompt accepted. -/
+def compiledLine (driver : TestDriver) (line : String) : TestDriver :=
+  (fedTo driver (presses "C-k c" ++ [.commit line] ++ presses "C-e y")).1
+
+/-- `driver` once `keys` are pressedOn, with nothing settled. -/
+def pressedOn (driver : TestDriver) (keys : String) : TestDriver :=
+  (fedTo driver (presses keys)).1
+
+/-- The buffer called `name` in `driver`. -/
+def compileBuffer (driver : TestDriver) (name : String) : Option Buffer := do
+  driver.loop.state.buffer? (← driver.loop.state.findBuffer name)
+
+/-- The compile checks (`Editor/Compile.lean`), on the loop's driver over the
+editor's models, the job model and the process model, in the world of
+`compileWorld`. -/
+def compileChecks : List Check :=
+  [{  name :=
+        "criterion 1: compile with make in a buffer of /r starts /bin/sh -c make streaming in /r, and *compilation: r@main* holds the header and then each line as it is delivered, before the child ends"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let asked := compiledLine opened "make"
+            let first := postedNext asked
+            let second := postedNext first
+            let done := drained (withClock second 1500)
+            let name := "*compilation: r@main*"
+            let state := done.loop.state
+            asked.jobs.processes.started.back? == some (shellCommand "/r" "make") &&
+              asked.posting.map (·.key) == #[some "compile local /r"] &&
+              compiledText asked name == some "r@main in /r: make\n" &&
+              compiledText first name == some "r@main in /r: make\none\n" &&
+              (Compile.recordOf first.loop.state placeR).running.isSome &&
+              compiledText second name == some "r@main in /r: make\none\ntwo\n" &&
+              second.pending.size == 1 &&
+              compiledText done name ==
+                some "r@main in /r: make\none\ntwo\nthree\nCompilation finished after 1.5 s\n" &&
+              (Compile.recordOf state placeR).running.isNone &&
+              (compileBuffer done name).map (·.readOnly) == some true &&
+              (compileBuffer done name).bind (·.major) == some Compile.modeName &&
+              (state.findBuffer name).bind (fun id => (state.workspaceOf? id).map (·.1.location)) ==
+                some (.local "/r") &&
+              -- A new view below view 0 shows it: view 2, since the prompt's
+              -- minibuffer had view 1.
+              (state.findBuffer name).map (Compile.viewsOf state) == some #[⟨2⟩] &&
+              (showing done).map (·.buffer.name) == some "a.lean" &&
+              state.frame.focused == ⟨0⟩ },
+    { name :=
+        "criterion 2: compiles in /r and /w run at once into two buffers, each holding only its own output, and kill-compilation in one leaves the other running"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := pressedOn (settledAfter driver "C-o a") "C-k m"
+            let both := pressedOn (settledAfter inR "C-o w") "C-k m"
+            let mixed := postedOf (postedOf both "compile local /w") "compile local /r"
+            -- `a.lean` is open: it is shown at once, and no job runs.
+            let killed := pressedOn mixed "C-o a C-k k"
+            let rest := drained killed
+            both.posting.map (·.key) == #[some "compile local /r", some "compile local /w"] &&
+              compiledText mixed "*compilation: r@main*" == some "r@main in /r: make\none\n" &&
+              compiledText mixed "*compilation: r@feature*" == some "r@feature in /w: make\nw1\n" &&
+              killed.posting.map (·.key) == #[some "compile local /w"] &&
+              killed.jobs.processes.killed == #[shellCommand "/r" "make"] &&
+              compiledText killed "*compilation: r@main*" ==
+                some "r@main in /r: make\none\nCompilation killed after 0.0 s\n" &&
+              compiledText rest "*compilation: r@feature*" ==
+                some "r@feature in /w: make\nw1\nw2\nw3\nCompilation finished after 0.0 s\n" &&
+              compiledText rest "*compilation: r@main*" ==
+                compiledText killed "*compilation: r@main*" },
+    { name :=
+        "criterion 4: compile in a buffer of a workspace that cannot run commands starts no process, opens no prompt and says why"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let kube := settledAfter (settledAfter driver "C-o a") "C-e k"
+            let asked := pressedOn kube "C-k c"
+            let given := pressedOn kube "C-k m"
+            asked.loop.state.prompt.isNone && asked.next == kube.next &&
+              asked.jobs.processes.started == kube.jobs.processes.started &&
+              echoOf asked ==
+                some
+                  "compile: r@app is reachable through kube pod at /app, where commands cannot run" &&
+              given.next == kube.next &&
+              echoOf given == echoOf asked },
+    { name :=
+        "criterion 5: the last line reads finished for exit 0, exited abnormally with code 2 for exit 2 and killed after kill-compilation, and the echo area says the same with r@main"
+      run :=
+        pure <|
+          match compileDriver, compileDriver (.code 2) with
+          | some driver, some failing =>
+            let run (driver : TestDriver) :=
+              drained (withClock (pressedOn (settledAfter driver "C-o a") "C-k m") 1500)
+            let lastLineOf (driver : TestDriver) :=
+              ((compiledText driver "*compilation: r@main*").map fun text =>
+                  ((text.splitOn "\n").filter (!·.isEmpty)).getLast?).join
+            let finished := run driver
+            let failed := run failing
+            let killed :=
+              pressedOn
+                (withClock (postedNext (pressedOn (settledAfter driver "C-o a") "C-k m")) 1500)
+                "C-k k"
+            lastLineOf finished == some "Compilation finished after 1.5 s" &&
+              echoOf finished == some "r@main: Compilation finished after 1.5 s" &&
+              lastLineOf failed == some "Compilation exited abnormally with code 2 after 1.5 s" &&
+              echoOf failed ==
+                some "r@main: Compilation exited abnormally with code 2 after 1.5 s" &&
+              lastLineOf killed == some "Compilation killed after 1.5 s" &&
+              echoOf killed == some "r@main: Compilation killed after 1.5 s"
+          | _, _ => false },
+    { name :=
+        "criterion 9: editing commands in a compilation buffer are refused as for a read-only buffer, and a committed text is dropped"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k m")
+            let focused := pressedOn ran "C-k o"
+            let inserted := pressedOn focused "C-k t"
+            let undone := pressedOn focused "C-e u"
+            let committed := (fedTo focused [.commit "z"]).1
+            let name := "*compilation: r@main*"
+            let text := compiledText ran name
+            (showing focused focused.loop.state.frame.focused).map (·.buffer.name) == some name &&
+              text.isSome &&
+              compiledText inserted name == text &&
+              echoOf inserted == some s!"insert-x: {name} is read-only" &&
+              compiledText undone name == text &&
+              echoOf undone == some s!"undo: {name} is read-only" &&
+              compiledText committed name == text &&
+              echoOf committed == some s!"{name} is read-only" },
+    { name :=
+        "criterion 10: two workspaces whose labels match get two compilation buffers with distinct names, and each compile writes to its own; a buffer that holds the second name gives a third"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := drained (pressedOn (settledAfter driver "C-o a") "C-k m")
+            let inClone := drained (pressedOn (settledAfter inR "C-o q") "C-k m")
+            let squatted := pressedOn (settledAfter inR "C-o q") "C-k s"
+            let pushed := drained (pressedOn squatted "C-k m")
+            compiledText inClone "*compilation: r@main*" ==
+                some "r@main in /r: make\none\ntwo\nthree\nCompilation finished after 0.0 s\n" &&
+              compiledText inClone "*compilation: r@main (clone)*" ==
+                some "r@main in /clone/r: make\nc1\nCompilation finished after 0.0 s\n" &&
+              compiledText pushed "*compilation: r@main (clone)*<2>" ==
+                some "r@main in /clone/r: make\nc1\nCompilation finished after 0.0 s\n" &&
+              compiledText pushed "*compilation: r@main (clone)*" == some "" },
+    { name :=
+        "a directory-scope compile in /x/a.txt runs in /x into *compilation: x*, which keeps its directory"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o x") "C-k m")
+            let state := ran.loop.state
+            ran.jobs.processes.started.back? == some (shellCommand "/x" "make") &&
+              compiledText ran "*compilation: x*" ==
+                some "x in /x: make\nx1\nCompilation finished after 0.0 s\n" &&
+              (state.findBuffer "*compilation: x*").bind (state.value? · Compile.directoryLocal) ==
+                some (.str "/x") &&
+              (Compile.recordOf state (.directory "/x")).last == some ("make", "/x") },
+    { name :=
+        "an empty answer to compile's prompt says compile: no command and starts nothing; with no compile-run registered the start is refused and said"
+      run :=
+        pure <|
+          match compileDriver, compileDriver (registered := shellJobs) with
+          | some driver, some unregistered =>
+            let opened := settledAfter driver "C-o a"
+            let empty := (fedTo opened (presses "C-k c C-e y")).1
+            let refused := pressedOn (settledAfter unregistered "C-o a") "C-k m"
+            (pressedOn opened "C-k c").loop.state.prompt.isSome &&
+              echoOf empty == some Compile.noCommand &&
+              empty.next == opened.next &&
+              echoOf refused ==
+                some (Compile.notStarted Compile.compileName (.noSuchJob Compile.runJob)) &&
+              (refused.loop.state.findBuffer "*compilation: r@main*").isNone
+          | _, _ => false },
+    { name :=
+        "a closed compilation buffer gets a new one on the next compile; a stale run's output changes nothing"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let first := drained (pressedOn (settledAfter driver "C-o a") "C-k m")
+            let closed := pressedOn (pressedOn first "C-k o") "C-e x"
+            let again := drained (pressedOn (settledAfter closed "C-o a") "C-k m")
+            let stale := pressedOn again "C-k z"
+            let name := "*compilation: r@main*"
+            match first.loop.state.findBuffer name, again.loop.state.findBuffer name with
+            | some old, some made =>
+              (closed.loop.state.buffer? old).isNone && made != old &&
+                compiledText again name ==
+                  some "r@main in /r: make\none\ntwo\nthree\nCompilation finished after 0.0 s\n" &&
+                (Compile.recordOf again.loop.state placeR).buffer == some made.index &&
+                (Compile.recordOf again.loop.state placeR).runs == 2 &&
+                compiledText stale name == compiledText again name
+            | _, _ => false },
+    { name :=
+        "a compile order crosses as arguments and back with a place of each kind, arguments that are no order read as none, and the run job started with them fails; each place has its own job key"
+      run :=
+        let places : List Compile.Place :=
+          [.workspace (.local "/a b"), .workspace (.reachable "kube" "pod" "/app"),
+            .workspace (.branchOnly "git@h:o/r" "x"), .directory "/x"]
+        pure
+          (places.all
+                        (fun place =>
+                          let order : Compile.Order :=
+                            { line := "make -j", directory := "/r", place, run := 3 }
+                          Compile.Order.ofArguments? order.arguments == some order) &&
+                      [[], [.str "make"], [.str "make", .str "/r", .nat 1, .str "directory"]].all
+                        (Compile.Order.ofArguments? · == none) &&
+                    ((Compile.runWork [.nat 1] ()).runModel {}).1 matches .failed _ &&
+                  placeR.jobKey == "compile local /r" &&
+                (Compile.Place.directory "/x").jobKey == "compile directory /x" &&
+              Compile.elapsed 1500 == "1.5 s" &&
+            Compile.elapsed 61049 == "61.0 s") }]
+
 /-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
 `abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts
 `x` at the window's cursors; `C-r d` (`delete-first`) deletes the first byte
@@ -27692,14 +28078,14 @@ def readOnlyKeys : Loop.Keys TestScheme.scheme :=
         return none),
       ("write-w", fun call => do
         call.target.window.buffer.writing do
-          let text := call.target.buffer.text
-          text.insert (← text.byteLength) "w"
+            let text := call.target.buffer.text
+            text.insert (← text.byteLength) "w"
         return none),
       ("write-fails", fun call => do
         call.target.window.buffer.writing do
-          let text := call.target.buffer.text
-          text.insert (← text.byteLength) "f"
-          text.delete 9 99
+            let text := call.target.buffer.text
+            text.insert (← text.byteLength) "f"
+            text.delete 9 99
         return none)]
 
 /-- A driver of the read-only checks, with their keys and no job; `none` if
@@ -27892,7 +28278,8 @@ def checks : List Check :=
     workspaceStateChecks ++
     workspaceChecks ++
     shellChecks ++
-    readOnlyChecks
+    readOnlyChecks ++
+    compileChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
