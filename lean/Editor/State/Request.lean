@@ -50,14 +50,16 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   `matchCandidates`, which there runs the completion style chosen for a
   category (`Editor/Completion/Style.lean`) inside the asking command, and
   `displayRules`, which there is answered config's display rules
-  (`Editor/DisplayRules.lean`). Here
+  (`Editor/DisplayRules.lean`), and `hasJob`, which there is answered
+  whether a job is registered under a name. Here
   `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
   answered `none`, `exNames` and `themeNames` are answered no name,
   `runCommand` is answered `false` and runs nothing, `askSource` is answered
   `none` and runs nothing, `categorySources` is answered no name,
-  `matchCandidates` is answered no hit and asks the matcher nothing, and
+  `matchCandidates` is answered no hit and asks the matcher nothing,
   `displayRules` is
-  answered no rule: this handler knows no registry.
+  answered no rule, and `hasJob` is answered `true`, as `startJob` takes any
+  name: this handler knows no registry.
 - **A reply holds plain data too**, so no request is answered a command:
   a command is a program over the port these requests are part of, and a
   reply that held one would be a type that refers to itself. A command
@@ -104,6 +106,16 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   listing has no request: the loop makes it, between a command and the
   scene, from what the prompt's style answers (`Editor/Loop.lean`), so no
   command can list what the style did not answer.
+- **What comes later is taken by four requests, none guarded**, so a
+  delivery is not interrupted between them (`Editor/Completion/Later.lean`):
+  `addCandidates`, a batch of a source's job, taken only for the open
+  prompt's view, the source's index and its generation, and dropped
+  otherwise (a stale job's), with a `Bool` reply; `sourceAnswered`, the
+  end of that job; `listMatched`, the listing a match job made, kept only
+  for the match in flight; and `matchFailed`, a match job that could not
+  list, which says why in the echo area. Each is the operation of the same
+  name (`Editor/State.lean`, "Prompts"). A delivery is never wrong to
+  list: it holds the candidates themselves, not indices.
 - **An invocation to run next is recorded by one request**, `invoke`: it
   is put after the invocations already recorded
   (`EditorState.answered`), a prompt's answer among them, and the loop
@@ -336,6 +348,21 @@ inductive StateRequest where
   | setCandidates (collected : Completion.Collected)
   /-- Move the open prompt's choice by `step` through its listing. -/
   | chooseCandidate (step : Candidates.Step)
+  /-- Take `batch`, a batch of the job of the asking source `index` of the
+  prompt open in `view`, at `generation`; dropped otherwise. -/
+  | addCandidates (view : ViewId) (index generation : Nat) (batch : Array Completion.Candidate)
+  /-- The job of the asking source `index` of the prompt open in `view`, at
+  `generation`, has ended. -/
+  | sourceAnswered (view : ViewId) (index generation : Nat)
+  /-- List `listed`, which a match job made for `pattern` at `revision`, in
+  the prompt open in `view`, if that is the match in flight. -/
+  | listMatched (view : ViewId) (pattern : String) (revision : Nat) (listed : Array Completion.Listed)
+  /-- The match in flight for `pattern` at `revision` in the prompt open in
+  `view` could not list, for `message`. -/
+  | matchFailed (view : ViewId) (pattern : String) (revision : Nat) (message : String)
+  /-- Whether a job is registered under `name`, which the loop that runs the
+  command answers with. -/
+  | hasJob (name : String)
   /-- Have the window `view` keep `wanted` as its wanted column, or none. -/
   | setWanted (view : ViewId) (wanted : Option Window.Wanted)
   /-- Which command the ex name `name` is bound to, and what it takes. -/
@@ -459,6 +486,11 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .closePrompt _ => Except PromptRefusal Unit
   | .setCandidates _ => Except PromptRefusal Unit
   | .chooseCandidate _ => Except PromptRefusal Unit
+  | .addCandidates .. => Bool
+  | .sourceAnswered .. => Unit
+  | .listMatched .. => Unit
+  | .matchFailed .. => Unit
+  | .hasJob _ => Bool
   | .setWanted .. => Except LayoutRefusal Unit
   | .ex _ => Option Ex.Binding
   | .exNames => Array String
@@ -565,6 +597,16 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .closePrompt answer, state => state.closePrompt answer
   | .setCandidates collected, state => state.setCandidates collected
   | .chooseCandidate step, state => state.chooseCandidate step
+  | .addCandidates view index generation batch, state =>
+    state.addCandidates view index generation batch
+  | .sourceAnswered view index generation, state => ((), state.sourceAnswered view index generation)
+  | .listMatched view pattern revision listed, state =>
+    ((), state.listMatched view pattern revision listed)
+  | .matchFailed view pattern revision message, state =>
+    ((), state.matchFailed view pattern revision message)
+  -- The registry is the loop's to answer from (`Program.dispatched`): here,
+  -- with no loop, any name is taken, as `startJob` takes any.
+  | .hasJob _, state => (true, state)
   | .setWanted view wanted, state => state.setWanted view wanted
   | .ex _, state => (none, state)
   | .exNames, state => (#[], state)

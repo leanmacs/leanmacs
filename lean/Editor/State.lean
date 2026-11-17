@@ -1295,9 +1295,44 @@ structure Candidates where
   listed : Array Completion.Listed := #[]
   /-- The choice: an index of `listed`, or none. -/
   chosen : Option Nat := none
+  /-- The sources that answer later, in the order they were asked, each with
+  what it has answered so far. -/
+  asking : Array Completion.Asking := #[]
+  /-- What may be listed, as a count: bumped whenever it changes, a batch
+  taken or a source's answer replaced or cleared. -/
+  revision : Nat := 0
+  /-- The revision `listed` was made at. -/
+  listedAt : Nat := 0
+  /-- The match a worker is running for this prompt, if one is
+  (`Editor/Loop.lean`, "Prompts"). -/
+  matching : Option Completion.InFlight := none
+  /-- The text and the revision a match failed for: not matched again until
+  one of them changes. -/
+  unmatched : Option (String × Nat) := none
   deriving DecidableEq, Repr
 
 namespace Candidates
+
+/-- The candidates a style matches: the prompt's own, then what each
+asking source that has not filtered answered, in the asking order. A
+source that answers later comes after those that answered now. -/
+def matchable (candidates : Candidates) : Array Completion.Candidate :=
+  candidates.asking.foldl (fun all source => if source.filtered then all else all ++ source.answered)
+    candidates.all
+
+/-- The candidates listed as given, after the matches: the passed ones, then
+what each filtered asking source answered, in the asking order. -/
+def passing (candidates : Candidates) : Array Completion.Candidate :=
+  candidates.asking.foldl
+    (fun passed source => if source.filtered then passed ++ source.answered else passed)
+    candidates.passed
+
+/-- How many candidates a style matches (`matchable`), counted over the
+sources without gathering them. -/
+def matchableSize (candidates : Candidates) : Nat :=
+  candidates.asking.foldl
+    (fun size source => if source.filtered then size else size + source.answered.size)
+    candidates.all.size
 
 /-- A step of the choice through the listing. -/
 inductive Step where
@@ -1312,11 +1347,31 @@ the hits' indices, in that order, each with its hit's ranges, an index that
 is none of theirs dropped; then every passed candidate, in the order given,
 with no ranges; and nothing chosen. -/
 def list (candidates : Candidates) (pattern : String) (hits : Array Completion.Hit) : Candidates :=
+  let matchable := candidates.matchable
   let matched :=
-    hits.filterMap fun hit => (candidates.all[hit.index]?).map (Completion.Listed.of · hit.ranges)
+    hits.filterMap fun hit => (matchable[hit.index]?).map (Completion.Listed.of · hit.ranges)
   { candidates with
-    listedFor := some pattern, listed := matched ++ candidates.passed.map Completion.Listed.of
-    chosen := none }
+    listedFor := some pattern, listed := matched ++ candidates.passing.map Completion.Listed.of
+    chosen := none, listedAt := candidates.revision }
+
+/-- `candidates` with `listed` as the listing for `pattern`, made at
+`revision`. The choice is kept on the same candidate, the first listed that
+is equal to it, when `pattern` is the text the old listing was for, so a
+batch that arrives does not throw away a choice; otherwise, or when that
+candidate is not listed, nothing is chosen. -/
+def relist (candidates : Candidates) (pattern : String) (revision : Nat)
+    (listed : Array Completion.Listed) : Candidates :=
+  let chosen :=
+    if candidates.listedFor == some pattern then
+      candidates.chosen.bind fun index =>
+        (candidates.listed[index]?).bind fun old => listed.findIdx? (·.candidate == old.candidate)
+    else none
+  { candidates with
+    listedFor := some pattern, listed, chosen, listedAt := revision }
+
+/-- Whether a match is in flight for `pattern` at `revision`. -/
+def matchingFor (candidates : Candidates) (pattern : String) (revision : Nat) : Bool :=
+  candidates.matching.any fun inFlight => inFlight.pattern == pattern && inFlight.revision == revision
 
 /-- `candidates` with the choice moved by `step`: from nothing chosen to
 the first or the last of the listing, from the last onward and from the
@@ -1484,6 +1539,10 @@ structure EditorState where
   /-- The file buffers the loop follows for auto-reload, each with its path
   and whether its watch was refused (`Editor/Loop.lean`, "Auto-reload"). -/
   following : Array Following := #[]
+  /-- The keys of the jobs the loop started for the open prompt: its
+  sources' jobs and its match (`Editor/Loop.lean`, "Prompts"), cancelled
+  once the prompt no longer wants them. -/
+  completionKeys : Array String := #[]
   /-- The workspaces and projects of the session, with their stores, and
   each directory's cached answer ("Workspaces", in the module docs). -/
   workspaces : Workspace.Table := {}
@@ -1659,6 +1718,9 @@ inductive PromptRefusal where
   /-- The prompt was asked with a completion source by name, and no source
   is registered under `name`. -/
   | noSuchSource (name : String)
+  /-- The prompt was asked with a completion source that answers later, by
+  the job registered under `name`, and no job is. -/
+  | noSuchJob (name : String)
   deriving DecidableEq, Repr
 
 /-- Why an operation on the prompt was refused, as a sentence for the echo
@@ -1669,6 +1731,7 @@ def PromptRefusal.describe : PromptRefusal → String
   | .notItsText => "the minibuffer's history and markers are not of its text"
   | .noWindow => "no window is focused to ask from"
   | .noSuchSource name => s!"no completion source is registered under `{name}`"
+  | .noSuchJob name => s!"no job is registered under `{name}` to answer a completion source"
 
 /-- Why an operation on a buffer was refused. -/
 inductive BufferRefusal where
@@ -3357,7 +3420,96 @@ open. -/
 def setCandidates (collected : Completion.Collected) (state : EditorState) :
     Except PromptRefusal Unit × EditorState :=
   state.changeCandidates fun _ =>
-    { all := collected.all, passed := collected.passed, category := collected.category }
+    { all := collected.all, passed := collected.passed, category := collected.category
+      asking := collected.asking }
+
+/-- The open prompt's candidates, when it is open in `view`. -/
+def candidatesIn? (state : EditorState) (view : ViewId) : Option Candidates :=
+  state.prompt.bind fun asked => if asked.view == view then some asked.candidates else none
+
+/-- `state` with the open prompt's candidates `candidates`. -/
+def replaceCandidates (state : EditorState) (candidates : Candidates) : EditorState :=
+  { state with prompt := state.prompt.map ({ · with candidates }) }
+
+/-- Takes `batch`, a batch of the job of the asking source `index` of the
+prompt open in `view`, at the source's `generation`: the first of a
+generation replaces what the source answered, a later one is appended,
+each candidate in the source's group, and the revision is bumped. Says
+whether it was taken: for another view, a source there is none of, another
+generation (a stale job's) or no prompt open, it is dropped and the state
+is as it was. -/
+def addCandidates (view : ViewId) (index generation : Nat) (batch : Array Completion.Candidate)
+    (state : EditorState) : Bool × EditorState :=
+  match state.candidatesIn? view with
+  | none => (false, state)
+  | some candidates =>
+    match candidates.asking[index]? with
+    | none => (false, state)
+    | some source =>
+      if source.generation != generation then (false, state)
+      else
+        let batch := batch.map (·.inGroup source.source)
+        let answered := if source.fresh then source.answered ++ batch else batch
+        (true,
+          state.replaceCandidates
+            { candidates with
+              asking := candidates.asking.set! index { source with answered, fresh := true }
+              revision := candidates.revision + 1 })
+
+/-- Marks the asking source `index` of the prompt open in `view` done, when
+it is at `generation`: a generation that delivered nothing clears what the
+source answered, bumping the revision when there was anything. Otherwise
+the state is as it was. -/
+def sourceAnswered (view : ViewId) (index generation : Nat) (state : EditorState) : EditorState :=
+  match state.candidatesIn? view with
+  | none => state
+  | some candidates =>
+    match candidates.asking[index]? with
+    | none => state
+    | some source =>
+      if source.generation != generation then state
+      else
+        let cleared := !source.fresh && !source.answered.isEmpty
+        state.replaceCandidates
+          { candidates with
+            asking :=
+              candidates.asking.set! index
+                { source with
+                  done := true, fresh := true
+                  answered := if source.fresh then source.answered else #[] }
+            revision := if cleared then candidates.revision + 1 else candidates.revision }
+
+/-- Lists `listed`, which a match job made for `pattern` at `revision`, in
+the prompt open in `view`, when that is the match in flight: the choice is
+kept on its candidate (`Candidates.relist`), and nothing is in flight after
+it. Otherwise the state is as it was. -/
+def listMatched (view : ViewId) (pattern : String) (revision : Nat)
+    (listed : Array Completion.Listed) (state : EditorState) : EditorState :=
+  match state.candidatesIn? view with
+  | some candidates =>
+    if candidates.matchingFor pattern revision then
+      state.replaceCandidates
+        { candidates.relist pattern revision listed with
+          matching := none }
+    else state
+  | none => state
+
+/-- Ends the match in flight for `pattern` at `revision` in the prompt open
+in `view`, which failed with `message`: nothing is in flight after it, the
+pair is recorded as unmatched, and the echo area says
+`completion-match: <message>`. The listing stays. For any other match the
+state is as it was. -/
+def matchFailed (view : ViewId) (pattern : String) (revision : Nat) (message : String)
+    (state : EditorState) : EditorState :=
+  match state.candidatesIn? view with
+  | some candidates =>
+    if candidates.matchingFor pattern revision then
+      { state.replaceCandidates
+            { candidates with
+              matching := none, unmatched := some (pattern, revision) } with
+        echo := s!"completion-match: {message}" }
+    else state
+  | none => state
 
 /-- Makes the open prompt's listing the one for `pattern`: the candidates at
 the hits' indices, in that order, with their ranges, then the passed ones,

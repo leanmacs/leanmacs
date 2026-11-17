@@ -10684,6 +10684,41 @@ def stateChecks : List Check :=
                   closed.prompt == none &&
                   again.prompt.map (·.candidates) == some {} },
         { name :=
+            "a prompt's candidates to match are its own, then what each asking source that has not filtered answered, in the asking order; those listed as given are its passed ones, then what each filtered asking source answered; and the size to match is counted over the sources"
+          run :=
+            pure <|
+              let later : Completion.Later := { job := "j" }
+              let asking : Array Completion.Asking :=
+                #[{ source := "a", later, askedFor := "", answered := offered #["a1"] },
+                  { source := "f", filtered := true, later, askedFor := "", answered := offered #["f1"] },
+                  { source := "b", later, askedFor := "", answered := offered #["b1", "b2"] }]
+              let candidates : Candidates :=
+                { all := offered #["x"], passed := offered #["p"], asking }
+              candidates.matchable.map (·.text) == #["x", "a1", "b1", "b2"] &&
+                candidates.passing.map (·.text) == #["p", "f1"] &&
+                candidates.matchableSize == 4 &&
+                ({} : Candidates).matchable.isEmpty },
+        { name :=
+            "relisting for the text the listing was made for keeps the choice on the same candidate, wherever it now is; relisting for another text, or without the chosen candidate, chooses nothing; either way the listing is the one given, for that text, made at the revision given"
+          run :=
+            pure <|
+              let listing (texts : Array String) : Array Completion.Listed :=
+                (offered texts).map Completion.Listed.of
+              let candidates : Candidates :=
+                { all := offered #["wq", "w", "e"], listedFor := some "w"
+                  listed := listing #["w", "wq"], chosen := some 1, revision := 3 }
+              let kept := candidates.relist "w" 3 (listing #["w", "e", "wq"])
+              let other := candidates.relist "x" 3 (listing #["w", "e", "wq"])
+              let gone := candidates.relist "w" 2 (listing #["w", "e"])
+              kept.chosen == some 2 && kept.listed == listing #["w", "e", "wq"] &&
+                kept.listedFor == some "w" &&
+                kept.listedAt == 3 &&
+                other.chosen == none &&
+                other.listedFor == some "x" &&
+                gone.chosen == none &&
+                gone.listedAt == 2 &&
+                gone.listed == listing #["w", "e"] },
+        { name :=
             "setting an open prompt's candidates replaces them and forgets the listing and the choice, and changes nothing else of the state"
           run :=
             pure <|
@@ -11157,7 +11192,12 @@ def stateRequests : List StateRequest :=
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"),
-    .setCandidates { all := offered #["one", "two"] }, .chooseCandidate .next,
+    .setCandidates { all := offered #["one", "two"] },
+    .setCandidates
+      { asking := #[{ source := "later", later := { job := "j" }, askedFor := "", generation := 1 }] },
+    .addCandidates ⟨3⟩ 0 1 (offered #["three"]), .addCandidates ⟨3⟩ 4 1 #[],
+    .sourceAnswered ⟨3⟩ 0 1, .listMatched ⟨3⟩ "" 0 #[], .matchFailed ⟨3⟩ "" 0 "no",
+    .hasJob "count", .chooseCandidate .next,
     .chooseCandidate .previous, .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }),
     .setWanted ⟨1⟩ none, .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames,
     .themeNames, .categorySources "buffer", .matchCandidates (some "buffer") "w" #["w"],
@@ -11769,6 +11809,123 @@ def stateRequestChecks : List Check :=
               sameSet == state &&
               replied noChoice == .inl .notOpen &&
               sameChoice == state },
+    { name :=
+        "a batch is taken for the open prompt's view, the asking source of its index and that source's generation: the first of a generation replaces what the source answered, a later one appends, each candidate in the source's group, and each bumps the revision; a batch for another view, another index or another generation, or with no prompt open, is dropped with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            match prompted state with
+            | (.ok view, asking) =>
+              let source : Completion.Asking :=
+                { source := "later", later := { job := "j" }, askedFor := "", generation := 1
+                  answered := offered #["old"] }
+              let (_, set) := asking.setCandidates { asking := #[source] }
+              let grouped (texts : Array String) : Array Completion.Candidate :=
+                (offered texts).map (·.inGroup "later")
+              let held (state : EditorState) : Option (Array (Array Completion.Candidate) × Nat) :=
+                state.prompt.map fun asked =>
+                  (asked.candidates.asking.map (·.answered), asked.candidates.revision)
+              let (first, one) := set.handle (.addCandidates view 0 1 (offered #["a"]))
+              let (second, two) := one.handle (.addCandidates view 0 1 (offered #["b"]))
+              let (otherView, sameView) :=
+                two.handle (.addCandidates ⟨view.index + 1⟩ 0 1 (offered #["x"]))
+              let (otherIndex, sameIndex) := two.handle (.addCandidates view 1 1 (offered #["x"]))
+              let (otherGeneration, sameGeneration) :=
+                two.handle (.addCandidates view 0 2 (offered #["x"]))
+              let (closed, sameClosed) := state.handle (.addCandidates view 0 1 (offered #["x"]))
+              first && second && held set == some (#[offered #["old"]], 0) &&
+                held one == some (#[grouped #["a"]], 1) &&
+                held two == some (#[grouped #["a", "b"]], 2) &&
+                !otherView && sameView == two && !otherIndex && sameIndex == two &&
+                !otherGeneration && sameGeneration == two && !closed && sameClosed == state
+            | _ => false },
+    { name :=
+        "a source's job's end marks the source done: a generation that delivered nothing clears what the source answered and bumps the revision, and one that delivered keeps it; for another generation, or with no prompt open, nothing changes"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            match prompted state with
+            | (.ok view, asking) =>
+              let source : Completion.Asking :=
+                { source := "later", later := { job := "j" }, askedFor := "", generation := 1
+                  answered := offered #["old"] }
+              let (_, set) := asking.setCandidates { asking := #[source] }
+              let (_, one) := set.handle (.addCandidates view 0 1 (offered #["a"]))
+              let (_, cleared) := set.handle (.sourceAnswered view 0 1)
+              let (_, kept) := one.handle (.sourceAnswered view 0 1)
+              let (_, stale) := one.handle (.sourceAnswered view 0 2)
+              let (_, closed) := state.handle (.sourceAnswered view 0 1)
+              let held (state : EditorState) : Option (Array (Array String × Bool) × Nat) :=
+                state.prompt.map fun asked =>
+                  (asked.candidates.asking.map fun source =>
+                      (source.answered.map (·.text), source.done),
+                    asked.candidates.revision)
+              held cleared == some (#[(#[], true)], 1) && held kept == some (#[(#["a"], true)], 1) &&
+                stale == one &&
+                closed == state
+            | _ => false },
+    { name :=
+        "a match is listed only for the open prompt's view and the pattern and revision of the match in flight: the listing is the one delivered, for that pattern, the choice kept on its candidate, and nothing is in flight after it; a delivery for another view, pattern or revision changes nothing"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            match prompted state with
+            | (.ok view, asking) =>
+              let listing (texts : Array String) : Array Completion.Listed :=
+                (offered texts).map Completion.Listed.of
+              let waiting :=
+                withCandidates asking
+                  { all := offered #["wq", "w"], listedFor := some "w", listed := listing #["w", "wq"]
+                    chosen := some 1, revision := 2
+                    matching := some { pattern := "w", revision := 2, generation := 0 } }
+              let (_, matched) := waiting.handle (.listMatched view "w" 2 (listing #["wq", "w"]))
+              let (_, otherPattern) := waiting.handle (.listMatched view "x" 2 (listing #["wq"]))
+              let (_, otherRevision) := waiting.handle (.listMatched view "w" 1 (listing #["wq"]))
+              let (_, otherView) :=
+                waiting.handle (.listMatched ⟨view.index + 1⟩ "w" 2 (listing #["wq"]))
+              matched.prompt.map (·.candidates) ==
+                  some
+                    { all := offered #["wq", "w"], listedFor := some "w"
+                      listed := listing #["wq", "w"], chosen := some 0, revision := 2
+                      listedAt := 2 } &&
+                otherPattern == waiting &&
+                otherRevision == waiting &&
+                otherView == waiting
+            | _ => false },
+    { name :=
+        "a match that failed, for the match in flight, ends it, records its pattern and revision as unmatched and says `completion-match: ` and why in the echo area, leaving the listing as it was; for any other match nothing changes"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            match prompted state with
+            | (.ok view, asking) =>
+              let waiting :=
+                withCandidates asking
+                  { all := offered #["wq", "w"], revision := 2
+                    matching := some { pattern := "w", revision := 2, generation := 0 } }
+              let (_, failed) := waiting.handle (.matchFailed view "w" 2 "broken")
+              let (_, other) := waiting.handle (.matchFailed view "w" 1 "broken")
+              failed.prompt.map (·.candidates) ==
+                  some
+                    { all := offered #["wq", "w"], revision := 2, unmatched := some ("w", 2) } &&
+                failed.echo == "completion-match: broken" &&
+                other == waiting
+            | _ => false },
+    { name :=
+        "the handler knows no registry: asked whether a job is registered under a name, it answers yes for any name, as it takes any start, and leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state => state.handle (.hasJob "nope") == (true, state) },
     { name :=
         "the handler knows no registry: asked which command an ex name is bound to, it answers none for any name, and leaves the state as it was"
       run :=

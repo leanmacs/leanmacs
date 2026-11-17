@@ -121,9 +121,4 @@ defaults. -/
 def SourceRef.ofCategory (category : String) : SourceRef :=
   .category category []
 
-/-- `candidate` as a prompt holds it when the source `source` answered it:
-in its own group, or, with none, in the source's. -/
-def Candidate.inGroup (candidate : Candidate) (source : String) : Candidate :=
-  { candidate with group := candidate.group <|> some source }
-
 end Editor.Completion
