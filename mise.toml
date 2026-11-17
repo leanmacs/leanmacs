@@ -460,6 +460,16 @@ run = [
   # (tests/render/themes/README.md). It reads only checked-in files and
   # writes nothing. `mise run theme-references` makes the images again.
   ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf",
+  # The excerpt picture (lean/FfiTest.lean, `excerptPictureScenario`): an
+  # excerpt document's view with each excerpt's header as a block above it,
+  # drawn by the CPU renderer through the display's real binding in
+  # solarized-dark, must match tests/render/excerpts/excerpts.png within the
+  # same tolerance; the scene with no blocks must differ from it, the
+  # header's background must be block-header's, and the cursor's cell must
+  # be lower than with no blocks (tests/render/excerpts/README.md). It
+  # reads only checked-in files and writes nothing. `mise run
+  # excerpt-reference` makes the image again.
+  ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../tests/fonts/NotoSansMono-Regular.subset.ttf",
   # The window mode's wiring, `editor <file>` (lean/Editor/Window/Real.lean),
   # on the library's scripted platform, as a process of its own, so that its
   # render session is the only one the process starts: a cells display bound
@@ -881,6 +891,20 @@ description = "Opt-in, never part of ci: draw the shipped themes' pictures (Sola
 depends = ["lean"]
 dir = "lean"
 run = ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf --write"
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It
+# writes a file of the repository, which no gate may do.
+#
+# It draws the excerpt picture, as `ffi-test excerpt-picture` in the
+# `ffi-test` task does, and writes it to `tests/render/excerpts/excerpts.png`.
+# Run it when the scene, the header's face, the font, the painter or the
+# rasteriser's pins change. Then look at the file enlarged before
+# committing it, and update `tests/render/excerpts/README.md`.
+[tasks.excerpt-reference]
+description = "Opt-in, never part of ci: draw the excerpt picture (an excerpt document's view with header blocks, in solarized-dark) and write it to tests/render/excerpts/excerpts.png, its reference image. Look at the file before committing it"
+depends = ["lean"]
+dir = "lean"
+run = ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../tests/fonts/NotoSansMono-Regular.subset.ttf --write"
 
 # Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl.
 # It needs the system's `swift`, and it writes a file of the repository,
