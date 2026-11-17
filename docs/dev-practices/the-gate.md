@@ -972,7 +972,15 @@ exit 0 and print exactly `expected`, whose command calls compiled code of
 import and run config: outside a bundle the same command line is refused,
 and the build tree's `.olean` directory is not beside the copy. It has a
 time limit of its own, 120 seconds, for copying the executable and the
-module files.
+module files. Then it checks `editor --version` through `IO.appPath` and
+the real file read (`lean/Editor/Version.lean`): `tests/headless/bundle/
+Info.plist`, which holds only the version, build ID and commit keys with a
+fake stamp, is copied into the staged `Contents/`, and the copy, with an
+empty environment, must print exactly `version-expected`; and the build
+tree's `editor --version`, outside a bundle, must say it is a development
+build. The model tests pin the plist reader and the three outputs against a
+fake file read (`ModelTest.versionChecks`), and `mise run app-check` runs
+the real bundle's `--version` against the real plist.
 
 What the gate checks of drawing, then: frames a bound display publishes
 reach a render loop with the input they answer (`editor-ffi`'s tests,

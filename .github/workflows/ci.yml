@@ -43,10 +43,6 @@ jobs:
       # gitleaks): the gate needs none of them, and the step below installs
       # exactly what it does need.
       MISE_AUTO_INSTALL: "false"
-      # Reads mise.ci.toml, which lowers MACOSX_DEPLOYMENT_TARGET to the
-      # runner's macOS: dyld will not start the test binaries the gate builds
-      # for 27.2 on macos-26. Linux ignores the value.
-      MISE_ENV: ci
       # The runner's disk is small, and nothing the gate checks reads debug
       # information (tools/linux/run.sh gives the same reasoning).
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -125,6 +121,56 @@ jobs:
         with:
           path: ~/.elan
           key: elan-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'tools/ci/install-elan.sh') }}
+
+  # The run's build ID (`mise run build-id`: HEAD's committer time in UTC,
+  # YYYYMMDDHHMMSS), worked out once for the whole run, so the .dmg, and
+  # the release and the page later phases add, all name the same build, as
+  # in ev-nova. Main pushes only, after both legs of the gate.
+  build-id:
+    needs: ci
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    env:
+      MISE_AUTO_INSTALL: "false"
+    outputs:
+      id: ${{ steps.build-id.outputs.id }}
+    steps:
+      # The commit's own time is read from git, so the default checkout of
+      # the one commit is enough. Don't leave the job's token in
+      # .git/config: nothing here pushes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Rust alone: the ID comes from crates/editor-release-std's binary.
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.11.2
+          install: true
+          install_args: rust
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+      - id: build-id
+        shell: bash
+        run: set -euo pipefail; id=$(mise run build-id); echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  # The nightly's .dmg (.github/workflows/build.yml): the stamped bundle,
+  # `mise run app-check`, the .dmg packed and checked, and uploaded as a
+  # workflow artifact. Main pushes only, after both legs of the gate, so
+  # only a commit the gate passed is packed. `concurrency` never cancels a
+  # main run in progress, so a build is never cut off halfway.
+  build:
+    needs: [ci, build-id]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+    # zizmor's self-repository audit asks for `$/.github/workflows/…`, which
+    # the pinned actionlint refuses as no reusable-workflow form it knows;
+    # `./` is the documented form, and names this repository's file at the
+    # commit being run, as `$/` would.
+    uses: ./.github/workflows/build.yml # zizmor: ignore[self-repository]
+    with:
+      build-id: ${{ needs.build-id.outputs.id }}
+      commit: ${{ github.sha }}
+      ref: ${{ github.sha }}
 
   # The secret scan (`mise run secrets-scan`: the probe, then gitleaks over
   # main's history, merges and the uncommitted tree; docs/dev-practices/

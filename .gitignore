@@ -13,3 +13,4 @@
 /infra/github/*.tfplan
 /infra/github/.terraform.tfstate.lock.info
 /infra/github/crash*.log
+/dist

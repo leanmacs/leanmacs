@@ -100,6 +100,7 @@ On macOS on arm64:
 mise run app          # builds lean/.lake/build/Leanmacs.app, ad-hoc signed
 mise run app-check    # checks the built bundle
 mise run install      # does both, then replaces /Applications/Leanmacs.app
+mise run dmg          # packs dist/Leanmacs-<build-id>.dmg; dmg-check checks it
 ```
 
 `mise run install` keeps no backup of the app it replaces. When
@@ -116,6 +117,8 @@ mise run install      # does both, then replaces /Applications/Leanmacs.app
 - Finder offers it under Open With for plain text and source code, and it
   opens a file dropped on its Dock icon. `.lean` files are not offered yet.
 - Its signature is ad-hoc, for this machine only.
+- `Leanmacs.app/Contents/MacOS/editor --version` prints its version, build
+  ID and commit.
 
 ## Licence
 

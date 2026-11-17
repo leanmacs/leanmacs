@@ -1,0 +1,33 @@
+# What no line of `editor-release` may name, its tests included: the world.
+# The crate is release tooling's core. It reads the environment only
+# through the `Env` port and runs programs only through the `Process` port
+# (`src/ports.rs`), and its tests run on the published fakes
+# (`src/fake.rs`). The real adapters, and the `leanmacs-release` binary
+# that wires them, are `editor-release-std`, which has no `clippy.toml`.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none. So this file governs
+# every target of this crate and no other. `disallowed_methods` is on by
+# default at `warn`, and `mise run lint` denies warnings, so a line that
+# names one of these fails the gate.
+#
+# Seen to bite once by hand, on 2026-11-17: with a test added to
+# `src/build_id.rs` that calls `std::env::var("HOME")`, `cargo clippy -p
+# editor-release --all-targets -- -D warnings` fails with "use of a
+# disallowed method `std::env::var`". With the test taken out it passes.
+#
+# It is a list of names, as `crates/editor-process/clippy.toml` says of its
+# own: a call through a library this crate does not depend on is a
+# reviewer's to look for, and the crate has no dependency.
+
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "the crate runs programs through the `Process` port; a test uses `fake::RecordingProcess`" },
+  { path = "std::env::var", reason = "the crate reads the environment through the `Env` port; a test uses `fake::FakeEnv`" },
+  { path = "std::env::var_os", reason = "the crate reads the environment through the `Env` port; a test uses `fake::FakeEnv`" },
+  { path = "std::env::vars", reason = "the crate reads the environment through the `Env` port; a test uses `fake::FakeEnv`" },
+  { path = "std::fs::write", reason = "the crate changes no file itself: the .dmg's plan is invocations a `Process` runs" },
+  { path = "std::fs::copy", reason = "the crate changes no file itself: the .dmg's plan is invocations a `Process` runs" },
+  { path = "std::fs::create_dir_all", reason = "the crate changes no file itself: the .dmg's plan is invocations a `Process` runs" },
+  { path = "std::fs::remove_dir_all", reason = "the crate changes no file itself: the .dmg's plan is invocations a `Process` runs" },
+  { path = "std::fs::File::create", reason = "the crate changes no file itself: the .dmg's plan is invocations a `Process` runs" },
+]

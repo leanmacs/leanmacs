@@ -9,11 +9,10 @@ local rust_sources = List("**/*.rs", "**/Cargo.toml", "Cargo.lock")
 // What the workflow lint reads (mise.toml's `workflow-lint` task): the
 // workflows and zizmor's config (.github), the structural check and its
 // probe (tools/workflow-*.sh), the probe's fixtures (tests/workflow-lint),
-// and the files tools/workflow-check.sh compares ci.yml with:
+// and the files tools/workflow-check.sh compares the workflows with:
 // tools/linux/Dockerfile (MISE_VERSION, ELAN_VERSION), mise.toml ([tools]),
 // infra/github/actions.tf (patterns_allowed) and tools/ci/install-elan.sh
-// (ELAN_VERSION). mise.ci.toml is not here: the lint never reads it, and
-// only the CI job (MISE_ENV=ci) does, so no local step checks a change to it.
+// (ELAN_VERSION).
 local workflow_sources = List(".github/**", "tools/workflow-*.sh", "tests/workflow-lint/**", "tools/linux/Dockerfile", "mise.toml", "infra/github/actions.tf", "tools/ci/**")
 
 // The full gate, defined once in mise.toml's `ci` task.

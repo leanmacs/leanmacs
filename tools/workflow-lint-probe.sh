@@ -7,14 +7,20 @@
 # 1. zizmor, with .github/zizmor.yml, must exit non-zero on
 #    tests/workflow-lint/tag-pinned.yml, whose one action is pinned by a tag,
 #    with an `unpinned-uses` finding.
-# 2. In a temporary directory it copies .github/workflows/ci.yml, and the
-#    check with the files it reads (tools/ci/install-elan.sh,
-#    tools/linux/Dockerfile, infra/github/actions.tf, mise.toml), and breaks the
+# 2. In a temporary directory it copies the check with the workflows and
+#    the files it reads (.github/workflows/ci.yml and build.yml,
+#    tools/ci/install-elan.sh, tools/linux/Dockerfile,
+#    infra/github/actions.tf, mise.toml), a tree per case, and breaks the
 #    check's rules one at a time: every rule at least once, with yq on the
-#    workflow or sed on another file, plus the sha-pin case of a SHA with
-#    no `# v…` comment. The check must exit 1 on each, naming that rule and
-#    no other. Then it must pass on the unbroken copy, written by the same
-#    yq, so a mutation's failure is the mutation's and not the rewrite's.
+#    tree's ci.yml or build.yml or sed on another file, plus the sha-pin
+#    case of a SHA with no `# v…` comment and the common rules on build.yml.
+#    The check runs on the tree's own copy of the workflow, so the file's
+#    base name picks the rules, as in the checkout; a copy of ci.yml saved
+#    as release.yml, a file the check has no rules for, fails the rule
+#    `workflows`. The check must exit 1 on each case, naming that rule and
+#    no other. Then it must pass both workflows of a tree rewritten by the
+#    same yq, so a mutation's failure is the mutation's and not the
+#    rewrite's.
 #
 # The fixtures are outside .github/workflows/, so GitHub never runs them
 # and the lint's own pass never reads them (tests/workflow-lint/README.md).
@@ -46,9 +52,9 @@ fi
 
 # ---- 2. the structural check rejects each broken rule
 
-# The check and the files it reads, copied: it finds them from its own
-# place, so a copy of this tree is a checkout it can be run in.
-fixture_files='tools/workflow-check.sh tools/ci/install-elan.sh tools/linux/Dockerfile infra/github/actions.tf mise.toml'
+# The check, the workflows and the files it reads, copied: it finds them
+# from its own place, so a copy of this tree is a checkout it can be run in.
+fixture_files='tools/workflow-check.sh .github/workflows/ci.yml .github/workflows/build.yml tools/ci/install-elan.sh tools/linux/Dockerfile infra/github/actions.tf mise.toml'
 
 # copy_tree <dir>: the check and its files, unbroken, under <dir>.
 copy_tree() {
@@ -57,11 +63,6 @@ copy_tree() {
     cp "$root/$f" "$1/$f"
   done
 }
-
-# The unbroken copy of ci.yml, rewritten by yq as the mutations are.
-unbroken="$work/unbroken.yml"
-cp "$root/.github/workflows/ci.yml" "$unbroken"
-yq -i '.' "$unbroken"
 
 n=0
 
@@ -84,20 +85,31 @@ expect() {
   fi
 }
 
-# mutate <rule> <what> <yq expression>: the check must fail on a copy of
-# ci.yml with the expression applied, naming <rule> and no other rule.
-mutate() {
+# mutate_in <file> <rule> <what> <yq expression>: the check must fail on a
+# tree whose .github/workflows/<file> has the expression applied, naming
+# <rule> and no other rule.
+mutate_in() {
   n=$((n + 1))
   copy_tree "$work/$n"
-  wf="$work/$n.yml"
-  cp "$root/.github/workflows/ci.yml" "$wf"
-  yq -i "$3" "$wf"
-  expect "$1" "$2" "$work/$n" "$wf"
+  wf="$work/$n/.github/workflows/$1"
+  yq -i "$4" "$wf"
+  expect "$2" "$3" "$work/$n" "$wf"
+}
+
+# mutate <rule> <what> <yq expression>: the same on the tree's ci.yml.
+mutate() {
+  mutate_in ci.yml "$@"
+}
+
+# mutate_build <rule> <what> <yq expression>: the same on the tree's
+# build.yml.
+mutate_build() {
+  mutate_in build.yml "$@"
 }
 
 # mutate_file <rule> <what> <file> <sed expression>: the check must fail
-# on the unbroken ci.yml with <file> of its tree edited, naming <rule> and
-# no other rule.
+# on the tree's unbroken ci.yml with <file> of its tree edited, naming
+# <rule> and no other rule.
 mutate_file() {
   n=$((n + 1))
   copy_tree "$work/$n"
@@ -106,7 +118,7 @@ mutate_file() {
     fail "the mutation for $1 left $3 unchanged"
     return
   fi
-  expect "$1" "$2" "$work/$n" "$unbroken"
+  expect "$1" "$2" "$work/$n" "$work/$n/.github/workflows/ci.yml"
 }
 
 # The Gate's step, Lake's restore, elan's save and the `ci` job's checkout.
@@ -125,7 +137,6 @@ mutate gate-step 'a condition on the Gate' "($gate).if = \"\${{ success() }}\""
 mutate gate-step 'a second `mise run ci` step' '.jobs.ci.steps += [{"run": "mise run ci"}]'
 mutate concurrency "main's runs cancelled in progress" '.concurrency["cancel-in-progress"] = true'
 mutate mise-env 'MISE_AUTO_INSTALL a boolean, not a string' '.jobs.ci.env.MISE_AUTO_INSTALL = false'
-mutate mise-env 'no MISE_ENV' 'del(.jobs.ci.env.MISE_ENV)'
 mutate sha-pin 'checkout pinned by a tag' "($checkout | .uses) = \"actions/checkout@v7.0.1\""
 mutate sha-pin 'a SHA pin with no tag comment' "($checkout | .uses) line_comment = \"\""
 mutate cache-save 'Lake saving from any ref' '(.jobs.ci.steps[] | select((.uses // "" | test("^actions/cache/save@")) and .with.path == "lean/.lake") | .if) = "${{ !cancelled() }}"'
@@ -143,14 +154,47 @@ mutate allowlist 'a third-party action not on the allowlist' '.jobs.ci.steps += 
 mutate_file elan-version "install-elan.sh's elan not the Dockerfile's" tools/ci/install-elan.sh 's/^ELAN_VERSION=.*/ELAN_VERSION=0.0.0/'
 mutate_file install-args 'a tool named as not in the gate gone from mise.toml' mise.toml '/^opentofu = /d'
 
-# The unbroken copy.
-wf=$unbroken
-if sh "$root/tools/workflow-check.sh" "$wf" >"$work/unbroken.out" 2>&1; then
-  printf 'workflow-lint-probe: workflow-check passes the unbroken workflow: pass\n' >&2
-else
-  cat "$work/unbroken.out" >&2
-  fail 'workflow-check failed on the unbroken copy of ci.yml'
-fi
+# A workflow file the check has no rules for.
+n=$((n + 1))
+copy_tree "$work/$n"
+cp "$work/$n/.github/workflows/ci.yml" "$work/$n/.github/workflows/release.yml"
+expect workflows 'a copy of ci.yml saved as release.yml' "$work/$n" "$work/$n/.github/workflows/release.yml"
+
+# ci.yml's build jobs.
+mutate build-gating 'build not needing ci' '.jobs.build.needs = ["build-id"]'
+mutate build-gating "build's if not limited to main" ".jobs.build.if = \"\${{ github.event_name == 'push' }}\""
+mutate build-gating 'build-id with no if' 'del(.jobs["build-id"].if)'
+
+# build.yml. Its steps: dmg-check's, the upload, and the Lake restore. The
+# save of lean/.lake goes before the upload, which must stay last.
+build_step='.jobs.build.steps[] | select(.run == "mise run dmg-check")'
+upload='.jobs.build.steps[] | select(.uses // "" | test("^actions/upload-artifact@"))'
+build_lake='.jobs.build.steps[] | select((.uses // "" | test("^actions/cache/restore@")) and .with.path == "lean/.lake")'
+mutate_build build-trigger 'build.yml also run on push' '.on.push = {}'
+mutate_build build-trigger 'the commit input not required' '.on.workflow_call.inputs.commit.required = false'
+mutate_build build-job 'the build on macos-15' '.jobs.build["runs-on"] = "macos-15"'
+mutate_build build-job 'no LEANMACS_COMMIT in the env' 'del(.jobs.build.env.LEANMACS_COMMIT)'
+mutate_build build-steps 'a condition on the dmg check' "($build_step).if = \"\${{ success() }}\""
+mutate_build build-steps "the upload's if-no-files-found warn" "($upload | .with[\"if-no-files-found\"]) = \"warn\""
+mutate_build build-steps 'app-check after the dmg' '(.jobs.build.steps[] | select(.run == "mise run app-check") | .run) = "swap" | (.jobs.build.steps[] | select(.run == "mise run dmg") | .run) = "mise run app-check" | (.jobs.build.steps[] | select(.run == "swap") | .run) = "mise run dmg"'
+mutate_build build-cache "a save of lean/.lake, guarded to main with the restore's key" ".jobs.build.steps |= (.[:-1] + [{\"if\": \"\${{ github.ref == 'refs/heads/main' }}\", \"uses\": \"actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9\", \"with\": {\"path\": \"lean/.lake\"}}] + .[-1:]) | .jobs.build.steps[-2].with.key = ($build_lake | .with.key) | .jobs.build.steps[-2].uses line_comment = \"v6.1.0\""
+mutate_build build-cache "Lake's restore key not ci.yml's" "($build_lake | .with.key) |= sub(\"^lake-v1-\"; \"lake-v2-\")"
+mutate_build sha-pin 'upload-artifact pinned by a tag' "($upload | .uses) = \"actions/upload-artifact@v7.0.2\""
+mutate_build mise-env 'no MISE_AUTO_INSTALL in the build job' 'del(.jobs.build.env.MISE_AUTO_INSTALL)'
+
+# The unbroken copies, rewritten by the same yq as the mutations.
+n=$((n + 1))
+copy_tree "$work/$n"
+for f in ci.yml build.yml; do
+  wf="$work/$n/.github/workflows/$f"
+  yq -i '.' "$wf"
+  if sh "$work/$n/tools/workflow-check.sh" "$wf" >"$work/unbroken.out" 2>&1; then
+    printf 'workflow-lint-probe: workflow-check passes the unbroken %s: pass\n' "$f" >&2
+  else
+    cat "$work/unbroken.out" >&2
+    fail "workflow-check failed on the unbroken copy of $f"
+  fi
+done
 
 if [ -n "$failed" ]; then
   exit 1
