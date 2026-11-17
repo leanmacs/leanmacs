@@ -1642,8 +1642,11 @@ echo area, the preedit, and the prompt that is open, if one is.
     applied to the layout and to the one zoom returns to
     (`Frame.inserted`, `Frame.removed`), so a window split or closed while
     zoomed is in the tree zoom returns to, and a removal's inheritor while
-    zoomed is that layout's. Under a monocle config chose, with no zoom to
-    leave, zoom is refused.
+    zoomed is that layout's. Rotate, balance, resize and main's count act
+    on the layout zoom returns to too (`Frame.underlying`,
+    `Frame.withUnderlying`), and are refused as that layout refuses them:
+    monocle stays shown, and zoom again shows the change. Under a monocle
+    config chose, with no zoom to leave, zoom is refused.
   - **The last window focused** (`Frame.lastFocused`, Vim's `prevwin`) is
     set when the focus moves from one window of the list to another, by a
     focus and by an exchange; focusing the minibuffer's view or leaving it

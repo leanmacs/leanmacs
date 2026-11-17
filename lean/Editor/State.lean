@@ -171,7 +171,9 @@ handler is these operations:
     stands where it was: Vim's `C-w x`.
   - `zoom` keeps the layout in `zoomedFrom` and makes it monocle, or goes
     back to it while zoomed. Under monocle with no zoom it is refused with
-    `monocleChosen`.
+    `monocleChosen`. While zoomed, `rotate`, `balance`, `resize` and
+    `mainCount` act on the layout zoom returns to, and monocle stays
+    shown.
   - `balance` makes the windows equal: master-and-stack's share back to
     50, every split of a manual tree balanced along both axes, and nothing
     under monocle.
@@ -815,6 +817,14 @@ namespace Frame
 returns to while zoomed, and the frame's own otherwise. -/
 def underlying (frame : Frame) : Layout :=
   frame.zoomedFrom.getD frame.layout
+
+/-- The frame with `layout` as the layout the windows are arranged by out
+of a zoom (`underlying`): the one zoom returns to while zoomed, monocle
+staying shown, and the frame's own otherwise. -/
+def withUnderlying (frame : Frame) (layout : Layout) : Frame :=
+  match frame.zoomedFrom with
+  | some _ => { frame with zoomedFrom := some layout }
+  | none => { frame with layout }
 
 /-- The frame once config chose `layout`: its layout, fitted to the windows
 (`Layout.fits`), recorded as the one chosen, and no zoom. -/
@@ -1942,6 +1952,11 @@ private def swapped (windows : Array ViewId) (first second : Nat) : Array ViewId
 - `mainCount` moves master-and-stack's count by `steps`, not below 0, and
   is refused with `noMain` under any other layout.
 
+`balance`, `resize` and `mainCount` act on the layout a zoom returns to
+while zoomed (`Frame.underlying`), and the refusals are that layout's:
+monocle stays shown, and zoom again shows the change
+(`Frame.withUnderlying`).
+
 Every change is refused, with the state unchanged, with `ofMinibuffer` for
 the minibuffer's window and with `noSuchWindow` for a window not in the
 list. -/
@@ -1986,16 +2001,16 @@ def arrange (id : ViewId) (change : Arrange) (state : EditorState) :
             set
               { frame with
                 layout := .monocle, zoomedFrom := some frame.layout }
-      | .balance => set { frame with layout := frame.layout.balanced }
+      | .balance => set (frame.withUnderlying frame.underlying.balanced)
       | .resize axis grow steps =>
-        match frame.layout.resized index windows.size axis grow steps with
-        | some layout => set { frame with layout }
+        match frame.underlying.resized index windows.size axis grow steps with
+        | some layout => set (frame.withUnderlying layout)
         | none => (.error (.notResizable axis), state)
       | .mainCount more steps =>
-        match frame.layout with
+        match frame.underlying with
         | .masterStack parameters =>
           let count := if more then parameters.count + steps else parameters.count - steps
-          set { frame with layout := .masterStack { parameters with count } }
+          set (frame.withUnderlying (.masterStack { parameters with count }))
         | _ => (.error .noMain, state)
 
 /-- The window `count` steps from the window `id` towards `side`, worked out

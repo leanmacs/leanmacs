@@ -7593,6 +7593,44 @@ def windowOperationChecks : List Check :=
               | _ => false
           | _, _ => false },
     { name :=
+        "while zoomed, balance, resize and main's count change the layout zoom returns to and leave monocle shown, so zoom again shows the change; a refusal is the layout zoom returns to's, and the state is as it was"
+      run :=
+        pure <|
+          let tree := Splits.split .rows 7 3 .tile .tile
+          let zoomed (layout : Layout) : Option EditorState :=
+            (onTextModel (windowsUnder 2 layout)).bind fun state =>
+              match state.arrange ⟨0⟩ .zoom with
+              | (.ok (), zoomed) => some zoomed
+              | _ => none
+          let changed (layout : Layout) (change : Arrange) : Option (Layout × Option Layout) :=
+            (zoomed layout).bind fun state =>
+              match state.arrange ⟨0⟩ change with
+              | (.ok (), after) =>
+                match after.arrange ⟨0⟩ .zoom with
+                | (.ok (), back) => some (after.frame.layout, some back.frame.layout)
+                | _ => none
+              | _ => none
+          let refused (layout : Layout) (change : Arrange) (refusal : LayoutRefusal) : Bool :=
+            match zoomed layout with
+            | none => false
+            | some state =>
+              match state.arrange ⟨0⟩ change with
+              | (.error got, after) => got == refusal && after == state
+              | _ => false
+          changed Layout.default (.mainCount true 1) ==
+              some (.monocle, some (.masterStack { count := 2 })) &&
+            changed Layout.default (.resize .columns true 1) ==
+              some (.monocle, some (.masterStack { share := 55 })) &&
+            changed (.masterStack { share := 70 }) .balance ==
+              some (.monocle, some (.masterStack { share := 50 })) &&
+            changed (.splits tree) .balance ==
+              some (.monocle, some (.splits (.split .rows 1 1 .tile .tile))) &&
+            changed (.splits tree) (.resize .rows true 1) ==
+              some (.monocle, some (.splits (.split .rows 75 25 .tile .tile))) &&
+            refused (.splits tree) (.resize .columns true 1) (.notResizable .columns) &&
+            refused (.splits tree) (.mainCount true 1) .noMain &&
+            refused Layout.default (.resize .rows true 1) (.notResizable .rows) },
+    { name :=
         "every change of the window list refuses a view not in the list with noSuchWindow and the minibuffer's view with ofMinibuffer, and the state is as it was"
       run :=
         pure <|
@@ -26114,6 +26152,20 @@ def windowCommandChecks : List Check :=
             layout "C-w <" == some (.masterStack { share := 45 }) &&
             layout "C-w ," == some (.masterStack { count := 2 }) &&
             layout "C-w , C-w ." == some Layout.default },
+    { name :=
+        "while zoomed, by key: under master-and-stack C-w , leaves the one view shown and C-w z then shows two windows in main, and C-w > then C-w z shows main wider; under manual splits C-w = then C-w z shows the rows balanced"
+      run :=
+        pure <|
+          let rects (layout : Layout) (count : Nat) (typed : String) :
+            Option (List (Nat × Nat × Nat × Nat × Nat)) :=
+            (windowsAfter count layout typed).map windowRects
+          rects Layout.default 3 "C-w z C-w ," == some [(0, 0, 0, 640, 464)] &&
+            rects Layout.default 3 "C-w z C-w , C-w z" ==
+              some [(0, 0, 0, 320, 232), (1, 0, 232, 320, 232), (2, 320, 0, 320, 464)] &&
+            rects Layout.default 2 "C-w z C-w > C-w z" ==
+              some [(0, 0, 0, 352, 464), (1, 352, 0, 288, 464)] &&
+            rects (.splits (.split .rows 7 3 .tile .tile)) 2 "C-w z C-w = C-w z" ==
+              some [(0, 0, 0, 640, 232), (1, 0, 232, 640, 232)] },
     { name :=
         "resize by key under manual splits, after C-w s at 640 by 464: C-w + makes the focused top row 5 percent of the extent taller and C-w - shorter, with a count 10 percent; on the bottom row C-w + grows it and shrinks the top; C-w > in a tree of rows only, and C-w + and C-w - under master-and-stack on the left, are refused, and the echo area says why"
       run :=
