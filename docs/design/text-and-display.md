@@ -1013,7 +1013,8 @@ Phase 1 of the excerpts roadmap built the text an excerpt buffer shows
 (`crates/editor-text/src/excerpt.rs`, the module docs of which have the
 rules; `crates/editor-ffi/src/excerpts.rs`; the text port's "Excerpt texts").
 Phase 2 built edits through it ("As built: editing through excerpts",
-below). Its headers and its decorations are later phases.
+below), and phase 3 its headers and its sources' decorations ("As built:
+showing excerpts", below).
 
 - **An assembled text, not a snapshot of pieces.** An excerpt text is a list
   of excerpts and one plain `Text` only the list writes, holding the
@@ -1149,9 +1150,60 @@ in `crates/editor-ffi/src/excerpts.rs`; the text port's "Excerpt texts";
   the deadlock argument of phase 1 still holds; each source it changed tells
   the syntax service once the locks are let go.
 - **Not built**: a trace through an excerpt text to its sources' origins,
-  an edit script of an excerpt text, mapping a source selection an undo
-  hands back into excerpt offsets, and carrying the list across a snapshot
-  (`locate` of a snapshot is refused).
+  an edit script of an excerpt text, and mapping a source selection an undo
+  hands back into excerpt offsets. `locate` of a snapshot is still refused
+  (phase 3 carried the list across a snapshot, below).
+
+### As built: showing excerpts
+
+Phase 3 of the excerpts roadmap made an excerpt buffer's view show a header
+above each excerpt and its sources' decorations at every excerpt of them
+(`lean/Editor/ExcerptView.lean`; the blocks rule in
+`crates/editor-layout/src/query.rs`, "Blocks"; `crates/editor-layout/src/translated.rs`;
+`crates/editor-ffi/src/excerpts.rs`, "A snapshot carries its list").
+
+- **A header is a block**, the "block between lines" kind of decoration
+  ("Decorations", as built): text of its own, in the face `block-header`,
+  before the excerpt's start. That offset is always a row's start, so the
+  header is drawn between the separator row above and the excerpt's first
+  row. **The separator row stays**: it holds the end of the excerpt above
+  (phase 2's edge rule), so `w`, `}` and an insert there behave as pinned,
+  and hiding it would leave that position nowhere to be drawn.
+- **The headers are Lean's**, kept beside the store's list in the buffer's
+  entries (`Buffer.ExcerptEntry`, `lean/Editor/State.lean`, "Excerpt
+  buffers"), one for each excerpt, its source's text and its header. Lean
+  builds an excerpt buffer from (buffer, range, header text)
+  (`createExcerptBuffer`, `BufferExcerpt`); `createExcerptBufferOf` keeps
+  phase 2's form over texts, for a text no buffer holds.
+- **The snapshot carries the list.** A snapshot of an excerpt document
+  takes the list under the same locks as its text, in a catch-up's order,
+  so phase 1's deadlock argument stands; the text port answers it
+  (`SnapshotId.excerpts`, `TextId.excerpts`). The blocks of a view are read
+  from the list of the snapshot it shows, so an edit that moves an excerpt
+  moves its header, with nothing kept by layout.
+- **The sources' decorations are translated in two halves, each where its
+  source lives.** A source's syntax highlights are a text's own spans, so
+  Rust translates them: an excerpt snapshot's `TextRef` carries a
+  `TranslatedSpans` that asks each attached source's spans at the source
+  snapshot the excerpt read and moves them back by the excerpt's offset, one
+  resolution for each source however many excerpts it has. A source
+  buffer's own spans (`Buffer.spans`) are Lean's, so the loop translates
+  them through the same list (`ExcerptView.translated`) and draws them
+  under the excerpt buffer's own spans and the search's matches. The
+  selection and the search matches are the excerpt view's own, asked of
+  its own text: translating a source's would draw them twice.
+- **Deferred**: `locate` of a snapshot, whose answer names a source by
+  `TextId` while the snapshot's list names sources by document key; the
+  excerpt buffer's mode-line "modified" field, which the review buffer of
+  phase 4 owns.
+
+| Piece | Where |
+|---|---|
+| Laying blocks out, and their rule | `crates/editor-layout/src/blocks.rs`, `crates/editor-layout/src/query.rs` ("Blocks"), pinned by `crates/editor-layout/tests/blocks.rs` |
+| Other texts' spans drawn in a text of pieces of them | `crates/editor-layout/src/translated.rs` |
+| The snapshot's list, and the highlights translated | `crates/editor-ffi/src/excerpts.rs`, `text_ref` in `crates/editor-ffi/src/display.rs` |
+| The headers and the sources' spans of a view | `lean/Editor/ExcerptView.lean` |
+| The reference image | `tests/render/excerpts/excerpts.png` and its README |
 
 ## Decorations
 
@@ -1175,10 +1227,43 @@ order. Faces are named and defined in Lean.
 
 ### As built
 
-Of the kinds above, span faces are built, from three sources: the
-selections, the decorations a scene carries, and a text's own spans, a
-syntax's highlights, which the text carries through a port of layout's
-(`TextSpans`, on a `TextRef`; "The scene", as built). The rest are not.
+Of the kinds above, span faces and blocks between lines are built. Span
+faces come from three sources: the selections, the decorations a scene
+carries, and a text's own spans, a syntax's highlights, which the text
+carries through a port of layout's (`TextSpans`, on a `TextRef`; "The
+scene", as built). The rest are not.
+
+**Blocks** (built by the excerpts roadmap's phase 3;
+`crates/editor-layout/src/query.rs`, "Blocks"; `lean/Editor/Display.lean`,
+"Blocks"): a view's blocks are rows of text of their own between the rows
+of its text, each a text and its own decorations, which Lean chooses per
+view as it chooses decorations (an excerpt buffer's headers).
+
+- **Placement.** A block is drawn above the first visual line of the row
+  that holds its offset, which is moved back to a character boundary, and
+  to the text's end from past it. Several before one row are drawn in the
+  order listed.
+- **The rows that fit count it.** Each block line counts like a text line,
+  its own height and at least a pixel. A row's blocks are shown with it or
+  not at all; the anchor's are shown only when they fit with it, so a view
+  a row tall always shows its anchor's row. The rows query and the spot
+  are asked with the view's blocks and walk the same walk as the frame,
+  so they answer the frame's text rows, and a spot below a block is lower
+  by its lines. The move query takes none: **a block holds no position**.
+- **Its faces.** It is laid out as a small text of its own, through the
+  same wrap layer, line store and styles, at the view's text width, with
+  its decorations as its only source over the default face, so a face that
+  sets a font shapes it in that font. It has no selection, no cursor and
+  no text spans. A frame row says which block it draws
+  (`FrameRow::block`); cursors and selections are on text rows only.
+- **The block store** is a map of its own, keyed by a hash of a block's
+  text and decorations, so two views showing one header share an entry. A
+  frame keeps the blocks some view names and drops the rest; a block's
+  shaping is counted as a row's, and a frame that shows the same blocks
+  again shapes none.
+- **A text made of pieces of others** draws their own spans in its pieces
+  (`TranslatedSpans`, `crates/editor-layout/src/translated.rs`): layout's
+  combinator of other texts' spans, which knows nothing of excerpts.
 
 **A text's own spans** are asked through `TextSpans::at`, which resolves
 what a text draws over one snapshot, fixed for one frame or one query
@@ -1464,7 +1549,8 @@ text layout places:
 
 - **A block is text**: a small piece of text with faces and clickable
   spans, each span naming a command. It has no rows, columns or buttons of
-  its own.
+  its own. Built as text with faces ("Decorations", as built); clickable
+  spans are not built.
 - **Tables, lists and pickers** are text views over generated text.
 - **Columns are aligned with align-to stops** in text layout, the one
   primitive this adds. Tab stops are the same mechanism.
@@ -1564,6 +1650,16 @@ The display pipeline's phase 1 built the contract and two layers, in
 The round trip of every position through both layers is a property test
 (`tests/layers.rs`).
 
+**Blocks are not a layer** (a departure, the excerpts roadmap's phase 3).
+The contract above says blocks would be a layer after the wrap layer, with
+coordinates of its own. But Lean asks layout by byte offsets and by rows'
+byte ranges, never by display-row numbers, and a block holds no position.
+So a layer would add a coordinate type no question uses and convert every
+position through it for nothing. Layout's walk counts a block's lines as
+heights instead ("Decorations", as built), and blocks never enter a text's
+wrap layer: they are matched to rows afresh in each frame and query. The
+layer contract stays for folds and inline text.
+
 ## Views
 
 A view shows something in a window. There is more than one kind:
@@ -1645,6 +1741,14 @@ echo area, the preedit, and the prompt that is open, if one is.
     keeps the margin as set (below, "How many rows a view has room for").
     Config cannot set it when it loads:
     `setup` registers and runs no command, and there are no settings yet.
+  - **In a view with blocks the follow settles** (`lean/Editor/Scroll.lean`,
+    "Blocks"; the excerpts roadmap's phase 3). The rows are asked with the
+    view's blocks, so a row with a header above it takes more height; the
+    policy counts text rows, so after it places an anchor it asks the rows
+    from it and steps the anchor down a row at a time until they hold the
+    cursor's row with the margin below it. The cursor's row is always
+    shown, though not always as the last row: least movement is exact only
+    where rows are one height. A view with no block asks what it asked.
   - **Whether the cursor is shown is decided by comparing rows the display
     answered**, never offsets: a position at a wrap is the start of the
     later row, and only a line's last row holds the position at its end.
