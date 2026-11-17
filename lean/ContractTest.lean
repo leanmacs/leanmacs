@@ -2516,6 +2516,23 @@ def workspaceFailures (services : Job.Services) (fixtures : System.FilePath) : I
   return failed.map (s!"the workspace finder over the process and file services: {·}") ++
       if reaped then [] else ["every child the workspace finder ran is reaped"]
 
+/-- The names of the mode marker search's contract properties
+(`Editor/Workspace/Contract.lean`, `Workspace.MarkerContract`) that do not
+hold of `Workspace.presentMarkers` over the library's file service, each
+world written out in a temporary directory of its own. -/
+def modeMarkerFailures (services : Job.Services) : IO (List String) := do
+  let failed ←
+    (Workspace.MarkerContract.properties "/").filterMapM fun named =>
+        withBase fun base => do
+          let some property :=
+            (Workspace.MarkerContract.properties base).find? (·.name == named.name)
+            | return some named.name
+          materialize property.world (property.asked.map (·.1))
+          let outcome ← runOnTimers services property.holds
+          return if outcome == .finished true then none
+            else some s!"{property.name} ({repr outcome})"
+  return failed.map (s!"the mode marker search over the file service: {·}")
+
 /-- Whether `Workspace.find`, with git standing in as the fixture under
 `fixtures`, answers each directory of `asked` with its answer, over
 `services`; and that every child it ran is reaped. -/
@@ -2659,6 +2676,7 @@ def main (arguments : List String) : IO UInt32 := do
   let environmentChecks := ContractTest.environmentChecks services fixtures
   let environmentFailed ← ContractTest.environmentFailures services fixtures
   let workspaceFailed ← ContractTest.workspaceFailures services workspaceFixtures
+  let modeMarkerFailed ← ContractTest.modeMarkerFailures services
   let workspaceChecks := ContractTest.workspaceChecks services workspaceFixtures
   let workspaceCheckFailed ← ContractTest.checkFailures workspaceChecks
   let shellChecks := ContractTest.shellChecks services shellFixtures
@@ -2703,6 +2721,7 @@ def main (arguments : List String) : IO UInt32 := do
       processCheckFailed ++
       environmentFailed ++
       workspaceFailed ++
+      modeMarkerFailed ++
       workspaceCheckFailed ++
       shellCheckFailed ++
       compileCheckFailed ++
@@ -2730,6 +2749,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

@@ -28041,6 +28041,56 @@ def workspaceChecks : List Check :=
               (Workspace.FindOrder.ofArguments? · == none) &&
             ((Workspace.findWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
 
+/-- The checks of the pure rules of the search for a minor mode's markers
+within a workspace (`Editor/Workspace.lean`, "Modes on markers"): where it
+looks, which modes the markers it found turn on, and how an on-mode
+crosses as a tree. -/
+def modeMarkerChecks : List Check :=
+  [{  name :=
+        "markerSearchPaths looks from /r/a/b/c up to and including the bound /r, each marker in order, and with a bound that does not hold the directory in the directory alone"
+      run :=
+        let expected : Array (System.FilePath × System.FilePath × String) :=
+          #[("/r/a/b/c", "/r/a/b/c/x.toml", "x.toml"), ("/r/a/b/c", "/r/a/b/c/y.toml", "y.toml"),
+            ("/r/a/b", "/r/a/b/x.toml", "x.toml"), ("/r/a/b", "/r/a/b/y.toml", "y.toml"),
+            ("/r/a", "/r/a/x.toml", "x.toml"), ("/r/a", "/r/a/y.toml", "y.toml"),
+            ("/r", "/r/x.toml", "x.toml"), ("/r", "/r/y.toml", "y.toml")]
+        let alone : Array (System.FilePath × System.FilePath × String) :=
+          #[("/r/a", "/r/a/x.toml", "x.toml")]
+        pure
+          (Workspace.markerSearchPaths #["x.toml", "y.toml"] "/r/a/b/c" "/r" == expected &&
+            Workspace.markerSearchPaths #["x.toml", "y.toml"] "/r/a/b/c/" "/r/" == expected &&
+            Workspace.markerSearchPaths #["x.toml"] "/r/a" "/w" == alone &&
+            Workspace.markerSearchPaths #["x.toml"] "/r/a" "/r/a/b" == alone) },
+    { name :=
+        "onModes puts the nearest root first and, at one root, keeps registration order, whatever order the markers were found in"
+      run :=
+        let modes : Array Workspace.MarkerMode :=
+          #[{ mode := "b-mode", markers := #["b.toml"] },
+            { mode := "a-mode", markers := #["a.toml"] },
+            { mode := "c-mode", markers := #["b.toml"] }]
+        let present : Array (System.FilePath × String) :=
+          #[("/r/k/l", "a.toml"), ("/r/k", "b.toml")]
+        let expected : Array Workspace.OnMode :=
+          #[{ mode := "a-mode", root := "/r/k/l" }, { mode := "b-mode", root := "/r/k" },
+            { mode := "c-mode", root := "/r/k" }]
+        pure
+          (Workspace.onModes modes "/r/k/l" "/r" present == expected &&
+            Workspace.onModes modes "/r/k/l" "/r" present.reverse == expected &&
+            -- A mode is on at its nearest marker only.
+            Workspace.onModes #[{ mode := "a-mode", markers := #["a.toml"] }] "/r/k/l" "/r"
+                #[("/r/k", "a.toml"), ("/r/k/l", "a.toml")] ==
+              #[{ mode := "a-mode", root := "/r/k/l" }] &&
+            Workspace.onModes modes "/r/k/l" "/r" #[] == #[] &&
+            Workspace.markersOf modes == #["b.toml", "a.toml"]) },
+    { name := "an on-mode crosses as a tree and back; a tree that is no on-mode reads as none"
+      run :=
+        let on : Workspace.OnMode := { mode := "a-mode", root := "/a b/é" }
+        pure
+          (Workspace.OnMode.decode? on.encode == some on &&
+            [Value.str "a-mode", .list [.str "a-mode"], .list [.nat 1, .str "/r"]].all
+              (Workspace.OnMode.decode? · == none) &&
+            Workspace.modesLocal == "marker-modes") }]
+
 /-- The jobs of the shell checks: the workspace driver checks', and the
 shell's run job. -/
 def shellJobs (name : String) : Option (List Argument → Work) :=
@@ -29821,6 +29871,25 @@ def workspaceFinderFailures : IO (List String) :=
         if property.asksGit || after.processes.started.isEmpty then []
         else [s!"the workspace finder on the job model starts no process: {property.name}"]
 
+/-- The names of the mode marker search's contract properties
+(`Editor/Workspace/Contract.lean`, `Workspace.MarkerContract`) that do not
+hold of the pure model (`World.presentMarkers`), or of the real search run
+on the job model of the property's world (`World.jobModel`); and of a run
+that started a process, which the search never does. -/
+def modeMarkerFailures : IO (List String) :=
+  pure <|
+    (Workspace.MarkerContract.properties "/").flatMap fun property =>
+      let byModel :=
+        property.asked.map fun (directory, bound, _) =>
+          property.world.presentMarkers property.markers directory bound
+      let (outcome, after) := property.answers.runModel (property.world.jobModel "git" #[])
+      (if byModel == property.expected then []
+        else [s!"the mode marker search's model: {property.name}"]) ++
+        (if outcome == .finished property.expected then []
+        else [s!"the mode marker search on the job model: {property.name}"]) ++
+        if after.processes.started.isEmpty then []
+        else [s!"the mode marker search on the job model starts no process: {property.name}"]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -29936,6 +30005,7 @@ def checks : List Check :=
     workspaceGitChecks ++
     workspaceStateChecks ++
     workspaceChecks ++
+    modeMarkerChecks ++
     shellChecks ++
     readOnlyChecks ++
     compileChecks ++
@@ -30082,7 +30152,8 @@ def main : IO UInt32 := do
       (← ModelTest.fuzzyFailures) ++
       (← ModelTest.syntaxTreeFailures) ++
       (← ModelTest.apiCaseFailures) ++
-      (← ModelTest.workspaceFinderFailures)
+      (← ModelTest.workspaceFinderFailures) ++
+      (← ModelTest.modeMarkerFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -30090,6 +30161,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model"
   (← IO.getStdout).flush
   IO.Process.exit 0

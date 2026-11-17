@@ -40,6 +40,15 @@ The first that answers wins.
   the workspace is its own project.
 
 None answering is `none`: the directory has no workspace.
+
+## Modes on markers
+
+`presentMarkers` is the search for a minor mode's markers within a
+workspace (`Editor/Workspace.lean`, "Modes on markers"): each path of
+`Workspace.markerSearchPaths` stamped with the marker adapter's rule
+(`markerThere`), the markers there answered with their directories. Its
+model is `World.presentMarkers`, and the two are held to
+`Workspace.MarkerContract`, run the same three ways as the finder's.
 -/
 
 namespace Editor.Workspace
@@ -62,18 +71,37 @@ def Git.origin (git : String) (directory : System.FilePath) : JobM (Option Strin
   | _ =>
     return none
 
+/-- Whether a marker is at `path`: it has a stamp, or its stamp is refused
+as `notAFile`, as a directory's is ("Markers", in the module docs). -/
+def markerThere (path : System.FilePath) : JobM Bool := do
+  match ← File.stamp path with
+  | .ok (some _) =>
+    return true
+  | .error .notAFile =>
+    return true
+  | _ =>
+    return false
+
 /-- The marker adapter: the nearest directory, `directory` or one of its
 ancestors, holding one of the settings' markers, in marker order. -/
 def markerFound (settings : Settings) (directory : System.FilePath) : JobM (Option Found) := do
   for (root, path) in markerPaths settings directory do
-    match ← File.stamp path with
-    | .ok (some _) =>
+    if ← markerThere path then
       return some (Found.ofMarker root)
-    | .error .notAFile =>
-      return some (Found.ofMarker root)
-    | _ =>
-      pure ()
   return none
+
+/-- The markers of `markers` that are there in the directories searched
+from `directory` within `bound` (`Workspace.markerSearchPaths`), each with
+the directory it is in, nearest first and, in one directory, in marker
+order ("Modes on markers", in the module docs). A marker is there by the
+marker adapter's rule (`markerThere`). -/
+def presentMarkers (markers : Array String) (directory bound : System.FilePath) :
+    JobM (Array (System.FilePath × String)) := do
+  let mut present := #[]
+  for (at_, path, marker) in markerSearchPaths markers directory bound do
+    if ← markerThere path then
+      present := present.push (at_, marker)
+  return present
 
 /-- The workspace of the local directory `directory`: config, then git, then
 the markers, the first that answers ("The adapters, in order", in the module
