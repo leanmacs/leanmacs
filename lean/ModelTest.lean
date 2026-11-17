@@ -36895,6 +36895,11 @@ def excerptRead (driver : EvilDriver) (name : String) : Option String := do
   let buffer ← excerptBufferNamed driver name
   (buffer.text.read.runModel driver.model.texts).1.toOption
 
+/-- The stamp of the file `one.txt` the excerpt buffer checks give source
+buffer `one` (`excerptRegistrations`, `one-changed`). -/
+def excerptStamp : File.Stamp :=
+  ⟨0, 0, 14⟩
+
 /-- The commands of the excerpt buffer checks, each a `Config.Registration`
 evil's commands are handed beside: `make-ex` makes source buffers `one`
 (`one\ntwo\nthree\n`) and `two` (`alpha\nbeta\n`) and an excerpt buffer `ex`
@@ -36905,7 +36910,10 @@ replaces the first byte of the second with `A`; `edit-both-fails` does that
 and is then refused; `edit-one` inserts `Z` at the start of `one`'s text;
 `show-one` shows `one` in the window; `two-ro` makes `two` read-only;
 `make-unheld` makes an excerpt buffer `ex2` of a text no buffer holds and
-shows it; and `insert-x` inserts `x` at the window's cursors. -/
+shows it; `insert-x` inserts `x` at the window's cursors; `one-changed` has
+`one` hold the file `one.txt`, at `excerptStamp`, and marks it changed on
+disk, the user not told; and `remove-one` removes `one`, which no window
+shows. -/
 def excerptRegistrations : Array Config.Registration :=
   #[{ name := "make-ex"
       action :=
@@ -36946,7 +36954,18 @@ def excerptRegistrations : Array Config.Registration :=
           let free ← createText "free\n"
           let .ok ex ← createExcerptBuffer "ex2" #[⟨free, 0, 5⟩] | return
           discard <| call.target.window.id.show ex },
-    { name := "insert-x", action := .call fun call => call.target.insertAtSelections "x" }]
+    { name := "insert-x", action := .call fun call => call.target.insertAtSelections "x" },
+    { name := "one-changed"
+      action :=
+        .call fun _ => do
+          let some one ← findBuffer "one" | return
+          discard <| one.attachFile "one.txt" excerptStamp .lf
+          discard <| one.markChanged excerptStamp (some { excerptStamp with size := 15 }) false },
+    { name := "remove-one"
+      action :=
+        .call fun _ => do
+          let some one ← findBuffer "one" | return
+          discard <| one.remove }]
 
 /-- `driver` once the command `name` has run, as an invocation no key
 yielded. -/
@@ -37084,6 +37103,48 @@ def excerptBufferChecks : List Check :=
             excerptRead made "ex2" == some "free\n" &&
               edited.loop.state.echo == "insert-x: ex2 reads a text no buffer holds" &&
               excerptRead edited "ex2" == some "free\n" },
+    { name :=
+        "a commit into an excerpt over a text no buffer holds is dropped, saying so, and changes nothing"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let made := excerptInvoked driver "make-unheld"
+            let committed := excerptFed (evilFed made "i") [.commit "Q"]
+            committed.loop.state.echo == EditorState.unheldReason "ex2" &&
+              excerptRead committed "ex2" == some "free\n" },
+    { name :=
+        "with source one's file changed on disk unbeknown to the user, a command editing both sources through the excerpt buffer is superseded, saying so, and neither source changes; the change is then told, and the same command lands"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let changed := excerptInvoked driver "one-changed"
+            let refused := excerptInvoked changed "edit-both"
+            let landed := excerptInvoked refused "edit-both"
+            refused.loop.state.echo == Files.changedOnDisk "one.txt" &&
+              excerptRead refused "one" == some "one\ntwo\nthree\n" &&
+              excerptRead refused "two" == some "alpha\nbeta\n" &&
+              excerptRead refused "ex" == some "two\n\nalpha\n" &&
+              excerptRead landed "one" == some "one\ntXwo\nthree\n" &&
+              excerptRead landed "two" == some "Alpha\nbeta\n" },
+    { name :=
+        "with source one's file changed on disk unbeknown to the user, a commit into the first excerpt is dropped, saying so, and the change is then told, so the next commit is inserted"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let changed := excerptInvoked driver "one-changed"
+            let refused := excerptFed (evilFed changed "i") [.commit "Q"]
+            let landed := excerptFed refused [.commit "R"]
+            refused.loop.state.echo == Files.changedOnDisk "one.txt" &&
+              excerptRead refused "one" == some "one\ntwo\nthree\n" &&
+              excerptRead refused "ex" == some "two\n\nalpha\n" &&
+              excerptRead landed "one" == some "one\nRtwo\nthree\n" &&
+              excerptRead landed "ex" == some "Rtwo\n\nalpha\n" },
     { name :=
         "the ranges a transaction changes are its runs of deletes and inserts in the text before, an insert's empty and changes that do nothing passed over"
       run :=
