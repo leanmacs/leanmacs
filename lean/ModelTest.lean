@@ -28178,6 +28178,13 @@ def compileChecks : List Check :=
               again.jobs.processes.started.size == made.jobs.processes.started.size + 1 &&
               asked.loop.state.prompt.map (·.label) == some Compile.promptLabel },
     { name :=
+        "the compilation mode fills the role refresh with recompile"
+      run :=
+        pure
+          (Compile.mode.roles.map (fun (role, command) => (role.name, command)) ==
+              [(Role.refresh.name, Compile.recompileName)] &&
+            Compile.mode.name == Compile.modeName) },
+    { name :=
         "a compile order crosses as arguments and back with a place of each kind, arguments that are no order read as none, and the run job started with them fails; each place has its own job key"
       run :=
         let places : List Compile.Place :=

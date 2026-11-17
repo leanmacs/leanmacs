@@ -114,7 +114,8 @@ its run ran gets no output; the end is still said.
 ## The mode
 
 `compilation` (`mode`), whose buffer is read-only to editing commands
-(`Editor/Command/Dispatch.lean`, "Read-only buffers"). Phases 4 and 5 add
+(`Editor/Command/Dispatch.lean`, "Read-only buffers"). It fills the role
+`refresh` with `recompile`. Phases 4 and 5 add
 errors and `next-error`, and the hook.
 
 Pinned by `ModelTest.compileChecks`, on the loop's driver over the editor's
@@ -776,6 +777,6 @@ def runWork (arguments : List Argument) : Work := fun _ => do
 
 /-- The `compilation` mode ("The mode", in the module docs). -/
 def mode : Mode :=
-  { name := modeName }
+  { name := modeName, roles := [(Role.refresh, recompileName)] }
 
 end Editor.Compile
