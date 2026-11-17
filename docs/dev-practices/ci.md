@@ -133,8 +133,10 @@ it runs the same in `linux-ci`'s copy of the checkout. It runs, in order:
    names its rule; the script's header lists them.
 4. `tools/workflow-lint-probe.sh`: zizmor must reject
    `tests/workflow-lint/tag-pinned.yml`, a tag-pinned action, with
-   `unpinned-uses`; and the check must reject copies of `ci.yml` broken
-   one rule at a time, naming that rule, and pass the unbroken copy. A
+   `unpinned-uses`; and the check must reject copies of `ci.yml` (or of
+   a file it reads) broken one rule at a time, every rule at least once,
+   naming that rule and no other, and pass the unbroken copy. A new rule
+   in the check needs its mutation in the probe. A
    config or a check that stopped checking fails here.
 
 actionlint, zizmor and yq are pinned in `mise.toml`, installed by mise's

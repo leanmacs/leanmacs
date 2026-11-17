@@ -8,7 +8,8 @@ workflow-lint` runs (docs/dev-practices/ci.md). They live outside
   non-zero on it with an `unpinned-uses` finding.
 
 The probe's other cases are made at run time: it copies
-`.github/workflows/ci.yml` into a temporary directory, breaks one rule of
-`tools/workflow-check.sh` at a time with `yq`, and requires the check to
-fail on each with a message naming that rule, then to pass on the
-unbroken copy.
+`.github/workflows/ci.yml`, with the check and the files it reads, into a
+temporary directory, breaks each rule of `tools/workflow-check.sh` in turn
+(with `yq` on the workflow, or `sed` on another file), and requires the
+check to fail on each with a message naming that rule and no other, then
+to pass on the unbroken copy.
