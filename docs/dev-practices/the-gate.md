@@ -29,6 +29,13 @@ through the clipboard adapter is the text read back. A change that
 touches the window, the surface or the clipboard is done when both this
 gate and that task exit 0.
 
+Two checks of the repository rather than the editor are outside the gate
+too: `mise run secrets-scan`, gitleaks over `main`'s history (the copy
+`linux-ci` runs the gate in has no history), and `mise run infra-check`,
+the offline checks of the repository's GitHub settings in `infra/github`.
+Neither runs in `ci` or the hk hooks; both are in
+[`publishing.md`](publishing.md).
+
 What the gate does check of the window, with none open:
 
 - **The translation**, in `crates/editor-platform-winit`, on winit's own

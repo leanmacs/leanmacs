@@ -19,6 +19,8 @@ close with unsaved changes.
 - [`docs/dev-practices/`](docs/dev-practices/README.md) says how to test it
   and what must pass before a change lands.
 - [`AGENTS.md`](AGENTS.md) holds the working rules.
+- [`docs/dev-practices/publishing.md`](docs/dev-practices/publishing.md)
+  says what is published and how the repository's settings are kept.
 
 ## Building
 
@@ -27,8 +29,9 @@ The build runs on macOS and on Linux. Windows has not been attempted.
 ### Prerequisites
 
 - [mise](https://mise.jdx.dev), which installs the tools `mise.toml` pins
-  (Rust, cargo-deny, hk, pkl, clang-format) and runs every task. Run
-  `mise install` once in the checkout.
+  (Rust, cargo-deny, hk, pkl, clang-format, and gitleaks and OpenTofu,
+  which only `mise run secrets-scan` and the `infra-*` tasks use) and runs
+  every task. Run `mise install` once in the checkout.
 - `uv` or `pipx`. mise uses one of them to install clang-format.
 - Lean, at exactly the version in `lean/lean-toolchain`, with `lean` and
   `lake` on the `PATH`. `mise install` does not provide it from

@@ -135,6 +135,8 @@ change.
 - Experiments on the Lean runtime's concurrency behaviour.
 
 The notes and report are local and untracked (`research_notes/`,
-`reports/`). Where a design choice rests on them the document says so, and
-says when the source was weak. The split between Rust and Lean is reasoning
+`reports/`), and are not published with the repository
+([why](../dev-practices/publishing.md#research_notes-and-reports-stay-local)).
+Where a design choice rests on them the document says so, and says when the
+source was weak. The split between Rust and Lean is reasoning
 from that evidence, not something the evidence establishes.
