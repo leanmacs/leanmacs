@@ -669,6 +669,20 @@ run = 'id=$(cargo run --quiet --locked -p editor-release-std --bin leanmacs-rele
 description = "Opt-in, never part of ci; macOS only: check dist/Leanmacs-<build-id>.dmg's stamp and prepare the nightly's assets in target/nightly, with no token (crates/editor-release, `nightly`)"
 run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- nightly dist target/nightly"
 
+# Any host, part of nothing: the golden tests in `mise run test`
+# (crates/editor-release's `site` and crates/editor-release-std/tests/site.rs)
+# cover it. CI's release job runs it on main, on the build.json `nightly`
+# just prepared (.github/workflows/release.yml).
+#
+# `leanmacs-release site` (crates/editor-release, `site`) renders the
+# download page for the build a build.json describes into
+# <out-dir>/index.html, target/site by default. The minimum macOS it shows
+# is [env]'s MACOSX_DEPLOYMENT_TARGET, the one the executable is linked for;
+# run outside mise, with that unset, it refuses.
+[tasks.site]
+description = "Any host: render the download page from a build.json into <out-dir>/index.html (default target/site): mise run site -- <build.json> [<out-dir>] (crates/editor-release, site)"
+run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- site"
+
 # Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl:
 # it mounts a disk image. The ignored test
 # crates/editor-release-std/tests/nightly_mount.rs packs a tiny stamped app

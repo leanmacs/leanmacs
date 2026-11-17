@@ -8,7 +8,8 @@
 //! holds [`StdProcess`] to the process port's contract, the one the core's
 //! fake passes, and `tests/resolve.rs` runs the core's resolvers through it
 //! on a git repository it makes; `tests/nightly_mount.rs` (`mise run
-//! nightly-check`) prepares a nightly from a real image. Only release
+//! nightly-check`) prepares a nightly from a real image; `tests/site.rs`
+//! runs `leanmacs-release site` on the fixtures in `tests/site/`. Only release
 //! tooling depends on this crate, and the editor never links it
 //! (`deny.toml`).
 

@@ -10,7 +10,10 @@
 //! - [`nightly`]: the rolling `nightly` prerelease: the check of the
 //!   mounted app's stamp against the build, `build.json`, the `.sha256`
 //!   line, the release notes, which old build-ID copies to prune, and the
-//!   ordered `gh` calls that publish.
+//!   ordered `gh` calls that publish; and `build.json` read back
+//!   (`parse_build_json`).
+//! - [`site`]: the download page, one self-contained `index.html` for the
+//!   build a `build.json` describes, which loads nothing.
 //!
 //! The crate touches nothing itself. It reads the environment through the
 //! [`ports::Env`] port and runs programs through the [`ports::Process`] port,
@@ -27,3 +30,4 @@ pub mod dmg;
 pub mod fake;
 pub mod nightly;
 pub mod ports;
+pub mod site;

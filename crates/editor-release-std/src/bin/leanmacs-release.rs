@@ -7,6 +7,7 @@
 //! leanmacs-release [--root <dir>] dmg <app> <out-dir>
 //! leanmacs-release [--root <dir>] nightly <dist-dir> <out-dir>
 //! leanmacs-release [--root <dir>] publish <dir>
+//! leanmacs-release [--root <dir>] site <build.json> [<out-dir>]
 //! ```
 //!
 //! - `build-id` prints the build ID (`editor_release::build_id::resolve`):
@@ -38,6 +39,15 @@
 //!   whose `build.json` and `Leanmacs.dmg.sha256` do not describe this
 //!   build and its `Leanmacs.dmg`'s size
 //!   (`editor_release::nightly::read_build`).
+//! - `site <build.json> [<out-dir>]`, on any system, renders the download
+//!   page (`editor_release::site`) for the build `<build.json>` describes
+//!   into `<out-dir>/index.html`, `<out-dir>` defaulting to `target/site`
+//!   and made if missing, and prints the page's path. The minimum macOS
+//!   is `MACOSX_DEPLOYMENT_TARGET`, which mise.toml's `[env]` sets for
+//!   `mise run site`; unset, it refuses. The links are
+//!   `editor_release::nightly::target`'s, as for `nightly`. It refuses a
+//!   `build.json` that `editor_release::nightly::build_json` did not write,
+//!   before writing anything.
 //!
 //! The workspace is the one this binary was built in, two directories above
 //! this crate's manifest, unless `--root` names another. Each failure is
@@ -48,10 +58,14 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use editor_release::dmg::{self, Inputs};
-use editor_release::{build_id, commit, nightly};
+use editor_release::ports::Env;
+use editor_release::{build_id, commit, nightly, site};
 use editor_release_std::{StdEnv, StdProcess, write_prepared};
 
-const USAGE: &str = "usage: leanmacs-release [--root <dir>] (build-id | commit | dmg <app> <out-dir> | nightly <dist-dir> <out-dir> | publish <dir>)";
+const USAGE: &str = "usage: leanmacs-release [--root <dir>] (build-id | commit | dmg <app> <out-dir> | nightly <dist-dir> <out-dir> | publish <dir> | site <build.json> [<out-dir>])";
+
+/// The variable holding the minimum macOS, as mise.toml's `[env]` sets it.
+const MINIMUM_VAR: &str = "MACOSX_DEPLOYMENT_TARGET";
 
 /// The workspace this binary was built in.
 fn built_workspace() -> PathBuf {
@@ -165,6 +179,26 @@ fn run(args: &[String]) -> Result<Option<String>, String> {
                 target.repo,
                 nightly::TAG
             )))
+        }
+        [command, build_json, rest @ ..] if command == "site" && rest.len() <= 1 => {
+            let build_json = absolute(build_json)?;
+            let out = match rest {
+                [out] => absolute(out)?,
+                _ => root.join("target").join("site"),
+            };
+            let minimum = StdEnv.var(MINIMUM_VAR).ok_or_else(|| {
+                format!("site: {MINIMUM_VAR} is not set: run it through mise run site")
+            })?;
+            let text = std::fs::read_to_string(&build_json)
+                .map_err(|e| format!("{}: {e}", build_json.display()))?;
+            let target = nightly::target(&StdEnv).map_err(|e| e.to_string())?;
+            let page = site::page_from(&text, target, &minimum.to_string_lossy())
+                .map_err(|e| format!("{}: {e}", build_json.display()))?;
+            let html = site::render(&page);
+            std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+            let index = out.join(site::INDEX);
+            std::fs::write(&index, html).map_err(|e| format!("{}: {e}", index.display()))?;
+            Ok(Some(index.display().to_string()))
         }
         _ => Ok(None),
     }
