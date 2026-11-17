@@ -1292,7 +1292,7 @@ def publish (collaborators : Collaborators σ scheme) (running : Running σ sche
   let (published, running) ←
     running.attempt collaborators
         (frame.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-          keys.inlineMatches)
+          keys.inlineMatches keys.displaying)
   let (frame, starts, cancels, spawns) := (published.getD frame).completionJobs keys
   { running with frame := some frame }.launch collaborators starts cancels spawns
 

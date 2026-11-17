@@ -1190,13 +1190,6 @@ measured whose key's 99th percentile, listed inline, was under 1 ms. -/
 def Loop.inlineMatches : Nat :=
   250
 
-/-- How many of a prompt's listed candidates the minibuffer's status line
-shows, the first of the listing: ten, what Emacs's vertico
-(`vertico-count`) and ivy (`ivy-height`) list by default
-(`Loop.promptStatus`). -/
-def Loop.shownCandidates : Nat :=
-  10
-
 /-- What a step is handed beside the loop and the event: what the keys are
 looked up in, and what an invocation runs. It is rebuilt by the caller for
 each step, from the registry as it then is, so a reload changes it between
@@ -1252,6 +1245,13 @@ structure Loop.Keys (scheme : InputScheme) where
   made in the publish, on the editor thread; more are matched by a job of
   the loop's own ("Prompts", in the module docs). -/
   inlineMatches : Nat := Loop.inlineMatches
+  /-- The displays a prompt's listing is shown with, chosen by its category
+  (`Editor/Completion/Display.lean`): the host hands the registry's,
+  config's choices or the minibuffer display for every category
+  (`Config.Registry.displaying`, `Headless.Running.keys`). It is looked up
+  for each step and never kept in the state, so a reload changes it from
+  the next scene. -/
+  displaying : Completion.Displaying := Completion.Displaying.standard
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1393,31 +1393,15 @@ def start (scheme : InputScheme) (size : Size) : TextM (Loop scheme) :=
 def promptFace : FaceName :=
   ⟨"minibuffer.prompt"⟩
 
-/-- The face of a listed candidate's field of the minibuffer's status line,
-unless it is the chosen one: the minibuffer display's
-(`Completion.Displays.candidateFace`). -/
-def candidateFace : FaceName :=
-  Completion.Displays.candidateFace
-
-/-- The face of the chosen candidate's field of the minibuffer's status
-line: the minibuffer display's (`Completion.Displays.chosenFace`). -/
-def chosenFace : FaceName :=
-  Completion.Displays.chosenFace
-
 /-- The fields of the minibuffer's status line for the prompt `asked`: its
-label, in `promptFace`, then one field for each of the first
-`shownCandidates` candidates it has listed, in the listing's order, in
-`candidateFace`, but for the chosen one, which is in `chosenFace`. With
-nothing listed it is the label alone. -/
+label, in `promptFace`, alone. The candidates it has listed are the
+candidate list's (`candidateListView`). -/
 def promptStatus (asked : Prompt) : Array StatusField :=
-  #[{ text := asked.label, face := promptFace }] ++
-    (asked.candidates.listed.extract 0 shownCandidates).mapIdx fun index candidate =>
-      { text := candidate.text
-        face := if asked.candidates.chosen == some index then chosenFace else candidateFace }
+  #[{ text := asked.label, face := promptFace }]
 
 /-- The status line of the view `id` of `state`, whose window `context`
 describes, and the face of its row: for the minibuffer's view the prompt's
-label and the candidates it has listed (`promptStatus`) and no face; for
+label (`promptStatus`) and no face; for
 any other the fields of `modeLine` (`ModeLine.fields`), and no face for the
 selected window or `mode-line.inactive` for one that is not. -/
 def statusOf (modeLine : ModeLine) (state : EditorState) (id : ViewId)
@@ -1820,17 +1804,81 @@ def tabBarView (state : EditorState) (shown : Array Shown) :
         status := #[], padding := state.paddingOf drawn.view }
     return (state, some (view, was), none)
 
+/-- The candidate list's view of `state` while a prompt is open and its list
+has shown a row (`EditorState.candidateListRect?`), what it shows, and the
+state with the list drawn. The first time, the text, its anchor marker at 0
+and the view's id (`EditorState.freshView`, with `nextView` past it) are
+made and kept in `EditorState.candidateList`; when the text of the sheet
+the display answered at this publish (`Prompt.sheet`,
+`Completion.Sheet.text`) differs from the one the text holds, the text's
+content is replaced with it. The snapshot is one of `shown` while the text
+is at its revision, and a new one otherwise. The view has no selection, so
+no cursor is drawn, the sheet's decorations, no status field, so its whole
+strip is text rows, and the list's padding (`EditorState.paddingOf`). Its
+anchor stays at 0: the sheet holds only the rows shown. It is not refused:
+a refusal of the store is handed back, with no view. -/
+def candidateListView (state : EditorState) (shown : Array Shown) :
+    TextM (EditorState × Option (View × Shown) × Option TextError) := do
+  let some rect := state.candidateListRect? | return (state, none, none)
+  let some asked := state.prompt | return (state, none, none)
+  let made ←
+    observing do
+        match state.candidateList with
+        | some drawn =>
+          pure (state, drawn)
+        | none =>
+          let text ← createText ""
+          let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+          let view := state.freshView
+          let drawn : Completion.Drawn := { view, text, scroll, content := "" }
+          pure
+              ({ state with
+                  candidateList := some drawn, nextView := view.index + 1 },
+                drawn)
+  let (state, drawn) ←
+    match made with
+    | .ok made =>
+      pure made
+    | .error error =>
+      return (state, none, some error)
+  let content := asked.sheet.text
+  let taken ←
+    observing do
+        if content != drawn.content then
+          drawn.text.replaceRange 0 (← drawn.text.byteLength) content
+        let revision ← drawn.text.revision
+        match shown.find? fun was => was.text == drawn.text && was.revision == revision with
+        | some was =>
+          pure was
+        | none =>
+          return { text := drawn.text, revision, snapshot := ← drawn.text.snapshot }
+  match taken with
+  | .error error =>
+    return (state, none, some error)
+  | .ok was =>
+    let drawn := { drawn with content }
+    let state := { state with candidateList := some drawn }
+    let view : View :=
+      { id := drawn.view, rect, snapshot := was.snapshot, scroll := drawn.scroll
+        selections := #[], cursor := { shape := .hollow, face := ⟨"cursor"⟩ }
+        decorations := asked.sheet.decorations, status := #[]
+        padding := state.paddingOf drawn.view }
+    return (state, some (view, was), none)
+
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
 (`EditorState.settleQuit`), brings an open prompt's listing up to date
-with the style `matching` chooses for its category (`listed`), has the frame choose `layout` when one is handed that is not
+with the style `matching` chooses for its category (`listed`) and shows it
+with the display `displaying` chooses (`EditorState.displayed`), has the
+frame choose `layout` when one is handed that is not
 the one it last chose (`Frame.choose`), sets when the tab bar is shown
 from `tabBar` when one is handed, has
 each view but the floats follow its cursor (`followed`), places the floats
 anchored at a position where the display drew it and closes a transient
 one whose anchor is not drawn (`spots`, `EditorState.located`), has the
-floats follow their cursors, appends the tab bar's view while the bar is
-shown (`tabBarView`), publishes a scene
+floats follow their cursors, appends the candidate list's view while a
+prompt's list has shown a row (`candidateListView`) and the tab bar's view
+while the bar is shown (`tabBarView`), publishes a scene
 of the state, releases each
 snapshot the last scene named that this one does not, and gives up what
 the floats it closed held, telling the scheme they closed. It is not refused
@@ -1839,8 +1887,8 @@ text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
 def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0)
     (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none)
-    (matching : Completion.Matching := .standard) (inlineMatches : Nat := Loop.inlineMatches) :
-    EditorM (Loop scheme) := do
+    (matching : Completion.Matching := .standard) (inlineMatches : Nat := Loop.inlineMatches)
+    (displaying : Completion.Displaying := .standard) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
@@ -1850,6 +1898,9 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   if keepRunning then
     Display.askFrame .keepRunning
   let (state, typed, unlisted) ← listed state matching inlineMatches
+  -- The listing is shown before the views are laid out, so the rectangles
+  -- of this scene are for the rows this scene shows.
+  let state := state.displayed displaying
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
   -- The padding the views are laid out with is the one handed in, and so
@@ -1885,15 +1936,19 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   followed placed.scrollMargin placed.bottomRow (views.filter (floating placed))
   -- The matches are read from where each anchor now is.
   let views ← decorated placed views
-  -- The tab bar's view comes last, once the views are followed and
-  -- decorated: it is never followed and gets no search match.
-  let (placed, barred, unbarred) ← tabBarView placed (shown ++ loop.shown)
-  let (views, shown) :=
-    match barred with
+  -- The candidate list's view and then the tab bar's come last, once the
+  -- views are followed and decorated: they are never followed and get no
+  -- search match.
+  let add (views : Array View) (shown : Array Shown) : Option (View × Shown) → Array View × Array Shown
     | some (view, was) =>
       (views.push view, if shown.any (·.snapshot == was.snapshot) then shown else shown.push was)
     | none => (views, shown)
-  let state := placed.refusedBy (unrecorded <|> unlisted <|> unshown <|> unbarred)
+  let (placed, listedView, unlistedView) ← candidateListView placed (shown ++ loop.shown)
+  let (views, shown) := add views shown listedView
+  let (placed, barred, unbarred) ← tabBarView placed (shown ++ loop.shown)
+  let (views, shown) := add views shown barred
+  let state :=
+    placed.refusedBy (unrecorded <|> unlisted <|> unshown <|> unlistedView <|> unbarred)
   Display.publish (scene state views loop.pending loop.menu)
   -- A snapshot is kept while a view of the scene names it: one taken for a
   -- float that closed above is released with the last scene's others.
@@ -2555,7 +2610,7 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
   do
   let loop ←
     stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-        keys.inlineMatches
+        keys.inlineMatches keys.displaying
   let (loop, starts, cancels) := loop.fileJobs keys
   let (loop, sourceStarts, sourceCancels, spawns) := loop.completionJobs keys
   return { stepped with

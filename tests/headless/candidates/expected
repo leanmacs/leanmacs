@@ -5,25 +5,33 @@ scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "de
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "w", scroll 0, selections 1..1, padding 8 0
-status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.candidate "wq"
+status 1: minibuffer.prompt "Pick: "
+view 2 0,0 0x0: "w\nwq", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candidate 2..4 minibuffer.match 2..3
+status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Tab> Tab -
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "w", scroll 0, selections 1..1, padding 8 0
-status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.chosen "wq"
+status 1: minibuffer.prompt "Pick: "
+view 2 0,0 0x0: "w\nwq", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.chosen 2..4 minibuffer.match 2..3
+status 2: -
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked wq", echo padding 8, preedit -, published 8, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run pick: ok
 key arrived: z KeyZ -
-scene 0x0, focused 2, echo "", echo padding 8, preedit -, published 11, theme "default"
+scene 0x0, focused 3, echo "", echo padding 8, preedit -, published 11, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 2 0,0 0x0: "z", scroll 0, selections 1..1, padding 8 0
-status 2: minibuffer.prompt "Pick: "
+view 3 0,0 0x0: "z", scroll 0, selections 1..1, padding 8 0
+status 3: minibuffer.prompt "Pick: "
+view 2 0,0 0x0: "", scroll 0, selections , padding 8 0
+status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked z", echo padding 8, preedit -, published 15, theme "default"

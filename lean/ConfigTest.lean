@@ -3003,17 +3003,28 @@ def bufferStyleChunk (defines : List String) (names : List String := ["alpha", "
     String.join (names.map (s!"    discard <| createBuffer {·.quote}\n")) ++
     String.join (defines.map (s!"  {·}\n"))
 
-/-- Whether a status line of `lines` lists `fields` after the label
-`label`, the label in the prompt's face and each field in the candidates'
-face, whichever view it is of: each prompt opens a minibuffer view of its
-own. -/
+/-- What `line`, a line of a printed scene, says after its view's id: from
+its first `:` on. -/
+def afterId (line : String) : String :=
+  (line.dropWhile (· != ':')).toString
+
+/-- Whether a view line of `lines` is the candidate list's showing `rows`,
+whichever view it is of: a view with no selection whose text is the rows,
+one a line. -/
+def listViewShows (lines : Array String) (rows : List String) : Bool :=
+  let text := "\n".intercalate rows
+  lines.any fun line =>
+    line.startsWith "view " &&
+      (afterId line).startsWith s!": {text.quote}, scroll 0, selections , padding"
+
+/-- Whether `lines` show a prompt labelled `label` listing `fields`: a
+status line that is the label alone, in the prompt's face, and the
+candidate list's view showing the fields, one a row, whichever views they
+are of: each prompt opens a minibuffer view of its own. -/
 def listsAfter (lines : Array String) (label : String) (fields : List String) : Bool :=
-  let after (line : String) : String := (line.dropWhile (· != ':')).toString
-  let status :=
-    Headless.statusLine ⟨0⟩
-      (#[{ text := label, face := Loop.promptFace }] ++
-        fields.toArray.map fun text => { text, face := Loop.candidateFace })
-  lines.any fun line => line.startsWith "status " && after line == after status
+  let status := Headless.statusLine ⟨0⟩ #[{ text := label, face := Loop.promptFace }]
+  lines.any (fun line => line.startsWith "status " && afterId line == afterId status) &&
+    listViewShows lines fields
 
 /-- The texts of `texts` that the library's matcher (`Fuzzy.real`) answers
 for `pattern`, in its order: what a prompt of the fuzzy style lists, so a
@@ -3065,6 +3076,26 @@ def manyCompiled (count : Nat) : Compiled :=
                 (discard <|
                   prompt "Pick: " { command := "picked" } ""
                     [.given (.ofTexts "many" "pick" (manyPaths count))]) }] }
+
+/-- The candidates `ask-annotated` asks among: `alpha`, annotated `one`,
+`palace`, annotated `two`, and `zz`, with no annotation. -/
+def annotatedCandidates : Array Completion.Candidate :=
+  #[{ text := "alpha", annotation := some "one" }, { text := "palace", annotation := some "two" },
+    .ofText "zz"]
+
+/-- What compiled code hands the hosts of the check of annotations: the
+minibuffer's commands and its mode, and `ask-annotated`, which asks
+`Pick: ` with a source given as a value over `annotatedCandidates`. -/
+def annotatedCompiled : Compiled :=
+  { minibufferCompiled with
+    commands :=
+      Minibuffer.commands ++
+        #[{ name := "ask-annotated"
+            action :=
+              .plain
+                (discard <|
+                  prompt "Pick: " { command := "picked" } ""
+                    [.given (.fixed "annotated" "pick" annotatedCandidates)]) }] }
 
 /-- The library's matcher, held: each request waits until `gate` is
 resolved, and is then answered by the library (`Fuzzy.real`). What a check
@@ -3271,11 +3302,7 @@ def promptChecks (context : Context) : List Check :=
             session.ask [.reload]
             session.ask [.run "pick"]
             let (_, views) ← session.scene
-            return asking.contains
-                  (Headless.statusLine ⟨1⟩
-                    #[{ text := "Pick: ", face := Loop.promptFace },
-                      { text := "w", face := Loop.candidateFace },
-                      { text := "wq", face := Loop.candidateFace }]) &&
+            return listsAfter asking "Pick: " ["w", "wq"] &&
                 views == #[viewLine "" 0] &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
@@ -3288,15 +3315,10 @@ def promptChecks (context : Context) : List Check :=
           Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
             (← Snapshots.new) (← Job.HeldSnapshots.new)
         let some theme := shipped.themes[0]? | return false
-        -- Each prompt opens a minibuffer view of its own, so a status line
-        -- is compared from its fields on, whichever view it is of.
-        let fields (line : String) : String := (line.dropWhile (· != ':')).toString
+        -- Each prompt opens a minibuffer view of its own, so the lines are
+        -- compared from their fields on, whichever view they are of.
         let lists (asking : Array String) (candidate : String) : Bool :=
-          let status :=
-            Headless.statusLine ⟨0⟩
-              #[{ text := "Theme: ", face := Loop.promptFace },
-                { text := candidate, face := Loop.candidateFace }]
-          asking.any fun line => line.startsWith "status " && fields line == fields status
+          listsAfter asking "Theme: " [candidate]
         withHost context [("10-source.lean", shippedSourceChunk false)]
             (fun session => do
               let asked (query : String) : IO (Array String) := do
@@ -3370,7 +3392,7 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
-        "criterion 5: a source config registers in the category buffer adds its candidates to switch-buffer's list, after the shipped source's buffer names; one registered under the shipped source's name replaces it; with neither the shipped names alone are listed (config chooses orderless for buffer, so the empty text lists the candidates in their own order and not by the library's scores)"
+        "criterion 5: a source config registers in the category buffer adds its candidates to switch-buffer's list, after the shipped source's buffer names; one registered under the shipped source's name replaces it; with neither the shipped names alone are listed; while two sources list, each group's rows follow a header of its name (config chooses orderless for buffer, so the empty text lists the candidates in their own order and not by the library's scores)"
       run :=
         let more := "defineSource (.ofTexts \"more\" \"buffer\" #[\"zz-extra\"])"
         let mine := "defineSource (.ofTexts \"buffers\" \"buffer\" #[\"mine\"])"
@@ -3390,8 +3412,11 @@ def promptChecks (context : Context) : List Check :=
             session.write "10-buffers.lean" (bufferStyleChunk [])
             let shipped ← asked
             let names := ["alpha", "beta", EditorState.scratchName]
+            -- Two sources list two groups, so each group's rows follow a
+            -- header of its name (`Completion.Displays.minibuffer`).
             return listsAfter shipped Buffers.switchPrompt names &&
-                listsAfter added Buffers.switchPrompt (names ++ ["zz-extra"]) &&
+                listsAfter added Buffers.switchPrompt
+                  ([Buffers.source.name] ++ names ++ ["more", "zz-extra"]) &&
                 listsAfter replaced Buffers.switchPrompt ["mine"] &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           { minibufferCompiled with
@@ -3477,7 +3502,7 @@ def promptChecks (context : Context) : List Check :=
                 unless (← session.host.join patience) == .settled do
                   return false
                 let listed ← session.sceneLines
-                let expected := (← realOrder typed (manyPaths 100000)).take Loop.shownCandidates
+                let expected := (← realOrder typed (manyPaths 100000)).take Completion.Displays.rows
                 return handled && held.size == 1 &&
                     (matchJobs (← session.output.get) "started").size == 2 &&
                     listsAfter listed "Pick: " expected &&
@@ -3515,11 +3540,47 @@ def promptChecks (context : Context) : List Check :=
                     | _, _ => false) &&
                     matchJobs output "ok" == started.extract 1 2 &&
                     listsAfter listed "Pick: "
-                      ((manyPaths 2000).toList.take Loop.shownCandidates) &&
+                      ((manyPaths 2000).toList.take Completion.Displays.rows) &&
                     !output.any (·.startsWith "loop: refused")
               finally
                 gate.resolve ())
-            (manyCompiled 2000) (heldMatcher gate) }]
+            (manyCompiled 2000) (heldMatcher gate) },
+    { name :=
+        "criterion 4: a candidate's annotation is drawn in a column beside its text and its matched ranges in their face: after `al` is committed the list shows the library's order of the candidates it matches, each padded to the longest one's length and the gap with its annotation after, `zz` not among them; each row is in the candidate face, its in-order spans in the match face and its annotation in the annotation face"
+      run :=
+        withHost context []
+          (fun session => do
+            session.ask [.run "ask-annotated"]
+            unless ← Event.post (.commit "al") do
+              return false
+            let lines ← session.sceneLines
+            let listed ← realOrder "al" (annotatedCandidates.map (·.text))
+            let annotationOf (text : String) : String :=
+              ((annotatedCandidates.find? (·.text == text)).bind (·.annotation)).getD ""
+            -- The column is computed from the texts listed, never written
+            -- out: the longest one's characters and the gap.
+            let column := (listed.map (·.length)).foldl max 0 + Completion.Displays.gap
+            let padded (text : String) : String := text.pushn ' ' (column - text.length)
+            let rows := listed.map fun text => padded text ++ annotationOf text
+            let spans :=
+              (listed.foldl
+                  (fun (spans, offset) text =>
+                    let row := padded text ++ annotationOf text
+                    let shift (span : Completion.Span) : String :=
+                      s!"{Completion.Displays.matchFace.name} {offset + span.start}..{offset + span.stop}"
+                    let start := offset + (padded text).utf8ByteSize
+                    (spans ++
+                        [s!"{Completion.Displays.candidateFace.name} {offset}..{offset + row.utf8ByteSize}"] ++
+                        (Completion.Styles.inOrderSpans "al" text).toList.map shift ++
+                        [s!"{Completion.Displays.annotationFace.name} {start}..{start + (annotationOf text).utf8ByteSize}"],
+                      offset + row.utf8ByteSize + 1))
+                  (([] : List String), 0)).1
+            let decorations := s!"decorations 0: {" ".intercalate spans}"
+            return !listed.contains "zz" && listed.length == 2 && listsAfter lines "Pick: " rows &&
+                lines.any (fun line =>
+                  line.startsWith "decorations " && afterId line == afterId decorations) &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          annotatedCompiled }]
 
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the ex names that ship (`Ex.commands`, `Ex.bindings`,

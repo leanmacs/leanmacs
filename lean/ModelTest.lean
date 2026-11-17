@@ -21564,6 +21564,11 @@ asked. -/
 def filteredSource : Completion.Source :=
   { Completion.Source.ofTexts "fixed" "other" #["zz", "w"] with filtered := true }
 
+/-- Fifteen candidates' texts, `c0` to `c14`: more than the minibuffer
+display shows (`Completion.Displays.rows`). -/
+def manyTexts : Array String :=
+  (Array.range 15).map (s!"c{·}")
+
 /-- The commands of the candidate checks, by name.
 
 - `ask-pick` asks `Pick: ` with `pickSource`, given as a value, and the
@@ -21583,6 +21588,8 @@ def filteredSource : Completion.Source :=
   `pickSource` as its default.
 - `ask-other` asks with a source of the category `other` over
   `pickCandidates`.
+- `ask-many` asks with a source of the category `pick` over `manyTexts`,
+  more than the minibuffer display shows.
 - `picked` says what it was called with (`picked`).
 - `accept` and `cancel` are the API's operations.
 - The test scheme's self-insert inserts its argument at its target's
@@ -21605,6 +21612,7 @@ def candidateCommands : List (String × Dispatched) :=
     ("ask-only-filtered", asks "" [.given filteredSource]),
     ("ask-category", asks "" [.category "pick" [pickSource]]),
     ("ask-other", asks "" [.given (.ofTexts "other" "other" pickCandidates)]),
+    ("ask-many", asks "" [.given (.ofTexts "many" "pick" manyTexts)]),
     ("ask-later", asks "" [.given (.answeringLater "later" "pick" "later-pick")]),
     ("ask-echo-later",
       asks "" [.given (.answeringLater "echo" "pick" "later-echo" (.afterPause 30) true)]),
@@ -21648,7 +21656,8 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
       ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"), ("C-c 5", invoke "ask-filtered"),
       ("C-c 7", invoke "ask-category"), ("C-c 6", invoke "ask-other"),
       ("C-c 8", invoke "ask-only-filtered"), ("C-c l", invoke "ask-later"),
-      ("C-c t", invoke "ask-echo-later"), ("C-c b", invoke "delete-backward")]
+      ("C-c t", invoke "ask-echo-later"), ("C-c b", invoke "delete-backward"),
+      ("C-c 9", invoke "ask-many")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -21656,6 +21665,14 @@ checks and the jobs of the driver checks, on the models `model`; `none` if
 making the state was refused. -/
 def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
   (Loop.Driver.over candidateKeys driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
+
+/-- `candidateDriver` whose prompts are shown by a display of no rows, so no
+candidate list is drawn: for the checks that count what the listing alone
+costs. -/
+def unshownDriver (model : EditorModel := editorModel) : Option TestDriver :=
+  (Loop.Driver.over
+      { candidateKeys with displaying := { default := Completion.Displays.minibuffer 0 } }
+      driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
 
 /-- `candidateDriver` whose prompts are matched by a job over more than
 `inline` candidates (`Loop.Keys.inlineMatches`), two unless given, so the
@@ -21671,7 +21688,7 @@ face. -/
 def laterFields (pattern : String) (texts : Array String) : Array StatusField :=
   #[{ text := pickLabel, face := Loop.promptFace }] ++
     (FuzzyModel.rank pattern texts).filterMap fun index =>
-      (texts[index]?).map fun text => { text, face := Loop.candidateFace }
+      (texts[index]?).map fun text => { text, face := Completion.Displays.candidateFace }
 
 /-- The ids of the jobs `driver` holds, at a post or finished and not
 delivered, each with its name. -/
@@ -21762,10 +21779,43 @@ model holds. -/
 def statusIn (driver : TestDriver) (id : ViewId) : Option (Array StatusField) := do
   ((← driver.model.display.scenes.back?).views.find? (·.id == id)).map (·.status)
 
-/-- The status line of the minibuffer's view in the last scene `driver`'s
-display model holds. -/
-def pickStatus (driver : TestDriver) : Option (Array StatusField) := do
-  statusIn driver (← driver.loop.state.minibufferView?)
+/-- The candidate list's view in the last scene `driver`'s display model
+holds, if it is there. -/
+def listView (driver : TestDriver) : Option View := do
+  let drawn ← driver.loop.state.candidateList
+  (← driver.model.display.scenes.back?).views.find? (·.id == drawn.view)
+
+/-- The text the candidate list's view shows in the last scene `driver`'s
+display model holds, if it is there. -/
+def listText (driver : TestDriver) : Option String := do
+  shownText driver.model (← listView driver)
+
+/-- The rectangle of the view `id` in the last scene `driver`'s display
+model holds, if the view is there. -/
+def viewRect (driver : TestDriver) (id : ViewId) : Option Rect := do
+  ((← driver.model.display.scenes.back?).views.find? (·.id == id)).map (·.rect)
+
+/-- What the last scene `driver`'s display model holds shows of the open
+prompt: the fields of the minibuffer's status line, then one field for
+each row of the candidate list's view, if it is there: the row's text, read
+from the view's snapshot, in the face of the decoration that starts the
+row. -/
+def pickShown (driver : TestDriver) : Option (Array StatusField) := do
+  let status ← statusIn driver (← driver.loop.state.minibufferView?)
+  let rows : Array StatusField :=
+    match listView driver with
+    | none => #[]
+    | some view =>
+      let text := (shownText driver.model view).getD ""
+      if text.isEmpty then #[]
+      else
+        ((text.splitOn "\n").foldl
+            (fun (fields, offset) row =>
+              let face :=
+                ((view.decorations.find? (·.start == offset)).map (·.face)).getD ⟨""⟩
+              (fields.push { text := row, face }, offset + row.utf8ByteSize + 1))
+            ((#[] : Array StatusField), 0)).1
+  return status ++ rows
 
 /-- The status line of the minibuffer's view of a prompt of the candidate
 checks whose minibuffer holds `pattern`: the label, then a field for each
@@ -21775,7 +21825,9 @@ def pickFields (pattern : String) (chosen : Option Nat := none) : Array StatusFi
   #[{ text := pickLabel, face := Loop.promptFace }] ++
     (pickListed pattern).listed.mapIdx fun index candidate =>
       { text := candidate.text
-        face := if chosen == some index then Loop.chosenFace else Loop.candidateFace }
+        face :=
+          if chosen == some index then Completion.Displays.chosenFace
+          else Completion.Displays.candidateFace }
 
 /-- The editor's models, but that every read of a whole text is refused
 with `noSuchText` and changes nothing: a fake written for the one check
@@ -21794,6 +21846,68 @@ loop does when the listing's read is refused. What is listed is compared
 with what the fuzzy model answers for the same pattern and candidates. -/
 def candidateChecks : List Check :=
   [{  name :=
+        "the scene lists the candidates one a row in a view of their own, directly above the minibuffer's; the windows above are shorter by its rows while it is open and get them back when it closes"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            let (cancelled, _) := fedTo asking (presses "C-c n")
+            let heights := asking.loop.state.heights
+            let rows := (pickListed "").listed.size
+            match listView asking, asking.loop.state.minibufferView? with
+            | some list, some minibuffer =>
+              listText asking ==
+                  some ("\n".intercalate ((pickListed "").listed.map (·.text)).toList) &&
+                rows == pickCandidates.size &&
+                some (list.rect.y + list.rect.height) == (viewRect asking minibuffer).map (·.y) &&
+                list.rect.height == rows * heights.text && list.selections.isEmpty &&
+                list.status.isEmpty &&
+                (viewRect asking ⟨0⟩).map (·.height) ==
+                  some (480 - heights.message - heights.text - rows * heights.text) &&
+                (viewRect cancelled ⟨0⟩).map (·.height) == some (480 - heights.message) &&
+                (listView cancelled).isNone
+            | _, _ => false },
+    { name :=
+        "moving the choice past the last row shown scrolls the list so the chosen candidate stays shown, through the loop: of fifteen, the scene's list shows the first ten, then from the second on after eleven steps forward, the first ten again after ten back, and the last ten when the last is chosen from nothing"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c 9")
+            let stepped (driver : TestDriver) (steps : List Candidates.Step) : TestDriver :=
+              steps.foldl (fun driver step => (fedTo (chose driver [step]) (presses "C-c s")).1)
+                driver
+            let order := (FuzzyModel.rank "" manyTexts).filterMap (manyTexts[·]?)
+            let window (first : Nat) : Option String :=
+              some ("\n".intercalate (order.extract first (first + Completion.Displays.rows)).toList)
+            let down := stepped asking (List.replicate 11 .next)
+            let up := stepped down (List.replicate 10 .previous)
+            let last := stepped asking [.previous]
+            order.size == 15 && listText asking == window 0 && listText down == window 1 &&
+              listText up == window 0 && listText last == window 5 },
+    { name :=
+        "typing that cuts the matches leaves the strip as tall as it has been: the window's view and the list's keep their rectangles and the list shows fewer lines; the cancel key gives the height back"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            let (typed, _) := fedTo asking (presses "e")
+            let (cancelled, _) := fedTo typed (presses "C-c n")
+            let lines (driver : TestDriver) : Nat :=
+              ((listText driver).map fun text => (text.splitOn "\n").length).getD 0
+            (pickListed "e").listed.size < pickCandidates.size &&
+              viewRect asking ⟨0⟩ == viewRect typed ⟨0⟩ &&
+              (listView typed).isSome &&
+              (listView asking).map (·.rect) == (listView typed).map (·.rect) &&
+              lines typed == (pickListed "e").listed.size && lines asking == pickCandidates.size &&
+              (viewRect cancelled ⟨0⟩).map (·.height) ==
+                some (480 - cancelled.loop.state.heights.message) },
+    { name :=
         "with the loop handed orderless for the category pick and the fuzzy style for the rest, after w is typed a pick prompt lists the orderless style's hits, in the candidates' order with w last, and a prompt of another category lists the fuzzy model's, with w first"
       run :=
         pure <|
@@ -21864,10 +21978,10 @@ def candidateChecks : List Check :=
               (candidatesOf typed).map (fun listed => (listed.listed.map (·.text)).toList.drop 3) ==
                 some ["zz", "w"] },
     { name :=
-        "a prompt asked with only a source that has filtered already holds no candidate to match, the filtered one's apart in its group, and that source's category; after a text is typed it lists them in the order the source gave, and the listing asks no style: its step costs the read of the minibuffer and no ranking"
+        "a prompt asked with only a source that has filtered already holds no candidate to match, the filtered one's apart in its group, and that source's category; after a text is typed it lists them in the order the source gave, and the listing asks no style: its step costs the read of the minibuffer and no ranking, shown by a display of no rows"
       run :=
         pure <|
-          match candidateDriver countingModel with
+          match unshownDriver countingModel with
           | none => false
           | some driver =>
             -- How many requests the last of `keys` took.
@@ -21949,10 +22063,10 @@ def candidateChecks : List Check :=
               candidatesOf failed == some (pickListed "w" (some 0)) &&
               failed.loop.state.prompt.isSome },
     { name :=
-        "what the listing costs, counted on the watch model's clock: a prompt with candidates is published with one request more than one with none, the read of the minibuffer, while its text is as it was, and with two more, the read and the ranking, at the step that asked for it and at each step that changed the text"
+        "what the listing costs, counted on the watch model's clock: a prompt with candidates is published with one request more than one with none, the read of the minibuffer, while its text is as it was, and with two more, the read and the ranking, at the step that asked for it and at each step that changed the text; the prompt is shown by a display of no rows, so no list is drawn"
       run :=
         pure <|
-          match candidateDriver countingModel with
+          match unshownDriver countingModel with
           | none => false
           | some driver =>
             -- How many requests the last of `keys` took.
@@ -21977,11 +22091,11 @@ def candidateChecks : List Check :=
           | some driver =>
             let (asking, _) := fedTo driver (presses "C-c a")
             let (typed, _) := fedTo asking (presses "e")
-            pickStatus asking == some (pickFields "") &&
-              (pickStatus asking).map (·.size) == some (1 + pickCandidates.size) &&
-              pickStatus typed == some (pickFields "e") &&
-              (pickStatus typed).map (·.size) == some 3 &&
-              (statusIn typed ⟨0⟩).map (·.any (·.face == Loop.candidateFace)) == some false },
+            pickShown asking == some (pickFields "") &&
+              (pickShown asking).map (·.size) == some (1 + pickCandidates.size) &&
+              pickShown typed == some (pickFields "e") &&
+              (pickShown typed).map (·.size) == some 3 &&
+              (statusIn typed ⟨0⟩).map (·.any (·.face == Completion.Displays.candidateFace)) == some false },
     { name :=
         "where a candidate is the typed text and others match it too, its field is the first after the label, though it is the last of the candidates"
       run :=
@@ -21990,10 +22104,10 @@ def candidateChecks : List Check :=
           | none => false
           | some driver =>
             let (typed, _) := fedTo driver (presses "C-c a w")
-            pickStatus typed == some (pickFields "w") &&
-              ((pickStatus typed).map fun fields => (fields.map (·.text)).extract 0 2) ==
+            pickShown typed == some (pickFields "w") &&
+              ((pickShown typed).map fun fields => (fields.map (·.text)).extract 0 2) ==
                 some #[pickLabel, "w"] &&
-              (pickStatus typed).map (·.size) == some 4 &&
+              (pickShown typed).map (·.size) == some 4 &&
               pickCandidates.back? == some "w" },
     { name :=
         "a text no candidate matches: the scene lists none, and the minibuffer's status line is the label alone; so is that of a prompt asked with no candidates"
@@ -22005,7 +22119,7 @@ def candidateChecks : List Check :=
             let (typed, _) := fedTo driver (presses "C-c a z")
             let (plain, _) := fedTo driver (presses "C-c p w")
             let label : Array StatusField := #[{ text := pickLabel, face := Loop.promptFace }]
-            pickStatus typed == some label && pickStatus plain == some label &&
+            pickShown typed == some label && pickShown plain == some label &&
               minibufferText typed == some "z" },
     { name :=
         "with a candidate chosen, its field of the minibuffer's status line and no other is in the chosen face, and the fields say what they said"
@@ -22017,12 +22131,12 @@ def candidateChecks : List Check :=
             let (typed, _) := fedTo driver (presses "C-c a w")
             let (second, _) := fedTo (chose typed [.next, .next]) (presses "C-c s")
             let (unchosen, _) := fedTo (chose second [.next, .next]) (presses "C-c s")
-            pickStatus second == some (pickFields "w" (some 1)) &&
-              ((pickStatus second).map fun fields => fields.map (·.face == Loop.chosenFace)) ==
+            pickShown second == some (pickFields "w" (some 1)) &&
+              ((pickShown second).map fun fields => fields.map (·.face == Completion.Displays.chosenFace)) ==
                 some #[false, false, true, false] &&
-              Loop.chosenFace != Loop.candidateFace &&
+              Completion.Displays.chosenFace != Completion.Displays.candidateFace &&
               candidatesOf unchosen == some (pickListed "w") &&
-              pickStatus unchosen == some (pickFields "w") },
+              pickShown unchosen == some (pickFields "w") },
     { name :=
         "text is typed, the key of the role next-item is pressed and then the accept key: the continuation's command runs with the first listed candidate as its first argument, which is not the typed text, and its own argument after it; the prompt is closed"
       run :=
@@ -22056,13 +22170,13 @@ def candidateChecks : List Check :=
             let (last, _) := fedTo unchosen previous
             !previous.isEmpty && previous != next &&
               candidatesOf second == some (pickListed "w" (some 1)) &&
-              pickStatus second == some (pickFields "w" (some 1)) &&
+              pickShown second == some (pickFields "w" (some 1)) &&
               candidatesOf first == some (pickListed "w" (some 0)) &&
-              pickStatus first == some (pickFields "w" (some 0)) &&
+              pickShown first == some (pickFields "w" (some 0)) &&
               candidatesOf unchosen == some (pickListed "w") &&
-              pickStatus unchosen == some (pickFields "w") &&
+              pickShown unchosen == some (pickFields "w") &&
               candidatesOf last == some (pickListed "w" (some 2)) &&
-              pickStatus last == some (pickFields "w" (some 2)) &&
+              pickShown last == some (pickFields "w" (some 2)) &&
               minibufferText last == some "w" },
     { name :=
         "the next key from the last listed candidate chooses nothing, and the accept key then gives the continuation the typed text"
@@ -22092,7 +22206,7 @@ def candidateChecks : List Check :=
             let (accepted, _) := fedTo typed (rolePresses Role.activate)
             candidatesOf chosen == some (pickListed "e" (some 0)) &&
               candidatesOf typed == some (pickListed "ed") &&
-              pickStatus typed == some (pickFields "ed") &&
+              pickShown typed == some (pickFields "ed") &&
               promptEcho accepted == picked [.str "ed", .nat 7] },
     { name :=
         "a text no candidate matches: the scene lists none, the next key and the previous key change nothing, and the accept key gives the continuation the typed text"
@@ -22108,9 +22222,9 @@ def candidateChecks : List Check :=
             let label : Array StatusField := #[{ text := pickLabel, face := Loop.promptFace }]
             candidatesOf typed == some (pickListed "z") &&
               (candidatesOf typed).map (·.listed.map (·.text)) == some #[] &&
-              pickStatus typed == some label &&
+              pickShown typed == some label &&
               candidatesOf moved == candidatesOf typed &&
-              pickStatus moved == some label &&
+              pickShown moved == some label &&
               minibufferText moved == some "z" &&
               promptEcho accepted == picked [.str "z", .nat 7] &&
               accepted.loop.state.prompt == none },
@@ -22183,8 +22297,8 @@ def candidateChecks : List Check :=
                 model.display.scenes.back?.map (·.echo) == some "refused: no such text" &&
                 (model.display.scenes.back?.map fun scene => scene.views.map (·.id)) ==
                   (chosen.model.display.scenes.back?.map fun scene => scene.views.map (·.id)) &&
-                pickStatus chosen == some (pickFields "w" (some 1)) &&
-                pickStatus after == pickStatus chosen &&
+                pickShown chosen == some (pickFields "w" (some 1)) &&
+                pickShown after == pickShown chosen &&
                 candidatesOf after == some (pickListed "w" (some 1)) &&
                 after.loop.state.wellFormed },
     { name :=
@@ -22527,7 +22641,7 @@ def completionJobChecks : List Check :=
               (spawns[0]?.bind (matchedBy after ·)).map (·.listed.map (·.text)) ==
                 some #["wq", "rewrite", "w"] },
     { name :=
-        "the minibuffer's status line shows the label and the first ten of a listing of fifteen, in the listing's order, the chosen one among them in the chosen face; a listing of ten or fewer shows every one"
+        "a listing of 15 shows 10 rows, the first of the listing, the chosen one among them in the chosen face, and one of 4 shows 4; the minibuffer's status line is the label alone"
       run :=
         pure <|
           let texts := (Array.range 15).map (s!"c{·}")
@@ -22536,12 +22650,16 @@ def completionJobChecks : List Check :=
               candidates :=
                 { listed := ((offered texts).extract 0 count).map Completion.Listed.of
                   chosen := some 2 } }
-          let fields := Loop.promptStatus (prompt 15)
-          Loop.shownCandidates == 10 && fields.map (·.text) == #["L: "] ++ texts.extract 0 10 &&
-            fields.map (·.face == Loop.chosenFace) ==
-              #[false, false, false, true] ++ Array.replicate 7 false &&
-            (Loop.promptStatus (prompt 10)).size == 11 &&
-            (Loop.promptStatus (prompt 4)).size == 5 }]
+          let sheet (count : Nat) : Completion.Sheet :=
+            let candidates := (prompt count).candidates
+            (Completion.Displaying.standard.displayFor none).sheet
+              { listed := candidates.listed, chosen := candidates.chosen }
+          let rows := (sheet 15).rows
+          rows.map (·.text) == texts.extract 0 10 &&
+            rows.map (fun row => row.decorations.any (·.face == Completion.Displays.chosenFace)) ==
+              #[false, false, true] ++ Array.replicate 7 false &&
+            (sheet 4).rows.size == 4 &&
+            (Loop.promptStatus (prompt 15)).map (·.text) == #["L: "] }]
 
 /-- The step a fed key handed back last, if it was not refused. -/
 def lastStep (steps : Array (Option (Loop.Stepped TestScheme.scheme))) :
@@ -22576,13 +22694,13 @@ def laterLoopChecks : List Check :=
               let chosen := chose one [.next, .next]
               let (two, _) := chosen.posted job.id
               let (typed, _) := fedTo two (presses "w")
-              job.name == "later-pick" && pickStatus asked == some label &&
-                pickStatus one == some (laterFields "" #["wq", "edit"]) &&
+              job.name == "later-pick" && pickShown asked == some label &&
+                pickShown one == some (laterFields "" #["wq", "edit"]) &&
                 chosenText chosen == some "edit" &&
                 (candidatesOf two).map (·.listed.map (·.text)) ==
                   some (((laterFields "" pickCandidates).extract 1).map (·.text)) &&
                 chosenText two == some "edit" &&
-                pickStatus typed == some (laterFields "w" pickCandidates) },
+                pickShown typed == some (laterFields "w" pickCandidates) },
     { name :=
         "criterion 2 on the models: in a prompt whose source depends on the text, a key hands back a cancel of the source's key and a start of its job for the typed text, at the next generation, after its pause; the first job is held no more, what it answered stays listed until the new job's batch, which lists the answer for the typed text"
       run :=
@@ -22659,7 +22777,7 @@ def laterLoopChecks : List Check :=
                 let (delivered, deliveredStep) := more.finish second.id
                 (lastStep askSteps).map (·.spawns.size) == some 1 &&
                   first.name == Loop.matchLabel &&
-                  pickStatus asked == some label &&
+                  pickShown asked == some label &&
                   (candidatesOf listed).map (·.listed) == some (pickListed "").listed &&
                   (lastStep typeSteps).map (·.spawns.size) == some 1 &&
                   (candidatesOf typed).map (·.listedFor) == some (some "") &&
@@ -25274,7 +25392,7 @@ def exChecks : List Check :=
               (candidatesOf asking).map (·.listed.size) == some names.size &&
               candidatesOf typed == some (exListed "s") &&
               (candidatesOf typed).map (·.listed.size) == some 3 &&
-              ((pickStatus typed).map fun fields => fields.map (·.text)) ==
+              ((pickShown typed).map fun fields => fields.map (·.text)) ==
                 some (#[Ex.label] ++ (exListed "s").listed.map (·.text)) },
     { name :=
         "in the ex prompt, text that is no name is typed, the key that moves to the next candidate and the accept key are pressed: the command the first listed name is bound to runs, as the whole name typed and accepted runs it, and not as the typed text alone does, which is no ex name"
@@ -25308,7 +25426,7 @@ def exChecks : List Check :=
             let (ran, _) := fedTo moved (presses "C-e y")
             candidatesOf typed == some (exListed "say hello there") &&
               (candidatesOf typed).map (·.listed.map (·.text)) == some #[] &&
-              ((pickStatus typed).map fun fields => fields.map (·.text)) == some #[Ex.label] &&
+              ((pickShown typed).map fun fields => fields.map (·.text)) == some #[Ex.label] &&
               candidatesOf moved == candidatesOf typed &&
               promptEcho ran == greeted hello &&
               closed ran },
@@ -33231,6 +33349,23 @@ def tabBarChecks : List Check :=
               { three with tabBarShown := .never }.tabBarRect? == none &&
               { three with tabBarShown := .never }.tiled == rect 0 0 640 464 },
     { name :=
+        "with a prompt that lists candidates and two tabs, the tab bar's strip lies directly above the list's, and the list's directly above the minibuffer's view"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some one =>
+            let (_, asking) := prompted (withTabs one 2)
+            let listing :=
+              (listingIn asking #["a", "b", "c"] #[0, 1, 2]).displayed .standard
+            match listing.tabBarRect?, listing.candidateListRect?,
+              listing.minibufferView?.bind listing.rect? with
+            | some bar, some list, some minibuffer =>
+              bar.y + bar.height == list.y && list.y + list.height == minibuffer.y &&
+                list.height == 3 * listing.heights.text &&
+                listing.tiled.y + listing.tiled.height == bar.y
+            | _, _, _ => false },
+    { name :=
         "a frame shorter than the two strips is clamped: the minibuffer's strip first, then the bar in what is left, and none when nothing is"
       run :=
         pure <|
@@ -37394,13 +37529,17 @@ def compileLocationChecks : List Check :=
             let asking := pressedOn ran "C-e c C-k c C-k o"
             let stepped := drained (pressedOn asking "C-k n")
             let minibuffer := asking.loop.state.minibufferView?
+            -- The split takes the next view id, past the candidate list's
+            -- once that is drawn.
+            let split := asking.loop.state.freshView
             asking.loop.state.frame.windows == #[⟨1⟩] && minibuffer == some ⟨2⟩ &&
               asking.loop.state.frame.focused == ⟨1⟩ &&
               stepped.loop.state.minibufferView? == minibuffer &&
-              stepped.loop.state.frame.windows == #[⟨1⟩, ⟨3⟩] &&
+              stepped.loop.state.frame.windows == #[⟨1⟩, split] &&
+              !stepped.loop.state.isCandidateList split &&
               (showing stepped ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
-              fileOf stepped ⟨3⟩ == some "/r/src/main.rs" &&
-              headsOf stepped ⟨3⟩ == some #[135] &&
+              fileOf stepped split == some "/r/src/main.rs" &&
+              headsOf stepped split == some #[135] &&
               currentOf stepped placeR == some 0 },
     { name :=
         "the view a location is visited in, asked from the compilation buffer in the only view, is the asking view where the split is refused, and the new view split from it where it is not"

@@ -210,10 +210,18 @@ where typing in the minibuffer is text, they are on `<Enter>`, `<Escape>`,
 A prompt may be asked with candidates, from completion sources given as
 values or registered by name with `defineSource`
 (`prompt label continuation initial (sources := [.named "picks"])`). The
-scene's `status` line of the minibuffer's view then has, after the
-prompt's label in the face `minibuffer.prompt`, one field for each
-candidate the typed text matches, best first, in the face
-`minibuffer.candidate`, and the chosen one in `minibuffer.chosen`.
+scene's `status` line of the minibuffer's view is the prompt's label alone,
+in the face `minibuffer.prompt`, and the candidates are a view of their
+own, printed after it: the candidate list, a text view with no selection,
+one candidate a line, best first, at most ten, with its `decorations` line.
+Each row is in the face `minibuffer.candidate`, the chosen one's in
+`minibuffer.chosen`, and over it the ranges the typed text matched in
+`minibuffer.match`, an annotation in `minibuffer.annotation`, and a group's
+header in `minibuffer.group`. Once the list has shown rows it stays in the
+scene while the prompt is open, with fewer lines, or none, when typing
+cuts the matches: the minibuffer's place grows and never shrinks. Its view
+takes a view id the first time it is drawn, so every view made after it
+has one more.
 
 And it ships evil, compiled in (`lean/Editor/Evil.lean` and the modules
 beside it): the commands the Vim scheme's keys run, so the editor moves,
@@ -632,8 +640,9 @@ shift`), which the Vim scheme's normal state binds to `ex` and hands a
 count and a register; the second opens it with `run ex`. `bogus` is a name nobody bound; `w` runs `save-buffer`, and the
 scratch buffer has no file. The third line is `e`, and a scene is printed
 with the prompt open: the ex line's candidates are the bound ex names, so
-the minibuffer's status line lists `e`, which is the text, and then
-`reload`. `<Tab>` chooses the first and `<Enter>` runs it: `e` with no
+the candidate list, view 2, lists `e`, which is the text, and then the
+other names `e` matches, at most ten, each with the range `e` matched in
+`minibuffer.match`. `<Tab>` chooses the first and `<Enter>` runs it: `e` with no
 path asks for one, with a prompt of its own that lists none, which
 `<Escape>` cancels. `q` quits the editor. The loop ends at that
 last `<Enter>`, so the `scene` line the script has after it is not run,
@@ -653,18 +662,21 @@ scene 0x0, focused 0, echo "scratch has no file to save to", echo padding 8, pre
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
-scene 0x0, focused 3, echo "", echo padding 8, preedit -, published 13, theme "default"
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, published 13, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 3 0,0 0x0: "e", scroll 0, selections 1..1, padding 8 0
-status 3: minibuffer.prompt ":", minibuffer.candidate "e", minibuffer.candidate "reload"
+view 4 0,0 0x0: "e", scroll 0, selections 1..1, padding 8 0
+status 4: minibuffer.prompt ":"
+view 2 0,0 0x0: "e\ne!\nnext-error\nprevious-error\nautoread\nnoautoread\nreload\ncompile\ncompile-command\nrecompile", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candidate 2..4 minibuffer.match 2..3 minibuffer.candidate 5..15 minibuffer.match 6..7 minibuffer.candidate 16..30 minibuffer.match 18..19 minibuffer.candidate 31..39 minibuffer.match 36..37 minibuffer.candidate 40..50 minibuffer.match 47..48 minibuffer.candidate 51..57 minibuffer.match 52..53 minibuffer.candidate 58..65 minibuffer.match 64..65 minibuffer.candidate 66..81 minibuffer.match 72..73 minibuffer.candidate 82..91 minibuffer.match 83..84
+status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
-scene 0x0, focused 4, echo "", echo padding 8, preedit -, published 18, theme "default"
+scene 0x0, focused 5, echo "", echo padding 8, preedit -, published 18, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 4 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
-status 4: minibuffer.prompt "Open file: "
+view 5 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 5: minibuffer.prompt "Open file: "
 key arrived: <Escape> Escape -
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
@@ -678,13 +690,14 @@ A ninth, `tests/headless/candidates/script`, asks for a prompt with
 candidates and chooses one, on the config in
 `tests/headless/candidates/config`, with the library's fuzzy matcher.
 Config's `pick` asks `Pick: ` with the candidates `wq`, `edit` and `w`.
-With `w` typed, the minibuffer's status line lists `w` and then `wq`: the
+With `w` typed, the candidate list, view 2, lists `w` and then `wq`: the
 library scores the two the same and `wq` came first, so only the rule
 that a candidate that is the text is first orders them. `<Tab>` twice
 chooses `wq`, which is then in the face `minibuffer.chosen`, and `<Enter>`
 gives config's `picked` that candidate and not the typed text. With `z`
-typed nothing is listed, `<Tab>` chooses nothing, and `picked` receives
-`z`. Its output must be exactly `tests/headless/candidates/expected`:
+typed nothing is listed, so the second prompt's list, which showed three
+rows for the empty initial text, is empty but stays in the scene; `<Tab>`
+chooses nothing, and `picked` receives `z`. Its output must be exactly `tests/headless/candidates/expected`:
 
 ```console
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script
@@ -695,25 +708,33 @@ scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "de
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "w", scroll 0, selections 1..1, padding 8 0
-status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.candidate "wq"
+status 1: minibuffer.prompt "Pick: "
+view 2 0,0 0x0: "w\nwq", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candidate 2..4 minibuffer.match 2..3
+status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Tab> Tab -
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "w", scroll 0, selections 1..1, padding 8 0
-status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.chosen "wq"
+status 1: minibuffer.prompt "Pick: "
+view 2 0,0 0x0: "w\nwq", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.chosen 2..4 minibuffer.match 2..3
+status 2: -
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked wq", echo padding 8, preedit -, published 8, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run pick: ok
 key arrived: z KeyZ -
-scene 0x0, focused 2, echo "", echo padding 8, preedit -, published 11, theme "default"
+scene 0x0, focused 3, echo "", echo padding 8, preedit -, published 11, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 2 0,0 0x0: "z", scroll 0, selections 1..1, padding 8 0
-status 2: minibuffer.prompt "Pick: "
+view 3 0,0 0x0: "z", scroll 0, selections 1..1, padding 8 0
+status 3: minibuffer.prompt "Pick: "
+view 2 0,0 0x0: "", scroll 0, selections , padding 8 0
+status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked z", echo padding 8, preedit -, published 15, theme "default"
@@ -787,7 +808,8 @@ A twelfth, `tests/headless/mode-line/script`, runs on the config in
 installed, says the unknown segment on a line of its own and in the echo
 area, and draws the rest; then the scenes in normal state, in insert state
 with `abc` typed, after `<Escape>`, and with the ex prompt open, where the
-asking window keeps its badge. Its output must be exactly
+asking window keeps its badge and the candidate list shows the first ten
+ex names. Its output must be exactly
 `tests/headless/mode-line/expected`:
 
 ```console
@@ -814,7 +836,10 @@ scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 10, theme "d
 view 0 0,0 0x0: "abc", scroll 0, selections 2..2, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
-status 1: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "e", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload"
+status 1: minibuffer.prompt ":"
+view 2 0,0 0x0: "w\nw!\ne\ne!\nautoread\nnoautoread\nq\nwq\nreload\nb", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..1 minibuffer.candidate 2..4 minibuffer.candidate 5..6 minibuffer.candidate 7..9 minibuffer.candidate 10..18 minibuffer.candidate 19..29 minibuffer.candidate 30..31 minibuffer.candidate 32..34 minibuffer.candidate 35..41 minibuffer.candidate 42..43
+status 2: -
 ```
 
 A thirteenth, `tests/headless/padding/script`, runs on the config in
@@ -822,7 +847,8 @@ A thirteenth, `tests/headless/padding/script`, runs on the config in
 (`framePadding 12`). After a resize to 640 by 480 the window's view is
 padded 12 across and 12 down and the echo 12, the padding, since the
 headless window's corners are square; with the ex prompt open the
-minibuffer's view is padded 12 across and none down. Its output must be
+minibuffer's view and the candidate list's above it are padded 12 across
+and none down, and the window is shorter by the list's ten rows. Its output must be
 exactly `tests/headless/padding/expected`:
 
 ```console
@@ -833,10 +859,13 @@ view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 12 12
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
 scene 640x480, focused 1, echo "", echo padding 12, preedit -, published 3, theme "default"
-view 0 0,0 640x448: "", scroll 0, selections 0..0, padding 12 12
+view 0 0,0 640x288: "", scroll 0, selections 0..0, padding 12 12
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,448 640x32: "", scroll 0, selections 0..0, padding 12 0
-status 1: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "e", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload"
+status 1: minibuffer.prompt ":"
+view 2 0,288 640x160: "w\nw!\ne\ne!\nautoread\nnoautoread\nq\nwq\nreload\nb", scroll 0, selections , padding 12 0
+decorations 2: minibuffer.candidate 0..1 minibuffer.candidate 2..4 minibuffer.candidate 5..6 minibuffer.candidate 7..9 minibuffer.candidate 10..18 minibuffer.candidate 19..29 minibuffer.candidate 30..31 minibuffer.candidate 32..34 minibuffer.candidate 35..41 minibuffer.candidate 42..43
+status 2: -
 ```
 
 A fourteenth, `tests/headless/monocle/script`, runs on the config in
@@ -846,8 +875,8 @@ it is pressed in and `C-c o` to one that focuses the next window of the
 frame's list. After a resize to 640 by 480 each scene has one window's
 view, `640x464`, the area above the bottom row: view 0, view 0 again after
 the split, since the focus stays, then view 1 once `C-c o` focuses it; and
-with the ex prompt open, view 1, the prompt's asker, `640x448`, above the
-minibuffer's view. Its output must be exactly
+with the ex prompt open, view 1, the prompt's asker, `640x288`, above the
+candidate list's ten rows, `640x160`, and the minibuffer's view. Its output must be exactly
 `tests/headless/monocle/expected`:
 
 ```console
@@ -868,10 +897,13 @@ view 1 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
 scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 9, theme "default"
-view 1 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
+view 1 0,0 640x288: "", scroll 0, selections 0..0, padding 8 8
 status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 2 0,448 640x32: "", scroll 0, selections 0..0, padding 8 0
-status 2: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "w!", minibuffer.candidate "e", minibuffer.candidate "e!", minibuffer.candidate "autoread", minibuffer.candidate "noautoread", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload", minibuffer.candidate "b", minibuffer.candidate "ls", minibuffer.candidate "bd", minibuffer.candidate "compile", minibuffer.candidate "compile-command", minibuffer.candidate "recompile", minibuffer.candidate "kill-compilation", minibuffer.candidate "next-error", minibuffer.candidate "previous-error"
+status 2: minibuffer.prompt ":"
+view 3 0,288 640x160: "w\nw!\ne\ne!\nautoread\nnoautoread\nq\nwq\nreload\nb", scroll 0, selections , padding 8 0
+decorations 3: minibuffer.candidate 0..1 minibuffer.candidate 2..4 minibuffer.candidate 5..6 minibuffer.candidate 7..9 minibuffer.candidate 10..18 minibuffer.candidate 19..29 minibuffer.candidate 30..31 minibuffer.candidate 32..34 minibuffer.candidate 35..41 minibuffer.candidate 42..43
+status 3: -
 ```
 
 A fifteenth, `tests/headless/two-windows/script`, runs on the config in
@@ -1074,31 +1106,31 @@ key arrived: i KeyI -
 key arrived: <Escape> Escape -
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
-scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 10, theme "default"
+scene 640x480, focused 3, echo "", echo padding 8, preedit -, published 10, theme "default"
 view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
-view 2 320,0 320x464: "  scratch\n", scroll 0, selections 0..0, padding 8 8
-status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 320,0 320x464: "  scratch\n", scroll 0, selections 0..0, padding 8 8
+status 3: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: w KeyW control
 key arrived: h KeyH -
 key arrived: c KeyC control
 key arrived: n KeyN -
-scene 640x480, focused 3, echo "", echo padding 8, preedit -, published 15, theme "default"
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 15, theme "default"
 view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
-view 2 320,0 320x232: "  scratch\n", scroll 0, selections 0..0, padding 8 8
-status 2 in mode-line.inactive: mode-line.inactive "buffer-list" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
-view 3 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
-status 3: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 320,0 320x232: "  scratch\n", scroll 0, selections 0..0, padding 8 8
+status 3 in mode-line.inactive: mode-line.inactive "buffer-list" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 4 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
+status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
-scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 21, theme "default"
+scene 640x480, focused 3, echo "", echo padding 8, preedit -, published 21, theme "default"
 view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
-view 2 320,0 320x232: "  notes\n  scratch\n", scroll 0, selections 18..18, padding 8 8
-status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4, mode-line.modified "●" +4 | mode-line.secondary "3:1" +4, mode-line.secondary "Bot" +4
-view 3 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
-status 3 in mode-line.inactive: mode-line.inactive "notes" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 3 320,0 320x232: "  notes\n  scratch\n", scroll 0, selections 18..18, padding 8 8
+status 3: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4, mode-line.modified "●" +4 | mode-line.secondary "3:1" +4, mode-line.secondary "Bot" +4
+view 4 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
+status 4 in mode-line.inactive: mode-line.inactive "notes" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 ```
 
 A twentieth, `tests/headless/edge-sidebar/script`, runs on the config in
