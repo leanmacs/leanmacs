@@ -78,7 +78,11 @@
 //!   query and the spot count them as the frame draws them and a move
 //!   does not, and that cursors and selections are on text rows only
 //!   ([`query`], "Blocks"; `tests/blocks.rs`); and that a frame that shows
-//!   the same blocks again shapes none of them (`tests/counters.rs`).
+//!   the same blocks again shapes none of them (`tests/counters.rs`);
+//! - translated spans: a text made of pieces of other texts draws each
+//!   source's own spans at every piece of it, cut at the pieces' edges,
+//!   each source resolved once, and keeps the contract of
+//!   [`scene::TextSpans`] ([`translated`]).
 //!
 //! The adapter-neutral rules of shaping are [`shaper::contract`]'s, which
 //! every real adapter runs. No crate downstream pins the fake's geometry.
@@ -94,6 +98,7 @@ pub mod query;
 pub mod scene;
 pub mod shaper;
 pub mod tabs;
+pub mod translated;
 pub mod wrap;
 
 use std::collections::HashMap;
