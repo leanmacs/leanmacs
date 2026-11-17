@@ -139,8 +139,9 @@ is still said.
 The error formats (`Editor/Compile/Errors.lean`) find the locations of a
 run's output as its lines arrive, not at its end: `compilation-output` and
 `finished` scan the lines they have just appended (`noteSites`, `scan`),
-from the row and byte offset where they start (`append`'s answer), and keep
-the locations in the scope's record. The header line and the last line are
+from the row and byte offset where they start (`append`'s answer), with the
+text of the row before them when it is output, so a lead line that came in
+an earlier post is seen, and keep the locations in the scope's record. The header line and the last line are
 never scanned, and a run whose compilation buffer was closed finds none.
 
 - **The formats** a run's output is read with are its on-modes'
@@ -1022,9 +1023,21 @@ def noteSites (record : Record) (id : BufferId) (start : Nat × Nat) (lines : Ar
   let state ← editorState
   let hook ← EditorState.ask .compileHook
   let directory : System.FilePath := (record.last.map (·.2)).getD state.workingDirectory
+  -- The row before the first appended one, when it is output and not the
+  -- header line (row 0), may be a lead.
+  let previous ←
+    if start.1 ≥ 2 then
+      match ← id.text with
+      | .ok text =>
+        let from_ ← text.offsetOf ⟨start.1 - 1, 0⟩
+        pure (some (← text.slice from_ (start.2 - 1)))
+      | .error _ =>
+        pure none
+    else
+      pure none
   let locations :=
     scan (formatsOf hook.contributions record.modes) directory record.locations start.1 start.2
-      lines
+      lines previous
   let added := (locations.extract record.locations.size locations.size).map Site.span
   unless added.isEmpty do
     let old := ((state.buffer? id).map (·.spans)).getD #[]

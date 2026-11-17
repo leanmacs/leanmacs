@@ -13,14 +13,16 @@ and build formats (phase 5 of the shell-and-compile roadmap).
 
 An error format (`Format`) is a record: its name; a pattern over one
 output line (`Pattern`), whose pieces say which part of the line gives the
-file, the line, the column and the severity (`Part`); optionally a pattern
-of a following line that continues it (`continuation`); the words that
-name each severity (`severities`, `Severity.words` by default) and the
-severity of a line that names none (`severity`, an error by default); and
-what the tool calls the first column (`columnBase`, 1 by default, as GNU
-and rustc count; Lean counts from 0). A field a later format needs, such as
-a location on the line after its message, is added with a default, so every
-existing format is unchanged.
+file, the line, the column, the severity and the message (`Part`);
+optionally a pattern of a following line that continues it
+(`continuation`); optionally a pattern of the line before it that gives its
+severity and message (`lead`), for a tool that prints the location on the
+line after its message, as rustc does; the words that name each severity
+(`severities`, `Severity.words` by default) and the severity of a line that
+names none (`severity`, an error by default); and what the tool calls the
+first column (`columnBase`, 1 by default, as GNU and rustc count; Lean
+counts from 0). A field a later format needs is added with a default, so
+every existing format is unchanged.
 
 ## The matcher
 
@@ -62,14 +64,19 @@ last line are no locations. A line that names no severity is an error.
 
 - **A reading** (`Format.read?`) is what one line gives: the file and the
   line, both required, the column if captured, the line and column as
-  printed (not rebased), the severity, and the byte range that gets a face,
-  from the start of the earliest of the file, line and column to the end of
-  the latest.
+  printed (not rebased), the severity, the message if captured, and the
+  byte range that gets a face, from the start of the earliest of the file,
+  line and column to the end of the latest. Handed a lead's captures, it
+  takes the severity and the message from the lead where the line captures
+  none.
 - **A site** (`Site`) is a location of a compilation: the resolved file,
   the line and column as printed and the format's column base, the
   severity, the format's name (for its continuation), the compilation
-  buffer's rows it covers, `first` through `last`, and the byte range of
-  its location text in that buffer. It is called a site because
+  buffer's rows it covers, `first` through `last`, the byte range of its
+  location text in that buffer, and its message, if its format read one.
+  The message is data only: nothing says it yet. A site's tree written
+  before messages were kept has no `message` field and reads with none, so
+  the stores keep their version. It is called a site because
   `Editor.Location` is a workspace's location.
 - **`resolve`** keeps an absolute file and joins a relative one to the
   compilation's directory, then drops `.` components and has `..` remove the
@@ -79,8 +86,13 @@ last line are no locations. A line that names no severity is an error.
   the compilation buffer, one row each. A line that the last site's
   format's continuation matches, on the row after that site's last, joins
   it; otherwise the first format whose reading answers makes a new site.
-  The join needs nothing but the sites, so lines that arrive in two posts
-  give the sites they give in one.
+  When that format has a lead, the line before matches it and no site
+  covers that line's row (`leadOf`), the site starts at the lead's row and
+  takes the lead's severity and message where its own line gives none; its
+  location text stays its own line's. The line before the first of `lines`
+  is handed in (`previous`). The join and the lead need nothing but the
+  sites and that line, so lines that arrive in two posts give the sites
+  they give in one.
 
 Pinned by `ModelTest.compileErrorChecks`.
 -/
@@ -124,6 +136,8 @@ inductive Part where
   | column
   /-- The severity's word. -/
   | severity
+  /-- The location's message. -/
+  | message
   deriving DecidableEq, Repr
 
 /-- What one piece of a pattern matches. -/
@@ -179,6 +193,11 @@ structure Format where
   severity : Severity := .error
   /-- What the tool calls the first column. -/
   columnBase : Nat := 1
+  /-- The pattern of the line before a location's line that gives its
+  severity and message, as rustc prints `error[E0308]: mismatched types`
+  before ` --> src/main.rs:4:18`; none for a format whose location is on its
+  message's line. -/
+  lead : Option Pattern := none
   deriving DecidableEq, Repr
 
 /-- A part a match captured: its text and its byte range in the line. -/
@@ -290,17 +309,22 @@ structure Reading where
   start : Nat
   /-- The byte offset where it stops, not included. -/
   stop : Nat
+  /-- The message, if the line or its lead captured one. -/
+  message : Option String := none
   deriving DecidableEq, Repr
 
 /-- What `format` reads in `text`, if its pattern matches and captures a
-file and a line. -/
-def Format.read? (format : Format) (text : String) : Option Reading := do
+file and a line. With `lead`, the captures of the format's lead on the line
+before, a part the line does not capture is taken from the lead: its
+severity and its message. -/
+def Format.read? (format : Format) (text : String) (lead : Captures := #[]) : Option Reading := do
   let captures ← format.pattern.match? text
-  let of (part : Part) : Option Capture := captures.find? (·.part == part)
-  let file ← of .file
-  let line ← of .line
+  let of (part : Part) : Option Capture :=
+    (captures.find? (·.part == part)).orElse fun _ => lead.find? (·.part == part)
+  let file ← captures.find? (·.part == .file)
+  let line ← captures.find? (·.part == .line)
   let lineNumber ← line.text.toNat?
-  let column := of .column
+  let column := captures.find? (·.part == .column)
   let severity :=
     ((of .severity).bind fun word => (format.severities.find? (·.1 == word.text)).map (·.2)).getD
       format.severity
@@ -308,7 +332,7 @@ def Format.read? (format : Format) (text : String) : Option Reading := do
   return {
       file := file.text, line := lineNumber, column := column.bind (·.text.toNat?), severity
       start := (spans.map (·.start)).foldl min file.start
-      stop := (spans.map (·.stop)).foldl max file.stop }
+      stop := (spans.map (·.stop)).foldl max file.stop, message := (of .message).map (·.text) }
 
 /-- A step of the pieces `pieces`. -/
 def step (pieces : List Piece) : Step :=
@@ -357,6 +381,8 @@ structure Site where
   start : Nat
   /-- The byte offset where it stops, not included. -/
   stop : Nat
+  /-- Its message, if its format read one. -/
+  message : Option String := none
   deriving DecidableEq, Repr
 
 /-- An optional value as a tree: `null` for none. -/
@@ -375,7 +401,7 @@ def Site.encode (site : Site) : Value :=
       ("column", optional .nat site.column), ("columnBase", .nat site.columnBase),
       ("severity", .str site.severity.name), ("format", .str site.format),
       ("first", .nat site.first), ("last", .nat site.last), ("start", .nat site.start),
-      ("stop", .nat site.stop)]
+      ("stop", .nat site.stop), ("message", optional .str site.message)]
 
 /-- The site a tree is (`Site.encode`), if it is one. -/
 def Site.decode : Value → Option Site
@@ -398,7 +424,17 @@ def Site.decode : Value → Option Site
     let .nat last := field fields "last" | none
     let .nat start := field fields "start" | none
     let .nat stop := field fields "stop" | none
-    return { file, line, column, columnBase, severity, format, first, last, start, stop }
+    -- A site written before messages were kept has no field, which reads
+    -- as `null`.
+    let message ←
+      match field fields "message" with
+      | .str text =>
+        some (some text)
+      | .null =>
+        some none
+      | _ =>
+        none
+    return { file, line, column, columnBase, severity, format, first, last, start, stop, message }
   | _ => none
 
 /-- `file` resolved against `directory` ("Reading, sites and `scan`", in the
@@ -415,15 +451,26 @@ def resolve (directory : System.FilePath) (file : String) : System.FilePath :=
   let path := "/".intercalate kept.toList
   if joined.isAbsolute then "/" ++ path else path
 
+/-- The captures of `format`'s lead on `previous`, the text of the row
+before `row`, when it has a lead that matches and no site of `sites` covers
+that row ("Reading, sites and `scan`", in the module docs). -/
+def leadOf (format : Format) (sites : Array Site) (row : Nat) (previous : Option String) :
+    Option Captures := do
+  let pattern ← format.lead
+  let text ← previous
+  guard (row ≥ 1 && sites.back?.all (·.last + 1 < row))
+  pattern.match? text
+
 /-- The sites after `lines`, appended at the row `row` and the byte offset
 `offset` of the compilation buffer, one row each, are found with `formats`
-after `sites`, relative files resolving against `directory` ("Reading,
+after `sites`, relative files resolving against `directory`; `previous` is
+the text of the row before `row`, if it is one of the output's ("Reading,
 sites and `scan`", in the module docs). -/
 def scan (formats : Array Compile.Format) (directory : System.FilePath) (sites : Array Site)
-    (row offset : Nat) (lines : Array String) : Array Site :=
+    (row offset : Nat) (lines : Array String) (previous : Option String := none) : Array Site :=
   (lines.foldl
-      (fun (state : Array Site × Nat × Nat) (text : String) =>
-        let (sites, row, offset) := state
+      (fun (state : Array Site × Nat × Nat × Option String) (text : String) =>
+        let (sites, row, offset, previous) := state
         let continued :=
           match sites.back? with
           | some last =>
@@ -439,13 +486,17 @@ def scan (formats : Array Compile.Format) (directory : System.FilePath) (sites :
               formats.findSome? fun (format : Compile.Format) =>
                 (format.read? text).map (format, ·) with
             | some (format, reading) =>
+              let lead := leadOf format sites row previous
+              let reading := (lead.bind (format.read? text ·)).getD reading
               sites.push
                 { file := resolve directory reading.file, line := reading.line
                   column := reading.column, columnBase := format.columnBase
-                  severity := reading.severity, format := format.name, first := row, last := row
-                  start := offset + reading.start, stop := offset + reading.stop }
+                  severity := reading.severity, format := format.name
+                  first := if lead.isSome then row - 1 else row, last := row
+                  start := offset + reading.start, stop := offset + reading.stop
+                  message := reading.message }
             | none => sites
-        (sites, row + 1, offset + text.utf8ByteSize + 1))
-      (sites, row, offset)).1
+        (sites, row + 1, offset + text.utf8ByteSize + 1, some text))
+      (sites, row, offset, previous)).1
 
 end Editor.Compile

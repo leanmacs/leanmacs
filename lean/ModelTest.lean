@@ -29423,11 +29423,76 @@ def indentedFormat : Compile.Format :=
     name := "indented"
     continuation := some [{ pieces := [{ atom := .blanks }] }, { pieces := [{ atom := .rest }] }] }
 
+/-- The format `t-lead` of the lead checks: a location line `  at
+<file>:<line>`, maybe followed by ` note`, its severity, after a lead line
+`<error|warning>: <message>` that gives its severity and message. -/
+def leadFormat : Compile.Format :=
+  { name := "t-lead"
+    pattern :=
+      [Compile.step
+          [{ atom := .blanks }, { atom := .literal "at " },
+            { atom := .noneOf [':', ' '], into := some .file }, { atom := .literal ":" },
+            { atom := .digits, into := some .line }],
+        Compile.optionalStep
+          [{ atom := .literal " " }, { atom := .oneOf ["note"], into := some .severity }]]
+    lead :=
+      some
+        [Compile.step
+            [{ atom := .oneOf ["error", "warning"], into := some .severity },
+              { atom := .literal ": " }, { atom := .rest, into := some .message }]] }
+
 /-- The checks of error formats, the matcher, sites and `resolve`
 (`Editor/Compile/Errors.lean`): pure, with no driver. -/
 def compileErrorChecks : List Check :=
   let general := Compile.Format.general
   [{  name :=
+        "a format with a lead makes the line before a location its site's first row, with the lead's severity and message; in one scan, across two with the previous line handed in, and with no lead before it a plain site"
+      run :=
+        let lines := #["warning: unused x", "  at a.rs:4"]
+        let one := Compile.scan #[leadFormat] "/r" #[] 1 100 lines
+        let two :=
+          Compile.scan #[leadFormat] "/r" (Compile.scan #[leadFormat] "/r" #[] 1 100 #[lines[0]!]) 2
+            118 #[lines[1]!] (previous := some lines[0]!)
+        let bare := Compile.scan #[leadFormat] "/r" #[] 1 100 #["plain", "  at a.rs:4"]
+        pure
+          (one ==
+              #[{ file := "/r/a.rs", line := 4, column := none, columnBase := 1
+                  severity := .warning, format := "t-lead", first := 1, last := 2, start := 123
+                  stop := 129, message := some "unused x" }] &&
+            two == one &&
+            bare.map (fun site => (site.first, site.last, site.severity, site.message)) ==
+              #[(2, 2, .error, none)]) },
+    { name :=
+        "a lead whose row the last site covers is not joined to the next location, and a lead's severity yields to one the location line captured"
+      run :=
+        let earlier : Compile.Site :=
+          { file := "/r/b.rs", line := 1, column := none, columnBase := 1, severity := .error
+            format := "general", first := 1, last := 1, start := 0, stop := 6 }
+        let covered :=
+          Compile.scan #[leadFormat] "/r" #[earlier] 2 9 #["  at a.rs:4"] (previous :=
+            some "error: e")
+        let captured := Compile.scan #[leadFormat] "/r" #[] 1 0 #["error: e", "  at a.rs:4 note"]
+        pure
+          (covered.map
+                (fun site => (site.format, site.first, site.last, site.severity, site.message)) ==
+              #[("general", 1, 1, .error, none), ("t-lead", 2, 2, .error, none)] &&
+            captured.map (fun site => (site.first, site.severity, site.message)) ==
+              #[(1, .note, some "e")]) },
+    { name :=
+        "a site with a message crosses as a tree and back, and a site's tree with no message field, written before messages were kept, reads with none"
+      run :=
+        let site : Compile.Site :=
+          { file := "/r/a.rs", line := 4, column := some 2, columnBase := 1, severity := .error
+            format := "t-lead", first := 3, last := 5, start := 40, stop := 48
+            message := some "mismatched types" }
+        let older :=
+          match ({ site with message := none } : Compile.Site).encode with
+          | .record fields => Value.record (fields.filter (·.1 != "message"))
+          | other => other
+        pure
+          (Compile.Site.decode site.encode == some site &&
+            Compile.Site.decode older == some { site with message := none }) },
+    { name :=
         "locations criterion 1: the general format reads src/main.rs:12:5: error: expected one of as src/main.rs, line 12, column 5, an error, and lib.lean:3: warning: unused with no column"
       run :=
         pure
@@ -30496,6 +30561,28 @@ def compileHookChecks : List Check :=
             Compile.chooseOffer #[a, b] "make" == none &&
             Compile.chooseOffer #[a, b] "" == none &&
             a.candidate == "build (a-mode)") },
+    { name :=
+        "a run whose child writes a lead line, pauses, then writes its location keeps one site whose first row is the lead's, with the lead's message, as one post would"
+      run :=
+        let setup : SetupM Unit :=
+          compileContribution
+            { mode := "a-mode", markers := #["a.toml"], commands := aCommands
+              formats := #[leadFormat] }
+        let steps : Array Process.Step :=
+          #[.write .out "warning: unused x\n".toUTF8, .pause 100,
+            .write .out "  at a.rs:4\n".toUTF8]
+        pure <|
+          match hookDriver (hookRegistry setup) with
+          | none => false
+          | some driver =>
+            let opened :=
+              withStreams (settledAfter driver "C-o h")
+                #[{ command := shellCommand "/r/hook/one/two" "a-build", steps }]
+            let ran := drained (pressedOn (pressedOn opened "C-k c") "C-e y")
+            ran.posting.isEmpty &&
+              (Compile.recordOf ran.loop.state placeR).locations.map
+                  (fun site => (site.file.toString, site.first, site.last, site.message)) ==
+                #[("/r/hook/one/two/a.rs", 1, 2, some "unused x")] },
     { name :=
         "a marker order crosses as arguments and back, and arguments that are no order read as none; the marker job started with them fails"
       run :=
