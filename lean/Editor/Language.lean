@@ -49,6 +49,16 @@ So an exact base name beats an extension, and between patterns of one kind
 config's entry beats a shipped one and the earlier beats the later: both are
 table order. A path with no base name has no language.
 
+## The code mode
+
+One generic major mode, `code` (`codeMode`), is the mode of every buffer
+with a language. It has no tree of its own: its text is parsed and drawn as
+its buffer's language says (`Mode.syntaxTreeOfLanguage`, `Editor/Mode.lean`),
+so highlighting, injections, indentation and text objects come from the
+language entry. It fills no role and has no local command; a user's minor
+mode for a language is an ordinary minor mode. Config may define a mode
+called `code`, which is then the one found, as for any compiled mode.
+
 ## What an entry cannot mean
 
 `problems` names the patterns no file name can be meant by: an empty one,
@@ -61,9 +71,11 @@ and one that holds `/`, which a base name never does.
 | A shipped language | A named definition here, and in `shipped` |
 | Something more a language says of how its text is parsed or drawn | A field of `Mode.SyntaxTree` (`Editor/Mode.lean`), which a language holds |
 | Something more a language says of how it is edited | A field of `Language`, read by its consumer |
+| Something the `code` mode does for every language | `codeMode`, reading what it needs from the buffer's language |
 | A new kind of pattern | A variant of `Language.Pattern`, its pass in `forPath`, and its case in `problems` |
 
-Pinned by `ModelTest.languageMatchChecks`.
+Pinned by `ModelTest.languageMatchChecks` (the rule, pure) and
+`ModelTest.modeRecordChecks` (the `code` mode's tree).
 -/
 
 namespace Editor
@@ -117,6 +129,20 @@ def markdown : Language :=
 /-- The languages that ship, in their order. -/
 def shipped : Array Language :=
   #[rust, json, markdown]
+
+/-- The name of the one major mode a buffer with a language is put in. -/
+def codeName : String :=
+  "code"
+
+/-- The `code` mode: its text is parsed and drawn as its buffer's language
+says (`Mode.syntaxTreeOfLanguage`). It fills no role and has no local
+command. -/
+def codeMode : Mode :=
+  { name := codeName, syntaxTreeOfLanguage := true }
+
+/-- The modes this module registers as compiled code: `code`. -/
+def modes : Array Mode :=
+  #[codeMode]
 
 /-- The table of `later`'s entries over `earlier`'s: `later`'s, in order,
 then `earlier`'s that no entry of `later` names, in order. A later owner's

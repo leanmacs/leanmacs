@@ -14589,6 +14589,29 @@ def modeRecordChecks : List Check :=
           (listing.syntaxTree == none && Mode.syntaxTreeOf [listing] == none &&
             Mode.syntaxTreeOf [json, listing] == some { grammar := "json" } &&
             Mode.syntaxTreeOf [json, five, listing] == five.syntaxTree) },
+    { name :=
+        "the code mode's syntax tree is its buffer's language's: the nearest mode of a lineage that has its own tree or takes the language's, and has one to give, says; with no language the code mode says nothing, and a mode that does not take the language's never gives it"
+      run :=
+        let rustTree : Mode.SyntaxTree := { grammar := "rust" }
+        let code := Language.codeMode
+        let own : Mode :=
+          { name := "own-json", parent := some "code", syntaxTree := some { grammar := "json" } }
+        let derived : Mode := { name := "derived", parent := some "code" }
+        let json : Mode := { name := "json", syntaxTree := some { grammar := "json" } }
+        pure
+          (code.name == Language.codeName && Language.codeName == "code" &&
+            code.syntaxTree == none &&
+            code.syntaxTreeOfLanguage &&
+            !listing.syntaxTreeOfLanguage &&
+            Language.modes.map (·.name) == #["code"] &&
+            Mode.syntaxTreeOf [code] (some rustTree) == some rustTree &&
+            Mode.syntaxTreeOf [code] none == none &&
+            Mode.syntaxTreeOf [code] == none &&
+            Mode.syntaxTreeOf [code, own] (some rustTree) == own.syntaxTree &&
+            Mode.syntaxTreeOf [code, derived] (some rustTree) == some rustTree &&
+            Mode.syntaxTreeOf [json, code] none == json.syntaxTree &&
+            Mode.syntaxTreeOf [json, listing] (some rustTree) == json.syntaxTree &&
+            Mode.syntaxTreeOf [listing] (some rustTree) == none) },
     { name := "Mode.check reports nothing for a mode with no problem, under a scheme that tunes it"
       run := pure (listing.check TestScheme.scheme == [] && listing.check checkedScheme == []) },
     { name := "Mode.check reports a role that is not registered, by its name"

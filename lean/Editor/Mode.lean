@@ -33,7 +33,13 @@ scheme are made from that (`Mode.keymaps`).
   config's mapping of capture names to faces, over the shipped default
   (`Editor/Highlight.lean`), and the sources of the injections, text
   objects and indents queries (each none: the grammar's shipped one). A derived mode with none takes the nearest one
-  of its lineage (`Mode.syntaxTreeOf`). When the mode becomes a buffer's
+  of its lineage (`Mode.syntaxTreeOf`).
+- **`syntaxTreeOfLanguage` takes the tree of the buffer's language**
+  (`Editor/Language.lean`) in place of one of the mode's own: the `code`
+  mode's. In a lineage, the nearest mode that has its own tree, or takes the
+  language's and the buffer has one, says (`Mode.syntaxTreeOf`), so a
+  config mode derived from `code` with its own tree wins, and one with none
+  takes the language's. When the mode becomes a buffer's
   major mode, the loop attaches and highlights the buffer's text before
   the lineage's on-enter actions run (`Editor/Command/Dispatch.lean`). It
   is not called `syntax`, which is a keyword of Lean's.
@@ -131,6 +137,10 @@ structure Mode where
   /-- How its text is parsed and drawn, if it says: none for a mode of
   plain text, or one that takes its parent's (`Mode.syntaxTreeOf`). -/
   syntaxTree : Option Mode.SyntaxTree := none
+  /-- Whether the mode's text is parsed and drawn as its buffer's language
+  says (`Editor/Language.lean`): the `code` mode's, and none other that
+  ships. Its own `syntaxTree`, when it has one, wins over it. -/
+  syntaxTreeOfLanguage : Bool := false
   /-- What runs, given the view, when the mode becomes a buffer's major
   mode, and also, before the derived mode's own, when a mode derived from
   this one does (the loop runs the lineage's, root first, inside the
@@ -141,10 +151,14 @@ structure Mode where
 namespace Mode
 
 /-- How the text of a mode whose lineage is `lineage`, root first, is
-parsed and drawn: the nearest of its modes that says (the last), or none
-when none does. -/
-def syntaxTreeOf (lineage : List Mode) : Option Mode.SyntaxTree :=
-  lineage.reverse.findSome? (·.syntaxTree)
+parsed and drawn, in a buffer whose language's tree is `language`: the
+nearest of its modes (the last) that says, by its own `syntaxTree`, or by
+taking the language's (`syntaxTreeOfLanguage`) when there is one; none when
+none does. -/
+def syntaxTreeOf (lineage : List Mode) (language : Option Mode.SyntaxTree := none) :
+    Option Mode.SyntaxTree :=
+  lineage.reverse.findSome? fun mode =>
+    mode.syntaxTree <|> if mode.syntaxTreeOfLanguage then language else none
 
 /-- The suffixes that are keys, as chords, each with its command's name, in
 order. A string `Key.parse` refuses, or one that names no keys, is left
