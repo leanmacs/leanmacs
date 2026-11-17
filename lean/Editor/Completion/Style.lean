@@ -83,7 +83,7 @@ structure Matching where
   /-- The style of a prompt whose category has none chosen, and of one with
   no category. -/
   default : Style
-  /-- The style chosen for a category; `none` for one with none. -/
+  /-- The style of a category; `none` for one that falls to the default. -/
   byCategory : String → Option Style := fun _ => none
   /-- Who registered the style `styleFor` answers for a prompt's category:
   a match job that runs it is that owner's, so an install that removes

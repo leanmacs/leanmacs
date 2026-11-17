@@ -3652,6 +3652,38 @@ def registryChecks : List Check :=
             shipped.matching.ownerFor none == .compiled &&
             ({} : Config.Registry).matching.ownerFor none == .compiled) },
     { name :=
+        "the matching's style and owner for a category are the one style entry the category resolves to: its style, by what it matches, and its owner, on registries with choices, with a choice of a name nobody registered, with config's style named fuzzy over the shipped one and with none; with no entry, the compiled fuzzy style"
+      run :=
+        let shipped : Config.Registry :=
+          ({} : Config.Registry).replaceStyles .compiled Completion.Styles.shipped
+        let mine : Completion.Style := .keeping "mine" fun _ _ => true
+        let keepingAll : Completion.Style := .keeping "fuzzy" fun _ _ => true
+        let overridden : Config.Registry := shipped.replaceStyles .config #[keepingAll]
+        let registries : List Config.Registry :=
+          [{}, shipped, overridden, overridden.replaceStyles .config #[],
+            ({} : Config.Registry).replaceStyles .config #[keepingAll],
+            { shipped.replaceStyles .config #[mine] with
+              styleChoices := #[(some "pick", "orderless"), (some "own", "mine")] },
+            { overridden.replaceStyles .config #[mine, keepingAll] with
+              styleChoices := #[(none, "mine"), (some "pick", "fuzzy")] },
+            { shipped with styleChoices := #[(some "pick", "nope"), (none, "gone")] }]
+        let categories : List (Option String) := [none, some "pick", some "own", some "other"]
+        let hitsOf (style : Completion.Style) : Array Completion.Hit :=
+          (Program.run (port := fuzzyPort) FuzzyModel.handle (style.hits "z" #["a"]) ()).1
+        let agrees (registry : Config.Registry) (category : Option String) : Bool :=
+          let entry := registry.styleEntry category
+          let style := registry.matching.styleFor category
+          registry.matching.ownerFor category == entry.owner && style.name == entry.style.name &&
+            hitsOf style == hitsOf entry.style
+        let empty := ({} : Config.Registry).styleEntry none
+        pure
+          (registries.all (fun registry => categories.all (agrees registry)) &&
+            (overridden.styleEntry none).owner == .config &&
+            hitsOf (overridden.styleEntry (some "pick")).style == #[.ofIndex 0] &&
+            empty.owner == .compiled &&
+            empty.style.name == Completion.Styles.fuzzy.name &&
+            hitsOf empty.style == #[]) },
+    { name :=
         "completion sources are held by owner and replaced as a set: the latest entry of a name is the one found, config's source of a compiled source's name while config registers it and the compiled one again once it does not; the loop is told what the lookup answers"
       run :=
         let registry : Config.Registry :=

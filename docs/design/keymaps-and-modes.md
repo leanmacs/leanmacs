@@ -3588,7 +3588,8 @@ its match runs, a match that fails),
 `stateRequestChecks` (batches, a source's end, a match's listing and its
 failure), `apiStateChecks` and `dispatchStateChecks` (a later source
 recorded, never run, `noSuchJob`), `setupChecks` (`sourceJob`),
-`registryChecks` (`ownerFor`), and `ConfigTest.promptChecks` (batches over
+`registryChecks` (`ownerFor`, and the style and owner read from one
+entry), and `ConfigTest.promptChecks` (batches over
 the recorder, a config source asked again after its pause, keys over
 100,000 candidates handled while the match is held, and a reload that
 ends a match of config's style).
@@ -3670,13 +3671,14 @@ and orderless choose it.
   `orderless` for the owner `compiled` (`Headless.Collaborators.styles`).
   Styles are held by owner and replaced as a set, latest entry of a name
   wins; the choices are config's alone, set at each install
-  (`Config.Registry.styleChoices`). `Registry.matching` resolves them: the
-  default is the chosen default's registered style, else the style
-  registered under `fuzzy`, so config's style of that name replaces the
-  shipped one as the default too (the compiled one only where no style of
-  the name is registered); a category's is the style chosen for it when
-  one is registered under that name, else the category falls to the
-  default. A chosen name no style is
+  (`Config.Registry.styleChoices`). `Registry.styleEntry` resolves them
+  to one style entry per category: the entry of the style chosen for it
+  when one is registered under that name, else the chosen default's, else
+  the style registered under `fuzzy`, so config's style of that name
+  replaces the shipped one as the default too (the compiled one only where
+  no style of the name is registered). `Registry.matching` reads both the
+  style and its owner from that one entry, so a match job is always
+  spawned under the owner of the style it runs. A chosen name no style is
   registered under is reported at install (`Report.unknownStyles`), said
   in the echo area after the segments' sentences
   (`no completion style is registered under <name>`) and on a `style:`
