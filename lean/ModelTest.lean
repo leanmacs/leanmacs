@@ -534,7 +534,7 @@ names a scheme's key:
   of an ignored node after its first kept, a node ending at a row's start
   not reaching it, a blank row's level, names the rule does not read
   ignored, and an opening bracket the tree did not close counting for every
-  later row;
+  later row an incomplete node that holds it reaches, and for none after;
 - `indentOpeningChecks`: the opening rule and the widening
   (`Editor/Indent.lean`), pure, over hand-built nodes: a begin node holding
   the position counts, an unclosed bracket before it counts, a branch at
