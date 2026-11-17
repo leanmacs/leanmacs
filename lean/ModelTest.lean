@@ -52,6 +52,8 @@ import Editor.State
 import Editor.State.Request
 import Editor.SyntaxTree.Contract
 import Editor.SyntaxTree.Model
+import Editor.TabBar
+import Editor.TabCommands.Compiled
 import Editor.Text.Contract
 import Editor.Themes.Check
 import Editor.Themes.Compiled
@@ -62,8 +64,6 @@ import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
 import Editor.WindowCheck
-import Editor.TabBar
-import Editor.TabCommands.Compiled
 import Editor.WindowCommands.Compiled
 import Editor.Workspace.Compiled
 import Editor.Workspace.Contract

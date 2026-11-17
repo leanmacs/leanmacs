@@ -16,7 +16,6 @@ import Editor.Minibuffer
 import Editor.Setup
 import Editor.TabCommands
 import Editor.Themes
-import Editor.WindowCommands
 
 /-!
 # The editor
