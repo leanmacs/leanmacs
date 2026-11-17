@@ -9,7 +9,7 @@
 #    with an `unpinned-uses` finding.
 # 2. In a temporary directory it copies .github/workflows/ci.yml, and the
 #    check with the files it reads (tools/ci/install-elan.sh,
-#    tools/linux/Dockerfile, infra/github/actions.tf), and breaks the
+#    tools/linux/Dockerfile, infra/github/actions.tf, mise.toml), and breaks the
 #    check's rules one at a time: every rule at least once, with yq on the
 #    workflow or sed on another file, plus the sha-pin case of a SHA with
 #    no `# v…` comment. The check must exit 1 on each, naming that rule and
@@ -48,7 +48,7 @@ fi
 
 # The check and the files it reads, copied: it finds them from its own
 # place, so a copy of this tree is a checkout it can be run in.
-fixture_files='tools/workflow-check.sh tools/ci/install-elan.sh tools/linux/Dockerfile infra/github/actions.tf'
+fixture_files='tools/workflow-check.sh tools/ci/install-elan.sh tools/linux/Dockerfile infra/github/actions.tf mise.toml'
 
 # copy_tree <dir>: the check and its files, unbroken, under <dir>.
 copy_tree() {
@@ -114,23 +114,34 @@ gate='.jobs.ci.steps[] | select(.run == "mise run ci")'
 lake_restore='.jobs.ci.steps[] | select((.uses // "" | test("^actions/cache/restore@")) and .with.path == "lean/.lake")'
 elan_save='.jobs.ci.steps[] | select((.uses // "" | test("^actions/cache/save@")) and .with.path == "~/.elan")'
 checkout='.jobs.ci.steps[] | select(.uses // "" | test("^actions/checkout@"))'
+mise_action='.jobs.ci.steps[] | select(.uses // "" | test("^jdx/mise-action@"))'
+lake_steps='.jobs.ci.steps[] | select((.uses // "" | test("^actions/cache/(restore|save)@")) and .with.path == "lean/.lake")'
 
 mutate triggers 'push filtered to main' '.on.push.branches = ["main"]'
 mutate matrix 'no ubuntu-24.04 leg' '.jobs.ci.strategy.matrix.os = ["macos-26"]'
+mutate matrix 'fail-fast on' '.jobs.ci.strategy["fail-fast"] = true'
 mutate continue-on-error 'the Gate continuing on error' "($gate)[\"continue-on-error\"] = true"
 mutate gate-step 'a condition on the Gate' "($gate).if = \"\${{ success() }}\""
+mutate gate-step 'a second `mise run ci` step' '.jobs.ci.steps += [{"run": "mise run ci"}]'
 mutate concurrency "main's runs cancelled in progress" '.concurrency["cancel-in-progress"] = true'
 mutate mise-env 'MISE_AUTO_INSTALL a boolean, not a string' '.jobs.ci.env.MISE_AUTO_INSTALL = false'
+mutate mise-env 'no MISE_ENV' 'del(.jobs.ci.env.MISE_ENV)'
 mutate sha-pin 'checkout pinned by a tag' "($checkout | .uses) = \"actions/checkout@v7.0.1\""
 mutate sha-pin 'a SHA pin with no tag comment' "($checkout | .uses) line_comment = \"\""
 mutate cache-save 'Lake saving from any ref' '(.jobs.ci.steps[] | select((.uses // "" | test("^actions/cache/save@")) and .with.path == "lean/.lake") | .if) = "${{ !cancelled() }}"'
+mutate cache-save 'the combined actions/cache' '.jobs.ci.steps += [{"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with": {"path": "x", "key": "x"}}] | .jobs.ci.steps[-1].uses line_comment = "v6.1.0"'
 mutate cache-keys "elan's save key not its restore's" "($elan_save | .with.key) = \"elan-v2\""
 mutate lake-key "Lake's restore-keys not its key's prefix" "($lake_restore | .with[\"restore-keys\"]) = \"lake-v1-\""
+mutate lake-key "Lake's key not ending in the commit" "($lake_steps | .with.key) |= sub(\"-[\$][{][{] github[.]sha [}][}]\$\"; \"\")"
+mutate rust-cache 'no rust-cache step' 'del(.jobs.ci.steps[] | select(.uses // "" | test("^Swatinem/rust-cache@")))'
 mutate rust-cache 'rust-cache saving from any ref' 'del(.jobs.ci.steps[] | select(.uses // "" | test("^Swatinem/rust-cache@")) | .with["save-if"])'
 mutate mise-action "mise-action at another mise version" '(.jobs.ci.steps[] | select(.uses // "" | test("^jdx/mise-action@")) | .with.version) = "2026.11.1"'
+mutate mise-action 'mise-action saving from any ref' "($mise_action | .with.cache_save) = \"true\""
+mutate install-args 'cargo-deny not installed' "($mise_action | .with.install_args) |= sub(\" aqua:EmbarkStudios/cargo-deny\"; \"\")"
 mutate secrets-scan 'a shallow checkout for the scan' 'del(.jobs["secrets-scan"].steps[] | select(.uses // "" | test("^actions/checkout@")) | .with["fetch-depth"])'
 mutate allowlist 'a third-party action not on the allowlist' '.jobs.ci.steps += [{"uses": "example/action@0123456789abcdef0123456789abcdef01234567"}] | .jobs.ci.steps[-1].uses line_comment = "v1.0.0"'
 mutate_file elan-version "install-elan.sh's elan not the Dockerfile's" tools/ci/install-elan.sh 's/^ELAN_VERSION=.*/ELAN_VERSION=0.0.0/'
+mutate_file install-args 'a tool named as not in the gate gone from mise.toml' mise.toml '/^opentofu = /d'
 
 # The unbroken copy.
 wf=$unbroken

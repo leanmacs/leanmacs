@@ -127,7 +127,11 @@ it runs the same in `linux-ci`'s copy of the checkout. It runs, in order:
    mise env of each job, that every `uses:` is a full SHA with a `# v…` tag
    comment, that every cache saves from `main` only and saves the key a
    restore uses, Lake's key, that mise-action's version is the
-   Dockerfile's `MISE_VERSION`, the `secrets-scan` job, that every
+   Dockerfile's `MISE_VERSION`, that the `ci` job's mise-action
+   `install_args` names every `mise.toml` tool the gate runs (with
+   `MISE_AUTO_INSTALL` false, a tool left out is missing on the runner;
+   the tools the gate never runs are named in the check), the
+   `secrets-scan` job, that every
    third-party action is on the allowlist (below), and that
    `tools/ci/install-elan.sh` pins the Dockerfile's elan. Each failure
    names its rule; the script's header lists them.

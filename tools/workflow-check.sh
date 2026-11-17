@@ -31,6 +31,8 @@
 #   rust-cache         every rust-cache saves from main only
 #   mise-action        every mise-action saves its cache from main only, at
 #                      the Linux container's mise version
+#   install-args       the `ci` job's mise-action installs every mise.toml
+#                      tool the gate runs (MISE_AUTO_INSTALL is false)
 #   secrets-scan       the `secrets-scan` job checks out the full history
 #                      and runs `mise run secrets-scan`
 #   allowlist          every third-party action has its pattern in
@@ -200,6 +202,47 @@ if [ "$(q '[.jobs[].steps[]? | select(.uses // "" | test("^jdx/mise-action@")) |
 fi
 if [ "$(V=$mise_version yq '[.jobs[].steps[]? | select(.uses // "" | test("^jdx/mise-action@")) | select((.with.version // "" | tostring) != strenv(V))] | length' "$wf")" != 0 ]; then
   fail mise-action "every mise-action step must have version: $mise_version, the Dockerfile's MISE_VERSION"
+fi
+
+# ---- install-args
+# With MISE_AUTO_INSTALL "false", the gate finds only the tools the `ci`
+# job's mise-action installs, so its install_args must name every tool the
+# gate runs. That list is mise.toml's [tools], read here, less the tools the
+# gate never runs, named below; a tool added to mise.toml is required here
+# until it is either installed or named below.
+#
+#   hk                      runs `mise run ci`, but the job runs it directly
+#   pkl                     hk.pkl's language, read only by hk
+#   aqua:gitleaks/gitleaks  `mise run secrets-scan`, the secrets-scan job's
+#   opentofu                `mise run infra-*`, never run in CI
+not_in_gate='hk pkl aqua:gitleaks/gitleaks opentofu'
+mise_tools=$(yq -p toml -o yaml '.tools | keys | .[]' "$root/mise.toml")
+if [ -z "$mise_tools" ]; then
+  fail install-args 'no [tools] in mise.toml'
+fi
+for t in $not_in_gate; do
+  if ! printf '%s\n' "$mise_tools" | grep -qxF "$t"; then
+    fail install-args "$t is named as not in the gate but is not in mise.toml's [tools]"
+  fi
+done
+if [ "$(q '[.jobs.ci.steps[]? | select(.uses // "" | test("^jdx/mise-action@"))] | length')" != 1 ]; then
+  fail install-args 'jobs.ci must have exactly one jdx/mise-action step'
+else
+  install_args=$(yq '.jobs.ci.steps[] | select(.uses // "" | test("^jdx/mise-action@")) | .with.install_args // ""' "$wf")
+  for t in $mise_tools; do
+    case " $not_in_gate " in
+    *" $t "*) continue ;;
+    esac
+    found=
+    for a in $install_args; do
+      if [ "${a%%@*}" = "$t" ]; then
+        found=1
+      fi
+    done
+    if [ -z "$found" ]; then
+      fail install-args "jobs.ci's mise-action install_args must name $t (mise.toml [tools]; MISE_AUTO_INSTALL is false)"
+    fi
+  done
 fi
 
 # ---- secrets-scan
