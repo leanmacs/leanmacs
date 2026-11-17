@@ -143,14 +143,59 @@ never scanned, and a run whose compilation buffer was closed finds none.
   spans with its text. Only that scope's record is written, so a rerun in
   one workspace leaves every other workspace's list as it was.
 
+## Stepping
+
+Each scope's list has a current location (`Record.current`), none at
+first. Three commands visit a location and make it the current one:
+
+- **The list** is the focused buffer's scope's (`Scope.of`), so in a buffer
+  of another worktree, project or directory it is that one's list, and in
+  a compilation buffer its own scope's.
+- **`next-error`** (`nextName`) visits the first location from none, else
+  the one after the current; **`previous-error`** (`previousName`) the one
+  before the current, and stops from none as from the first. A step past
+  either end changes nothing and says `next-error: no more locations in
+  <label>` or `previous-error: no earlier locations in <label>`; an empty
+  list says `<name>: no locations in <label>` (`stepCommand`).
+- **`compile-goto-error`** (`gotoName`), in the scope's kept compilation
+  buffer, visits the location whose rows hold the row of the window's
+  cursor; on a row no location covers it says `compile-goto-error: no
+  location on this line`, and in a buffer that is not its scope's
+  compilation buffer `compile-goto-error: <name> is not a compilation
+  buffer` (`gotoCommand`).
+- **A visit** (`visitLocation`) makes the location current, puts the
+  cursor of every view of the kept compilation buffer at the start of the
+  location's first row, and visits its file (`Files.visit`) at its line
+  and column, both as printed: row `line - 1` and the column less the
+  format's column base, in characters, or the row's start with no column.
+  The visiting view (`visitingView`) is the asking view, unless that shows
+  the scope's compilation buffer: then the first other view that is not
+  the minibuffer's, else a new view below the asking one, else the asking
+  view.
+- **Focus.** `compile-goto-error` focuses the visiting view, as Emacs's
+  `RET`; `next-error` and `previous-error` asked from a compilation buffer
+  (by the ex line) keep the focus there, as Emacs's
+  `next-error-no-select`; asked from any other view, the visiting view is
+  that view.
+- **Only these three change the current location.** Moving the
+  compilation buffer's cursor by hand changes nothing; a visit moves that
+  cursor, so a view of it that followed stops following.
+- **A file that is not there** is said by Files (`Files.notOpened`): the
+  location is current and the compilation buffer's cursor on it, and no
+  buffer is made, no other cursor moves and the focus stays.
+
 ## The mode
 
 `compilation` (`mode`), whose buffer is read-only to editing commands
-(`Editor/Command/Dispatch.lean`, "Read-only buffers"). It fills the role
-`refresh` with `recompile`. Phases 4 and 5 add
-errors and `next-error`, and the hook.
+(`Editor/Command/Dispatch.lean`, "Read-only buffers"). It fills two roles:
+`refresh` with `recompile` and `activate` with `compile-goto-error`. It
+leaves `next-item` and `previous-item` unfilled: under the Vim scheme those
+are `j` and `k`, which stay motions in a compilation buffer, so
+`next-error` and `previous-error` are commands and ex names only, and no
+global key binds them. Phase 5 adds the hook.
 
-Pinned by `ModelTest.compileChecks`, on the loop's driver over the editor's
+Pinned by `ModelTest.compileChecks`, `ModelTest.compileErrorChecks` and
+`ModelTest.compileLocationChecks`, on the loop's driver over the editor's
 models, the job model and the process model, and over the real process
 service by `ContractTest.compileChecks`.
 -/
@@ -175,6 +220,21 @@ def confirmName : String :=
 under. -/
 def killName : String :=
   "kill-compilation"
+
+/-- The name the command that visits the next location is registered
+under. -/
+def nextName : String :=
+  "next-error"
+
+/-- The name the command that visits the previous location is registered
+under. -/
+def previousName : String :=
+  "previous-error"
+
+/-- The name the command that visits the location on the cursor's line of a
+compilation buffer is registered under. -/
+def gotoName : String :=
+  "compile-goto-error"
 
 /-- The name the command a compile's job posts its output to is registered
 under. -/
@@ -444,6 +504,31 @@ def nothingRunning (label : String) : String :=
 /-- What `name` says of a start that was refused. -/
 def notStarted (name : String) (refusal : JobRefusal) : String :=
   s!"{name}: {refusal.describe}"
+
+/-- What `next-error` says past the last location of the scope labelled
+`label`. -/
+def noMore (label : String) : String :=
+  s!"{nextName}: no more locations in {label}"
+
+/-- What `previous-error` says before the first location of the scope
+labelled `label`, or with no current one. -/
+def noEarlier (label : String) : String :=
+  s!"{previousName}: no earlier locations in {label}"
+
+/-- What the command `name` says in the scope labelled `label` with no
+locations. -/
+def noLocations (name : String) (label : String) : String :=
+  s!"{name}: no locations in {label}"
+
+/-- What `compile-goto-error` says on a line of a compilation buffer that no
+location covers. -/
+def noLocationHere : String :=
+  s!"{gotoName}: no location on this line"
+
+/-- What `compile-goto-error` says in the buffer called `name`, which is not
+its scope's compilation buffer. -/
+def notCompilation (name : String) : String :=
+  s!"{gotoName}: {name} is not a compilation buffer"
 
 /-- The label of the prompt for a line. -/
 def promptLabel : String :=
@@ -815,6 +900,96 @@ def finished (order : Order) (lines : Array String) (how : How) : EditorM Unit :
     | .directory path => (Scope.directory path).label
   message s!"{label}: {text}"
 
+/-! ## Stepping -/
+
+/-- The view a location is visited in, asked from `asking` ("Stepping", in
+the module docs): the asking view, unless it shows the scope's compilation
+buffer `compilation`; then the first other view that is not the
+minibuffer's, or, with none, a new view below the asking one, or, when the
+split is refused, the asking view. -/
+def visitingView (asking : ViewId) (compilation : Option BufferId) : EditorM ViewId := do
+  let state ← editorState
+  let shows (view : ViewId) : Bool :=
+    compilation.isSome && (state.window? view).map (·.buffer) == compilation
+  if !shows asking then
+    return asking
+  let minibuffer := state.minibufferView?
+  match state.windows.find? fun window => !shows window.id && some window.id != minibuffer with
+  | some window =>
+    return window.id
+  | none =>
+    match ← asking.split .rows with
+    | .ok below =>
+      return below
+    | .error _ =>
+      return asking
+
+/-- Visits the location `index` of `place`'s record `record`, asked from
+`asking` ("Stepping", in the module docs): it becomes the current location,
+every view of the kept compilation buffer has its cursor put at the start of
+the location's first row, and its file is visited at its line and column in
+the visiting view (`visitingView`), which is focused with `focus`. -/
+def visitLocation (asking : ViewId) (place : Place) (record : Record) (index : Nat) (focus : Bool) :
+    EditorM Unit := do
+  let some site := record.locations[index]? | return
+  setRecord place { record with current := some index }
+  let state ← editorState
+  let compilation := kept state record
+  if let some id := compilation then
+    if let .ok text← id.text then
+      let offset ← text.offsetOf ⟨site.first, 0⟩
+      for view in viewsOf state id do
+        Files.placeCursor view offset
+  let visiting ← visitingView asking compilation
+  Files.visit visiting site.file
+      { row := site.line - 1, column := (site.column.map (· - site.columnBase)).getD 0 } focus
+
+/-- `next-error` (`forward`) and `previous-error` ("Stepping", in the module
+docs), registered under `name`: one location on in the list of the focused
+buffer's scope, from none to the first, stopping with a message at either
+end. Asked from a compilation buffer, the focus stays there. -/
+def stepCommand (name : String) (forward : Bool) (call : Call) : EditorM Unit := do
+  let state ← editorState
+  let scope := Scope.of state call.target.window.buffer
+  let record := recordOf state scope.place
+  if record.locations.isEmpty then
+    message (noLocations name scope.label)
+    return
+  let index :=
+    if forward then
+      match record.current with
+      | none => some 0
+      | some current => if current + 1 < record.locations.size then some (current + 1) else none
+    else
+      match record.current with
+      | some (current + 1) => some current
+      | _ => none
+  match index with
+  | some index =>
+    visitLocation call.target.window.id scope.place record index false
+  | none =>
+    message (if forward then noMore scope.label else noEarlier scope.label)
+
+/-- `compile-goto-error` ("Stepping", in the module docs): in its scope's
+kept compilation buffer, visits the location whose rows hold the row of the
+window's cursor, focusing the visiting view. -/
+def gotoCommand (call : Call) : EditorM Unit := do
+  let state ← editorState
+  let buffer := call.target.window.buffer
+  let scope := Scope.of state buffer
+  let record := recordOf state scope.place
+  if kept state record != some buffer then
+    message (notCompilation call.target.buffer.name)
+    return
+  let selection ← call.target.selection
+  let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
+  let row := (← call.target.buffer.text.pointOf head).row
+  match record.locations.findIdx? fun site => site.first ≤ row && row ≤ site.last with
+  | some index =>
+    visitLocation call.target.window.id scope.place record index true
+  | none =>
+    message noLocationHere
+
 /-- The lines of `frames` as text: each decoded by the store's escape rule,
 one trailing carriage return dropped. -/
 def linesOf : Process.Frames → Array String
@@ -858,6 +1033,6 @@ def runWork (arguments : List Argument) : Work := fun _ => do
 
 /-- The `compilation` mode ("The mode", in the module docs). -/
 def mode : Mode :=
-  { name := modeName, roles := [(Role.refresh, recompileName)] }
+  { name := modeName, roles := [(Role.refresh, recompileName), (Role.activate, gotoName)] }
 
 end Editor.Compile

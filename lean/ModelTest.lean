@@ -19546,7 +19546,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile and recompile, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, recompile, next-error and previous-error, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -19556,7 +19556,9 @@ def exChecks : List Check :=
             let (opening, _) := fedTo typed (presses "C-e t C-e y")
             candidatesOf typed == some (exListed "e" none Ex.bindings) &&
               (candidatesOf typed).map (·.listed) ==
-                some #["e", "e!", "autoread", "noautoread", "reload", "compile", "recompile"] &&
+                some
+                  #["e", "e!", "autoread", "noautoread", "reload", "compile", "recompile",
+                    "next-error", "previous-error"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
 
@@ -28634,7 +28636,10 @@ compilation buffer), `C-k s` (`squat`, which makes a buffer
 `compilation-output` of `/r`'s first run), `C-k q`, which cancels the open
 prompt, `C-o q`, which opens `/clone/r/src/a.lean`, and `C-k h` (`compile`
 with `check`, asking nothing, so a new compilation buffer is in view 1,
-below view 0). -/
+below view 0). For stepping: `C-k n` (`next-error`), `C-k p`
+(`previous-error`), `C-k e` (`compile-goto-error`), and `C-k g` and `C-k j`
+(`to-point`, which puts the window's cursor at row 4, column 3, and at row
+2, column 0). -/
 def compileBindings : List (String × Invocation) :=
   shellBindings ++
     [("C-k c", invoke Compile.compileName),
@@ -28646,7 +28651,11 @@ def compileBindings : List (String × Invocation) :=
         { command := Compile.outputName
           arguments := placeR.arguments ++ [.nat 1, .str "stale"] }),
       ("C-k q", invoke Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean"),
-      ("C-k h", { command := Compile.compileName, arguments := [.str "check"] })]
+      ("C-k h", { command := Compile.compileName, arguments := [.str "check"] }),
+      ("C-k n", invoke Compile.nextName), ("C-k p", invoke Compile.previousName),
+      ("C-k e", invoke Compile.gotoName),
+      ("C-k g", { command := "to-point", arguments := [.nat 4, .nat 3] }),
+      ("C-k j", { command := "to-point", arguments := [.nat 2, .nat 0] })]
 
 /-- The commands of the compile checks (`compileBindings`). -/
 def compileCommands : List (String × Dispatched) :=
@@ -28666,15 +28675,26 @@ def compileCommands : List (String × Dispatched) :=
   let squat : Dispatched := fun _ => do
     discard <| createBuffer "*compilation: r@main (clone)*"
     return none
+  let toPoint : Dispatched := fun call => do
+    if let .nat row :: .nat column :: _ := call.arguments then
+      let offset ← call.target.buffer.text.offsetOf ⟨row, column⟩
+      discard <| call.target.window.id.select { ranges := #[⟨offset, offset⟩] }
+    return none
   shellCommands ++ dispatchedOf Compile.commands ++
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
-      ("squat-clone", squat)]
+      ("squat-clone", squat), ("to-point", toPoint)]
 
 /-- The keys of the compile checks, with the compile mode and the ex names
-that ship registered. -/
+that ship registered: the active keymaps of a registry holding the compile
+mode's modes, so the mode's roles are on their keys in a compilation
+buffer as a host's registry puts them, then the keymap of
+`compileBindings`. -/
 def compileKeys : Loop.Keys TestScheme.scheme :=
   let keys := dispatchKeys compileBindings compileCommands
+  let registry := ({} : Config.Registry).replaceModes .compiled Compile.modes
   { keys with
+    maps := fun state view =>
+      registry.activeMaps TestScheme.scheme state view ++ keys.maps state view
     registered :=
       { keys.registered with
         entering := fun name => (Compile.modes.find? (·.name == name)).map ([·])
@@ -29166,11 +29186,13 @@ def compileChecks : List Check :=
               again.posting.map (·.key) == #[some "compile local /r"] &&
               again.jobs.processes.started.size == made.jobs.processes.started.size + 1 &&
               asked.loop.state.prompt.map (·.label) == some Compile.promptLabel },
-    { name := "the compilation mode fills the role refresh with recompile"
+    { name :=
+        "the compilation mode fills the role refresh with recompile and activate with compile-goto-error, and neither next-item nor previous-item, so j and k stay motions under Vim"
       run :=
         pure
           (Compile.mode.roles.map (fun (role, command) => (role.name, command)) ==
-              [(Role.refresh.name, Compile.recompileName)] &&
+              [(Role.refresh.name, Compile.recompileName),
+                (Role.activate.name, Compile.gotoName)] &&
             Compile.mode.name == Compile.modeName) },
     { name :=
         "a compile order crosses as arguments and back with a place of each kind, arguments that are no order read as none, and the run job started with them fails; each place has its own job key"
@@ -29309,6 +29331,12 @@ def compileLocationChecks : List Check :=
   let rowAt := rowStart header checkLines
   let files (driver : TestDriver) (place : Compile.Place) : Array String :=
     (Compile.recordOf driver.loop.state place).locations.map (·.file.toString)
+  let fileOf (driver : TestDriver) (view : ViewId) : Option String :=
+    (showing driver view).bind fun shown => shown.buffer.file.map (·.path.toString)
+  let headsOf (driver : TestDriver) (view : ViewId) : Option (Array Nat) :=
+    ((showing driver view).bind (·.cursors)).map (·.map (·.head))
+  let currentOf (driver : TestDriver) (place : Compile.Place) : Option Nat :=
+    (Compile.recordOf driver.loop.state place).current
   [{  name :=
         "locations criterion 3: locations are found as lines arrive: after the first two of four output lines the first location exists while the run is in flight, and the second once the next arrives"
       run :=
@@ -29368,7 +29396,171 @@ def compileLocationChecks : List Check :=
             (compileBuffer ran "*compilation: r@main*").map (·.spans) == some expected &&
               expected[0]?.map (fun span => (span.start, span.stop)) == some (20, 36) &&
               (showing ran ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
-              sceneDecorations ran ⟨1⟩ == some expected }]
+              sceneDecorations ran ⟨1⟩ == some expected },
+    { name :=
+        "locations criterion 4: next-error from no location visits the first, opening its file with the cursor on its line and column; next-error and previous-error move one location each, and stop with a message at either end; with nothing compiled it says so"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let step (driver : TestDriver) (keys : String) := drained (pressedOn driver keys)
+            let first := step ran "C-k n"
+            let second := step first "C-k n"
+            let back := step second "C-k p"
+            let stopped := step back "C-k p"
+            let fourth := step (step (step back "C-k n") "C-k n") "C-k n"
+            let past := step fourth "C-k n"
+            let unstepped := pressedOn (settledAfter driver "C-o a") "C-k n"
+            fileOf first ⟨0⟩ == some "/r/src/main.rs" &&
+              (showing first).bind (·.cursors) == some #[⟨135, 135⟩] &&
+              currentOf first placeR == some 0 &&
+              headsOf first ⟨1⟩ == some #[20] &&
+              first.loop.state.frame.focused == ⟨0⟩ &&
+              fileOf second ⟨0⟩ == some "/r/src/lib.lean" &&
+              headsOf second ⟨0⟩ == some #[8] &&
+              currentOf second placeR == some 1 &&
+              headsOf second ⟨1⟩ == some #[rowAt 3] &&
+              fileOf back ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf back ⟨0⟩ == some #[135] &&
+              currentOf back placeR == some 0 &&
+              echoOf stopped == some "previous-error: no earlier locations in r@main" &&
+              currentOf stopped placeR == some 0 &&
+              fileOf stopped ⟨0⟩ == fileOf back ⟨0⟩ &&
+              headsOf stopped ⟨0⟩ == headsOf back ⟨0⟩ &&
+              fileOf fourth ⟨0⟩ == some "/r/src/b.lean" &&
+              headsOf fourth ⟨0⟩ == some #[2] &&
+              currentOf fourth placeR == some 3 &&
+              echoOf past == some "next-error: no more locations in r@main" &&
+              currentOf past placeR == some 3 &&
+              fileOf past ⟨0⟩ == fileOf fourth ⟨0⟩ &&
+              headsOf past ⟨0⟩ == headsOf fourth ⟨0⟩ &&
+              echoOf unstepped == some "next-error: no locations in r@main" },
+    { name :=
+        "locations criterion 5: with compilations in two worktrees of one repository, next-error in a buffer of each visits that workspace's own first location, in its own checkout's file"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let both := drained (pressedOn (settledAfter inR "C-o w") "C-k h")
+            let inW := drained (pressedOn (settledAfter both "C-o w") "C-k n")
+            let inRAfter := drained (pressedOn (settledAfter inW "C-o a") "C-k n")
+            let again := pressedOn (settledAfter inRAfter "C-o w") "C-k n"
+            fileOf inW ⟨0⟩ == some "/w/src/main.rs" && headsOf inW ⟨0⟩ == some #[2] &&
+              fileOf inRAfter ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf inRAfter ⟨0⟩ == some #[135] &&
+              currentOf inRAfter placeR == some 0 &&
+              currentOf inRAfter placeW == some 0 &&
+              echoOf again == some "next-error: no more locations in r@feature" },
+    { name :=
+        "locations criterion 8: activate in a compilation buffer on a location's line visits that location and focuses its view; on a line with no location it says so and changes nothing"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let onThird := pressedOn ran "C-k o C-k g"
+            let activated := drained (pressedOn onThird "RET")
+            let nothing := drained (pressedOn activated "C-k o C-k j RET")
+            onThird.loop.state.frame.focused == ⟨1⟩ &&
+              fileOf activated ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf activated ⟨0⟩ == some #[23] &&
+              activated.loop.state.frame.focused == ⟨0⟩ &&
+              currentOf activated placeR == some 2 &&
+              headsOf activated ⟨1⟩ == some #[rowAt 4] &&
+              echoOf nothing == some "compile-goto-error: no location on this line" &&
+              currentOf nothing placeR == some 2 &&
+              fileOf nothing ⟨0⟩ == fileOf activated ⟨0⟩ &&
+              headsOf nothing ⟨0⟩ == headsOf activated ⟨0⟩ },
+    { name :=
+        "locations criterion 7: after activate on the third location, moving the compilation buffer's cursor by hand leaves the current location, and next-error visits the fourth, the focus staying in the compilation buffer"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let activated := drained (pressedOn ran "C-k o C-k g RET")
+            let byHand := pressedOn activated "C-k o C-k 0"
+            let next := drained (pressedOn byHand "C-k n")
+            currentOf activated placeR == some 2 && currentOf byHand placeR == some 2 &&
+              headsOf byHand ⟨1⟩ == some #[0] &&
+              fileOf next ⟨0⟩ == some "/r/src/b.lean" &&
+              headsOf next ⟨0⟩ == some #[2] &&
+              currentOf next placeR == some 3 &&
+              headsOf next ⟨1⟩ == some #[rowAt 5] &&
+              next.loop.state.frame.focused == ⟨1⟩ },
+    { name :=
+        "locations criterion 9: a location whose file does not exist says so in the echo area and moves no cursor but the compilation buffer's, which is on the location"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let gone := drained (compiledLine (settledAfter driver "C-o a") "gone")
+            let stepped := drained (pressedOn gone "C-k n")
+            echoOf stepped == some (Files.notOpened "/r/src/gone.rs" .notFound) &&
+              fileOf stepped ⟨0⟩ == some "/r/src/a.lean" &&
+              headsOf stepped ⟨0⟩ == some #[0] &&
+              (stepped.loop.state.findBuffer "gone.rs").isNone &&
+              stepped.loop.state.frame.focused == ⟨0⟩ &&
+              currentOf stepped placeR == some 0 &&
+              (showing stepped ⟨2⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              headsOf stepped ⟨2⟩ == some #["r@main in /r: gone\n".utf8ByteSize] },
+    { name :=
+        "locations criterion 10: a recompile resets that workspace's list only, and its next next-error visits its new first location"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let both := drained (pressedOn (settledAfter inR "C-o w") "C-k h")
+            let steppedW := drained (pressedOn both "C-k n")
+            let steppedR := drained (pressedOn (settledAfter steppedW "C-o a") "C-k n")
+            let wBefore := Compile.recordOf steppedR.loop.state placeW
+            let second :=
+              withStreams steppedR
+                #[{ command := shellCommand "/r" "check"
+                    steps := linesSteps ["src/b.lean:1:2: error: second run"] }]
+            let rerun := drained (pressedOn second "C-o a C-k r")
+            let record := Compile.recordOf rerun.loop.state placeR
+            let after := drained (pressedOn rerun "C-k n")
+            currentOf steppedW placeW == some 0 && currentOf steppedR placeR == some 0 &&
+              record.locations.map (fun site => (site.file.toString, site.first)) ==
+                #[("/r/src/b.lean", 1)] &&
+              record.current == none &&
+              (compileBuffer rerun "*compilation: r@main*").map (·.spans) ==
+                some #[{ start := 20, stop := 34, face := ⟨"compilation.error"⟩ }] &&
+              Compile.recordOf rerun.loop.state placeW == wBefore &&
+              fileOf after ⟨0⟩ == some "/r/src/b.lean" &&
+              headsOf after ⟨0⟩ == some #[1] &&
+              currentOf after placeR == some 0 },
+    { name :=
+        "the ex line steps as the keys do: :next-error visits the first location and :previous-error stops before it; compile-goto-error outside a compilation buffer says so; the test scheme's next-item key in a compilation buffer steps nothing"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let exNext := drained (fedTo ran (exLine "next-error")).1
+            let exPrevious := drained (fedTo exNext (exLine "previous-error")).1
+            let elsewhere := pressedOn (settledAfter driver "C-o a") "C-k e"
+            let activated := drained (pressedOn ran "C-k o C-k g RET")
+            let item := drained (pressedOn activated "C-k o C-n")
+            fileOf exNext ⟨0⟩ == some "/r/src/main.rs" && headsOf exNext ⟨0⟩ == some #[135] &&
+              currentOf exNext placeR == some 0 &&
+              echoOf exPrevious == some "previous-error: no earlier locations in r@main" &&
+              currentOf exPrevious placeR == some 0 &&
+              echoOf elsewhere == some "compile-goto-error: a.lean is not a compilation buffer" &&
+              currentOf item placeR == some 2 &&
+              fileOf item ⟨0⟩ == fileOf activated ⟨0⟩ &&
+              headsOf item ⟨0⟩ == headsOf activated ⟨0⟩ }]
 
 /-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
 `abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts

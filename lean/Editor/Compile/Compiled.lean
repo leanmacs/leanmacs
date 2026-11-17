@@ -17,7 +17,11 @@ line's (`Editor/Ex/Compiled.lean`), which binds the ex names `compile`,
   (`Compile.confirmCommand`); `kill-compilation`, which kills
   the scope's run in flight (`Compile.killCommand`); and
   `compilation-output`, which no key runs: the run job posts its output to
-  it (`Compile.outputCommand`).
+  it (`Compile.outputCommand`); `next-error` and `previous-error`, which
+  step through the focused buffer's scope's locations
+  (`Compile.stepCommand`); and `compile-goto-error`, which visits the
+  location on the cursor's line of a compilation buffer, the mode's
+  `activate` (`Compile.gotoCommand`).
 - **`Compile.jobs`**: `compile-run`, which runs the child, posts its output
   as it comes and finishes with how it ended (`Compile.runWork`). A host
   that is not handed it runs no compile, and says so when one is asked for.
@@ -27,7 +31,8 @@ line's (`Editor/Ex/Compiled.lean`), which binds the ex names `compile`,
 This module is apart from `Editor/Compile.lean` because it names the
 registry, which is the config session's.
 
-Pinned by `ModelTest.compileChecks`, on the models.
+Pinned by `ModelTest.compileChecks` and `ModelTest.compileLocationChecks`,
+on the models.
 -/
 
 namespace Editor.Compile
@@ -39,7 +44,10 @@ def commands : Array Config.Registration :=
     { name := recompileName, action := .call recompileCommand },
     { name := confirmName, action := .call confirmCommand },
     { name := killName, action := .call killCommand },
-    { name := outputName, action := .call outputCommand }]
+    { name := outputName, action := .call outputCommand },
+    { name := nextName, action := .call (stepCommand nextName true) },
+    { name := previousName, action := .call (stepCommand previousName false) },
+    { name := gotoName, action := .call gotoCommand }]
 
 /-- The compile mode's job, as a host registers it for the owner
 `compiled`. -/
