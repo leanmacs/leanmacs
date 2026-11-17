@@ -619,7 +619,9 @@ editor's working directory in those checks), `tests/compile` (the
 fixture `compile` runs over the real process service, which waits for files
 the check makes, so its pauses are the check's to end) and `tests/syntax`
 (the syntax fixtures, whose Rust fixtures the indent and text-object checks
-read); each fixture must stay executable. Then `config-test`, and
+read); each fixture must stay executable. Then `config-test`, handed
+`tests/syntax` too, whose Rust indent fixture its indent checks mangle and
+re-indent through a headless host, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must
