@@ -175,6 +175,10 @@ from the next command.
   answered config's limit the loop was told of
   (`Loop.Registered.shellTimeLimit`), or `none`, the state not read and
   not changed. `:!` asks, for its run's limit (`Editor/Shell.lean`).
+- **Asking for the syntax refresh delay**
+  (`StateRequest.syntaxRefreshDelay`) is answered the same way, from
+  `Loop.Registered.syntaxRefreshDelay`. A mode's entry asks, for the
+  interval it hands the syntax service (`Editor/Highlight.lean`).
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -312,6 +316,10 @@ structure Loop.Registered where
   (`shellTimeLimit`, `Editor/Setup.lean`); `none` for the shell's
   default. -/
   shellTimeLimit : Option Nat := none
+  /-- How long a text goes unchanged after an edit before it is parsed
+  whole again, in milliseconds, as config set it (`syntaxRefreshDelay`,
+  `Editor/Setup.lean`); `none` for the default. -/
+  syntaxRefreshDelay : Option Nat := none
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -380,6 +388,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     dispatched registered state (next (state.autoReload.getD registered.autoReload))
   | state, .step (.state .shellTimeLimit) next =>
     dispatched registered state (next registered.shellTimeLimit)
+  | state, .step (.state .syntaxRefreshDelay) next =>
+    dispatched registered state (next registered.syntaxRefreshDelay)
   | state, .step (.state .workspaceSettings) next =>
     dispatched registered state
       (next ({ roots := registered.workspaceRoots }, registered.generation))

@@ -32,6 +32,9 @@ Its state has three parts:
 - `kept`: the query each snapshot keeps of each kind, compiled, so it
   outlives its id's release; `detach` drops them. `capturesOf` answers its
   captures as `captures` answers a query's, of the snapshot's own text.
+- `refreshAfter`: the refresh delay it was handed last. It parses at once,
+  so every tree is exact and the delay changes no answer; it is what the
+  editor's checks read.
 
 Its shipped highlights query (`highlights`) is its own, in its query subset:
 the library's JSON one uses an alternation, which the model refuses as
@@ -75,6 +78,9 @@ structure SyntaxTreeModel where
     #[]
   /-- The query each snapshot keeps of each kind, compiled. -/
   kept : Array (SnapshotId × QueryKind × SyntaxTreeModel.Query) := #[]
+  /-- The refresh delay `refreshAfter` handed it last, if any. The model
+  parses at once, so it changes nothing it answers. -/
+  refreshAfter : Option Nat := none
 
 namespace SyntaxTreeModel
 
@@ -285,6 +291,7 @@ def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply
   | .keep snapshot kind query, model => model.keep snapshot kind query
   | .capturesOf snapshot kind first last, model =>
     (model.capturesOf snapshot kind first last, model)
+  | .refreshAfter milliseconds, model => ((), { model with refreshAfter := some milliseconds })
 
 end SyntaxTreeModel
 

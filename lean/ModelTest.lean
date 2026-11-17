@@ -2828,6 +2828,19 @@ def setupChecks : List Check :=
               refusal twice == some Config.Registrations.shellTimeLimitTwice)
         | _, _ => pure false },
     { name :=
+        "a setup's syntax refresh delay is collected, a setup that sets none has none, and one that sets it twice is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          syntaxRefreshDelay 250
+          syntaxRefreshDelay 100
+        match Config.Registrations.ofSetup (syntaxRefreshDelay 250),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.syntaxRefreshDelay == some 250 && plain.syntaxRefreshDelay == none &&
+              refusal twice == some Config.Registrations.syntaxRefreshDelayTwice)
+        | _, _ => pure false },
+    { name :=
         "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
       run :=
         let twice : SetupM Unit := do
@@ -3948,6 +3961,17 @@ def reloadChecks : List Check :=
           state.registry.registered.shellTimeLimit
         pure
           (told (reduce []).1 == none && told loaded == some 5000 && told kept == some 5000 &&
+            told bare == none) },
+    { name :=
+        "an installed reload puts config's syntax refresh delay in the registry, which tells the loop of it; a rejected reload leaves it, and a config that sets none goes back to none"
+      run :=
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (syntaxRefreshDelay 250))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let told (state : Config.State Elaborated) : Option Nat :=
+          state.registry.registered.syntaxRefreshDelay
+        pure
+          (told (reduce []).1 == none && told loaded == some 250 && told kept == some 250 &&
             told bare == none) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
@@ -6626,6 +6650,19 @@ def syntaxTreeChecks : List Check :=
         let broken ← syntaxTreeBroken wholeRange
         return broken.any (·.startsWith "a range answers the whole text's rows that are in it") &&
             broken.all (·.startsWith "a range ") },
+    { name := "the model records the refresh delay it is handed, and answers nothing else for it"
+      run :=
+        pure <|
+          let (model, ids) := syntaxTreeModelOf #["[1]"]
+          let snapshot := ids[0]?.getD ⟨0⟩
+          let program : SyntaxTreeM (Array SyntaxTree.Capture) := do
+            SyntaxTree.attach snapshot "json"
+            SyntaxTree.refreshAfter 250
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTree.captures snapshot query 0 3
+          match SyntaxTreeM.runModel program model with
+          | (.ok found, after) => after.refreshAfter == some 250 && found.size == 1
+          | _ => false },
     { name := "every property of the syntax tree contract holds of the model"
       run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
 
@@ -14880,13 +14917,14 @@ def parsedMode (name : String) (syntaxTree : Mode.SyntaxTree := { grammar := "js
 
 /-- Sets each mode of `steps`, in turn, as the major mode of buffer 1
 through view 1, by an invocation of `enter` the loop runs, over the
-registry of the on-enter checks with `modes` registered for config, on the
-editor's models: what each left in the echo area, buffer 1's major mode at
+registry of the on-enter checks with `modes` registered for config, and
+config's syntax refresh delay `refreshDelay`, on the editor's models: what each left in the echo area, buffer 1's major mode at
 the end, and the syntax tree model then. `none` when the run was
 refused. -/
-def highlightedBy (modes : Array Mode) (steps : List String) :
+def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Option Nat := none) :
     Option (List String × Option String × SyntaxTreeModel) :=
-  let registry := enterRegistry.replaceModes .config modes
+  let registry :=
+    { enterRegistry.replaceModes .config modes with syntaxRefreshDelay := refreshDelay }
   let program : EditorM (List String × EditorState) := do
     let mut state ← twoBuffers
     let mut echoes := []
@@ -14910,6 +14948,17 @@ models through the loop's dispatch: what the syntax tree model is asked and
 records. -/
 def highlightEnterChecks : List Check :=
   [{  name :=
+        "entering a major mode with a syntax tree hands the syntax service config's refresh delay, or the default when config sets none"
+      run :=
+        pure <|
+          (match highlightedBy #[parsedMode "json"] ["json"] with
+            | some (_, _, model) => model.refreshAfter == some Highlight.defaultRefreshDelay
+            | none => false) &&
+            Highlight.defaultRefreshDelay == 500 &&
+            match highlightedBy #[parsedMode "json"] ["json"] (some 250) with
+            | some (_, _, model) => model.refreshAfter == some 250
+            | none => false },
+    { name :=
         "a major mode with a syntax tree attaches its buffer's text and highlights it with the grammar's shipped query, each capture in its syntax face by the shipped default, and releases the query"
       run :=
         pure <|
@@ -27548,6 +27597,17 @@ def workspaceStateChecks : List Check :=
           (EditorState.none.handle .shellTimeLimit).1 == none &&
             match (program.runModel editorModel).1 with
             | .ok (.finished answer, _) => answer == some 5000
+            | _ => false },
+    { name :=
+        "with no loop to answer, the syntax refresh delay is none; a dispatched command that asks is answered the delay the loop was told of"
+      run :=
+        let program : EditorM (Guarded (Option Nat) × EditorState) := do
+          (EditorState.ask .syntaxRefreshDelay).dispatched { syntaxRefreshDelay := some 250 }
+              (← twoBuffers)
+        pure <|
+          (EditorState.none.handle .syntaxRefreshDelay).1 == none &&
+            match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) => answer == some 250
             | _ => false },
     { name :=
         "with no loop to answer, the workspace settings are config's defaults under generation 0"

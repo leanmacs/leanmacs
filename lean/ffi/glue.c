@@ -798,6 +798,7 @@ void editor_ffi_syntax_captures(const editor_ffi_snapshot *snapshot,
                                 const editor_ffi_syntax_query *query,
                                 size_t start, size_t end,
                                 editor_ffi_raw_words *out);
+void editor_ffi_syntax_refresh_after(uint64_t milliseconds);
 bool editor_ffi_syntax_settle(const editor_ffi_snapshot *snapshot,
                               uint64_t bound_ms);
 uint64_t editor_ffi_syntax_shipped_query(const uint8_t *grammar, size_t len,
@@ -1026,6 +1027,12 @@ lean_obj_res editor_glue_syntax_settle(b_lean_obj_arg snapshot,
                                        uint64_t bound_ms) {
   return lean_io_result_mk_ok(lean_box(
       editor_ffi_syntax_settle(lean_get_external_data(snapshot), bound_ms)));
+}
+
+// `Editor.Ffi.syntaxRefreshAfter : UInt64 → IO Unit`
+lean_obj_res editor_glue_syntax_refresh_after(uint64_t milliseconds) {
+  editor_ffi_syntax_refresh_after(milliseconds);
+  return lean_io_result_mk_ok(lean_box(0));
 }
 
 // ---- The event queues ----

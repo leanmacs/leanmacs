@@ -160,7 +160,8 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   (`Editor/Command/Dispatch.lean`). Here, with no registry, it is answered
   no root and generation 0.
 - **Config's shell time limit is asked by one request**, `shellTimeLimit`,
-  which the loop answers the same way; here it is answered `none`.
+  which the loop answers the same way; here it is answered `none`. So is
+  **config's syntax refresh delay**, `syntaxRefreshDelay`.
 
 ## Where an addition goes
 
@@ -313,6 +314,10 @@ inductive StateRequest where
   /-- How long a `:!` or a filter may run, in milliseconds, as config set
   it, which the loop that runs the command answers with. -/
   | shellTimeLimit
+  /-- How long a text goes unchanged after an edit before it is parsed
+  whole again, in milliseconds, as config set it, which the loop that runs
+  the command answers with. -/
+  | syntaxRefreshDelay
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -368,6 +373,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .workspaceSettings => Workspace.Settings × Nat
   | .setUnscopedValue .. => Unit
   | .shellTimeLimit => Option Nat
+  | .syntaxRefreshDelay => Option Nat
 
 namespace EditorState
 
@@ -456,6 +462,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   -- Config's limit is the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, config set none.
   | .shellTimeLimit, state => (none, state)
+  -- So is config's syntax refresh delay.
+  | .syntaxRefreshDelay, state => (none, state)
 
 end EditorState
 

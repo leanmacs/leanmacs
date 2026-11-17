@@ -1274,6 +1274,7 @@ def recordedRequest : SyntaxTreeRequest → String
   | .injectLanguage _ name .. => s!"injectLanguage {name}"
   | .keep _ kind _ => s!"keep {kind.name}"
   | .capturesOf _ kind .. => s!"capturesOf {kind.name}"
+  | .refreshAfter milliseconds => s!"refreshAfter {milliseconds}"
 
 /-- Runs `check` against a host over a config of `highlightChunk`, whose
 syntax tree collaborator is the real binding over the library's syntax
@@ -1546,7 +1547,7 @@ def jobChecks (context : Context) : List Check :=
             working != Headless.Failure.describe 30000 (.reloading (some 12)) &&
             working != Headless.Failure.describe 30000 (.unanswered (some 12))) },
     { name :=
-        "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the text is attached, the grammar's shipped query compiled and its text highlighted in the default faces, and the grammar's injections, text objects and indents asked for, none of which json ships"
+        "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the refresh delay handed over, the text attached, the grammar's shipped query compiled and its text highlighted in the default faces, and the grammar's injections, text objects and indents asked for, none of which json ships"
       run :=
         -- Seen to bite once by hand: with `Running.ended` handing
         -- `Job.finishWith` no syntax tree, the job's command reaches
@@ -1562,8 +1563,8 @@ def jobChecks (context : Context) : List Check :=
           let scene ← session.sceneLines
           return joined == .settled && (← session.output.get).contains "job 1 highlight: ok" &&
               (← asked.get) ==
-                #["attach json", "shippedQuery json highlights", "compile json", "captureNames",
-                  ← jsonDefaultFaces, "release", "shippedQuery json injections",
+                #["refreshAfter 500", "attach json", "shippedQuery json highlights", "compile json",
+                  "captureNames", ← jsonDefaultFaces, "release", "shippedQuery json injections",
                   "shippedQuery json textObjects", "shippedQuery json indents"] &&
               scene.any fun line =>
                 line.startsWith "scene " && (line.splitOn "highlights:").length == 1 },

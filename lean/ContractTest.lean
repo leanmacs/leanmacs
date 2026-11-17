@@ -1993,7 +1993,49 @@ def syntaxTreeChecks : List Check :=
         let frame ← display.frameText
         -- One row starts with a keyword: the fence's `fn`, in red.
         return reported > 0 && published.isOk &&
-            (frame.splitOn "runs 0..2:cc0000ff/").length == 2 }]
+            (frame.splitOn "runs 0..2:cc0000ff/").length == 2 },
+    { name :=
+        "a Markdown text with emphasis and inline code, entered with the inline grammar's captures mapped to faces, is drawn by the real display with the emphasis and the code span in their faces' colours"
+      run := do
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let syntaxTree := settlingAttach table real.handle
+        let green := Color.rgb 0 0xcc 0
+        let blue := Color.rgb 0 0 0xcc
+        let display ← Ffi.Display.newCells 8 16
+        let shown ←
+          RealDisplay.over display table.reader
+              #[{ name := ⟨"test.emphasis"⟩, face := { foreground := some green } },
+                { name := ⟨"test.literal"⟩, face := { foreground := some blue } }]
+        -- The delimiters draw nothing, so each span is one run. The text has
+        -- no fenced block: `text.literal` here can only be the inline
+        -- layer's.
+        let captures :=
+          [("text.emphasis", some ⟨"test.emphasis"⟩), ("text.literal", some ⟨"test.literal"⟩),
+            ("punctuation.delimiter", none)]
+        let entered : EditorM (SnapshotId × MarkerId) := do
+          let text ← createText "Some *emphasis* and `code`.\n"
+          Highlight.enter "markdown" text { grammar := "markdown", captures }
+          return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
+        let (.ok (snapshot, scroll), texts) ←
+          entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
+        let some found ← table.find? snapshot | return false
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        discard drainedParsed
+        let scene : Scene :=
+          { size := { width := 320, height := 32 }
+            views :=
+              #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 320, height := 32 }, snapshot
+                  scroll, selections := #[], cursor := { shape := .block, face := ⟨"cursor"⟩ }
+                  decorations := #[], status := #[] }]
+            focused := none, echo := "", pending := "", preedit := none }
+        let publish : EditorM Unit := Display.publish scene
+        let (published, _) ← publish.runReal texts shown.handle
+        let frame ← display.frameText
+        -- `*emphasis*` is bytes 5 to 15 of its row, and `` `code` `` 20 to 26.
+        return published.isOk && (frame.splitOn "5..15:00cc00ff").length == 2 &&
+            (frame.splitOn "20..26:0000ccff").length == 2 }]
 
 /-- Runs a property of the watch port's contract against the real binding
 over `timers`. The library is told the interrupt key, and the property's

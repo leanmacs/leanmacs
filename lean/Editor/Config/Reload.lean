@@ -296,7 +296,8 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
             autoReload := built.registrations.autoReload.back?.getD false
             workspaceRoots := built.registrations.workspaceRoots
             generation := state.registry.generation + 1
-            shellTimeLimit := built.registrations.shellTimeLimit },
+            shellTimeLimit := built.registrations.shellTimeLimit
+            syntaxRefreshDelay := built.registrations.syntaxRefreshDelay },
         cells }
     let (themeName, unknownTheme) :=
       chooseAt state.registry state.themeName built.registrations.theme

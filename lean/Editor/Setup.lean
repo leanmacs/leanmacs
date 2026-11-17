@@ -217,6 +217,14 @@ Config sets how long a `:!` or a filter may run before it is killed with
 30 seconds. Setting it twice is refused, and a reload changes it for the
 next run.
 
+Config sets how long a text goes unchanged after an edit before it is parsed
+whole again with `syntaxRefreshDelay`, in milliseconds
+(`syntaxRefreshDelay 250`); with none it is 500 milliseconds
+(`Highlight.defaultRefreshDelay`). Each edit's tree is the incremental
+reparse, and the whole parse once the text is quiet makes it exact. Setting
+it twice is refused, and a reload changes it from the next buffer whose mode
+is entered.
+
 Config declares a workspace root with `workspace`, for a directory that is
 not a repository, or to split one, with the name of the project it belongs
 to if it gives one (`Editor/Workspace.lean`):
@@ -307,6 +315,9 @@ inductive SetupRequest where
   /-- Set how long a `:!` or a filter may run, in milliseconds, before it is
   killed (`Editor/Shell.lean`). -/
   | shellTimeLimit (milliseconds : Nat)
+  /-- Set how long a text goes unchanged after an edit, in milliseconds,
+  before it is parsed whole again (`Editor/Highlight.lean`). -/
+  | syntaxRefreshDelay (milliseconds : Nat)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -329,6 +340,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .autoReload _ => Unit
   | .workspace .. => Unit
   | .shellTimeLimit _ => Unit
+  | .syntaxRefreshDelay _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -530,6 +542,16 @@ the next run. A second call in one `setup` is refused, as a second frame
 padding is. -/
 def shellTimeLimit (milliseconds : Nat) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.shellTimeLimit milliseconds))
+
+/-- Sets how long a text parsed with a grammar goes unchanged after an edit,
+in milliseconds, before it is parsed whole again: 500 when config says
+nothing (`Highlight.defaultRefreshDelay`, `Editor/Highlight.lean`). An
+edit's tree is the incremental reparse, and the whole parse once the text
+is quiet makes it exact. A reload changes it from the next buffer whose
+mode is entered, for every text. A second call in one `setup` is refused,
+as a second shell time limit is. -/
+def syntaxRefreshDelay (milliseconds : Nat) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.syntaxRefreshDelay milliseconds))
 
 /-- The message a workspace root is refused with when it is not absolute. -/
 def relativeWorkspace (root : System.FilePath) : String :=

@@ -311,6 +311,11 @@ it did not, which a host reads as `auto`. -/
   (`shellTimeLimit`, `Editor/Setup.lean`); `none` when it did not, which
   the shell reads as its default. -/
   shellTimeLimit : Option Nat := none
+  /-- How long a text goes unchanged after an edit before it is parsed
+  whole again, in milliseconds, as config set it (`syntaxRefreshDelay`,
+  `Editor/Setup.lean`); `none` when it did not, which a mode's entry reads
+  as its default. -/
+  syntaxRefreshDelay : Option Nat := none
 
 namespace Registry
 
@@ -527,7 +532,8 @@ def registered (registry : Registry) : Loop.Registered :=
     jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex?
     exNames := registry.exNames, themeNames := registry.themeNames
     autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
-    generation := registry.generation, shellTimeLimit := registry.shellTimeLimit }
+    generation := registry.generation, shellTimeLimit := registry.shellTimeLimit
+    syntaxRefreshDelay := registry.syntaxRefreshDelay }
 
 end Registry
 
@@ -577,6 +583,9 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The shell time limits `setup` set (`shellTimeLimit`), in order: one at
   most, in a `setup` that is not refused. -/
   shellTimeLimits : Array Nat := #[]
+  /-- The syntax refresh delays `setup` set (`syntaxRefreshDelay`), in
+  order: one at most, in a `setup` that is not refused. -/
+  syntaxRefreshDelays : Array Nat := #[]
 
 namespace Registrations
 
@@ -603,6 +612,14 @@ def shellTimeLimit (collected : Registrations) : Option Nat :=
 /-- What a `setup` that sets the shell time limit twice is refused with. -/
 def shellTimeLimitTwice : String :=
   "the shell time limit is set twice"
+
+/-- The syntax refresh delay a `setup` set, in milliseconds, if it set one. -/
+def syntaxRefreshDelay (collected : Registrations) : Option Nat :=
+  collected.syntaxRefreshDelays[0]?
+
+/-- What a `setup` that sets the syntax refresh delay twice is refused with. -/
+def syntaxRefreshDelayTwice : String :=
+  "the syntax refresh delay is set twice"
 
 /-- The handler of the setup port that collects: its answer to each request,
 and what has been registered after it. -/
@@ -643,6 +660,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with workspaceRoots := collected.workspaceRoots.push { root, project } })
   | .shellTimeLimit milliseconds, collected =>
     ((), { collected with shellTimeLimits := collected.shellTimeLimits.push milliseconds })
+  | .syntaxRefreshDelay milliseconds, collected =>
+    ((), { collected with syntaxRefreshDelays := collected.syntaxRefreshDelays.push milliseconds })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -717,6 +736,8 @@ def problem? (collected : Registrations) : Option String := do
     return workspaceTwice root
   if collected.shellTimeLimits.size > 1 then
     return shellTimeLimitTwice
+  if collected.syntaxRefreshDelays.size > 1 then
+    return syntaxRefreshDelayTwice
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command
