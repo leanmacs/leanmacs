@@ -1,7 +1,7 @@
 //! Highlighting wired to real documents, the real adapter and the display:
 //! a document highlighted through the C functions, edited, and reparsed is
-//! drawn as a fresh highlight of its text draws it, a Rust document and a
-//! TOML one; the adapter keeps the
+//! drawn as a fresh highlight of its text draws it, a Rust document, a
+//! TOML one and a Lean one; the adapter keeps the
 //! layout's spans contract; and a published scene paints a keyword in its
 //! face. The same holds of a Markdown document given its injections through
 //! the C functions: its fences are drawn in their languages' captures over
@@ -327,6 +327,61 @@ fn toml_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
         "syntax.string",
         "syntax.punctuation.bracket",
         "syntax.comment",
+    ] {
+        assert!(drawn.iter().any(|(_, drawn)| drawn == face), "{face}");
+    }
+}
+
+/// The Lean fixture of programs in `do` notation.
+const PROGRAMS: &str = include_str!("../../../tests/syntax/lean/Programs.lean");
+
+#[test]
+fn lean_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    refresh_at_once();
+    let (document, source, faces) = highlighted("lean", PROGRAMS);
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert_eq!(
+        drawn(&document),
+        Some(fresh(&document, "lean", &source, &faces))
+    );
+
+    // A new definition, at the end.
+    let end = document.snapshot().len();
+    apply(&document, &[(end..end, "\ndef extra : Nat := 1\n")]);
+    // An insert inside a string.
+    let at = find(&document, "small\"") + "small".len();
+    assert!(document.replace(at, at, "ish"));
+    // A delete across lines: from inside `"zero"` to inside `"one"`, which
+    // leaves the strings' quotes paired, so what follows is still code.
+    let start = find(&document, "\"zero\"") + 2;
+    let stop = find(&document, "\"one\"") + 2;
+    assert!(document.replace(start, stop, ""));
+    // A line commented out.
+    let line = find(&document, "private def helper");
+    assert!(document.replace(line, line, "-- "));
+    // One transaction of several changes, in the text's order: an
+    // operator replaced, a definition renamed, and a theorem inserted.
+    let first = find(&document, "total > 10") + "total ".len();
+    let second = find(&document, "twice");
+    let third = find(&document, "def main");
+    apply(
+        &document,
+        &[
+            (first..first + 1, "≥"),
+            (second..second + "twice".len(), "thrice"),
+            (third..third, "theorem t : True := trivial\n\n"),
+        ],
+    );
+
+    assert!(settled_quiet(&document));
+    let drawn = drawn(&document).expect("highlights of the delivered tree");
+    assert_eq!(drawn, fresh(&document, "lean", &source, &faces));
+    // Something is drawn: a keyword, a string, a comment and an operator.
+    for face in [
+        "syntax.keyword",
+        "syntax.string",
+        "syntax.comment",
+        "syntax.operator",
     ] {
         assert!(drawn.iter().any(|(_, drawn)| drawn == face), "{face}");
     }

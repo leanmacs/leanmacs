@@ -337,6 +337,15 @@
 # `tree-sitter-language`: with the wrapper not yet there, it fails on the
 # new edge ("crate 'tree-sitter-language = 0.1.9' is explicitly banned").
 #
+# The Lean grammar, `tree-sitter-lean`, vendored under `vendor/` (2026-11-17,
+# the language-modes roadmap's phase 5), got its entry in the commit that
+# added it, with the adapter its one wrapper: with the wrapper naming another
+# crate, it fails on the adapter's edge ("crate 'tree-sitter-lean = 0.2.0' is
+# explicitly banned"). Bans match a path crate by its name, as they do a
+# registry crate. In the same commit it joined the wrappers of
+# `tree-sitter-language`: with the wrapper not yet there, it fails on the new
+# edge ("crate 'tree-sitter-language = 0.1.9' is explicitly banned").
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -391,7 +400,8 @@ deny = [
   { crate = "tree-sitter-json", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
   { crate = "tree-sitter-md", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
   { crate = "tree-sitter-toml-ng", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
-  { crate = "tree-sitter-language", wrappers = ["tree-sitter", "tree-sitter-rust", "tree-sitter-json", "tree-sitter-md", "tree-sitter-toml-ng"], reason = "the type a grammar crate hands its language in is between tree-sitter and its grammars: no crate of the workspace names it, the adapter handing each grammar's language straight to tree-sitter" },
+  { crate = "tree-sitter-lean", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
+  { crate = "tree-sitter-language", wrappers = ["tree-sitter", "tree-sitter-rust", "tree-sitter-json", "tree-sitter-md", "tree-sitter-toml-ng", "tree-sitter-lean"], reason = "the type a grammar crate hands its language in is between tree-sitter and its grammars: no crate of the workspace names it, the adapter handing each grammar's language straight to tree-sitter" },
   { crate = "streaming-iterator", wrappers = ["tree-sitter"], reason = "tree-sitter's query cursor iterates with it, and the adapter names it only through tree-sitter's re-export: no crate of the workspace depends on it" },
   { crate = "regex", wrappers = ["tree-sitter"], reason = "regular expressions are tree-sitter's, for a query's `#match?` predicates, behind the Syntax port: no crate of the workspace depends on it" },
   { crate = "wasmtime", reason = "grammars are compiled in (crates/editor-syntax-treesitter, \"How grammars are loaded\"): tree-sitter's `wasm` feature, which loads grammars built as WebAssembly, stays off" },

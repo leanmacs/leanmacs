@@ -1,6 +1,6 @@
 //! The tree-sitter adapter held to the syntax port's contract, once for
 //! each grammar compiled in: Rust, JSON, Markdown, Markdown's inline
-//! grammar and TOML.
+//! grammar, TOML and Lean.
 //!
 //! The check is `editor-syntax`'s, the same one its fake passes
 //! (`editor_syntax::contract::check`). Its incremental property drives a
@@ -207,6 +207,58 @@ const TOML: Corpus = Corpus {
     policy: ReparsePolicy::Incremental,
 };
 
+/// The Lean grammar's corpus. Its multibyte CRLF text has no string that
+/// a range of `IN_RANGES` starts inside: a range that starts on a
+/// multibyte character inside a string leaves an `ERROR` leaf that starts
+/// in the gap before it, which is tree-sitter's error recovery across
+/// included ranges and which the Rust grammar shows on the same cut.
+const LEAN: Corpus = Corpus {
+    grammar: "lean",
+    texts: &[
+        include_str!("../../../tests/syntax/lean/Basic.lean"),
+        include_str!("../../../tests/syntax/lean/Strings.lean"),
+        include_str!("../../../tests/syntax/lean/Programs.lean"),
+        include_str!("../../../tests/syntax/lean/broken.lean"),
+        "",
+        "def x := 1\n",
+        "def é : String := \"😀\"\r\n-- 漢\r\n",
+    ],
+    pieces: &[
+        "x",
+        " ",
+        "\n",
+        "(",
+        ")",
+        "{",
+        "}",
+        ":",
+        ":=",
+        "\"",
+        "|",
+        ".",
+        "1",
+        "-- c\n",
+        "def f := 1\n",
+        "fun x => x",
+        "é",
+    ],
+    query: "(structure name: (identifier) @name) @structure\n(str_lit) @string\n(line_comment) @comment\n",
+    query_names: &["name", "structure", "string", "comment"],
+    bad_queries: &[
+        ("((", QueryErrorKind::Syntax),
+        ("(no_such_kind) @x", QueryErrorKind::NodeType),
+        ("(def nope: (identifier)) @x", QueryErrorKind::Field),
+        ("((identifier) @x (#eq? @y \"a\"))", QueryErrorKind::Capture),
+        ("((identifier) @x (#eq? @x))", QueryErrorKind::Predicate),
+        ("(identifier (def)) @x", QueryErrorKind::Structure),
+    ],
+    unknown_kind_query: "(def) @d\n(no_such_kind) @x\n",
+    shipped: &[QueryKind::Highlights],
+    settings_query: "((str_lit) @s (#set! injection.language \"json\"))\n(def) @d\n",
+    settings: &[&[("injection.language", Some("json"))], &[]],
+    policy: ReparsePolicy::Incremental,
+};
+
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_rust() {
     assert_eq!(contract::check(&TreeSitter, &RUST), [""; 0]);
@@ -230,4 +282,9 @@ fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_markdown_inline()
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_toml() {
     assert_eq!(contract::check(&TreeSitter, &TOML), [""; 0]);
+}
+
+#[test]
+fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_lean() {
+    assert_eq!(contract::check(&TreeSitter, &LEAN), [""; 0]);
 }
