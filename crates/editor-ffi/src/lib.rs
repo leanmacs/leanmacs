@@ -343,10 +343,16 @@
 //! ([`diffs::editor_ffi_diffs_start`]); the script is taken by its id once
 //! its completion has arrived ([`diffs::editor_ffi_diffs_take`]), as words.
 //! A document applies one ([`transaction::editor_ffi_document_apply_script`]).
+//! A start for hunks ([`diffs::editor_ffi_diffs_start_hunks`]) asks for
+//! the hunks of whole lines instead ([`editor_diff::hunks`]), which a
+//! gutter marks; they are taken by their own take
+//! ([`diffs::editor_ffi_diffs_take_hunks`]), and a take of the other
+//! kind takes nothing.
 //!
 //! Tests: the unit tests of `diffs.rs`, on the port's fake (the order, a
-//! script taken once, cancelling, the limit reaching the script, and a
-//! script's words), and of `transaction.rs` for applying a script. On the
+//! script taken once, cancelling, the limit reaching the script, a
+//! script's words, a hunks request's words, and a take of the other kind),
+//! and of `transaction.rs` for applying a script. On the
 //! Lean side: `contract-test`'s diff properties, which run the real engine
 //! through the service on real files.
 //!
