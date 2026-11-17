@@ -15335,7 +15335,17 @@ def highlightEnterChecks : List Check :=
             match highlightedBy #[] ["listing", "other"] with
             | some (_, major, model) =>
               major == some "other" && model.texts.isEmpty && model.attached.isEmpty
-            | none => false }]
+            | none => false },
+    { name :=
+        "a major mode with no syntax tree set over the code mode on a buffer whose language has a tree detaches the text, which drops its highlights"
+      run :=
+        pure <|
+          match
+            highlightedBy Language.modes ["code", "listing"] (languages := #[Language.json])
+              (language := some "json") with
+          | some (_, major, model) =>
+            major == some "listing" && model.attached.isEmpty && model.highlighted.isEmpty
+          | none => false }]
 
 /-- A node of the indents query, for the indent rule's checks: its capture's
 name, where it starts, and its first and last rows. -/

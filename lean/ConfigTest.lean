@@ -3666,6 +3666,25 @@ def languageChecks (context : Context) : List Check :=
               let report ← reportedAfter session "open-txt"
               return report == some "none none".quote && (← asked.get).isEmpty },
     { name :=
+        "a major mode with no syntax tree set over the code mode of an opened .rs file detaches its text"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "main.rs"
+          IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
+          let plain :=
+            "  defineMode { name := \"plain\" }
+  command \"to-plain\" (do discard <| (← editorState).frame.focused.setMajorMode \"plain\")
+"
+          withLanguageHost context plain [("open-rs", path)] fun session asked => do
+              unless (← reportedAfter session "open-rs") == some "rust code".quote do
+                return false
+              let opened := (← asked.get).size
+              session.ask [.run "to-plain", .run "language-report"]
+              let report := (← session.scene).1
+              let requests ← asked.get
+              return report == "rust plain".quote &&
+                  (requests.extract opened requests.size).contains "detach" },
+    { name :=
         "config's language rust, over the shipped one, with its own highlights query, is the one an opened .rs file is highlighted with: its query is compiled in place of the shipped one, and its one capture drawn in its default face"
       run :=
         IO.FS.withTempDir fun files => do
