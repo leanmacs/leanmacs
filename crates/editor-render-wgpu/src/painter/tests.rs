@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Paint, Underline, UnderlineStyle};
-use editor_layout::frame::{Area, CursorBox, Frame, FrameRow, ViewFrame};
+use editor_layout::frame::{Area, CursorBox, Fill, Frame, FrameRow, ViewFrame};
 use editor_layout::scene::{
     Cursor, CursorShape, Decoration, Rect, Scene, Side, StatusField, ViewId,
 };
@@ -1373,4 +1373,110 @@ fn a_painter_says_which_masks_its_last_paint_asked_for() {
         cannot.paint(&shown, target(scale));
         assert_eq!(cannot.masks(), Some(Masks::Plain), "at {scale}");
     }
+}
+
+/// The colour of the pixel at `x`, `y` of `image`, as red, green, blue and
+/// alpha.
+fn pixel_at(image: &crate::Image, x: u32, y: u32) -> [u8; 4] {
+    let at = (y as usize * image.width as usize + x as usize) * 4;
+    [
+        image.rgba[at],
+        image.rgba[at + 1],
+        image.rgba[at + 2],
+        image.rgba[at + 3],
+    ]
+}
+
+/// What `frame` comes to on the CPU device, at the target of [`target`]
+/// at scale 1.
+fn composited(frame: &Frame) -> crate::Image {
+    let mut painter = painter();
+    let target = target(1.0);
+    painter.paint(frame, target);
+    let mut image = crate::cpu::cleared(target.width, target.height);
+    crate::cpu::composite(&mut image, painter.quads(), painter.atlas(), 0.0);
+    image
+}
+
+/// A view of no row at `x`, `y`, `width` by `height`, on `background`.
+fn view_at(id: u64, rect: Rect, background: Color) -> ViewFrame {
+    ViewFrame {
+        id: ViewId(id),
+        rect,
+        background,
+        ..view(Vec::new())
+    }
+}
+
+/// The rectangle `x`, `y`, `width` by `height`.
+fn rect(x: u32, y: u32, width: u32, height: u32) -> Rect {
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+#[test]
+fn a_divider_between_two_views_is_filled_in_its_colour_and_the_views_are_as_they_were() {
+    let views = vec![
+        view_at(1, rect(0, 0, 198, 100), WHITE),
+        view_at(2, rect(200, 0, 200, 100), GREEN),
+    ];
+    let divided = Frame {
+        dividers: vec![Fill {
+            rect: rect(198, 0, 2, 100),
+            color: RED,
+        }],
+        ..frame(views.clone())
+    };
+    let image = composited(&divided);
+    let red = [0xff, 0, 0, 0xff];
+    assert_eq!(pixel_at(&image, 198, 0), red);
+    assert_eq!(pixel_at(&image, 199, 99), red);
+    assert_eq!(pixel_at(&image, 197, 50), [0xff, 0xff, 0xff, 0xff]);
+    assert_eq!(pixel_at(&image, 200, 50), [0, 0xff, 0, 0xff]);
+    // Below the views and the divider the target is as it was cleared.
+    assert_eq!(pixel_at(&image, 198, 100), crate::cpu::CLEAR);
+    // Every pixel of the views is what it is with no divider.
+    let plain = composited(&frame(views));
+    for y in 0..100 {
+        for x in (0..198).chain(200..400) {
+            assert_eq!(
+                pixel_at(&image, x, y),
+                pixel_at(&plain, x, y),
+                "at {x}, {y}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_dividers_are_filled_first_so_a_view_over_one_covers_it_and_the_target_clips_them() {
+    let mut painter = painter();
+    let covered = Frame {
+        dividers: vec![
+            Fill {
+                rect: rect(10, 10, 20, 20),
+                color: RED,
+            },
+            Fill {
+                rect: rect(390, 0, 20, 400),
+                color: GREY,
+            },
+        ],
+        ..frame(vec![view_at(1, rect(0, 0, 100, 100), WHITE)])
+    };
+    painter.paint(&covered, target(1.0));
+    assert_eq!(
+        painter.quads().first().copied(),
+        Some(Quad::fill(10, 10, 20, 20, RED))
+    );
+    assert_eq!(
+        boxes(&quads_of(&painter, QuadKind::Fill, GREY)),
+        vec![(390, 0, 10, 300)]
+    );
+    let image = composited(&covered);
+    assert_eq!(pixel_at(&image, 15, 15), [0xff, 0xff, 0xff, 0xff]);
 }
