@@ -54,11 +54,13 @@ would put a regex behind a port.
 
 ## The general format
 
-`Format.general`, the one format that ships: GNU's `file:line:col: message`
-and `file:line: message`, with an optional `error`, `warning` or `note`
-after the location. The file stops at a colon, a space or a tab, so a
-compilation's header (`r@main in /r: make`), an indented help line and its
-last line are no locations. A line that names no severity is an error.
+`Format.general`, the format every run falls back to; the tool-specific
+formats (rustc's, Lean's) ship in `Editor/Compile/Shipped.lean`. It reads
+GNU's `file:line:col: message` and `file:line: message`, with an optional
+`error`, `warning` or `note` after the location. The file stops at a colon,
+a space or a tab, so a compilation's header (`r@main in /r: make`), an
+indented help line and its last line are no locations. A line that names
+no severity is an error.
 
 ## Reading, sites and `scan`
 
