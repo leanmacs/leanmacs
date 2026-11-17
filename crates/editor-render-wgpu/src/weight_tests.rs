@@ -161,22 +161,14 @@ pub(crate) fn sentence() -> (Frame, Target) {
         underline: None,
         strike_through: false,
     };
-    let row = FrameRow {
-        x: 0.0,
-        y: 0.0,
+    let line = Arc::new(VisualLine {
+        bytes: bytes.clone(),
+        glyphs,
+        width: MARGIN + SENTENCE.len() as f32 * advance,
         height: height as f32,
         baseline,
-        bytes: bytes.clone(),
-        line: Arc::new(VisualLine {
-            bytes: bytes.clone(),
-            glyphs,
-            width: MARGIN + SENTENCE.len() as f32 * advance,
-            height: height as f32,
-            baseline,
-        }),
-        runs: vec![(bytes, paint)],
-        hash: 1,
-    };
+    });
+    let row = FrameRow::text_row(0.0, 0.0, bytes.clone(), line, vec![(bytes, paint)], 1);
     let view = ViewFrame {
         id: ViewId(1),
         rect: Rect {

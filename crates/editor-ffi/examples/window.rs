@@ -2727,15 +2727,8 @@ mod tests {
         let white = Color::rgb(0xff, 0xff, 0xff);
         let rows = rows
             .iter()
-            .map(|fonts| FrameRow {
-                x: 0.0,
-                y: 0.0,
-                height: 16.0,
-                baseline: 12.0,
-                bytes: 0..fonts.len(),
-                line: line_in(fonts),
-                runs: Vec::new(),
-                hash: 0,
+            .map(|fonts| {
+                FrameRow::text_row(0.0, 0.0, 0..fonts.len(), line_in(fonts), Vec::new(), 0)
             })
             .collect();
         let status = status.map(|fonts| StatusRow {

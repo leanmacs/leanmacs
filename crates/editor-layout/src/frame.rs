@@ -270,6 +270,36 @@ pub struct FrameRow {
     pub hash: u64,
 }
 
+impl FrameRow {
+    /// A row of the view's text at `x` and `y`, of `bytes` of its
+    /// snapshot, drawing `line` with `runs`, as tall as `line` and on its
+    /// baseline, with the content hash `hash`.
+    ///
+    /// It is how the frame builds a text row, and it is published for the
+    /// tests of other crates: a renderer's test builds the rows it draws
+    /// through it, or from one it returns with `..`, so a field added to a
+    /// row breaks no test outside this crate.
+    pub fn text_row(
+        x: f32,
+        y: f32,
+        bytes: Range<usize>,
+        line: Arc<VisualLine>,
+        runs: Vec<(Range<usize>, Paint)>,
+        hash: u64,
+    ) -> Self {
+        Self {
+            x,
+            y,
+            height: line.height,
+            baseline: line.baseline,
+            bytes,
+            line,
+            runs,
+            hash,
+        }
+    }
+}
+
 /// One cursor of a view.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CursorBox {
@@ -1108,16 +1138,15 @@ impl<S: Shaper> Layout<S> {
                     _ => runs.push((run.bytes, paint)),
                 }
             }
-            frame.rows.push(FrameRow {
-                x: across,
+            let hash = hash(&line, &runs);
+            frame.rows.push(FrameRow::text_row(
+                across,
                 y,
-                height: line.height,
-                baseline: line.baseline,
                 bytes,
-                hash: hash(&line, &runs),
-                line: Arc::clone(&line),
+                Arc::clone(&line),
                 runs,
-            });
+                hash,
+            ));
             y += line.height;
         }
         // The cursors on the rows shown.
@@ -1368,6 +1397,26 @@ mod tests {
     /// The tops of `rows`.
     fn tops(rows: &[FrameRow]) -> Vec<f32> {
         rows.iter().map(|row| row.y).collect()
+    }
+
+    #[test]
+    fn a_text_row_built_by_hand_is_as_tall_as_its_line_and_equals_the_frames() {
+        let mut layout = layout();
+        let laid = frame(&mut layout, view("ab\ncd", 4, 64, 0, &[])).rows;
+        let second = &laid[1];
+        let built = FrameRow::text_row(
+            second.x,
+            second.y,
+            second.bytes.clone(),
+            Arc::clone(&second.line),
+            second.runs.clone(),
+            second.hash,
+        );
+        assert_eq!(&built, second);
+        assert_eq!(
+            (built.height, built.baseline),
+            (second.line.height, second.line.baseline)
+        );
     }
 
     #[test]

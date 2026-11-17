@@ -120,22 +120,14 @@ fn glyph(id: u32, cluster: usize, x: f32) -> Glyph {
 fn row(y: f32, glyphs: Vec<Glyph>, runs: Vec<(Range<usize>, Paint)>, hash: u64) -> FrameRow {
     let bytes = 0..glyphs.len();
     let width = glyphs.last().map_or(0.0, |last| last.x + last.advance);
-    FrameRow {
-        x: 0.0,
-        y,
+    let line = Arc::new(VisualLine {
+        bytes: bytes.clone(),
+        glyphs,
+        width,
         height: 16.0,
         baseline: 12.0,
-        bytes: bytes.clone(),
-        line: Arc::new(VisualLine {
-            bytes,
-            glyphs,
-            width,
-            height: 16.0,
-            baseline: 12.0,
-        }),
-        runs,
-        hash,
-    }
+    });
+    FrameRow::text_row(0.0, y, bytes, line, runs, hash)
 }
 
 /// A row at `y` of the glyphs `ids`, ten pixels apart, in the base paint.
