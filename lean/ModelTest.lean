@@ -8,6 +8,7 @@ import Editor.Command.Model
 import Editor.Compile.Compiled
 import Editor.Compile.Shipped
 import Editor.Completion.Contract
+import Editor.Completion.DisplayContract
 import Editor.Completion.Fake
 import Editor.Completion.StyleContract
 import Editor.Completion.Styles
@@ -151,6 +152,12 @@ predicate says, and a category picks its style. Its contract
 and the model (`styleContractChecks`), and seen to bite on a style that
 answers an index twice and on one with a range past its candidate's end;
 `contract-test` runs it against the fuzzy style over the real binding.
+
+The completion display interface (`Editor/Completion/Display.lean`) has
+its contract (`Editor/Completion/DisplayContract.lean`) run against the
+model, `Display.plain`, and the shipped minibuffer display at 0, 1, 3 and
+10 rows (`displayContractChecks`), and seen to bite on a display with a
+decoration past its row's end.
 
 The layouts (`Editor/Layout.lean`) are pure functions, checked by
 enumeration (`layoutChecks`): master-and-stack's rectangles tile the area
@@ -7462,6 +7469,33 @@ def styleContractChecks : List Check :=
                 (Array.range candidates.size).map fun index =>
                   { index, ranges := #[⟨0, ((candidates[index]?).getD "").utf8ByteSize + 1⟩] } }
         return (← styleBroken past) == [Completion.StyleContract.ranges] }]
+
+/-- The checks of the completion displays' contract
+(`Editor/Completion/DisplayContract.lean`): it holds of the model and of
+the shipped minibuffer display at 0, 1, 3 and 10 rows, and bites on a
+display written here with a decoration past its row's end. -/
+def displayContractChecks : List Check :=
+  [{  name :=
+        "every property of the display contract holds of the plain display over every showing of its table"
+      run :=
+        pure <|
+          (Completion.DisplayContract.failures (Completion.Display.plain "plain")).isEmpty &&
+            !Completion.DisplayContract.properties.isEmpty &&
+            Completion.DisplayContract.showings.any (·.listed.size == 30) },
+    { name :=
+        "the display contract reports a display with a decoration past its row's end, by its property of the decorations alone"
+      run :=
+        let past : Completion.Display :=
+          { name := "past"
+            sheet := fun showing =>
+              { rows :=
+                  showing.listed.map fun listed =>
+                    { text := listed.text
+                      decorations :=
+                        #[{ start := 0, stop := listed.text.utf8ByteSize + 1
+                            face := ⟨"minibuffer.candidate"⟩ }] } } }
+        pure <|
+          Completion.DisplayContract.failures past == [Completion.DisplayContract.decorations] }]
 
 /-- The syntax tree model knowing `texts`, as the snapshots `0`, `1` and so
 on, and the ids of those snapshots. -/
@@ -38645,6 +38679,7 @@ def checks : List Check :=
     fuzzyChecks ++
     styleChecks ++
     styleContractChecks ++
+    displayContractChecks ++
     syntaxTreeChecks ++
     guardChecks ++
     scrollChecks ++
