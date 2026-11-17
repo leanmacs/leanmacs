@@ -276,6 +276,13 @@ run = [
   # times closes two windows and is refused on the last, with the reason in
   # the echo area (`manual-splits/expected`). It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/manual-splits/config ../tests/headless/manual-splits/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/manual-splits/expected -",
+  # The dividers and the selected window's mode line (tests/headless/
+  # window-dividers), under the manual split layout and the Vim scheme's
+  # `C-w` keys: `C-w v` puts a divider between two side-by-side windows,
+  # `C-w s` adds one across the stacked pair, none is along the frame's
+  # edges, and `C-w C-w` moves `mode-line.active` to the window it focuses
+  # (`window-dividers/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/window-dividers/config ../tests/headless/window-dividers/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/window-dividers/expected -",
   # The window commands in insert state (tests/headless/insert-window-keys):
   # a config that binds every key of the Vim scheme's `C-w` table with
   # `bindKey`. `C-w v` puts view 1 on the right, under master-and-stack,

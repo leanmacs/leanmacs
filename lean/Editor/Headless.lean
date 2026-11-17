@@ -416,11 +416,15 @@ with its padding: the mode line's (`Loop.statusOf`, `Editor/ModeLine.lean`),
 which under the Vim scheme and the default order is the badge of the
 view's Vim state (`NORMAL` in `mode-line.state.normal`), the buffer's name,
 the modified mark while the buffer is modified and the directory its file
-was opened in, then its major mode, line:col and position; a window that
-is not selected prints `in mode-line.inactive` after its id, and has no
-badge. It is a line of its own, so the view's line keeps its form. It is
-how a script sees a view's state, its buffer's name, whether the buffer is
-modified and where the cursor is.
+was opened in, then its major mode, line:col and position; the selected
+window prints `in mode-line.active` after its id, and a window that is not
+selected `in mode-line.inactive`, and has no badge. It is a line of its
+own, so the view's line keeps its form. It is how a script sees a view's
+state, its buffer's name, whether the buffer is modified and where the
+cursor is. After the views comes one `divider` line for each divider
+between the tiled windows (`Scene.dividers`), in the scene's order: its
+top left, its size and its face, `divider 318,0 2x464 in window-divider`.
+A scene with no divider, one window's, prints none.
 
 A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>`,
@@ -1473,6 +1477,12 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
           s!"{decoration.face.name} {decoration.start}..{decoration.stop}"
       lines := lines.push s!"decorations {view.id.index}: {" ".intercalate spans.toList}"
     lines := lines.push (statusLine view.id view.status view.statusFace)
+  -- Only a scene that has dividers has their lines, so a scene of one
+  -- window prints as it did before there were any.
+  for divider in scene.dividers do
+    let rect := divider.rect
+    lines :=
+      lines.push s!"divider {rect.x},{rect.y} {rect.width}x{rect.height} in {divider.face.name}"
   return lines
 
 /-- Prints the last scene published, or that there is none. -/

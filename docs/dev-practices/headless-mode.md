@@ -439,13 +439,13 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 key arrived: i KeyI -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 2, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
-status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 reload 1: installed, 2 chunks, 1 commands
 spawn count: job 1
 job 1 count: ok
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 9, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
-status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 ```
 
 A fourth, `tests/headless/dispatch/script`, runs on a config of its own,
@@ -470,19 +470,19 @@ key arrived: s KeyS -
 key arrived: g KeyG control
 scene 0x0, focused 0, echo "Quit", echo padding 8, preedit -, published 3, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: m KeyM -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
 view 0 0,0 0x0: "mark", scroll 0, selections 4..4, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: d KeyD -
 job 1 double: started
 job 1 double: ok
 scene 0x0, focused 0, echo "doubled to 42", echo padding 8, preedit -, published 11, theme "default"
 view 0 0,0 0x0: "mark", scroll 0, selections 4..4, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 ```
 
 The status line after the first scene's view has the state's badge and the
@@ -512,13 +512,13 @@ reload 1: installed, 1 chunks, 1 commands
 run save-buffer: ok
 scene 0x0, focused 0, echo "scratch has no file to save to", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run open-relative: ok
 job 1 load-file: started
 job 1 load-file: ok
 scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", echo padding 8, preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 A sixth, `tests/headless/prompt/script`, asks for a prompt and answers it,
@@ -563,25 +563,25 @@ run ask-name: ok
 key arrived: ! Digit1 shift
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "Ada!", scroll 0, selections 4..4, padding 8 0
 status 1: minibuffer.prompt "Name: "
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "hello Ada!", echo padding 8, preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run ask-name: ok
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run open-file: ok
 key arrived: <Enter> Enter -
 job 1 load-file: started
 job 1 load-file: ok
 scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", echo padding 8, preedit -, published 15, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 A seventh, `tests/headless/evil-script`, runs on the first fixture's config
@@ -605,15 +605,15 @@ key arrived: l KeyL -
 key arrived: o KeyO -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
-status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 4..4, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
 key arrived: 0 Digit0 -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 10, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 The status line's first field is the badge of the view's Vim state, in the
@@ -645,23 +645,23 @@ key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "bogus: not an ex command", echo padding 8, preedit -, published 4, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run ex: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "scratch has no file to save to", echo padding 8, preedit -, published 10, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
 scene 0x0, focused 3, echo "", echo padding 8, preedit -, published 13, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,0 0x0: "e", scroll 0, selections 1..1, padding 8 0
 status 3: minibuffer.prompt ":", minibuffer.candidate "e", minibuffer.candidate "reload"
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
 scene 0x0, focused 4, echo "", echo padding 8, preedit -, published 18, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 4 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
 status 4: minibuffer.prompt "Open file: "
 key arrived: <Escape> Escape -
@@ -692,32 +692,32 @@ run pick: ok
 key arrived: w KeyW -
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "w", scroll 0, selections 1..1, padding 8 0
 status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.candidate "wq"
 key arrived: <Tab> Tab -
 key arrived: <Tab> Tab -
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "w", scroll 0, selections 1..1, padding 8 0
 status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.chosen "wq"
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked wq", echo padding 8, preedit -, published 8, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run pick: ok
 key arrived: z KeyZ -
 scene 0x0, focused 2, echo "", echo padding 8, preedit -, published 11, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 2 0,0 0x0: "z", scroll 0, selections 1..1, padding 8 0
 status 2: minibuffer.prompt "Pick: "
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked z", echo padding 8, preedit -, published 15, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 A tenth, `tests/headless/themes/script`, switches the theme, on the config
@@ -739,22 +739,22 @@ reload 1: installed, 1 chunks, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "first"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 7, theme "second"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 13, theme "solarized-dark"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 19, theme "fairy-floss"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 An eleventh, `tests/headless/shipped-themes/script`, runs on the config in
@@ -771,12 +771,12 @@ reload 1: installed, 1 chunks, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "solarized-light"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 7, theme "fairy-floss"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 A twelfth, `tests/headless/mode-line/script`, runs on the config in
@@ -796,22 +796,22 @@ segment: no segment is registered as `nope`
 key arrived: <F5> F5 -
 scene 0x0, focused 0, echo "reload: no segment is registered as `nope`", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: i KeyI -
 key arrived: a KeyA -
 key arrived: b KeyB -
 key arrived: c KeyC -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
 view 0 0,0 0x0: "abc", scroll 0, selections 3..3, padding 8 8
-status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:4" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:4" +4, mode-line.secondary "All" +4
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "default"
 view 0 0,0 0x0: "abc", scroll 0, selections 2..2, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 10, theme "default"
 view 0 0,0 0x0: "abc", scroll 0, selections 2..2, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "hi" +4, mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
 status 1: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "e", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload"
 ```
@@ -829,11 +829,11 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 1 chunks, 0 commands
 scene 640x480, focused 0, echo "", echo padding 12, preedit -, published 1, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 12 12
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
 scene 640x480, focused 1, echo "", echo padding 12, preedit -, published 3, theme "default"
 view 0 0,0 640x448: "", scroll 0, selections 0..0, padding 12 12
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,448 640x32: "", scroll 0, selections 0..0, padding 12 0
 status 1: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "e", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload"
 ```
@@ -854,21 +854,21 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 1 chunks, 2 commands
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: s KeyS -
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 4, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: o KeyO -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 7, theme "default"
 view 1 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: : Semicolon shift
 scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 9, theme "default"
 view 1 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 2 0,448 640x32: "", scroll 0, selections 0..0, padding 8 0
 status 2: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "w!", minibuffer.candidate "e", minibuffer.candidate "e!", minibuffer.candidate "autoread", minibuffer.candidate "noautoread", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload", minibuffer.candidate "b", minibuffer.candidate "ls", minibuffer.candidate "bd", minibuffer.candidate "compile", minibuffer.candidate "compile-command", minibuffer.candidate "recompile", minibuffer.candidate "kill-compilation", minibuffer.candidate "next-error", minibuffer.candidate "previous-error"
 ```
@@ -878,8 +878,8 @@ A fifteenth, `tests/headless/two-windows/script`, runs on the config in
 binds the same two keys as the monocle fixture's (each fixture's config
 directory is self-contained). In a frame of 640 by 120 it types twelve
 lines, more than a window shows, goes back to the first, and splits the
-window: views 0 and 1 are side by side, `0,0 320x104` and `320,0 320x104`,
-on one buffer, both at scroll 0. Then view 1 is focused and `G` takes its
+window: views 0 and 1 are side by side, `0,0 318x104` and `320,0 320x104`,
+with the divider `318,0 2x104` between them, on one buffer, both at scroll 0. Then view 1 is focused and `G` takes its
 cursor to the last line, its anchor following it down, and view 0, focused
 again, appends `,world` to its first line. The last scene shows both views
 with the edit; view 0 is still at scroll 0 with its cursor on the first
@@ -908,10 +908,11 @@ key arrived: g KeyG -
 key arrived: c KeyC control
 key arrived: s KeyS -
 scene 640x120, focused 0, echo "", echo padding 8, preedit -, published 30, theme "default"
-view 0 0,0 320x104: "hello\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+view 0 0,0 318x104: "hello\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 view 1 320,0 320x104: "hello\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 0..0, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "Top" +4
+divider 318,0 2x104 in window-divider
 key arrived: c KeyC control
 key arrived: o KeyO -
 key arrived: G KeyG shift
@@ -920,19 +921,21 @@ key arrived: o KeyO -
 key arrived: A KeyA shift
 key arrived: <Escape> Escape -
 scene 640x120, focused 0, echo "", echo padding 8, preedit -, published 39, theme "default"
-view 0 0,0 320x104: "hello,world\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 10..10, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:11" +4, mode-line.secondary "Top" +4
+view 0 0,0 318x104: "hello,world\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 10..10, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:11" +4, mode-line.secondary "Top" +4
 view 1 320,0 320x104: "hello,world\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 33, selections 42..42, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "12:1" +4, mode-line.inactive "Bot" +4
+divider 318,0 2x104 in window-divider
 ```
 
 A sixteenth, `tests/headless/manual-splits/script`, runs on the config in
 `tests/headless/manual-splits/config`, which chooses the manual split layout
 (`layout Layout.manual`) and binds no key: the window commands are reached
 by the keys the Vim scheme ships under `C-w`. In a frame of 640 by 480,
-`C-w s` puts view 1 above view 0 and focuses it, each `0,0 640x232` and
-`0,232 640x232`; `C-w v` puts view 2 left of view 1 and focuses it, each
-`320x232`, view 0's row as it was; `C-w j` focuses view 0, below; `C-w C-w`
+`C-w s` puts view 1 above view 0 and focuses it, `0,0 640x230` and
+`0,232 640x232`, the upper one giving up the divider `0,230 640x2`; `C-w v`
+puts view 2 left of view 1 and focuses it, `0,0 318x230` and
+`320,0 320x230`, with a divider down between them, view 0's row as it was; `C-w j` focuses view 0, below; `C-w C-w`
 wraps from view 0, the last in Vim's numbering, to view 2, the first; and
 `C-w C-c` three times closes view 2 and view 1 and is refused on view 0,
 the last, which takes the whole tiled area, with
@@ -945,37 +948,47 @@ reload 1: installed, 1 chunks, 0 commands
 key arrived: w KeyW control
 key arrived: s KeyS -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
-view 1 0,0 640x232: "", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 640x230: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 0 0,232 640x232: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 0,230 640x2 in window-divider
 key arrived: w KeyW control
 key arrived: v KeyV -
 scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 6, theme "default"
-view 2 0,0 320x232: "", scroll 0, selections 0..0, padding 8 8
-status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 320,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+view 2 0,0 318x230: "", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 320,0 320x230: "", scroll 0, selections 0..0, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 0 0,232 640x232: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 318,0 2x232 in window-divider
+divider 0,230 318x2 in window-divider
+divider 320,230 320x2 in window-divider
 key arrived: w KeyW control
 key arrived: j KeyJ -
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 9, theme "default"
-view 2 0,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+view 2 0,0 318x230: "", scroll 0, selections 0..0, padding 8 8
 status 2 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
-view 1 320,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+view 1 320,0 320x230: "", scroll 0, selections 0..0, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 0 0,232 640x232: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+divider 318,0 2x232 in window-divider
+divider 0,230 318x2 in window-divider
+divider 320,230 320x2 in window-divider
 key arrived: w KeyW control
 key arrived: w KeyW control
 scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 12, theme "default"
-view 2 0,0 320x232: "", scroll 0, selections 0..0, padding 8 8
-status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 320,0 320x232: "", scroll 0, selections 0..0, padding 8 8
+view 2 0,0 318x230: "", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 320,0 320x230: "", scroll 0, selections 0..0, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 0 0,232 640x232: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 318,0 2x232 in window-divider
+divider 0,230 318x2 in window-divider
+divider 320,230 320x2 in window-divider
 key arrived: w KeyW control
 key arrived: c KeyC control
 key arrived: w KeyW control
@@ -984,7 +997,7 @@ key arrived: w KeyW control
 key arrived: c KeyC control
 scene 640x480, focused 0, echo "window-close: the last window cannot be closed", echo padding 8, preedit -, published 19, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 A seventeenth, `tests/headless/insert-window-keys/script`, runs on the
@@ -1009,22 +1022,25 @@ key arrived: i KeyI -
 key arrived: w KeyW control
 key arrived: h KeyH -
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 7, theme "default"
-view 0 0,0 320x464: "ab", scroll 0, selections 2..2, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
+view 0 0,0 318x464: "ab", scroll 0, selections 2..2, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
 view 1 320,0 320x464: "ab", scroll 0, selections 2..2, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:3" +4, mode-line.inactive "All" +4
+divider 318,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: l KeyL -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 10, theme "default"
-view 0 0,0 320x464: "ab", scroll 0, selections 2..2, padding 8 8
+view 0 0,0 318x464: "ab", scroll 0, selections 2..2, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:3" +4, mode-line.inactive "All" +4
 view 1 320,0 320x464: "ab", scroll 0, selections 2..2, padding 8 8
-status 1: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
+status 1 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:3" +4, mode-line.secondary "All" +4
+divider 318,0 2x464 in window-divider
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 12, theme "default"
-view 0 0,0 320x464: "abc", scroll 0, selections 3..3, padding 8 8
+view 0 0,0 318x464: "abc", scroll 0, selections 3..3, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:4" +4, mode-line.inactive "All" +4
 view 1 320,0 320x464: "abc", scroll 0, selections 3..3, padding 8 8
-status 1: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:4" +4, mode-line.secondary "All" +4
+status 1 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:4" +4, mode-line.secondary "All" +4
+divider 318,0 2x464 in window-divider
 ```
 
 An eighteenth, `tests/headless/insert-word-delete/script`, runs on the
@@ -1041,11 +1057,11 @@ key arrived: i KeyI -
 key arrived: w KeyW control
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 4, theme "default"
 view 0 0,0 640x464: "hello ", scroll 0, selections 6..6, padding 8 8
-status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:7" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:7" +4, mode-line.secondary "All" +4
 key arrived: l KeyL -
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
 view 0 0,0 640x464: "hello l", scroll 0, selections 7..7, padding 8 8
-status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:8" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:8" +4, mode-line.secondary "All" +4
 ```
 
 A nineteenth, `tests/headless/display-rules/script`, runs on the config in
@@ -1068,36 +1084,41 @@ reload 1: installed, 1 chunks, 1 commands
 rule: display rule 1 is left out: the layout has no right edge
 scene 640x480, focused 0, echo "reload: display rule 1 is left out: the layout has no right edge", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: i KeyI -
 key arrived: <Escape> Escape -
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 10, theme "default"
-view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
+view 0 0,0 318x464: "draft", scroll 0, selections 4..4, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
 view 2 320,0 320x464: "  scratch\n", scroll 0, selections 0..0, padding 8 8
-status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+divider 318,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: h KeyH -
 key arrived: c KeyC control
 key arrived: n KeyN -
 scene 640x480, focused 3, echo "", echo padding 8, preedit -, published 15, theme "default"
-view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
+view 0 0,0 318x464: "draft", scroll 0, selections 4..4, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
-view 2 320,0 320x232: "  scratch\n", scroll 0, selections 0..0, padding 8 8
+view 2 320,0 320x230: "  scratch\n", scroll 0, selections 0..0, padding 8 8
 status 2 in mode-line.inactive: mode-line.inactive "buffer-list" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 3 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
-status 3: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 3 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+divider 318,0 2x464 in window-divider
+divider 320,230 320x2 in window-divider
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 21, theme "default"
-view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
+view 0 0,0 318x464: "draft", scroll 0, selections 4..4, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
-view 2 320,0 320x232: "  notes\n  scratch\n", scroll 0, selections 18..18, padding 8 8
-status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4, mode-line.modified "●" +4 | mode-line.secondary "3:1" +4, mode-line.secondary "Bot" +4
+view 2 320,0 320x230: "  notes\n  scratch\n", scroll 0, selections 18..18, padding 8 8
+status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4, mode-line.modified "●" +4 | mode-line.secondary "3:1" +4, mode-line.secondary "Bot" +4
 view 3 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
 status 3 in mode-line.inactive: mode-line.inactive "notes" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 318,0 2x464 in window-divider
+divider 320,230 320x2 in window-divider
 ```
 
 A twentieth, `tests/headless/edge-sidebar/script`, runs on the config in
@@ -1121,55 +1142,61 @@ key arrived: n KeyN -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
 view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
-view 1 0,0 160x464: "a note", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 158x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+divider 158,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: l KeyL -
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
 view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 160x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 158x464: "a note", scroll 0, selections 0..0, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "notes" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 158,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: h KeyH -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 9, theme "default"
 view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
-view 1 0,0 160x464: "a note", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 158x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+divider 158,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: H KeyH shift
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 12, theme "default"
-view 0 0,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+view 0 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 320,0 320x464: "a note", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+divider 318,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: H KeyH shift
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 15, theme "default"
 view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
-view 1 0,0 160x464: "a note", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 158x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+divider 158,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: m KeyM -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 18, theme "default"
-view 1 0,0 320x464: "a note", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 318x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 0 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 318,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: H KeyH shift
 key arrived: w KeyW control
 key arrived: c KeyC control
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 23, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: w KeyW control
 key arrived: H KeyH shift
 scene 640x480, focused 0, echo "window-edge-left: the last tiled window cannot leave the tiles", echo padding 8, preedit -, published 26, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
 A twenty-first, `tests/headless/float-rule/script`, runs on the config in
@@ -1195,24 +1222,24 @@ scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 128,116 384x232: "a note", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: w KeyW control
 key arrived: p KeyP control
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
 key arrived: m KeyM -
 scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 9, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 2 128,116 384x232: "a memo", scroll 0, selections 0..0, padding 8 8
-status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "memo" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "memo" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: w KeyW control
 key arrived: p KeyP control
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 12, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 2 128,116 384x232: "a memo", scroll 0, selections 0..0, padding 8 8
 status 2 in mode-line.inactive: mode-line.inactive "memo" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 key arrived: w KeyW control
@@ -1220,10 +1247,11 @@ key arrived: w KeyW control
 key arrived: w KeyW control
 key arrived: F KeyF shift
 scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 17, theme "default"
-view 0 0,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+view 0 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 2 320,0 320x464: "a memo", scroll 0, selections 0..0, padding 8 8
-status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "memo" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "memo" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+divider 318,0 2x464 in window-divider
 ```
 
 A twenty-second, `tests/headless/float-anchor/script`, runs on the config
@@ -1255,13 +1283,13 @@ key arrived: c KeyC control
 key arrived: h KeyH -
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 11, theme "default"
 view 0 0,0 640x464: "line00\nline01\nline02\nline03\nline04\nline05\nline06\nline07\nline08\nline09\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51\nline52\nline53\nline54\nline55\nline56\nline57\nline58\nline59\nline60\nline61\nline62\nline63\nline64\nline65\nline66\nline67\nline68\nline69\nline70\nline71\nline72\nline73\nline74\nline75\nline76\nline77\nline78\nline79", scroll 0, selections 18..18, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "3:5" +4, mode-line.secondary "3%" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "3:5" +4, mode-line.secondary "3%" +4
 view 1 40,56 320x116: "a hint", scroll 0, selections 0..0, padding 8 8
 status 1 in mode-line.inactive: mode-line.inactive "hint" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 key arrived: f KeyF control
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 13, theme "default"
 view 0 0,0 640x464: "line00\nline01\nline02\nline03\nline04\nline05\nline06\nline07\nline08\nline09\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51\nline52\nline53\nline54\nline55\nline56\nline57\nline58\nline59\nline60\nline61\nline62\nline63\nline64\nline65\nline66\nline67\nline68\nline69\nline70\nline71\nline72\nline73\nline74\nline75\nline76\nline77\nline78\nline79", scroll 189, selections 207..207, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "30:5" +4, mode-line.secondary "37%" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "30:5" +4, mode-line.secondary "37%" +4
 key arrived: 2 Digit2 -
 key arrived: 4 Digit4 -
 key arrived: j KeyJ -
@@ -1269,7 +1297,7 @@ key arrived: c KeyC control
 key arrived: h KeyH -
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 19, theme "default"
 view 0 0,0 640x464: "line00\nline01\nline02\nline03\nline04\nline05\nline06\nline07\nline08\nline09\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51\nline52\nline53\nline54\nline55\nline56\nline57\nline58\nline59\nline60\nline61\nline62\nline63\nline64\nline65\nline66\nline67\nline68\nline69\nline70\nline71\nline72\nline73\nline74\nline75\nline76\nline77\nline78\nline79", scroll 189, selections 375..375, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "54:5" +4, mode-line.secondary "67%" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "54:5" +4, mode-line.secondary "67%" +4
 view 2 40,308 320x116: "a hint", scroll 0, selections 0..0, padding 8 8
 status 2 in mode-line.inactive: mode-line.inactive "hint" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 ```
@@ -1299,15 +1327,16 @@ reload 1: installed, 1 chunks, 0 commands
 key arrived: w KeyW control
 key arrived: s KeyS -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
-view 0 0,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+view 0 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+divider 318,0 2x464 in window-divider
 key arrived: w KeyW control
 key arrived: c KeyC -
 scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 6, theme "default"
 view 2 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
-status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
 decorations 3: tab-bar 0..11 tab-bar.selected 12..23
 status 3: -
@@ -1317,25 +1346,26 @@ key arrived: w KeyW control
 key arrived: z KeyZ -
 scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 11, theme "default"
 view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
-status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
 decorations 3: tab-bar 0..11 tab-bar.selected 12..23
 status 3: -
 key arrived: w KeyW control
 key arrived: p KeyP -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 14, theme "default"
-view 0 0,0 320x448: "", scroll 0, selections 0..0, padding 8 8
+view 0 0,0 318x448: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 320,0 320x448: "", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
 decorations 3: tab-bar.selected 0..11 tab-bar 12..23
 status 3: -
+divider 318,0 2x448 in window-divider
 key arrived: w KeyW control
 key arrived: n KeyN -
 scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 17, theme "default"
 view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
-status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
 decorations 3: tab-bar 0..11 tab-bar.selected 12..23
 status 3: -
@@ -1343,7 +1373,7 @@ key arrived: w KeyW control
 key arrived: 3 Digit3 -
 scene 640x480, focused 4, echo "tab-select-3: there is no tab 3", echo padding 8, preedit -, published 20, theme "default"
 view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
-status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
 decorations 3: tab-bar 0..11 tab-bar.selected 12..23
 status 3: -
@@ -1352,7 +1382,7 @@ key arrived: r KeyR -
 key arrived: <Enter> Enter -
 scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 26, theme "default"
 view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
-status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,448 640x16: " 1 scratch   2 notes ", scroll 0, selections , padding 8 0
 decorations 3: tab-bar 0..11 tab-bar.selected 12..21
 status 3: -
@@ -1360,7 +1390,7 @@ key arrived: c KeyC control
 key arrived: m KeyM -
 scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 29, theme "default"
 view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
-status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,448 640x16: " 1 scratch   2 notes ", scroll 0, selections , padding 8 0
 decorations 3: tab-bar 0..11 tab-bar.selected 12..21
 status 3: -
@@ -1368,23 +1398,74 @@ key arrived: w KeyW control
 key arrived: w KeyW -
 key arrived: <Enter> Enter -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 35, theme "default"
-view 0 0,0 320x448: "", scroll 0, selections 0..0, padding 8 8
+view 0 0,0 318x448: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 view 1 320,0 320x448: "", scroll 0, selections 0..0, padding 8 8
-status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,448 640x16: " 1 scratch   2 notes ", scroll 0, selections , padding 8 0
 decorations 3: tab-bar.selected 0..11 tab-bar 12..21
 status 3: -
+divider 318,0 2x448 in window-divider
 key arrived: w KeyW control
 key arrived: & Digit7 shift
 scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 38, theme "default"
 view 4 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: w KeyW control
 key arrived: & Digit7 shift
 scene 640x480, focused 4, echo "tab-close: the last tab cannot be closed", echo padding 8, preedit -, published 41, theme "default"
 view 4 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
-status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+```
+
+A twenty-fourth, `tests/headless/window-dividers/script`, runs on the
+config in `tests/headless/window-dividers/config`, which chooses the manual
+split layout and binds no key. In a frame of 640 by 480, `C-w v` puts view
+1 left of view 0 and focuses it: view 1 gives up 2 pixels at its right,
+`0,0 318x464`, and the scene's one divider is that strip,
+`divider 318,0 2x464 in window-divider`, with none along the frame's
+edges. `C-w s` splits view 1 and focuses the new view 2 above it, which
+gives up 2 pixels at its right and at its foot, `0,0 318x230`: three
+dividers, down the column's right beside each view and across between
+them. The selected window's status line says `in mode-line.active`, and
+`C-w C-w` moves it to view 1. Its output must be exactly
+`tests/headless/window-dividers/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/window-dividers/config ../tests/headless/window-dividers/script
+reload 1: installed, 1 chunks, 0 commands
+key arrived: w KeyW control
+key arrived: v KeyV -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
+view 1 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 0 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 318,0 2x464 in window-divider
+key arrived: w KeyW control
+key arrived: s KeyS -
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 2 0,0 318x230: "", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,232 318x232: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 0 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 318,0 2x232 in window-divider
+divider 0,230 318x2 in window-divider
+divider 318,232 2x232 in window-divider
+key arrived: w KeyW control
+key arrived: w KeyW control
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 9, theme "default"
+view 2 0,0 318x230: "", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 0,232 318x232: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 0 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 318,0 2x232 in window-divider
+divider 0,230 318x2 in window-divider
+divider 318,232 2x232 in window-divider
 ```
 
 Two more runs of the gate are on a real file, and so on a script that
@@ -1562,7 +1643,8 @@ After each view's line comes its status line, one entry a
 field, each the field's face, its text and, when it has one, its padding
 in points after `+`: the left fields, then ` | ` and the right fields when
 there are any. A view with a status face prints it after its id, as `in
-mode-line.inactive` for a window that is not selected. Under the default
+mode-line.active` for the selected window and `in mode-line.inactive` for
+one that is not. Under the default
 mode line (`Editor/ModeLine.lean`) the left side is the badge of the
 view's Vim state (`NORMAL` in `mode-line.state.normal`), the buffer's name
 in `mode-line.buffer`, while the buffer is modified `●` in

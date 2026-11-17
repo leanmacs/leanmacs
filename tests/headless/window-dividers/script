@@ -1,0 +1,34 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which chooses the manual split layout and binds no
+# key: the window commands are reached by the Vim scheme's own `C-w` keys.
+# It shows the dividers taken out between tiled windows, 2 pixels wide in
+# `window-divider`, and the selected window's status row in
+# `mode-line.active` following the focus. What it prints must be exactly
+# `expected`. It touches no file.
+
+reload
+settle
+
+# A frame of 640 by 480: the tiled area is 640 by 464, above the bottom row.
+resize 640 480
+
+# `C-w v` splits the window side by side: the new one, view 1, is on the
+# left and focused. It gives up the divider's 2 pixels at its right, and the
+# divider is that strip, the tiled area's height; none is along the frame's
+# edges.
+key w KeyW control
+key v KeyV -
+scene
+
+# `C-w s` splits view 1: the new one, view 2, is above it and focused. View
+# 2 gives up 2 pixels at its right and at its foot, view 1 at its right, so
+# there are three dividers: two down the column's right and one across it.
+key w KeyW control
+key s KeyS -
+scene
+
+# `C-w C-w` focuses the next window, view 1: its status row is now in
+# `mode-line.active`, and view 2's in `mode-line.inactive`.
+key w KeyW control
+key w KeyW control
+scene

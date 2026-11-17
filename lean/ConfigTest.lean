@@ -1634,7 +1634,8 @@ which the test scheme reports nothing, with its cursor at `cursor` (a row
 and a column in cells) in a text of `lines` rows, and with its file found
 changed on disk by a check when `changed`: what the host prints
 (`Headless.statusLine`) of the fields the shipped mode line gives such a
-view (`ModeLine.standard`). So a check that compares a host's whole output
+view (`ModeLine.standard`), its row in `mode-line.active`
+(`Loop.statusOf`). So a check that compares a host's whole output
 repeats neither the mode line's faces and texts nor the host's form. Each
 call site passes the cursor its printed `selections` imply and the rows its
 text has, since the line:col and the position segments read them. The
@@ -1654,6 +1655,7 @@ def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := 
           { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 }
             changed := if changed then some { found := none, told := true } else none } }
   Headless.statusLine ⟨view⟩ (ModeLine.standard.fields { buffer, cursor := some cursor, lines })
+    (some ModeLine.activeFace)
 
 /-- Whether `output` has a line that says a job registered under `name`
 ended ok, whatever its id: the loop's own checks of files shift the ids of
@@ -1821,7 +1823,7 @@ def scriptChecks (context : Context) : List Check :=
               output.filter (fun line => !line.startsWith "scene " && !line.startsWith "view ") ==
                 #["reload 1: installed, 1 chunks, 0 commands",
                   "segment: no segment is registered as `nope`",
-                  "status 0: mode-line.buffer \"scratch\" +4 | mode-line.secondary \"hi\" +4, mode-line.secondary \"1:3\" +4"] &&
+                  "status 0 in mode-line.active: mode-line.buffer \"scratch\" +4 | mode-line.secondary \"hi\" +4, mode-line.secondary \"1:3\" +4"] &&
               output.any fun line =>
                 line.startsWith "scene " &&
                   (line.splitOn

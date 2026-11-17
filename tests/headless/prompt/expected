@@ -3,22 +3,22 @@ run ask-name: ok
 key arrived: ! Digit1 shift
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 1 0,0 0x0: "Ada!", scroll 0, selections 4..4, padding 8 0
 status 1: minibuffer.prompt "Name: "
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "hello Ada!", echo padding 8, preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run ask-name: ok
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 run open-file: ok
 key arrived: <Enter> Enter -
 job 1 load-file: started
 job 1 load-file: ok
 scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", echo padding 8, preedit -, published 15, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
