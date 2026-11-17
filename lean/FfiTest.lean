@@ -3037,6 +3037,8 @@ def themePicture (font : ByteArray) (theme : Editor.Theme) (text selectedIn : St
             cursor := { shape := .block, face := selected.getD unthemedFace }
             decorations := #[]
             status := themeStatus selectedIn (head + 3)
+            -- A selected window's row, as the loop gives it (`Loop.statusOf`).
+            statusFace := some Editor.ModeLine.activeFace
             -- The editor's frame padding at scale 1 (`Loop.padding`).
             padding := { across := Editor.Loop.padding, down := Editor.Loop.padding } }]
       focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
