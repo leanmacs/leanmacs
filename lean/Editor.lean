@@ -1,7 +1,6 @@
 import Editor.Api.Theorems
 import Editor.Buffers
 import Editor.Command.Append
-import Editor.DisplayRules
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
@@ -33,7 +32,10 @@ editor state a buffer's history is part of), the events the editor queue
 delivers, as plain data (`Editor/Event.lean`), the scene Lean publishes to
 the display (`Editor/Scene.lean`) and the display interface it is published
 through (`Editor/Display.lean`), and what config registers
-with (`setup` and stores, `Editor/Setup.lean`). The job port
+with (`setup` and stores, `Editor/Setup.lean`). The display rules
+(`Editor/DisplayRules.lean`) come with `Editor/Setup.lean`, which adds one
+with `displayRule`, and with the editor state: a command of config's shows
+a buffer it made where they say with `BufferId.display`. The job port
 (`Editor/Job.lean`) comes with `Editor/Setup.lean`, which registers jobs,
 and with the job port the file requests a job makes (`Editor/File.lean`):
 config loads and saves files with `File.load` and `File.save`, and the
