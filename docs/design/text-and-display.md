@@ -1660,7 +1660,10 @@ echo area, the preedit, and the prompt that is open, if one is.
     name, which the caller passes, since a call carries none), and a
     target: the focused window, main, the stack, an edge, a float or a new
     tab. It matches when every field it sets holds; the first that matches
-    is chosen, and with none the fallback, the stack, focused.
+    is chosen, and with none the fallback, the stack, focused unless the
+    caller says otherwise: `BufferId.display` takes a default focus
+    (`focus`, `true` unless given) that only the fallback takes, so a rule
+    that matches keeps its own (decided 2026-11-17).
   - **A window of the frame that shows the buffer already is used first**,
     whatever the rules say (Emacs's `display-buffer-reuse-window`), so
     `ls` twice reuses the list's window and the buffer being edited never
@@ -1673,12 +1676,14 @@ echo area, the preedit, and the prompt that is open, if one is.
     them.
   - **What routes through them**: `list-buffers`'s list, `:!`'s output
     buffer (opener `shell-command`, so by default it opens in the stack and
-    the window the line was asked from keeps its buffer; `Editor/Shell.lean`)
-    and the buffers config's commands make. The compilation buffer does
-    not yet: `compile` and `recompile` split the asking window for it,
-    the focus staying ([keymaps-and-modes.md](keymaps-and-modes.md), "The
-    compile mode, as built"). `open-file`, `switch-buffer`, `edit-file`,
-    `close-buffer`'s fallback and `window-new` still show in the window
+    the window the line was asked from keeps its buffer; `Editor/Shell.lean`),
+    the compilation buffer (openers `compile` and `recompile`, with the
+    mode `compilation` set before it is displayed so a mode rule can match
+    it, and `false` as the default focus, so by default it opens in the
+    stack and the focus stays where compile was asked from;
+    [keymaps-and-modes.md](keymaps-and-modes.md), "The compile mode, as
+    built"), and the buffers config's commands make. `open-file`,
+    `switch-buffer`, `edit-file`, `close-buffer`'s fallback and `window-new` still show in the window
     they act on: a file opened or a buffer switched to is the one being
     edited.
 - **The tiled area is the frame above the minibuffer's strip**

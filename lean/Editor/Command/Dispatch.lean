@@ -124,6 +124,15 @@ from the next command.
   action of each mode of its lineage runs, root first, each once, with the
   view, before the command goes on with its reply. Setting the major mode
   the buffer already has runs nothing.
+- **Setting a buffer's major mode by its id**
+  (`StateRequest.setBufferMajorMode`) needs no window: it is refused with
+  `noSuchBuffer` for a buffer there is none of, and then with `noSuchMode`,
+  each with the state as it was and nothing run. Otherwise it is set as
+  above, and the lineage's on-enter actions run once with each view that
+  shows the buffer, in the order of the state's windows, and with none for
+  a buffer no window shows. The compilation buffer is given its mode this
+  way before it is displayed, so a display rule can match the mode
+  (`Editor/Compile.lean`).
 - **A major mode with a syntax tree is highlighted first.** When the new
   lineage says how its text is parsed and drawn (`Mode.syntaxTreeOf`), the
   loop runs `Highlight.enter` for the buffer's text before the on-enter
@@ -327,6 +336,23 @@ compiler is shown for `Program.dispatched`, which is `partial`. -/
 instance {α : Type} : Inhabited (Program editorPort (Guarded α × EditorState)) :=
   ⟨.done (.interrupted, EditorState.none)⟩
 
+/-- What runs when the mode `name`, of `lineage` (root first), has become
+the major mode of a buffer over `text` whose old major mode said
+`before` of how its text is parsed: the text highlighted with the new
+lineage's syntax tree, or detached when only the old said one, then the
+lineage's on-enter actions, root first, once with each of `views`. -/
+def enteringMode (name : String) (text : TextId) (lineage : List Mode)
+    (before : Option Mode.SyntaxTree) (views : List ViewId) : EditorM Unit := do
+  match Mode.syntaxTreeOf lineage, before with
+  | some syntaxTree, _ =>
+    Highlight.enter name text syntaxTree
+  | none, some _ =>
+    Highlight.leave text
+  | none, none =>
+    pure ()
+  for view in views do
+    lineage.forM (·.onEnter view)
+
 /-- `program`, a command's, with its state requests answered from `state`,
 each from the state the one before left, and the interrupt flag asked
 before each of its other requests: how the command ended, and the state it
@@ -336,8 +362,9 @@ ends the program there, with its reason and the state it had reached ("A
 command that gives up", in the module docs), and so does a request to
 break off ("A command that breaks off").
 
-A request to set a major mode is answered with what `registered` says of
-the mode ("Requests that name something registered", in the module docs):
+A request to set a major mode, of a view's buffer or of a buffer by its id,
+is answered with what `registered` says of the mode ("Requests that name
+something registered", in the module docs):
 the on-enter actions it runs are put before the rest of the program. A
 request to start a job and one for an ex binding are answered with what
 `registered` says of the name, and for a request to run a command the
@@ -356,16 +383,24 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       let before := (target.buffer.major.bind registered.entering).bind Mode.syntaxTreeOf
       match state.handle (.setMajorMode view name) with
       | (.ok true, state) =>
-        let highlighting : EditorM Unit :=
-          match Mode.syntaxTreeOf lineage, before with
-          | some syntaxTree, _ => Highlight.enter name target.buffer.text syntaxTree
-          | none, some _ => Highlight.leave target.buffer.text
-          | none, none => pure ()
-        let entering : EditorM Unit := do
-          highlighting
-          lineage.forM (·.onEnter view)
         dispatched registered state do
-          match ← entering.run with
+          match ← (enteringMode name target.buffer.text lineage before [view]).run with
+          | .ok () =>
+            next (.ok true)
+          | .error error =>
+            pure (.error error)
+      | (reply, state) => dispatched registered state (next reply)
+  | state, .step (.state (.setBufferMajorMode id name)) next =>
+    match state.buffer? id, registered.entering name with
+    | none, _ => dispatched registered state (next (.error (.noSuchBuffer id)))
+    | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
+    | some buffer, some lineage =>
+      let before := (buffer.major.bind registered.entering).bind Mode.syntaxTreeOf
+      let views := (state.windows.filter (·.buffer == id)).toList.map (·.id)
+      match state.handle (.setBufferMajorMode id name) with
+      | (.ok true, state) =>
+        dispatched registered state do
+          match ← (enteringMode name buffer.text lineage before views).run with
           | .ok () =>
             next (.ok true)
           | .error error =>

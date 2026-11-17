@@ -3159,8 +3159,18 @@ buffer while editing goes on.
   `Compilation <how> after <s>.<tenths> s`, with Emacs's words for how:
   `finished`, `exited abnormally with code <n>`, `killed by signal <n>`,
   `killed`, or `stopped: <why>` and `could not start: <why>`. The echo area
-  says the same with the label. When no view shows the buffer, the asking
-  view is split and the new view below shows it, the focus staying.
+  says the same with the label. A buffer made for the run is given the
+  major mode `compilation` before it is shown, so a display rule can match
+  the mode. It is shown where config's display rules say, for the opener
+  `compile` or `recompile` ([text-and-display.md](text-and-display.md),
+  "Views as built"): a window that shows it already is reused, so a
+  recompile while it is open opens nothing; with no rule that matches, it
+  opens in a new window at the end of the tiled list, the stack, and the
+  focus stays in the window compile was asked from, as it did when compile
+  split that window. A rule that matches keeps its own focus, so
+  `displayRule { mode := some "compilation", target := .edge .bottom,
+  focus := false }` docks it at the bottom edge with the focus staying
+  (decided 2026-11-17).
 - **Streaming.** The run is a job keyed by its scope. It reads the child a
   delivery at a time and posts each batch of lines to the editor as it
   comes (`post`, [concurrency.md](concurrency.md), "Getting results
@@ -3518,7 +3528,9 @@ which run the executable on a real file.
   buffer a command makes is shown, matched on its modes, its name and the
   command that opened it ([text-and-display.md](text-and-display.md),
   "Views as built"). A config command shows a buffer it made with
-  `BufferId.display buffer view "its-name"`. A rule whose target does not
+  `BufferId.display buffer view "its-name"`, adding `(focus := false)` to
+  leave the focus where it is when no rule matches, as compile does. A
+  rule whose target does not
   exist under the layout config chose, a float, a new tab or an edge the
   layout lacks, is left out at install, and the echo area says so,
   `reload: display rule 1 is left out: there are no floating windows yet`,

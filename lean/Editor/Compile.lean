@@ -1,7 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.File
-import Editor.Files
 import Editor.Mode
 import Editor.Shell
 
@@ -81,10 +80,17 @@ text replaced by the header line:
   (<parent>)*` with the last component of the root's parent directory, then
   the first free name of that (`EditorState.freeName`).
 - **The header line** is `<label> in <directory>: <line>`.
-- **Shown**: when no view shows the buffer, the asking view is split, the
-  new view below shows it and the focus stays where the user is editing; a
-  refused split shows it in the asking view. A view that newly shows a made
-  buffer has its major mode set to `compilation`.
+- **Its mode**: a made buffer is given the major mode `compilation`
+  (`BufferId.setMajorMode`) before it is shown, so a display rule can
+  match the mode.
+- **Shown** where config's display rules say, for the opener `compile` or
+  `recompile` (whichever asked), asked from the asking view
+  (`BufferId.display`, `Editor/DisplayRules.lean`): a window that shows it
+  already is reused, so a recompile while it is open opens nothing; with
+  no rule that matches, it opens in a new window at the end of the tiled
+  list, the stack, and the focus stays where the user is editing, since
+  compile passes `false` as the fallback's focus. A rule that matches
+  keeps its own focus (decided 2026-11-17).
 
 The job (`runWork`) starts the child as a streaming one, lines on both
 streams, under `lineBound` a line, its input closed, and reads it: each
@@ -533,24 +539,15 @@ def append (id : BufferId) (lines : Array String) : EditorM Unit := do
   for view in followers do
     placeCursor view last
 
-/-- Shows the buffer `id` for a run asked from `view` ("The run", in the
-module docs): in a new view below the asking one when no view shows it, the
-focus staying, or in the asking one when the split is refused. A made
-buffer's new view gets the `compilation` mode. -/
-def showFrom (view : ViewId) (id : BufferId) (made : Bool) : EditorM Unit := do
-  let state ← editorState
-  unless (viewsOf state id).isEmpty do
-    return
-  let asking := Files.shownIn state view
-  let shown ←
-    match ← asking.split with
-    | .ok below =>
-      pure below
-    | .error _ =>
-      pure asking
-  if (← shown.show id) matches .ok () then
-    if made then
-      discard <| shown.setMajorMode modeName
+/-- Shows the buffer `id` for a run the command `name` asked from `view`
+("The run", in the module docs): a made buffer is given the `compilation`
+mode first, so a display rule can match it, and the buffer is shown where
+the display rules say for `name`, a window that shows it already reused,
+with the focus staying when no rule matches. -/
+def showFrom (name : String) (view : ViewId) (id : BufferId) (made : Bool) : EditorM Unit := do
+  if made then
+    discard <| id.setMajorMode modeName
+  discard <| id.display view name (focus := false)
 
 /-- Makes the scope's compilation buffer hold `content`, the header line: the
 kept one's text replaced, or one made ("The run", in the module docs). Its
@@ -600,7 +597,7 @@ def start (name : String) (view : ViewId) (scope : Scope) (line : String)
           running := some { run, line, started }
           buffer := (prepared.map (·.1.index)).orElse fun _ => record.buffer }
     if let some (id, made) := prepared then
-      showFrom view id made
+      showFrom name view id made
 
 /-- The scope of the buffer of `call`'s window, and why it may not run a
 command named `name`, if it may not. -/

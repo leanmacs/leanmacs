@@ -31,9 +31,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So eight requests are answered with more than this handler by the loop,
-  which knows the registry: `setMajorMode`, which there refuses a name no
-  mode is registered under and runs the mode's on-enter actions,
+  So nine requests are answered with more than this handler by the loop,
+  which knows the registry: `setMajorMode` and `setBufferMajorMode`, which
+  there refuse a name no mode is registered under and run the mode's
+  on-enter actions,
   `startJob`, which there refuses a name no job is registered under,
   `ex`, which there is answered the binding the registry has for an ex
   name (`Editor/Ex/Line.lean`), `exNames`, which there is answered the ex
@@ -43,7 +44,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   command registered under a name inside the asking command, and
   `displayRules`, which there is answered config's display rules
   (`Editor/DisplayRules.lean`). Here
-  `setMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
+  `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
   answered `none`, `exNames` and `themeNames` are answered no name,
   `runCommand` is answered `false` and runs nothing, and `displayRules` is
   answered no rule: this handler knows no registry.
@@ -208,6 +209,9 @@ inductive StateRequest where
   /-- Make the mode called `name` the major mode of the buffer `view`
   shows. -/
   | setMajorMode (view : ViewId) (name : String)
+  /-- Make the mode called `name` the major mode of the buffer `id`, which
+  no window need show. -/
+  | setBufferMajorMode (id : BufferId) (name : String)
   /-- Add the minor mode called `name` to the buffer `id`. -/
   | addMinorMode (id : BufferId) (name : String)
   /-- Remove the minor mode called `name` from the buffer `id`. -/
@@ -350,6 +354,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setHistory .. => Except BufferRefusal Unit
   | .setValue .. => Except BufferRefusal Unit
   | .setMajorMode .. => Except ModeRefusal Bool
+  | .setBufferMajorMode .. => Except ModeRefusal Bool
   | .addMinorMode .. => Except BufferRefusal Unit
   | .removeMinorMode .. => Except BufferRefusal Unit
   | .split .. => Except LayoutRefusal ViewId
@@ -414,6 +419,16 @@ def setMajorModeOf (view : ViewId) (name : String) (state : EditorState) :
     | (.ok became, next) => (.ok became, next)
     | (.error _, _) => (.error (.noSuchWindow view), state)
 
+/-- Makes the mode called `name` the major mode of the buffer `id`, and
+says whether it became the major mode (`EditorState.setMajorMode`). Any
+name is taken. Refused, with the state unchanged, with `noSuchBuffer` for
+a buffer there is none of. -/
+def setMajorModeOfBuffer (id : BufferId) (name : String) (state : EditorState) :
+    Except ModeRefusal Bool × EditorState :=
+  match state.setMajorMode id name with
+  | (.ok became, next) => (.ok became, next)
+  | (.error _, _) => (.error (.noSuchBuffer id), state)
+
 /-- The reply to `request` from `state`, and the state after it: each
 request is its operation of `Editor/State.lean`. A refused request leaves
 the state as it was. -/
@@ -425,6 +440,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setHistory id history, state => state.setHistory id history
   | .setValue id name value, state => state.setValue id name value
   | .setMajorMode view name, state => state.setMajorModeOf view name
+  | .setBufferMajorMode id name, state => state.setMajorModeOfBuffer id name
   | .addMinorMode id name, state => state.addMinorMode id name
   | .removeMinorMode id name, state => state.removeMinorMode id name
   | .split view scroll selection placement, state =>

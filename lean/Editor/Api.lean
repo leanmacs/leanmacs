@@ -202,7 +202,9 @@ a value, with their `LayoutRefusal`.
   the first rule that matches its modes, its name and `opener`, the
   command's name, else a new window at the end of the tiled list, the
   stack. A new window's markers are made as `show` makes them, and only for
-  a new window. The window is focused when the rule says so. It reads the
+  a new window. The window is focused when the rule says so; with no rule
+  that matches, when the caller's `focus` says so, `true` unless it is
+  given (the compile mode gives `false`, so the focus stays). It reads the
   rules with a state request the loop answers (`.displayRules`). A docked
   window, at an edge (`Frame.docked`), is a window like any other to every
   operation here.
@@ -293,7 +295,9 @@ has a case on the real binding. They are pinned once, on the models
   run, when the buffer already had it. The loop that runs the command
   refuses a name no mode is registered under (`noSuchMode`) and runs the
   on-enter actions of the mode's lineage, root first, inside the command
-  (`Editor/Command/Dispatch.lean`).
+  (`Editor/Command/Dispatch.lean`). `BufferId.setMajorMode id name` does
+  the same for a buffer no window need show: the on-enter actions run
+  once with each view that shows it, and with none when no window does.
 
 ## Messages
 
@@ -1107,6 +1111,18 @@ def setValue (id : BufferId) (name : String) (value : Value) :
 def value? (id : BufferId) (name : String) : EditorM (Option Value) :=
   return (← editorState).value? id name
 
+/-- Makes the mode called `name` the major mode of the buffer `id`, which
+no window need show, and says whether it became the major mode: `false`,
+with nothing run, when the buffer already had it. When it became it, the
+text is highlighted as the mode says and the on-enter actions of the
+mode's lineage have run, root first, once with each view that shows the
+buffer, and with none when no window shows it, before this returns
+(`Editor/Command/Dispatch.lean`). Refused with `noSuchBuffer` for a
+buffer there is none of, and with `noSuchMode` for a name no mode is
+registered under. -/
+def setMajorMode (id : BufferId) (name : String) : EditorM (Except ModeRefusal Bool) :=
+  EditorState.ask (.setBufferMajorMode id name)
+
 /-- Adds the minor mode called `name` to the buffer `id`, first; one it has
 already changes nothing. Refused with `noSuchBuffer` for a buffer there is
 none of. -/
@@ -1376,19 +1392,20 @@ rule that matches decides, or a new window in the stack: an existing
 window shows it as `ViewId.show` does, and a new window gets a scroll
 anchor at the buffer's start and one cursor at its start, of the shape the
 asking view's selection has, marked on its text, and is opened
-(`EditorState.openWindow`). The window is focused when the rule says so,
-as the fallback does. Refused with `ofMinibuffer`, and the minibuffer's
-view, for the minibuffer's buffer, and with `noSuchBuffer` for a buffer
-there is none of, each with no marker made. -/
-def BufferId.display (buffer : BufferId) (asking : ViewId) (opener : String) :
-    EditorM (Except LayoutRefusal ViewId) := do
+(`EditorState.openWindow`). The window is focused when the rule that
+matched says so, and, when none matched, when `focus` does: the caller's
+default, the fallback's focus. Refused with `ofMinibuffer`, and the
+minibuffer's view, for the minibuffer's buffer, and with `noSuchBuffer`
+for a buffer there is none of, each with no marker made. -/
+def BufferId.display (buffer : BufferId) (asking : ViewId) (opener : String)
+    (focus : Bool := true) : EditorM (Except LayoutRefusal ViewId) := do
   let state ← editorState
   if let some minibuffer := state.minibufferView? then
     if state.minibufferBuffer? == some buffer then
       return .error (.ofMinibuffer minibuffer)
   let some shown := state.buffer? buffer | return .error (.noSuchBuffer buffer)
   let rules ← EditorState.ask .displayRules
-  let (decided, focus) := state.displaying rules buffer asking opener
+  let (decided, focus) := state.displaying rules buffer asking opener focus
   let placed : Except LayoutRefusal ViewId ←
     match decided with
     | .shown view =>

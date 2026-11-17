@@ -19,6 +19,11 @@ is pure: the editor state decides with it (`EditorState.displaying`,
   (`DisplayRule.fallback`): a new window in the stack, focused. So a buffer
   that is not the one being edited never replaces main's, and main is never
   split.
+- **A caller may give the fallback's focus** (`choose`'s `focus`, which
+  `BufferId.display` passes on): the compilation buffer is displayed with
+  `false`, so with no rule that matches it opens in the stack and the focus
+  stays where compile was asked from. It is only the fallback's: a rule
+  that matches keeps its own `focus` (decided 2026-11-17).
 - **The targets** (`DisplayTarget`): the window the asking command acts on,
   main, a new window at the end of the tiled list, a new window docked at
   an edge, a float and a new tab. A rule's `focus` says whether the window
@@ -92,10 +97,11 @@ stack, focused. -/
 def fallback : DisplayRule :=
   { target := .stack }
 
-/-- The first of `rules` that matches `facts`, and `fallback` when none
-does. -/
-def choose (rules : Array DisplayRule) (facts : Facts) : DisplayRule :=
-  (rules.find? (·.matches facts)).getD fallback
+/-- The first of `rules` that matches `facts`, and `fallback` with `focus`
+as its focus when none does: the caller's default, which a rule that
+matches does not take. -/
+def choose (rules : Array DisplayRule) (facts : Facts) (focus : Bool := true) : DisplayRule :=
+  (rules.find? (·.matches facts)).getD { fallback with focus }
 
 end DisplayRule
 

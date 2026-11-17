@@ -16456,6 +16456,7 @@ echo area. -/
 def modeRefusalText : ModeRefusal → String
   | .noSuchWindow id => s!"no window {id.index}"
   | .noSuchMode name => s!"no mode {name}"
+  | .noSuchBuffer id => s!"no buffer {id.index}"
 
 /-- The command `enter` of the on-enter checks: it asks for the mode named
 by its second argument to be the major mode of the buffer the view of its
@@ -16470,12 +16471,50 @@ def enter (fail : Bool := false) : Dispatched := fun call => do
     call.target.buffer.text.delete 9 99
   return none
 
-/-- What a step of the on-enter checks is handed: the commands `enter` and
-`enter-fail`, and what `registry` says of its modes. -/
+/-- The command `enter-buffer` of the on-enter checks: it asks for the mode
+named by its second argument to be the major mode of the buffer its first
+argument numbers, by the request (`BufferId.setMajorMode`), and says a
+refusal in the echo area. -/
+def enterBuffer : Dispatched := fun call => do
+  let [.nat buffer, .str name] := call.arguments | throw .badPosition
+  if let .error refusal← (⟨buffer⟩ : BufferId).setMajorMode name then
+    EditorState.ask (.message (modeRefusalText refusal))
+  return none
+
+/-- What a step of the on-enter checks is handed: the commands `enter`,
+`enter-fail` and `enter-buffer`, and what `registry` says of its modes. -/
 def enterKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ([("enter", enter), ("enter-fail", enter true)].find? (·.1 == name)).map (·.2)
+      ([("enter", enter), ("enter-fail", enter true), ("enter-buffer", enterBuffer)].find?
+            (·.1 == name)).map
+        (·.2)
     registered := registry.registered }
+
+/-- Sets the major mode of each buffer in `steps`, by its number, in turn,
+each by an invocation of `enter-buffer` the loop runs, from `twoBuffers`
+with a third buffer, `loose`, that no window shows: the texts made after
+the three, what each invocation left in the echo area, and each buffer's
+major mode at the end. `none` when the run was refused. -/
+def enteredBuffer (steps : List (Nat × String)) :
+    Option (Array String × List String × Array (Option String)) :=
+  let program : EditorM (List String × EditorState) := do
+    let two ← twoBuffers
+    let text ← createText "loose"
+    let history ← UndoTree.over text
+    let mut state :=
+      { two with buffers := two.buffers.push (some { name := "loose", text, history }) }
+    let mut echoes := []
+    for (buffer, name) in steps do
+      let invocation : Invocation :=
+        { command := "enter-buffer", arguments := [.nat buffer, .str name] }
+      state := (← Loop.run (enterKeys enterRegistry) state invocation []).state
+      echoes := echoes ++ [state.echo]
+    return (echoes, state)
+  match program.runModel editorModel with
+  | (.ok (echoes, state), model) =>
+    let texts := model.texts.contents
+    some (texts.extract 3 texts.size, echoes, state.buffers.map (·.bind (·.major)))
+  | (.error _, _) => none
 
 /-- The invocation of `command` that sets the mode `name` through `view`. -/
 def entersMode (view : ViewId) (name : String) (command : String := "enter") : Invocation :=
@@ -16888,6 +16927,16 @@ def modeEnterChecks : List Check :=
           (entered [(⟨0⟩, "ghost")] == some (#[], ["no mode ghost"], #[none, none]) &&
             entered [(⟨9⟩, "listing")] == some (#[], ["no window 9"], #[none, none]) &&
             entered [(⟨9⟩, "ghost")] == some (#[], ["no window 9"], #[none, none])) },
+    { name :=
+        "a mode set on a buffer by its number needs no window: it becomes the major mode, the lineage's on-enter actions run once with each view that shows the buffer and with none for a buffer no window shows, setting it again runs nothing, and a buffer there is none of is refused with noSuchBuffer and a mode no mode is registered under with noSuchMode"
+      run :=
+        pure
+          (enteredBuffer [(1, "child")] ==
+              some (#["root in 1", "base in 1", "child in 1"], [""], #[none, some "child", none]) &&
+            enteredBuffer [(2, "listing"), (2, "listing")] ==
+              some (#[], ["", ""], #[none, none, some "listing"]) &&
+            enteredBuffer [(9, "listing")] == some (#[], ["no buffer 9"], #[none, none, none]) &&
+            enteredBuffer [(2, "ghost")] == some (#[], ["no mode ghost"], #[none, none, none])) },
     { name :=
         "an on-enter action's own state requests are answered from the state the command had reached and kept with it: its message is in the echo area, and the minor mode it adds is the buffer's"
       run :=
@@ -22126,6 +22175,17 @@ def displayRuleChecks : List Check :=
             DisplayRule.fallback.target == .stack &&
             DisplayRule.fallback.focus },
     { name :=
+        "a caller's default focus is the fallback's when no rule matches, and a rule that matches keeps its own focus"
+      run :=
+        pure <|
+          let toMain : DisplayRule := { opener := some "make", target := .main }
+          let never : DisplayRule := { name := some "other", target := .focused }
+          DisplayRule.choose #[never] facts (focus := false) ==
+              { DisplayRule.fallback with focus := false } &&
+            DisplayRule.choose #[] facts (focus := false) == { target := .stack, focus := false } &&
+            DisplayRule.choose #[never, toMain] facts (focus := false) == toMain &&
+            DisplayRule.choose #[never] facts (focus := true) == DisplayRule.fallback },
+    { name :=
         "a target is missing when the layout lacks it: floats and tabs always, for now, and an edge the layout has no edge at; the focused window, main and the stack never are"
       run :=
         pure <|
@@ -22161,6 +22221,10 @@ def displayRuleChecks : List Check :=
               docked.displaying (rule .main false) ⟨1⟩ ⟨0⟩ "make" == (.shown ⟨1⟩, false) &&
               fresh.wellFormed &&
               fresh.displaying #[] ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying #[] ⟨1⟩ ⟨0⟩ "make" (focus := false) == (.opened .stack, false) &&
+              fresh.displaying (rule .focused) ⟨1⟩ ⟨0⟩ "make" (focus := false) ==
+                (.showIn ⟨0⟩, true) &&
+              two.displaying #[] ⟨1⟩ ⟨0⟩ "make" (focus := false) == (.shown ⟨1⟩, false) &&
               fresh.displaying (rule .focused) ⟨1⟩ ⟨0⟩ "make" == (.showIn ⟨0⟩, true) &&
               fresh.displaying (rule .main false) ⟨1⟩ ⟨0⟩ "make" == (.showIn ⟨0⟩, false) &&
               fresh.displaying (rule .stack) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
@@ -30975,11 +31039,67 @@ def compileChecks : List Check :=
               (compileBuffer done name).bind (·.major) == some Compile.modeName &&
               (state.findBuffer name).bind (fun id => (state.workspaceOf? id).map (·.1.location)) ==
                 some (.local "/r") &&
-              -- A new view below view 0 shows it: view 2, since the prompt's
-              -- minibuffer had view 1.
+              -- A new window at the end of the tiled list shows it: view 2,
+              -- since the prompt's minibuffer had view 1.
               (state.findBuffer name).map (Compile.viewsOf state) == some #[⟨2⟩] &&
+              state.frame.windows == #[⟨0⟩, ⟨2⟩] &&
               (showing done).map (·.buffer.name) == some "a.lean" &&
               state.frame.focused == ⟨0⟩ },
+    { name :=
+        "with no display rule that matches, the compilation buffer opens in a new window at the end of the tiled list, not beside the asking window, and the focus stays in the window compile was asked from; a recompile while a window shows it reuses that window"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            -- Views 0 and 1, view 0 focused.
+            let split := settledAfter (settledAfter driver "C-o a") "C-e s"
+            let back :=
+              { split with
+                loop :=
+                  { split.loop with
+                    state :=
+                      { split.loop.state with
+                        frame := { split.loop.state.frame with focused := ⟨0⟩ } } } }
+            let ran := drained (pressedOn back "C-k m")
+            let again := drained (pressedOn ran "C-k r")
+            let name := "*compilation: r@main*"
+            let state := ran.loop.state
+            split.loop.state.frame.windows == #[⟨0⟩, ⟨1⟩] &&
+              state.frame.windows == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
+              (showing ran ⟨2⟩).map (·.buffer.name) == some name &&
+              state.frame.focused == ⟨0⟩ &&
+              again.loop.state.frame.windows == state.frame.windows &&
+              again.loop.state.frame.focused == ⟨0⟩ &&
+              (showing again ⟨2⟩).map (·.buffer.name) == some name },
+    { name :=
+        "the compilation buffer has its mode before it is displayed, so a display rule for the compilation mode places it: one with the focused target shows it in the window compile was asked from"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ruled :=
+              withDisplayRules driver
+                #[{ mode := some Compile.modeName, target := .focused, focus := false }]
+            let ran := drained (pressedOn (settledAfter ruled "C-o a") "C-k m")
+            let name := "*compilation: r@main*"
+            ran.loop.state.frame.windows == #[⟨0⟩] &&
+              (showing ran).map (·.buffer.name) == some name &&
+              (showing ran).bind (·.buffer.major) == some Compile.modeName },
+    { name :=
+        "a display rule that matches the compilation buffer keeps its own focus: one for compile that sends it to the stack, focused by default, focuses its new window"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ruled :=
+              withDisplayRules driver #[{ opener := some Compile.compileName, target := .stack }]
+            let ran := drained (pressedOn (settledAfter ruled "C-o a") "C-k m")
+            let state := ran.loop.state
+            state.frame.windows.size == 2 && state.frame.focused != ⟨0⟩ &&
+              (showingFocused ran).map (·.buffer.name) == some "*compilation: r@main*" },
     { name :=
         "criterion 2: compiles in /r and /w run at once into two buffers, each holding only its own output, and kill-compilation in one leaves the other running"
       run :=

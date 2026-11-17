@@ -1386,6 +1386,8 @@ inductive ModeRefusal where
   | noSuchWindow (id : ViewId)
   /-- No mode is registered under this name. -/
   | noSuchMode (name : String)
+  /-- The state has no buffer of this id. -/
+  | noSuchBuffer (id : BufferId)
   deriving DecidableEq, Repr
 
 namespace EditorState
@@ -2519,15 +2521,16 @@ name, its modes (major first) and `opener` decides, or the fallback
 the first window of the tiled list, `stack` opens a window after the last
 of the list, and `edge side` one docked at `side` when the layout out of
 a zoom has that edge and in the stack otherwise; `float` and `newTab`,
-which config cannot reach, open one in the stack. -/
+which config cannot reach, open one in the stack. `focus` is the caller's
+default: the fallback's focus when no rule matches. -/
 def displaying (state : EditorState) (rules : Array DisplayRule) (buffer : BufferId)
-    (asking : ViewId) (opener : String) : Displaying × Bool :=
+    (asking : ViewId) (opener : String) (focus : Bool := true) : Displaying × Bool :=
   let held := state.buffer? buffer
   let facts : DisplayRule.Facts :=
     { name := (held.map (·.name)).getD ""
       modes := (held.map fun buffer => buffer.major.toList ++ buffer.minors.toList).getD []
       opener }
-  let rule := DisplayRule.choose rules facts
+  let rule := DisplayRule.choose rules facts focus
   match state.frame.all.find? fun view => (state.window? view).any (·.buffer == buffer) with
   | some view => (.shown view, rule.focus)
   | none =>
