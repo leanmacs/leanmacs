@@ -1,7 +1,7 @@
 [package]
 name = "editor-syntax-treesitter"
 version = "0.1.0"
-description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON, Markdown and Markdown inline grammars compiled in"
+description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON, Markdown, Markdown inline and TOML grammars compiled in"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -81,3 +81,34 @@ tree-sitter-json = { version = "=0.24.8" }
 # grammar's 6,000 reparses all equalled the fresh parse, and it is
 # `incremental`.
 tree-sitter-md = { version = "=0.5.4", default-features = false }
+# TOML, for manifests and settings: `Cargo.toml`, `mise.toml`,
+# `lakefile.toml` and `Cargo.lock`. It is the tree-sitter-grammars
+# project's grammar, the continuation of ikatyang's original and the same
+# project as `tree-sitter-md`; the most used TOML grammar crate. MIT, used
+# unmodified; 0.7.0, released on 2024-12-03, was the newest release when
+# looked at on crates.io on 2026-11-17, and the repository's last commit is
+# its tag (TOML 1.0 is a stable spec). Its build compiles the grammar's
+# `parser.c` and its external scanner `scanner.c`. It has no features; its
+# one normal dependency is `tree-sitter-language`, and `cc` at build time,
+# both already in the graph (its `tree-sitter ^0.24` is a dev-dependency
+# only). It ships a highlights query and no other, so TOML has no
+# injections, indents or text objects.
+#
+# Its reparse policy is `incremental`: on 2026-11-17, 4,221 incremental
+# reparses of texts without errors, of random edits to the fixtures under
+# `tests/syntax/toml/`, all equalled a fresh parse, and the contract
+# (`tests/contract.rs`) passes with the policy `incremental`.
+#
+# Looked at on 2026-11-17 and set aside:
+#
+# - `tree-sitter-toml` 0.20.0 (2022): a normal dependency on
+#   `tree-sitter ^0.20`, and the old `language()` function, so it cannot
+#   hand a `LanguageFn` to the pinned tree-sitter.
+# - `tree-sitter-toml-updated` 0.20.0: a personal fork with a normal
+#   dependency on `tree-sitter >=0.21` and the same old API.
+# - `treease-ts-toml` 0.7.2: a third party's republish of the same
+#   repository, with no grammar change over 0.7.0 (upstream has no commit
+#   after its tag), from a publisher that is not the project.
+# - `konomanoasa-tree-sitter-toml` 0.11.2: a personal fork with few users,
+#   which pins `cc =1.11.0` exactly and so would move the locked `cc`.
+tree-sitter-toml-ng = { version = "=0.7.0" }

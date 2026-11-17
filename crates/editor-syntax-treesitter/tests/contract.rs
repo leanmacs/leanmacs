@@ -1,6 +1,6 @@
 //! The tree-sitter adapter held to the syntax port's contract, once for
-//! each grammar compiled in: Rust, JSON, Markdown and Markdown's inline
-//! grammar.
+//! each grammar compiled in: Rust, JSON, Markdown, Markdown's inline
+//! grammar and TOML.
 //!
 //! The check is `editor-syntax`'s, the same one its fake passes
 //! (`editor_syntax::contract::check`). Its incremental property drives a
@@ -158,6 +158,55 @@ const MARKDOWN_INLINE: Corpus = Corpus {
     policy: ReparsePolicy::Whole,
 };
 
+/// The TOML grammar's corpus. Its grammar has no fields, so `nope:` is
+/// refused as a field.
+const TOML: Corpus = Corpus {
+    grammar: "toml",
+    texts: &[
+        include_str!("../../../tests/syntax/toml/manifest.toml"),
+        include_str!("../../../tests/syntax/toml/values.toml"),
+        include_str!("../../../tests/syntax/toml/Cargo.lock"),
+        include_str!("../../../tests/syntax/toml/broken.toml"),
+        "",
+        "[a]\n",
+        "\"é\" = '漢'\r\n[\"😀\"]\r\nk = [1]\r\n",
+    ],
+    pieces: &[
+        "x",
+        " ",
+        "\n",
+        "=",
+        "\"",
+        "'",
+        "[",
+        "]",
+        "{",
+        "}",
+        ",",
+        ".",
+        "1",
+        "# c\n",
+        "[t]\n",
+        "k = \"v\"\n",
+        "é",
+    ],
+    query: "(table (bare_key) @header) @table\n(pair (bare_key) @key)\n(string) @string\n(comment) @comment\n",
+    query_names: &["header", "table", "key", "string", "comment"],
+    bad_queries: &[
+        ("((", QueryErrorKind::Syntax),
+        ("(no_such_kind) @x", QueryErrorKind::NodeType),
+        ("(pair nope: (string)) @x", QueryErrorKind::Field),
+        ("((bare_key) @x (#eq? @y \"a\"))", QueryErrorKind::Capture),
+        ("((bare_key) @x (#eq? @x))", QueryErrorKind::Predicate),
+        ("(bare_key (pair)) @x", QueryErrorKind::Structure),
+    ],
+    unknown_kind_query: "(pair) @p\n(no_such_kind) @x\n",
+    shipped: &[QueryKind::Highlights],
+    settings_query: "((string) @s (#set! injection.language \"json\"))\n(pair) @p\n",
+    settings: &[&[("injection.language", Some("json"))], &[]],
+    policy: ReparsePolicy::Incremental,
+};
+
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_rust() {
     assert_eq!(contract::check(&TreeSitter, &RUST), [""; 0]);
@@ -176,4 +225,9 @@ fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_markdown() {
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_markdown_inline() {
     assert_eq!(contract::check(&TreeSitter, &MARKDOWN_INLINE), [""; 0]);
+}
+
+#[test]
+fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_toml() {
+    assert_eq!(contract::check(&TreeSitter, &TOML), [""; 0]);
 }

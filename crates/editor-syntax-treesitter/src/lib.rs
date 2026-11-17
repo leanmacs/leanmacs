@@ -1,6 +1,6 @@
 //! The syntax port's real adapter: [`TreeSitter`], a [`Syntax`] over
-//! tree-sitter, with the Rust, JSON and Markdown grammars compiled in, and
-//! Markdown's inline grammar.
+//! tree-sitter, with the Rust, JSON, Markdown and TOML grammars compiled
+//! in, and Markdown's inline grammar.
 //!
 //! The port, its fake, its contract, the rule for what a range answers and
 //! the worker that reparses are `editor-syntax`'s. This crate is thin: each
@@ -54,6 +54,7 @@
 //! | `rust` | incremental | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
 //! | `markdown` | incremental | the crate's, of its block grammar | the crate's, of its block grammar | none | none |
 //! | `markdown_inline` | whole | the crate's, of its inline grammar | the crate's, of its inline grammar | none | none |
+//! | `toml` | incremental | the crate's | none | none | none |
 //!
 //! **The reparse policy** (`editor_syntax::ReparsePolicy`) is declared in
 //! the table and pinned by each grammar's corpus in `tests/contract.rs`.
@@ -70,6 +71,13 @@
 //! differ from a fresh parse (the crate's `Cargo.toml`). An injected layer
 //! is parsed whole each round anyway. Its injections name `html` and
 //! `latex`, which this adapter does not have, so they inject nothing.
+//!
+//! TOML is `tree-sitter-toml-ng`'s grammar, `toml`, with its crate's
+//! highlights query and no other. It is `incremental`: its incremental
+//! reparses of texts without errors were seen to equal a fresh parse (the
+//! crate's `Cargo.toml`). Since every grammar here is a language a layer
+//! can be injected in, a Markdown fence whose info string is `toml` is a
+//! TOML layer.
 //!
 //! # What each method forwards to
 //!
@@ -124,7 +132,7 @@ use editor_text::{InputEdit, Point, Snapshot};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
 /// The adapter: tree-sitter, with the grammars compiled in: `json`,
-/// `rust`, `markdown` and `markdown_inline`.
+/// `rust`, `markdown`, `markdown_inline` and `toml`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TreeSitter;
 
@@ -146,7 +154,7 @@ struct Grammar {
 }
 
 /// The grammars compiled in.
-const GRAMMARS: [Grammar; 4] = [
+const GRAMMARS: [Grammar; 5] = [
     Grammar {
         name: "json",
         language: || Language::new(tree_sitter_json::LANGUAGE),
@@ -195,6 +203,12 @@ const GRAMMARS: [Grammar; 4] = [
                 tree_sitter_md::INJECTION_QUERY_INLINE,
             ),
         ],
+    },
+    Grammar {
+        name: "toml",
+        language: || Language::new(tree_sitter_toml_ng::LANGUAGE),
+        policy: ReparsePolicy::Incremental,
+        queries: &[(QueryKind::Highlights, tree_sitter_toml_ng::HIGHLIGHTS_QUERY)],
     },
 ];
 

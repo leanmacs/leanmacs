@@ -1,0 +1,32 @@
+title = "TOML \"values\" \u00e9"
+literal = 'C:\path'
+multi = """
+Roses are red
+  Violets are blue"""
+raw = '''
+no \escapes here
+'''
+int = +99
+hex = 0xDEAD_beef
+oct = 0o755
+bin = 0b1101
+float = -3.14e-2
+inf = inf
+nan = -nan
+yes = true
+no = false
+odt = 1979-05-27T07:32:00Z
+ldt = 1979-05-27T07:32:00
+ld = 1979-05-27
+lt = 07:32:00.999
+array = [ 1, 2, [ "nested", 'mixed' ], ]
+inline = { x = 1, y.z = 2 }
+a.b."c d" = 3
+
+[table.sub]
+key = "value" # trailing comment
+
+[[products]]
+name = "Hammer"
+
+[[products]]

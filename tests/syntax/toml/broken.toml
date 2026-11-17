@@ -1,0 +1,5 @@
+[package
+name = = "x"
+version = { a = 1,, }
+[[bin]
+key "no equals"

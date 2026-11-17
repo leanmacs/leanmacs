@@ -1,0 +1,22 @@
+# A manifest, as Cargo writes one.
+[package]
+name = "editor-ffi"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+editor-text = { path = "../editor-text" }
+tree-sitter = { version = "=0.27.2", default-features = false }
+'quoted key' = "v"
+"basic key" = 'literal'
+
+[dev-dependencies]
+proptest = { version = "=1.12.0", features = ["std"] }
+
+[[bin]]
+name = "editor"
+path = "src/main.rs"
+
+[profile.release.package."*"]
+opt-level = 3

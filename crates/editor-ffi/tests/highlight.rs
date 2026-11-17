@@ -1,6 +1,7 @@
 //! Highlighting wired to real documents, the real adapter and the display:
 //! a document highlighted through the C functions, edited, and reparsed is
-//! drawn as a fresh highlight of its text draws it; the adapter keeps the
+//! drawn as a fresh highlight of its text draws it, a Rust document and a
+//! TOML one; the adapter keeps the
 //! layout's spans contract; and a published scene paints a keyword in its
 //! face. The same holds of a Markdown document given its injections through
 //! the C functions: its fences are drawn in their languages' captures over
@@ -192,16 +193,25 @@ fn apply(document: &Document, changes: &[(Range<usize>, &str)]) {
 }
 
 /// A document of [`ITEMS`], attached to `rust` and highlighted with its
+/// shipped query through C ([`highlighted`]).
+fn highlighted_items() -> (Document, String, Vec<String>) {
+    highlighted("rust", ITEMS)
+}
+
+/// A document of `text`, attached to `grammar` and highlighted with its
 /// shipped query through C, each capture in `syntax.` and its name; and
 /// that query's source and faces. The query's handle is freed once the
 /// highlighter is set: the highlighter keeps the query.
-fn highlighted_items() -> (Document, String, Vec<String>) {
-    let document = Document::new(ITEMS);
+fn highlighted(grammar: &str, text: &str) -> (Document, String, Vec<String>) {
+    let document = Document::new(text);
     let snapshot = Snapshot::of(&document);
-    assert_eq!(syntaxes().attach(&snapshot, "rust"), AttachStatus::Attached);
-    let source = shipped("rust", 0).unwrap();
-    let (_, faces) = names_and_faces("rust", &source);
-    let query = query_new("rust", &source);
+    assert_eq!(
+        syntaxes().attach(&snapshot, grammar),
+        AttachStatus::Attached
+    );
+    let source = shipped(grammar, 0).unwrap();
+    let (_, faces) = names_and_faces(grammar, &source);
+    let query = query_new(grammar, &source);
     assert_eq!(
         highlight_through_c(&snapshot, query, &faces),
         HighlightStatus::Highlighted as u64
@@ -259,6 +269,65 @@ fn highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
     assert_eq!(drawn, fresh(&document, "rust", &source, &faces));
     // Something is drawn: a keyword, the string and the comment.
     for face in ["syntax.keyword", "syntax.string", "syntax.comment"] {
+        assert!(drawn.iter().any(|(_, drawn)| drawn == face), "{face}");
+    }
+}
+
+/// The TOML fixture of a manifest.
+const MANIFEST: &str = include_str!("../../../tests/syntax/toml/manifest.toml");
+
+#[test]
+fn toml_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    refresh_at_once();
+    let (document, source, faces) = highlighted("toml", MANIFEST);
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert_eq!(
+        drawn(&document),
+        Some(fresh(&document, "toml", &source, &faces))
+    );
+
+    // A new table, at the end.
+    let end = document.snapshot().len();
+    apply(
+        &document,
+        &[(end..end, "\n[features]\ndefault = [\"std\"]\n")],
+    );
+    // An insert inside a string.
+    let at = find(&document, "editor-ffi\"") + "editor-ffi".len();
+    assert!(document.replace(at, at, "-x"));
+    // A delete across lines: from inside `[dependencies]`'s first value to
+    // inside the next key.
+    let start = find(&document, "../editor-text") + 3;
+    let stop = find(&document, "tree-sitter = {") + 4;
+    assert!(document.replace(start, stop, ""));
+    // A line commented out.
+    let line = find(&document, "publish = false");
+    assert!(document.replace(line, line, "# "));
+    // One transaction of several changes: a boolean flipped, a new header,
+    // and a key renamed.
+    let first = find(&document, "= true") + 2;
+    let second = find(&document, "[dev-dependencies]");
+    let third = find(&document, "name = \"editor\"");
+    apply(
+        &document,
+        &[
+            (first..first + 4, "false"),
+            (second..second, "[build-dependencies]\ncc = \"1\"\n\n"),
+            (third..third + 4, "title"),
+        ],
+    );
+
+    assert!(settled_quiet(&document));
+    let drawn = drawn(&document).expect("highlights of the delivered tree");
+    assert_eq!(drawn, fresh(&document, "toml", &source, &faces));
+    // Something is drawn: a key, a string, a header's bracket and the
+    // comment.
+    for face in [
+        "syntax.type",
+        "syntax.string",
+        "syntax.punctuation.bracket",
+        "syntax.comment",
+    ] {
         assert!(drawn.iter().any(|(_, drawn)| drawn == face), "{face}");
     }
 }
