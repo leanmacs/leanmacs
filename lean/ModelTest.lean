@@ -5451,6 +5451,19 @@ def faceVocabularyChecks : List Check :=
       run :=
         let states := Vim.Default.states.initial :: Vim.Default.states.others
         pure (Themes.cursorFaces == #[⟨"cursor"⟩] ++ states.toArray.map (Vim.cursorFace ·.name)) },
+    { name :=
+        "the compilation faces are in the vocabulary, each with a meaning, and the built-in theme defines each once, bold, in its palette's red, orange and green"
+      run :=
+        let palette := Palette.placeholder
+        let faces :=
+          [("compilation.error", palette.red), ("compilation.warning", palette.orange),
+            ("compilation.note", palette.green)]
+        pure
+          (faces.all fun (name, colour) =>
+            (Face.vocabulary.find? (·.name == ⟨name⟩)).any (!·.meaning.isEmpty) &&
+              (Theme.builtin.filter (·.name == ⟨name⟩)).size == 1 &&
+              (Theme.builtin.merged ⟨name⟩).foreground == some colour &&
+              (Theme.builtin.merged ⟨name⟩).weight == some 700) },
     { name := "the built-in theme has no problem the check finds"
       run := pure (Themes.problems Theme.builtin == #[]) },
     { name :=
@@ -5581,7 +5594,9 @@ def solarizedChoices (c : Themes.Solarized.Colours) : List (String × Option Col
       ("syntax.variable", some c.blue, none), ("diff.added", some c.green, some c.base02),
       ("diff.removed", some c.red, some c.base02), ("diff.changed", some c.yellow, some c.base02),
       ("gutter", some c.base01, some c.base02), ("search-match", some c.base03, some c.yellow),
-      ("review-unexamined", none, none), ("block-header", some c.base1, some c.base02)]
+      ("review-unexamined", none, none), ("block-header", some c.base1, some c.base02),
+      ("compilation.error", some c.red, none), ("compilation.warning", some c.orange, none),
+      ("compilation.note", some c.green, none)]
 
 /-- Whether `theme` gives each face of `solarizedChoices c` the colours
 listed, and keeps the weight, slant and underline the table keeps. -/
@@ -5590,7 +5605,9 @@ def solarizedChosen (theme : Theme) (c : Themes.Solarized.Colours) : Bool :=
   (solarizedChoices c).all
       (fun (name, foreground, background) =>
         (face name).foreground == foreground && (face name).background == background) &&
-    (badgeFaces ++ ["mode-line.buffer", "minibuffer.prompt", "block-header"]).all
+    (badgeFaces ++
+          ["mode-line.buffer", "minibuffer.prompt", "block-header", "compilation.error",
+            "compilation.warning", "compilation.note"]).all
       (fun name => (face name).weight == some 700) &&
     (face "syntax.comment").slant == some .italic &&
     (face "review-unexamined").underline == some { style := .single, color := some c.orange }
@@ -5684,7 +5701,9 @@ def fairyFlossChoices (c : Themes.FairyFloss.Colours) :
       ("diff.added", some c.added, none), ("diff.removed", some c.removed, none),
       ("diff.changed", some c.modified, none), ("gutter", some c.foreground, some c.background),
       ("search-match", some c.background, some c.lemon), ("review-unexamined", none, none),
-      ("block-header", some c.foreground, some c.lineHighlight)]
+      ("block-header", some c.foreground, some c.lineHighlight),
+      ("compilation.error", some c.removed, none), ("compilation.warning", some c.peach, none),
+      ("compilation.note", some c.added, none)]
 
 /-- Whether `theme` gives each face of `fairyFlossChoices c` the colours
 listed, and the weight, slant and underline the table records. -/
@@ -5693,7 +5712,9 @@ def fairyFlossChosen (theme : Theme) (c : Themes.FairyFloss.Colours) : Bool :=
   (fairyFlossChoices c).all
       (fun (name, foreground, background) =>
         (face name).foreground == foreground && (face name).background == background) &&
-    (badgeFaces ++ ["mode-line.buffer", "minibuffer.prompt", "block-header"]).all
+    (badgeFaces ++
+          ["mode-line.buffer", "minibuffer.prompt", "block-header", "compilation.error",
+            "compilation.warning", "compilation.note"]).all
       (fun name => (face name).weight == some 700) &&
     (face "syntax.comment").slant == some .upright &&
     (face "syntax.type").slant == some .italic &&
