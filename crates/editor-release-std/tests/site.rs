@@ -125,3 +125,22 @@ fn site_refuses_a_malformed_build_json_naming_it_and_writes_nothing() {
     );
     assert!(!out.exists());
 }
+
+#[test]
+fn site_refuses_a_malformed_minimum_naming_the_variable_and_writes_nothing() {
+    let tmp = TempDir::new().expect("a temporary directory");
+    let out = tmp.path().join("site");
+    let json = fixtures().join("nightly-26.0/build.json");
+    let run = site(&json, &out, Some("26.0 "));
+    assert_eq!(run.status.code(), Some(1), "{run:?}");
+    let stderr = String::from_utf8(run.stderr).expect("UTF-8");
+    assert!(
+        stderr.contains(
+            "site: MACOSX_DEPLOYMENT_TARGET is `26.0 `, not a version (N, N.N or N.N.N); \
+             set it in mise.toml's [env]"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains(&json.display().to_string()), "{stderr}");
+    assert!(!out.exists());
+}

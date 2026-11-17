@@ -192,8 +192,17 @@ fn run(args: &[String]) -> Result<Option<String>, String> {
             let text = std::fs::read_to_string(&build_json)
                 .map_err(|e| format!("{}: {e}", build_json.display()))?;
             let target = nightly::target(&StdEnv).map_err(|e| e.to_string())?;
-            let page = site::page_from(&text, target, &minimum.to_string_lossy())
-                .map_err(|e| format!("{}: {e}", build_json.display()))?;
+            // Each error names its own source: the file, or the variable.
+            let page =
+                site::page_from(&text, target, &minimum.to_string_lossy()).map_err(
+                    |e| match e {
+                        site::SiteError::BuildJson(e) => format!("{}: {e}", build_json.display()),
+                        site::SiteError::Minimum(text) => format!(
+                            "site: {MINIMUM_VAR} is `{text}`, not a version (N, N.N or N.N.N); \
+                             set it in mise.toml's [env]"
+                        ),
+                    },
+                )?;
             let html = site::render(&page);
             std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
             let index = out.join(site::INDEX);
