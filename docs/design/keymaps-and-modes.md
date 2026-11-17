@@ -2586,7 +2586,7 @@ structure Mode where
   onEnter    : ViewId → EditorM Unit := fun _ => pure ()
 
 structure Mode.SyntaxTree where
-  grammar     : String                               -- the library's grammar: rust, json, markdown
+  grammar     : String                               -- the library's grammar: rust, json, markdown, toml
   highlights  : Option String := none                -- query source; none: the grammar's shipped one
   captures    : List (String × Option FaceName) := [] -- config's capture faces, over the shipped default
   injections  : Option String := none                -- injections query source; none: the shipped one
@@ -2837,9 +2837,12 @@ requests can name it (`Language → Mode → Command → State.Request` would
 otherwise be a cycle).
 
 - **The shipped table** (`Language.shipped`) is `rust` (`*.rs`, four
-  spaces), `json` (`*.json`, two) and `markdown` (`*.md`, two), each parsed
-  with the grammar of its name and its shipped queries. Each is a named
-  definition, so config writes `{ Language.rust with … }`.
+  spaces), `json` (`*.json`, two), `markdown` (`*.md`, two) and `toml`
+  (`*.toml` and `Cargo.lock`, two), each parsed with the grammar of its
+  name and its shipped queries. Each is a named definition, so config
+  writes `{ Language.rust with … }`. `toml` draws its booleans, a capture
+  the face vocabulary has no face for, as constants; a TOML file with
+  another name (`uv.lock`) is one line of config.
 - **The rule is pure and the core's** (`Language.forPath`). The table is in
   precedence order: config's entries, in the order config defined them,
   then the shipped ones config did not replace by name
@@ -2886,8 +2889,11 @@ otherwise be a cycle).
 Pinned by `ModelTest.languageMatchChecks` (the rule and the table, pure),
 `ModelTest.modeRecordChecks` (`code`'s tree), `ModelTest.languageOpenChecks`
 (opening on the models, over the model's one grammar, `json`), and
-`ConfigTest.languageChecks` (Rust, JSON and Markdown, and config's
-override of Rust's query, through the host and the real syntax binding).
+`ConfigTest.languageChecks` (Rust, JSON, Markdown and TOML, a `.toml` file
+and `Cargo.lock`, and config's override of Rust's query, through the host
+and the real syntax binding), and `ContractTest`'s check that a TOML text
+is drawn by the real display with its keys, string and brackets in their
+faces' colours.
 
 ### Why this shape
 

@@ -1372,8 +1372,9 @@ restated the contract to match.
 
 **How grammars are loaded: compiled in.** Each grammar is a crates.io
 grammar crate, pinned exactly (`tree-sitter-rust` 0.24.2,
-`tree-sitter-json` 0.24.8 and `tree-sitter-md` 0.5.4, over `tree-sitter`
-0.27.2), whose build compiles
+`tree-sitter-json` 0.24.8, `tree-sitter-md` 0.5.4 and
+`tree-sitter-toml-ng` 0.7.0, over `tree-sitter` 0.27.2), whose build
+compiles
 the generated `parser.c` (and the grammar's scanner, if it has one) with
 `cc` when Cargo builds the library; the objects end up in
 `libeditor_ffi.a`, which Lake links. Nothing is fetched, generated or
@@ -1440,8 +1441,8 @@ declaring none, and the core's rounds honouring it: a `Whole` grammar's
 never handed an old tree, an `Incremental` grammar's handed one after an
 edit (`REPARSE_POLICY`). Each property is seen to bite on an implementation
 written to break it, and each such mutant's failures are pinned exactly.
-The fake passes it, and the adapter passes it for Rust, JSON, Markdown and
-Markdown's inline grammar.
+The fake passes it, and the adapter passes it for Rust, JSON, Markdown,
+Markdown's inline grammar and TOML.
 
 - **The edits** are named cases (an insert inside a token, a delete across
   lines, everything deleted, an edit at offset 0 and at the end, a CRLF,
@@ -1620,6 +1621,17 @@ an inner node over its outer one. `highlight::fresh` (a whole parse, the
 whole text's captures and the rule) is the reference the tests compare
 with.
 
+**A language may map a capture the vocabulary lacks.** TOML's shipped
+query captures booleans as `boolean`, which the face vocabulary has no face
+for, so the `toml` language maps it to `syntax.constant` through its
+tree's `captures`, as Rust's `true` and `false` draw (`lean/Editor/Language.lean`).
+The same query's first pattern is `(bare_key) @type`, so under the
+first-pattern rule every bare key, a table header's included, draws in
+`syntax.type`; its `(pair (bare_key)) @property` captures the whole pair,
+drawn under the key, the `=` and the value, so `syntax.property` shows only
+on a pair's spaces. That is upstream's query as shipped; config may replace
+it per language.
+
 **Which tree draws a snapshot** (`Session::highlights`), resolved once a
 frame and fixed for it, with the tree delivered last of revision M and a
 snapshot of revision N: nothing with no highlighter or no delivery; the
@@ -1716,6 +1728,7 @@ is used wherever it ships one, as phase 2 decided for highlights:
 | `json` | the crate's | none | none | none |
 | `markdown` | the crate's, of the block grammar | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none |
 | `markdown_inline` | the crate's, of the inline grammar | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none |
+| `toml` | the crate's | none | none | none |
 
 `tree-sitter-rust` 0.24.2 ships no `indents.scm` or `textobjects.scm`, so
 Rust's are this repository's (`crates/editor-syntax-treesitter/queries/rust/`,
@@ -1791,6 +1804,18 @@ config maps them; `punctuation.delimiter` draws in `syntax.punctuation`. A
 Markdown tree may say it has an error with no error node the walk shows (a
 heading marker that ends the text); its round keeps it as it keeps any
 incremental tree.
+
+**TOML is `tree-sitter-toml-ng`'s grammar** (language-modes phase 4,
+2026-11-17). `tree-sitter-toml-ng` 0.7.0 (MIT, the tree-sitter-grammars
+project's, the continuation of ikatyang's original) ships a highlights
+query and no other, so TOML has no injections, indents or text objects: a
+TOML buffer's `=` and new lines find no indents query and add nothing. It
+is of policy `Incremental`: in a sweep on 2026-11-17, 4,221 incremental
+reparses of texts without errors, of random edits to the fixtures under
+`tests/syntax/toml/`, all equalled a fresh parse, and its contract passes.
+Since every compiled grammar is a language a layer can be injected in, a
+Markdown fence whose info string is `toml` is now a TOML layer. The crates
+looked at and set aside are in the adapter's `Cargo.toml`.
 
 **What the port gains.** `Syntax::matches` (a query's matches, each with
 its captures, and each captured node's named children), `pattern_settings`

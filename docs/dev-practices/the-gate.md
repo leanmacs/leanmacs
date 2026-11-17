@@ -229,9 +229,9 @@ that turns captures into spans and the carrying of spans through a patch
 its touch, a language set for injections and a read of the highlights on
 other threads each complete within a bound. `crates/editor-ffi/tests/syntax.rs` runs the syntax service on real
 documents through their edit paths and the C functions, and
-`crates/editor-ffi/tests/highlight.rs` highlights a Rust fixture through
-the C functions, edits it, and holds its spans once reparsed to a fresh
-highlight of its text; it runs layout's spans contract on the service, and
+`crates/editor-ffi/tests/highlight.rs` highlights a Rust fixture and a
+TOML fixture through the C functions, edits each, and holds its spans once
+reparsed to a fresh highlight of its text; it runs layout's spans contract on the service, and
 checks that a published scene paints a keyword in its face. It does the
 same for a Markdown document given its injections and languages through the
 C functions: a Rust fence drawn in Rust's captures, a JSON fence in JSON's,
