@@ -136,8 +136,10 @@ texts as the snapshots `0`, `1` and so on, and `contract-test` runs the
 same list against the real binding. `syntaxTreeChecks` are what only the
 model shows: the JSON tree of a small text node by node, the root of a text
 of blanks, the `ERROR` answer outside the subset, what the query subset
-refuses as unsupported, and the contract biting on a model written here
-that answers a range with the whole text's captures.
+refuses as unsupported, the contract biting on a model written here
+that answers a range with the whole text's captures, and a model whose
+trees a test says are not delivered refusing questions of captures with
+`notParsed`.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that a split tree's views tile the
@@ -467,9 +469,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
 - `evilIndentChecks`: `=` by key in a JSON language whose model tree
   answers the indents query (`indentDriver`): `gg=G` over a mangled text,
   `=af`, counts, `=j`, a visual selection, one undo step, `.` over another
-  range, a config entry's tab unit, and the give-up with no syntax tree or
-  no indents query; and the new lines `RET`, `o` and `O` start at their
-  level, and as before this phase with neither;
+  range, a config entry's tab unit, and the give-up with no syntax tree, no
+  indents query, or a tree not delivered yet (`undeliveredDriver`); and the
+  new lines `RET`, `o` and `O` start at their level, at the row's own indent
+  while the tree is not delivered, and as before this phase with neither;
 - `evilUndoChecks`: `u` and `C-r` after one change of each kind
   (`undoRows`): the text and the cursor from before the change, and those
   the change left. They are the phase's rule and are not compared with
@@ -6726,6 +6729,36 @@ def syntaxTreeChecks : List Check :=
           match SyntaxTreeM.runModel program model with
           | (.ok found, after) => after.refreshAfter == some 250 && found.size == 1
           | _ => false },
+    { name :=
+        "a model whose trees a test says are not delivered refuses captures and capturesOf with notParsed, after the range check, and answers both once they are"
+      run :=
+        pure <|
+          let (model, ids) := syntaxTreeModelOf #["[1]"]
+          let snapshot := ids[0]?.getD ⟨0⟩
+          let program : SyntaxTreeM Bool := do
+            SyntaxTree.attach snapshot "json"
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTree.keep snapshot .indents query
+            return (←
+                  SyntaxTreeContract.refusedWith .notParsed
+                      (SyntaxTree.captures snapshot query 0 3)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .notParsed
+                      (SyntaxTree.capturesOf snapshot .indents 0 3)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .badRange
+                      (SyntaxTree.capturesOf snapshot .indents 0 9)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .noQuery
+                      (SyntaxTree.capturesOf snapshot .textObjects 0 3))
+          let delivered : SyntaxTreeM Nat := do
+            SyntaxTree.attach snapshot "json"
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTree.keep snapshot .indents query
+            return (← SyntaxTree.captures snapshot query 0 3).size +
+                (← SyntaxTree.capturesOf snapshot .indents 0 3).captures.size
+          (SyntaxTreeM.runModel program { model with delivered := false }).1 matches .ok true &&
+            (SyntaxTreeM.runModel delivered model).1 matches .ok 2 },
     { name := "every property of the syntax tree contract holds of the model"
       run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
 
@@ -22814,6 +22847,20 @@ def indentEdited (fixture typed : String) (language : Language := modelJsonInden
     (config : Array Language := #[]) : Option EvilEdited :=
   (indentDriver fixture language config).map fun driver => evilLeft (evilFed driver typed)
 
+/-- `indentDriver` over `fixture`, its syntax tree model saying the tree of
+the text's last edit is not delivered (`SyntaxTreeModel.delivered`): what a
+command meets when keys come faster than a reparse. -/
+def undeliveredDriver (fixture : String) : Option EvilDriver :=
+  (indentDriver fixture).map fun driver =>
+    { driver with
+      model :=
+        { driver.model with syntaxTree := { driver.model.syntaxTree with delivered := false } } }
+
+/-- The keys `typed` pressed from `fixture` on `undeliveredDriver`: what
+they left. -/
+def undeliveredEdited (fixture typed : String) : Option EvilEdited :=
+  (undeliveredDriver fixture).map fun driver => evilLeft (evilFed driver typed)
+
 /-- One row of an oracle table of the operators: keys, the text and the
 cursor they are pressed from, and what Vim leaves. -/
 structure OperatorRow where
@@ -25362,6 +25409,29 @@ def evilIndentChecks : List Check :=
             evilGaveUp (evilEdited fixture "g g = G") "    |ab\n  cd" reason &&
             (evilDriver fixture).bind (fun driver => evilText (evilFed driver "x = = .")) ==
               some "    \n  cd" },
+    { name :=
+        "while the tree of the text's last edit is not delivered, = = and g g = G leave the text and the cursor and say the tree is not parsed yet, where the tree would re-indent the rows; the give-up is not the last change, so . after it repeats the change before it"
+      run :=
+        pure <|
+          let fixture := "[\n   |1,\n 2\n]"
+          let reason := Evil.cannotIndent .notParsed
+          (indentEdited fixture "= =").map (·.shown) == some "[\n  |1,\n 2\n]" &&
+            evilGaveUp (undeliveredEdited fixture "= =") fixture reason &&
+            evilGaveUp (undeliveredEdited fixture "g g = G") "|[\n   1,\n 2\n]" reason &&
+            (undeliveredDriver "[\n   |12\n]").bind
+                (fun driver => evilText (evilFed driver "x = = .")) ==
+              some "[\n   \n]" },
+    { name :=
+        "while the tree of the text's last edit is not delivered, A RET, o and O start the new row at the cursor row's own leading whitespace, Vim's autoindent, where the tree would give its level, and . replays a RET so"
+      run :=
+        pure <|
+          (indentEdited "[\n   |1\n]" "o").map (·.shown) == some "[\n   1\n  |\n]" &&
+            (undeliveredEdited "[\n   |1\n]" "A RET").map (·.shown) == some "[\n   1\n   |\n]" &&
+            (undeliveredEdited "[\n   |1\n]" "o").map (·.shown) == some "[\n   1\n   |\n]" &&
+            (undeliveredEdited "[\n   |1\n]" "O").map (·.shown) == some "[\n   |\n   1\n]" &&
+            (undeliveredDriver "[\n   |1,\n 2\n]").bind
+                (fun driver => evilText (evilFed driver "A RET <Escape> j .")) ==
+              some "[\n   1,\n   \n 2\n \n]" },
     { name :=
         "in a buffer whose language's tree keeps no indents query = = leaves the text and says so"
       run :=

@@ -7,7 +7,8 @@ A pure model of the syntax tree interface (`Editor/SyntaxTree.lean`). It
 knows one grammar, `json` (`Editor/SyntaxTree/Model/Json.lean`), and the
 subset of the query language that `Editor/SyntaxTree/Model/Query.lean`
 states, and it parses at once: a question of captures is answered of the
-snapshot's own text, so the model never answers `notParsed`.
+snapshot's own text, so the model answers `notParsed` only when a test
+says its trees are not delivered (`delivered`).
 
 Its state has three parts:
 
@@ -35,6 +36,12 @@ Its state has three parts:
 - `refreshAfter`: the refresh delay it was handed last. It parses at once,
   so every tree is exact and the delay changes no answer; it is what the
   editor's checks read.
+- `delivered`: whether the tree of each text's last edit is delivered. It
+  starts `true`. A test sets it `false` to see what a command does when
+  keys come faster than a reparse: `captures` and `capturesOf` are then
+  refused with `notParsed`, after every check the real binding makes
+  before it, as the clipboard model is taken away
+  (`ClipboardModel.available`).
 
 Its shipped highlights query (`highlights`) is its own, in its query subset:
 the library's JSON one uses an alternation, which the model refuses as
@@ -81,6 +88,10 @@ structure SyntaxTreeModel where
   /-- The refresh delay `refreshAfter` handed it last, if any. The model
   parses at once, so it changes nothing it answers. -/
   refreshAfter : Option Nat := none
+  /-- Whether the tree of each text's last edit is delivered: when `false`,
+  a question of captures is refused with `notParsed` after its other
+  checks. -/
+  delivered : Bool := true
 
 namespace SyntaxTreeModel
 
@@ -225,6 +236,8 @@ def capturesOf (model : SyntaxTreeModel) (snapshot : SnapshotId) (kind : QueryKi
     | throw .noQuery
   unless first ≤ last && isPosition text first && isPosition text last do
     throw .badRange
+  unless model.delivered do
+    throw .notParsed
   return { names := compiled.names, captures := compiled.captures (Json.parse text) first last }
 
 /-- `highlight`, checked in the order the real binding checks it. -/
@@ -267,6 +280,8 @@ def captures (model : SyntaxTreeModel) (snapshot : SnapshotId) (query : QueryId)
     throw .wrongGrammar
   unless first ≤ last && isPosition text first && isPosition text last do
     throw .badRange
+  unless model.delivered do
+    throw .notParsed
   return compiled.captures (Json.parse text) first last
 
 /-- Answers `request` from the model as it is. -/
