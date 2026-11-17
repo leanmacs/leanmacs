@@ -572,6 +572,10 @@ accepted names at most one (`theme`). -/
   /-- The layouts `setup` chose (`layout`), in order: more than one is
   refused, so a `setup` that is accepted chooses at most one (`layout`). -/
   layouts : Array Layout := #[]
+  /-- When `setup` chose the tab bar to be shown (`tabBar`), in order: more
+  than one is refused, so a `setup` that is accepted chooses it once at
+  most (`tabBar`). -/
+  tabBars : Array TabBar.Shown := #[]
   /-- The title bars `setup` chose (`titleBar`), in order: more than one is
   refused, so a `setup` that is accepted chooses at most one (`titleBar`). -/
   titleBars : Array Window.TitleBar := #[]
@@ -606,6 +610,10 @@ def framePadding (collected : Registrations) : Option Nat :=
 /-- The layout a `setup` chose, if it chose one. -/
 def layout (collected : Registrations) : Option Layout :=
   collected.layouts[0]?
+
+/-- When a `setup` chose the tab bar to be shown, if it chose. -/
+def tabBar (collected : Registrations) : Option TabBar.Shown :=
+  collected.tabBars[0]?
 
 /-- The title bar a `setup` chose, if it chose one. -/
 def titleBar (collected : Registrations) : Option Window.TitleBar :=
@@ -650,6 +658,7 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .framePadding points, collected =>
     ((), { collected with framePaddings := collected.framePaddings.push points })
   | .layout chosen, collected => ((), { collected with layouts := collected.layouts.push chosen })
+  | .tabBar shown, collected => ((), { collected with tabBars := collected.tabBars.push shown })
   | .titleBar style, collected =>
     ((), { collected with titleBars := collected.titleBars.push style })
   | .processEnvironment setting, collected =>
@@ -688,7 +697,7 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 twice, a command name or a job name registered twice, a face set twice, a
 theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
-twice, the layout chosen twice, the title bar chosen twice, a key sequence bound twice, a binding of
+twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, a key sequence bound twice, a binding of
 no keys, an ex name bound twice, the process environment set twice,
 auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
@@ -727,6 +736,8 @@ def problem? (collected : Registrations) : Option String := do
     return "the frame padding is set twice"
   if collected.layouts.size > 1 then
     return "the layout is chosen twice"
+  if collected.tabBars.size > 1 then
+    return "the tab bar is chosen twice"
   if collected.titleBars.size > 1 then
     return "the title bar is chosen twice"
   if collected.environments.size > 1 then

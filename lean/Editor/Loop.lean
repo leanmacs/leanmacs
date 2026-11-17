@@ -1132,6 +1132,10 @@ structure Loop.Keys (scheme : InputScheme) where
   built with. The host hands config's choice, or the default
   (`Headless.keys`). -/
   layout : Option Layout := none
+  /-- When the tab bar is shown (`Editor/TabBar.lean`), which the publish
+  sets on the state (`EditorState.tabBarShown`); `none` keeps the state's.
+  The host hands config's choice, or the editor's own (`Headless.keys`). -/
+  tabBar : Option TabBar.Shown := none
   /-- The menu bar the scene names, its key equivalents filled from the
   registry's bindings as they are now (`Config.Registry.menuOf`,
   `Editor/Menu/Compiled.lean`); `none` for a host with no menu bar, whose
@@ -1629,7 +1633,8 @@ def tabBarView (state : EditorState) (shown : Array Shown) :
 session (`sessions`), withdraws a quit that cannot go ahead
 (`EditorState.settleQuit`), brings an open prompt's listing up to date
 (`listed`), has the frame choose `layout` when one is handed that is not
-the one it last chose (`Frame.choose`), has
+the one it last chose (`Frame.choose`), sets when the tab bar is shown
+from `tabBar` when one is handed, has
 each view but the floats follow its cursor (`followed`), places the floats
 anchored at a position where the display drew it and closes a transient
 one whose anchor is not drawn (`spots`, `EditorState.located`), has the
@@ -1642,7 +1647,8 @@ the floats it closed held, telling the scheme they closed. It is not refused
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
 def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0)
-    (layout : Option Layout := none) : EditorM (Loop scheme) := do
+    (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none) :
+    EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
@@ -1665,7 +1671,8 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
     | none => state.frame
   let state :=
     { state with
-      heights := ← Display.heights, padding, frame }
+      heights := ← Display.heights, padding, frame
+      tabBarShown := tabBar.getD state.tabBarShown }
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views modeLine
   -- Each view follows its cursor before the scene names its anchor: the
   -- snapshots the questions of layout need were taken just above. Each is
@@ -2221,7 +2228,7 @@ leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
 scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
-  let loop ← stepped.loop.publish keys.modeLine keys.padding keys.layout
+  let loop ← stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar
   let (loop, starts, cancels) := loop.fileJobs keys
   return { stepped with
       loop, next := nextOf loop, starts := stepped.starts ++ starts

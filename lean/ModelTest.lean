@@ -2889,6 +2889,19 @@ def setupChecks : List Check :=
               refusal (layout .monocle) == none)
         | _, _ => pure false },
     { name :=
+        "a setup's tab bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          tabBar .never
+          tabBar .always
+        match Config.Registrations.ofSetup (tabBar .always),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.tabBar == some .always && plain.tabBar == none &&
+              refusal twice == some "the tab bar is chosen twice")
+        | _, _ => pure false },
+    { name :=
         "a setup's edge layout is collected; an edge above 100 percent, a side given twice and a share above 100 inside an edge are each refused with their message"
       run :=
         let edged := Layout.edge .left 25 (.edge .bottom 30 Layout.manual)
@@ -3763,6 +3776,15 @@ def reloadChecks : List Check :=
           (themed.framePadding == none && state.framePadding == some 12 &&
             dropped.framePadding == none &&
             kept.framePadding == some 12) },
+    { name :=
+        "an install sets when the tab bar is shown as config chooses, a later install that chooses none goes back to none, the editor's own, and a rejected one changes nothing"
+      run :=
+        let (state, _) := reduceFrom themed [.requested, .finished (accepted ["a"] (tabBar .never))]
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        pure
+          (themed.tabBar == none && state.tabBar == some .never && dropped.tabBar == none &&
+            kept.tabBar == some .never) },
     { name :=
         "an install sets the layout config chooses, a later install that chooses none goes back to none, the editor's own, and a rejected one changes nothing"
       run :=
@@ -29673,7 +29695,24 @@ def tabBarChecks : List Check :=
               shownText named.model again == some " 1 scratch   2 n " && again.id == bar.id &&
                 bar.snapshot != again.snapshot &&
                 releasedSnapshot named bar.snapshot
-            | _, _ => false }]
+            | _, _ => false },
+    { name :=
+        "a loop handed never shows no bar with two tabs, and the tiled area is whole; handed always it shows one with one tab; handed none it keeps the state's"
+      run :=
+        pure <|
+          let barred (shown : Option TabBar.Shown) (typed : String) : Option EditorState :=
+            (windowDriver 1 Layout.default (handed :=
+                  { tabHanded Layout.default with tabBar := shown })).map
+              fun driver => (evilFed driver typed).loop.state
+          match barred (some .never) "C-w c", barred (some .always) "<Escape>",
+            barred none "C-w c" with
+          | some never, some always, some kept =>
+            never.tabBarShown == .never && never.tabBarRect? == none &&
+              never.tiled == rect 0 0 640 464 &&
+              always.tabBarRect? == some (rect 0 448 640 16) &&
+              kept.tabBarShown == .several &&
+              kept.tabBarRect? == some (rect 0 448 640 16)
+          | _, _, _ => false }]
 
 /-- The checks of the window commands (`Editor/WindowCommands.lean`), by
 key, on the loop's driver over the editor's models, under the Vim scheme

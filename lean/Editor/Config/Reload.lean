@@ -69,6 +69,12 @@ the model tests run it with outcomes built by hand
   host hands it to the loop for each step (`Headless.keys`,
   `Loop.Keys.layout`), so it changes with no restart. A rejected outcome
   changes none of it.
+- **The tab bar follows config.** An install sets when the tab bar is
+  shown (`State.tabBar`) to what the config chose, or none for the
+  editor's own (`TabBar.Shown.several`), so a reload that chooses none
+  goes back to it. The host hands it to the loop for each step
+  (`Headless.keys`, `Loop.Keys.tabBar`). A rejected outcome changes none
+  of it.
 - **The display rules follow config.** An install checks each display
   rule the config made (`displayRule`) against the layout it chose, or the
   editor's when it chose none (`DisplayTarget.missing?`): a rule whose
@@ -219,6 +225,10 @@ structure State (σ : Type) where
   editor's own (`Layout.default`): set at every install, so a config that
   chooses none goes back to it. -/
   layout : Option Layout := none
+  /-- When the installed config chose the tab bar to be shown (`tabBar`), or
+  none for the editor's own (`TabBar.Shown.several`): set at every install,
+  so a config that chooses none goes back to it. -/
+  tabBar : Option TabBar.Shown := none
   /-- The title bar the installed config chose (`titleBar`), or none for the
   themed one: set at every install, so a config that chooses none goes
   back to it. The window mode reads it when it opens the window. -/
@@ -344,7 +354,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
     let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
     ({ state with
         themeName, modeLine, framePadding := built.registrations.framePadding
-        layout := built.registrations.layout
+        layout := built.registrations.layout, tabBar := built.registrations.tabBar
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments

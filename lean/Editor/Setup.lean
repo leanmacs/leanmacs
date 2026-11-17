@@ -9,6 +9,7 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Store
+import Editor.TabBar
 import Editor.Window
 
 /-!
@@ -210,6 +211,12 @@ has the rest. Choosing it twice is refused, and so are a master-and-stack
 share above 100, an edge above 100 and a side given twice, at any depth
 (`Layout.problem?`).
 
+Config chooses when the tab bar is shown (`tabBar`, `Editor/TabBar.lean`):
+`tabBar .never` turns it off, `tabBar .always` shows it with one tab too,
+and a config that chooses none has it while there are two tabs or more
+(`TabBar.Shown.several`). A reload changes it. Choosing it twice is
+refused.
+
 Config says where a buffer a command makes is shown with display rules
 (`displayRule`, `Editor/DisplayRules.lean`), matched in order on the
 buffer's modes, its name and the command that opened it:
@@ -330,6 +337,9 @@ inductive SetupRequest where
   /-- Choose the layout the frame's windows are arranged by, once the config
   is installed (`Editor/Layout.lean`). -/
   | layout (chosen : Layout)
+  /-- Choose when the tab bar is shown, once the config is installed
+  (`Editor/TabBar.lean`). -/
+  | tabBar (shown : TabBar.Shown)
   /-- Choose the title bar the window opens with (`Window.TitleBar`). -/
   | titleBar (style : Window.TitleBar)
   /-- Choose where a child's environment comes from
@@ -364,6 +374,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .modeLine _ => Unit
   | .framePadding _ => Unit
   | .layout _ => Unit
+  | .tabBar _ => Unit
   | .titleBar _ => Unit
   | .processEnvironment _ => Unit
   | .autoReload _ => Unit
@@ -546,6 +557,14 @@ def layout (chosen : Layout) : SetupM Unit := do
   if let some problem := chosen.problem? then
     throw problem
   ExceptT.lift (Program.request (port := setupPort) (.layout chosen))
+
+/-- Chooses when the tab bar is shown once the config is installed
+(`Editor/TabBar.lean`): `tabBar .never`, `tabBar .always`, or
+`tabBar .several`, the editor's own, while there are two tabs or more. A
+reload changes it with no restart. The editor refuses the `setup` for
+choosing it twice. -/
+def tabBar (shown : TabBar.Shown) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.tabBar shown))
 
 /-- Adds `rule` to the display rules, after the ones made before it: where a
 buffer a command shows goes, matched in order on its modes, its name and
