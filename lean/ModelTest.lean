@@ -28383,6 +28383,134 @@ def viewChecks : List Check :=
               | some now => now.anchor == 0 && now.head == 9 && after.loop.state.echo == ""
               | none => false }]
 
+/-- Forty lines of seven bytes with their breaks, `line00` to `line39`: the
+text of the float checks of the loop, in which row `r`, column `c` is at
+`7 * r + c`. -/
+def floatLines : String :=
+  "\n".intercalate ((List.range 40).map fun line => s!"line{line / 10}{line % 10}")
+
+/-- `viewState floatLines size 0 head` with a second buffer, `hint`, over a
+text of its own holding `hint`, shown in a float, view 1, on top of view 0,
+anchored at `offset` of view 0's buffer, 50 percent of the tiled area wide
+and 25 percent tall, `pinned` or not, opened without the focus. -/
+def hinted (size : Size) (head offset : Nat) (pinned : Bool) : TextM EditorState := do
+  let state ← viewState floatLines size 0 head
+  let some buffer := state.buffer? ⟨0⟩ | throw .noSuchText
+  let text ← createText "hint"
+  let history ← UndoTree.over text
+  let (.ok hint, state) := state.addBuffer "hint" text history | throw .noSuchText
+  let anchor ← buffer.text.mark (.anchor { offset, bias := .before })
+  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+  let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩] })
+  let spot : WindowSpot := .float (.position ⟨0⟩ anchor) { width := 50, height := 25 } pinned
+  let (.ok _, state) := state.openWindow hint scroll selection spot | throw .noSuchText
+  return state
+
+/-- The models of the float checks of the loop: the display in cells 8
+pixels across and 16 down. -/
+def floatModel : EditorModel :=
+  .over { advance := 8, lineHeight := 16 }
+
+/-- A driver of the float checks of the loop over `hinted`, with the cursor
+at `head` and the float anchored at `offset`, under the Vim scheme that
+ships, with the frame padding 8, in a frame of 640 by 480, whose one
+window's text area is 640 by 448; none if making the state was refused.
+Nothing is published until a step is fed. -/
+def floatDriver (head offset : Nat) (pinned : Bool := false) : Option EvilDriver :=
+  let frame := frameAround ⟨640, 448⟩ floatModel.display.cells
+  (Loop.Driver.over { evilHanded with padding := 8 } (fun _ => none)
+      (hinted frame head offset pinned) floatModel).toOption
+
+/-- The views of the last scene `driver`'s display recorded, with their
+rectangles, and the focused view. -/
+def sceneViews (driver : EvilDriver) : Option (Array (ViewId × Rect) × Option ViewId) :=
+  driver.model.display.scenes.back?.map fun scene =>
+    (scene.views.map fun view => (view.id, view.rect), scene.focused)
+
+/-- Whether the text model of `driver` holds the marker `id`. -/
+def holdsMarker (driver : EvilDriver) (id : MarkerId) : Bool :=
+  ((id.text.marker id : TextM Marker).runModel driver.model.texts).1.toOption.isSome
+
+/-- The checks of the floats a publish places against a position of a
+window (`Editor/Loop.lean`, "After each event"), on the loop's driver over
+the editor's models. -/
+def floatViewChecks : List Check :=
+  let rect (x y width height : Nat) : Rect := { x, y, width, height }
+  -- The first publish: a resize to the size the frame has.
+  let published (driver : EvilDriver) : EvilDriver := viewResized driver ⟨640, 448⟩
+  [{  name :=
+        "criterion 1 in the loop: a float anchored at a position is placed directly under the position's row, at its x, the padding included, and listed after the window it floats over; with the position on the last row shown it is flipped above the row"
+      run :=
+        pure <|
+          match floatDriver 18 18, floatDriver 18 (7 * 26 + 4) with
+          | some driver, some low =>
+            sceneViews (published driver) ==
+                some (#[(⟨0⟩, rect 0 0 640 464), (⟨1⟩, rect 40 56 320 116)], some ⟨0⟩) &&
+              sceneViews (published low) ==
+                some (#[(⟨0⟩, rect 0 0 640 464), (⟨1⟩, rect 40 308 320 116)], some ⟨0⟩)
+          | _, _ => false },
+    { name :=
+        "a transient float whose anchor scrolled away is closed at the publish: once the cursor moves thirty rows down it is in neither the scene nor the state, and its window's markers and its anchor marker are given up; a pinned one stays where it last was"
+      run :=
+        pure <|
+          match floatDriver 18 18, floatDriver 18 18 (pinned := true) with
+          | some driver, some pinned =>
+            let shown := published driver
+            let held : Array MarkerId :=
+              ((shown.loop.state.window? ⟨1⟩).map
+                      (fun window => #[window.scroll, window.selection])).getD
+                  #[] ++
+                (shown.loop.state.frame.floats.filterMap (·.anchor.marker?))
+            let moved := evilFed shown "3 0 j"
+            let kept := evilFed (published pinned) "3 0 j"
+            held.size == 3 && held.all (holdsMarker shown) &&
+              (sceneViews moved).map (·.1.map (·.1)) == some #[⟨0⟩] &&
+              (moved.loop.state.window? ⟨1⟩).isNone &&
+              moved.loop.state.frame.floats.isEmpty &&
+              held.all (!holdsMarker moved ·) &&
+              moved.loop.state.wellFormed &&
+              sceneViews kept ==
+                some (#[(⟨0⟩, rect 0 0 640 464), (⟨1⟩, rect 40 56 320 116)], some ⟨0⟩)
+          | _, _ => false },
+    { name :=
+        "a float the publish closes is told to the scheme as closed: neither state of the scheme the loop keeps holds anything for it"
+      run :=
+        pure <|
+          let program : EditorM ((List ViewId × List ViewId) × Bool) := do
+            -- The anchor, on row 35, is below the 27 rows view 0 shows.
+            let state ← hinted (frameAround ⟨640, 448⟩ floatModel.display.cells) 0 (7 * 35) false
+            let told : TestScheme.State × List ViewId := ({}, [⟨0⟩, ⟨1⟩])
+            let loop : Loop remembering :=
+              { state := { state with heights := floatModel.display.cells.heights }, input := told
+                atRest := told }
+            let loop ← loop.publish (padding := 8)
+            return (remembered loop, loop.state.frame.floats.isEmpty)
+          (program.runModel floatModel).1.toOption == some (([⟨0⟩], [⟨0⟩]), true) },
+    { name :=
+        "a publish asks the display one spot for each float anchored at a position, and none with no such float"
+      run :=
+        pure <|
+          let spotsAsked (start : TextM EditorState) : Option Nat :=
+            let program : EditorM Unit := do
+              let state ← start
+              let loop : Loop Vim.Default.scheme :=
+                { state := { state with heights := floatModel.display.cells.heights } }
+              discard <| loop.publish (padding := 8)
+            let count (request : EditorRequest) : Nat :=
+              match request with
+              | .display (.spot _) => 1
+              | _ => 0
+            let handle (request : EditorRequest) (models : EditorModel × Nat) :
+              request.Reply × (EditorModel × Nat) :=
+              let (reply, model) := EditorModel.handle request models.1
+              (reply, (model, models.2 + count request))
+            match Program.run (port := editorPort) handle program.run (floatModel, 0) with
+            | (.ok (), (_, asked)) => some asked
+            | _ => none
+          let frame := frameAround ⟨640, 448⟩ floatModel.display.cells
+          spotsAsked (hinted frame 18 18 false) == some 1 &&
+            spotsAsked (viewState floatLines frame 0 18) == some 0 }]
+
 /-- A rectangle at `x`, `y`, `width` across and `height` down. -/
 def rectAt (x y width height : Nat) : Rect :=
   { x, y, width, height }
@@ -32191,6 +32319,7 @@ def checks : List Check :=
     evilUndoChecks ++
     evilRepeatChecks ++
     viewChecks ++
+    floatViewChecks ++
     frameCommandChecks ++
     windowCommandChecks ++
     titleChecks ++

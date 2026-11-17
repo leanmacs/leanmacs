@@ -514,6 +514,11 @@ comparing the state from before the command with the state it left:
 - **A window's markers.** Each marker of a window of the state before that
   no window of the state after uses is given up (`TextId.unmark`): the
   window was closed, or shown another buffer.
+- **A float's anchor marker.** The anchor marker of each float of the state
+  before (`Floating.Anchor.position`) that no float of the state after
+  holds is given up: the float was closed, or its anchor went and a pinned
+  float was anchored to the frame (`Editor/State.lean`, "A floating
+  window").
 - **A buffer's text.** The text of each buffer of the state before whose
   slot is empty in the state after is released, unless a buffer that is
   left is over the same text. The markers go first, so a window closed with
@@ -688,14 +693,36 @@ changed the state or not (`Loop.publish`):
    the keyboard focus. The pending prefix is the scheme's pending keys
    (`Loop.pending`).
 3. **The follow** (`Loop.followed`). Each view's scroll anchor is placed
-   so that the view shows its cursor ("Following the cursor", below). The
-   scene names the anchor's marker, not its offset, so placing it changes
-   no value of the scene.
-4. **Publish** it through the display port.
-5. **Release** each snapshot the previous scene named that this one does
-   not. So a scene's handles are alive while it is the last one published,
-   and a real binding resolves them when it is published.
-6. **The checks of files** (`Loop.fileJobs`): the loop compares what the
+   so that the view shows its cursor ("Following the cursor", below), the
+   floats' last. The scene names the anchor's marker, not its offset, so
+   placing it changes no value of the scene.
+4. **The floats' places** (`Loop.spots`, `EditorState.located`). Once the
+   tiles, the docked windows and the minibuffer's view have followed their
+   cursors, the display is asked where each float anchored at a position
+   is drawn, in its window's view as it will be published: the view's
+   snapshot, its rectangle less its bottom row, its padding, and its scroll
+   anchor where the follow left it, and the anchor marker's offset. The
+   spot is kept on the float, offset into frame pixels, so the rectangles
+   of the state (`EditorState.rects`) stay pure. A transient float whose
+   anchor is not drawn, a position its window does not show or a window
+   with no rectangle, closes here, and the focus on it goes back as
+   `removeWindow` sends it; a pinned one keeps the spot it last had. The
+   views are then given their rectangles and paddings again, a closed
+   float's view is dropped, and the floats follow their cursors. A float
+   is listed after every tile and docked window, so the display, which
+   draws views in scene order each over its own background, draws it
+   above them.
+5. **Publish** it through the display port.
+6. **Release** each snapshot the previous scene named that this one does
+   not, and each taken for a float closed in step 4. So a scene's handles
+   are alive while it is the last one published, and a real binding
+   resolves them when it is published.
+7. **What the closed floats held.** A float step 4 closed gives up its
+   markers and its anchor marker (`Loop.gaveUp`), and the scheme is told
+   its view closed (`Loop.forgetViews`, on both of the loop's states of
+   the scheme), as for a window a command closed: only the publish knows
+   what the follow scrolled.
+8. **The checks of files** (`Loop.fileJobs`): the loop compares what the
    state shows with what it saw at the last publish (`Loop.Seen`) and
    starts one `check-files` for the files that are due ("Files that
    changed on disk", below).
@@ -876,6 +903,7 @@ is kept here.
   | Shows no row | 1: the anchor | 1: the rows shown |
   | Keeps its anchor, the margin as set holding | 2: and the selection | 2: and the rows from the cursor |
   | Is moved | 3: and the place | 2 to 4 (`Editor/Scroll.lean`, "What it costs") |
+  | A float anchored at a position, placed (`Loop.spots`) | 2 more: the anchor marker and its window's scroll anchor | 1 more: the spot |
 
 - Not done: following inside the dispatch of a command, since a resize
   and a committed text run none; and following inside each motion, since
@@ -885,7 +913,9 @@ is kept here.
 Pinned by `ModelTest.viewChecks`, on the loop's driver over the editor's
 models; by a case of `Editor/Api/Cases.lean`, on the models and on the
 real text binding with the recorder; and by the fixture
-`tests/headless/view`, on the executable.
+`tests/headless/view`, on the executable. The floats' places are pinned by
+`ModelTest.floatViewChecks`, on the same driver, and by the fixture
+`tests/headless/float-anchor`.
 
 ## Insert sessions
 
@@ -1443,14 +1473,96 @@ def followed (margin : Nat) (bottomOf : ViewId → Nat) (views : Array View) : E
   for view in views do
     discard <| observing (follow margin (bottomOf view.id) view)
 
+/-- The snapshots of the saves in flight in `state`: one for each buffer
+that has one (`Buffer.File.saving`). -/
+def savesInFlight (state : EditorState) : Array SnapshotId :=
+  state.buffers.filterMap fun slot => ((slot.bind (·.file)).bind (·.saving)).map (·.snapshot)
+
+/-- Gives up what a command that ran to its end dropped ("What a finished
+command gave up", in the module docs), `before` being the state from before
+it and `after` the state it left: each marker of a window of `before` that
+no window of `after` uses, then the snapshot of each save in flight in
+`before` that is not in flight in `after`, and then the text of each buffer
+of `before` whose slot is empty in `after`, unless a buffer of `after` is
+over it. It is not refused: the first thing the store refuses is handed
+back, and the rest is still given up. -/
+def gaveUp (before after : EditorState) : TextM (Option TextError) := do
+  let mut refusal := none
+  let held := after.windows.flatMap fun window => #[window.selection, window.scroll]
+  for window in before.windows do
+    for id in [window.selection, window.scroll] do
+      unless held.contains id do
+        if let .error error← observing (id.text.unmark id) then
+          refusal := refusal <|> some error
+  let anchored := after.frame.floats.filterMap (·.anchor.marker?)
+  for float in before.frame.floats do
+    if let some id := float.anchor.marker? then
+      unless anchored.contains id do
+        if let .error error← observing (id.text.unmark id) then
+          refusal := refusal <|> some error
+  let saving := savesInFlight after
+  for snapshot in savesInFlight before do
+    unless saving.contains snapshot do
+      if let .error error← (observing snapshot.release : TextM (Except TextError Unit)) then
+        refusal := refusal <|> some error
+  for index in [0:before.buffers.size] do
+    let some buffer := before.buffer? ⟨index⟩ | continue
+    if (after.buffer? ⟨index⟩).isSome || after.buffers.any (·.any (·.text == buffer.text)) then
+      continue
+    if let .error error← observing buffer.text.release then
+      refusal := refusal <|> some error
+  return refusal
+
+/-- The views `before` has a window of and `after` has none of: the views a
+command that took the one to the other closed. -/
+def closedViews (before after : EditorState) : Array ViewId :=
+  before.windows.filterMap fun window =>
+    if (after.window? window.id).isNone then some window.id else none
+
+/-- `state`, a state of the loop's scheme, once it is told that each of
+`views` is closed (`InputScheme.closeView`). -/
+def forgetViews (views : Array ViewId) (state : scheme.State) : scheme.State :=
+  views.foldl (fun state view => scheme.closeView view state) state
+
+/-- Where each float of `state` anchored at a position is drawn in its
+window's view, one of `views`, as the display answers (`Display.spotOf`):
+from the view's top left, asked with the view's snapshot, its rectangle less
+its bottom row, its padding, and its scroll anchor where the follow left it.
+None when the view does not show the position, when the window has no view
+or no height, and when a marker of it was given up or its snapshot
+released: its anchor is not drawn ("After each event", in the module
+docs). Each costs two text requests, the anchor marker and the view's
+scroll anchor, and one display request. -/
+def spots (state : EditorState) (views : Array View) :
+    EditorM (Array (ViewId × Option Display.Spot)) :=
+  state.frame.floats.filterMapM fun float => do
+    let .position view marker := float.anchor | return none
+    let some shown := views.find? (·.id == view) | return some (float.view, none)
+    if shown.rect.height == 0 then
+      return some (float.view, none)
+    let answer ←
+      observing do
+          let .anchor anchor ← marker.text.marker marker | throw .noSuchMarker
+          let .anchor scroll ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
+          let area :=
+            Scroll.Area.ofRect shown.snapshot shown.rect (state.bottomRow view) shown.padding
+          Display.spotOf
+              { snapshot := area.snapshot, width := area.width, height := area.height
+                anchor := scroll.offset, padding := area.padding, position := anchor.offset }
+    return some (float.view, (answer : Except TextError (Option Display.Spot)).toOption.join)
+
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
 (`EditorState.settleQuit`), brings an open prompt's listing up to date
 (`listed`), has the frame choose `layout` when one is handed that is not
 the one it last chose (`Frame.choose`), has
-each view follow its cursor (`followed`), publishes a scene
-of the state, and releases each
-snapshot the last scene named that this one does not. It is not refused
+each view but the floats follow its cursor (`followed`), places the floats
+anchored at a position where the display drew it and closes a transient
+one whose anchor is not drawn (`spots`, `EditorState.located`), has the
+floats follow their cursors, publishes a scene
+of the state, releases each
+snapshot the last scene named that this one does not, and gives up what
+the floats it closed held, telling the scheme they closed. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
@@ -1482,19 +1594,45 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views modeLine
   -- Each view follows its cursor before the scene names its anchor: the
   -- snapshots the questions of layout need were taken just above. Each is
-  -- asked with its height less its bottom row.
-  followed state.scrollMargin state.bottomRow views
+  -- asked with its height less its bottom row. The floats follow once they
+  -- are placed, below.
+  let floating (state : EditorState) (view : View) : Bool := (state.frame.floating? view.id).isSome
+  followed state.scrollMargin state.bottomRow (views.filter (!floating state ·))
+  -- Each float anchored at a position is placed where the display drew it,
+  -- in the views as the follow left them, and a transient one whose anchor
+  -- is not drawn closes.
+  let before := state
+  let placed := state.located (← spots state views)
+  let views :=
+    views.filterMap fun view =>
+      (placed.rect? view.id).map fun rect =>
+        { view with
+          rect, padding := placed.paddingOf view.id }
+  followed placed.scrollMargin placed.bottomRow (views.filter (floating placed))
   -- The matches are read from where each anchor now is.
-  let views ← decorated state views
-  let state := state.refusedBy (unrecorded <|> unlisted <|> unshown)
+  let views ← decorated placed views
+  let state := placed.refusedBy (unrecorded <|> unlisted <|> unshown)
   Display.publish (scene state views loop.pending loop.menu)
+  -- A snapshot is kept while a view of the scene names it: one taken for a
+  -- float that closed above is released with the last scene's others.
+  let named := shown.filter fun was => views.any (·.snapshot == was.snapshot)
+  let taken := shown.filter fun was => !loop.shown.any (·.snapshot == was.snapshot)
   let mut unreleased := none
-  for was in loop.shown do
-    unless shown.any (·.snapshot == was.snapshot) do
+  for was in loop.shown ++ taken do
+    unless named.any (·.snapshot == was.snapshot) do
       if let .error error← (observing was.snapshot.release : TextM (Except TextError Unit)) then
         unreleased := unreleased <|> some error
+  -- The floats closed above give up their markers, and the scheme is told
+  -- they closed, as for a command's closed windows.
+  let closed := closedViews before placed
+  let ungiven ←
+    if closed.isEmpty then
+      pure none
+    else
+      gaveUp before placed
   return { loop with
-      state := state.refusedBy unreleased, shown }
+      state := state.refusedBy (unreleased <|> ungiven), shown := named
+      input := forgetViews closed loop.input, atRest := forgetViews closed loop.atRest }
 
 /-- Replaces what each range of `target`'s selection covers with `text`, as
 one transaction with the user's origin, which carries the selection before
@@ -1676,51 +1814,6 @@ def Kept.restore (kept : Kept) (before after : EditorState) : TextM (EditorState
     | some error => s!"; not rolled back: {error.describe}"
     | none => ""
   return ({ before with buffers }, history ++ unrestored)
-
-/-- The snapshots of the saves in flight in `state`: one for each buffer
-that has one (`Buffer.File.saving`). -/
-def savesInFlight (state : EditorState) : Array SnapshotId :=
-  state.buffers.filterMap fun slot => ((slot.bind (·.file)).bind (·.saving)).map (·.snapshot)
-
-/-- Gives up what a command that ran to its end dropped ("What a finished
-command gave up", in the module docs), `before` being the state from before
-it and `after` the state it left: each marker of a window of `before` that
-no window of `after` uses, then the snapshot of each save in flight in
-`before` that is not in flight in `after`, and then the text of each buffer
-of `before` whose slot is empty in `after`, unless a buffer of `after` is
-over it. It is not refused: the first thing the store refuses is handed
-back, and the rest is still given up. -/
-def gaveUp (before after : EditorState) : TextM (Option TextError) := do
-  let mut refusal := none
-  let held := after.windows.flatMap fun window => #[window.selection, window.scroll]
-  for window in before.windows do
-    for id in [window.selection, window.scroll] do
-      unless held.contains id do
-        if let .error error← observing (id.text.unmark id) then
-          refusal := refusal <|> some error
-  let saving := savesInFlight after
-  for snapshot in savesInFlight before do
-    unless saving.contains snapshot do
-      if let .error error← (observing snapshot.release : TextM (Except TextError Unit)) then
-        refusal := refusal <|> some error
-  for index in [0:before.buffers.size] do
-    let some buffer := before.buffer? ⟨index⟩ | continue
-    if (after.buffer? ⟨index⟩).isSome || after.buffers.any (·.any (·.text == buffer.text)) then
-      continue
-    if let .error error← observing buffer.text.release then
-      refusal := refusal <|> some error
-  return refusal
-
-/-- The views `before` has a window of and `after` has none of: the views a
-command that took the one to the other closed. -/
-def closedViews (before after : EditorState) : Array ViewId :=
-  before.windows.filterMap fun window =>
-    if (after.window? window.id).isNone then some window.id else none
-
-/-- `state`, a state of the loop's scheme, once it is told that each of
-`views` is closed (`InputScheme.closeView`). -/
-def forgetViews (views : Array ViewId) (state : scheme.State) : scheme.State :=
-  views.foldl (fun state view => scheme.closeView view state) state
 
 /-- The minibuffer's view a command that took `before` to `after` opened:
 the view of the prompt that is open in `after`, unless it was the open
