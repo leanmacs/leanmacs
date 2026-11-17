@@ -1817,7 +1817,8 @@ def monocleView (state : EditorState) : ViewId :=
 one point on a display of scale 2. Lean handles no scale, and a scene's
 rectangles are physical pixels, so it is a width in pixels
 (`Layout.carve`). -/
-def dividerWidth : Nat := 2
+def dividerWidth : Nat :=
+  2
 
 /-- The frame's tiled windows laid out by its layout in the tiled area
 (`tiled`), monocle showing `monocleView`, with the dividers between them

@@ -553,7 +553,10 @@ def carve (area : Rect) (width : Nat) (laid : Array (ViewId × Rect)) :
       let bottom : Rect :=
         { x := rect.x, y := rect.y + rect.height - ch, width := rect.width - cw, height := ch }
       let gaps := #[right, bottom].filter fun gap => 0 < gap.width && 0 < gap.height
-      (tiles.push (view, { rect with width := rect.width - cw, height := rect.height - ch }),
+      (tiles.push
+          (view,
+            { rect with
+              width := rect.width - cw, height := rect.height - ch }),
         dividers ++ gaps))
     (#[], #[])
 

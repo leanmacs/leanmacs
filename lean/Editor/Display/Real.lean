@@ -386,8 +386,7 @@ def encode (real : RealDisplay) (scene : Scene) (faces : Option Theme) : IO Enco
         pushText
           { encoded with
             words :=
-              encoded.words ++
-                #[rect.x, rect.y, rect.width, rect.height].map RealTexts.word }
+              encoded.words ++ #[rect.x, rect.y, rect.width, rect.height].map RealTexts.word }
           divider.face.name)
       { encoded with words := encoded.words.push scene.dividers.size.toUInt64 }
   match faces with

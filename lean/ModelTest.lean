@@ -147,7 +147,9 @@ remove and its inheritor, balance, resize, fit) pinned; and an edge
 layout's strip is pinned at 25 percent, reserves nothing with no window
 docked, tiles the area under compositions of up to two edges round each
 layout, and passes the list's operations through to the layout inside
-it.
+it. The carve (`Layout.carve`) is pinned by examples and, over the same
+layouts, by its rule: the carved tiles and the dividers tile the area, and
+a tile along the area's edge keeps that edge.
 
 The placement of a float (`Editor/Floating.lean`) is checked by
 `floatChecks`: beside a position, as a property over the sample areas,
@@ -5948,8 +5950,10 @@ def faceVocabularyChecks : List Check :=
         let inactive := (Themes.effectiveOver theme ⟨"mode-line.inactive"⟩ ⟨"mode-line"⟩).2
         let unset :=
           theme.map fun definition =>
-            if definition.name == ⟨"mode-line.active"⟩ || definition.name == ⟨"mode-line.inactive"⟩
-            then { definition with face := { definition.face with background := none } }
+            if
+                definition.name == ⟨"mode-line.active"⟩ ||
+                  definition.name == ⟨"mode-line.inactive"⟩ then
+              { definition with face := { definition.face with background := none } }
             else definition
         pure
           (inactive.isSome &&
@@ -5981,7 +5985,8 @@ def faceVocabularyChecks : List Check :=
             names (.noCursor ⟨"cursor.visual"⟩) "cursor.visual" &&
             names (.cursorOnPaper ⟨"cursor.insert"⟩) "cursor.insert" &&
             names (.cursorInkOnItself ⟨"cursor.normal"⟩) "cursor.normal" &&
-            names .modeLinesAlike "mode-line.active" && names .modeLinesAlike "mode-line.inactive" &&
+            names .modeLinesAlike "mode-line.active" &&
+            names .modeLinesAlike "mode-line.inactive" &&
             names .dividerOnPaper "window-divider") },
     { name :=
         "one palette mapping applied to two palettes gives two themes that define the same names in the same order, and each has no problem the check finds"
@@ -6018,11 +6023,9 @@ def solarizedChoices (c : Themes.Solarized.Colours) : List (String × Option Col
       "cursor.minibuffer"]
   [("default", some c.base0, some c.base03), ("selection", none, some c.base02)] ++
     cursors.map (·, some c.base03, some c.base0) ++
-    [("mode-line", some c.base1, some c.base02),
-      ("mode-line.active", some c.base1, some c.base02),
+    [("mode-line", some c.base1, some c.base02), ("mode-line.active", some c.base1, some c.base02),
       ("mode-line.inactive", some c.base0, some c.base03), ("window-divider", some c.base01, none),
-      ("echo-area", some c.base0, none),
-      ("mode-line.state.normal", some c.base03, some c.blue),
+      ("echo-area", some c.base0, none), ("mode-line.state.normal", some c.base03, some c.blue),
       ("mode-line.state.insert", some c.base03, some c.green),
       ("mode-line.state.visual", some c.base03, some c.magenta),
       ("mode-line.state.visual-line", some c.base03, some c.magenta),
@@ -6128,8 +6131,7 @@ def fairyFlossChoices (c : Themes.FairyFloss.Colours) :
     [("mode-line", some c.foreground, some c.lineHighlight),
       ("mode-line.active", some c.foreground, some c.selection),
       ("mode-line.inactive", some c.lavender, some c.background),
-      ("window-divider", some c.lavender, none),
-      ("echo-area", some c.foreground, none),
+      ("window-divider", some c.lavender, none), ("echo-area", some c.foreground, none),
       ("mode-line.state.normal", some c.background, some c.pink),
       ("mode-line.state.insert", some c.background, some c.added),
       ("mode-line.state.visual", some c.background, some c.lavender),
@@ -8033,8 +8035,7 @@ def layoutChecks : List Check :=
             Layout.carve whole 2 #[(⟨0⟩, rect 0 0 640 240), (⟨1⟩, rect 0 240 640 240)] ==
               (#[(⟨0⟩, rect 0 0 640 238), (⟨1⟩, rect 0 240 640 240)], #[rect 0 238 640 2]) &&
             Layout.carve whole 2 (Layout.default.place (windowsUpTo 3) ⟨0⟩ whole) ==
-              (#[(⟨0⟩, rect 0 0 318 480), (⟨1⟩, rect 320 0 320 238),
-                  (⟨2⟩, rect 320 240 320 240)],
+              (#[(⟨0⟩, rect 0 0 318 480), (⟨1⟩, rect 320 0 320 238), (⟨2⟩, rect 320 240 320 240)],
                 #[rect 318 0 2 480, rect 320 238 320 2]) },
     { name :=
         "the carve of one tile, and of monocle's, gives no divider and leaves the tile as it was; a tile short of both edges gives up its right strip, full height, and then its foot, short of that strip"
@@ -8076,7 +8077,8 @@ def layoutChecks : List Check :=
                 sides.flatMap fun side =>
                   [0, 1, 2].map fun count => (Layout.masterStack { share, side, count }, #[])) ++
               (splitsReached 3).map (fun tree => (Layout.splits tree, #[])) ++
-              [(Layout.monocle, #[])] ++ edged
+              [(Layout.monocle, #[])] ++
+              edged
           layouts.all fun (layout, docked) =>
             (List.range 5).all fun index =>
               let windows := windowsUpTo (index + 1)
@@ -8085,8 +8087,7 @@ def layoutChecks : List Check :=
                 let (carved, dividers) := Layout.carve whole 2 laid
                 let right := whole.x + whole.width
                 let foot := whole.y + whole.height
-                carved.map (·.1) == laid.map (·.1) &&
-                  tiles whole (carved.map (·.2) ++ dividers) &&
+                carved.map (·.1) == laid.map (·.1) && tiles whole (carved.map (·.2) ++ dividers) &&
                   (dividers.all fun divider => 0 < divider.width && 0 < divider.height) &&
                   (laid.zip carved).all fun ((_, before), (_, after)) =>
                     after.x == before.x && after.y == before.y &&
@@ -9863,7 +9864,8 @@ def stateChecks : List Check :=
                     (Layout.carve plain.tiled 2 (Layout.default.place windows ⟨0⟩ plain.tiled)).1 &&
                   asking.tiled == rect 0 0 640 448 &&
                   asking.rects ==
-                    (Layout.carve asking.tiled 2 (Layout.default.place windows ⟨0⟩ asking.tiled)).1 ++
+                    (Layout.carve asking.tiled 2
+                          (Layout.default.place windows ⟨0⟩ asking.tiled)).1 ++
                       #[(⟨3⟩, rect 0 448 640 32)] &&
                   short.tiled == rect 0 0 640 0 &&
                   short.rects.back? == some (⟨3⟩, rect 0 0 640 10) &&
@@ -11832,8 +11834,7 @@ def loopChecks : List Check :=
             let height := beside.state.tiled.height
             let half := above.state.tiled.height / 2
             Loop.dividerFace == ⟨"window-divider"⟩ &&
-              across.views.map (·.rect) ==
-                #[rect 0 0 318 height, rect 320 0 320 height] &&
+              across.views.map (·.rect) == #[rect 0 0 318 height, rect 320 0 320 height] &&
               across.dividers == #[{ rect := rect 318 0 2 height, face := Loop.dividerFace }] &&
               down.views.map (·.rect) ==
                 #[rect 0 0 640 (half - 2), rect 0 half 640 (above.state.tiled.height - half)] &&
@@ -11844,7 +11845,8 @@ def loopChecks : List Check :=
       run :=
         pure <|
           let monocle : TextM EditorState := windowsUnder 3 .monocle
-          let floated : TextM EditorState := do withFloats (← windowsUnder 1 Layout.default) [(.frame, true)]
+          let floated : TextM EditorState := do
+            withFloats (← windowsUnder 1 Layout.default) [(.frame, true)]
           [EditorState.initial ⟨640, 480⟩, monocle, floated].all fun start =>
             match looped start [pressF5] with
             | some (_, #[scene], _) => !scene.views.isEmpty && scene.dividers.isEmpty
