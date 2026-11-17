@@ -21156,6 +21156,31 @@ def displayRuleChecks : List Check :=
               fromSidebar.displaying focused ⟨9⟩ (minibuffer fromSidebar) "e" ==
                 (.showIn ⟨2⟩, true) },
     { name :=
+        "displaying a buffer into an existing window by a rule focuses that window when the rule says so, and leaves the focus where it was when it does not: a rule for main, asked from the stack"
+      run :=
+        let displayed (focus : Bool) : EditorM (Option (Nat × Option BufferId × BufferId)) := do
+          let state ← windowsUnder 2 Layout.default
+          let (_, state) := state.focusWindow ⟨1⟩
+          let program : EditorM (Except LayoutRefusal ViewId × BufferId) := do
+            let .ok other ← createBuffer "other" "x" | throw .noSuchText
+            return (← other.display ⟨1⟩ "make", other)
+          match ← program.dispatched { displayRules := #[{ target := .main, focus }] } state with
+          | (.finished (.ok view, other), after) =>
+            if view == ⟨0⟩ && after.wellFormed then
+              return some (after.frame.focused.index, (after.window? ⟨0⟩).map (·.buffer), other)
+            else
+              return none
+          | _ =>
+            return none
+        pure <|
+          match ((displayed true).runModel editorModel).1,
+            ((displayed false).runModel editorModel).1 with
+          | .ok (some (focusedTrue, shownTrue, otherTrue)),
+            .ok (some (focusedFalse, shownFalse, otherFalse)) =>
+            focusedTrue == 0 && shownTrue == some otherTrue && focusedFalse == 1 &&
+              shownFalse == some otherFalse
+          | _, _ => false },
+    { name :=
         "criterion 1, in the model: with no rules, ls from main, which shows a file, leaves main on the file and shows the list in a new window at the end of the list, the stack, focused; ls from main again focuses that window and makes no third; a command that makes a buffer and displays it puts it in a new window at the end of the stack, and main still shows the file"
       run :=
         pure <|

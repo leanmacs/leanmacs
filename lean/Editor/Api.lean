@@ -1333,7 +1333,7 @@ def BufferId.display (buffer : BufferId) (asking : ViewId) (opener : String) :
     | .shown view =>
       pure (.ok view)
     | .showIn view =>
-      return (← view.show buffer).map fun () => view
+      pure ((← view.show buffer).map fun () => view)
     | .opened spot =>
       let shape ←
         match state.target? (state.shownIn asking) with
