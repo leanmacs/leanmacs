@@ -152,9 +152,11 @@ impl Document {
     /// `text`, and returns whether it did. An empty range inserts, and an
     /// empty `text` deletes.
     ///
-    /// Returns false, changing nothing, when the text refuses the edit
-    /// ([`Text::replace`]): unless both offsets are character boundaries of
-    /// the document's text, within it, and `start <= end`.
+    /// Returns false, changing nothing: always for an excerpt document,
+    /// whose edits are refused before it is locked, so the refusal catches
+    /// nothing up ([`crate::excerpts`]); then when the text refuses the
+    /// edit ([`Text::replace`]): unless both offsets are character
+    /// boundaries of the document's text, within it, and `start <= end`.
     pub fn replace(&self, start: usize, end: usize, text: &str) -> bool {
         // An excerpt document is refused before it is locked, so a refusal
         // catches nothing up.
