@@ -386,6 +386,35 @@ focus is one of its own windows. The ids of every window of every tab,
 then the minibuffer's view, are distinct and are exactly the windows' ids,
 so no window is in two tabs.
 
+**Tabs change by one operation**, `changeTab`, with the change as data
+(`TabChange`), its indices from 0; each refusal leaves the state as it
+was:
+
+| Change | What it does | Refused with |
+|---|---|---|
+| `select i` | The tab left closes its transient floats (phase 4's rule that a transient float closes when it loses the focus, `closeFloats`), the zipper moves to `i`, and the buffer of the newly focused window becomes the most recent. Selecting the tab in view changes nothing | `noSuchTab`; `promptOpen` while a prompt is open and `i` is not the tab in view |
+| `close i` | Every window of tab `i`, tiled, docked or floating, leaves `windows`, so the loop gives up their markers and tells the scheme they closed; its buffers stay. When `i` is the tab in view, the tab that takes its index comes into view, or the new last one when it was last, and its focused window's buffer becomes the most recent | `onlyTab`; `noSuchTab`; `promptOpen` when `i` is the tab in view and a prompt is open |
+| `rename i name` | Sets the tab's name; `none` goes back to the generated one | `noSuchTab` |
+| `move i to` | Tab `i` moves to `min to (count - 1)`; the tab in view stays in view, wherever it now stands | `noSuchTab` |
+
+`promptOpen` keeps the asker of an open prompt a window of the tab in view,
+so `closePrompt` never focuses a window that is not shown.
+
+- **A new tab is a spot of `openWindow`** (`WindowSpot.tab`): right after
+  the tab in view, its one window focused within it, under the layout
+  config chose (`Frame.chosen`) or the default before any, fitted to it.
+  The tab in view stays in view.
+- **`focusWindow` takes a window of any tab.** For a window of a hidden tab
+  it selects that tab as `select` does, then focuses the window within it,
+  as Vim's `win_gotoid` switches tab pages; while a prompt is open that is
+  refused with `promptOpen`.
+- **`showBuffer` takes a window of any tab.** For a hidden tab's window it
+  runs inside that tab (`inTabOf`): the zipper moves there, the buffer is
+  shown and that tab's floats anchored at a position of the window are
+  dropped (`dropAnchors`), and the zipper moves back.
+- **The other operations stay with the tab in view.** For a hidden tab's
+  window `removeWindow`, `splitWindow` and `arrange` answer `noSuchWindow`.
+
 ## The wanted column
 
 A window keeps the column its vertical motions aim for, which survives
@@ -1462,6 +1491,22 @@ inductive WindowSpot where
   /-- A float on top of the others, placed against `anchor`, of `share`,
   pinned or transient (`Editor/Floating.lean`). -/
   | float (anchor : Floating.Anchor) (share : Floating.Share) (pinned : Bool)
+  /-- The only window of a new tab, right after the tab in view, under the
+  layout config chose (`Frame.chosen`), or the default before any. -/
+  | tab
+  deriving DecidableEq, Repr
+
+/-- A change of the frame's tabs (`EditorState.changeTab`). Indices are
+from 0. -/
+inductive TabChange where
+  /-- The tab at `index` into view. -/
+  | select (index : Nat)
+  /-- The tab at `index` closed, with every window of it. -/
+  | close (index : Nat)
+  /-- The tab at `index` given `name`, or the generated one for none. -/
+  | rename (index : Nat) (name : Option String)
+  /-- The tab at `index` moved to the index `to`, clamped to the last. -/
+  | move (index : Nat) (to : Nat)
   deriving DecidableEq, Repr
 
 /-- Where a buffer is to be displayed (`EditorState.displaying`). -/
@@ -1510,6 +1555,13 @@ inductive LayoutRefusal where
   /-- The window `view` floats: it has no tile to split or to move through
   the list, and a float is no anchor of another. -/
   | floating (view : ViewId)
+  /-- It would close the last tab, leaving no window to show. -/
+  | onlyTab
+  /-- The frame has no tab at `index`, from 0. -/
+  | noSuchTab (index : Nat)
+  /-- It would change the tab in view while a prompt is open: the prompt's
+  asker must stay a window of the tab in view. -/
+  | promptOpen
   deriving DecidableEq, Repr
 
 /-- What a refusal of the layout says, as one sentence the echo area can
@@ -1529,6 +1581,9 @@ def LayoutRefusal.describe : LayoutRefusal → String
   | .lastTile => "the last tiled window cannot leave the tiles"
   | .atEdge _ => "a window at an edge cannot be the only window"
   | .floating _ => "a floating window is not in the layout"
+  | .onlyTab => "the last tab cannot be closed"
+  | .noSuchTab index => s!"there is no tab {index + 1}"
+  | .promptOpen => "the tab in view cannot change while a prompt is open"
 
 /-- Why an operation on the prompt was refused. -/
 inductive PromptRefusal where
@@ -1957,21 +2012,109 @@ where
                 windows := rest, focused } })
     | false, _, _, _ => (.error (.noSuchWindow id), state)
 
-/-- Focuses the window `id`: a window of the frame, or the minibuffer's while
-a prompt is open (`focusedOn`, which keeps the window of the frame focused
-before it, and closes the transient floats the focus leaves). Its buffer is then the most recently used, unless it
-is the minibuffer's. Refused, with the state unchanged, with `noSuchWindow`
-for any other. -/
+/-- The state with the buffer of the tab in view's focused window the most
+recently used, unless that window has none. -/
+def touchFocused (state : EditorState) : EditorState :=
+  match state.window? state.frame.focused with
+  | some window => { state with recent := Recent.touch state.recent window.buffer }
+  | none => state
+
+/-- The state with the tab at `index` in view, for an index of a tab that is
+not the one in view: the tab left closes its transient floats (`closeFloats`,
+the focus rule: their focus is lost), the zipper moves (`Frame.selected`),
+and the buffer of the newly focused window becomes the most recently
+used. -/
+def selectTab (index : Nat) (state : EditorState) : EditorState :=
+  let transient := (state.frame.floats.filter (!·.pinned)).map (·.view)
+  let left := state.closeFloats transient
+  { left with frame := left.frame.selected index }.touchFocused
+
+/-- Makes `change` on the frame's tabs (`TabChange`):
+
+- `select index` brings the tab at `index` into view (`selectTab`); the tab
+  in view changes nothing.
+- `close index` closes the tab at `index`: every window of it, tiled,
+  docked or floating, leaves `windows`, its markers the caller's to give
+  up, and its buffers stay. When it is the tab in view, the tab that takes
+  its index comes into view, or the new last one when it was last, and its
+  focused window's buffer becomes the most recently used.
+- `rename index name` gives the tab `name`, or the generated one for none.
+- `move index to` moves the tab to `to`, clamped to the last; the tab in
+  view stays in view, wherever it now stands.
+
+Refused, with the state unchanged, with `noSuchTab` for an index past the
+last, with `onlyTab` for closing the last tab, and with `promptOpen` for
+selecting another tab or closing the tab in view while a prompt is open:
+the prompt's asker must stay a window of the tab in view. -/
+def changeTab (change : TabChange) (state : EditorState) :
+    Except LayoutRefusal Unit × EditorState :=
+  let frame := state.frame
+  let tabs := frame.tabs
+  let current := frame.tabIndex
+  match change with
+  | .select index =>
+    if tabs.size ≤ index then (.error (.noSuchTab index), state)
+    else
+      if index == current then (.ok (), state)
+      else
+        if state.prompt.isSome then (.error .promptOpen, state) else (.ok (), state.selectTab index)
+  | .close index =>
+    match tabs[index]? with
+    | none => (.error (.noSuchTab index), state)
+    | some closing =>
+      if tabs.size == 1 then (.error .onlyTab, state)
+      else
+        if index == current && state.prompt.isSome then (.error .promptOpen, state)
+        else
+          let gone := closing.all
+          let rest := tabs.eraseIdx! index
+          let inView :=
+            if index == current then min index (rest.size - 1)
+            else if index < current then current - 1 else current
+          let closed :=
+            { state with
+              windows := state.windows.filter (!gone.contains ·.id)
+              frame := frame.withTabs rest inView }
+          (.ok (), if index == current then closed.touchFocused else closed)
+  | .rename index name =>
+    match tabs[index]? with
+    | none => (.error (.noSuchTab index), state)
+    | some tab =>
+      (.ok (), { state with frame := frame.withTabs (tabs.set! index { tab with name }) current })
+  | .move index to =>
+    if tabs.size ≤ index then (.error (.noSuchTab index), state)
+    else
+      let order := ((List.range tabs.size).erase index).insertIdx (min to (tabs.size - 1)) index
+      let moved := order.toArray.filterMap (tabs[·]?)
+      let inView := (order.findIdx? (· == current)).getD current
+      (.ok (), { state with frame := frame.withTabs moved inView })
+
+/-- Focuses the window `id`: a window of the tab in view, or the minibuffer's
+while a prompt is open (`focusedOn`, which keeps the window of the tab
+focused before it, and closes the transient floats the focus leaves); or a
+window of a hidden tab, whose tab is then selected (`selectTab`) before the
+window is focused within it, as Vim's `win_gotoid` switches tab pages. Its
+buffer is then the most recently used, unless it is the minibuffer's.
+Refused, with the state unchanged, with `promptOpen` for a hidden tab's
+window while a prompt is open, and with `noSuchWindow` for any other. -/
 def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
-  if state.views.contains id then
+  if state.views.contains id then (.ok (), focusing state)
+  else
+    match state.frame.tabOf? id with
+    | some index =>
+      if state.prompt.isSome then (.error .promptOpen, state)
+      else (.ok (), focusing (state.selectTab index))
+    | none => (.error (.noSuchWindow id), state)
+where
+  /-- `state`, of which `id` is a view, with the focus on `id`. -/
+  focusing (state : EditorState) : EditorState :=
     let recent :=
       match state.window? id with
       | some window =>
         if state.minibufferBuffer? == some window.buffer then state.recent
         else Recent.touch state.recent window.buffer
       | none => state.recent
-    (.ok (), { state.focusedOn id with recent })
-  else (.error (.noSuchWindow id), state)
+    { state.focusedOn id with recent }
 
 /-- Has the window `id` keep `wanted` as its wanted column, or none. Any
 window is taken, the minibuffer's among them. Refused, with the state
@@ -2767,18 +2910,21 @@ def cycled (state : EditorState) (id : ViewId) (forward : Bool) (nth : Nat) : Op
   else
     windows[(index + windows.size - 1) % windows.size]?
 
-/-- Has the window `id` show the buffer `buffer`, with `scroll` and
-`selection` as its markers, and no wanted column: an offset of one text
-means nothing in another. The buffer is then the most recently used
-(`recent`). Refused, with the state unchanged, with
-`ofMinibuffer`, and the minibuffer's view, for the minibuffer's window and
-for the minibuffer's buffer in another window, with `noSuchWindow` for a
-window not in the frame, with `noSuchBuffer` for a buffer there is none of,
-and with `markersOfAnotherText` when a marker is not of that buffer's
-text. The floats anchored at a position of the window close when transient
-and are anchored to the frame when pinned, since their marker is of the
-text it showed (`dropAnchors`). -/
-def showBuffer (id : ViewId) (buffer : BufferId) (scroll selection : MarkerId)
+/-- `op` run inside the tab of the window `id`: for a window of a hidden tab,
+on the state with that tab in view (`Frame.selected`, which closes nothing
+and touches nothing), and the zipper moved back to the tab that was in
+view after it; for any other window, on the state as it is. -/
+def inTabOf {α : Type} (id : ViewId) (op : EditorState → α × EditorState) (state : EditorState) :
+    α × EditorState :=
+  match state.frame.contains id, state.frame.tabOf? id with
+  | false, some index =>
+    let (result, after) := op { state with frame := state.frame.selected index }
+    (result, { after with frame := after.frame.selected state.frame.tabIndex })
+  | _, _ => op state
+
+/-- `showBuffer` for a window of the tab in view: any other is refused with
+`noSuchWindow`. -/
+def showBufferInView (id : ViewId) (buffer : BufferId) (scroll selection : MarkerId)
     (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
   match state.minibufferView? with
   | some view =>
@@ -2813,6 +2959,23 @@ where
               | .position view _ => view == id
               | _ => false)
 
+/-- Has the window `id` show the buffer `buffer`, with `scroll` and
+`selection` as its markers, and no wanted column: an offset of one text
+means nothing in another. The buffer is then the most recently used
+(`recent`). A window of a hidden tab is taken, and the buffer is shown
+there, inside that tab (`inTabOf`); the tab in view stays in view. Refused,
+with the state unchanged, with
+`ofMinibuffer`, and the minibuffer's view, for the minibuffer's window and
+for the minibuffer's buffer in another window, with `noSuchWindow` for a
+window of no tab, with `noSuchBuffer` for a buffer there is none of,
+and with `markersOfAnotherText` when a marker is not of that buffer's
+text. The floats of the window's tab anchored at a position of the window
+close when transient and are anchored to the frame when pinned, since
+their marker is of the text it showed (`dropAnchors`). -/
+def showBuffer (id : ViewId) (buffer : BufferId) (scroll selection : MarkerId)
+    (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
+  state.inTabOf id (showBufferInView id buffer scroll selection)
+
 /-- Opens a new window on the buffer `buffer`, with `scroll` and `selection`
 as its markers, at `spot`, and hands its id back (`freshView`):
 
@@ -2822,7 +2985,11 @@ as its markers, at `spot`, and hands its id back (`freshView`):
   is appended, and under manual splits the last tile is split along rows;
 - `edge side` docks it at `side`, after the windows docked there;
 - `float anchor share pinned` puts it on top of the floats, placed against
-  `anchor`.
+  `anchor`;
+- `tab` makes it the only window of a new tab, right after the tab in view
+  (Vim's `:tabnew`, Emacs's `tab-bar-new-tab-to`), under the layout config
+  chose (`Frame.chosen`), or the default before any, fitted to it: a new
+  tab takes the configured default layout. The tab in view stays in view.
 
 The focus stays. Refused, with the state unchanged, with `ofMinibuffer`,
 and the minibuffer's view, for the minibuffer's buffer, with
@@ -2884,6 +3051,11 @@ where
           | none =>
             opened
               { frame with floats := frame.floats.push { view := made, anchor, share, pinned } }
+        | .tab =>
+          let tab : Tab :=
+            { windows := #[made], focused := made
+              layout := (frame.chosen.getD Layout.default).fits 1 }
+          opened { frame with tabsAfter := #[tab] ++ frame.tabsAfter }
 
 /-- The state once a publish placed its floats against their anchors
 (`Loop.publish`). `spots` answers, for each float anchored at a position,

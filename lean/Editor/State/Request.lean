@@ -64,6 +64,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   it was, `noSuchEdge` among them for an edge the layout has none at.
   Where a buffer goes is the asking command's to decide, with the display
   rules (`displayRules`, `EditorState.displaying`).
+- **The frame's tabs are changed by one request**, `tab`, with the change
+  as data (`TabChange`: select, close, rename, move). A new tab is a spot
+  of `openWindow` (`WindowSpot.tab`). It is refused with a
+  `LayoutRefusal`, the state as it was.
 - **A window's place and its layout's parameters are changed by one
   request**, `arrange`, with the change as data (`Arrange`: promote,
   demote, rotate, exchange, zoom, balance, resize, main's count and the
@@ -227,6 +231,9 @@ inductive StateRequest where
   as its markers, at `spot`: after the last of the tiled list, or docked at
   an edge. -/
   | openWindow (buffer : BufferId) (scroll selection : MarkerId) (spot : WindowSpot)
+  /-- Make `change` on the frame's tabs (`TabChange`): select, close, rename
+  or move one. -/
+  | tab (change : TabChange)
   /-- Remove the window `view`. -/
   | removeWindow (view : ViewId)
   /-- Focus the window `view`. -/
@@ -360,6 +367,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .split .. => Except LayoutRefusal ViewId
   | .arrange .. => Except LayoutRefusal Unit
   | .openWindow .. => Except LayoutRefusal ViewId
+  | .tab _ => Except LayoutRefusal Unit
   | .removeWindow _ => Except LayoutRefusal Window
   | .focus _ => Except LayoutRefusal Unit
   | .show .. => Except LayoutRefusal Unit
@@ -447,6 +455,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     state.splitWindow view scroll selection placement
   | .arrange view change, state => state.arrange view change
   | .openWindow buffer scroll selection spot, state => state.openWindow buffer scroll selection spot
+  | .tab change, state => state.changeTab change
   | .removeWindow view, state => state.removeWindow view
   | .focus view, state => state.focusWindow view
   | .show view buffer scroll selection, state => state.showBuffer view buffer scroll selection

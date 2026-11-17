@@ -10118,6 +10118,209 @@ buffer holds. -/
 def noteStamp : File.Stamp :=
   { seconds := 3, nanoseconds := 0, size := 9 }
 
+/-- The checks of tabs on the state's model (`TabChange`,
+`EditorState.changeTab`, `WindowSpot.tab`, `Editor/State.lean`, "Tabs").
+The operations ask the text store nothing, so a marker's id is written out
+by hand. -/
+def tabChecks : List Check :=
+  let marker (index : Nat) (text : Nat := 0) : MarkerId := ⟨⟨text⟩, index⟩
+  [{  name :=
+        "criterion 1, on the model: a new tab on view 1's buffer goes after the tab in view, which is unchanged and stays in view, its layout the default fitted to one window; focusing its window brings it into view, zooming there leaves the first tab as it was, and selecting each tab gives it back exactly as it was left; every state is well formed"
+      run :=
+        pure <|
+          match onTextModel (windowsUnder 2 Layout.default) with
+          | none => false
+          | some state =>
+            let (_, focused) := state.focusWindow ⟨1⟩
+            match focused.openWindow ⟨0⟩ (marker 90) (marker 91) .tab with
+            | (.ok made, tabbed) =>
+              let (_, second) := tabbed.focusWindow made
+              let (_, zoomed) := second.arrange made .zoom
+              let (_, first) := zoomed.changeTab (.select 0)
+              let (_, again) := first.changeTab (.select 1)
+              made == ⟨2⟩ && tabbed.frame.toTab == focused.frame.toTab &&
+                tabbed.frame.tabIndex == 0 &&
+                tabbed.frame.tabsAfter ==
+                  #[{ windows := #[made], focused := made, layout := Layout.default.fits 1 }] &&
+                (tabbed.window? made).map (·.buffer) == some ⟨0⟩ &&
+                second.frame.tabIndex == 1 &&
+                second.frame.focused == made &&
+                zoomed.frame.layout == .monocle &&
+                zoomed.frame.tabsBefore == #[focused.frame.toTab] &&
+                first.frame.tabIndex == 0 &&
+                first.frame.toTab == focused.frame.toTab &&
+                again.frame.tabIndex == 1 &&
+                again.frame.toTab == zoomed.frame.toTab &&
+                [focused, tabbed, second, zoomed, first, again].all (·.wellFormed)
+            | _ => false },
+    { name :=
+        "a new tab takes the layout config chose, fitted to its one window, and the tab in view keeps its own"
+      run :=
+        pure <|
+          match onTextModel (windowsUnder 2 Layout.default) with
+          | none => false
+          | some state =>
+            let chosen : Layout := .edge .left 25 (.splits (.split .rows 1 1 .tile .tile))
+            let state := { state with frame := { state.frame with chosen := some chosen } }
+            match state.openWindow ⟨0⟩ (marker 90) (marker 91) .tab with
+            | (.ok _, tabbed) =>
+              tabbed.frame.tabsAfter.map (·.layout) == #[chosen.fits 1] &&
+                tabbed.frame.layout == Layout.default &&
+                tabbed.wellFormed
+            | _ => false },
+    { name :=
+        "closing the tab in view brings the tab that takes its index into view, or the new last one when it was last; its windows leave the state and its buffers stay; closing a hidden tab keeps the tab in view in view"
+      run :=
+        pure <|
+          match onTextModel threeTabs with
+          | none => false
+          | some state =>
+            let (closed, next) := state.changeTab (.close 1)
+            let (_, last) := { state with frame := state.frame.selected 2 }.changeTab (.close 2)
+            let (_, hidden) := state.changeTab (.close 0)
+            replied closed == .inr () && next.frame.tabIndex == 1 && next.frame.windows == #[⟨2⟩] &&
+              next.frame.focused == ⟨2⟩ &&
+              next.windows.map (·.id) == #[⟨0⟩, ⟨2⟩] &&
+              next.buffers == state.buffers &&
+              last.frame.tabIndex == 1 &&
+              last.frame.windows == #[⟨1⟩] &&
+              last.frame.tabs.size == 2 &&
+              hidden.frame.tabIndex == 0 &&
+              hidden.frame.toTab == state.frame.toTab &&
+              hidden.windows.map (·.id) == #[⟨1⟩, ⟨2⟩] &&
+              [next, last, hidden].all (·.wellFormed) },
+    { name := "closing the last tab is refused with onlyTab, and the state is as it was"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            match state.changeTab (.close 0) with
+            | (.error .onlyTab, after) => after == state
+            | _ => false },
+    { name := "a tab past the last is refused with noSuchTab by every change, the state as it was"
+      run :=
+        pure <|
+          match onTextModel threeTabs with
+          | none => false
+          | some state =>
+            [TabChange.select 3, .close 3, .rename 3 (some "x"), .move 3 0].all fun change =>
+              match state.changeTab change with
+              | (.error (.noSuchTab 3), after) => after == state
+              | _ => false },
+    { name :=
+        "while a prompt is open, selecting another tab and closing the tab in view are refused with promptOpen, the state as it was; selecting the tab in view and closing a hidden tab are not"
+      run :=
+        pure <|
+          match onTextModel threeTabs with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let refused (change : TabChange) : Bool :=
+              match asking.changeTab change with
+              | (.error .promptOpen, after) => after == asking
+              | _ => false
+            let (same, kept) := asking.changeTab (.select 1)
+            let (closed, hidden) := asking.changeTab (.close 0)
+            refused (.select 0) && refused (.close 1) && replied same == .inr () &&
+              kept == asking &&
+              replied closed == .inr () &&
+              hidden.frame.tabs.size == 2 &&
+              hidden.prompt == asking.prompt &&
+              hidden.wellFormed },
+    { name := "renaming a tab gives it the name, and none goes back to the generated one"
+      run :=
+        pure <|
+          match onTextModel threeTabs with
+          | none => false
+          | some state =>
+            let (renamed, named) := state.changeTab (.rename 0 (some "notes"))
+            let (_, back) := named.changeTab (.rename 0 none)
+            let (_, own) := state.changeTab (.rename 1 (some "here"))
+            replied renamed == .inr () &&
+              named.frame.tabs.map (·.name) == #[some "notes", none, none] &&
+              named.frame.tabIndex == 1 &&
+              back == state &&
+              own.frame.name == some "here" },
+    { name :=
+        "moving a tab moves it to the index, clamped to the last, and the tab in view stays in view wherever it now stands"
+      run :=
+        pure <|
+          match onTextModel threeTabs with
+          | none => false
+          | some state =>
+            let order (state : EditorState) : Array (Array ViewId) :=
+              state.frame.tabs.map (·.windows)
+            let (_, front) := state.changeTab (.move 1 0)
+            let (_, clamped) := state.changeTab (.move 0 9)
+            let (_, first) := state.changeTab (.move 2 0)
+            order front == #[#[⟨1⟩], #[⟨0⟩], #[⟨2⟩]] && front.frame.tabIndex == 0 &&
+              order clamped == #[#[⟨1⟩], #[⟨2⟩], #[⟨0⟩]] &&
+              clamped.frame.tabIndex == 0 &&
+              order first == #[#[⟨2⟩], #[⟨0⟩], #[⟨1⟩]] &&
+              first.frame.tabIndex == 2 &&
+              [front, clamped, first].all (·.wellFormed) },
+    { name :=
+        "leaving a tab closes its transient floats, whose windows leave the state, and keeps its pinned ones"
+      run :=
+        pure <|
+          match
+            onTextModel do
+              let state ← windowsUnder 1 Layout.default
+              withFloats state [(.frame, false), (.frame, true)] with
+          | none => false
+          | some state =>
+            match state.openWindow ⟨0⟩ (marker 90) (marker 91) .tab with
+            | (.ok made, tabbed) =>
+              let (selected, left) := tabbed.changeTab (.select 1)
+              replied selected == .inr () && left.frame.focused == made &&
+                left.frame.tabsBefore.map (·.floats.map (·.view)) == #[#[⟨2⟩]] &&
+                (left.window? ⟨1⟩).isNone &&
+                (left.window? ⟨2⟩).isSome &&
+                left.wellFormed
+            | _ => false },
+    { name :=
+        "focusing a hidden tab's window selects its tab and focuses the window there; while a prompt is open it is refused with promptOpen, the state as it was"
+      run :=
+        pure <|
+          match onTextModel threeTabs with
+          | none => false
+          | some state =>
+            let (focused, after) := state.focusWindow ⟨2⟩
+            let (_, asking) := prompted state
+            replied focused == .inr () && after.frame.tabIndex == 2 && after.frame.focused == ⟨2⟩ &&
+              after.wellFormed &&
+              match asking.focusWindow ⟨2⟩ with
+              | (.error .promptOpen, same) => same == asking
+              | _ => false },
+    { name :=
+        "showing a buffer in a hidden tab's window shows it there, the tab in view staying in view, and closes that tab's transient float anchored at a position of the window"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let float : Window :=
+              { id := ⟨2⟩, buffer := ⟨1⟩, scroll := marker 20 1, selection := marker 21 1 }
+            let state :=
+              { state with
+                windows := state.windows.push float
+                frame :=
+                  { state.frame with
+                    windows := #[⟨0⟩]
+                    tabsAfter :=
+                      #[{ windows := #[⟨1⟩], focused := ⟨1⟩
+                          floats := #[{ view := ⟨2⟩, anchor := .position ⟨1⟩ (marker 5 1) }] }] } }
+            match state.showBuffer ⟨1⟩ ⟨0⟩ (marker 90) (marker 91) with
+            | (.ok (), after) =>
+              state.wellFormed && after.frame.tabIndex == 0 &&
+                after.frame.toTab == state.frame.toTab &&
+                (after.window? ⟨1⟩).map (·.buffer) == some ⟨0⟩ &&
+                after.frame.tabsAfter.map (·.floats.size) == #[0] &&
+                (after.window? ⟨2⟩).isNone &&
+                after.wellFormed
+            | _ => false }]
+
 /-- The requests a well-formed state is seen to stay well formed under, on
 `hiddenBuffer`, whose buffers' texts are 0, 1 and 2: each kind of request,
 accepted and refused. -/
@@ -10161,7 +10364,9 @@ def stateRequests : List StateRequest :=
     .arrange ⟨0⟩ .float, .arrange ⟨4⟩ .float, .arrange ⟨4⟩ .promote, .arrange ⟨4⟩ (.edge .left),
     .arrange ⟨4⟩ (.resize .columns true 1), .arrange ⟨4⟩ .demote, .removeWindow ⟨4⟩,
     .removeWindow ⟨3⟩, .focus ⟨4⟩, .focus ⟨3⟩, .split ⟨4⟩ (marker 0 8) (marker 0 9),
-    .show ⟨1⟩ ⟨0⟩ (marker 0 0) (marker 0 1)]
+    .show ⟨1⟩ ⟨0⟩ (marker 0 0) (marker 0 1), .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .tab,
+    .tab (.select 1), .tab (.rename 1 (some "notes")), .tab (.move 0 1), .tab (.select 0),
+    .tab (.close 1), .tab (.close 0), .tab (.select 7)]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -10176,6 +10381,19 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (read, after) := state.handle .read
             read == state && after == state },
+    { name :=
+        "a tab request is the change it carries (EditorState.changeTab), and a refused one leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel threeTabs with
+          | none => false
+          | some state =>
+            let (selected, after) := state.handle (.tab (.select 0))
+            let (absent, same) := state.handle (.tab (.close 7))
+            replied selected == .inr () && after == (state.changeTab (.select 0)).2 &&
+              after.frame.tabIndex == 0 &&
+              replied absent == .inl (.noSuchTab 7) &&
+              same == state },
     { name :=
         "adding a buffer gives it the next slot's id and finds it by its name; a name a buffer has is refused with nameTaken, and a history over another text with notItsHistory, each with the state as it was"
       run :=
@@ -22332,8 +22550,9 @@ scheme gives a command a key is bound to, a count and a register, `C-b n`
 runs it with `note.txt`, `C-b s` runs `split`, `C-b x` runs
 `edit-then-close`, `C-b d` runs `close-buffer` with no argument, `C-b m`
 runs it with the name the minibuffer's buffer has (`Prompt.bufferName`),
-`C-b h` runs `dock-others`, `C-b f` runs `focus-main` and `C-b o` runs
-`make-notes`. -/
+`C-b h` runs `dock-others`, `C-b f` runs `focus-main`, `C-b o` runs
+`make-notes` and `C-b t` runs `new-tab`, which opens a tab after the one in
+view on the call's window's buffer (`ViewId.newTab`). -/
 def bufferKeys : Loop.Keys TestScheme.scheme :=
   let registrations := Files.commands ++ Minibuffer.commands ++ Buffers.commands ++ Ex.commands
   let compiled : List (String × Dispatched) :=
@@ -22362,6 +22581,9 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         if let some main := (← editorState).frame.windows[0]? then
           discard <| main.focus
         return none),
+      ("new-tab", fun call => do
+        discard <| call.target.window.id.newTab
+        return none),
       ("make-notes", fun call => do
         let name := (← editorState).freeName "notes"
         let .ok notes ← createBuffer name "a note" | giveUp "making notes was refused"
@@ -22378,7 +22600,7 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         ("C-b d", invoke Buffers.closeName),
         ("C-b m", { command := Buffers.closeName, arguments := [.str Prompt.bufferName] }),
         ("C-b h", invoke "dock-others"), ("C-b f", invoke "focus-main"),
-        ("C-b o", invoke "make-notes")]
+        ("C-b o", invoke "make-notes"), ("C-b t", invoke "new-tab")]
       (compiled ++ written) with
     registered :=
       { ex := fun name => Ex.bindings.findRev? (·.name == name),
@@ -22419,6 +22641,23 @@ scheme. Each message is read from the function that makes it, and an order
 the fuzzy matcher decides is computed with its model. -/
 def bufferCommandChecks : List Check :=
   [{  name :=
+        "closing a buffer shown only in a hidden tab's window shows the fallback there and removes the buffer; the tab in view stays in view"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (tabbed, _) := fedTo opened (presses "C-b t" ++ exLine "b scratch")
+            let hidden := tabbed.loop.state.frame.tabsAfter.flatMap (·.windows)
+            let (closed, _) := fedTo tabbed (exLine "bd lf.txt")
+            let state := closed.loop.state
+            hidden.size == 1 && (hidden.all fun view => shownName tabbed view == some "lf.txt") &&
+              shownName tabbed == some "scratch" &&
+              state.findBuffer "lf.txt" == none &&
+              state.frame.tabIndex == 0 &&
+              (hidden.all fun view => (shownName closed view).any (· != "lf.txt")) &&
+              state.wellFormed },
+    { name :=
         "b with no argument opens a prompt labelled with the switch prompt's label, whose continuation is switch-buffer, and whose candidates are the open buffers' names, most recently used first and the asking window's buffer last, without the minibuffer's; called with a count and a register, as a key under the Vim scheme calls it, it asks the same"
       run :=
         pure <|
@@ -28632,6 +28871,39 @@ def floatViewChecks : List Check :=
   -- The first publish: a resize to the size the frame has.
   let published (driver : EvilDriver) : EvilDriver := viewResized driver ⟨640, 448⟩
   [{  name :=
+        "a pinned float anchored at a position keeps its anchor marker while another tab is in view and when its tab comes back; closing a tab gives up the markers of its windows, the float's anchor among them, and the loop counts its views as closed"
+      run :=
+        pure <|
+          match floatDriver 18 18 (pinned := true) with
+          | none => false
+          | some driver =>
+            let shown := published driver
+            let delivered (driver : EvilDriver) (command : EditorM Unit) : EvilDriver :=
+              (driver.stepped (driver.loop.deliver driver.handed "tab" command)).1
+            let held : Array MarkerId :=
+              ((shown.loop.state.window? ⟨1⟩).map
+                      (fun window => #[window.scroll, window.selection])).getD
+                  #[] ++
+                (shown.loop.state.frame.floats.filterMap (·.anchor.marker?))
+            let away :=
+              delivered shown do
+                let .ok made ← (⟨0⟩ : ViewId).newTab | giveUp "no tab"
+                let .ok () ← made.focus | giveUp "no focus"
+            let back :=
+              delivered away do
+                let .ok () ← changeTab (.select 0) | giveUp "no select"
+            let closed :=
+              delivered away do
+                let .ok () ← changeTab (.close 0) | giveUp "no close"
+            held.size == 3 && away.loop.state.frame.tabIndex == 1 && held.all (holdsMarker away) &&
+              back.loop.state.frame.tabIndex == 0 &&
+              back.loop.state.frame.floats.size == 1 &&
+              held.all (holdsMarker back) &&
+              closed.loop.state.frame.tabs.size == 1 &&
+              held.all (!holdsMarker closed ·) &&
+              Loop.closedViews away.loop.state closed.loop.state == #[⟨0⟩, ⟨1⟩] &&
+              [away, back, closed].all (·.loop.state.wellFormed) },
+    { name :=
         "criterion 1 in the loop: a float anchored at a position is placed directly under the position's row, at its x, the padding included, and listed after the window it floats over; with the position on the last row shown it is flipped above the row"
       run :=
         pure <|
@@ -32547,6 +32819,7 @@ def checks : List Check :=
     layoutChecks ++
     floatChecks ++
     stateChecks ++
+    tabChecks ++
     displayRuleChecks ++
     stateRequestChecks ++
     loopChecks ++

@@ -455,6 +455,34 @@ def windowCases : List Case :=
             (← nextMarker scratch) == marked + 1 &&
             (← editorState) == state },
     { name :=
+        "a new tab of a view: its one window shows the view's buffer, with markers of its own that read as the view's, in a tab after the one in view, which stays in view with the focus; the minibuffer's view is refused with ofMinibuffer and a view with no window with noSuchWindow, each with no marker made"
+      start := holding "héllo" (selection #[(1, 3)])
+      run := do
+        let view : ViewId := ⟨0⟩
+        let before ← editorState
+        let some source := before.window? view | return false
+        let markers := (← scratch.marker source.selection, ← scratch.marker source.scroll)
+        let .ok made ← view.newTab | return false
+        let tabbed ← editorState
+        let some new := tabbed.window? made | return false
+        let copies := (← scratch.marker new.selection, ← scratch.marker new.scroll)
+        let absent : ViewId := ⟨9⟩
+        let marked ← nextMarker scratch
+        let missing ← absent.newTab
+        let unmarked := (← nextMarker scratch) == marked + 1
+        let .ok asking ← prompt "Name: " { command := "greet" } | return false
+        let marked ← nextMarker scratch
+        let minibuffer ← asking.newTab
+        return made == ⟨1⟩ && tabbed.wellFormed && tabbed.frame.toTab == before.frame.toTab &&
+            tabbed.frame.tabsAfter.map (·.windows) == #[#[made]] &&
+            tabbed.frame.focused == view &&
+            new.buffer == source.buffer &&
+            copies == markers &&
+            refusedAs missing (.noSuchWindow absent) &&
+            unmarked &&
+            refusedAs minibuffer (.ofMinibuffer asking) &&
+            (← nextMarker scratch) == marked + 1 },
+    { name :=
         "close the only window: it is refused with onlyWindow, and the frame and the rest of the state are as they were"
       run := do
         let before ← editorState

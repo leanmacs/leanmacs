@@ -190,12 +190,23 @@ a value, with their `LayoutRefusal`.
   the view a split made gives back the frame from before the split.
   The window's markers are given up by the loop once the command has run
   to its end (`Editor/Loop.lean`, "What a finished command gave up").
-- `ViewId.focus` focuses a window.
+- `ViewId.focus` focuses a window. A window of a hidden tab brings its tab
+  into view first (`Editor/State.lean`, "Tabs"), refused with `promptOpen`
+  while a prompt is open.
 - `ViewId.show view buffer` has the window show another buffer, with a
   scroll anchor at that buffer's start and one cursor at its start, of the
   shape the window's selection had. Showing the buffer the window already
   shows changes nothing and marks nothing. The markers the window had are
-  given up by the loop, as a closed window's are.
+  given up by the loop, as a closed window's are. A window of a hidden tab
+  shows it there, and the tab in view stays in view.
+- `ViewId.newTab view` opens a new tab after the one in view, its one
+  window on the view's buffer with markers that are copies of the view's,
+  as `split` makes them, and returns its view; the tab in view and the
+  focus stay. Focusing the new view brings its tab into view.
+- `changeTab change` selects, closes, renames or moves a tab (`TabChange`),
+  refused with `noSuchTab`, `onlyTab` (the last tab) and `promptOpen`
+  (changing the tab in view while a prompt is open). Closing a tab closes
+  every window of it, whose markers the loop gives up.
 - `BufferId.display buffer asking opener` shows a buffer a command made
   where config's display rules say (`Editor/DisplayRules.lean`), and
   returns its view: a window that shows it already, else the target of
@@ -1400,7 +1411,32 @@ returns. Refused with `noSuchWindow` for a view with no window, and with
 def setMajorMode (view : ViewId) (name : String) : EditorM (Except ModeRefusal Bool) :=
   EditorState.ask (.setMajorMode view name)
 
+/-- Opens a new tab after the one in view, its one window on the buffer of
+`view`'s window, with markers that are copies of the window's scroll
+anchor and selection as they are, and returns the new view
+(`EditorState.openWindow`, `WindowSpot.tab`), as `split` makes a window.
+The tab in view stays in view, and the focus stays. Refused with
+`noSuchWindow` for a view with no window, and with `ofMinibuffer` for the
+minibuffer's view, each with no marker made. -/
+def newTab (view : ViewId) : EditorM (Except LayoutRefusal ViewId) := do
+  if (← editorState).minibufferView? == some view then
+    return .error (.ofMinibuffer view)
+  match ← view.target with
+  | .error refusal =>
+    return .error refusal
+  | .ok target =>
+    let text := target.buffer.text
+    let scroll ← text.mark (← text.marker target.window.scroll)
+    let selection ← text.mark (← text.marker target.window.selection)
+    EditorState.ask (.openWindow target.window.buffer scroll selection .tab)
+
 end ViewId
+
+/-- Makes `change` on the frame's tabs (`TabChange`, `EditorState.changeTab`):
+selects, closes, renames or moves one, its index from 0. Refused with
+`noSuchTab`, `onlyTab` and `promptOpen` as the change says. -/
+def changeTab (change : TabChange) : EditorM (Except LayoutRefusal Unit) :=
+  EditorState.ask (.tab change)
 
 /-- Displays the buffer `buffer` where config's display rules say, for the
 command `opener` acting on the view `asking`, and returns the view it is

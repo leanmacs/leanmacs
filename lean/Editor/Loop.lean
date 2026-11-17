@@ -1494,8 +1494,10 @@ def gaveUp (before after : EditorState) : TextM (Option TextError) := do
       unless held.contains id do
         if let .error error← observing (id.text.unmark id) then
           refusal := refusal <|> some error
-  let anchored := after.frame.floats.filterMap (·.anchor.marker?)
-  for float in before.frame.floats do
+  -- The floats of every tab hold their anchors: selecting another tab gives
+  -- none up, and closing one gives up its floats'.
+  let anchored := (after.frame.tabs.flatMap (·.floats)).filterMap (·.anchor.marker?)
+  for float in before.frame.tabs.flatMap (·.floats) do
     if let some id := float.anchor.marker? then
       unless anchored.contains id do
         if let .error error← observing (id.text.unmark id) then

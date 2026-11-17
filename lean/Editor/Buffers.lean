@@ -283,12 +283,12 @@ def unrefused {ε : Type} (what : String) : Except ε Unit → EditorM Unit
   | .ok () => pure ()
   | .error _ => giveUp s!"{what} was refused"
 
-/-- Closes the buffer `id` ("Close", in the module docs): every window of the
-frame that shows it, tiled or docked (`Frame.all`), shows `fallback`, and
-then it is removed. -/
+/-- Closes the buffer `id` ("Close", in the module docs): every window of
+every tab that shows it, tiled, docked or floating (`Frame.everyWindow`),
+shows `fallback`, and then it is removed. -/
 def closeInto (id fallback : BufferId) : EditorM Unit := do
   let state ← editorState
-  for view in state.frame.all do
+  for view in state.frame.everyWindow do
     if (state.window? view).any (·.buffer == id) then
       unrefused "showing the buffer left" (← view.show fallback)
   unrefused "removing the buffer" (← id.remove)
