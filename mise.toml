@@ -283,8 +283,9 @@ run = [
   # It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-word-delete/expected -",
   # Display rules (tests/headless/display-rules): a config whose one rule
-  # names a new tab is installed with the rule left out, and says so in its
-  # report's `rule:` line and in the echo area; `:ls` and a command of
+  # names the right edge the default layout lacks is installed with the
+  # rule left out, and says so in its report's `rule:` line and in the
+  # echo area; `:ls` and a command of
   # config's that makes a buffer each show it in a new window at the end of
   # the stack, focused, while main keeps the buffer being edited, and `:ls`
   # again focuses the list's window (`display-rules/expected`). It touches
@@ -310,6 +311,14 @@ run = [
   # the row out of the view, and on the last row shown is flipped above it
   # (`float-anchor/expected`). It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/float-anchor/config ../tests/headless/float-anchor/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/float-anchor/expected -",
+  # Tabs (tests/headless/tabs): under the default layout, `C-w c` makes a
+  # second tab and the tab bar appears above the bottom row, its chip of the
+  # tab in view in `tab-bar.selected`; `C-w p` and `C-w n` show each tab as
+  # it was left, its windows, focus and zoom; `C-w 3` and the last `C-w &`
+  # are refused with the reason in the echo area; `tab-rename` and
+  # `tab-switch` go through the minibuffer (`tabs/expected`). It touches no
+  # file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/tabs/config ../tests/headless/tabs/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/tabs/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed

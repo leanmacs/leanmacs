@@ -1,0 +1,83 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which keeps the default layout and binds
+# `tab-rename` to `C-c r` and `tab-move-right` to `C-c m`; every other tab
+# command is reached by the Vim scheme's own keys under `C-w`. It shows two
+# tabs keeping their own windows, focus and layout, the tab bar listing
+# them with the tab in view's chip in its own face, a missing tab and the
+# last tab refused with the reason in the echo area. What it prints must be
+# exactly `expected`. It touches no file.
+
+reload
+settle
+
+# A frame of 640 by 480: the tiled area is 640 by 464, above the bottom row.
+resize 640 480
+
+# `C-w s` splits view 0: one tab, views 0 and 1 side by side, and no tab
+# bar, since there is one tab.
+key w KeyW control
+key s KeyS -
+scene
+
+# `C-w c` makes a second tab after the first, on the same buffer, and
+# brings it into view: view 2 alone in the tiled area, now 640 by 448, and
+# the tab bar's view last, in the strip above the bottom row, its second
+# chip in `tab-bar.selected`.
+key w KeyW control
+key c KeyC -
+scene
+
+# `C-w s C-w z` splits view 2 and zooms the new window: the second tab
+# shows one view.
+key w KeyW control
+key s KeyS -
+key w KeyW control
+key z KeyZ -
+scene
+
+# `C-w p` goes back to the first tab, as it was left: views 0 and 1 side by
+# side, the focus on view 1, and the first chip selected.
+key w KeyW control
+key p KeyP -
+scene
+
+# `C-w n` goes to the second tab, still zoomed, its focus where it was.
+key w KeyW control
+key n KeyN -
+scene
+
+# `C-w 3` is refused: there is no tab 3.
+key w KeyW control
+key 3 Digit3 -
+scene
+
+# `C-c r`, `notes` and `<Enter>` rename the second tab: its chip reads
+# `notes`.
+key c KeyC control
+key r KeyR -
+commit notes
+key <Enter> Enter -
+scene
+
+# `C-c m` on the last tab moves nothing.
+key c KeyC control
+key m KeyM -
+scene
+
+# `C-w w`, `1` and `<Enter>` switch to tab 1.
+key w KeyW control
+key w KeyW -
+commit 1
+key <Enter> Enter -
+scene
+
+# `C-w &` closes the first tab: the second, `notes`, zoomed, is left alone,
+# and the bar goes.
+key w KeyW control
+key & Digit7 shift
+scene
+
+# `C-w &` again is refused: the last tab cannot be closed.
+key w KeyW control
+key & Digit7 shift
+scene

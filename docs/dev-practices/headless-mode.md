@@ -1274,6 +1274,119 @@ view 2 40,308 320x116: "a hint", scroll 0, selections 0..0, padding 8 8
 status 2 in mode-line.inactive: mode-line.inactive "hint" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 ```
 
+A twenty-third, `tests/headless/tabs/script`, runs on the config in
+`tests/headless/tabs/config`, which keeps the default layout and binds
+`tab-rename` to `C-c r` and `tab-move-right` to `C-c m`; every other tab
+command is reached by the Vim scheme's own keys under `C-w`, tmux's. `C-w
+s` splits view 0, with no tab bar for one tab. `C-w c` makes a second tab
+and brings it into view: view 2 alone in a tiled area now 640 by 448, and
+the tab bar's view last, view 3, in the strip above the bottom row, its
+line `" 1 scratch   2 scratch "` with the second chip in
+`tab-bar.selected`, no selection and no status field (`status 3: -`).
+`C-w s C-w z` zooms the second tab on its new window, view 4 (the bar took
+3). `C-w p` shows the first tab as it was left, views 0 and 1 side by side
+and the focus on 1, with the first chip selected, and `C-w n` the second,
+still zoomed. `C-w 3` is refused, `tab-select-3: there is no tab 3`.
+`C-c r`, `notes` and `<Enter>` rename the second tab, `C-c m` on the last
+tab moves nothing, and `C-w w`, `1` and `<Enter>` switch to the first.
+`C-w &` closes it, leaving `notes` zoomed and no bar, and `C-w &` again is
+refused, `tab-close: the last tab cannot be closed`. Its output must be
+exactly `tests/headless/tabs/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/tabs/config ../tests/headless/tabs/script
+reload 1: installed, 1 chunks, 0 commands
+key arrived: w KeyW control
+key arrived: s KeyS -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
+view 0 0,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: c KeyC -
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 2 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
+status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
+decorations 3: tab-bar 0..11 tab-bar.selected 12..23
+status 3: -
+key arrived: w KeyW control
+key arrived: s KeyS -
+key arrived: w KeyW control
+key arrived: z KeyZ -
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 11, theme "default"
+view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
+status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
+decorations 3: tab-bar 0..11 tab-bar.selected 12..23
+status 3: -
+key arrived: w KeyW control
+key arrived: p KeyP -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 14, theme "default"
+view 0 0,0 320x448: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 320,0 320x448: "", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
+decorations 3: tab-bar.selected 0..11 tab-bar 12..23
+status 3: -
+key arrived: w KeyW control
+key arrived: n KeyN -
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 17, theme "default"
+view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
+status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
+decorations 3: tab-bar 0..11 tab-bar.selected 12..23
+status 3: -
+key arrived: w KeyW control
+key arrived: 3 Digit3 -
+scene 640x480, focused 4, echo "tab-select-3: there is no tab 3", echo padding 8, preedit -, published 20, theme "default"
+view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
+status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 0,448 640x16: " 1 scratch   2 scratch ", scroll 0, selections , padding 8 0
+decorations 3: tab-bar 0..11 tab-bar.selected 12..23
+status 3: -
+key arrived: c KeyC control
+key arrived: r KeyR -
+key arrived: <Enter> Enter -
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 26, theme "default"
+view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
+status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 0,448 640x16: " 1 scratch   2 notes ", scroll 0, selections , padding 8 0
+decorations 3: tab-bar 0..11 tab-bar.selected 12..21
+status 3: -
+key arrived: c KeyC control
+key arrived: m KeyM -
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 29, theme "default"
+view 4 0,0 640x448: "", scroll 0, selections 0..0, padding 8 8
+status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 0,448 640x16: " 1 scratch   2 notes ", scroll 0, selections , padding 8 0
+decorations 3: tab-bar 0..11 tab-bar.selected 12..21
+status 3: -
+key arrived: w KeyW control
+key arrived: w KeyW -
+key arrived: <Enter> Enter -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 35, theme "default"
+view 0 0,0 320x448: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 320,0 320x448: "", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 0,448 640x16: " 1 scratch   2 notes ", scroll 0, selections , padding 8 0
+decorations 3: tab-bar.selected 0..11 tab-bar 12..21
+status 3: -
+key arrived: w KeyW control
+key arrived: & Digit7 shift
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 38, theme "default"
+view 4 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: & Digit7 shift
+scene 640x480, focused 4, echo "tab-close: the last tab cannot be closed", echo padding 8, preedit -, published 41, theme "default"
+view 4 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+```
+
 Two more runs of the gate are on a real file, and so on a script that
 cannot be checked in whole: the file port takes absolute paths only. Each
 is one entry of the `ffi-test` task, a shell of its own that makes a
