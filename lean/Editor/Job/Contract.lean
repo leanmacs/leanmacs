@@ -1344,7 +1344,8 @@ def postProperties : List PostProperty :=
         sleep 1
         post (posting "second")
         post (posting "third" [.bool true])
-      posted := #[posting "first" [.nat 1, .str "a"], posting "second", posting "third" [.bool true]] },
+      posted :=
+        #[posting "first" [.nat 1, .str "a"], posting "second", posting "third" [.bool true]] },
     { name := "a job that posts and then fails has made its posts"
       job := do
         post (posting "made")

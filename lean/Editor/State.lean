@@ -1690,7 +1690,8 @@ refuses an edit of that text ("Buffers", in the module docs). -/
 def readOnly? (state : EditorState) (text : TextId) : Option (BufferId × String) :=
   (List.range state.buffers.size).findSome? fun index =>
     match state.buffer? ⟨index⟩ with
-    | some buffer => if buffer.text == text && buffer.readOnly then some (⟨index⟩, buffer.name) else none
+    | some buffer =>
+      if buffer.text == text && buffer.readOnly then some (⟨index⟩, buffer.name) else none
     | none => none
 
 /-- What is said of an edit refused because the buffer called `name` is

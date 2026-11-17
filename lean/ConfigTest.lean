@@ -4480,8 +4480,8 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
     Headless.start (scheme := TestScheme.scheme)
         { elaborator, source := { chunks := chunks.get }, emit,
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
-          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3,
-          environment := 4, posts := 5 }
+          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3, environment := 4,
+          posts := 5 }
   return { host, chunks, reported, others }
 
 /-- Makes `config` the source's chunks, asks for a reload, and returns the

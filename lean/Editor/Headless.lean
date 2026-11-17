@@ -1069,7 +1069,7 @@ def startJob (collaborators : Collaborators σ scheme) (running : Running σ sch
   let posted (id : Nat) (invocation : Invocation) : BaseIO Unit := do
     running.mailbox.push id invocation
     (discard <| Ffi.postEvent .editor collaborators.posts id.toUInt64 "" : IO Unit).catchExceptions
-      fun _ => pure ()
+        fun _ => pure ()
   let (id, jobs) ← running.jobs.start owner name work wake posted
   return (some id, { running with jobs })
 
