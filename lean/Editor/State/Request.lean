@@ -33,7 +33,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So nine requests are answered with more than this handler by the loop,
+  So ten requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode` and `setBufferMajorMode`, which
   there refuse a name no mode is registered under and run the mode's
   on-enter actions,
@@ -43,12 +43,15 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   names that are bound, `themeNames`, which there is answered the names
   themes are registered under, `loadTheme`, which there refuses a name no
   theme is registered under, `runCommand`, which there runs the
-  command registered under a name inside the asking command, and
+  command registered under a name inside the asking command, `askSource`,
+  which there runs the completion source registered under a name inside
+  the asking command (`Editor/Completion.lean`), and
   `displayRules`, which there is answered config's display rules
   (`Editor/DisplayRules.lean`). Here
   `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
   answered `none`, `exNames` and `themeNames` are answered no name,
-  `runCommand` is answered `false` and runs nothing, and `displayRules` is
+  `runCommand` is answered `false` and runs nothing, `askSource` is answered
+  `none` and runs nothing, and `displayRules` is
   answered no rule: this handler knows no registry.
 - **A reply holds plain data too**, so no request is answered a command:
   a command is a program over the port these requests are part of, and a
@@ -108,6 +111,14 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   asking command's (`Editor/Command/Dispatch.lean`, "Requests that name
   something registered"). The reply says whether a command was registered
   under the name.
+- **A completion source is asked inside the asking command by one
+  request**, `askSource`, with the name it is registered under and the
+  query (`Editor/Completion.lean`). It is the loop's to act on, as
+  `runCommand` is: the source's program is put before the rest of the
+  asking command's. The reply is the candidates it answered, or `none`
+  when no source is registered under the name. A source is a program over
+  this port, so the request names it and the reply holds its candidates,
+  which are plain data.
 - **The editor is asked to quit by one request**, `quit`, which sets the
   state's flag and nothing else (`Editor/State.lean`, "Quit"). The handler
   does not judge whether the editor may quit: the command that asks
@@ -323,6 +334,9 @@ inductive StateRequest where
   /-- Run the command registered under `name` inside this command, with
   `call`. -/
   | runCommand (name : String) (call : Call)
+  /-- Ask the completion source registered under `name` for its candidates
+  for `query`, inside this command. -/
+  | askSource (name : String) (query : Completion.Query)
   /-- Ask the editor to quit. -/
   | quit
   /-- Ask for the config to be reloaded. -/
@@ -427,6 +441,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
   | .runCommand .. => Bool
+  | .askSource .. => Option (Array Completion.Candidate)
   | .quit => Unit
   | .reload => Unit
   | .giveUp _ => Unit
@@ -530,6 +545,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .loadTheme name, state => (.ok (), { state with theme := some name })
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
   | .runCommand .., state => (false, state)
+  | .askSource .., state => (none, state)
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with reload := true })
   | .giveUp _, state => ((), state)

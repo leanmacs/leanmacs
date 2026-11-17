@@ -708,12 +708,14 @@ def promptCases : List Case :=
         let .ok selected ← view.selection | return false
         return (← target.buffer.text.read) == "" && selected == selection #[(0, 0)] },
     { name :=
-        "a prompt asked for with candidates from a function holds what the function answered, here the lines it read of the buffer the prompt was asked from, and its minibuffer holds the initial value and has the focus as with no candidates"
+        "a prompt asked for with candidates from a source holds what the source answered, here the lines it read of the buffer the prompt was asked from, and its minibuffer holds the initial value and has the focus as with no candidates"
       run := do
         let .ok () ← (⟨0⟩ : BufferId).insertAt 0 "wq\nédit\nw" | return false
-        let lines : EditorM (Array String) := do
-          return ((← scratch.read).splitOn "\n").toArray
-        let .ok view ← prompt "Pick: " greeting "w" (candidates := lines) | return false
+        let lines : Completion.Source :=
+          { name := "lines", category := "line"
+            candidates := fun _ => do
+              return ((← scratch.read).splitOn "\n").toArray.map Completion.Candidate.ofText }
+        let .ok view ← prompt "Pick: " greeting "w" [.given lines] | return false
         let state ← editorState
         let some target := state.target? view | return false
         return state.prompt.map (·.candidates.all.map (·.text)) == some #["wq", "édit", "w"] &&

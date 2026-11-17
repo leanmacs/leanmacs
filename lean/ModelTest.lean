@@ -5,6 +5,7 @@ import Editor.Clipboard.Model
 import Editor.Command.Append
 import Editor.Command.Dispatch
 import Editor.Command.Model
+import Editor.Completion.Fake
 import Editor.Compile.Compiled
 import Editor.Compile.Shipped
 import Editor.Config.Display
@@ -10184,12 +10185,15 @@ def stateChecks : List Check :=
                 | _ => false },
         { name := "why a prompt was refused is a sentence for the echo area, one for each refusal"
           run :=
-            pure
-              (([PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow].map
+            pure <|
+              (([PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow, .noSuchSource "a"].map
                       PromptRefusal.describe).eraseDups.length ==
-                  4 &&
-                [PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow].all fun refusal =>
-                  !refusal.describe.isEmpty) },
+                  5 &&
+                [PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow,
+                      .noSuchSource "a"].all
+                  fun refusal => !refusal.describe.isEmpty) &&
+                PromptRefusal.describe (.noSuchSource "picks") ==
+                  "no completion source is registered under `picks`" },
         { name :=
             "closing a prompt with no answer leaves no prompt: the minibuffer's window is gone, its buffer's slot is empty, the focus is on the asking view, the window list and the next view's id are as they were after the open, and nothing is answered; the state is well formed"
           run :=
@@ -14140,7 +14144,66 @@ def dispatchStateChecks : List Check :=
             let state ← EditorState.initial ⟨640, 480⟩
             let some target := state.focusedTarget? | throw .noSuchText
             runCommand "inner" { target }
-          (command.runModel editorModel).1.toOption == some false }]
+          (command.runModel editorModel).1.toOption == some false },
+    { name :=
+        "a command that asks a source by a name the loop was told no source of is answered none, with the state as it was; by a name it was told of, the source runs inside the command with the query handed, its state requests answered from the state the command had reached"
+      run :=
+        pure <|
+          let said : Completion.Source :=
+            { name := "said", category := "said"
+              candidates := fun _ => do
+                return #[.ofText (← editorState).echo] }
+          let registered : Loop.Registered :=
+            { sources := fun name =>
+                match name with
+                | "echo" => some (Completion.Fake.echo "echo" "test")
+                | "said" => some said
+                | _ => none }
+          let command :
+            EditorM
+              (Option (Array Completion.Candidate) × Bool × Option (Array Completion.Candidate) ×
+                Option (Array Completion.Candidate)) := do
+            let start ← editorState
+            let missing ← EditorState.ask (.askSource "nope" { text := "w", view := ⟨0⟩ })
+            let unchanged := (← editorState) == start
+            let echoed ← EditorState.ask (.askSource "echo" { text := "wq", view := ⟨1⟩ })
+            message "hello"
+            let read ← EditorState.ask (.askSource "said" { text := "", view := ⟨0⟩ })
+            return (missing, unchanged, echoed, read)
+          let program : EditorM (Guarded _ × EditorState) := do
+            command.dispatched registered (← EditorState.initial ⟨640, 480⟩)
+          match (program.runModel editorModel).1 with
+          | .ok (outcome, _) =>
+            outcome ==
+              .finished
+                (none, true, some #[{ text := "wq", annotation := some "1" }],
+                  some #[.ofText "hello"])
+          | .error _ => false },
+    { name :=
+        "a source asked by name that is refused refuses the asking command at the request, with nothing of the asking command run after it"
+      run :=
+        pure <|
+          let registered : Loop.Registered :=
+            { sources := fun name =>
+                if name == "refusing" then some (Completion.Fake.refusing "refusing" "test")
+                else none }
+          let asking : EditorM Unit := do
+            discard <| createText "early"
+            discard <| EditorState.ask (.askSource "refusing" { text := "", view := ⟨0⟩ })
+            discard <| createText "late"
+          let program : EditorM (Guarded Unit × EditorState) := do
+            asking.dispatched registered (← EditorState.initial ⟨640, 480⟩)
+          match program.runModel editorModel with
+          | (.ok (outcome, _), model) =>
+            outcome == .refused .badRange && model.texts.contents == #["", "early"]
+          | (.error _, _) => false },
+    { name :=
+        "a command that asks a source by name where no loop dispatches it is answered none: the handler of the runners knows no registry"
+      run :=
+        pure <|
+          let command : EditorM (Option (Array Completion.Candidate)) :=
+            EditorState.ask (.askSource "echo" { text := "w", view := ⟨0⟩ })
+          (command.runModel editorModel).1.toOption == some none }]
 
 /-- The refusal `program` ends with, if it is refused. -/
 def refusalOf {α : Type} (program : TextM α) : TextM (Option TextError) := do
@@ -19027,54 +19090,61 @@ def apiStateChecks : List Check :=
             (since.map fun (reply, state) => (replied reply, state.quitting)) ==
               some (.inl (.unsaved "other"), false) },
     { name :=
-        "a prompt asked for with a function for its candidates holds what the function answered, and the function is run once: the text it makes is in the store once, beside the minibuffer's"
+        "a prompt asked for with a source holds what the source answered, in the source's group, and the source is run once: the text it makes is in the store once, beside the minibuffer's"
       run :=
         pure <|
-          let made := "made by the function"
-          let candidates : EditorM (Array String) := do
-            discard <| createText made
-            return #["wq", "edit", "w"]
-          match dispatchedOn (prompt "Pick: " asked "w" (candidates := candidates)) with
+          let made := "made by the source"
+          let source : Completion.Source :=
+            { name := "made", category := "test"
+              candidates := fun _ => do
+                discard <| createText made
+                return offered #["wq", "edit", "w"] }
+          match dispatchedOn (prompt "Pick: " asked "w" [.given source]) with
           | some (.finished (.ok view), state, texts) =>
-            state.prompt.map (·.candidates) == some { all := offered #["wq", "edit", "w"] } &&
+            state.prompt.map (·.candidates) ==
+                some { all := (offered #["wq", "edit", "w"]).map (·.inGroup "made") } &&
               state.prompt.map (·.view) == some view &&
               (texts.filter (· == made)).size == 1 &&
               texts.contains "w" &&
               state.wellFormed
           | _ => false },
     { name :=
-        "a prompt whose function for its candidates is refused refuses the asking command: no prompt is open and no text was made for a minibuffer"
+        "a prompt whose source is refused refuses the asking command: no prompt is open and no text was made for a minibuffer"
       run :=
         pure <|
-          let candidates : EditorM (Array String) := do
-            discard <| (⟨99⟩ : TextId).read
-            return #["a"]
-          match dispatchedOn (prompt "Pick: " asked "w" (candidates := candidates)),
+          let source : Completion.Source :=
+            { name := "reads", category := "test"
+              candidates := fun _ => do
+                discard <| (⟨99⟩ : TextId).read
+                return offered #["a"] }
+          match dispatchedOn (prompt "Pick: " asked "w" [.given source]),
             dispatchedOn (pure () : EditorM Unit) with
           | some (.refused .noSuchText, state, texts), some (_, _, before) =>
             state.prompt == none && texts == before
           | _, _ => false },
     { name :=
-        "while a prompt is open, asking for another with a function for its candidates is refused with alreadyOpen and the function is not run: it makes no text, and the open prompt's candidates are as they were"
+        "while a prompt is open, asking for another with a source is refused with alreadyOpen and the source is not run: it makes no text, and the open prompt's candidates are as they were"
       run :=
         pure <|
-          let candidates : EditorM (Array String) := do
-            discard <| createText "ran"
-            return #["x"]
+          let source : Completion.Source :=
+            { name := "ran", category := "test"
+              candidates := fun _ => do
+                discard <| createText "ran"
+                return offered #["x"] }
           match
             dispatchedOn do
               let first ← prompt "A: " asked
-              return (first, ← prompt "B: " asked "" (candidates := candidates)) with
+              return (first, ← prompt "B: " asked "" [.given source]) with
           | some (.finished (.ok view, .error (.alreadyOpen held)), state, texts) =>
             view == held && !texts.contains "ran" && state.prompt.map (·.candidates) == some {} &&
               state.prompt.map (·.label) == some "A: "
           | _ => false },
     { name :=
-        "a prompt asked for with no function has no candidates, and leaves the state and the store as one asked for with a function that answers none"
+        "a prompt asked for with no source has no candidates, and leaves the state and the store as one asked for with a source that answers none"
       run :=
         pure <|
           match dispatchedOn (prompt "Name: " asked "hé"),
-            dispatchedOn (prompt "Name: " asked "hé" (candidates := pure #[])) with
+            dispatchedOn (prompt "Name: " asked "hé" [.given (.fixed "none" "test" #[])]) with
           | some (.finished (.ok view), state, texts), some (.finished (.ok same), again, others) =>
             view == same && state == again && texts == others &&
               state.prompt.map (·.candidates) == some {}
@@ -19086,11 +19156,11 @@ def apiStateChecks : List Check :=
           match
             dispatchedOn do
               let closed ← setCandidates (offered #["a"])
-              discard <| prompt "Pick: " asked (candidates := pure #["x", "y"])
+              discard <| prompt "Pick: " asked "" [.given (.ofTexts "xy" "test" #["x", "y"])]
               let before := (← editorState).prompt.map (·.candidates)
               return (closed, before, ← setCandidates (offered #["a", "b"])) with
           | some (.finished (.error .notOpen, before, .ok ()), state, _) =>
-            before == some { all := offered #["x", "y"] } &&
+            before.map (·.all.map (·.text)) == some #["x", "y"] &&
               state.prompt.map (·.candidates) == some { all := offered #["a", "b"] }
           | _ => false },
     { name :=
@@ -20273,11 +20343,33 @@ def picked (arguments : List Argument) : String :=
 def pickLabel : String :=
   "Pick: "
 
+/-- The source the prompts of the candidate checks are asked with: the
+model's, called `pick`, over `pickCandidates`. -/
+def pickSource : Completion.Source :=
+  .ofTexts "pick" "pick" pickCandidates
+
+/-- The candidates a prompt asked with `pickSource` holds, each in its
+group. -/
+def pickOffered : Array Completion.Candidate :=
+  (offered pickCandidates).map (·.inGroup pickSource.name)
+
+/-- The two sources one command of the candidate checks asks with at once:
+`a`, of `wq` and `edit`, then `b`, of `rewrite` and `w`. -/
+def pickHalves : List Completion.SourceRef :=
+  [.given (.ofTexts "a" "pick" #["wq", "edit"]), .given (.ofTexts "b" "pick" #["rewrite", "w"])]
+
 /-- The commands of the candidate checks, by name.
 
-- `ask-pick` asks `Pick: ` with the candidates `pickCandidates`, from a
-  function, and the continuation `pickContinuation`; `ask-pick-w` asks the
-  same with the initial value `w`; `ask-plain` asks with no candidates.
+- `ask-pick` asks `Pick: ` with `pickSource`, given as a value, and the
+  continuation `pickContinuation`; `ask-pick-w` asks the same with the
+  initial value `w`; `ask-plain` asks with no source.
+- `ask-two` asks with `pickHalves`; `ask-grouped` with a source `c` whose
+  first candidate has a group of its own; `ask-refusing` with a source that
+  is refused (`Completion.Fake.refusing`); `ask-echo` with the initial
+  value `w` and a source that answers what it was asked
+  (`Completion.Fake.echo`).
+- `ask-named` asks with the source registered under `pick`, by name, and
+  says the refusal in the echo area when the prompt is refused.
 - `picked` says what it was called with (`picked`).
 - `accept` and `cancel` are the API's operations.
 - The test scheme's self-insert inserts its argument at its target's
@@ -20285,11 +20377,19 @@ def pickLabel : String :=
 - `still` does nothing, and `edit-then-fail` inserts `x` at its target's
   cursors and is then refused. -/
 def candidateCommands : List (String × Dispatched) :=
-  let asks (initial : String) (candidates : EditorM (Array String)) : Dispatched := fun _ => do
-    discard <| prompt pickLabel pickContinuation initial (candidates := candidates)
+  let asks (initial : String) (sources : List Completion.SourceRef) : Dispatched := fun _ => do
+    discard <| prompt pickLabel pickContinuation initial sources
     return none
-  [("ask-pick", asks "" (pure pickCandidates)), ("ask-pick-w", asks "w" (pure pickCandidates)),
-    ("ask-plain", asks "" (pure #[])),
+  [("ask-pick", asks "" [.given pickSource]), ("ask-pick-w", asks "w" [.given pickSource]),
+    ("ask-plain", asks "" []), ("ask-two", asks "" pickHalves),
+    ("ask-grouped",
+      asks "" [.given (.fixed "c" "pick" #[{ text := "x", group := some "own" }, .ofText "y"])]),
+    ("ask-refusing", asks "" [.given (Completion.Fake.refusing "no" "pick")]),
+    ("ask-echo", asks "w" [.given (Completion.Fake.echo "echo" "pick")]),
+    ("ask-named", fun _ => do
+      if let .error refusal ← prompt pickLabel pickContinuation "" [.named pickSource.name] then
+        message refusal.describe
+      return none),
     ("picked", fun call => do
       message (picked call.arguments)
       return none),
@@ -20315,7 +20415,9 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     [("C-c a", invoke "ask-pick"), ("C-c w", invoke "ask-pick-w"), ("C-c p", invoke "ask-plain"),
       ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c s", invoke "still"),
-      ("C-c f", invoke "edit-then-fail")]
+      ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
+      ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
+      ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -20323,6 +20425,15 @@ checks and the jobs of the driver checks, on the models `model`; `none` if
 making the state was refused. -/
 def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
   (Loop.Driver.over candidateKeys driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
+
+/-- A driver of the candidate checks whose loop is told of one source,
+`pickSource`, registered under its name. -/
+def namedPickDriver : Option TestDriver :=
+  let keys : Loop.Keys TestScheme.scheme :=
+    { candidateKeys with
+      registered :=
+        { sources := fun name => if name == pickSource.name then some pickSource else none } }
+  (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption
 
 /-- The registry of the candidate checks that press the minibuffer's keys:
 the minibuffer's commands and its mode registered for the owner `compiled`,
@@ -20366,9 +20477,8 @@ def candidatesOf (driver : TestDriver) : Option Candidates :=
 for `pattern`, with `chosen` as its choice: the listing is what the fuzzy
 model answers for the pattern, so no order is written out here. -/
 def pickListed (pattern : String) (chosen : Option Nat := none) : Candidates :=
-  { all := offered pickCandidates, listedFor := some pattern
-    listed := (FuzzyModel.rank pattern pickCandidates).filterMap ((offered pickCandidates)[·]?)
-    chosen }
+  { all := pickOffered, listedFor := some pattern
+    listed := (FuzzyModel.rank pattern pickCandidates).filterMap (pickOffered[·]?), chosen }
 
 /-- `driver` with the choice of its open prompt moved by `steps`, through
 the state and not by a command. -/
@@ -20712,7 +20822,64 @@ def candidateChecks : List Check :=
                 pickStatus chosen == some (pickFields "w" (some 1)) &&
                 pickStatus after == pickStatus chosen &&
                 candidatesOf after == some (pickListed "w" (some 1)) &&
-                after.loop.state.wellFormed }]
+                after.loop.state.wellFormed },
+    { name :=
+        "a prompt asked with two sources holds the candidates of both, the first source's then the second's, each in its source's group, and its listing for the empty text is the fuzzy model's order of all of them; a candidate with a group of its own keeps it"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (two, _) := fedTo driver (presses "C-c 2")
+            let (grouped, _) := fedTo driver (presses "C-c g")
+            let pairs (all : Array Completion.Candidate) : Array (String × Option String) :=
+              all.map fun candidate => (candidate.text, candidate.group)
+            let both := #[("wq", some "a"), ("edit", some "a"), ("rewrite", some "b"), ("w", some "b")]
+            let ranked := (FuzzyModel.rank "" (both.map (·.1))).filterMap (both[·]?)
+            (candidatesOf two).map (pairs ·.all) == some both &&
+              (candidatesOf two).map (pairs ·.listed) == some ranked &&
+              (candidatesOf two).map (·.listedFor) == some (some "") &&
+              (candidatesOf grouped).map (pairs ·.all) == some #[("x", some "own"), ("y", some "c")] },
+    { name :=
+        "a prompt asked with a source by name holds what the source registered under that name answers, the same as the prompt asked with that source as a value; where no source is registered under the name it is refused with noSuchSource, no prompt opens and no text is made"
+      run :=
+        pure <|
+          match candidateDriver, namedPickDriver with
+          | some driver, some registered =>
+            let (named, _) := fedTo registered (presses "C-c m")
+            let (given, _) := fedTo driver (presses "C-c a")
+            let (refused, _) := fedTo driver (presses "C-c m")
+            candidatesOf named == some (pickListed "") &&
+              candidatesOf named == candidatesOf given &&
+              promptEcho named == "" &&
+              refused.loop.state.prompt.isNone &&
+              promptEcho refused == PromptRefusal.describe (.noSuchSource pickSource.name) &&
+              refused.model.texts.contents == driver.model.texts.contents
+          | _, _ => false },
+    { name :=
+        "a source that is refused refuses the asking command: no prompt opens and no text is made"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver (presses "C-c r")
+            refused.loop.state.prompt.isNone &&
+              refused.model.texts.contents == driver.model.texts.contents },
+    { name :=
+        "a source is asked with the prompt's initial text and the view the prompt was asked from"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (echoed, _) := fedTo driver (presses "C-c e")
+            match echoed.loop.state.prompt with
+            | none => false
+            | some asked =>
+              asked.candidates.all ==
+                #[{ text := "w", annotation := some (toString asked.asker.index),
+                    group := some "echo" }] }]
 
 /-- A file of three lines of which two end in CRLF and one in a line
 feed. -/
@@ -22641,12 +22808,14 @@ def exNamesOf (bindings : Array Ex.Binding) : Array String :=
 
 /-- What the ex prompt of a driver told of `bindings` holds once its
 candidates are listed for `pattern`, with `chosen` as its choice: the
-bound names, and of them what the fuzzy model answers for the pattern. -/
+bound names, in the group of the source of the ex names, and of them what
+the fuzzy model answers for the pattern. -/
 def exListed (pattern : String) (chosen : Option Nat := none)
     (bindings : Array Ex.Binding := exTestBindings) : Candidates :=
   let names := exNamesOf bindings
-  { all := offered names, listedFor := some pattern
-    listed := (FuzzyModel.rank pattern names).filterMap ((offered names)[·]?), chosen }
+  let all := (offered names).map (·.inGroup Ex.namesSource.name)
+  { all, listedFor := some pattern, listed := (FuzzyModel.rank pattern names).filterMap (all[·]?)
+    chosen }
 
 /-- What a step of the ex checks is handed. The commands are the ones
 compiled code registers for the ex line, the minibuffer and files

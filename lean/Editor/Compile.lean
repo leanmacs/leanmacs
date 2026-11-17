@@ -933,7 +933,7 @@ where
     let state ← editorState
     discard <|
         prompt promptLabel { command := compileName, arguments := [.bool true] } initial
-          (pure (history state scope))
+          [.given (.ofTexts "compile-history" "compile" (history state scope))]
 
 /-- `compile-command` ("The commands", in the module docs): the answer is
 its first argument; an answer of its prompt comes back with `true` after
@@ -972,7 +972,7 @@ where
   ask (offered : Array Offer) : EditorM Unit :=
     discard <|
       prompt commandPromptLabel { command := commandName, arguments := [.bool true] } ""
-        (pure (offered.map (·.candidate)))
+        [.given (.ofTexts "compile-commands" "compile-command" (offered.map (·.candidate)))]
 
 /-- `recompile` ("The commands", in the module docs): reruns the scope's last
 line in the directory it ran in, with no prompt, asking first when the

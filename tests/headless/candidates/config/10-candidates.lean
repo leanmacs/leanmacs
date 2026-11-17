@@ -6,11 +6,14 @@ def pickedOne (call : Call) : EditorM Unit :=
   | .str answer :: _ => message s!"picked {answer}"
   | _ => message "picked nothing"
 
--- Asks `Pick: ` with three candidates, from a function, and returns at
--- once. The candidate `w` is last, after `wq`, which holds a `w` too.
+-- Asks `Pick: ` with the completion source registered under `picks`, by
+-- name, and returns at once.
 def pick : EditorM Unit :=
-  discard <| prompt "Pick: " { command := "picked" } (candidates := pure #["wq", "edit", "w"])
+  discard <| prompt "Pick: " { command := "picked" } (sources := [.named "picks"])
 
+-- Registers the source `picks`, of three candidates. The candidate `w` is
+-- last, after `wq`, which holds a `w` too.
 def setup : SetupM Unit := do
+  defineSource (.ofTexts "picks" "pick" #["wq", "edit", "w"])
   commandWith "picked" pickedOne
   command "pick" pick

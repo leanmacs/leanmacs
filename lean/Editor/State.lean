@@ -1635,6 +1635,9 @@ inductive PromptRefusal where
   | notItsText
   /-- No window is focused for the prompt to be asked from. -/
   | noWindow
+  /-- The prompt was asked with a completion source by name, and no source
+  is registered under `name`. -/
+  | noSuchSource (name : String)
   deriving DecidableEq, Repr
 
 /-- Why an operation on the prompt was refused, as a sentence for the echo
@@ -1644,6 +1647,7 @@ def PromptRefusal.describe : PromptRefusal → String
   | .notOpen => "no prompt is open"
   | .notItsText => "the minibuffer's history and markers are not of its text"
   | .noWindow => "no window is focused to ask from"
+  | .noSuchSource name => s!"no completion source is registered under `{name}`"
 
 /-- Why an operation on a buffer was refused. -/
 inductive BufferRefusal where

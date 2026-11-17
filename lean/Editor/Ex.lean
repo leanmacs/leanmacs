@@ -38,7 +38,11 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   when the line is asked for. So while a line is being typed the scene
   lists the lines and names it matches, a key of the minibuffer chooses
   one, and accepting runs the chosen one (`Editor/Minibuffer.lean`).
-  Typing `!` lists the history.
+  Typing `!` lists the history. They come from two completion sources,
+  given to the prompt as values in that order (`Editor/Completion.lean`):
+  `historySource` (`ex-history`) and `namesSource` (`ex-names`), each of
+  the category `ex-line`, which compiled code registers under their
+  names too.
   - **The typed line is the pattern, whole.** A line with an argument
     matches no name, so nothing is listed, and accepting runs the line as
     typed. A name is completed, an argument is not.
@@ -257,6 +261,23 @@ def run (target : Target) (line : String) : EditorM Unit := do
   let some invocation := binding.invocation? parsed.argument | message (noArgument parsed.name)
   invoke invocation
 
+/-- The completion source of the `:!` lines of the scope of the buffer the
+query's view shows (`Shell.history`), newest first, for the ex line's
+prompt: `ex-history`, of the category `ex-line`. A view with no window
+answers none. -/
+def historySource : Completion.Source :=
+  { name := "ex-history", category := "ex-line"
+    candidates := fun query => do
+      let state ← editorState
+      let some target := state.target? query.view | return #[]
+      return (Shell.history state target.window.buffer).map Completion.Candidate.ofText }
+
+/-- The completion source of the ex names that are bound (`exNames`), for
+the ex line's prompt: `ex-names`, of the category `ex-line`. -/
+def namesSource : Completion.Source :=
+  { name := "ex-names", category := "ex-line"
+    candidates := fun _ => return (← exNames).map Completion.Candidate.ofText }
+
 /-- The ex command as it is called: runs the line that is its first
 argument, a string, in the view it was called with (`run`). With anything
 else first, or nothing, it asks
@@ -270,9 +291,9 @@ def exCommand (call : Call) : EditorM Unit := do
   | .str line :: _ =>
     run call.target line
   | _ =>
-    let candidates : EditorM (Array String) := do
-      return Shell.history (← editorState) call.target.window.buffer ++ (← exNames)
-    if let .error refusal← prompt label { command := name } (candidates := candidates) then
+    if let .error refusal←
+        prompt label { command := name } (sources := [.given historySource, .given namesSource])
+    then
       message (notAsking refusal)
 
 /-- The name the quit command is registered under. -/

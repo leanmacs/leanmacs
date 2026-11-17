@@ -239,6 +239,19 @@ from the next command.
     a name is one command however it comes to run. It is how evil's dot
     repeat replays a change with the command the change's own keys ran
     (`Editor/Evil/Repeat.lean`).
+- **Asking a completion source inside the asking command**
+  (`StateRequest.askSource`) is answered `none` for a name no source is
+  registered under (`Loop.Registered.sources`), with nothing run.
+  Otherwise the source's program, for the query the request hands it, is
+  put before the rest of the asking command's, as a command's is for
+  `runCommand`, and the reply is the candidates it answered. It is part of
+  the asking command the same way: its state requests are answered from
+  the state reached, its other requests are guarded, what it did is rolled
+  back with the asking command, and a refusal refuses the asking command
+  at the request. A reply cannot hold the source: it is a program over the
+  port the reply is part of. `prompt` asks it for a source named
+  (`Editor/Api.lean`, "Prompts"), and the registry fills the lookup
+  (`Config.Registry.registered`).
 
 Putting an action's program, or a command's, before the rest of the command
 makes the transformation recurse into a program that is no part of the one
@@ -414,6 +427,7 @@ the on-enter actions it runs are put before the rest of the program. A
 request to start a job and one for an ex binding are answered with what
 `registered` says of the name, and for a request to run a command the
 command `registered` has of the name is put before the rest of the
+program, and for a request to ask a completion source, the source's
 program. -/
 partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     EditorState →
@@ -500,6 +514,16 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
         match ← (command call).run with
         | .ok () =>
           next true
+        | .error error =>
+          pure (.error error)
+  | state, .step (.state (.askSource name query)) next =>
+    match registered.sources name with
+    | none => dispatched registered state (next none)
+    | some source =>
+      dispatched registered state do
+        match ← (source.candidates query).run with
+        | .ok candidates =>
+          next (some candidates)
         | .error error =>
           pure (.error error)
   | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)

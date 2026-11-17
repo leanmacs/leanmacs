@@ -1,3 +1,4 @@
+import Editor.Completion
 import Editor.Scroll
 import Editor.Store
 
@@ -912,18 +913,31 @@ argument, before the continuation's own. Refused, with no text made, with
 `alreadyOpen` while a prompt is open, and with `noWindow` where no window
 is focused to ask from.
 
-`candidates` answers the strings the answer may be chosen from, none by
-default. It is run once, after those two refusals and before the
-minibuffer's text is made, and what it answers is kept by the prompt; if it
-is refused, so is this command, with no prompt open. -/
+`sources` supply the candidates the answer may be chosen from, none by
+default. Each is asked once, in order, after those two refusals and before
+the minibuffer's text is made, with `initial` and the asking view; the
+prompt keeps what they answered, each source's candidates in its group
+(`Completion.Candidate.inGroup`), in the sources' order. A source given as
+a value is run here; one named is run by the loop (`StateRequest.askSource`),
+and refused, with no text made, with `noSuchSource` when no source is
+registered under its name. If a source is refused, so is this command, with
+no prompt open. -/
 def prompt (label : String) (continuation : Invocation) (initial : String := "")
-    (candidates : EditorM (Array String) := pure #[]) : EditorM (Except PromptRefusal ViewId) := do
+    (sources : List Completion.SourceRef := []) : EditorM (Except PromptRefusal ViewId) := do
   let state ← editorState
   if let some asked := state.prompt then
     return .error (.alreadyOpen asked.view)
-  if state.focusedTarget?.isNone then
-    return .error .noWindow
-  let all := (← candidates).map Completion.Candidate.ofText
+  let some asker := state.focusedTarget? | return .error .noWindow
+  let query : Completion.Query := { text := initial, view := asker.window.id }
+  let mut all : Array Completion.Candidate := #[]
+  for source in sources do
+    match source with
+    | .given source =>
+      all := all ++ (← source.candidates query).map (·.inGroup source.name)
+    | .named name =>
+      let some answered ← EditorState.ask (.askSource name query)
+        | return .error (.noSuchSource name)
+      all := all ++ answered.map (·.inGroup name)
   let text ← createText initial
   let scroll ← text.mark (.anchor { offset := 0, bias := .before })
   let cursor := initial.utf8ByteSize

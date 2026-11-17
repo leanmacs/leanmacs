@@ -33,7 +33,10 @@ checks compare the echo area with that function, never with a sentence.
   a register, so it asks. The prompt's candidates are the open buffers'
   names, most recently used first, with the asking window's own buffer
   last: the empty pattern lists the buffer used before this one first, so
-  choosing the first candidate and accepting is "the other buffer".
+  choosing the first candidate and accepting is "the other buffer". They
+  come from the completion source `buffers`, of the category `buffer`
+  (`source`, `Editor/Completion.lean`), given to the prompt as a value and
+  registered by compiled code under its name.
 - **So a buffer is chosen by fuzzy match both ways.** A pattern typed and
   accepted with nothing chosen answers the text, and the command takes the
   best match; a key of the minibuffer that chooses a listed candidate
@@ -189,6 +192,17 @@ def candidates (state : EditorState) (asking : BufferId) : Array String :=
   let all := named state
   ((all.filter (·.1 != asking)) ++ all.filter (·.1 == asking)).map (·.2)
 
+/-- The completion source of the switch prompt's candidates (`candidates`),
+as the state is when it is asked, with the buffer of the view the query is
+asked from as the asking window's: `buffers`, of the category `buffer`. A
+view with no window answers none. -/
+def source : Completion.Source :=
+  { name := "buffers", category := "buffer"
+    candidates := fun query => do
+      let state ← editorState
+      let some target := state.target? query.view | return #[]
+      return (candidates state target.window.buffer).map Completion.Candidate.ofText }
+
 /-- The open buffer `text` names, as `state` is: the one of exactly that
 name, and otherwise the best of the open buffers' names the fuzzy matcher
 answers for it; `none` when none matches. -/
@@ -214,17 +228,15 @@ def switchTo (view : ViewId) (text : String) : EditorM Unit := do
 the buffer its first argument, a string, names (`switchTo`). With anything
 else first, or nothing, it asks for one (`prompt`, labelled
 `switchPrompt`), with itself as the continuation and the open buffers'
-names as the candidates (`candidates`). Where the prompt is refused it says
+names as the candidates (`source`). Where the prompt is refused it says
 so (`notAsking`). -/
 def switchCommand (call : Call) : EditorM Unit := do
   match call.arguments with
   | .str text :: _ =>
     switchTo call.target.window.id text
   | _ =>
-    let asking := call.target.window.buffer
-    if let .error refusal←
-        prompt switchPrompt { command := switchName } (candidates :=
-          return candidates (← editorState) asking) then
+    if let .error refusal← prompt switchPrompt { command := switchName } (sources := [.given source])
+    then
       message (notAsking refusal)
 
 /-- The buffer list of `state`, if there is one: the open buffer with no file

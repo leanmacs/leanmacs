@@ -18,7 +18,10 @@ the themes that ship, are in `Editor/Themes/Compiled.lean`.
   or nothing, it asks with a prompt labelled `label`, whose continuation is
   `load-theme` itself and whose candidates are the names themes are
   registered under (`themeNames`), which the loop answers from the registry
-  as it is when the name is asked for.
+  as it is when the name is asked for. They come from the completion
+  source `themes`, of the category `theme` (`source`,
+  `Editor/Completion.lean`), which the prompt is given as a value and
+  compiled code registers under its name.
 - **Where the prompt is refused**, because one is open, the echo area says
   so (`notAsking`): the command's name, then the refusal's sentence. The
   open prompt stays.
@@ -58,11 +61,18 @@ own sentence, after the command's name. -/
 def notLoaded (refusal : ThemeRefusal) : String :=
   s!"{loadName}: {refusal.describe}"
 
+/-- The completion source of the names themes are registered under
+(`themeNames`), as the loop answers them when it is asked: `themes`, of the
+category `theme`. -/
+def source : Completion.Source :=
+  { name := "themes", category := "theme"
+    candidates := fun _ => return (← themeNames).map Completion.Candidate.ofText }
+
 /-- The command that loads a theme, as it is called: loads the theme whose
 name is its first argument, a string, and says a refusal in the echo area
 (`notLoaded`). With anything else first, or nothing, it asks for the name
 (`prompt`, labelled `label`), with itself as the continuation and the
-registered themes' names as the candidates; where the prompt is refused it
+registered themes' names as the candidates (`source`); where the prompt is refused it
 says so (`notAsking`). -/
 def loadThemeCommand (call : Call) : EditorM Unit := do
   match call.arguments with
@@ -70,7 +80,7 @@ def loadThemeCommand (call : Call) : EditorM Unit := do
     if let .error refusal← loadTheme name then
       message (notLoaded refusal)
   | _ =>
-    if let .error refusal← prompt label { command := loadName } (candidates := themeNames) then
+    if let .error refusal← prompt label { command := loadName } (sources := [.given source]) then
       message (notAsking refusal)
 
 end Editor.Themes
