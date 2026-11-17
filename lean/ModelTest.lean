@@ -30357,6 +30357,17 @@ def namedText (driver : TestDriver) (name : String) : Option String := do
 def outputBuffers (driver : TestDriver) : Array String :=
   (driver.loop.state.buffers.filterMap id).map (·.name) |>.filter (·.startsWith "*shell output")
 
+/-- What the focused view of `driver` shows (`showing`). -/
+def showingFocused (driver : TestDriver) : Option Showing :=
+  showing driver driver.loop.state.frame.focused
+
+/-- `driver` with `rules` as config's display rules, which the loop hands
+the commands it runs (`Loop.Registered.displayRules`). -/
+def withDisplayRules (driver : TestDriver) (rules : Array DisplayRule) : TestDriver :=
+  { driver with
+    keys :=
+      { driver.keys with registered := { driver.keys.registered with displayRules := rules } } }
+
 /-- The checks of `:!` (`Editor/Shell.lean`), on the loop's driver over the
 editor's models, the job model and the process model, in the world of the
 workspace driver checks: a main checkout `/r`, a linked worktree `/w` of one
@@ -30396,7 +30407,7 @@ def shellChecks : List Check :=
               echoOf (shellRan opened "!fail") == some "hi [exit 3]" &&
               echoOf (shellRan opened "!true") == some "!true: no output" },
     { name :=
-        "criterion 5: two lines of output and anything on standard error open `*shell output: r@main*`, holding standard output, standard error and the exit status, with the workspace /r, shown in view 0; one line with standard error opens it too"
+        "criterion 5: two lines of output and anything on standard error open `*shell output: r@main*`, holding standard output, standard error and the exit status, with the workspace /r, shown where the display rules say: with none, in a new window at the end of the tiled list, focused, view 0 still showing a.lean; one line with standard error opens it too"
       run :=
         pure <|
           match shellDriver with
@@ -30405,12 +30416,34 @@ def shellChecks : List Check :=
             let opened := settledAfter driver "C-o a"
             let built := shellRan opened "!build"
             let warned := shellRan opened "!warn"
-            match built.loop.state.findBuffer "*shell output: r@main*", showing built with
+            let frame := built.loop.state.frame
+            match built.loop.state.findBuffer "*shell output: r@main*", showingFocused built with
             | some id, some shown =>
               shown.id == id && shown.text == some "l1\nl2\nwarn\n[exit 2]\n" &&
+                frame.windows == #[⟨0⟩, frame.focused] &&
+                frame.focused != ⟨0⟩ &&
+                (showing built).map (·.buffer.name) == some "a.lean" &&
                 (built.loop.state.workspaceOf? id).map (·.1.location) == some (.local "/r") &&
                 namedText warned "*shell output: r@main*" == some "one\ncareful\n[exit 0]\n"
             | _, _ => false },
+    { name :=
+        "the output buffer goes where a display rule for `shell-command` says: one with the focused target shows it in the window the line was asked from; and a run while a window shows the output buffer reuses that window, whatever the rules say"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let ruled :=
+              withDisplayRules driver #[{ opener := some Shell.commandName, target := .focused }]
+            let inPlace := shellRan (settledAfter ruled "C-o a") "!build"
+            let stacked := shellRan (settledAfter driver "C-o a") "!build"
+            let again := shellRan stacked "!rebuild"
+            inPlace.loop.state.frame.windows == #[⟨0⟩] &&
+              (showing inPlace).map (·.buffer.name) == some "*shell output: r@main*" &&
+              stacked.loop.state.frame.windows.size == 2 &&
+              again.loop.state.frame.windows == stacked.loop.state.frame.windows &&
+              again.loop.state.frame.focused == stacked.loop.state.frame.focused &&
+              (showingFocused again).bind (·.text) == some "again\nand again\n[exit 0]\n" },
     { name :=
         "criterion 6: a second run in the workspace replaces the text of the same output buffer, and makes no second one"
       run :=
@@ -30422,7 +30455,7 @@ def shellChecks : List Check :=
             let second := shellRan (settledAfter first "C-o a") "!rebuild"
             let id := first.loop.state.findBuffer "*shell output: r@main*"
             id.isSome && second.loop.state.findBuffer "*shell output: r@main*" == id &&
-              (showing second).map (·.id) == id &&
+              (showingFocused second).map (·.id) == id &&
               namedText second "*shell output: r@main*" == some "again\nand again\n[exit 0]\n" &&
               outputBuffers second == #["*shell output: r@main*"] },
     { name :=
@@ -30441,7 +30474,7 @@ def shellChecks : List Check :=
             | some old, some made =>
               (removed.loop.state.buffer? old).isNone && made != old &&
                 bufferText second made == some "again\nand again\n[exit 0]\n" &&
-                (showing second).map (·.id) == some made &&
+                (showingFocused second).map (·.id) == some made &&
                 Shell.scopedValue state Shell.outputStore main == some made.index &&
                 (state.workspaceOf? made).map (·.1.location) == some (.local "/r")
             | _, _ => false },
@@ -30459,10 +30492,11 @@ def shellChecks : List Check :=
             | some made =>
               bufferText ran made == some "l1\nl2\nwarn\n[exit 2]\n" &&
                 namedText ran "*shell output: r@main*" == some "" &&
-                (showing ran).map (·.id) == some made &&
+                (showingFocused ran).map (·.id) == some made &&
                 Shell.scopedValue state Shell.outputStore main == some made.index
             | none => false },
-    { name := "output asked for from a view closed before the run ends is shown in the focused view"
+    { name :=
+        "output asked for from a view closed before the run ends is shown where the display rules say for the focused view: with none, in a new window at the end of the tiled list, focused, view 0 still showing a.lean"
       run :=
         pure <|
           match shellDriver with
@@ -30475,9 +30509,10 @@ def shellChecks : List Check :=
             let state := finished.loop.state
             split.loop.state.frame.focused != (⟨0⟩ : ViewId) && asked.pending.size == 1 &&
               (state.window? split.loop.state.frame.focused).isNone &&
-              state.frame.focused == ⟨0⟩ &&
-              (showing finished).map (·.buffer.name) == some "*shell output: r@main*" &&
-              (showing finished).bind (·.text) == some "l1\nl2\nwarn\n[exit 2]\n" },
+              state.frame.windows == #[⟨0⟩, state.frame.focused] &&
+              (showing finished).map (·.buffer.name) == some "a.lean" &&
+              (showingFocused finished).map (·.buffer.name) == some "*shell output: r@main*" &&
+              (showingFocused finished).bind (·.text) == some "l1\nl2\nwarn\n[exit 2]\n" },
     { name :=
         "criterion 7: in a buffer with no workspace, long output goes to `*shell output*` and the line to the editor-wide history; the project's history is left as it was"
       run :=
@@ -30488,7 +30523,7 @@ def shellChecks : List Check :=
             let ran := shellRan (settledAfter (settledAfter driver "C-o a") "C-o x") "!ls -l"
             let table := ran.loop.state.workspaces
             namedText ran "*shell output*" == some "a.txt\nb.txt\n[exit 0]\n" &&
-              (showing ran).map (·.buffer.name) == some "*shell output*" &&
+              (showingFocused ran).map (·.buffer.name) == some "*shell output*" &&
               table.getUnscoped Shell.historyStore == #["!ls -l"] &&
               table.getOfProject Shell.historyStore (.remote "github.com/o/r") == #[] },
     { name :=

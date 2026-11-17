@@ -1671,8 +1671,13 @@ echo area, the preedit, and the prompt that is open, if one is.
     edge the layout lacks goes to the stack, and so do floats and tabs
     until phases 4 and 5, though install keeps config from naming any of
     them.
-  - **What routes through them**: `list-buffers`'s list and the buffers
-    config's commands make. `open-file`, `switch-buffer`, `edit-file`,
+  - **What routes through them**: `list-buffers`'s list, `:!`'s output
+    buffer (opener `shell-command`, so by default it opens in the stack and
+    the window the line was asked from keeps its buffer; `Editor/Shell.lean`)
+    and the buffers config's commands make. The compilation buffer does
+    not yet: `compile` and `recompile` split the asking window for it,
+    the focus staying ([keymaps-and-modes.md](keymaps-and-modes.md), "The
+    compile mode, as built"). `open-file`, `switch-buffer`, `edit-file`,
     `close-buffer`'s fallback and `window-new` still show in the window
     they act on: a file opened or a buffer switched to is the one being
     edited.

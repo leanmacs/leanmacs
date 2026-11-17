@@ -3257,8 +3257,14 @@ command** (`:!` built by the shell-and-compile roadmap's phase 2,
   status is not 0; no output says `<line>: no output`. Anything longer, or
   anything on standard error, replaces the text of the workspace's output
   buffer, `*shell output: <workspace label>*`, with standard output, then
-  standard error, then a last line `[exit <n>]`, and it is shown in the
-  view the line was asked from. A second run in that workspace replaces
+  standard error, then a last line `[exit <n>]`, and it is shown where
+  config's display rules say for the opener `shell-command`
+  ([text-and-display.md](text-and-display.md), "Views as built"): a
+  window that shows it already is used, and with no rule that matches it
+  opens in a new window at the end of the tiled list, focused, so the
+  view the line was asked from keeps its buffer; a rule
+  `{ opener := some "shell-command", target := .focused }` shows it in
+  that view instead. A second run in that workspace replaces
   its text, as one edit `u` takes back; another workspace has a buffer of
   its own. A buffer outside any workspace uses one editor-wide `*shell
   output*`. A refusal, a program not there or output past 16 MiB among

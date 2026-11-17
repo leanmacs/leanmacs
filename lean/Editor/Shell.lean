@@ -96,8 +96,13 @@ The job's command (`finished`) clears what the scope is running, then:
   transaction, so `u` in it brings the last run back. With none kept, one
   is made, named `*shell output: <workspace label>*` or `*shell output*`
   (`<2>`, `<3>` when the name is taken), with the scope's workspace. It is
-  shown in the view the line was asked from, or in the focused view when
-  that one was closed, by the open command's rule (`Files.shownIn`).
+  shown where config's display rules say for the opener `shell-command`,
+  asked from the view the line was asked from, or from the focused view
+  when that one was closed (`BufferId.display`,
+  `Editor/DisplayRules.lean`): a window that shows it already is used;
+  otherwise, with no rule that matches, a new window at the end of the
+  tiled list, focused, so the window the line was asked from keeps its
+  buffer.
 - Bytes become text by the store's escape rule (`File.decodeBytes`), so a
   byte that is not UTF-8 keeps its byte.
 
@@ -521,8 +526,9 @@ def filterCommand (call : Call) : EditorM Unit := do
 
 /-- Shows the scope's output buffer holding `content` ("What comes of it",
 in the module docs): the kept buffer's text replaced, or a buffer made with
-the scope's workspace, and shown in the order's view, or the focused view
-when that one was closed. -/
+the scope's workspace, and shown where the display rules say for
+`shell-command` (`commandName`), asked from the order's view, or the
+focused view when that one was closed. -/
 def showOutput (order : Order) (content : String) : EditorM Unit := do
   let state ← editorState
   let kept :=
@@ -544,7 +550,7 @@ def showOutput (order : Order) (content : String) : EditorM Unit := do
       pure id
   let state ← editorState
   let view := if (state.window? order.view).isSome then order.view else state.frame.focused
-  discard <| (Files.shownIn state view).show shown
+  discard <| shown.display view commandName
 
 /-- The command a finished run hands the loop ("What comes of it", in the
 module docs): what the scope runs is cleared, and the reply is said, or its
