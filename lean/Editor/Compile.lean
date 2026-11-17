@@ -1,10 +1,12 @@
 import Editor.Api
 import Editor.Command.Call
+import Editor.Compile.Contribution
 import Editor.Compile.Errors
 import Editor.File
 import Editor.Files
 import Editor.Mode
 import Editor.Shell
+import Editor.Workspace.Modes
 
 /-!
 # The compile mode: `compile` into a workspace's compilation buffer
@@ -38,11 +40,12 @@ Each scope keeps a `Record`: the number of its compilation buffer, found by
 it and never by its name; the last line it ran and the directory it ran in;
 how many runs it has started; the run in flight, with its line and the
 clock's reading when it started (`Watch.now`); the locations its last run's
-output gave ("Locations"); and the current location ("Stepping"). A
-workspace's is in its store (`store`), a directory's in the unscoped store,
-by directory (`directoryStore`), so each workspace has its own error list
-and current location. Both stores are at version 2, the version that added
-the locations; they live for the session. Each post decodes and re-encodes
+output gave ("Locations"); the current location ("Stepping"); and the
+on-modes its last run started with ("The hook"). A workspace's is in its
+store (`store`), a directory's in the unscoped store, by directory
+(`directoryStore`), so each workspace has its own error list and current
+location. Both stores are at version 3, the version that added the run's
+modes; they live for the session. Each post decodes and re-encodes
 the record with every location so far: fine for hundreds of locations, and
 revisited if a measured build says otherwise. The lines compiled are a history, newest first, each
 once (`Shell.remember`): the project's (`historyStore`), so every worktree of
@@ -55,9 +58,11 @@ starts.
 - **`compile`** (`compileName`): a location that cannot run commands
   (`Location.can`) refuses before anything is asked or started. With no
   line, or an empty one, it prompts, `Compile command: `, with the scope's
-  last line as its text and the scope's history as its candidates, and the
-  answer comes back to it; an empty answer says `compile: no command`. With
-  a line it starts the run ("The run").
+  last line as its text, or with none the first command the buffer's
+  on-modes offer ("The hook"), and the scope's history as its candidates,
+  and the answer comes back to it; an empty answer says `compile: no
+  command`. With a line it starts the run ("The run"), in the first
+  on-mode's root, or the scope's root with none.
 - **`recompile`** (`recompileName`): the same location refusal; then the
   scope's last line, in the directory it ran in, with no prompt; with none
   it says `recompile: nothing has been compiled in <label>`.
@@ -75,8 +80,9 @@ starts.
 
 ## The run
 
-A start (`start`) runs the line in the workspace's root, or the scope's
-directory; a start that is refused is said, `compile: <refusal>`. Then the
+A start (`start`) runs the line in the directory it is handed: the first
+on-mode's root, or the workspace's root, or the scope's directory; a start
+that is refused is said, `compile: <refusal>`. Then the
 scope's record keeps the run, and the compilation buffer is made, or its
 text replaced by the header line:
 
@@ -127,8 +133,10 @@ from the row and byte offset where they start (`append`'s answer), and keep
 the locations in the scope's record. The header line and the last line are
 never scanned, and a run whose compilation buffer was closed finds none.
 
-- **The formats** a scope uses are `formatsOf`'s: the general format alone.
-  Phase 5's hook adds the buffer's minor modes' formats there.
+- **The formats** a run's output is read with are its on-modes'
+  contributions' formats, in on-mode order, then the general format
+  (`formatsOf`, `Editor/Compile/Contribution.lean`): so a line two formats
+  read is the nearest mode's location.
 - **A relative file** resolves against the directory the run ran in (the
   record's last directory, which `start` set for this run), lexically
   (`resolve`). Make's `Entering directory` lines are not tracked.
@@ -184,6 +192,38 @@ first. Three commands visit a location and make it the current one:
   location is current and the compilation buffer's cursor on it, and no
   buffer is made, no other cursor moves and the focus stays.
 
+## The hook
+
+Minor modes give the compile mode what fits a kind of project
+(`Compile.Contribution`, `Editor/Compile/Contribution.lean`). A buffer's
+on-modes (`Workspace.onModesOf`, `Editor/Workspace/Modes.lean`), nearest
+root first, then in registration order, decide where a run goes, what
+`compile` offers and how the output is read. The contributions are asked of
+the loop (`StateRequest.compileHook`), so a reload's hold from the next
+command.
+
+- **Where.** With on-modes, `compile` runs its line, typed or default, in
+  the first on-mode's root; with none, in the scope's root.
+- **The default.** `compile`'s prompt holds the scope's last line when it
+  has one, as projectile keeps the last command per project; else the
+  first command the on-modes offer (`offers`); else nothing. Its
+  candidates stay the scope's history.
+- **The run's modes.** A run keeps its on-modes in the scope's record
+  (`Record.modes`), so `recompile`, the restart prompt (whose continuation
+  carries them) and the scan of its output use the modes it started with.
+  In the scope's own compilation buffer, which has no file and so no
+  on-modes of its own, `compile` uses the record's (`modesOf`).
+- **Formats.** A run's output is read with its modes' formats, then the
+  general one ("Locations").
+- **Project commands.** Config's project commands for the scope's project
+  (`projectCommands`, `Editor/Setup.lean`) are written to the project's
+  store (`projectStore`, `compile-project`) when they differ from what it
+  keeps, before the store is read (`hookOffers`), so a reload's change
+  holds at the next use in any open buffer, and every worktree of the
+  project reads the same. They are offered only while their mode is on.
+  `projectSettings` reads a mode's settings there. A directory scope has no
+  project, and no project commands.
+
 ## The mode
 
 `compilation` (`mode`), whose buffer is read-only to editing commands
@@ -192,12 +232,12 @@ first. Three commands visit a location and make it the current one:
 leaves `next-item` and `previous-item` unfilled: under the Vim scheme those
 are `j` and `k`, which stay motions in a compilation buffer, so
 `next-error` and `previous-error` are commands and ex names only, and no
-global key binds them. Phase 5 adds the hook.
+global key binds them.
 
-Pinned by `ModelTest.compileChecks`, `ModelTest.compileErrorChecks` and
-`ModelTest.compileLocationChecks`, on the loop's driver over the editor's
-models, the job model and the process model, and over the real process
-service by `ContractTest.compileChecks`.
+Pinned by `ModelTest.compileChecks`, `ModelTest.compileErrorChecks`,
+`ModelTest.compileLocationChecks` and `ModelTest.compileHookChecks`, on the
+loop's driver over the editor's models, the job model and the process
+model, and over the real process service by `ContractTest.compileChecks`.
 -/
 
 namespace Editor.Compile
@@ -355,6 +395,9 @@ structure Record where
   /-- The index in `locations` of the current location, the one last
   visited ("Stepping", in the module docs); none at first. -/
   current : Option Nat := none
+  /-- The on-modes its last run started with ("The hook", in the module
+  docs), nearest first. -/
+  modes : Array Workspace.OnMode := #[]
   deriving DecidableEq, Repr
 
 /-- A record as a tree. -/
@@ -367,7 +410,8 @@ def Record.encode (record : Record) : Value :=
         optional (fun running => .list [.nat running.run, .str running.line, .nat running.started])
           record.running),
       ("locations", .list (record.locations.toList.map Site.encode)),
-      ("current", optional .nat record.current)]
+      ("current", optional .nat record.current),
+      ("modes", .list (record.modes.toList.map Workspace.OnMode.encode))]
 
 /-- The record a tree is (`Record.encode`), if it is one. -/
 def Record.decode : Value → Option Record
@@ -407,18 +451,20 @@ def Record.decode : Value → Option Record
         some none
       | _ =>
         none
-    return { buffer, last, runs, running, locations, current }
+    let .list modes := field fields "modes" | none
+    let modes ← modes.toArray.mapM Workspace.OnMode.decode?
+    return { buffer, last, runs, running, locations, current, modes }
   | _ => none
 
 /-- A workspace's record. -/
 def store : Store Record :=
-  { name := "compile", version := 2, initial := {}, encode := Record.encode
+  { name := "compile", version := 3, initial := {}, encode := Record.encode
     decode := Record.decode }
 
 /-- The records of the directory scopes, by directory, in the unscoped
 store. -/
 def directoryStore : Store (Array (String × Record)) :=
-  { name := "compile-directories", version := 2, initial := #[]
+  { name := "compile-directories", version := 3, initial := #[]
     encode := fun all =>
       .list (all.toList.map fun (directory, record) => .list [.str directory, record.encode])
     decode := fun
@@ -466,6 +512,50 @@ def remember (scope : Scope) (line : String) : EditorM Unit := do
     discard <| Project.set historyStore project.identity lines
   | .directory _ =>
     Workspace.setUnscoped historyStore lines
+
+/-- Config's project commands for one project, as its store keeps them
+("The hook", in the module docs). -/
+def projectStore : Store (Array ProjectCommands) :=
+  { name := "compile-project", version := 1, initial := #[]
+    encode := fun all => .list (all.toList.map ProjectCommands.encode)
+    decode := fun
+      | .list items => items.toArray.mapM ProjectCommands.decode?
+      | _ => none }
+
+/-- The settings config gives the project of `identity` for the mode
+`mode`, as its store keeps them; none when it gives none. -/
+def projectSettings (state : EditorState) (identity : Project.Identity) (mode : String) :
+    List (String × Value) :=
+  (((state.workspaces.getOfProject projectStore identity).find? (·.mode == mode)).map
+        (·.settings)).getD
+    []
+
+/-- The commands the on-modes `modes` offer in `scope` ("The hook", in the
+module docs): the hook asked of the loop and, for a workspace scope, its
+project's commands, which config's are written to first when they differ
+from what the store keeps. -/
+def hookOffers (scope : Scope) (modes : Array Workspace.OnMode) : EditorM (Array Offer) := do
+  let hook ← EditorState.ask .compileHook
+  let stored ←
+    match scope with
+    | .workspace _ project =>
+      let given := hook.projects.filter (·.project == project.identity)
+      if (← editorState).workspaces.getOfProject projectStore project.identity != given then
+        discard <| Project.set projectStore project.identity given
+      pure ((← editorState).workspaces.getOfProject projectStore project.identity)
+    | .directory _ =>
+      pure #[]
+  return offers hook.contributions stored modes
+
+/-- The on-modes `modes` as arguments: each one's name, then its root. -/
+def modeArguments (modes : Array Workspace.OnMode) : List Argument :=
+  modes.toList.flatMap fun on => [.str on.mode, .str on.root.toString]
+
+/-- The on-modes `arguments` are (`modeArguments`), if they are them. -/
+def modesOfArguments? : List Argument → Option (Array Workspace.OnMode)
+  | [] => some #[]
+  | .str mode :: .str root :: rest => (modesOfArguments? rest).map (#[{ mode, root }] ++ ·)
+  | _ => none
 
 /-! ## What is said -/
 
@@ -630,6 +720,12 @@ buffer. -/
 def kept (state : EditorState) (record : Record) : Option BufferId :=
   (record.buffer.filter fun index => (state.buffer? ⟨index⟩).isSome).map (⟨·⟩)
 
+/-- The on-modes a command asked from the buffer `buffer` uses, given its
+scope's record `record` ("The hook", in the module docs): the record's in
+the scope's kept compilation buffer, else the buffer's own. -/
+def modesOf (state : EditorState) (record : Record) (buffer : BufferId) : Array Workspace.OnMode :=
+  if kept state record == some buffer then record.modes else Workspace.onModesOf state buffer
+
 /-- Appends `lines`, each ended with a line feed, to the buffer `id`, inside
 `writing`, and answers the row and the byte offset where the first of them
 starts. Each view showing it whose cursor is on the last line, or the empty
@@ -703,10 +799,11 @@ def prepare (scope : Scope) (record : Record) (content : String) :
 
 /-! ## The commands, the job and its commands -/
 
-/-- Starts a run of `line` in `directory` for `scope`, asked from `view` by
-the command `name` ("The run", in the module docs). -/
+/-- Starts a run of `line` in `directory` for `scope`, with the on-modes
+`modes`, asked from `view` by the command `name` ("The run", in the module
+docs). -/
 def start (name : String) (view : ViewId) (scope : Scope) (line : String)
-    (directory : System.FilePath) : EditorM Unit := do
+    (directory : System.FilePath) (modes : Array Workspace.OnMode) : EditorM Unit := do
   let place := scope.place
   let record := recordOf (← editorState) place
   let run := record.runs + 1
@@ -722,7 +819,7 @@ def start (name : String) (view : ViewId) (scope : Scope) (line : String)
         { record with
           runs := run, last := some (line, directory.toString)
           running := some { run, line, started }
-          locations := #[], current := none
+          locations := #[], current := none, modes
           buffer := (prepared.map (·.1.index)).orElse fun _ => record.buffer }
     if let some (id, made) := prepared then
       showFrom view id made
@@ -740,43 +837,53 @@ def scopeOf (call : Call) (name : String) : EditorM (Scope × Option String) := 
   | .directory _ =>
     return (scope, none)
 
-/-- Starts a run of `line` in `directory` for `scope`, asked from `view` by
-the command `name`, unless the scope's own run is in flight: then it asks
-first, the confirm prompt's continuation carrying the run ("The commands",
-in the module docs). -/
+/-- Starts a run of `line` in `directory` for `scope`, with the on-modes
+`modes`, asked from `view` by the command `name`, unless the scope's own run
+is in flight: then it asks first, the confirm prompt's continuation carrying
+the run and its modes ("The commands", in the module docs). -/
 def startOrAsk (name : String) (view : ViewId) (scope : Scope) (line : String)
-    (directory : System.FilePath) : EditorM Unit := do
+    (directory : System.FilePath) (modes : Array Workspace.OnMode) : EditorM Unit := do
   if (recordOf (← editorState) scope.place).running.isSome then
     discard <|
         prompt (confirmLabel scope.label)
-          { command := confirmName, arguments := [.str name, .str line, .str directory.toString] }
+          { command := confirmName
+            arguments := [.str name, .str line, .str directory.toString] ++ modeArguments modes }
   else
-    start name view scope line directory
+    start name view scope line directory modes
 
 /-- `compile` ("The commands", in the module docs): the line is its first
-argument; an answer of its prompt comes back with `true` after it. The
-prompt offers the scope's last line and its history. -/
+argument; an answer of its prompt comes back with `true` after it. It runs
+in the first on-mode's root, or the scope's ("The hook"). The prompt offers
+the scope's last line, or the on-modes' first command, and its history. -/
 def compileCommand (call : Call) : EditorM Unit := do
   let (scope, refusal) ← scopeOf call compileName
   if let some reason := refusal then
     message reason
     return
+  let record := recordOf (← editorState) scope.place
+  let modes := modesOf (← editorState) record call.target.window.buffer
+  let directory := (modes[0]?.map (·.root)).getD scope.root
   match call.arguments with
   | .str line :: rest =>
     if !line.trimAscii.isEmpty then
-      startOrAsk compileName call.target.window.id scope line scope.root
+      startOrAsk compileName call.target.window.id scope line directory modes
     else
       if rest matches .bool true :: _ then
         message noCommand
       else
-        ask scope
+        ask scope record modes
   | _ =>
-    ask scope
+    ask scope record modes
 where
   /-- Opens the prompt for a line, whose answer comes back to `compile`. -/
-  ask (scope : Scope) : EditorM Unit := do
+  ask (scope : Scope) (record : Record) (modes : Array Workspace.OnMode) : EditorM Unit := do
+    let offered ← hookOffers scope modes
+    let initial :=
+      match record.last, offered[0]? with
+      | some (line, _), _ => line
+      | none, some offer => offer.line
+      | none, none => ""
     let state ← editorState
-    let initial := ((recordOf state scope.place).last.map (·.1)).getD ""
     discard <|
         prompt promptLabel { command := compileName, arguments := [.bool true] } initial
           (pure (history state scope))
@@ -794,16 +901,17 @@ def recompileCommand (call : Call) : EditorM Unit := do
     message (nothingCompiled scope.label)
   | some (line, directory) =>
     startOrAsk recompileName call.target.window.id scope line directory
+        (recordOf (← editorState) scope.place).modes
 
 /-- `compile-confirm`, the confirm prompt's continuation: its answer, then
-the asking command's name, the line and the directory. A yes starts the run,
-which cancels the one in flight through its key; anything else leaves both
-alone and says so. -/
+the asking command's name, the line, the directory and the run's on-modes
+(`modeArguments`). A yes starts the run, which cancels the one in flight
+through its key; anything else leaves both alone and says so. -/
 def confirmCommand (call : Call) : EditorM Unit := do
-  let .str answer :: .str name :: .str line :: .str directory :: _ := call.arguments | return
+  let .str answer :: .str name :: .str line :: .str directory :: rest := call.arguments | return
   let scope := Scope.of (← editorState) call.target.window.buffer
   if confirms answer then
-    start name call.target.window.id scope line directory
+    start name call.target.window.id scope line directory ((modesOfArguments? rest).getD #[])
   else
     message (leftRunning name scope.label)
 
@@ -833,12 +941,6 @@ def current (place : Place) (run : Nat) : EditorM (Option (Record × Running)) :
   | none =>
     return none
 
-/-- The error formats the scope at `place` finds locations with in `state`:
-the general format. Phase 5's hook adds the buffer's minor modes' formats
-here; nothing else names `Format.general`. -/
-def formatsOf (_state : EditorState) (_place : Place) : Array Compile.Format :=
-  #[Format.general]
-
 /-- The face a location of `severity` is drawn in ("Locations", in the
 module docs). -/
 def Severity.face : Severity → FaceName
@@ -854,12 +956,16 @@ def Site.span (site : Site) : Decoration :=
 /-- `record` with the locations `lines` give, appended to the buffer `id` at
 `start`, its row and byte offset ("Locations", in the module docs); each new
 location's span is added to the buffer's, and a joined continuation adds
-none. Relative files resolve against the run's directory. -/
-def noteSites (place : Place) (record : Record) (id : BufferId) (start : Nat × Nat)
-    (lines : Array String) : EditorM Record := do
+none. Relative files resolve against the run's directory, and the lines are
+read with the run's modes' formats, then the general one (`formatsOf`). -/
+def noteSites (record : Record) (id : BufferId) (start : Nat × Nat) (lines : Array String) :
+    EditorM Record := do
   let state ← editorState
+  let hook ← EditorState.ask .compileHook
   let directory : System.FilePath := (record.last.map (·.2)).getD state.workingDirectory
-  let locations := scan (formatsOf state place) directory record.locations start.1 start.2 lines
+  let locations :=
+    scan (formatsOf hook.contributions record.modes) directory record.locations start.1 start.2
+      lines
   let added := (locations.extract record.locations.size locations.size).map Site.span
   unless added.isEmpty do
     let old := ((state.buffer? id).map (·.spans)).getD #[]
@@ -878,7 +984,7 @@ def outputCommand (call : Call) : EditorM Unit := do
       | .str line => some line
       | _ => none
   let some start ← append id lines | return
-  setRecord place (← noteSites place record id start lines)
+  setRecord place (← noteSites record id start lines)
 
 /-- The command a finished run hands the loop ("The run", in the module
 docs): while the run is in flight, its last lines and its last line are
@@ -891,7 +997,7 @@ def finished (order : Order) (lines : Array String) (how : How) : EditorM Unit :
   if let some id := kept state record then
     -- The last line is no output of the child's, and is never scanned.
     if let some start← append id (lines.push text) then
-      record ← noteSites order.place record id start lines
+      record ← noteSites record id start lines
   setRecord order.place record
   let label :=
     match order.place with

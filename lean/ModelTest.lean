@@ -29531,8 +29531,8 @@ def compileErrorChecks : List Check :=
                 (.record
                   [("buffer", .null), ("last", .null), ("runs", .nat 0), ("running", .null)]) ==
               none &&
-            Compile.store.version == 2 &&
-            Compile.directoryStore.version == 2) }]
+            Compile.store.version == 3 &&
+            Compile.directoryStore.version == 3) }]
 
 /-- The decorations of the view `view` in the last scene `driver`
 published. -/
@@ -30056,6 +30056,35 @@ def settledNames (driver : TestDriver) (keys : String) : TestDriver × Array Str
       | none => (driver, names))
     ((fedTo driver (presses keys)).1, #[])
 
+/-- The on-modes of `/r/hook/one/two/three/four` in the hook checks:
+`a-mode` at `/r/hook/one/two`, then `b-mode` at `/r/hook`. -/
+def hookModes : Array Workspace.OnMode :=
+  #[{ mode := "a-mode", root := "/r/hook/one/two" }, { mode := "b-mode", root := "/r/hook" }]
+
+/-- The locations a run of `a-build` in `/r/hook/one/two` with `hookModes`
+finds, as each one's format and file: `a-mode`'s format reads the first
+line, and `b-mode`'s copy of the general format the second. -/
+def hookLocations : Array (String × String) :=
+  #[("a-at", "/r/hook/one/two/src/x.rs"), ("b-general", "/r/hook/one/two/src/main.rs")]
+
+/-- The locations `place` keeps in `driver`, as each one's format and
+file. -/
+def locationsOf (driver : TestDriver) (place : Compile.Place) : Array (String × String) :=
+  (Compile.recordOf driver.loop.state place).locations.map fun site =>
+    (site.format, site.file.toString)
+
+/-- The registry of criterion 8 of the hook checks: config's `a-mode` with
+the commands `build` and `test` as `config-build` and `config-test`, over a
+compiled `a-mode` with `build` and `lint`. -/
+def hookOverCompiled : Config.Registry :=
+  hookRegistry
+    (hookSetup
+      #[{ name := "build", line := "config-build" }, { name := "test", line := "config-test" }])
+    #[{ mode := "a-mode", markers := #["a.toml"]
+        commands :=
+          #[{ name := "build", line := "compiled-build" },
+            { name := "lint", line := "compiled-lint" }] }]
+
 /-- The checks of the compile hook (`Editor/Workspace/Modes.lean`,
 `Editor/Compile.lean`, "The hook"), on the loop's driver over the editor's
 models, the job model and the process model, in the world of `hookWorld`
@@ -30135,6 +30164,160 @@ def compileHookChecks : List Check :=
               !names.contains Workspace.findJob &&
               shownOnModes second == shownOnModes first &&
               shownMinors second == some #["a-mode", "b-mode"] },
+    { name :=
+        "hook criterion 4: in that set-up compile's prompt holds a-mode's first command, a-build; a line both a-mode's and b-mode's formats read is a-mode's location, and a line b-mode's format and the general one read is b-mode's"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let asked := pressedOn (settledAfter driver "C-o h") "C-k c"
+            let ran := drained (pressedOn asked "C-e y")
+            asked.loop.state.prompt.map (·.label) == some Compile.promptLabel &&
+              (showing asked asked.loop.state.frame.focused).bind (·.text) == some "a-build" &&
+              locationsOf ran placeR == hookLocations &&
+              (Compile.formatsOf hookRegistry.compileContributions hookModes).map (·.name) ==
+                #["a-at", "b-at", "b-general", "general"] },
+    { name :=
+        "hook criterion 5: on the process model, compile accepted with its default starts /bin/sh -c a-build in /r/hook/one/two, the header says r@main in /r/hook/one/two: a-build, and the output is in *compilation: r@main*, the workspace's buffer"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let ran := pressedOn (pressedOn (settledAfter driver "C-o h") "C-k c") "C-e y"
+            let done := drained ran
+            let name := "*compilation: r@main*"
+            let state := done.loop.state
+            ran.jobs.processes.started.back? == some (shellCommand "/r/hook/one/two" "a-build") &&
+              ran.posting.map (·.key) == #[some "compile local /r"] &&
+              (compiledText done name).map
+                  (·.startsWith "r@main in /r/hook/one/two: a-build\nat src/x.rs line 4\n") ==
+                some true &&
+              (state.findBuffer name).bind (fun id => (state.workspaceOf? id).map (·.1.location)) ==
+                some (.local "/r") },
+    { name :=
+        "hook criterion 7: a-mode's format finds at src/x.rs line 4, which the general format does not, in a compile from a buffer where a-mode is on, and not in one from /r/src/a.lean where it is off"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let off := drained (compiledLine (settledAfter driver "C-o a") "a-build")
+            let on := drained (pressedOn (pressedOn (settledAfter driver "C-o h") "C-k c") "C-e y")
+            off.jobs.processes.started.back? == some (shellCommand "/r" "a-build") &&
+              locationsOf off placeR == #[("general", "/r/src/main.rs")] &&
+              locationsOf on placeR == hookLocations },
+    { name :=
+        "hook criterion 8: config's contribution of a-mode replaces the compiled one's commands: compile defaults to config-build"
+      run :=
+        pure <|
+          match hookDriver hookOverCompiled with
+          | none => false
+          | some driver =>
+            let asked := pressedOn (settledAfter driver "C-o h") "C-k c"
+            (showing asked asked.loop.state.frame.focused).bind (·.text) == some "config-build" },
+    { name :=
+        "recompile reruns the last line in its directory with the run's modes, so a-mode's format still reads its lines, from the compilation buffer too; compile in the compilation buffer defaults to the run's line and runs in its first mode's root"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let first :=
+              drained (pressedOn (pressedOn (settledAfter driver "C-o h") "C-k c") "C-e y")
+            let again := drained (pressedOn first "C-k r")
+            let fromBuffer := drained (pressedOn first "C-k o C-k r")
+            let asked := pressedOn first "C-k o C-k c"
+            let accepted := drained (pressedOn asked "C-e y")
+            let runsThere (driver : TestDriver) :=
+              driver.jobs.processes.started.back? ==
+                  some (shellCommand "/r/hook/one/two" "a-build") &&
+                (Compile.recordOf driver.loop.state placeR).modes == hookModes &&
+                locationsOf driver placeR == hookLocations
+            runsThere first && runsThere again &&
+              again.jobs.processes.started.size == first.jobs.processes.started.size + 1 &&
+              (showing fromBuffer fromBuffer.loop.state.frame.focused).map (·.buffer.name) ==
+                some "*compilation: r@main*" &&
+              runsThere fromBuffer &&
+              (showing asked asked.loop.state.frame.focused).bind (·.text) == some "a-build" &&
+              runsThere accepted &&
+              accepted.jobs.processes.started.size == first.jobs.processes.started.size + 1 },
+    { name :=
+        "a compile record with on-modes crosses as a tree and back, in both stores, now at version 3; a tree of version 2's shape, with no modes, is none"
+      run :=
+        let record : Compile.Record :=
+          { buffer := some 2, last := some ("a-build", "/r/hook/one/two"), runs := 1
+            modes := hookModes }
+        let older :=
+          match record.encode with
+          | .record fields => Value.record (fields.filter (·.1 != "modes"))
+          | other => other
+        pure
+          (Compile.Record.decode record.encode == some record &&
+            Compile.store.decode (Compile.store.encode record) == some record &&
+            Compile.directoryStore.decode (Compile.directoryStore.encode #[("/x", record)]) ==
+              some #[("/x", record)] &&
+            Compile.Record.decode older == none &&
+            Compile.store.version == 3 &&
+            Compile.directoryStore.version == 3) },
+    { name :=
+        "a run asked while one is in flight carries its modes through the restart prompt: yes runs the line in the mode's root with them"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let running := pressedOn (pressedOn (settledAfter driver "C-o h") "C-k c") "C-e y"
+            let asked := pressedOn (pressedOn running "C-k c") "C-e y"
+            let confirmed := drained (fedTo asked ([.commit "y"] ++ presses "C-e y")).1
+            let line := shellCommand "/r/hook/one/two" "a-build"
+            asked.loop.state.prompt.map (·.label) ==
+                some "Kill the compilation running in r@main? (y or n) " &&
+              confirmed.jobs.processes.killed == #[line] &&
+              (confirmed.jobs.processes.started.filter (· == line)).size == 2 &&
+              (Compile.recordOf confirmed.loop.state placeR).modes == hookModes &&
+              locationsOf confirmed placeR == hookLocations },
+    { name :=
+        "offers gives each on-mode's commands in on-mode order with the mode's root, replaces a contribution's command by a project's of the same name in place and appends a new name after, and offers nothing for a mode with no contribution, whose formats are none"
+      run :=
+        let contributions : Array Compile.Contribution :=
+          #[{ mode := "a-mode", markers := #["a.toml"], commands := aCommands },
+            { mode := "b-mode", markers := #["b.toml"]
+              commands := #[{ name := "check", line := "b-check" }] }]
+        let stored : Array Compile.ProjectCommands :=
+          #[{ project := .remote "github.com/o/r", mode := "a-mode"
+              commands :=
+                #[{ name := "lint", line := "a-lint" }, { name := "build", line := "p-build" }] }]
+        let modes : Array Workspace.OnMode :=
+          #[{ mode := "a-mode", root := "/a" }, { mode := "gone-mode", root := "/g" },
+            { mode := "b-mode", root := "/b" }]
+        pure
+          (Compile.offers contributions stored modes ==
+              #[{ mode := "a-mode", name := "build", line := "p-build", root := "/a" },
+                { mode := "a-mode", name := "test", line := "a-test", root := "/a" },
+                { mode := "a-mode", name := "lint", line := "a-lint", root := "/a" },
+                { mode := "b-mode", name := "check", line := "b-check", root := "/b" }] &&
+            (Compile.offers contributions stored #[]).isEmpty &&
+            (Compile.offers contributions #[] #[{ mode := "gone-mode", root := "/g" }]).isEmpty &&
+            (Compile.formatsOf contributions #[{ mode := "gone-mode", root := "/g" }]).map
+                (·.name) ==
+              #["general"]) },
+    { name :=
+        "a project's commands cross as a tree and back in the project store, with each kind of identity and with settings; a tree that is none reads as none"
+      run :=
+        let entries : Array Compile.ProjectCommands :=
+          #[{ project := .remote "github.com/o/r", mode := "cargo-mode"
+              commands := #[{ name := "lint", line := "cargo clippy" }]
+              settings := [("profile", .str "dev"), ("jobs", .nat 4)] },
+            { project := .commonDir "/r/.git", mode := "a-mode" },
+            { project := .root "/x", mode := "a-mode" },
+            { project := .declared "tools", mode := "b" }]
+        pure
+          (Compile.projectStore.decode (Compile.projectStore.encode entries) == some entries &&
+            Compile.projectStore.decode (.list [.str "x"]) == none &&
+            Compile.projectStore.name == "compile-project" &&
+            Compile.projectStore.version == 1) },
     { name :=
         "a marker order crosses as arguments and back, and arguments that are no order read as none; the marker job started with them fails"
       run :=
