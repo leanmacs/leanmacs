@@ -1,10 +1,12 @@
-//! A line diff of two texts, as an edit script: what a reload of a file
-//! applies to the buffer it is open in.
+//! A line diff of two texts, as an edit script (what a reload of a file
+//! applies to the buffer it is open in) or as hunks of whole lines (what
+//! a gutter marks against an older text).
 //!
 //! [`script`] is what the editor asks: two texts and a line limit in, an
 //! edit script out ([`Step`]), which walks the old text from its start to
 //! its end and the new text likewise, and names byte counts and ranges of
-//! them, never text. Which lines of the two texts match is a
+//! them, never text. [`hunks`] is asked the same way and answers
+//! [`ByteHunk`]s, byte ranges of whole lines in both texts. Which lines of the two texts match is a
 //! [`LineDiff`]'s to say, the port a diff library fills; everything round
 //! it is decided here, once. The crate has no dependencies and knows
 //! nothing about Lean or about the rope.
@@ -41,13 +43,24 @@
 //!   delete and one insert. Equal texts, the empty text included, give one
 //!   retain of the whole.
 //!
+//! - **Hunks** are the same checked line hunks, untrimmed, as byte ranges
+//!   of both texts: each starts at a line's start and stops at the next
+//!   line's start or at its text's end, so a hunk is whole lines. A hunk
+//!   empty on both sides is left out, and equal texts have none. The
+//!   strip, the limit and the check are one private function that both
+//!   answers share, so the two never disagree about which lines changed.
+//!
 //! [`run`] says what applying a script gives, and refuses a script that
 //! does not walk both texts whole, at character boundaries.
+//! [`apply_hunks`] does the same for hunks, and refuses hunks out of
+//! order, out of range or not on whole lines.
 //!
 //! # Where an addition goes
 //!
 //! A rule of the core is a change here, pinned by this module's tests on
-//! the fake. A rule every engine keeps is a property of [`contract`],
+//! the fake. A new shape of answer is a function beside [`script`] and
+//! [`hunks`] over the same line hunks, with an `apply` of its own that
+//! the contract holds it to. A rule every engine keeps is a property of [`contract`],
 //! which the fake and every real adapter run. A new engine is an adapter
 //! crate that implements [`LineDiff`] and runs the contract in its tests.
 
@@ -103,47 +116,26 @@ pub fn lines(text: &str) -> Vec<&[u8]> {
         .collect()
 }
 
+/// A run of whole lines of the old text replaced by a run of whole lines
+/// of the new, as byte ranges, half-open. Each range starts at a line's
+/// start and stops at the next line's start or at its text's end. Either
+/// may be empty, never both: an empty `old` is lines added, an empty `new`
+/// lines removed, and the rest lines changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ByteHunk {
+    /// The old text's bytes.
+    pub old: Range<usize>,
+    /// The new text's bytes.
+    pub new: Range<usize>,
+}
+
 /// The edit script that turns `old` into `new`, with `engine` asked about
 /// a middle of at most `limit` lines on each side. The module docs have
 /// the rules.
 pub fn script(engine: &mut impl LineDiff, old: &str, new: &str, limit: usize) -> Vec<Step> {
     let old_lines = lines(old);
     let new_lines = lines(new);
-    let shorter = old_lines.len().min(new_lines.len());
-    let head = (0..shorter)
-        .take_while(|&index| old_lines[index] == new_lines[index])
-        .count();
-    let tail = (0..shorter - head)
-        .take_while(|&back| {
-            old_lines[old_lines.len() - 1 - back] == new_lines[new_lines.len() - 1 - back]
-        })
-        .count();
-    let old_middle = head..old_lines.len() - tail;
-    let new_middle = head..new_lines.len() - tail;
-    let whole = Hunk {
-        old: old_middle.clone(),
-        new: new_middle.clone(),
-    };
-    let hunks = if old_middle.is_empty() && new_middle.is_empty() {
-        Vec::new()
-    } else if old_middle.len() <= limit && new_middle.len() <= limit {
-        let old_part = &old_lines[old_middle.clone()];
-        let new_part = &new_lines[new_middle.clone()];
-        let found = engine.hunks(old_part, new_part);
-        if well_formed(&found, old_part, new_part) {
-            found
-                .into_iter()
-                .map(|hunk| Hunk {
-                    old: hunk.old.start + head..hunk.old.end + head,
-                    new: hunk.new.start + head..hunk.new.end + head,
-                })
-                .collect()
-        } else {
-            vec![whole]
-        }
-    } else {
-        vec![whole]
-    };
+    let hunks = line_hunks(engine, &old_lines, &new_lines, limit);
     let old_starts = starts(&old_lines);
     let new_starts = starts(&new_lines);
     let mut steps = Steps::default();
@@ -165,6 +157,73 @@ pub fn script(engine: &mut impl LineDiff, old: &str, new: &str, limit: usize) ->
     }
     steps.retain(old.len() - at);
     steps.finish(old.len())
+}
+
+/// The hunks that turn `old` into `new`, as byte ranges of whole lines in
+/// both, with `engine` asked about a middle of at most `limit` lines on
+/// each side: the same hunks [`script`] trims, untrimmed, and none empty
+/// on both sides. Equal texts have none.
+pub fn hunks(engine: &mut impl LineDiff, old: &str, new: &str, limit: usize) -> Vec<ByteHunk> {
+    let old_lines = lines(old);
+    let new_lines = lines(new);
+    let found = line_hunks(engine, &old_lines, &new_lines, limit);
+    let old_starts = starts(&old_lines);
+    let new_starts = starts(&new_lines);
+    found
+        .into_iter()
+        .filter(|hunk| !(hunk.old.is_empty() && hunk.new.is_empty()))
+        .map(|hunk| ByteHunk {
+            old: old_starts[hunk.old.start]..old_starts[hunk.old.end],
+            new: new_starts[hunk.new.start]..new_starts[hunk.new.end],
+        })
+        .collect()
+}
+
+/// The line hunks of `old_lines` and `new_lines`: the common head and
+/// tail stripped, `engine` asked about the middle when each side of it is
+/// at most `limit` lines, and its answer checked. Over the limit, or when
+/// the answer is not a hunk list, the middle is one hunk. The rules
+/// [`script`] and [`hunks`] share, written once.
+fn line_hunks(
+    engine: &mut impl LineDiff,
+    old_lines: &[&[u8]],
+    new_lines: &[&[u8]],
+    limit: usize,
+) -> Vec<Hunk> {
+    let shorter = old_lines.len().min(new_lines.len());
+    let head = (0..shorter)
+        .take_while(|&index| old_lines[index] == new_lines[index])
+        .count();
+    let tail = (0..shorter - head)
+        .take_while(|&back| {
+            old_lines[old_lines.len() - 1 - back] == new_lines[new_lines.len() - 1 - back]
+        })
+        .count();
+    let old_middle = head..old_lines.len() - tail;
+    let new_middle = head..new_lines.len() - tail;
+    let whole = Hunk {
+        old: old_middle.clone(),
+        new: new_middle.clone(),
+    };
+    if old_middle.is_empty() && new_middle.is_empty() {
+        return Vec::new();
+    }
+    if old_middle.len() > limit || new_middle.len() > limit {
+        return vec![whole];
+    }
+    let old_part = &old_lines[old_middle];
+    let new_part = &new_lines[new_middle];
+    let found = engine.hunks(old_part, new_part);
+    if !well_formed(&found, old_part, new_part) {
+        return vec![whole];
+    }
+    found
+        .into_iter()
+        .map(|hunk| Hunk {
+            old: hunk.old.start + head..hunk.old.end + head,
+            new: hunk.new.start + head..hunk.new.end + head,
+        })
+        .collect()
 }
 
 /// Whether `hunks` is a hunk list for the lines `old` and `new` by the
@@ -345,6 +404,44 @@ pub fn run(old: &str, new: &str, script: &[Step]) -> Option<String> {
         }
     }
     (at_old == old.len() && at_new == new.len()).then_some(out)
+}
+
+/// What applying `hunks` to `old` gives, taking what each puts in from
+/// `new`: `None` when a hunk is out of order or out of range, a range
+/// does not start and stop at a line's start or its text's end, or the
+/// walks of the two texts between hunks, or after the last, are not as
+/// long.
+pub fn apply_hunks(old: &str, new: &str, hunks: &[ByteHunk]) -> Option<String> {
+    let on_line = |text: &str, at: usize| {
+        at == 0 || at == text.len() || text.as_bytes().get(at - 1) == Some(&b'\n')
+    };
+    let (mut at_old, mut at_new): (usize, usize) = (0, 0);
+    let mut out = String::with_capacity(new.len());
+    for hunk in hunks {
+        let in_order = at_old <= hunk.old.start
+            && hunk.old.start <= hunk.old.end
+            && hunk.old.end <= old.len()
+            && at_new <= hunk.new.start
+            && hunk.new.start <= hunk.new.end
+            && hunk.new.end <= new.len()
+            && hunk.old.start - at_old == hunk.new.start - at_new;
+        let lined = [hunk.old.start, hunk.old.end]
+            .iter()
+            .all(|&at| on_line(old, at))
+            && [hunk.new.start, hunk.new.end]
+                .iter()
+                .all(|&at| on_line(new, at));
+        if !in_order || !lined {
+            return None;
+        }
+        out.push_str(&old[at_old..hunk.old.start]);
+        out.push_str(&new[hunk.new.clone()]);
+        (at_old, at_new) = (hunk.old.end, hunk.new.end);
+    }
+    (old.len() - at_old == new.len() - at_new).then(|| {
+        out.push_str(&old[at_old..]);
+        out
+    })
 }
 
 /// The ranges of the old text that `script` retains, in order.
@@ -587,6 +684,135 @@ mod tests {
             .as_deref(),
             Some("xab")
         );
+    }
+
+    fn byte_hunks(old: &str, new: &str) -> Vec<ByteHunk> {
+        hunks(&mut Lcs, old, new, 100)
+    }
+
+    fn hunk(old: Range<usize>, new: Range<usize>) -> ByteHunk {
+        ByteHunk { old, new }
+    }
+
+    #[test]
+    fn hunks_of_equal_texts_are_none() {
+        assert_eq!(byte_hunks("a\nb\n", "a\nb\n"), []);
+        assert_eq!(byte_hunks("", ""), []);
+    }
+
+    #[test]
+    fn an_added_line_is_a_hunk_empty_in_the_old_text() {
+        assert_eq!(byte_hunks("a\nc\n", "a\nb\nc\n"), [hunk(2..2, 2..4)]);
+        assert_eq!(byte_hunks("", "a\n"), [hunk(0..0, 0..2)]);
+    }
+
+    #[test]
+    fn a_removed_line_is_a_hunk_empty_in_the_new_text() {
+        assert_eq!(byte_hunks("a\nb\nc\n", "a\nc\n"), [hunk(2..4, 2..2)]);
+    }
+
+    #[test]
+    fn a_changed_line_is_its_whole_line_in_both() {
+        assert_eq!(
+            byte_hunks("one\ntwo\nthree\n", "one\ntwx\nthree\n"),
+            [hunk(4..8, 4..8)]
+        );
+        assert_eq!(
+            byte_hunks("a\nb\nc\nd\n", "a\nB\nc\n"),
+            [hunk(2..4, 2..4), hunk(6..8, 6..6)]
+        );
+    }
+
+    #[test]
+    fn a_last_line_without_a_line_feed_ends_at_the_texts_end() {
+        assert_eq!(byte_hunks("a\nb", "a\nb\n"), [hunk(2..3, 2..4)]);
+        assert_eq!(byte_hunks("a\nb", "a\nc"), [hunk(2..3, 2..3)]);
+    }
+
+    #[test]
+    fn over_the_limit_the_middle_is_one_hunk() {
+        let mut engine = canned(Vec::new());
+        assert_eq!(
+            hunks(&mut engine, "h\na\nk\nb\nt\n", "h\nA\nk\nB\nt\n", 2),
+            [hunk(2..8, 2..8)]
+        );
+        assert_eq!(engine.asked, 0);
+    }
+
+    #[test]
+    fn hunks_that_are_not_a_hunk_list_are_taken_as_one() {
+        let mut engine = canned(vec![Hunk {
+            old: 0..9,
+            new: 0..1,
+        }]);
+        assert_eq!(
+            hunks(&mut engine, "h\na\nb\nt\n", "h\nc\nt\n", 100),
+            [hunk(2..6, 2..4)]
+        );
+        assert_eq!(engine.asked, 1);
+    }
+
+    #[test]
+    fn an_engines_hunk_empty_on_both_sides_is_left_out() {
+        let mut engine = canned(vec![
+            Hunk {
+                old: 0..0,
+                new: 0..0,
+            },
+            Hunk {
+                old: 0..1,
+                new: 0..1,
+            },
+        ]);
+        assert_eq!(hunks(&mut engine, "a\n", "b\n", 100), [hunk(0..2, 0..2)]);
+    }
+
+    #[test]
+    fn script_and_hunks_ask_the_engine_about_the_same_middle() {
+        /// The lines of one side of a question.
+        type Side = Vec<Vec<u8>>;
+        #[derive(Default)]
+        struct Asked(Vec<(Side, Side)>);
+        impl LineDiff for Asked {
+            fn hunks(&mut self, old: &[&[u8]], new: &[&[u8]]) -> Vec<Hunk> {
+                let owned = |lines: &[&[u8]]| lines.iter().map(|line| line.to_vec()).collect();
+                self.0.push((owned(old), owned(new)));
+                Lcs.hunks(old, new)
+            }
+        }
+        let mut engine = Asked::default();
+        let (old, new) = ("h\nx\ny\nt\n", "h\nz\nt\n");
+        script(&mut engine, old, new, 100);
+        hunks(&mut engine, old, new, 100);
+        assert_eq!(engine.0.len(), 2);
+        assert_eq!(engine.0[0], engine.0[1]);
+    }
+
+    #[test]
+    fn hunks_applied_to_the_old_text_give_the_new() {
+        let (old, new) = ("a\nb\nc\nd", "a\nB\nc\nd\ne\n");
+        assert_eq!(
+            apply_hunks(old, new, &byte_hunks(old, new)).as_deref(),
+            Some(new)
+        );
+        assert_eq!(apply_hunks("a\n", "a\n", &[]).as_deref(), Some("a\n"));
+    }
+
+    #[test]
+    fn apply_hunks_refuses_hunks_that_are_not_on_lines_or_in_order() {
+        // Not at a line start.
+        assert_eq!(apply_hunks("ab\n", "ac\n", &[hunk(1..2, 1..2)]), None);
+        // Out of range.
+        assert_eq!(apply_hunks("a\n", "b\n", &[hunk(0..3, 0..2)]), None);
+        // Out of order.
+        assert_eq!(
+            apply_hunks("a\nb\n", "c\nd\n", &[hunk(2..4, 2..4), hunk(0..2, 0..2)]),
+            None
+        );
+        // The walks of the two texts between hunks are not as long.
+        assert_eq!(apply_hunks("a\nb\n", "a\nb\n", &[hunk(0..0, 2..2)]), None);
+        // Nothing left to walk at the end of one text alone.
+        assert_eq!(apply_hunks("a\n", "a\nb\n", &[]), None);
     }
 
     #[test]

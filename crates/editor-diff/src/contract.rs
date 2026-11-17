@@ -5,12 +5,15 @@
 //! [`script`], and returns the names of the properties that fail. The
 //! exact hunks an engine picks may differ from the fake's, so the
 //! properties are relational: what a script gives, what it must keep, and
-//! where its steps may start and stop. The same properties, over the
-//! editor's diff request, are the Lean job port's `diffProperties`.
+//! where its steps may start and stop. The hunks [`hunks`] answers are
+//! held likewise: they apply ([`apply_hunks`]), they are whole lines, and
+//! a sweep of generated texts keeps both ([`hunk_sweep`], which an
+//! adapter's tests name). The same properties, over the editor's diff
+//! request, are the Lean job port's `diffProperties`.
 
 use std::ops::Range;
 
-use crate::{Hunk, LineDiff, Step, retained, run, script};
+use crate::{ByteHunk, Hunk, LineDiff, Step, apply_hunks, hunks, retained, run, script};
 
 /// A script applied to the old text gives the new text.
 pub const APPLIES: &str = "a script applied to the old text gives the new text";
@@ -39,8 +42,30 @@ pub const HUNKS: &str =
 /// characters: each script applies and keeps to character boundaries.
 pub const SWEEP: &str = "generated texts give scripts that apply at character boundaries";
 
+/// Hunks applied to the old text give the new text.
+pub const HUNKS_APPLY: &str = "hunks applied to the old text give the new text";
+/// Every hunk starts and stops at a line's start or its text's end, in
+/// order, and none is empty on both sides; equal texts have none.
+pub const HUNK_LINES: &str =
+    "hunks are whole lines, in order, none empty on both sides, and equal texts have none";
+/// Generated texts, from a fixed seed: their hunks apply and are whole
+/// lines.
+pub const HUNK_SWEEP: &str = "generated texts give hunks that apply and are whole lines";
+
 /// Every property, by name, in the order [`check`] reports them.
-pub const PROPERTIES: [&str; 8] = [APPLIES, EQUAL, BOUNDARIES, AFFIX, KEPT, LIMIT, HUNKS, SWEEP];
+pub const PROPERTIES: [&str; 11] = [
+    APPLIES,
+    EQUAL,
+    BOUNDARIES,
+    AFFIX,
+    KEPT,
+    LIMIT,
+    HUNKS,
+    SWEEP,
+    HUNKS_APPLY,
+    HUNK_LINES,
+    HUNK_SWEEP,
+];
 
 /// The limit the cases are diffed under but for [`LIMIT`]'s: more lines
 /// than any case has.
@@ -85,8 +110,11 @@ pub fn check(engine: &mut impl LineDiff) -> Vec<&'static str> {
         (AFFIX, affix(engine)),
         (KEPT, kept(engine)),
         (LIMIT, limit(engine)),
-        (HUNKS, hunks(engine)),
+        (HUNKS, engine_hunks(engine)),
         (SWEEP, sweep(engine)),
+        (HUNKS_APPLY, hunks_apply(engine)),
+        (HUNK_LINES, hunk_lines(engine)),
+        (HUNK_SWEEP, hunk_sweep(engine)),
     ]
     .into_iter()
     .filter_map(|(name, holds)| (!holds).then_some(name))
@@ -216,11 +244,42 @@ fn hunk_list(found: &[Hunk], old: &[&[u8]], new: &[&[u8]]) -> bool {
     old.len() - at_old == new.len() - at_new && old[at_old..] == new[at_new..]
 }
 
-fn hunks(engine: &mut impl LineDiff) -> bool {
+fn engine_hunks(engine: &mut impl LineDiff) -> bool {
     PAIRS.iter().all(|(old, new)| {
         let (old, new) = (crate::lines(old), crate::lines(new));
         hunk_list(&engine.hunks(&old, &new), &old, &new)
     })
+}
+
+/// Whether every hunk of `found` starts and stops at a line's start or
+/// its text's end in both texts, and none is empty on both sides.
+pub fn on_lines(old: &str, new: &str, found: &[ByteHunk]) -> bool {
+    let on_line = |text: &str, at: usize| {
+        at <= text.len() && (at == 0 || at == text.len() || text.as_bytes()[at - 1] == b'\n')
+    };
+    found.iter().all(|hunk| {
+        !(hunk.old.is_empty() && hunk.new.is_empty())
+            && on_line(old, hunk.old.start)
+            && on_line(old, hunk.old.end)
+            && on_line(new, hunk.new.start)
+            && on_line(new, hunk.new.end)
+    })
+}
+
+fn hunks_apply(engine: &mut impl LineDiff) -> bool {
+    PAIRS.iter().all(|(old, new)| {
+        apply_hunks(old, new, &hunks(engine, old, new, ROOM)).as_deref() == Some(*new)
+    })
+}
+
+fn hunk_lines(engine: &mut impl LineDiff) -> bool {
+    let equal = ["", "a", "a\n", "a\nb\nc\n", "é\n日\n"]
+        .iter()
+        .all(|text| hunks(engine, text, text, ROOM).is_empty());
+    equal
+        && PAIRS
+            .iter()
+            .all(|(old, new)| on_lines(old, new, &hunks(engine, old, new, ROOM)))
 }
 
 /// The lines generated texts are made of: one- to four-byte characters,
@@ -256,5 +315,19 @@ fn sweep(engine: &mut impl LineDiff) -> bool {
         let steps = script(engine, &old, &new, ROOM);
         run(&old, &new, &steps).as_deref() == Some(new.as_str())
             && on_boundaries(&old, &new, &steps)
+    })
+}
+
+/// Whether generated texts, from the fixed seed [`SWEEP`] uses, give
+/// hunks that apply and are whole lines: [`HUNK_SWEEP`], for an adapter's
+/// tests to name.
+pub fn hunk_sweep(engine: &mut impl LineDiff) -> bool {
+    let mut seed = 0x5eed;
+    (0..300).all(|_| {
+        let old = generated(&mut seed);
+        let new = generated(&mut seed);
+        let found = hunks(engine, &old, &new, ROOM);
+        apply_hunks(&old, &new, &found).as_deref() == Some(new.as_str())
+            && on_lines(&old, &new, &found)
     })
 }
