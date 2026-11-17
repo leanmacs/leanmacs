@@ -148,7 +148,7 @@ does: the workspace is rooted right but is its own project, with no branch.
 
 | State | Where | Examples |
 |---|---|---|
-| What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer, its last line and its run in flight (`compile`), running jobs |
+| What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer, its last line, its run in flight, its error list and current location (`compile`), running jobs |
 | What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` lines, `shell-history`; compile lines, `compile-history`), the commands and settings config gives the project |
 | What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers; their compile history (`compile-history`), and each directory scope's compile record by directory (`compile-directories`) |
 
@@ -207,8 +207,13 @@ open when the table has it: found or registered this session.
   (`Compile.store`), or the unscoped store's by directory
   (`Compile.directoryStore`); its history is the project's
   (`Compile.historyStore`). Its job is keyed by the workspace, so
-  compiles in two worktrees run at once. Phases 4 to 6: errors, the hook
-  and the rest, the same way.
+  compiles in two worktrees run at once.
+- `shell-and-compile` phase 4 (built): the locations a compilation's
+  output gives and the current one are fields of that same record, so each
+  workspace (or directory scope) has its own error list; `next-error` and
+  `previous-error` step through the focused buffer's workspace's list, and
+  a rerun resets that workspace's list only. Phases 5 and 6: the hook and
+  the rest, the same way.
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)
   and `remote-workspace-execution` (running in a `reachable` location).
 

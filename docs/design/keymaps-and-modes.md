@@ -2968,7 +2968,8 @@ library's matcher.
 
 ### The compile mode, as built
 
-Status: built by `shell-and-compile` phase 3 (`lean/Editor/Compile.lean`,
+Status: built by `shell-and-compile` phases 3 and 4
+(`lean/Editor/Compile.lean`, `lean/Editor/Compile/Errors.lean`,
 `lean/Editor/Compile/Compiled.lean`; the module docs have the detail).
 Emacs's `M-x compile`, one per workspace: a build or test command runs as
 `/bin/sh -c <line>` and its output arrives in the workspace's compilation
@@ -2988,8 +2989,9 @@ buffer while editing goes on.
   its process group. Starting a run while the scope's own runs asks,
   `Kill the compilation running in <label>? (y or n) `: `y` or `yes`
   kills the old one and empties the buffer, anything else leaves both. The
-  ex line ships `compile` (taking the line), `recompile` and
-  `kill-compilation`; no key binds them yet.
+  ex line ships `compile` (taking the line), `recompile`,
+  `kill-compilation`, `next-error` and `previous-error`; no global key
+  binds them yet.
 - **The buffer** is `*compilation: <label>*`, with the root's parent
   directory in parentheses when that name is taken by another workspace
   of the same label, then the first free name of that. It is found by the
@@ -3017,13 +3019,52 @@ buffer while editing goes on.
   read-only`, undo included, and a committed text is dropped and said. The
   compile mode writes it inside `BufferId.writing`, Emacs's
   `inhibit-read-only`. The mode line has no read-only mark yet.
-- **The mode** `compilation` fills the role `refresh` with `recompile`.
-- **Not built here**: errors and `next-error` (phase 4), the hook a minor
-  mode gives a project (phase 5), a time limit (a build may run for many
-  minutes; `kill-compilation` ends it, and `C-g` does not, as in Emacs).
+- **Error formats** are data (`Compile.Format`): a name, a pattern over
+  one output line whose pieces capture the file, the line, the column and
+  the severity (error, warning or note), and optionally the pattern of a
+  following line that continues a location. Patterns are matched by a
+  small anchored matcher the editor owns, not a regex: the search port's
+  regex answers no submatches and its model answers literal patterns
+  alone. One format ships, `general`: `file:line:col: message` and
+  `file:line: message`, with an optional severity word.
+- **Locations** are found as lines arrive, in each post and at the run's
+  end, never in the header or the last line, and kept per workspace in its
+  compile record, with the run's directory resolving a relative file
+  lexically (`./` dropped, `..` taken). Each location's text, from the
+  file through the line or column, is a span of the compilation buffer in
+  a face by severity: `compilation.error`, `compilation.warning`,
+  `compilation.note`, drawn under the last search's matches
+  ([text-and-display.md](text-and-display.md), "Decorations"). A rerun in
+  a workspace resets that workspace's list only.
+- **Stepping.** Each workspace's list has a current location, none at
+  first. `next-error` and `previous-error` step through the focused
+  buffer's workspace's list, so a buffer of another worktree or project
+  steps through its own, and stop with a message at either end; in a
+  compilation buffer, `activate` (`compile-goto-error`, `RET`) visits the
+  location on the cursor's line. Each sets the current location and puts
+  the compilation buffer's cursor on its first line; moving that cursor by
+  hand changes nothing.
+- **Visiting** opens the location's file (`Files.visit`) and puts the
+  cursor on its line and column, the column in characters less the
+  format's column base (1 for `general`). From a compilation buffer the
+  file is shown in the first other view, or a new one below; `RET` moves
+  the focus there, as Emacs's does, and `next-error` asked from the
+  compilation buffer keeps it, as `next-error-no-select`. A file that is
+  not there is said by Files, and no other cursor moves.
+- **The mode** `compilation` fills the role `refresh` with `recompile` and
+  `activate` with `compile-goto-error`. It leaves `next-item` and
+  `previous-item` unfilled, so under the Vim scheme `j` and `k` stay
+  motions in a compilation buffer.
+- **Not built here**: the hook a minor mode gives a project, with its
+  error formats (phase 5), make's directory tracking (`Entering
+  directory`), global keys for `next-error` and `previous-error` (such as
+  Vim's `]q` and `[q`), a location's message in the echo area,
+  `next-error-follow`, and a time limit (a build may run for many minutes;
+  `kill-compilation` ends it, and `C-g` does not, as in Emacs).
 
-Pinned by `ModelTest.compileChecks` and `readOnlyChecks` on the models, and
-by `ContractTest.compileChecks` over the real process service, with the
+Pinned by `ModelTest.compileChecks`, `compileErrorChecks`,
+`compileLocationChecks` and `readOnlyChecks` on the models, and by
+`ContractTest.compileChecks` over the real process service, with the
 fixture `tests/compile/three-lines`.
 
 ## The ex command line
@@ -3245,6 +3286,8 @@ command an ex name runs is a step of its own.**
 | `compile` | `compile` | Text | Runs the rest of the line as `/bin/sh -c` in the buffer's workspace, into its compilation buffer ("The compile mode, as built"); with no argument, asks for the line |
 | `recompile` | `recompile` | Nothing | Reruns the workspace's last compiled line |
 | `kill-compilation` | `kill-compilation` | Nothing | Kills the workspace's compilation in flight |
+| `next-error` | `next-error` | Nothing | Visits the next location of the workspace's compilation |
+| `previous-error` | `previous-error` | Nothing | Visits the previous location of the workspace's compilation |
 
 Where they differ from Vim:
 
@@ -3262,8 +3305,9 @@ Where they differ from Vim:
 - **`e!` and `w!` are names of their own**, bound with a fixed argument;
   only a leading `!` is parsed, as the shell's.
 - **`w` takes no file name.** Saving under another name is not built.
-- **`reload` is no Vim command**, nor are `compile`, `recompile` and
-  `kill-compilation`, which are Emacs's.
+- **`reload` is no Vim command**, nor are `compile`, `recompile`,
+  `kill-compilation`, `next-error` and `previous-error`, which are
+  Emacs's; Vim's `:cnext` and `:cprevious` are not bound.
 - **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
   matches more than one buffer.
 - **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it
