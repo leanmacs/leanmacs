@@ -56,13 +56,15 @@ namespace Editor
 
 namespace Compile
 
-/-- A named command a minor mode gives: a name, such as `build`, and the
-command line it runs. -/
+/-- A named command a minor mode gives: a name, such as `build`, the command
+line it runs, and where it runs when that is not its mode's root. -/
 structure NamedCommand where
   /-- Its name. -/
   name : String
   /-- The command line, as `/bin/sh -c` is handed it. -/
   line : String
+  /-- Where it runs, resolved against its mode's root; none for the root. -/
+  directory : Option System.FilePath := none
   deriving BEq, Repr
 
 /-- What a minor mode gives the compile mode ("A contribution", in the

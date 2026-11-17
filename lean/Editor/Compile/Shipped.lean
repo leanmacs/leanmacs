@@ -1,12 +1,14 @@
 import Editor.Compile.Contribution
+import Editor.Json
 
 /-!
 # The shipped error formats and minor modes of the compile mode
 
 What fits the compile mode to the kinds of project the editor is used on
 (`docs/design/keymaps-and-modes.md`, "The compile mode, as built"), as data:
-the error formats of rustc and of Lean. Pure, importing only the
-contributions' data, and imported by `Editor.lean`, so config can name each
+the error formats of rustc and of Lean, and the reading of mise's task list.
+Pure, importing only the contributions' data and the JSON reader
+(`Editor/Json.lean`), and imported by `Editor.lean`, so config can name each
 one and build its own from it, as `{ Compile.rustcFormat with … }`.
 
 ## The formats
@@ -29,7 +31,20 @@ The general format reads none of rustc's or Lake's lines: its file stops at
 a colon or a space, and a line that starts with a blank, or a word and `: `,
 is no `file:line`.
 
-Pinned by `ModelTest.projectFormatChecks`.
+## mise's task list
+
+`miseTasks` reads what `mise tasks ls --json` prints: a JSON array of
+objects, one per task, each with a non-empty string `name` and, as a
+non-empty string, the `dir` it runs in, among many other fields, which are
+ignored. Each task is a named command of its name, whose line is `mise run`
+and the name as one shell word (`shellWord`: bare when every character is
+an ASCII letter or digit or one of `_ - . : / @ % + = ,`, else
+single-quoted, a `'` written `'\''`), run in its `dir`. A name listed twice
+keeps its first; `[]` gives none. Anything else is refused with why: `it is
+not an array`, `task <n> is not an object`, `task <n> has no name`, or the
+JSON reader's own reason.
+
+Pinned by `ModelTest.projectFormatChecks` and `ModelTest.jsonChecks`.
 -/
 
 namespace Editor.Compile
@@ -69,5 +84,29 @@ def leanFormat : Format :=
             { atom := .literal ": " }, { atom := .rest, into := some .message }]]
     severities := [("error", .error), ("warning", .warning), ("info", .note)]
     columnBase := 0 }
+
+/-- `word` as one word of a shell's command line ("mise's task list", in
+the module docs). -/
+def shellWord (word : String) : String :=
+  let bare (char : Char) : Bool := char.isAlphanum || "_-.:/@%+=,".contains char
+  if !word.isEmpty && word.all bare then word else "'" ++ word.replace "'" "'\\''" ++ "'"
+
+/-- The named commands of mise's task list `bytes` ("mise's task list", in
+the module docs), or why it gives none. -/
+def miseTasks (bytes : ByteArray) : Except String (Array NamedCommand) := do
+  let .array tasks ← Json.parse bytes | throw "it is not an array"
+  let mut commands : Array NamedCommand := #[]
+  for (task, index) in tasks.zipIdx do
+    let .object _ := task | throw s!"task {index + 1} is not an object"
+    let some (.string name) := task.field? "name" | throw s!"task {index + 1} has no name"
+    if name.isEmpty then
+      throw s!"task {index + 1} has no name"
+    let directory : Option System.FilePath :=
+      match task.field? "dir" with
+      | some (.string dir) => if dir.isEmpty then none else some dir
+      | _ => none
+    unless commands.any (·.name == name) do
+      commands := commands.push { name, line := "mise run " ++ shellWord name, directory }
+  return commands
 
 end Editor.Compile
