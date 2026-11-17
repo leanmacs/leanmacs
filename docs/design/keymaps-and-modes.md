@@ -3553,9 +3553,9 @@ which run the executable on a real file.
   `BufferId.display buffer view "its-name"`, adding `(focus := false)` to
   leave the focus where it is when no rule matches, as compile does. A
   rule whose target does not
-  exist under the layout config chose, a new tab or an edge the layout
-  lacks, is left out at install, and the echo area says so,
-  `reload: display rule 1 is left out: there are no tabs yet`, as an
+  exist under the layout config chose, an edge the layout lacks, is left
+  out at install, and the echo area says so,
+  `reload: display rule 1 is left out: the layout has no right edge`, as an
   unknown theme is said; the rest of the config is installed.
 - Built: the float target (window management's phase 4). A rule may send
   a buffer to a new float centred in the frame, with `target := .float`,

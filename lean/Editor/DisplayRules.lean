@@ -37,9 +37,17 @@ is pure: the editor state decides with it (`EditorState.displaying`,
   default, the buffer opens focused in a popup that goes away when the
   focus leaves it. A window that shows the buffer already, a float among
   them, is still used first.
-- **A target the layout lacks is missing** (`DisplayTarget.missing?`):
-  tabs, which are not built yet, and an edge the layout config chose has
-  none at. Config's rules are checked against it at install, and a rule
+- **A new-tab target** (`DisplayTarget.newTab`) opens the buffer in the
+  only window of a new tab, right after the one in view, under the layout
+  config chose (`WindowSpot.tab`). With the rule's `focus` the new tab comes
+  into view, as focusing any window of a hidden tab brings it into view;
+  without it the tab is opened behind, as tmux's `new-window -d` does. The
+  window that shows the buffer already is looked for in the tab in view
+  only, as Emacs's `display-buffer-reuse-window` looks in the selected
+  frame: a buffer shown in a hidden tab is displayed again where the rules
+  say.
+- **A target the layout lacks is missing** (`DisplayTarget.missing?`): an
+  edge the layout config chose has none at. Config's rules are checked against it at install, and a rule
   whose target is missing is left out and said
   (`Editor/Config/Reload.lean`).
 
@@ -65,7 +73,7 @@ inductive DisplayTarget where
   /-- A new floating window, anchored to the frame and centred in the tiled
   area, of `share`, transient unless `pinned` (`Editor/Floating.lean`). -/
   | float (share : Floating.Share := {}) (pinned : Bool := false)
-  /-- A window in a new tab: not built yet. -/
+  /-- A window in a new tab, after the one in view. -/
   | newTab
   deriving DecidableEq, Repr
 
@@ -117,19 +125,13 @@ end DisplayRule
 
 namespace DisplayTarget
 
-/-- What is said of a new-tab target: there are none to send a buffer
-to. -/
-def noTabs : String :=
-  "there are no tabs yet"
-
-/-- Why `target` does not exist under `layout`, if it does not: tabs are not
-built yet, and an edge the layout has none at (`Layout.edgeSides`) is
-missing. The focused window, main, the stack and a float always exist. -/
+/-- Why `target` does not exist under `layout`, if it does not: an edge the
+layout has none at (`Layout.edgeSides`) is missing. The focused window,
+main, the stack, a float and a new tab always exist. -/
 def missing? (target : DisplayTarget) (layout : Layout) : Option String :=
   match target with
-  | .newTab => some noTabs
   | .edge side => if layout.edgeSides.contains side then none else some (Layout.noEdge side)
-  | .focused | .main | .stack | .float .. => none
+  | .focused | .main | .stack | .float .. | .newTab => none
 
 end DisplayTarget
 

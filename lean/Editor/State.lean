@@ -3170,8 +3170,10 @@ name, its modes (major first) and `opener` decides, or the fallback
 the first window of the tiled list, `stack` opens a window after the last
 of the list, `edge side` one docked at `side` when the layout out of
 a zoom has that edge and in the stack otherwise, and `float` a float
-anchored to the frame, of the rule's share, pinned when the rule says;
-`newTab`, which config cannot reach, opens one in the stack. `focus` is the caller's
+anchored to the frame, of the rule's share, pinned when the rule says,
+and `newTab` the only window of a new tab after the one in view
+(`WindowSpot.tab`). The window that shows the buffer already is looked
+for in the tab in view only. `focus` is the caller's
 default: the fallback's focus when no rule matches. -/
 def displaying (state : EditorState) (rules : Array DisplayRule) (buffer : BufferId)
     (asking : ViewId) (opener : String) (focus : Bool := true) : Displaying × Bool :=
@@ -3192,7 +3194,8 @@ def displaying (state : EditorState) (rules : Array DisplayRule) (buffer : Buffe
         if state.frame.underlying.edgeSides.contains side then .opened (.edge side)
         else .opened .stack
       | .float share pinned => .opened (.float .frame share pinned)
-      | .stack | .newTab => .opened .stack
+      | .stack => .opened .stack
+      | .newTab => .opened .tab
     (decided, rule.focus)
 
 /-- Closes the open prompt: the minibuffer's window is removed, its buffer's
