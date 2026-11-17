@@ -115,4 +115,6 @@ it is outside the gate.
 Changing the live repository is the owner's alone: read
 `mise run infra-plan`, then run `mise run infra-apply`, which runs
 `secrets-scan` first and asks before applying. Both use the owner's `gh`
-login and 1Password, and nothing else in the repository calls them.
+login and 1Password, and nothing else in the repository calls them. The
+first apply, which makes the repository public, is two steps
+(`infra/github/README.md`, "The first apply").

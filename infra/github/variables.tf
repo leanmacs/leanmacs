@@ -4,6 +4,13 @@ variable "state_passphrase" {
   sensitive   = true
 }
 
+variable "enable_security_and_analysis" {
+  description = "Whether github_repository.leanmacs declares its security_and_analysis block (secret scanning and push protection). Left true everywhere except the first apply's first step, run with TF_VAR_enable_security_and_analysis=false while the repository is still private (README.md, \"The first apply\")."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "import_existing" {
   description = "Whether the import blocks run. Left true everywhere except tests/*.tftest.hcl, because `tofu test` can't import."
   type        = bool

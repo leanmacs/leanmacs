@@ -86,3 +86,25 @@ run "secret_scanning_and_push_protection_enabled" {
     error_message = "Push protection must be enabled: it refuses a pushed credential."
   }
 }
+
+# The first apply's first step (README.md, "The first apply"): no
+# security_and_analysis block, so the provider's first PATCH carries none
+# and the visibility change is not blocked behind it; the repository is
+# still made public.
+run "first_step_declares_no_security_and_analysis" {
+  command = plan
+
+  variables {
+    enable_security_and_analysis = false
+  }
+
+  assert {
+    condition     = github_repository.leanmacs.visibility == "public"
+    error_message = "The first step must still make the repository public."
+  }
+
+  assert {
+    condition     = length(github_repository.leanmacs.security_and_analysis) == 0
+    error_message = "With enable_security_and_analysis false, no security_and_analysis block may be declared."
+  }
+}

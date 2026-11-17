@@ -9,8 +9,9 @@ import {
 
 # Every value below except `visibility` and `security_and_analysis` is the
 # live repository's value as of 2026-11-17 (`gh api repos/leanmacs/leanmacs`),
-# so the first plan changes only those two. Changing one here changes the
-# live repository on the next apply.
+# so the two steps of the first apply change only those two (README.md,
+# "The first apply"). Changing one here changes the live repository on the
+# next apply.
 resource "github_repository" "leanmacs" {
   name = "leanmacs"
   # On purpose, not the live value (`private`): the first apply makes the
@@ -44,15 +45,26 @@ resource "github_repository" "leanmacs" {
   # these two are sent by provider 6.13.0. No advanced_security: the
   # provider refuses it on a public repository.
   #
-  # If the first apply rejects this block because the provider sent it
-  # before the change of visibility, run `mise run infra-apply` again: the
-  # repository is public by then.
-  security_and_analysis {
-    secret_scanning {
-      status = "enabled"
-    }
-    secret_scanning_push_protection {
-      status = "enabled"
+  # The provider's update (6.13.0, resourceGithubRepositoryUpdate in
+  # github/resource_github_repository.go) sends this block in its first
+  # PATCH, with the visibility left out, and sends the visibility in a
+  # second PATCH only after the first succeeds. On the still-private
+  # free-plan repository GitHub can refuse this block, and then the update
+  # fails before the visibility changes, on every retry. So the first apply
+  # is two steps (README.md, "The first apply"): with
+  # var.enable_security_and_analysis false this block is not declared
+  # (the attribute is Optional and Computed, so its absence plans no
+  # change) and the apply makes the repository public; the second, with
+  # the default true, enables these two on the now-public repository.
+  dynamic "security_and_analysis" {
+    for_each = var.enable_security_and_analysis ? [1] : []
+    content {
+      secret_scanning {
+        status = "enabled"
+      }
+      secret_scanning_push_protection {
+        status = "enabled"
+      }
     }
   }
 

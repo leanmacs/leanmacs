@@ -55,10 +55,31 @@ apply never runs with `-auto-approve` against a plan that changes anything.
 ### The first apply
 
 Every value in `repository.tf` and `actions.tf` is the live value read on
-2026-11-17, except those changed on purpose. The first plan should read:
+2026-11-17, except those changed on purpose. The first apply is two steps,
+because of how the provider orders its requests.
+
+`resourceGithubRepositoryUpdate` in provider 6.13.0
+(`github/resource_github_repository.go`) clears the visibility from the
+request, sends everything else, `security_and_analysis` included, as one
+`PATCH /repos/leanmacs/leanmacs`, and returns at once if that fails. Only
+after it succeeds does it send a second `PATCH` with the visibility. Secret
+scanning and push protection may be refused on a private repository on the
+free plan, and if the first request is refused the visibility never
+changes, so the same apply fails the same way every time. The first step
+therefore leaves the block out:
+
+```sh
+TF_VAR_enable_security_and_analysis=false mise run infra-plan
+TF_VAR_enable_security_and_analysis=false mise run infra-apply
+```
+
+With the variable false, `repository.tf` declares no
+`security_and_analysis` block. The provider marks the attribute computed,
+so its absence plans no change and the first request carries none. This
+plan should read:
 
 - `github_repository.leanmacs`: imported and updated in place, visibility
-  `private` to `public` and the `security_and_analysis` block added.
+  `private` to `public`, and nothing in `security_and_analysis`.
 - `github_actions_repository_permissions.leanmacs`: imported and updated
   in place, from all actions allowed without SHA pinning to the allowlist
   below with `sha_pinning_required`.
@@ -68,10 +89,23 @@ Every value in `repository.tf` and `actions.tf` is the live value read on
   (the API answers 403), so both refer to the repository resource, which
   orders them after the change of visibility in the same apply.
 
-If the apply rejects the security block because the provider sent it
-before the visibility change, run `mise run infra-apply` again: the
-repository is public by then. Anything else in the plan is a reason to stop
-and read before typing `yes`.
+Anything else in the plan is a reason to stop and read before typing
+`yes`.
+
+The second step is the ordinary loop, with the variable at its default
+(`true`), on the now-public repository:
+
+```sh
+mise run infra-plan    # only security_and_analysis changes on github_repository.leanmacs
+mise run infra-apply
+```
+
+Its plan should change only `security_and_analysis` on
+`github_repository.leanmacs`, to secret scanning and push protection
+`enabled`; after it, `mise run infra-plan`
+shows no changes. Every later apply runs with the default, so never set the
+variable false again: it is not a way to turn the two off, since a block
+left out plans no change and the provider would leave them enabled.
 
 ## Actions settings
 
