@@ -95,6 +95,14 @@ pause of `batchPause` after each, so a fast child is posted at most twenty
 times a second and its output batches meanwhile. The delivery that ends the
 child, a refused start and a refused read finish the job with `finished`.
 
+**Following.** Before lines are appended, each view showing the buffer
+whose cursor is on its last line, or on the empty row after it (its row is
+at least the text's lines less one, `TextId.lineCount`), follows; after,
+each follower's cursor is put at the start of the new last line, its shape
+kept, and the loop's cursor-follow scrolls it into view. A view whose
+cursor was moved up is left where it is. A restart puts every view's cursor
+on the header line, so all follow.
+
 `compilation-output` and `finished` act only while the scope's run in
 flight is theirs, so a killed or replaced run's late output is dropped.
 Each appends its lines to the kept buffer inside `BufferId.writing`, each
@@ -495,14 +503,31 @@ buffer. -/
 def kept (state : EditorState) (record : Record) : Option BufferId :=
   (record.buffer.filter fun index => (state.buffer? ⟨index⟩).isSome).map (⟨·⟩)
 
+/-- Puts the cursor of `view` at `offset`, one bar with its shape kept. -/
+def placeCursor (view : ViewId) (offset : Nat) : EditorM Unit := do
+  if let .ok selection ← view.selection then
+    discard <| view.select { selection with ranges := #[⟨offset, offset⟩], primary := 0 }
+
 /-- Appends `lines`, each ended with a line feed, to the buffer `id`, inside
-`writing`. -/
+`writing`. Each view showing it whose cursor is on the last line, or the
+empty row after it, follows: its cursor is put at the start of the new last
+line ("Following", in the module docs). Others are left where they are. -/
 def append (id : BufferId) (lines : Array String) : EditorM Unit := do
   if lines.isEmpty then
     return
   let .ok text ← id.text | return
+  let count ← text.lineCount
+  let mut followers := #[]
+  for view in viewsOf (← editorState) id do
+    if let .ok selection ← view.selection then
+      let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
+      if (← text.pointOf head).row + 1 ≥ count then
+        followers := followers.push view
   id.writing do
       text.insert (← text.byteLength) (String.join (lines.map (· ++ "\n")).toList)
+  let last ← text.offsetOf { row := (← text.lineCount) - 1, column := 0 }
+  for view in followers do
+    placeCursor view last
 
 /-- Shows the buffer `id` for a run asked from `view` ("The run", in the
 module docs): in a new view below the asking one when no view shows it, the
@@ -534,6 +559,9 @@ def prepare (scope : Scope) (record : Record) (content : String) :
     let .ok text ← id.text | return none
     id.writing do
         text.replaceRange 0 (← text.byteLength) content
+    -- Every view of it starts the new run on the header line, so it follows.
+    for view in viewsOf state id do
+      placeCursor view 0
     return some (id, false)
   | none =>
     let .ok id ← createBuffer (freeBufferName state scope) content | return none

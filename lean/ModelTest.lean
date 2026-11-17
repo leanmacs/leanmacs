@@ -28014,6 +28014,55 @@ def compileChecks : List Check :=
               lastLineOf killed == some "Compilation killed after 1.5 s" &&
               echoOf killed == some "r@main: Compilation killed after 1.5 s"
           | _, _ => false },
+    -- Ordered as the plan review asked (review 2026-11-16-2327-c551): a
+    -- first post makes the text `header\none\n` with both views following;
+    -- only then is one view's cursor moved up, to a row before the last
+    -- line, and the next post shows the other following from the old last
+    -- line and the moved one left where it was.
+    { name :=
+        "criterion 8: a view of the compilation buffer with its cursor on the last line follows appended output, and one whose cursor was moved up does not"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let asked := pressedOn (settledAfter driver "C-o a") "C-k m"
+            -- View 1 shows the compilation buffer; a split of it, view 2,
+            -- shows it too and is focused.
+            let twoViews := pressedOn asked "C-k o C-e s"
+            let first := postedNext twoViews
+            let moved := pressedOn first "C-k 0"
+            let second := postedNext moved
+            let name := "*compilation: r@main*"
+            let header := "r@main in /r: make\n"
+            let heads (driver : TestDriver) (view : ViewId) :=
+              ((showing driver view).bind (·.cursors)).map (·.map (·.head))
+            (showing twoViews ⟨1⟩).map (·.buffer.name) == some name &&
+              (showing twoViews ⟨2⟩).map (·.buffer.name) == some name &&
+              twoViews.loop.state.frame.focused == ⟨2⟩ &&
+              compiledText first name == some (header ++ "one\n") &&
+              heads first ⟨1⟩ == some #[header.utf8ByteSize] &&
+              heads first ⟨2⟩ == some #[header.utf8ByteSize] &&
+              heads moved ⟨2⟩ == some #[0] &&
+              compiledText second name == some (header ++ "one\ntwo\n") &&
+              heads second ⟨1⟩ == some #[header.utf8ByteSize + 4] &&
+              heads second ⟨2⟩ == some #[0] },
+    { name :=
+        "a restart puts every view's cursor of the kept compilation buffer on the header line, so each follows the new run"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k m")
+            let moved := pressedOn ran "C-k o C-e s C-k 0"
+            let again := postedNext (pressedOn moved "C-k r")
+            let header := "r@main in /r: make\n"
+            let heads (driver : TestDriver) (view : ViewId) :=
+              ((showing driver view).bind (·.cursors)).map (·.map (·.head))
+            compiledText again "*compilation: r@main*" == some (header ++ "one\n") &&
+              heads again ⟨1⟩ == some #[header.utf8ByteSize] &&
+              heads again ⟨2⟩ == some #[header.utf8ByteSize] },
     { name :=
         "criterion 9: editing commands in a compilation buffer are refused as for a read-only buffer, and a committed text is dropped"
       run :=
