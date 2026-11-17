@@ -455,8 +455,7 @@ fn scene_directly() -> Scene {
                 face: "mode".to_owned(),
                 ..StatusField::default()
             }],
-            status_face: None,
-            padding: Padding::default(),
+            ..View::default()
         }],
         focused: Some(ViewId(3)),
         echo: "hello".to_owned(),

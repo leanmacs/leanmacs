@@ -27,6 +27,18 @@
 //! `preedit` and `focused`, which no phase of the display pipeline draws
 //! yet.
 //!
+//! # Blocks
+//!
+//! A view's [`Block`]s are rows of text of their own drawn between the
+//! rows of its text: an excerpt's header, and later a hunk's controls and
+//! a comment thread. A block is the view's, not its text's, as a
+//! decoration is, and Lean chooses each one. It is text only, laid out as
+//! a small text of its own in its own faces, and it holds no position: a
+//! position of the view's text is drawn and moved to as it is without
+//! blocks, and only the height a view's rows take counts a block's lines
+//! ([`query`](crate::query), "Blocks"). Several blocks before one row are
+//! drawn in the order the view lists them.
+//!
 //! # Where an addition goes
 //!
 //! A new field of Lean's scene is a field here, decoded by the binding.
@@ -112,6 +124,20 @@ pub struct Decoration {
     pub stop: usize,
     /// The name of the face it takes.
     pub face: String,
+}
+
+/// A block: rows of text of its own, drawn between two rows of a view
+/// (module docs, "Blocks").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Block {
+    /// A byte offset of the view's snapshot: the block is drawn above the
+    /// first visual line of the row that holds it.
+    pub before: usize,
+    /// What it says.
+    pub text: String,
+    /// Spans of `text` drawn in a face: the block's own faces, over the
+    /// default face. `start` and `stop` are bytes of `text`.
+    pub decorations: Vec<Decoration>,
 }
 
 /// Which end of a view's status row a field is drawn from
@@ -485,6 +511,9 @@ pub struct View {
     /// How far its text and its status fields are inset from its edges, in
     /// points; none by default.
     pub padding: Padding,
+    /// Its blocks, drawn between the rows of its text (module docs,
+    /// "Blocks"); none by default.
+    pub blocks: Vec<Block>,
 }
 
 /// A divider: a strip of the frame between two tiled views, filled in the

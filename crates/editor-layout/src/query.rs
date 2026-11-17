@@ -39,6 +39,33 @@
 //! reaches or what it costs: as many steps as the lines asked for, fewer
 //! at an end of the text.
 //!
+//! # Blocks
+//!
+//! A view's blocks ([`Block`](crate::scene::Block)) are rows of text of
+//! their own between the rows of its text, laid out as a small text of
+//! their own at the view's text width, in their own faces. They are
+//! placed by this rule, which the rows query, the spot and the frame all
+//! walk by, so the three agree:
+//!
+//! - A block is drawn above the first visual line (segment 0, line 0) of
+//!   the buffer row that holds its `before`. A `before` that is not a
+//!   character boundary is moved back to the one before it, and one past
+//!   the end is the text's end. Several blocks before one row are drawn
+//!   in the order the view lists them.
+//! - Each block line counts like a text line among the lines that fit a
+//!   height: its own height, and at least [`LEAST_ROW_HEIGHT`].
+//! - A row's blocks are shown with the line below them or not at all:
+//!   the walk ends before blocks whose line does not fit with them.
+//! - The first line shown is the anchor's. Its blocks are shown above it
+//!   only when they fit with it, and otherwise left out, so a view at
+//!   least one line tall always shows its anchor's line. An anchor on a
+//!   wrapped continuation line has no blocks above it.
+//! - The rows query answers text rows only, and a spot below a block is
+//!   lower by the block's lines, each at the height it is drawn at.
+//! - **A block holds no position.** A position is located, and a move
+//!   goes, as without blocks: the move query takes none, and counts the
+//!   visual lines of the text alone.
+//!
 //! A refusal is [`QueryError::BadPosition`] for an offset that is not a
 //! position of the text. An unknown snapshot is the binding's refusal:
 //! layout is handed a snapshot or nothing.
@@ -105,6 +132,36 @@ pub(crate) struct Visual {
     pub segment: usize,
     /// The visual line of the segment.
     pub line: usize,
+}
+
+/// A line a view shows: a visual line of its text, or a line of one of
+/// its blocks (module docs, "Blocks").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Shown {
+    /// The `line`th visual line of the view's `block`th block, `height`
+    /// pixels tall as it is drawn.
+    Block {
+        /// Which block, by its index among the view's.
+        block: usize,
+        /// Which of its visual lines.
+        line: usize,
+        /// How tall it is drawn.
+        height: f32,
+    },
+    /// A visual line of the view's text.
+    Text(Visual),
+}
+
+impl Shown {
+    /// What a block line counts for among the lines that fit a height:
+    /// its height, and at least [`LEAST_ROW_HEIGHT`]. A text line is
+    /// counted by the walk, which knows its height.
+    fn counted(&self) -> f32 {
+        match self {
+            Self::Block { height, .. } => height.max(LEAST_ROW_HEIGHT),
+            Self::Text(_) => 0.0,
+        }
+    }
 }
 
 /// Walks the visual lines of one text, laying out each segment it reaches
@@ -239,24 +296,47 @@ impl<S: Shaper> Walker<'_, S> {
             .unwrap_or(0.0)
     }
 
-    /// The visual lines from the one that holds `anchor`, as many as fit
-    /// `height` pixels whole, fewer at the end of the text. Each counts
-    /// as at least [`LEAST_ROW_HEIGHT`], so it lays out at most a line for
-    /// each pixel of `height`, and none when `height` is no number.
-    pub fn rows_shown(&mut self, height: f32, anchor: usize) -> Result<Vec<Visual>, QueryError> {
+    /// The visual lines from the one that holds `anchor` and the block
+    /// lines above them, as many as fit `height` pixels whole, fewer at
+    /// the end of the text, top to bottom (module docs, "Blocks").
+    /// `above` gives the lines of the blocks before a buffer row, in
+    /// order, and is asked only for the rows the walk reaches the first
+    /// line of. Each line counts as at least [`LEAST_ROW_HEIGHT`].
+    pub fn shown(
+        &mut self,
+        height: f32,
+        anchor: usize,
+        above: &mut dyn FnMut(usize) -> Vec<Shown>,
+    ) -> Result<Vec<Shown>, QueryError> {
         let (mut visual, _) = self.locate(anchor)?;
-        let mut rows = Vec::new();
+        let mut shown = Vec::new();
         let mut used = 0.0;
+        let mut first = true;
         loop {
+            let mut blocks = if visual.segment == 0 && visual.line == 0 {
+                above(visual.row)
+            } else {
+                Vec::new()
+            };
             // `max` gives the least height for a height that is no number.
             let tall = self.height(visual).max(LEAST_ROW_HEIGHT);
+            let blocks_tall: f32 = blocks.iter().map(Shown::counted).sum();
             // False when either side is no number, which stops the walk.
-            let fits = used + tall <= height;
+            let fits = used + blocks_tall + tall <= height;
             if !fits {
-                break;
+                // The first line is shown alone when its blocks do not
+                // fit with it; any later one is shown with its blocks or
+                // not at all.
+                if first && tall <= height {
+                    blocks.clear();
+                } else {
+                    break;
+                }
             }
-            used += tall;
-            rows.push(visual);
+            first = false;
+            used += blocks.iter().map(Shown::counted).sum::<f32>() + tall;
+            shown.extend(blocks);
+            shown.push(Shown::Text(visual));
             // A view filled exactly lays out no row past it.
             if used >= height {
                 break;
@@ -266,27 +346,35 @@ impl<S: Shaper> Walker<'_, S> {
                 None => break,
             }
         }
-        Ok(rows)
+        Ok(shown)
     }
 
     /// Where `position` is among the visual lines from the one that holds
-    /// `anchor` that fit `height` pixels whole: the x of it in its line,
-    /// the y of its line's top below the anchor's, each line counted at
-    /// the height it is drawn at, and its line's height. None when the
-    /// rows shown do not hold it.
+    /// `anchor` that fit `height` pixels whole, with the block lines
+    /// `above` gives ([`Walker::shown`]): the x of it in its line, the y of
+    /// its line's top below the first line shown, each line, a block's
+    /// included, counted at the height it is drawn at, and its line's
+    /// height. None when the rows shown do not hold it.
     pub fn spot(
         &mut self,
         height: f32,
         anchor: usize,
         position: usize,
+        above: &mut dyn FnMut(usize) -> Vec<Shown>,
     ) -> Result<Option<Spot>, QueryError> {
         let (target, x) = self.locate(position)?;
         let mut y = 0.0;
-        for visual in self.rows_shown(height, anchor)? {
-            let tall = self.height(visual);
-            if visual == target {
-                return Ok(Some(Spot { x, y, height: tall }));
-            }
+        for shown in self.shown(height, anchor, above)? {
+            let tall = match shown {
+                Shown::Text(visual) => {
+                    let tall = self.height(visual);
+                    if visual == target {
+                        return Ok(Some(Spot { x, y, height: tall }));
+                    }
+                    tall
+                }
+                Shown::Block { height, .. } => height,
+            };
             y += tall;
         }
         Ok(None)

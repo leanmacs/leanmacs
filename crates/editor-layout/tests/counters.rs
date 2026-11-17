@@ -14,7 +14,8 @@ use editor_layout::cache::Counters;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::frame::Frame;
 use editor_layout::scene::{
-    Changes, Cursor, Decoration, Padding, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId,
+    Block, Changes, Cursor, Decoration, Padding, Rect, Scene, StatusField, TextKey, TextRef, View,
+    ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -81,6 +82,7 @@ fn scene_rows(text: &TextRef, width: u32, cursor: usize, rows: u32) -> Scene {
             status: vec![],
             status_face: None,
             padding: Padding::default(),
+            blocks: vec![],
         }],
         ..Scene::default()
     }
@@ -783,4 +785,79 @@ fn a_paint_only_change_does_not_shape_the_status_row() {
         layout.frame(&with_status(&text, &fields, &sized));
     });
     assert_eq!(resized, 13);
+}
+
+/// [`scene`] with a block of each of `headers` before the start of the
+/// rows 0, 5, 10 and so on, in that order.
+fn scene_with_blocks(text: &TextRef, headers: &[&str]) -> Scene {
+    let mut scene = scene(text, 400, 0);
+    scene.views[0].blocks = headers
+        .iter()
+        .enumerate()
+        .map(|(index, header)| Block {
+            before: text.snapshot.row_range(index * 5).unwrap().start,
+            text: (*header).to_owned(),
+            decorations: vec![Decoration {
+                start: 0,
+                stop: header.len(),
+                face: "block-header".to_owned(),
+            }],
+        })
+        .collect();
+    scene
+}
+
+#[test]
+fn a_frame_that_shows_the_same_blocks_again_shapes_none_of_them() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    let headers = ["one", "two", "three"];
+    // The twenty rows and the three blocks, a segment each.
+    let first = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_blocks(&text, &headers));
+    });
+    assert_eq!(first, count(23, 23, 0));
+    let again = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_blocks(&text, &headers));
+    });
+    assert_eq!(again, count(0, 0, 23));
+    // A query with the same blocks lays out nothing either.
+    let asked = counted(&mut layout, |layout| {
+        let blocks = scene_with_blocks(&text, &headers).views.remove(0).blocks;
+        layout
+            .rows_shown_with_blocks(&text, 400.0, 640.0, Padding::default(), 0, &blocks)
+            .unwrap();
+    });
+    assert_eq!(asked.shaped, 0);
+}
+
+#[test]
+fn changing_one_block_shapes_that_block_alone() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&scene_with_blocks(&text, &["one", "two", "three"]));
+    let changed = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_blocks(&text, &["one", "deux", "three"]));
+    });
+    assert_eq!(changed, count(1, 1, 22));
+    // The same block before another row is the same block: moving it
+    // shapes nothing.
+    let mut moved = scene_with_blocks(&text, &["one", "deux", "three"]);
+    moved.views[0].blocks[1].before = text.snapshot.row_range(7).unwrap().start;
+    let moved = counted(&mut layout, |layout| {
+        layout.frame(&moved);
+    });
+    assert_eq!(moved.shaped, 0);
+}
+
+#[test]
+fn a_block_no_view_names_is_dropped_and_shaped_again_when_it_comes_back() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&scene_with_blocks(&text, &["one"]));
+    layout.frame(&scene_with_blocks(&text, &[]));
+    let back = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_blocks(&text, &["one"]));
+    });
+    assert_eq!(back, count(1, 1, 20));
 }

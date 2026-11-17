@@ -168,7 +168,7 @@ impl<L> DerefMut for Held<'_, L> {
 
 impl<L: ShapedLine> TextState<L> {
     /// Nothing laid out of `snapshot` yet.
-    fn fresh(snapshot: &Snapshot, tab_width: usize, width: Option<f32>) -> Self {
+    pub(crate) fn fresh(snapshot: &Snapshot, tab_width: usize, width: Option<f32>) -> Self {
         Self {
             wrap: WrapLayer::new(TabSnapshot::new(snapshot.clone(), tab_width), width),
             sources: None,

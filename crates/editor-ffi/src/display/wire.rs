@@ -736,6 +736,7 @@ impl WireScene {
                         .collect(),
                     status_face: view.status_face.clone(),
                     padding: view.padding,
+                    blocks: Vec::new(),
                 }
             })
             .collect();

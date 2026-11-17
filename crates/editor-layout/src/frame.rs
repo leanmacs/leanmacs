@@ -23,6 +23,17 @@
 //! gives its lines. A row is as tall as the shaper made it, so a row of no
 //! height has a height of 0 and the row after it has its `y`.
 //!
+//! **Block rows.** A view's blocks ([`View::blocks`]) are rows of
+//! [`ViewFrame::rows`] too, in top-to-bottom order among its text rows,
+//! each with [`FrameRow::block`] naming its block, its bytes those of the
+//! block's text and its runs its block's decorations' paint over the
+//! default face. Where each goes and which fit are the rows query's rule
+//! ([`query`](crate::query), "Blocks"), and the frame walks the same
+//! walk. A renderer draws a block row as any row. Cursors and selection
+//! areas are on text rows only, at their `y`, which counts the block rows
+//! above them; a row's hash is computed as a text row's, so an unchanged
+//! header keeps its hash.
+//!
 //! **The mode line.** A view with at least one status field has a status
 //! row ([`StatusRow`]) at the bottom of its rectangle. Each field is
 //! shaped through the `Shaper` port as a line of its own, in its face over
@@ -201,7 +212,9 @@ use std::sync::Arc;
 use editor_text::{Selection, SelectionRange, Snapshot};
 
 use crate::Layout;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+use crate::blocks::{BlockKey, BlockLayout, ViewBlocks};
 
 use crate::cache::{FieldKept, StatusKept, state};
 use crate::decoration::{
@@ -210,7 +223,7 @@ use crate::decoration::{
 use crate::face::{
     Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
 };
-use crate::query::{Visual, Walker};
+use crate::query::{Shown, Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, Side, Size, StatusField, TextKey, View, ViewId};
 use crate::shaper::{
     FontId, FontRun, Glyph, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
@@ -254,7 +267,8 @@ pub struct FrameRow {
     pub height: f32,
     /// Its baseline, from its top.
     pub baseline: f32,
-    /// Its bytes in the view's snapshot, without its line break. A tab
+    /// Its bytes, without its line break: in the view's snapshot for a row
+    /// of the view's text, and in the block's text for a block row. A tab
     /// whose spaces it starts inside is not among them: the tab is the
     /// earlier row's.
     pub bytes: Range<usize>,
@@ -268,6 +282,11 @@ pub struct FrameRow {
     pub runs: Vec<(Range<usize>, Paint)>,
     /// The content hash.
     pub hash: u64,
+    /// Which text it is a row of: `None` for the view's text, and
+    /// `Some(i)` for a line of the view's `blocks[i]` ([`View::blocks`];
+    /// [`query`](crate::query), "Blocks"). A block row is drawn like any
+    /// row: the renderer needs to tell it from no other.
+    pub block: Option<usize>,
 }
 
 impl FrameRow {
@@ -296,6 +315,7 @@ impl FrameRow {
             line,
             runs,
             hash,
+            block: None,
         }
     }
 }
@@ -435,7 +455,8 @@ impl Frame {
     /// fonts.
     ///
     /// - A row is `row`, then ` x <x>` when its `x` is not 0 (a padded
-    ///   view's), then its `y`, its height, its baseline and its bytes.
+    ///   view's), then its `y`, its height, its baseline and its bytes. A
+    ///   block row has `block <i> ` before it.
     /// - A colour is its eight hexadecimal digits, `rrggbbaa`.
     /// - A glyph is `id@x`, with `^dx,dy` after it when its outline is
     ///   drawn off its pen position, and then `#font` when it is drawn in
@@ -468,7 +489,11 @@ impl Frame {
                 view.selection.0
             );
             for row in &view.rows {
-                out.push_str("  row");
+                out.push_str("  ");
+                if let Some(block) = row.block {
+                    let _ = write!(out, "block {block} ");
+                }
+                out.push_str("row");
                 if row.x != 0.0 {
                     let _ = write!(out, " x {}", row.x);
                 }
@@ -681,13 +706,24 @@ impl<S: Shaper> Layout<S> {
                     .offset_to_point(offset)
                     .map_or(0, |point| point.row)
             };
-            if let (Some(first), Some(last)) = (laid.rows.first(), laid.rows.last()) {
+            let text_row = |row: &&FrameRow| row.block.is_none();
+            let first = laid.rows.iter().find(text_row);
+            let last = laid.rows.iter().rev().find(text_row);
+            if let (Some(first), Some(last)) = (first, last) {
                 let (first, last) = (row_of(first.bytes.start), row_of(last.bytes.end));
                 let reach = KEPT_VIEW_HEIGHTS * (last - first + 1);
                 rows.push(first.saturating_sub(reach)..last + reach + 1);
             }
         }
         self.texts.retain(|key, _| shown.contains_key(key));
+        // The blocks no view names are dropped.
+        let named: HashSet<BlockKey> = scene
+            .views
+            .iter()
+            .flat_map(|view| &view.blocks)
+            .map(BlockKey::of)
+            .collect();
+        self.blocks.retain(|key, _| named.contains(key));
         for (key, state) in &mut self.texts {
             let near = &shown[key];
             state
@@ -1036,6 +1072,7 @@ impl<S: Shaper> Layout<S> {
                 }
             })
             .collect();
+        let mut view_blocks = ViewBlocks::new(&view.blocks, snapshot, &mut self.styles);
         let selections: Vec<Selection> = view
             .selections
             .iter()
@@ -1079,9 +1116,44 @@ impl<S: Shaper> Layout<S> {
             },
         };
         let anchor = boundary_at_or_before(snapshot, view.scroll);
-        let shown = walker.rows_shown(text_height, anchor).unwrap_or_default();
+        let mut block_layout = BlockLayout {
+            store: &mut self.blocks,
+            shaper,
+            styles,
+            base,
+            tab_width: self.tab_width,
+            width: text_width,
+            counters: &mut self.counters,
+        };
+        let walked = walker
+            .shown(text_height, anchor, &mut |row| {
+                view_blocks.above(row, &mut block_layout)
+            })
+            .unwrap_or_default();
+        // The text lines shown, each with its index among the frame's rows.
+        let mut shown: Vec<(Visual, usize)> = Vec::new();
         let mut y = first_row;
-        for &visual in &shown {
+        for item in walked {
+            let visual = match item {
+                Shown::Text(visual) => visual,
+                Shown::Block { block, line, .. } => {
+                    if let Some(laid) = view_blocks.line(block, line) {
+                        frame.rows.push(FrameRow {
+                            block: Some(block),
+                            ..FrameRow::text_row(
+                                across,
+                                y,
+                                laid.bytes.clone(),
+                                Arc::clone(&laid.line),
+                                laid.runs.clone(),
+                                laid.hash,
+                            )
+                        });
+                        y += laid.line.height;
+                    }
+                    continue;
+                }
+            };
             let Some(entry) = walker.entry(visual.row, visual.segment) else {
                 continue;
             };
@@ -1139,6 +1211,7 @@ impl<S: Shaper> Layout<S> {
                 }
             }
             let hash = hash(&line, &runs);
+            shown.push((visual, frame.rows.len()));
             frame.rows.push(FrameRow::text_row(
                 across,
                 y,
@@ -1150,12 +1223,17 @@ impl<S: Shaper> Layout<S> {
             y += line.height;
         }
         // The cursors on the rows shown.
-        let last = shown.last().copied().unwrap_or(Visual {
-            row: 0,
-            segment: 0,
-            line: 0,
-        });
-        let from = frame.rows.first().map_or(0, |row| row.bytes.start);
+        let last = shown.last().map_or(
+            Visual {
+                row: 0,
+                segment: 0,
+                line: 0,
+            },
+            |(visual, _)| *visual,
+        );
+        let from = shown
+            .first()
+            .map_or(0, |(_, index)| frame.rows[*index].bytes.start);
         let to = snapshot
             .row_range(last.row)
             .map_or(snapshot.len(), |row| row.end);
@@ -1168,7 +1246,7 @@ impl<S: Shaper> Layout<S> {
             let Ok((visual, x)) = walker.locate(head) else {
                 continue;
             };
-            let Some(index) = shown.iter().position(|shown| *shown == visual) else {
+            let Some(&(_, index)) = shown.iter().find(|(shown, _)| *shown == visual) else {
                 continue;
             };
             let row = &frame.rows[index];
@@ -1217,7 +1295,7 @@ fn moved_back(snapshot: &Snapshot, selection: &Selection) -> Option<Selection> {
 
 /// The content hash of a row of `line` with `runs`: its glyphs and runs
 /// relative to its start, and its height.
-fn hash(line: &VisualLine, runs: &[(Range<usize>, Paint)]) -> u64 {
+pub(crate) fn hash(line: &VisualLine, runs: &[(Range<usize>, Paint)]) -> u64 {
     let mut hasher = DefaultHasher::new();
     line.height.to_bits().hash(&mut hasher);
     line.baseline.to_bits().hash(&mut hasher);
@@ -1246,8 +1324,8 @@ mod tests {
         BASE_BACKGROUND, BASE_FOREGROUND, Color, Face, FaceDef, Paint, Underline, UnderlineStyle,
     };
     use crate::scene::{
-        Cursor, CursorShape, Decoration, Divider, FixedSpans, Padding, Rect, Scene, Side, SpansAt,
-        StatusField, TextKey, TextRef, TextSpans, View, ViewId,
+        Block, Cursor, CursorShape, Decoration, Divider, FixedSpans, Padding, Rect, Scene, Side,
+        SpansAt, StatusField, TextKey, TextRef, TextSpans, View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
     use crate::shaper::scripted::{ScriptedShaper, glyph, line};
@@ -1382,6 +1460,7 @@ mod tests {
             status: vec![],
             status_face: None,
             padding: Padding::default(),
+            blocks: vec![],
         }
     }
 
@@ -2736,6 +2815,31 @@ mod tests {
              runs 0..1:cc0000ff/0000ccff 1..2:00cc00ff/0000ccff \
              boxes 0+10:0000ccff 10+20:0000ccff\n  \
              cursor block paint 000000ff/808080ff at 10 0 10 16\n"
+        );
+    }
+
+    #[test]
+    fn a_frame_is_described_with_its_block_rows() {
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        let mut shown = view("ab\ncd", 4, 48, 0, &[]);
+        shown.blocks = vec![Block {
+            before: 3,
+            text: "h".to_owned(),
+            decorations: vec![],
+        }];
+        let scene = Scene {
+            views: vec![shown],
+            ..Scene::default()
+        };
+        assert_eq!(
+            layout.frame(&scene).describe(),
+            "view 1 rect 0 0 40 48 background ffffffff selection ffffffff\n  \
+             row y 0 height 16 baseline 12 bytes 0..2 glyphs 97@0 98@10 \
+             runs 0..2:000000ff/ffffffff\n  \
+             block 0 row y 16 height 16 baseline 12 bytes 0..1 glyphs 104@0 \
+             runs 0..1:000000ff/ffffffff\n  \
+             row y 32 height 16 baseline 12 bytes 3..5 glyphs 99@0 100@10 \
+             runs 0..2:000000ff/ffffffff\n"
         );
     }
 
