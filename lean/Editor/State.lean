@@ -351,6 +351,41 @@ and `showBuffer` refuse it with `ofMinibuffer` and its view, and
 another window. `removeWindow` counts the list's windows alone, so the last
 ordinary window cannot be removed while a prompt is open.
 
+## Tabs
+
+A tab (`Tab`) is a whole arrangement of windows of its own, as a tmux
+window is: its tiled list, its docked windows, its floats, its layout and
+the one a zoom returns to, its focus, its last focused window, and the
+name it was given, if any. Buffers are not a tab's: every tab's windows
+show buffers of the one editor, and `EditorState.windows` holds every
+window of every tab, with its markers.
+
+**The frame extends the tab in view, as a zipper.** The tab in view is the
+frame's own fields (`Frame extends Tab`), and the others are kept before
+and after it (`Frame.tabsBefore`, `Frame.tabsAfter`), as xmonad's
+`StackSet` keeps its current workspace and the hidden ones. So every read
+of `frame.windows`, `frame.focused`, `frame.floats` and the rest is of the
+tab in view, and so is every operation above: `EditorState.views`,
+`rects`, `toward?`, `cycled` and the window operations read the tab in
+view alone. An index into the tabs cannot be out of range, since the
+zipper has none. What stays frame-wide is the frame's size, its focus,
+fullscreen, its corner and top insets, and the layout config chose
+(`Frame.chosen`).
+
+- `Frame.tabs` is every tab in order, `Frame.tabIndex` the index of the tab
+  in view, from 0, `Frame.everyWindow` every window of every tab, and
+  `Frame.tabOf?` the tab a window is a window of.
+- `Frame.selected index` moves the zipper so that the tab at `index` is in
+  view, each tab as it was; an index past the last changes nothing.
+  `Frame.withTabs` puts a new list of tabs in place, one of them in view.
+
+`wellFormed` is stated over every tab: each tab's tiled list is not empty,
+its layouts fit it, its docked windows' sides are edges of its layout, and
+its floats are anchored to its own tiled or docked windows. A hidden tab's
+focus is one of its own windows. The ids of every window of every tab,
+then the minibuffer's view, are distinct and are exactly the windows' ids,
+so no window is in two tabs.
+
 ## The wanted column
 
 A window keeps the column its vertical motions aim for, which survives
@@ -924,12 +959,12 @@ structure Window where
   wanted : Option Window.Wanted := none
   deriving DecidableEq, Repr
 
-/-- The one window of the platform, and how the editor's windows are
-arranged in it. -/
-structure Frame where
-  /-- Its size, in physical pixels. -/
-  size : Size
-  /-- The editor's tiled windows, by their views' names, in order: the first
+/-- One tab of the frame: a whole arrangement of windows of its own, as a
+tmux window is. Buffers are not a tab's: every tab's windows show buffers
+of the one editor ("Tabs", in the module docs). The tab in view is the
+frame's own fields (`Frame extends Tab`). -/
+structure Tab where
+  /-- The tab's tiled windows, by their views' names, in order: the first
   is main. The minibuffer's window is not among them, nor are the windows
   docked at an edge (`docked`). -/
   windows : Array ViewId
@@ -943,8 +978,68 @@ structure Frame where
   floats : Array Floating := #[]
   /-- How its windows are arranged (`Editor/Layout.lean`). -/
   layout : Layout := Layout.default
-  /-- The window that is focused within it. -/
+  /-- The window that is focused within it: in the tab in view, the
+  minibuffer's view while a prompt is open. -/
   focused : ViewId
+  /-- The layout a zoom left, to go back to: `some` while zoomed, when
+  `layout` is monocle. -/
+  zoomedFrom : Option Layout := none
+  /-- The window of the tab focused before the current one, Vim's
+  `prevwin`: set when the focus moves from one window of the tab to
+  another (`contains`), and never cleared, so a reader checks that it is
+  still in the tab. -/
+  lastFocused : Option ViewId := none
+  /-- The name the tab was given (`tab-rename`); none for the generated one,
+  its focused window's buffer's name (`EditorState.tabLabel`). -/
+  name : Option String := none
+  deriving DecidableEq, Repr
+
+namespace Tab
+
+/-- Every window of the tab: the tiled list, then the docked windows, then
+the floats in stacking order. The minibuffer's window is not among them. -/
+def all (tab : Tab) : Array ViewId :=
+  tab.windows ++ tab.docked.map (·.1) ++ tab.floats.map (·.view)
+
+/-- Whether `id` is a window of the tab: in the tiled list, docked at an
+edge, or floating. -/
+def contains (tab : Tab) (id : ViewId) : Bool :=
+  tab.windows.contains id || tab.docked.any (·.1 == id) || tab.floats.any (·.view == id)
+
+/-- Whether `id` is a tiled or a docked window of the tab: a window a float
+may be anchored to. A float is not, so placement never recurses. -/
+def anchors (tab : Tab) (id : ViewId) : Bool :=
+  tab.windows.contains id || tab.docked.any (·.1 == id)
+
+/-- The float `id`, if it is one of the tab's. -/
+def floating? (tab : Tab) (id : ViewId) : Option Floating :=
+  tab.floats.find? (·.view == id)
+
+/-- The side the window `id` is docked at; none for a window that is not
+docked. -/
+def sideOf? (tab : Tab) (id : ViewId) : Option Side :=
+  (tab.docked.find? (·.1 == id)).map (·.2)
+
+/-- The windows docked at `side`, in order. -/
+def atSide (tab : Tab) (side : Side) : Array ViewId :=
+  (tab.docked.filter (·.2 == side)).map (·.1)
+
+/-- The layout the windows are arranged by out of a zoom: the one zoom
+returns to while zoomed, and the tab's own otherwise. -/
+def underlying (tab : Tab) : Layout :=
+  tab.zoomedFrom.getD tab.layout
+
+end Tab
+
+/-- The one window of the platform: what is frame-wide, and the tabs of
+windows arranged in it. The tab in view is the frame's own fields (it
+extends `Tab`), so every read of `frame.windows`, `frame.focused` and the
+rest is of the tab in view; the tabs before it and after it are kept
+apart, in order (`tabsBefore`, `tabsAfter`), as xmonad's `StackSet` keeps
+its current workspace and the hidden ones ("Tabs", in the module docs). -/
+structure Frame extends Tab where
+  /-- Its size, in physical pixels. -/
+  size : Size
   /-- Whether it has the keyboard focus. -/
   hasFocus : Bool := true
   /-- Whether the window last said it is in the system's fullscreen
@@ -961,55 +1056,59 @@ structure Frame where
   what the views along the frame's top edge start their text below
   (`EditorState.topInset`). Nothing but a resize changes it. -/
   top : Nat := 0
-  /-- The layout a zoom left, to go back to: `some` while zoomed, when
-  `layout` is monocle. -/
-  zoomedFrom : Option Layout := none
-  /-- The window of the frame focused before the current one, Vim's
-  `prevwin`: set when the focus moves from one window of the frame to
-  another (`contains`), and never cleared, so a reader checks that it is
-  still in the frame. -/
-  lastFocused : Option ViewId := none
   /-- The layout config chose that the last publish applied (`Frame.choose`,
   `Loop.publish`): a publish handed the same one again leaves the frame's
-  layout, so a command's change to it lasts. -/
+  layout, so a command's change to it lasts. It is frame-wide: config's
+  layout rearranges the tab in view, and a new tab takes it. -/
   chosen : Option Layout := none
+  /-- The tabs before the one in view, in order. -/
+  tabsBefore : Array Tab := #[]
+  /-- The tabs after the one in view, in order. -/
+  tabsAfter : Array Tab := #[]
   deriving DecidableEq, Repr
 
 namespace Frame
 
-/-- Every window of the frame: the tiled list, then the docked windows, then
-the floats in stacking order. The minibuffer's window is not among them. -/
-def all (frame : Frame) : Array ViewId :=
-  frame.windows ++ frame.docked.map (·.1) ++ frame.floats.map (·.view)
+/-- Every tab of the frame, in order: the tabs before the one in view, the
+tab in view (the frame's own fields), and the tabs after it. -/
+def tabs (frame : Frame) : Array Tab :=
+  frame.tabsBefore ++ #[frame.toTab] ++ frame.tabsAfter
 
-/-- Whether `id` is a window of the frame: in the tiled list, docked at an
-edge, or floating. -/
-def contains (frame : Frame) (id : ViewId) : Bool :=
-  frame.windows.contains id || frame.docked.any (·.1 == id) || frame.floats.any (·.view == id)
+/-- The index of the tab in view among `tabs`, from 0; the tab bar and the
+keys count from 1. -/
+def tabIndex (frame : Frame) : Nat :=
+  frame.tabsBefore.size
 
-/-- Whether `id` is a tiled or a docked window of the frame: a window a float
-may be anchored to. A float is not, so placement never recurses. -/
-def anchors (frame : Frame) (id : ViewId) : Bool :=
-  frame.windows.contains id || frame.docked.any (·.1 == id)
+/-- Every window of every tab, tab by tab in order, each tab's in
+`Tab.all`'s order. The minibuffer's window is not among them. -/
+def everyWindow (frame : Frame) : Array ViewId :=
+  frame.tabs.flatMap Tab.all
 
-/-- The float `id`, if it is one of the frame's. -/
-def floating? (frame : Frame) (id : ViewId) : Option Floating :=
-  frame.floats.find? (·.view == id)
+/-- The index of the tab the window `id` is a window of, if it is one of a
+tab's. -/
+def tabOf? (frame : Frame) (id : ViewId) : Option Nat :=
+  frame.tabs.findIdx? (·.contains id)
+
+/-- The frame with `tabs` as its tabs and the one at `index` in view; the
+frame unchanged for an index past the last. -/
+def withTabs (frame : Frame) (tabs : Array Tab) (index : Nat) : Frame :=
+  match tabs[index]? with
+  | some tab =>
+    { frame with
+      toTab := tab, tabsBefore := tabs.extract 0 index
+      tabsAfter := tabs.extract (index + 1) tabs.size }
+  | none => frame
+
+/-- The frame with the tab at `index` in view, the zipper moved and every
+tab as it was; the frame unchanged for an index past the last. -/
+def selected (frame : Frame) (index : Nat) : Frame :=
+  frame.withTabs frame.tabs index
 
 /-- The frame with the float `id` changed by `change`; one that is not a
 float leaves it as it was. -/
 def withFloat (frame : Frame) (id : ViewId) (change : Floating → Floating) : Frame :=
   { frame with
     floats := frame.floats.map fun float => if float.view == id then change float else float }
-
-/-- The side the window `id` is docked at; none for a window that is not
-docked. -/
-def sideOf? (frame : Frame) (id : ViewId) : Option Side :=
-  (frame.docked.find? (·.1 == id)).map (·.2)
-
-/-- The windows docked at `side`, in order. -/
-def atSide (frame : Frame) (side : Side) : Array ViewId :=
-  (frame.docked.filter (·.2 == side)).map (·.1)
 
 /-- The frame with the windows docked at `side` replaced, in their places,
 by `views` in order: `views` is a reorder of `atSide side`. -/
@@ -1022,11 +1121,6 @@ def withSide (frame : Frame) (side : Side) (views : Array ViewId) : Frame :=
         | _, _ => (placed.push (view, at_), left))
       ((#[] : Array (ViewId × Side)), views)
   { frame with docked }
-
-/-- The layout the windows are arranged by out of a zoom: the one zoom
-returns to while zoomed, and the frame's own otherwise. -/
-def underlying (frame : Frame) : Layout :=
-  frame.zoomedFrom.getD frame.layout
 
 /-- The frame with `layout` as the layout the windows are arranged by out
 of a zoom (`underlying`): the one zoom returns to while zoomed, monocle
@@ -1651,28 +1745,35 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
     let top := if (state.rect? id).any (·.y == 0) then state.topInset else 0
     { across := state.padding, down := state.padding, top }
 
-/-- Whether the state keeps the layout invariants, over its views
-(`views`: the frame's windows, then the open prompt's view): the frame's
-layout, and the one a zoom returns to, fit its list of windows
-(`Layout.fitted`), every docked window's side is an edge of the layout
-out of a zoom (`Frame.underlying`, `Layout.edgeSides`), every float's
-anchor window is a tiled or docked window of the frame (`Frame.anchors`) and
-a position anchor's marker is of the text of that window's buffer, the
-focused window is among them, the views' ids are distinct and are exactly the windows' ids, and each window's buffer
-exists. And whether an open prompt's choice, if it has one, is an index of
-its listing, and whether every buffer of the order they were used in
-(`recent`) is open and is there once. -/
+/-- Whether the state keeps the layout invariants ("The window list, the
+layout and their invariants" and "Tabs", in the module docs). For every tab
+of the frame (`Frame.tabs`): its tiled list is not empty, its layout, and
+the one a zoom returns to, fit that list (`Layout.fitted`), every docked
+window's side is an edge of its layout out of a zoom (`Tab.underlying`,
+`Layout.edgeSides`), and every float's anchor window is a tiled or docked
+window of the same tab (`Tab.anchors`), a position anchor's marker of the
+text of that window's buffer. The tab in view's focused window is one of
+the state's views (`views`), and every other tab's is one of its own
+windows (`Tab.contains`). The ids of every window of every tab
+(`Frame.everyWindow`), then the open prompt's view, are distinct, are
+exactly the windows' ids, and each window's buffer exists. And whether an
+open prompt's choice, if it has one, is an index of its listing, and
+whether every buffer of the order they were used in (`recent`) is open and
+is there once. -/
 def wellFormed (state : EditorState) : Bool :=
-  let ids := state.views
-  let count := state.frame.windows.size
-  state.frame.layout.fitted count && state.frame.zoomedFrom.all (·.fitted count) &&
-    state.frame.docked.all (fun (_, side) => state.frame.underlying.edgeSides.contains side) &&
-    (state.frame.floats.all fun float =>
-      float.anchor.view?.all state.frame.anchors &&
-        match float.anchor with
-        | .position view marker => (state.target? view).any (·.buffer.text == marker.text)
-        | _ => true) &&
-    ids.contains state.frame.focused &&
+  let ids := state.frame.everyWindow ++ state.minibufferView?.toArray
+  let fits (tab : Tab) : Bool :=
+    let count := tab.windows.size
+    0 < count && tab.layout.fitted count && tab.zoomedFrom.all (·.fitted count) &&
+      tab.docked.all (fun (_, side) => tab.underlying.edgeSides.contains side) &&
+      tab.floats.all fun float =>
+        float.anchor.view?.all tab.anchors &&
+          match float.anchor with
+          | .position view marker => (state.target? view).any (·.buffer.text == marker.text)
+          | _ => true
+  state.frame.tabs.all fits &&
+    (state.frame.tabsBefore ++ state.frame.tabsAfter).all (fun tab => tab.contains tab.focused) &&
+    state.views.contains state.frame.focused &&
     ids.toList.eraseDups.length == ids.size &&
     ids.size == state.windows.size &&
     ids.all (fun id => (state.window? id).isSome) &&

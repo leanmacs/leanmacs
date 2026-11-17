@@ -7868,7 +7868,53 @@ def spoilings : List (String × (EditorState → EditorState)) :=
         frame :=
           { state.frame with
             windows := #[⟨0⟩, ⟨1⟩]
-            floats := #[{ view := ⟨2⟩, anchor := .position ⟨0⟩ ⟨⟨5⟩, 0⟩ }] } })]
+            floats := #[{ view := ⟨2⟩, anchor := .position ⟨0⟩ ⟨⟨5⟩, 0⟩ }] } }),
+    ("with a hidden tab whose tiled list is empty", fun state =>
+      { state with
+        frame :=
+          { state.frame with
+            windows := #[⟨0⟩, ⟨1⟩]
+            tabsAfter :=
+              #[{ windows := #[], floats := #[{ view := ⟨2⟩, anchor := .frame }]
+                  focused := ⟨2⟩ }] } }),
+    ("with a hidden tab whose focus is not one of its windows", fun state =>
+      { state with
+        frame :=
+          { state.frame with
+            windows := #[⟨0⟩, ⟨1⟩], tabsAfter := #[{ windows := #[⟨2⟩], focused := ⟨0⟩ }] } }),
+    ("with one window listed in two tabs, with as many entries as there are windows", fun state =>
+      { state with
+        frame :=
+          { state.frame with
+            windows := #[⟨0⟩, ⟨1⟩], tabsBefore := #[{ windows := #[⟨1⟩], focused := ⟨1⟩ }] } }),
+    ("with a hidden tab whose manual split tree does not fit its list", fun state =>
+      { state with
+        frame :=
+          { state.frame with
+            windows := #[⟨0⟩, ⟨1⟩]
+            tabsAfter :=
+              #[{ windows := #[⟨2⟩], focused := ⟨2⟩
+                  layout := .splits (.split .rows 1 1 .tile .tile) }] } }),
+    ("with a hidden tab's float anchored to a window of the tab in view", fun state =>
+      { state with
+        frame :=
+          { state.frame with
+            windows := #[⟨0⟩]
+            tabsAfter :=
+              #[{ windows := #[⟨1⟩], floats := #[{ view := ⟨2⟩, anchor := .window ⟨0⟩ }]
+                  focused := ⟨1⟩ }] } })]
+
+/-- `threeWindows` as three tabs: view 0 alone in the first, view 1 in the
+second, which is in view, and view 2 in the third, each focused on its one
+window under the default layout. -/
+def threeTabs : TextM EditorState := do
+  let state ← threeWindows
+  return { state with
+      frame :=
+        { state.frame with
+          windows := #[⟨1⟩], focused := ⟨1⟩
+          tabsBefore := #[{ windows := #[⟨0⟩], focused := ⟨0⟩ }]
+          tabsAfter := #[{ windows := #[⟨2⟩], focused := ⟨2⟩ }] } }
 
 /-- `state` with a prompt asked for from its focused view, and the reply: the
 label `Name: `, the continuation `asked`, and a minibuffer over the text
@@ -9285,7 +9331,51 @@ def stateChecks : List Check :=
                   (named ["other<2>", "other<3>"]).freeName "other" == "other<4>" &&
                   (named ["other<2>"]).freeName "other<2>" == "other<2><2>" },
         { name :=
-            "a state that breaks one layout invariant is not well formed: a focus outside the list, a window named twice, a list entry with no window, a window outside the list, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the list, a prompt whose choice is past its listing, an order of use that names a removed buffer or one buffer twice; and the same prompt with a choice in its listing is well formed"
+            "a frame of three tabs: its tabs in order, the one in view second at index 1, every window of every tab, and the tab of each window; none for a window of no tab"
+          run :=
+            pure <|
+              match onTextModel threeTabs with
+              | none => false
+              | some state =>
+                let frame := state.frame
+                frame.tabs.map (·.windows) == #[#[⟨0⟩], #[⟨1⟩], #[⟨2⟩]] &&
+                  frame.tabs[1]? == some frame.toTab &&
+                  frame.tabIndex == 1 &&
+                  frame.everyWindow == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
+                  [0, 1, 2].all (fun index => frame.tabOf? ⟨index⟩ == some index) &&
+                  frame.tabOf? ⟨7⟩ == none &&
+                  state.wellFormed },
+        { name :=
+            "selecting a tab of a frame of three tabs brings it into view, keeps the order of the tabs, and selecting the tab that was in view again gives back the frame it started from, for every tab; an index past the last changes nothing"
+          run :=
+            pure <|
+              match onTextModel threeTabs with
+              | none => false
+              | some state =>
+                let frame := state.frame
+                [0, 1, 2].all
+                    (fun index =>
+                      let moved := frame.selected index
+                      moved.tabIndex == index && moved.tabs == frame.tabs &&
+                        frame.tabs[index]? == some moved.toTab &&
+                        moved.selected frame.tabIndex == frame &&
+                        { state with frame := moved }.wellFormed) &&
+                  frame.selected 3 == frame },
+        { name := "a state of two tabs, each with its windows, layout and focus, is well formed"
+          run :=
+            pure <|
+              match onTextModel threeWindows with
+              | none => false
+              | some state =>
+                { state with
+                    frame :=
+                      { state.frame with
+                        windows := #[⟨0⟩, ⟨1⟩]
+                        tabsAfter :=
+                          #[{ windows := #[⟨2⟩], focused := ⟨2⟩,
+                              layout := .splits .tile }] } }.wellFormed },
+        { name :=
+            "a state that breaks one layout invariant is not well formed: a focus outside the list, a window named twice, a list entry with no window, a window outside the list, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the list, a prompt whose choice is past its listing, an order of use that names a removed buffer or one buffer twice, a hidden tab with no tile, a hidden tab focused outside itself, a window in two tabs, a hidden tab whose split tree does not fit its list, a hidden tab's float anchored in the tab in view; and the same prompt with a choice in its listing is well formed"
           run := do
             let some state := onTextModel threeWindows | return false
             -- A failure names the spoiled states that were taken for well formed.
