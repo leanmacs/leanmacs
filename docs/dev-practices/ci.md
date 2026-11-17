@@ -163,28 +163,43 @@ so macOS minutes are free. Its steps:
    (`GH_TOKEN`, the job's own). It compiles nothing. It refuses to run
    except on a push to `refs/heads/main`, reads `build.json` and the
    checksum back and refuses them unless they describe this build and
-   `Leanmacs.dmg`'s size, and re-checks both images' SHA-256. Then, each
-   step only if the one before it succeeded:
+   `Leanmacs.dmg`'s size. It copies `Leanmacs.dmg`, `Leanmacs.dmg.sha256`
+   and `build.json` to the same names with `.new` appended (an asset is
+   named after its file), and re-checks the SHA-256 of the build-ID copy
+   and of `Leanmacs.dmg.new`, the file that goes up. Then, each step only
+   if the one before it succeeded:
    1. on the first run, `gh release create nightly --prerelease --target
       <commit>`, which creates the tag at the commit;
-   2. upload `Leanmacs-<build-id>.dmg` (a new name, so the old nightly is
-      untouched), then `Leanmacs.dmg`, then `Leanmacs.dmg.sha256`, then
-      `build.json` last, so `build.json` never names a build whose `.dmg`
-      is not up yet, each with `--clobber`, which replaces an asset in
-      place;
-   3. move the tag to the commit through the API (`gh api --method PATCH
+   2. delete any `*.new` asset a failed run left behind;
+   3. upload `Leanmacs-<build-id>.dmg` (a new name, so the old nightly is
+      untouched), then `Leanmacs.dmg.new`, `Leanmacs.dmg.sha256.new` and
+      `build.json.new`, beside the old assets. Nothing is uploaded with
+      `--clobber` over a live name: `gh release upload --clobber` deletes
+      the old asset *before* uploading the new one, so the permanent link
+      would 404 for the whole upload and stay gone if it failed. A failed
+      upload here leaves the old nightly whole;
+   4. list the asset ids (`gh api repos/<repo>/releases/tags/nightly`) and,
+      for `Leanmacs.dmg`, then `Leanmacs.dmg.sha256`, then `build.json`
+      last, delete the old asset and rename the new one to its name
+      (`gh api --method DELETE` then `--method PATCH
+      repos/<repo>/releases/assets/<id> -f name=<name>`), so each name is
+      missing only between those two calls and `build.json` never names a
+      build whose `.dmg` is not up yet;
+   5. move the tag to the commit through the API (`gh api --method PATCH
       repos/<repo>/git/refs/tags/nightly`), so no git credentials are ever
       set up;
-   4. set the title, "Leanmacs nightly", and the notes, as a prerelease;
-   5. delete old build-ID copies: the release keeps the newest **10**
+   6. set the title, "Leanmacs nightly", and the notes, as a prerelease;
+   7. delete old build-ID copies: the release keeps the newest **10**
       `Leanmacs-<build-id>.dmg`, by build ID, the current one always among
       them, and never deletes the fixed names or a name it does not
       recognise.
 
 No step has an `if:`, so a failure before the last step leaves the
-previous nightly's assets and tag as they were. A failure partway through
-the uploads can leave a half-replaced nightly: the next green push fixes
-it.
+previous nightly's assets and tag as they were, and so does a failure in
+the uploads. A failure partway through the swaps can leave some names on
+the new build and the rest on the old one, or one name missing with its
+`.new` beside it: the next green push deletes the `.new` leftovers and
+fixes it.
 
 The assets, at permanent links under
 `https://github.com/leanmacs/leanmacs/releases/download/nightly/`:
@@ -381,7 +396,7 @@ lands, the owner confirms it live, in this order.
       run; the fork's `nightly` tag and assets are as before. A run where
       `release` was skipped does not count.
 12. **Repository settings.** If "immutable releases" is ever turned on,
-    the `--clobber` uploads fail, so leave it off for the `nightly`
+    the asset deletes and renames fail, so leave it off for the `nightly`
     prerelease. No tag ruleset may protect `nightly`: one would block the
     tag's move.
 

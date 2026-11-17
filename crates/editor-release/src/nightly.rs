@@ -23,8 +23,10 @@
 //! - [`read_build`]: the [`Build`] the prepared directory describes, read
 //!   back from its texts and the image's size, refusing any mismatch.
 //! - [`publish`]: the ordered `gh` calls that publish a prepared
-//!   directory, stopping at the first that fails, with [`prune`] deciding
-//!   which old build-ID copies to delete last.
+//!   directory, stopping at the first that fails: each asset it replaces
+//!   ([`SWAPPED`]) goes up under a [`staged`] name first and is swapped in
+//!   only once every upload succeeded, and [`prune`] decides which old
+//!   build-ID copies to delete last.
 
 use std::error::Error;
 use std::ffi::OsString;
@@ -48,6 +50,14 @@ pub const NOTES: &str = "notes.md";
 pub const TAG: &str = "nightly";
 /// The release's title.
 pub const TITLE: &str = "Leanmacs nightly";
+/// What [`publish`] appends to the name of each asset it replaces
+/// ([`SWAPPED`]) to upload the new one beside the old one, before swapping
+/// them.
+pub const STAGED: &str = ".new";
+/// The assets [`publish`] replaces by uploading under a [`STAGED`] name,
+/// then deleting the old one and renaming the new one, in this order:
+/// [`BUILD_JSON`] last, so it never names a build whose image is not up.
+pub const SWAPPED: [&str; 3] = [FIXED, SHA256, BUILD_JSON];
 /// How many build-ID copies of the image the release keeps, the newest by
 /// build ID.
 pub const KEEP: usize = 10;
@@ -846,6 +856,9 @@ pub enum PublishError {
     },
     /// `shasum` printed no digest.
     Shasum(String),
+    /// After the uploads, the release lists no asset of this name with a
+    /// numeric id.
+    NotListed(String),
     /// An image in the directory is not the one its checksum names.
     Hash {
         /// The image.
@@ -862,6 +875,7 @@ impl fmt::Display for PublishError {
         match self {
             Self::Run { command, source } => write!(f, "`{command}` failed: {source}"),
             Self::Shasum(output) => write!(f, "shasum printed `{output}`, not a SHA-256"),
+            Self::NotListed(name) => write!(f, "the {TAG} release lists no asset {name}"),
             Self::Hash {
                 file,
                 expected,
@@ -879,7 +893,7 @@ impl Error for PublishError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Run { source, .. } => Some(source),
-            Self::Shasum(_) | Self::Hash { .. } => None,
+            Self::Shasum(_) | Self::NotListed(_) | Self::Hash { .. } => None,
         }
     }
 }
@@ -895,23 +909,55 @@ where
         .args(["--repo", repo.as_str()])
 }
 
+/// `name` with [`STAGED`] appended: the name its replacement is uploaded
+/// under.
+#[must_use]
+pub fn staged(name: &str) -> String {
+    format!("{name}{STAGED}")
+}
+
+/// The numeric id of each asset `gh api repos/<repo>/releases/tags/<tag>
+/// --jq '.assets[] | "\(.id) \(.name)"'` printed, by name; lines of any
+/// other form are skipped.
+fn asset_ids(listing: &str) -> Vec<(String, String)> {
+    listing
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .filter(|(id, name)| {
+            !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) && !name.is_empty()
+        })
+        .map(|(id, name)| (name.to_owned(), id.to_owned()))
+        .collect()
+}
+
 /// Publishes the nightly prepared in `dir` as `build` to `repo`, in this
 /// order, stopping at the first step that fails:
 ///
 /// 1. list the releases' tags, to learn whether [`TAG`] exists, and if it
-///    does, list its assets, the input to [`prune`];
-/// 2. check both images' SHA-256 against the build's, so nothing goes up
-///    that is not what was checked;
-/// 3. if the release does not exist, create it as a prerelease, which
+///    does, list its asset names, the input to [`prune`];
+/// 2. copy each of [`SWAPPED`] to its [`staged`] name in `dir`, since `gh
+///    release upload` names an asset after its file;
+/// 3. check the build-ID copy's and the staged [`FIXED`]'s SHA-256 against
+///    the build's, so nothing goes up that is not what was checked;
+/// 4. if the release does not exist, create it as a prerelease, which
 ///    creates the tag at the build's commit;
-/// 4. upload the build-ID copy (a new name, so the old nightly is
-///    untouched), then [`FIXED`], [`SHA256`] and [`BUILD_JSON`] last, so
-///    the page never names a build whose image is not up yet, each
-///    replacing an asset of the same name;
-/// 5. move the tag to the build's commit through the API (no git
+/// 5. delete any [`staged`] asset a failed run left behind;
+/// 6. upload the build-ID copy (a new name, so the old nightly is
+///    untouched; `--clobber` only matters when a run of the same build is
+///    retried), then the staged [`FIXED`], [`SHA256`] and [`BUILD_JSON`].
+///    None of them replaces an asset of the nightly's: `gh release upload
+///    --clobber` deletes the old asset before uploading the new one, so
+///    the permanent link would 404 for the whole upload, and stay gone if
+///    the upload failed. A failed upload here leaves the old assets as
+///    they were;
+/// 7. list the release's asset ids, then, for each of [`SWAPPED`] in its
+///    order, [`BUILD_JSON`] last, delete the old asset (if any) and rename
+///    the staged one to its name through the API, so a name is missing
+///    only between those two calls;
+/// 8. move the tag to the build's commit through the API (no git
 ///    credentials);
-/// 6. set the release's title and body ([`NOTES`]), as a prerelease;
-/// 7. delete the old build-ID copies [`prune`] names, keeping [`KEEP`].
+/// 9. set the release's title and body ([`NOTES`]), as a prerelease;
+/// 10. delete the old build-ID copies [`prune`] names, keeping [`KEEP`].
 ///
 /// # Errors
 ///
@@ -965,8 +1011,13 @@ pub fn publish(
     } else {
         Vec::new()
     };
+    for name in SWAPPED {
+        run(Invocation::new("cp")
+            .arg(dir.join(name))
+            .arg(dir.join(staged(name))))?;
+    }
     let copy = dir.join(build.copy_name());
-    let fixed = dir.join(FIXED);
+    let fixed = dir.join(staged(FIXED));
     for image in [&copy, &fixed] {
         let found = parse_shasum(&run(shasum(image))?).map_err(PublishError::Shasum)?;
         if found != build.sha256 {
@@ -1000,15 +1051,49 @@ pub fn publish(
             .chain(title_and_notes());
         run(gh(repo, args))?;
     }
-    for file in [copy, fixed, dir.join(SHA256), dir.join(BUILD_JSON)] {
-        let args: [OsString; 5] = [
-            "release".into(),
-            "upload".into(),
-            TAG.into(),
-            file.into(),
-            "--clobber".into(),
-        ];
-        run(gh(repo, args))?;
+    for name in SWAPPED.map(staged) {
+        if assets.contains(&name) {
+            run(gh(repo, ["release", "delete-asset", TAG, &name, "--yes"]))?;
+        }
+    }
+    let upload = |file: PathBuf| -> [OsString; 4] {
+        ["release".into(), "upload".into(), TAG.into(), file.into()]
+    };
+    run(gh(
+        repo,
+        upload(copy).into_iter().chain(["--clobber".into()]),
+    ))?;
+    for name in SWAPPED {
+        run(gh(repo, upload(dir.join(staged(name)))))?;
+    }
+    let ids = asset_ids(&run(Invocation::new("gh")
+        .arg("api")
+        .arg(format!("repos/{repo}/releases/tags/{TAG}"))
+        .args(["--jq", r#".assets[] | "\(.id) \(.name)""#])
+        .captured())?);
+    let id_of = |name: &str| {
+        ids.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, id)| id.clone())
+    };
+    let mut swaps = Vec::new();
+    for name in SWAPPED {
+        let new = id_of(&staged(name)).ok_or_else(|| PublishError::NotListed(staged(name)))?;
+        swaps.push((name, id_of(name), new));
+    }
+    let asset = |id: &str| format!("repos/{repo}/releases/assets/{id}");
+    for (name, old, new) in swaps {
+        if let Some(old) = old {
+            run(Invocation::new("gh")
+                .args(["api", "--method", "DELETE"])
+                .arg(asset(&old))
+                .captured())?;
+        }
+        run(Invocation::new("gh")
+            .args(["api", "--method", "PATCH"])
+            .arg(asset(&new))
+            .args(["-f", &format!("name={name}")])
+            .captured())?;
     }
     run(Invocation::new("gh")
         .args(["api", "--method", "PATCH"])
@@ -1528,6 +1613,61 @@ mod tests {
     }
 
     #[test]
+    fn prepare_copies_nothing_when_shasum_fails() {
+        let mut process = mounted(ID, SHA, &["shasum "]);
+        let error = prepare(&mut process, &inputs(), &id(), &commit(), &leanmacs())
+            .expect_err("shasum fails");
+        assert_eq!(
+            error,
+            PrepareError::Run {
+                command: format!("shasum -a 256 {IMAGE}"),
+                source: RunError::Failed(Some(1)),
+            }
+        );
+        assert!(process.runs.iter().all(|i| i.program != "cp"));
+    }
+
+    #[test]
+    fn prepare_copies_nothing_when_shasum_prints_no_digest() {
+        let mut process = RecordingProcess::new(|i: &Invocation| {
+            let line = i.to_string();
+            Ok(if line.contains("CFBundleVersion") {
+                ID.into()
+            } else if line.contains("LeanmacsCommit") {
+                SHA.into()
+            } else if i.program == "shasum" {
+                b"garbage\n".to_vec()
+            } else {
+                Vec::new()
+            })
+        });
+        let error =
+            prepare(&mut process, &inputs(), &id(), &commit(), &leanmacs()).expect_err("refused");
+        assert_eq!(error, PrepareError::Shasum("garbage".into()));
+        assert!(process.runs.iter().all(|i| i.program != "cp"));
+    }
+
+    #[test]
+    fn prepare_refuses_an_image_path_with_no_file_name_and_runs_nothing() {
+        for image in ["/", "/w/dist/.."] {
+            let mut process = mounted(ID, SHA, &[]);
+            let error = prepare(
+                &mut process,
+                &Inputs {
+                    image: Path::new(image),
+                    ..inputs()
+                },
+                &id(),
+                &commit(),
+                &leanmacs(),
+            )
+            .expect_err("refused");
+            assert_eq!(error, PrepareError::NoFileName(PathBuf::from(image)));
+            assert!(process.runs.is_empty(), "{image}");
+        }
+    }
+
+    #[test]
     fn read_build_reads_back_what_prepare_wrote() {
         let b = build();
         assert_eq!(
@@ -1614,53 +1754,145 @@ mod tests {
 
     const DIR: &str = "/w/target/nightly";
 
-    /// A process for `publish`: `gh release list` prints `tags`, `gh
-    /// release view` prints `assets`, `shasum` prints `digest`, and the
-    /// first invocation whose line starts with `failing` fails.
-    fn github(
+    /// What a fake GitHub answers `publish` with.
+    struct Github {
+        /// What `gh release list` prints.
         tags: &'static str,
-        assets: &'static str,
-        digest: &'static str,
-        failing: Option<&'static str>,
-    ) -> RecordingProcess<impl FnMut(&Invocation) -> Result<Vec<u8>, RunError>> {
-        RecordingProcess::new(move |i: &Invocation| {
-            let line = i.to_string();
-            if failing.is_some_and(|f| line.starts_with(f)) {
-                return Err(RunError::Failed(Some(1)));
+        /// What `gh release view` prints.
+        assets: String,
+        /// What `gh api repos/<repo>/releases/tags/nightly` prints.
+        ids: &'static str,
+        /// `shasum`'s digest for a path, [`HEX`] for any other.
+        digests: Vec<(String, String)>,
+        /// The first invocation whose line starts with this fails.
+        failing: Option<String>,
+    }
+
+    /// After the uploads: the old nightly's three swapped assets, and the
+    /// three staged ones.
+    const IDS: &str = "101 Leanmacs.dmg\n102 Leanmacs.dmg.sha256\n103 build.json\n201 Leanmacs.dmg.new\n202 Leanmacs.dmg.sha256.new\n203 build.json.new\n";
+    /// After the uploads on the first run: only the staged ones.
+    const FIRST_IDS: &str =
+        "201 Leanmacs.dmg.new\n202 Leanmacs.dmg.sha256.new\n203 build.json.new\n";
+
+    impl Github {
+        /// An existing nightly with these assets.
+        fn existing(assets: &str) -> Self {
+            Self {
+                tags: "v0.1\nnightly\n",
+                assets: assets.to_owned(),
+                ids: IDS,
+                digests: Vec::new(),
+                failing: None,
             }
-            Ok(if line.starts_with("gh release list") {
-                tags.into()
-            } else if line.starts_with("gh release view") {
-                assets.into()
-            } else if i.program == "shasum" {
-                format!("{digest}  x\n").into_bytes()
-            } else {
-                Vec::new()
+        }
+
+        /// No nightly yet.
+        fn first_run() -> Self {
+            Self {
+                tags: "v0.1\nnightly-old\n",
+                assets: String::new(),
+                ids: FIRST_IDS,
+                digests: Vec::new(),
+                failing: None,
+            }
+        }
+
+        fn failing(self, line: &str) -> Self {
+            Self {
+                failing: Some(line.to_owned()),
+                ..self
+            }
+        }
+
+        fn digest(mut self, path: &str, digest: &str) -> Self {
+            self.digests.push((path.to_owned(), digest.to_owned()));
+            self
+        }
+
+        fn process(self) -> RecordingProcess<impl FnMut(&Invocation) -> Result<Vec<u8>, RunError>> {
+            RecordingProcess::new(move |i: &Invocation| {
+                let line = i.to_string();
+                if self.failing.as_ref().is_some_and(|f| line.starts_with(f)) {
+                    return Err(RunError::Failed(Some(1)));
+                }
+                Ok(if line.starts_with("gh release list") {
+                    self.tags.into()
+                } else if line.starts_with("gh release view") {
+                    self.assets.clone().into_bytes()
+                } else if line.starts_with("gh api repos/leanmacs/leanmacs/releases/tags/nightly") {
+                    self.ids.into()
+                } else if i.program == "shasum" {
+                    let path = i.args[2].to_string_lossy();
+                    let digest = self
+                        .digests
+                        .iter()
+                        .find(|(p, _)| *p == path)
+                        .map_or(HEX, |(_, d)| d.as_str());
+                    format!("{digest}  {path}\n").into_bytes()
+                } else {
+                    Vec::new()
+                })
             })
-        })
+        }
     }
 
     const LIST: &str =
         "gh release list --limit 1000 --json tagName --jq .[].tagName --repo leanmacs/leanmacs";
     const VIEW: &str =
         "gh release view nightly --json assets --jq .assets[].name --repo leanmacs/leanmacs";
+    const ASSET_IDS: &str = r#"gh api repos/leanmacs/leanmacs/releases/tags/nightly --jq .assets[] | "\(.id) \(.name)""#;
 
-    fn sums() -> Vec<String> {
+    /// Staging the three swapped assets, then checking both images.
+    fn stage_and_sum() -> Vec<String> {
         vec![
+            format!("cp {DIR}/Leanmacs.dmg {DIR}/Leanmacs.dmg.new"),
+            format!("cp {DIR}/Leanmacs.dmg.sha256 {DIR}/Leanmacs.dmg.sha256.new"),
+            format!("cp {DIR}/build.json {DIR}/build.json.new"),
             format!("shasum -a 256 {DIR}/Leanmacs-20010203040506.dmg"),
-            format!("shasum -a 256 {DIR}/Leanmacs.dmg"),
+            format!("shasum -a 256 {DIR}/Leanmacs.dmg.new"),
         ]
     }
 
-    fn uploads_to_prune() -> Vec<String> {
-        let upload = |f: &str| {
-            format!("gh release upload nightly {DIR}/{f} --clobber --repo leanmacs/leanmacs")
-        };
+    fn upload(file: &str) -> String {
+        format!("gh release upload nightly {DIR}/{file} --repo leanmacs/leanmacs")
+    }
+
+    fn uploads() -> Vec<String> {
         vec![
-            upload("Leanmacs-20010203040506.dmg"),
-            upload("Leanmacs.dmg"),
-            upload("Leanmacs.dmg.sha256"),
-            upload("build.json"),
+            format!(
+                "gh release upload nightly {DIR}/Leanmacs-20010203040506.dmg --clobber --repo leanmacs/leanmacs"
+            ),
+            upload("Leanmacs.dmg.new"),
+            upload("Leanmacs.dmg.sha256.new"),
+            upload("build.json.new"),
+            ASSET_IDS.to_owned(),
+        ]
+    }
+
+    fn delete(id: u32) -> String {
+        format!("gh api --method DELETE repos/leanmacs/leanmacs/releases/assets/{id}")
+    }
+
+    fn rename(id: u32, name: &str) -> String {
+        format!("gh api --method PATCH repos/leanmacs/leanmacs/releases/assets/{id} -f name={name}")
+    }
+
+    /// Each old asset deleted just before its staged one takes its name,
+    /// `build.json` last.
+    fn swaps() -> Vec<String> {
+        vec![
+            delete(101),
+            rename(201, "Leanmacs.dmg"),
+            delete(102),
+            rename(202, "Leanmacs.dmg.sha256"),
+            delete(103),
+            rename(203, "build.json"),
+        ]
+    }
+
+    fn tag_and_edit() -> Vec<String> {
+        vec![
             format!(
                 "gh api --method PATCH repos/leanmacs/leanmacs/git/refs/tags/nightly -f sha={SHA} -F force=true"
             ),
@@ -1670,108 +1902,251 @@ mod tests {
         ]
     }
 
+    fn create() -> String {
+        format!(
+            "gh release create nightly --prerelease --target {SHA} --title Leanmacs nightly --notes-file {DIR}/notes.md --repo leanmacs/leanmacs"
+        )
+    }
+
+    fn delete_asset(name: &str) -> String {
+        format!("gh release delete-asset nightly {name} --yes --repo leanmacs/leanmacs")
+    }
+
     fn repo() -> Repo {
         leanmacs().repo
     }
 
-    #[test]
-    fn publish_updates_an_existing_nightly_in_order_and_prunes_last() {
-        let assets = "Leanmacs.dmg\nLeanmacs.dmg.sha256\nbuild.json\nLeanmacs-20000101000000.dmg\nLeanmacs-20000102000000.dmg\n";
-        let mut process = github("v0.1\nnightly\n", assets, HEX, None);
-        // With two old copies, under KEEP, nothing is pruned; the next
-        // test has more.
-        publish(&mut process, &repo(), Path::new(DIR), &build()).expect("published");
-        let mut expected = vec![LIST.to_owned(), VIEW.to_owned()];
-        expected.extend(sums());
-        expected.extend(uploads_to_prune());
-        assert_eq!(lines(&process.runs), expected);
-        assert!(process.runs[0].captured && process.runs[1].captured);
-    }
+    const ASSETS: &str = "Leanmacs.dmg\nLeanmacs.dmg.sha256\nbuild.json\nLeanmacs-20000101000000.dmg\nLeanmacs-20000102000000.dmg\n";
 
-    #[test]
-    fn publish_deletes_what_prune_names_after_everything_else() {
-        let assets: String = (1..=12)
+    /// Twelve old copies, three of them over [`KEEP`] counting the current
+    /// one, and a staged image a failed run left behind.
+    fn crowded() -> String {
+        let mut assets: String = (1..=12)
             .map(|d| format!("Leanmacs-200001{d:02}000000.dmg\n"))
             .collect();
-        let assets: &'static str = Box::leak(assets.into_boxed_str());
-        let mut process = github("nightly\n", assets, HEX, None);
-        publish(&mut process, &repo(), Path::new(DIR), &build()).expect("published");
-        let tail: Vec<String> = lines(&process.runs)[2 + 2 + 6..].to_vec();
-        assert_eq!(
-            tail,
-            ["01", "02", "03"]
-                .map(|d| format!("gh release delete-asset nightly Leanmacs-200001{d}000000.dmg --yes --repo leanmacs/leanmacs"))
+        assets.push_str("Leanmacs.dmg\nLeanmacs.dmg.sha256\nbuild.json\nLeanmacs.dmg.new\n");
+        assets
+    }
+
+    fn concat(parts: &[Vec<String>]) -> Vec<String> {
+        parts.concat()
+    }
+
+    /// What `publish` runs when nothing fails: with the old nightly's
+    /// assets `ASSETS` (nothing pruned), on the first run, and with
+    /// [`crowded`] assets.
+    fn successes() -> [(Github, Vec<String>); 3] {
+        let mut crowded_runs = vec![LIST.to_owned(), VIEW.to_owned()];
+        crowded_runs.extend(stage_and_sum());
+        crowded_runs.push(delete_asset("Leanmacs.dmg.new"));
+        crowded_runs.extend(uploads());
+        crowded_runs.extend(swaps());
+        crowded_runs.extend(tag_and_edit());
+        crowded_runs.extend(
+            ["01", "02", "03"].map(|d| delete_asset(&format!("Leanmacs-200001{d}000000.dmg"))),
         );
+        [
+            (
+                Github::existing(ASSETS),
+                concat(&[
+                    vec![LIST.to_owned(), VIEW.to_owned()],
+                    stage_and_sum(),
+                    uploads(),
+                    swaps(),
+                    tag_and_edit(),
+                ]),
+            ),
+            (
+                Github::first_run(),
+                concat(&[
+                    vec![LIST.to_owned()],
+                    stage_and_sum(),
+                    vec![create()],
+                    uploads(),
+                    vec![
+                        rename(201, "Leanmacs.dmg"),
+                        rename(202, "Leanmacs.dmg.sha256"),
+                        rename(203, "build.json"),
+                    ],
+                    tag_and_edit(),
+                ]),
+            ),
+            (Github::existing(&crowded()), crowded_runs),
+        ]
     }
 
     #[test]
-    fn publish_creates_the_nightly_at_the_commit_on_the_first_run() {
-        let mut process = github("v0.1\nnightly-old\n", "", HEX, None);
-        publish(&mut process, &repo(), Path::new(DIR), &build()).expect("published");
-        let mut expected = vec![LIST.to_owned()];
-        expected.extend(sums());
-        expected.push(format!(
-            "gh release create nightly --prerelease --target {SHA} --title Leanmacs nightly --notes-file {DIR}/notes.md --repo leanmacs/leanmacs"
-        ));
-        expected.extend(uploads_to_prune());
-        assert_eq!(lines(&process.runs), expected);
+    fn publish_stages_uploads_swaps_then_tags_edits_and_prunes_in_order() {
+        for (github, expected) in successes() {
+            let mut process = github.process();
+            publish(&mut process, &repo(), Path::new(DIR), &build()).expect("published");
+            assert_eq!(lines(&process.runs), expected);
+            assert!(process.runs[0].captured);
+            assert!(
+                process
+                    .runs
+                    .iter()
+                    .filter(|i| i.to_string().starts_with("gh api"))
+                    .all(|i| i.captured)
+            );
+        }
+    }
+
+    #[test]
+    fn publish_never_clobbers_a_swapped_asset() {
+        for (github, _) in successes() {
+            let mut process = github.process();
+            publish(&mut process, &repo(), Path::new(DIR), &build()).expect("published");
+            for line in lines(&process.runs) {
+                assert!(
+                    !line.contains("--clobber") || line.contains("Leanmacs-20010203040506.dmg"),
+                    "{line}"
+                );
+            }
+        }
     }
 
     #[test]
     fn publish_uploads_nothing_when_an_image_is_not_the_checked_one() {
-        let other: &'static str = Box::leak("f".repeat(64).into_boxed_str());
-        let mut process = github("nightly\n", "", other, None);
+        let other = "f".repeat(64);
+        for path in [
+            format!("{DIR}/Leanmacs-20010203040506.dmg"),
+            format!("{DIR}/Leanmacs.dmg.new"),
+        ] {
+            let mut process = Github::existing(ASSETS).digest(&path, &other).process();
+            let error =
+                publish(&mut process, &repo(), Path::new(DIR), &build()).expect_err("refused");
+            assert_eq!(
+                error,
+                PublishError::Hash {
+                    file: PathBuf::from(&path),
+                    expected: build().sha256,
+                    found: Sha256::parse(&other).expect("a digest"),
+                }
+            );
+            assert_eq!(
+                process.runs.last().map(ToString::to_string),
+                Some(format!("shasum -a 256 {path}"))
+            );
+            assert!(process.runs.iter().all(|i| i.program != "gh"
+                || i.to_string().starts_with("gh release list")
+                || i.to_string().starts_with("gh release view")));
+        }
+    }
+
+    #[test]
+    fn publish_uploads_nothing_when_shasum_prints_no_digest() {
+        let mut process = Github::existing(ASSETS)
+            .digest(&format!("{DIR}/Leanmacs.dmg.new"), "garbage")
+            .process();
         let error = publish(&mut process, &repo(), Path::new(DIR), &build()).expect_err("refused");
-        assert!(matches!(error, PublishError::Hash { .. }), "{error:?}");
+        assert_eq!(
+            error,
+            PublishError::Shasum(format!("garbage  {DIR}/Leanmacs.dmg.new"))
+        );
         assert!(
             process
                 .runs
                 .iter()
                 .all(|i| !i.to_string().contains("upload"))
         );
-        assert!(
-            process
-                .runs
-                .iter()
-                .all(|i| !i.to_string().contains("create"))
-        );
     }
 
     #[test]
     fn publish_stops_at_each_step_that_fails() {
-        let mut all = vec![LIST.to_owned(), VIEW.to_owned()];
-        all.extend(sums());
-        all.extend(uploads_to_prune());
-        for (at, line) in all.iter().enumerate() {
-            let failing: &'static str = Box::leak(line.clone().into_boxed_str());
-            let mut process = github("nightly\n", "", HEX, Some(failing));
-            let error = publish(&mut process, &repo(), Path::new(DIR), &build()).expect_err(line);
-            assert!(
-                matches!(&error, PublishError::Run { command, .. } if command == line),
-                "{error:?}"
-            );
-            assert_eq!(
-                lines(&process.runs),
-                all[..=at].to_vec(),
-                "failing at {line}"
-            );
+        for (github, all) in successes() {
+            let Github {
+                tags,
+                assets,
+                ids,
+                digests,
+                ..
+            } = github;
+            for (at, line) in all.iter().enumerate() {
+                let mut process = Github {
+                    tags,
+                    assets: assets.clone(),
+                    ids,
+                    digests: digests.clone(),
+                    failing: Some(line.clone()),
+                }
+                .process();
+                let error =
+                    publish(&mut process, &repo(), Path::new(DIR), &build()).expect_err(line);
+                assert!(
+                    matches!(&error, PublishError::Run { command, .. } if command == line),
+                    "{error:?}"
+                );
+                assert_eq!(
+                    lines(&process.runs),
+                    all[..=at].to_vec(),
+                    "failing at {line}"
+                );
+            }
         }
     }
 
     #[test]
-    fn a_failed_upload_moves_no_tag() {
-        let mut process = github(
-            "nightly\n",
-            "",
-            HEX,
-            Some("gh release upload nightly /w/target/nightly/Leanmacs.dmg "),
-        );
+    fn a_failed_create_uploads_renames_tags_and_edits_nothing() {
+        let mut process = Github::first_run().failing(&create()).process();
         assert!(publish(&mut process, &repo(), Path::new(DIR), &build()).is_err());
+        assert_eq!(process.runs.last().map(ToString::to_string), Some(create()));
+        for line in lines(&process.runs) {
+            for later in ["gh release upload", "gh api", "gh release edit"] {
+                assert!(!line.starts_with(later), "{line}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_failed_prune_stops_there() {
+        let doomed = delete_asset("Leanmacs-20000102000000.dmg");
+        let mut process = Github::existing(&crowded()).failing(&doomed).process();
+        let error = publish(&mut process, &repo(), Path::new(DIR), &build()).expect_err("fails");
+        assert!(
+            matches!(&error, PublishError::Run { command, .. } if *command == doomed),
+            "{error:?}"
+        );
+        assert_eq!(process.runs.last().map(ToString::to_string), Some(doomed));
         assert!(
             process
                 .runs
                 .iter()
-                .all(|i| !i.to_string().starts_with("gh api"))
+                .all(|i| !i.to_string().contains("Leanmacs-20000103000000.dmg"))
+        );
+    }
+
+    #[test]
+    fn a_failed_staged_upload_leaves_the_old_assets_and_the_tag_alone() {
+        for staged in [
+            "Leanmacs.dmg.new",
+            "Leanmacs.dmg.sha256.new",
+            "build.json.new",
+        ] {
+            let mut process = Github::existing(ASSETS).failing(&upload(staged)).process();
+            assert!(publish(&mut process, &repo(), Path::new(DIR), &build()).is_err());
+            for line in lines(&process.runs) {
+                assert!(!line.starts_with("gh api"), "{line}");
+                assert!(!line.contains("delete-asset"), "{line}");
+                assert!(
+                    !line.contains("--clobber") || line.contains("20010203040506"),
+                    "{line}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn publish_refuses_to_swap_when_a_staged_asset_is_not_listed() {
+        let mut github = Github::existing(ASSETS);
+        github.ids =
+            "101 Leanmacs.dmg\n201 Leanmacs.dmg.new\n202 Leanmacs.dmg.sha256.new\nnot a line\n";
+        let mut process = github.process();
+        let error = publish(&mut process, &repo(), Path::new(DIR), &build()).expect_err("refused");
+        assert_eq!(error, PublishError::NotListed("build.json.new".into()));
+        assert_eq!(
+            process.runs.last().map(ToString::to_string),
+            Some(ASSET_IDS.to_owned())
         );
     }
 }
