@@ -15619,7 +15619,15 @@ def vimDefaultChecks : List Check :=
             (Vim.Default.keymap Vim.Default.windowCommands).bindings.length ==
               Vim.Default.windowKeys.length &&
             Vim.Default.windowKeys.all fun (text, name) =>
-              vimDefaultCommand text == some { name } && registered.contains name }]
+              vimDefaultCommand text == some { name } && registered.contains name },
+    { name :=
+        "C-w H, C-w J, C-w K and C-w L run the commands that move a window to the left, bottom, top and right edge and back, each changing no text and entering no state"
+      run :=
+        pure <|
+          [("C-w H", WindowCommands.edgeLeftName), ("C-w J", WindowCommands.edgeBottomName),
+                ("C-w K", WindowCommands.edgeTopName), ("C-w L", WindowCommands.edgeRightName)].all
+            fun (text, name) =>
+            vimDefaultCommand text == some { name } && (vimDefault text).2.head? == some .nothing }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/
@@ -26804,7 +26812,60 @@ area. -/
 def windowCommandChecks : List Check :=
   let manual (count : Nat) (typed : String) (focus : Nat := 0) : Option EditorState :=
     windowsAfter count Layout.manual typed focus
+  let edged := Layout.edge .left 25 Layout.default
   [{  name :=
+        "criterion 3, by key: under a layout with a left edge, C-w H docks the window at the left edge, in its strip, focused; C-w l and C-w h move between it and main; C-w C-c closes it and the strip goes; docked again, C-w m makes it main; C-w H again moves it back to the end of the list"
+      run :=
+        pure <|
+          let after (typed : String) : Option EditorState := windowsAfter 2 edged typed 1
+          match after "C-w H", after "C-w H C-w l", after "C-w H C-w l C-w h",
+            after "C-w H C-w C-c", after "C-w H C-w m", after "C-w H C-w H" with
+          | some docked, some right, some left, some closed, some promoted, some back =>
+            windowOrder docked == ([0], 1) && docked.frame.docked == #[(⟨1⟩, .left)] &&
+              windowRects docked == [(0, 160, 0, 480, 464), (1, 0, 0, 160, 464)] &&
+              docked.wellFormed &&
+              right.frame.focused == ⟨0⟩ &&
+              left.frame.focused == ⟨1⟩ &&
+              windowOrder closed == ([0], 0) &&
+              closed.frame.docked == #[] &&
+              windowRects closed == [(0, 0, 0, 640, 464)] &&
+              windowOrder promoted == ([1, 0], 1) &&
+              promoted.frame.docked == #[] &&
+              windowOrder back == ([0, 1], 1) &&
+              back.frame.docked == #[] &&
+              windowRects back == [(0, 0, 0, 320, 464), (1, 320, 0, 320, 464)]
+          | _, _, _, _, _, _ => false },
+    { name :=
+        "C-w L under a layout with no right edge is refused, and the echo area says so with the command's name; C-w H on the last tile is refused with lastTile"
+      run :=
+        pure <|
+          match windowsAfter 2 edged "C-w L" 1, windowsAfter 1 edged "C-w H" with
+          | some refused, some last =>
+            refused.echo == s!"{WindowCommands.edgeRightName}: the layout has no right edge" &&
+              windowOrder refused == ([0, 1], 1) &&
+              refused.frame.docked == #[] &&
+              last.echo == s!"{WindowCommands.edgeLeftName}: {LayoutRefusal.lastTile.describe}" &&
+              windowOrder last == ([0], 0)
+          | _, _ => false },
+    { name :=
+        "C-w o from a docked window is refused, as Emacs refuses a side window as the only window, and the echo area says why; from main it closes every other window, the docked one too; C-w b and C-w t reach the docked window and main, and C-w p goes back to the docked window"
+      run :=
+        pure <|
+          let after (typed : String) : Option EditorState := windowsAfter 3 edged typed 2
+          match after "C-w H C-w o", after "C-w H C-w l C-w o", after "C-w H C-w t",
+            after "C-w H C-w t C-w b", after "C-w H C-w l C-w C-p" with
+          | some refused, some only, some top, some bottom, some back =>
+            refused.echo == s!"{WindowCommands.onlyName}: {(LayoutRefusal.atEdge ⟨2⟩).describe}" &&
+              windowOrder refused == ([0, 1], 2) &&
+              refused.frame.docked == #[(⟨2⟩, .left)] &&
+              windowOrder only == ([0], 0) &&
+              only.frame.docked == #[] &&
+              only.wellFormed &&
+              top.frame.focused == ⟨0⟩ &&
+              bottom.frame.focused == ⟨2⟩ &&
+              back.frame.focused == ⟨2⟩
+          | _, _, _, _, _ => false },
+    { name :=
         "criterion 1, C-w s: two windows on the same buffer with equal markers at first, the new one above and focused, and the windows of the column equal in height; three from one window at 640 by 464 give four rows of 116"
       run :=
         pure <|

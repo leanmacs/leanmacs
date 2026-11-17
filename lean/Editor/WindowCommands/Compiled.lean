@@ -60,6 +60,10 @@ def commands : Array Config.Registration :=
     { name := mainMoreName,
       action := .call (arranging fun count => .mainCount true (steps count)) },
     { name := mainFewerName,
-      action := .call (arranging fun count => .mainCount false (steps count)) }]
+      action := .call (arranging fun count => .mainCount false (steps count)) },
+    { name := edgeLeftName, action := .call (arranging fun _ => .edge .left) },
+    { name := edgeBottomName, action := .call (arranging fun _ => .edge .bottom) },
+    { name := edgeTopName, action := .call (arranging fun _ => .edge .top) },
+    { name := edgeRightName, action := .call (arranging fun _ => .edge .right) }]
 
 end Editor.WindowCommands

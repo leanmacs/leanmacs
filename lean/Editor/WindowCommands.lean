@@ -29,12 +29,13 @@ scheme binds them under `C-w` (`Vim.Default.windowKeys`,
 | `new` | `window-new` | Splits as `split` does, then shows a new empty buffer with no file in the new window, named `scratch` or the next free name, and focuses it: Vim's `:new` and `CTRL-W n` |
 | `close` | `window-close` | Closes the window (`ViewId.close`): `CTRL-W c` |
 | `quit` | `window-quit` | Closes the window, or on the last window runs `quit` (`Ex.quitName`), which asks the editor to quit: Vim's `:quit` and `CTRL-W q` |
-| `only` | `window-only` | Closes every other window of the list, and says `already only one window` when there is none, as Vim does: `CTRL-W o` |
+| `only` | `window-only` | Closes every other window of the frame, the docked ones too, and says `already only one window` when there is none, as Vim does: `CTRL-W o`. From a window docked at an edge it gives up with `atEdge`, as Emacs refuses a side window as the only window |
 | `focusToward side` | `window-focus-left`, `-down`, `-up`, `-right` | Focuses the window `count` steps that way (`EditorState.toward?`), and does nothing when none is there, as Vim is silent at an edge: `CTRL-W h j k l` |
-| `focusCycled forward` | `window-focus-next`, `window-focus-previous` | Focuses the next or the previous window of the list, wrapping, or the Nth with a count (`EditorState.cycled`): `CTRL-W w` and `W` |
-| `focusEnd last` | `window-focus-top`, `window-focus-bottom` | Focuses the first or the last window of the list: `CTRL-W t` and `b` |
-| `focusLast` | `window-focus-last` | Focuses the window of the list focused before this one (`Frame.lastFocused`) while it is another window of the list, and otherwise gives up with `noPreviousWindow`, where Vim beeps: `CTRL-W p` |
+| `focusCycled forward` | `window-focus-next`, `window-focus-previous` | Focuses the next or the previous window of the frame, the tiles then the docked windows, wrapping, or the Nth with a count (`EditorState.cycled`): `CTRL-W w` and `W` |
+| `focusEnd last` | `window-focus-top`, `window-focus-bottom` | Focuses the first or the last window of the frame (`Frame.all`): `CTRL-W t` and `b` |
+| `focusLast` | `window-focus-last` | Focuses the window of the frame focused before this one (`Frame.lastFocused`) while it is another window of the frame, and otherwise gives up with `noPreviousWindow`, where Vim beeps: `CTRL-W p` |
 | `arranging change` | `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer` | `ViewId.arrange` with its change (`Arrange`). Exchange takes the count as the Nth window, and resize and main's count take it as the steps, 1 when there is none |
+| `arranging fun _ => .edge side` | `window-edge-left`, `-bottom`, `-top`, `-right` | Docks the window at that edge, moves a window docked at another edge there, or moves a window docked there back to the end of the tiled list (`Arrange.edge`): Vim's `CTRL-W H J K L`, which move a window to the far side at the full extent. Recorded departures: under a layout with no such edge it gives up with `noSuchEdge`, where Vim restructures its frames under any layout, and on a window already at that edge it moves it back into the tiles, where Vim does nothing |
 
 They are compiled: a host registers them for the owner `compiled`
 (`Editor/WindowCommands/Compiled.lean`), so config can call them and bind
@@ -158,7 +159,23 @@ def mainMoreName : String :=
 def mainFewerName : String :=
   "window-main-fewer"
 
-/-- What `only` says when the window is the only one of the list. -/
+/-- The name `arranging fun _ => .edge .left` is registered under. -/
+def edgeLeftName : String :=
+  "window-edge-left"
+
+/-- The name `arranging fun _ => .edge .bottom` is registered under. -/
+def edgeBottomName : String :=
+  "window-edge-bottom"
+
+/-- The name `arranging fun _ => .edge .top` is registered under. -/
+def edgeTopName : String :=
+  "window-edge-top"
+
+/-- The name `arranging fun _ => .edge .right` is registered under. -/
+def edgeRightName : String :=
+  "window-edge-right"
+
+/-- What `only` says when the window is the only one of the frame. -/
 def alreadyOnly : String :=
   "already only one window"
 
@@ -215,16 +232,19 @@ def quit (call : Call) : EditorM Unit := do
   | .error refusal =>
     giveUp refusal.describe
 
-/-- `window-only`: every other window of the list is closed, or, when there
-is none, `alreadyOnly` is said. -/
+/-- `window-only`: every other window of the frame, tiled or docked, is
+closed, or, when there is none, `alreadyOnly` is said. From a window docked
+at an edge it gives up with `atEdge`: the tiles would be gone. -/
 def only (call : Call) : EditorM Unit := do
   let view := call.target.window.id
   let state ← editorState
   if state.minibufferView? == some view then
     giveUp (LayoutRefusal.ofMinibuffer view).describe
+  if (state.frame.sideOf? view).isSome then
+    giveUp (LayoutRefusal.atEdge view).describe
   unless state.frame.windows.contains view do
     giveUp (LayoutRefusal.noSuchWindow view).describe
-  let others := state.frame.windows.filter (· != view)
+  let others := state.frame.all.filter (· != view)
   if others.isEmpty then
     message alreadyOnly
   for other in others do
@@ -248,19 +268,20 @@ def focusCycled (forward : Bool) (call : Call) : EditorM Unit := do
   focusing ((← editorState).cycled call.target.window.id forward (countOf call))
 
 /-- `window-focus-top` and `window-focus-bottom`: the first window of the
-list, or the last when `last`, is focused. -/
+frame, or the last when `last`, is focused, in `Frame.all`'s order: the
+tiles, then the docked windows. -/
 def focusEnd (last : Bool) (_ : Call) : EditorM Unit := do
-  let windows := (← editorState).frame.windows
+  let windows := (← editorState).frame.all
   focusing (if last then windows.back? else windows[0]?)
 
-/-- `window-focus-last`: the window of the list focused before the call's
-window is focused, while it is another window of the list; otherwise the
+/-- `window-focus-last`: the window of the frame focused before the call's
+window is focused, while it is another window of the frame; otherwise the
 command gives up with `noPreviousWindow`. -/
 def focusLast (call : Call) : EditorM Unit := do
   let frame := (← editorState).frame
   match frame.lastFocused with
   | some view =>
-    if view != call.target.window.id && frame.windows.contains view then
+    if view != call.target.window.id && frame.contains view then
       orGiveUp (← view.focus)
     else
       giveUp LayoutRefusal.noPreviousWindow.describe
