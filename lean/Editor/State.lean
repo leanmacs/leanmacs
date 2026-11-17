@@ -2,6 +2,7 @@ import Editor.Display
 import Editor.DisplayRules
 import Editor.Face
 import Editor.File
+import Editor.Floating
 import Editor.Invocation
 import Editor.Layout
 import Editor.Scene
@@ -36,9 +37,11 @@ a scene of it after each.
   marker of the buffer's text, and its selections as one selection marker
   of that text, whose ranges are its cursors.
 - **The frame** (`Frame`) is the one window of the platform: its size, the
-  editor's windows as an ordered list (`Frame.windows`), the layout that
-  arranges them (`Frame.layout`, `Editor/Layout.lean`), the window that is
-  focused, and whether the frame has the keyboard focus.
+  editor's windows as an ordered list (`Frame.windows`), the windows docked
+  at an edge (`Frame.docked`) and the floating windows (`Frame.floats`),
+  the layout that arranges the first two (`Frame.layout`,
+  `Editor/Layout.lean`), the window that is focused, and whether the frame
+  has the keyboard focus.
 
 ## The window list, the layout and their invariants
 
@@ -56,8 +59,16 @@ where each goes.
 layout's operations index, so an edge layout leaves every rule of the list
 as it was; the layout gives the windows docked at each of its edges that
 edge's strip (`Layout.place`, `Layout.edge`). Which windows the frame has
-is read in one place, `Frame.all`, the tiled list then the docked windows,
-and `Frame.contains` asks whether a window is one of them.
+is read in one place, `Frame.all`, the tiled list then the docked windows
+then the floats, and `Frame.contains` asks whether a window is one of
+them.
+
+**The floating windows are kept apart from both** (`Frame.floats`, each a
+`Floating` with its anchor, its share, whether it is pinned and the spot
+its position anchor was last drawn at; `Editor/Floating.lean`), in
+stacking order, the last on top, for the same reason: every layout
+operation indexes the tiled list. They are placed in the tiled area
+against their anchors, not by the layout ("A floating window", below).
 
 **The frame keeps three more things about its windows**, each changed only
 by the operations below:
@@ -65,7 +76,7 @@ by the operations below:
 | Field | What it holds |
 |---|---|
 | `Frame.zoomedFrom` | The layout a zoom left, to go back to: `some` while zoomed, when the layout is monocle |
-| `Frame.lastFocused` | Vim's `prevwin`: the window of the frame focused before the current one. Set when the focus moves from one window of the frame to another, tiled or docked (`Frame.focusedOn`), by `focusWindow` and by an exchange; focusing the minibuffer's view or leaving it does not set it. It is never cleared, and ids are never used again, so a reader checks that it is still in the frame |
+| `Frame.lastFocused` | Vim's `prevwin`: the window of the frame focused before the current one. Set when the focus moves from one window of the frame to another, tiled, docked or floating (`Frame.focusedOn`), by `focusWindow` and by an exchange; focusing the minibuffer's view or leaving it does not set it. It is never cleared, and ids are never used again, so a reader checks that it is still in the frame |
 | `Frame.chosen` | The layout config chose that the last publish applied. A publish handed the same layout again leaves the frame's (`Loop.publish`), so a zoom, a resized share, a main count or a split tree a command made lasts until config chooses another layout; `Frame.choose` then moves the windows docked at an edge the new layout lacks to the end of the list, sets the layout, fitted to the windows, and clears the zoom, so the same windows are rearranged and none is lost |
 
 Every change of the list is applied to the layout and to the one zoom
@@ -91,16 +102,20 @@ its text, so a command's questions of layout are answered with the rows
 the frame shows.
 
 **The rectangles of a state's views** are `EditorState.rects`: the frame's
-windows laid out by its layout in the tiled area, then the minibuffer's view
-in the bottom strip while a prompt is open. Monocle is handed the selected
+tiled and docked windows laid out by its layout in the tiled area, then
+each float in stacking order, placed in the tiled area against its anchor
+(`Floating.placed`), then the minibuffer's view in the bottom strip while a
+prompt is open. So the scene lists the floats after every tile and docked
+window, and the display, which draws views in scene order each over its
+own background, draws them above. Monocle is handed the selected
 view (`EditorState.selectedView`), so while a prompt is open it shows the
 asker, not the minibuffer. A window monocle hides has no rectangle, and so
 is not in the scene, but it is still one of the views and can be focused,
 which shows it. It is the one definition the scene's views and a command's
 question about its view (`EditorState.rect?`) are both read from, so a
 command is answered with the rectangle the next scene gives its view. The
-rectangles tile the area: a view's padding is inside its rectangle, not
-between rectangles.
+tiles' and the strips' rectangles tile the area, and a float's lies inside
+it: a view's padding is inside its rectangle, not between rectangles.
 
 **The padding of the views** is in whole points, which the display
 multiplies by its scale (Lean handles no scale). `EditorState.padding` is
@@ -120,14 +135,19 @@ command's question about its view carries the view's padding
 
 The invariants are part of the model (`EditorState.wellFormed`). They are
 stated over the state's views (`EditorState.views`): the frame's windows,
-the tiled list in order and then the docked windows (`Frame.all`), then
-the minibuffer's view while a prompt is open ("Prompts", below).
+the tiled list in order, then the docked windows, then the floats
+(`Frame.all`), then the minibuffer's view while a prompt is open
+("Prompts", below).
 
 - the frame's layout, and the one zoom returns to, fit the list: a manual
   split tree has as many tiles as the list has windows (`Layout.fitted`);
 - every docked window's side is an edge of the layout out of a zoom
   (`Frame.underlying`, `Layout.edgeSides`), so no docked window is left
   without a strip;
+- every float's anchor window, for a `window` or a `position` anchor, is a
+  tiled or docked window of the frame (`Frame.anchors`): not a float, so
+  placement never recurses, and not the minibuffer's view;
+- a `position` anchor's marker is of the text of its window's buffer;
 - the focused window is one of the views;
 - the views' ids are distinct, and they are exactly the windows' ids;
 - each window's buffer exists.
@@ -152,10 +172,12 @@ handler is these operations:
   the group's axis. Otherwise it moves to the window that took its index,
   or, when it was last, to the new last window, as xmonad's delete does.
   While zoomed, the inheritor is the one of the layout to return to.
-- `focusWindow` takes a window of the list, and the minibuffer's window
+- `focusWindow` takes a window of the frame, and the minibuffer's window
   while a prompt is open, so the focus can leave the minibuffer and come
   back. It refuses `noSuchWindow` for any other. Moving the focus from one
-  window of the list to another sets `lastFocused`.
+  window of the frame to another sets `lastFocused`, and closes the
+  transient floats the focus leaves (`EditorState.focusedOn`, "A floating
+  window", below).
 - `splitWindow` takes a placement (`Placement`: an axis, and whether the
   new window goes before its source), which only manual splits read.
   Under them the new window takes the source's index when the placement
@@ -205,8 +227,8 @@ handler is these operations:
   frame with wrap, or the Nth.
 - `openWindow` opens a new window on a buffer at a spot (`WindowSpot`):
   after the last of the tiled list (`stack`), as a split of that window
-  with the default placement would, or docked at an edge, after that
-  side's windows. The focus stays. It refuses `noSuchEdge` for an edge the
+  with the default placement would, docked at an edge, after that side's
+  windows, or a float on top of the others (`float`). The focus stays. It refuses `noSuchEdge` for an edge the
   layout has none at, and the minibuffer's buffer, a buffer there is none
   of and markers of another text as `showBuffer` does.
 - `displaying` says where a buffer is to be shown, under display rules
@@ -248,6 +270,66 @@ docked window as it takes a tile, with these rules of its own:
 - The window a prompt was asked from (`askedFrom`), and so where the focus
   goes when it closes and where `shownIn` shows a buffer, may be a docked
   window.
+
+**A floating window** (`Frame.floats`, `Editor/Floating.lean`) is a window
+of the frame like any other to every operation above, which reach it
+through `Frame.all` and `Frame.contains`: `focusWindow`, `showBuffer`,
+`cycled` (`C-w C-w` reaches a float), `askedFrom` and `shownIn` (a prompt
+asked from a float returns there) and the reuse step of `displaying`. A
+float is placed in the tiled area against its anchor (`rects`): centred
+in the area for the frame, centred in its window's rectangle for a
+window, or in the area when monocle hides that window, and beside the
+spot of its position, flipped and clamped to stay inside the area, or as
+for its window before the first publish has drawn the position. The area
+is the tiled one, so a float never covers the echo row, the minibuffer's
+view or a tab bar cut off the frame. These rules are its own:
+
+- **The focus rule.** When the focus moves from one window of the frame to
+  another, every transient float that is not the window now focused closes
+  (`EditorState.focusedOn`, which `focusWindow` and an exchange use, and
+  which `removeWindow` applies when it moves the focus). So a focused
+  transient float closes when the focus goes anywhere else, one opened
+  without the focus closes when the focus leaves the window it was opened
+  from, and focusing it keeps it. Opening and closing a prompt is no move,
+  so a prompt asked from a float keeps it, and the focus comes back to it.
+  A pinned float stays until it is closed.
+- **Closing a float** removes its window from `floats` and from `windows`
+  (`closeFloats`); its markers and its anchor marker are the loop's to give
+  up once the command ends (`Editor/Loop.lean`, "What a finished command
+  gave up"). A focused float's focus goes to `lastFocused` while that is
+  still in the frame, else to main.
+- **When an anchor goes.** When a window that floats are anchored to (by
+  `window` or `position`) leaves the tiles and the edges, because
+  `removeWindow` closed it or `arrange`'s `float` floated it, the transient
+  floats anchored to it close and the pinned ones are anchored to the
+  frame (`anchorGone`). `showBuffer` does the same for the floats anchored
+  at a position of the window it shows another buffer in, since their
+  marker is of the old text (`dropAnchors`).
+- **When an anchor is not drawn.** A publish asks where each position
+  anchor is drawn and keeps the spot on the float, offset into frame
+  pixels (`located`, `Loop.publish`). A transient float whose anchor is
+  not drawn closes there: a position its window does not show, or an
+  anchor window with no rectangle. A pinned one keeps its last spot.
+- `removeWindow` takes a float out of `floats`, and never refuses it with
+  `onlyWindow`: floats do not count, so the last tile cannot be closed
+  while floats remain.
+- `splitWindow` refuses a float with `floating`: it has no tile to split.
+- `arrange`'s `promote` moves it into the tiles as main, `edge side` docks
+  it, `float` moves it into the tiles at the end of the list, as
+  `openWindow`'s `stack` places a window, and `resize` steps its share;
+  `demote`, `rotate` and `exchange` refuse it with `floating`, since no
+  operation changes the stacking order yet. `zoom`, `balance` and
+  `mainCount` act as from any window; zoom from a float shows the first
+  tile under it, since monocle's selected view is then no tile.
+- `arrange`'s `float` on a tile or a docked window floats it, pinned,
+  anchored to the frame, of the default share, on top; the last tile is
+  refused with `lastTile`.
+- `toward?` never lands on a float, which overlaps the tiles it floats
+  over; from a float the step starts from its rectangle.
+- `openWindow`'s `float` refuses an anchor window that is a float with
+  `floating`, one that is no tiled or docked window with `noSuchWindow`,
+  and a position marker of another text than that window's buffer's with
+  `markersOfAnotherText`.
 
 **A view's id is never used again.** A new window's id is the state's
 `nextView`, or one more than the greatest id a window has when that is
@@ -849,6 +931,10 @@ structure Frame where
   not in `windows`, which stays the tiled list the layout's operations
   index. -/
   docked : Array (ViewId × Side) := #[]
+  /-- The floating windows, above the tiles, in stacking order: the first is
+  lowest, the last on top. They are in neither `windows` nor `docked`
+  (`Editor/Floating.lean`). -/
+  floats : Array Floating := #[]
   /-- How its windows are arranged (`Editor/Layout.lean`). -/
   layout : Layout := Layout.default
   /-- The window that is focused within it. -/
@@ -885,15 +971,30 @@ structure Frame where
 
 namespace Frame
 
-/-- Every window of the frame: the tiled list, then the docked windows, in
-order. The minibuffer's window is not among them. -/
+/-- Every window of the frame: the tiled list, then the docked windows, then
+the floats in stacking order. The minibuffer's window is not among them. -/
 def all (frame : Frame) : Array ViewId :=
-  frame.windows ++ frame.docked.map (·.1)
+  frame.windows ++ frame.docked.map (·.1) ++ frame.floats.map (·.view)
 
-/-- Whether `id` is a window of the frame: in the tiled list or docked at
-an edge. -/
+/-- Whether `id` is a window of the frame: in the tiled list, docked at an
+edge, or floating. -/
 def contains (frame : Frame) (id : ViewId) : Bool :=
+  frame.windows.contains id || frame.docked.any (·.1 == id) || frame.floats.any (·.view == id)
+
+/-- Whether `id` is a tiled or a docked window of the frame: a window a float
+may be anchored to. A float is not, so placement never recurses. -/
+def anchors (frame : Frame) (id : ViewId) : Bool :=
   frame.windows.contains id || frame.docked.any (·.1 == id)
+
+/-- The float `id`, if it is one of the frame's. -/
+def floating? (frame : Frame) (id : ViewId) : Option Floating :=
+  frame.floats.find? (·.view == id)
+
+/-- The frame with the float `id` changed by `change`; one that is not a
+float leaves it as it was. -/
+def withFloat (frame : Frame) (id : ViewId) (change : Floating → Floating) : Frame :=
+  { frame with
+    floats := frame.floats.map fun float => if float.view == id then change float else float }
 
 /-- The side the window `id` is docked at; none for a window that is not
 docked. -/
@@ -1245,6 +1346,10 @@ inductive Arrange where
   to it, and a window docked at `side` back into the tiles, at the end of
   the list. -/
   | edge (side : Side)
+  /-- A tiled or docked window floated, pinned and anchored to the frame,
+  on top of the floats; and a float back into the tiles, at the end of the
+  list. -/
+  | float
   deriving DecidableEq, Repr
 
 /-- Where a new window goes (`EditorState.openWindow`). -/
@@ -1254,6 +1359,9 @@ inductive WindowSpot where
   | stack
   /-- Docked at `side`, after the windows docked there. -/
   | edge (side : Side)
+  /-- A float on top of the others, placed against `anchor`, of `share`,
+  pinned or transient (`Editor/Floating.lean`). -/
+  | float (anchor : Floating.Anchor) (share : Floating.Share) (pinned : Bool)
   deriving DecidableEq, Repr
 
 /-- Where a buffer is to be displayed (`EditorState.displaying`). -/
@@ -1293,11 +1401,15 @@ inductive LayoutRefusal where
   /-- The layout has no edge at `side` to dock a window at. -/
   | noSuchEdge (side : Side)
   /-- The window is the last of the tiled list, which cannot move to an
-  edge: a frame of docked windows has no area to tile. -/
+  edge or float: a frame of docked and floating windows has no area to
+  tile. -/
   | lastTile
   /-- The window `view` is docked at an edge, and cannot be the only
   window: the tiles would be gone. -/
   | atEdge (view : ViewId)
+  /-- The window `view` floats: it has no tile to split or to move through
+  the list, and a float is no anchor of another. -/
+  | floating (view : ViewId)
   deriving DecidableEq, Repr
 
 /-- What a refusal of the layout says, as one sentence the echo area can
@@ -1314,8 +1426,9 @@ def LayoutRefusal.describe : LayoutRefusal → String
   | .noMain => "only master-and-stack has main windows"
   | .monocleChosen => "the layout is monocle, and there is no zoom to leave"
   | .noSuchEdge side => Layout.noEdge side
-  | .lastTile => "the last tiled window cannot move to an edge"
+  | .lastTile => "the last tiled window cannot leave the tiles"
   | .atEdge _ => "a window at an edge cannot be the only window"
+  | .floating _ => "a floating window is not in the layout"
 
 /-- Why an operation on the prompt was refused. -/
 inductive PromptRefusal where
@@ -1464,13 +1577,16 @@ def tiled (state : EditorState) : Rect :=
 
 /-- The rectangle of each view of the state in its frame, in drawing order:
 the frame's windows laid out by its layout in the tiled area (`tiled`), the
-selected view (`selectedView`) being the one monocle shows, and then, while
-a prompt is open, the minibuffer's view in the strip below it. A window the
+selected view (`selectedView`) being the one monocle shows; then each float
+in stacking order, placed in the tiled area against its anchor
+(`Floating.placed`); and then, while a prompt is open, the minibuffer's view
+in the strip below it. A window the
 layout does not show has none. It is what a scene's views are laid out in
 (`Loop.views`, `Editor/Loop.lean`). -/
 def rects (state : EditorState) : Array (ViewId × Rect) :=
   let frame := state.frame
-  frame.layout.place frame.windows state.selectedView state.tiled frame.docked ++
+  let laid := frame.layout.place frame.windows state.selectedView state.tiled frame.docked
+  laid ++ frame.floats.map (fun float => (float.view, float.placed state.tiled laid)) ++
     (state.minibufferView?.map (·, state.cutFrame.2)).toArray
 
 /-- How far the frame's bottom row, where the echo and a prompt are drawn,
@@ -1519,8 +1635,10 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
 (`views`: the frame's windows, then the open prompt's view): the frame's
 layout, and the one a zoom returns to, fit its list of windows
 (`Layout.fitted`), every docked window's side is an edge of the layout
-out of a zoom (`Frame.underlying`, `Layout.edgeSides`), the focused window
-is among them, the views' ids are distinct and are exactly the windows' ids, and each window's buffer
+out of a zoom (`Frame.underlying`, `Layout.edgeSides`), every float's
+anchor window is a tiled or docked window of the frame (`Frame.anchors`) and
+a position anchor's marker is of the text of that window's buffer, the
+focused window is among them, the views' ids are distinct and are exactly the windows' ids, and each window's buffer
 exists. And whether an open prompt's choice, if it has one, is an index of
 its listing, and whether every buffer of the order they were used in
 (`recent`) is open and is there once. -/
@@ -1529,6 +1647,11 @@ def wellFormed (state : EditorState) : Bool :=
   let count := state.frame.windows.size
   state.frame.layout.fitted count && state.frame.zoomedFrom.all (·.fitted count) &&
     state.frame.docked.all (fun (_, side) => state.frame.underlying.edgeSides.contains side) &&
+    (state.frame.floats.all fun float =>
+      float.anchor.view?.all state.frame.anchors &&
+        match float.anchor with
+        | .position view marker => (state.target? view).any (·.buffer.text == marker.text)
+        | _ => true) &&
     ids.contains state.frame.focused &&
     ids.toList.eraseDups.length == ids.size &&
     ids.size == state.windows.size &&
@@ -1565,6 +1688,70 @@ def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := d
       frame := { size, windows := #[⟨0⟩], focused := ⟨0⟩ }
       recent := #[⟨0⟩] }
 
+/-- The state with every transient float but `keep` closed: each leaves
+`floats` and `windows`, its markers the caller's to give up. The focus is
+the caller's. -/
+def closeTransient (keep : ViewId) (state : EditorState) : EditorState :=
+  let closing (float : Floating) : Bool := !float.pinned && float.view != keep
+  { state with
+    windows :=
+      state.windows.filter fun window =>
+        !state.frame.floats.any fun float => closing float && float.view == window.id
+    frame := { state.frame with floats := state.frame.floats.filter (!closing ·) } }
+
+/-- The state with the focus on `id` (`Frame.focusedOn`), and, when the focus
+moves from one window of the frame to another (`Frame.contains`), every
+transient float that is not `id` closed (`closeTransient`): the focus rule
+("A floating window", in the module docs). Focusing the minibuffer's view
+or leaving it is no move, so a prompt asked from a float keeps it. -/
+def focusedOn (id : ViewId) (state : EditorState) : EditorState :=
+  let frame := state.frame
+  let moves := frame.focused != id && frame.contains frame.focused && frame.contains id
+  let focused := { state with frame := frame.focusedOn id }
+  if moves then focused.closeTransient id else focused
+
+/-- The state with the floats `closing` closed: each leaves `floats` and
+`windows`, its markers the caller's to give up. A focus on one of them goes
+to the window focused before it while that is still in the frame, else to
+main, and every other transient float closes with it (the focus rule). -/
+def closeFloats (closing : Array ViewId) (state : EditorState) : EditorState :=
+  if closing.isEmpty then state
+  else
+    let frame := state.frame
+    let closed :=
+      { state with
+        windows := state.windows.filter (!closing.contains ·.id)
+        frame := { frame with floats := frame.floats.filter (!closing.contains ·.view) } }
+    if closing.contains frame.focused then
+      let main := frame.windows[0]?.getD frame.focused
+      let back :=
+        match frame.lastFocused with
+        | some last => if closed.frame.contains last then last else main
+        | none => main
+      { closed with frame := { closed.frame with focused := back } }.closeTransient back
+    else closed
+
+/-- The state once the anchors of the floats `anchored` picks went: those
+that are transient close (`closeFloats`), and those that are pinned are
+anchored to the frame, with no spot. Their anchor markers are the
+caller's to give up. -/
+def dropAnchors (anchored : Floating → Bool) (state : EditorState) : EditorState :=
+  let floats :=
+    state.frame.floats.map fun float =>
+      if anchored float && float.pinned then
+        { float with
+          anchor := .frame, spot := none }
+      else float
+  let closing :=
+    (state.frame.floats.filter fun float => anchored float && !float.pinned).map (·.view)
+  { state with frame := { state.frame with floats } }.closeFloats closing
+
+/-- The state once the window `id` is no anchor any more, because it left
+the tiles and the edges (`removeWindow`, `arrange`'s `float`): the floats
+anchored to it by `window` or `position` (`dropAnchors`). -/
+def anchorGone (id : ViewId) (state : EditorState) : EditorState :=
+  state.dropAnchors (·.anchor.view? == some id)
+
 /-- Removes the window `id` from the frame, and hands it back, its markers
 the caller's to give up.
 
@@ -1579,57 +1766,79 @@ the caller's to give up.
   last window, else to the window focused before it while that is still in
   the frame (`Frame.lastFocused`), else to main.
 
+- **A float** leaves the floats (`closeFloats`). A focused float's focus
+  goes to the window focused before it while that is still in the frame,
+  else to main.
+
+When the focus moves off the window, every transient float but the one
+now focused closes (the focus rule). The floats anchored to the window
+close when transient and are anchored to the frame when pinned
+(`anchorGone`).
+
 Refused, with the state unchanged, with `ofMinibuffer` for the
 minibuffer's window, with `noSuchWindow` for a window not in the frame and
 with `onlyWindow` for the last one of the tiled list: neither the
-minibuffer's window nor a docked window counts. -/
+minibuffer's window nor a docked window nor a float counts. -/
 def removeWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Window × EditorState :=
-  let windows := state.frame.windows
-  match state.minibufferView? == some id, state.window? id, windows.findIdx? (· == id),
-    state.frame.sideOf? id with
-  | true, _, _, _ => (.error (.ofMinibuffer id), state)
-  | false, some window, none, some side =>
-    let frame := state.frame
-    let ofSide := frame.atSide side
-    let index := (ofSide.findIdx? (· == id)).getD 0
-    let rest := ofSide.filter (· != id)
-    let focused :=
-      if frame.focused == id then
-        match rest[index]? <|> rest.back? with
-        | some view => view
-        | none =>
-          match frame.lastFocused with
-          | some last => if last != id && frame.contains last then last else windows[0]?.getD id
-          | none => windows[0]?.getD id
-      else frame.focused
-    (.ok window,
-      { state with
-        windows := state.windows.filter (·.id != id)
-        frame :=
-          { frame with
-            docked := frame.docked.filter (·.1 != id), focused } })
-  | false, some window, some index, _ =>
-    let rest := windows.filter (· != id)
-    if rest.isEmpty then (.error .onlyWindow, state)
-    else
-      let (frame, inheritor) := state.frame.removed index
+  match removing with
+  | (.ok window, after) =>
+    let moved :=
+      if state.frame.focused == id then after.closeTransient after.frame.focused else after
+    (.ok window, moved.anchorGone id)
+  | refused => refused
+where
+  /-- The window removed from the tiles or an edge, the focus moved off it
+  by the layout's rule, or a float closed. -/
+  removing : Except LayoutRefusal Window × EditorState :=
+    let windows := state.frame.windows
+    match state.minibufferView? == some id, state.window? id, windows.findIdx? (· == id),
+      state.frame.sideOf? id with
+    | true, _, _, _ => (.error (.ofMinibuffer id), state)
+    | false, some window, none, none =>
+      if (state.frame.floating? id).isSome then (.ok window, state.closeFloats #[id])
+      else (.error (.noSuchWindow id), state)
+    | false, some window, none, some side =>
+      let frame := state.frame
+      let ofSide := frame.atSide side
+      let index := (ofSide.findIdx? (· == id)).getD 0
+      let rest := ofSide.filter (· != id)
       let focused :=
-        if state.frame.focused == id then
-          match inheritor.bind (rest[·]?) with
+        if frame.focused == id then
+          match rest[index]? <|> rest.back? with
           | some view => view
-          | none => rest[index]?.getD (rest.back?.getD state.frame.focused)
-        else state.frame.focused
+          | none =>
+            match frame.lastFocused with
+            | some last => if last != id && frame.contains last then last else windows[0]?.getD id
+            | none => windows[0]?.getD id
+        else frame.focused
       (.ok window,
         { state with
           windows := state.windows.filter (·.id != id)
           frame :=
             { frame with
-              windows := rest, focused } })
-  | false, _, _, _ => (.error (.noSuchWindow id), state)
+              docked := frame.docked.filter (·.1 != id), focused } })
+    | false, some window, some index, _ =>
+      let rest := windows.filter (· != id)
+      if rest.isEmpty then (.error .onlyWindow, state)
+      else
+        let (frame, inheritor) := state.frame.removed index
+        let focused :=
+          if state.frame.focused == id then
+            match inheritor.bind (rest[·]?) with
+            | some view => view
+            | none => rest[index]?.getD (rest.back?.getD state.frame.focused)
+          else state.frame.focused
+        (.ok window,
+          { state with
+            windows := state.windows.filter (·.id != id)
+            frame :=
+              { frame with
+                windows := rest, focused } })
+    | false, _, _, _ => (.error (.noSuchWindow id), state)
 
 /-- Focuses the window `id`: a window of the frame, or the minibuffer's while
-a prompt is open (`Frame.focusedOn`, which keeps the window of the list
-focused before it). Its buffer is then the most recently used, unless it
+a prompt is open (`focusedOn`, which keeps the window of the frame focused
+before it, and closes the transient floats the focus leaves). Its buffer is then the most recently used, unless it
 is the minibuffer's. Refused, with the state unchanged, with `noSuchWindow`
 for any other. -/
 def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
@@ -1640,9 +1849,7 @@ def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit 
         if state.minibufferBuffer? == some window.buffer then state.recent
         else Recent.touch state.recent window.buffer
       | none => state.recent
-    (.ok (),
-      { state with
-        frame := state.frame.focusedOn id, recent })
+    (.ok (), { state.focusedOn id with recent })
   else (.error (.noSuchWindow id), state)
 
 /-- Has the window `id` keep `wanted` as its wanted column, or none. Any
@@ -2107,6 +2314,7 @@ is ignored and it goes right after `id`. A docked window's new window is
 docked at the same side, right after it, the placement ignored and the
 layout unchanged. The focus stays. Refused, with the state
 unchanged, with `ofMinibuffer` for the minibuffer's window, with
+`floating` for a float, which has no tile to split, with
 `noSuchWindow` for a window not in the frame, and with
 `markersOfAnotherText` when a marker is not of that buffer's text. -/
 def splitWindow (id : ViewId) (scroll selection : MarkerId) (placement : Placement := {})
@@ -2116,6 +2324,9 @@ def splitWindow (id : ViewId) (scroll selection : MarkerId) (placement : Placeme
   match state.minibufferView? == some id, state.target? id, windows.findIdx? (· == id),
     docked.findIdx? (·.1 == id) with
   | true, _, _, _ => (.error (.ofMinibuffer id), state)
+  | false, some _, none, none =>
+    if (state.frame.floating? id).isSome then (.error (.floating id), state)
+    else (.error (.noSuchWindow id), state)
   | false, some target, none, some at_ =>
     if scroll.text != target.buffer.text || selection.text != target.buffer.text then
       (.error .markersOfAnotherText, state)
@@ -2168,7 +2379,7 @@ list:
   window.
 - `exchange` swaps it with the `nth` window of the list (1-based), or with
   the next, or with the previous when it is last, and focuses the other
-  view, which now stands where it was (`Frame.focusedOn`). One window, an
+  view, which now stands where it was (`focusedOn`, the focus rule). One window, an
   `nth` past the list or the window itself changes nothing.
 - `resize` is `Layout.resized`, refused with `notResizable` and its axis
   where it gives none.
@@ -2192,6 +2403,22 @@ docs):
   to `side`, after the windows docked there, when it is docked at another
   side; and is refused with `noSuchEdge` when the layout has no edge at
   `side`.
+
+On a float ("A floating window", in the module docs):
+
+- `promote` moves it into the tiles as main, as for a docked window;
+  `edge side` docks it at `side`, refused with `noSuchEdge` as for any
+  window; and `float` moves it into the tiles at the end of the list
+  (`Frame.inserted` after the last), as `openWindow`'s `stack` places a
+  window. Its anchor is dropped, and the focus stays.
+- `resize` steps its share on the axis (`Floating.Share.resized`).
+- `demote`, `rotate` and `exchange` are refused with `floating`: changing
+  the stacking order is not built.
+
+`float` on a tile or a docked window floats it, pinned, anchored to the
+frame, of the default share, on top of the floats; the focus stays, and
+the last tile is refused with `lastTile`. The floats anchored to it close
+when transient and are anchored to the frame when pinned (`anchorGone`).
 
 On any window:
 
@@ -2247,10 +2474,50 @@ def arrange (id : ViewId) (change : Arrange) (state : EditorState) :
             (frame.underlying.withTiling (.masterStack { parameters with count })))
       | _ => (.error .noMain, state)
     | _ => (.ok (), state)
+  -- The frame once the window `id` left the tiles or an edge for the
+  -- floats, pinned and anchored to the frame, on top: the floats anchored
+  -- to it lose their anchor (`anchorGone`).
+  let floated (frame : Frame) : Except LayoutRefusal Unit × EditorState :=
+    (.ok (),
+      ({ state with
+              frame :=
+                { frame with
+                  floats := frame.floats.push { view := id, anchor := .frame, pinned := true } } } :
+            EditorState).anchorGone
+        id)
+  -- The state with the focus on `view` by the focus rule (`focusedOn`), and
+  -- then its frame changed by `change`.
+  let focusing (view : ViewId) (change : Frame → Frame) : Except LayoutRefusal Unit × EditorState :=
+    let moved := state.focusedOn view
+    (.ok (), { moved with frame := change moved.frame })
   if state.minibufferView? == some id then (.error (.ofMinibuffer id), state)
   else
     match windows.findIdx? (· == id), frame.sideOf? id with
-    | none, none => (.error (.noSuchWindow id), state)
+    | none, none =>
+      if (frame.floating? id).isNone then (.error (.noSuchWindow id), state)
+      else
+        let unfloated := frame.floats.filter (·.view != id)
+        match change with
+        | .promote =>
+          set
+            { frame.inserted 0 { before := true } with
+              windows := #[id] ++ windows, floats := unfloated }
+        | .edge side =>
+          if !frame.underlying.edgeSides.contains side then (.error (.noSuchEdge side), state)
+          else
+            set
+              { frame with
+                docked := frame.docked.push (id, side), floats := unfloated }
+        | .float =>
+          set
+            { frame.inserted (windows.size - 1) {} with
+              windows := windows.push id, floats := unfloated }
+        | .resize axis grow steps =>
+          set
+            (frame.withFloat id fun float =>
+              { float with share := float.share.resized axis grow steps })
+        | .demote | .rotate _ | .exchange _ => (.error (.floating id), state)
+        | _ => common
     | some index, _ =>
       match change with
       | .promote =>
@@ -2265,7 +2532,7 @@ def arrange (id : ViewId) (change : Arrange) (state : EditorState) :
         match windows[other]? with
         | some view =>
           if other == index then set frame
-          else set { frame.focusedOn view with windows := swapped windows index other }
+          else focusing view fun frame => { frame with windows := swapped windows index other }
         | none => set frame
       | .resize axis grow steps =>
         match frame.underlying.resized index windows.size axis grow steps with
@@ -2280,6 +2547,11 @@ def arrange (id : ViewId) (change : Arrange) (state : EditorState) :
             set
               { (frame.removed index).1 with
                 windows := windows.eraseIdx! index, docked := frame.docked.push (id, side) }
+      | .float =>
+        if windows.size ≤ 1 then (.error .lastTile, state)
+        else
+          -- The focus stays on the window, so the inheritor is not read.
+          floated { (frame.removed index).1 with windows := windows.eraseIdx! index }
       | _ => common
     | none, some at_ =>
       let ofSide := frame.atSide at_
@@ -2298,7 +2570,7 @@ def arrange (id : ViewId) (change : Arrange) (state : EditorState) :
         match ofSide[other]? with
         | some view =>
           if other == index then set frame
-          else set ((frame.focusedOn view).withSide at_ (swapped ofSide index other))
+          else focusing view (·.withSide at_ (swapped ofSide index other))
         | none => set frame
       | .resize axis grow steps =>
         match frame.underlying.resizedEdge at_ axis grow steps with
@@ -2312,6 +2584,7 @@ def arrange (id : ViewId) (change : Arrange) (state : EditorState) :
         else
           if !frame.underlying.edgeSides.contains side then (.error (.noSuchEdge side), state)
           else set { frame with docked := undocked.push (id, side) }
+      | .float => floated { frame with docked := undocked }
       | _ => common
 
 /-- The window `count` steps from the window `id` towards `side`, worked out
@@ -2319,8 +2592,9 @@ from the rectangles the layout gave (`rects`), so it holds under every
 layout; none when no window lies that way, and for a window with no
 rectangle, which monocle hides.
 
-A step's candidates are the windows of the frame (`Frame.contains`), tiled
-and docked, whose rectangle lies
+A step's candidates are the tiled and docked windows of the frame
+(`Frame.anchors`), never a float, which overlaps the tiles it floats over;
+from a float, the step starts from its rectangle. A candidate's rectangle lies
 wholly on `side` of the window reached so far and overlaps it across
 (`Side.lies`). The nearest edge wins; among windows equally near, the one
 whose span holds the reference coordinate, the top of `id`'s rectangle for
@@ -2332,6 +2606,8 @@ def toward? (state : EditorState) (id : ViewId) (side : Side) (count : Nat) : Op
   Id.run do
     let laid := state.rects.filter fun (view, _) => state.frame.contains view
     let some (_, start) := laid.find? (·.1 == id) | return none
+    -- A float is never a candidate: it overlaps what it floats over.
+    let laid := laid.filter fun (view, _) => (state.frame.floating? view).isNone
     let reference :=
       match side with
       | .left | .right => start.y
@@ -2357,7 +2633,8 @@ def toward? (state : EditorState) (id : ViewId) (side : Side) (count : Nat) : Op
 /-- The window of the frame after the window `id` when `forward`, and before
 it otherwise, wrapping at either end; or, with `nth` above 0, the `nth`
 window of the frame, the last when `nth` is past it. The frame's windows
-are walked in `Frame.all`'s order: the tiles, then the docked windows.
+are walked in `Frame.all`'s order: the tiles, the docked windows, then the
+floats in stacking order.
 None for a window not in the frame. -/
 def cycled (state : EditorState) (id : ViewId) (forward : Bool) (nth : Nat) : Option ViewId := do
   let windows := state.frame.all
@@ -2377,7 +2654,9 @@ means nothing in another. The buffer is then the most recently used
 for the minibuffer's buffer in another window, with `noSuchWindow` for a
 window not in the frame, with `noSuchBuffer` for a buffer there is none of,
 and with `markersOfAnotherText` when a marker is not of that buffer's
-text. -/
+text. The floats anchored at a position of the window close when transient
+and are anchored to the frame when pinned, since their marker is of the
+text it showed (`dropAnchors`). -/
 def showBuffer (id : ViewId) (buffer : BufferId) (scroll selection : MarkerId)
     (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
   match state.minibufferView? with
@@ -2399,14 +2678,19 @@ where
           (.error .markersOfAnotherText, state)
         else
           (.ok (),
-            { state with
-              windows :=
-                state.windows.map fun window =>
-                  if window.id == id then
-                    { window with
-                      buffer, scroll, selection, wanted := none }
-                  else window
-              recent := Recent.touch state.recent buffer })
+            ({ state with
+                    windows :=
+                      state.windows.map fun window =>
+                        if window.id == id then
+                          { window with
+                            buffer, scroll, selection, wanted := none }
+                        else window
+                    recent := Recent.touch state.recent buffer } :
+                  EditorState).dropAnchors
+              fun float =>
+              match float.anchor with
+              | .position view _ => view == id
+              | _ => false)
 
 /-- Opens a new window on the buffer `buffer`, with `scroll` and `selection`
 as its markers, at `spot`, and hands its id back (`freshView`):
@@ -2415,13 +2699,19 @@ as its markers, at `spot`, and hands its id back (`freshView`):
   that window with the default placement would (`Frame.inserted`): under
   master-and-stack the stack grows and main is untouched, under monocle it
   is appended, and under manual splits the last tile is split along rows;
-- `edge side` docks it at `side`, after the windows docked there.
+- `edge side` docks it at `side`, after the windows docked there;
+- `float anchor share pinned` puts it on top of the floats, placed against
+  `anchor`.
 
 The focus stays. Refused, with the state unchanged, with `ofMinibuffer`,
 and the minibuffer's view, for the minibuffer's buffer, with
 `noSuchBuffer` for a buffer there is none of, with `markersOfAnotherText`
 when a marker is not of that buffer's text, and with `noSuchEdge` for an
-edge the layout has none at. -/
+edge the layout has none at. A float's anchor window is refused with
+`floating` when it is a float, with `noSuchWindow` when it is no tiled or
+docked window of the frame, and a position anchor's marker with
+`markersOfAnotherText` when it is not of the text of that window's
+buffer. -/
 def openWindow (buffer : BufferId) (scroll selection : MarkerId) (spot : WindowSpot)
     (state : EditorState) : Except LayoutRefusal ViewId × EditorState :=
   match state.minibufferView? with
@@ -2454,6 +2744,57 @@ where
           if frame.underlying.edgeSides.contains side then
             opened { frame with docked := frame.docked.push (made, side) }
           else (.error (.noSuchEdge side), state)
+        | .float anchor share pinned =>
+          let refusal : Option LayoutRefusal :=
+            match anchor.view? with
+            | none => none
+            | some view =>
+              if (frame.floating? view).isSome then some (.floating view)
+              else
+                if !frame.anchors view then some (.noSuchWindow view)
+                else
+                  match anchor, state.target? view with
+                  | .position _ marker, some target =>
+                    if marker.text != target.buffer.text then some .markersOfAnotherText else none
+                  | .position _ _, none => some (.noSuchWindow view)
+                  | _, _ => none
+          match refusal with
+          | some refusal => (.error refusal, state)
+          | none =>
+            opened
+              { frame with floats := frame.floats.push { view := made, anchor, share, pinned } }
+
+/-- The state once a publish placed its floats against their anchors
+(`Loop.publish`). `spots` answers, for each float anchored at a position,
+where the display drew its anchor in its window's view, from the view's
+top left, or none when the view does not show it. A float whose anchor is
+drawn has its spot, offset by its window's rectangle (`rects`) into frame
+pixels. A transient float whose anchor is not drawn closes
+(`closeFloats`): a position the display answered none for, or an anchor
+window with no rectangle. A pinned one keeps the spot it last had. -/
+def located (spots : Array (ViewId × Option Display.Spot)) (state : EditorState) : EditorState :=
+  let laid := state.rects
+  let drawn (view : ViewId) : Option Rect := (laid.find? (·.1 == view)).map (·.2)
+  let answer (float : Floating) : Option (Option Display.Spot) :=
+    (spots.find? (·.1 == float.view)).map (·.2)
+  let floats :=
+    state.frame.floats.map fun float =>
+      match float.anchor, answer float with
+      | .position view _, some (some spot) =>
+        match drawn view with
+        | some rect =>
+          { float with
+            spot := some { x := rect.x + spot.x, y := rect.y + spot.y, height := spot.height } }
+        | none => float
+      | _, _ => float
+  let gone (float : Floating) : Bool :=
+    !float.pinned &&
+      match float.anchor with
+      | .frame => false
+      | .window view => (drawn view).isNone
+      | .position view _ => (drawn view).isNone || answer float == some none
+  let closing := (state.frame.floats.filter gone).map (·.view)
+  { state with frame := { state.frame with floats } }.closeFloats closing
 
 /-- Opens a prompt, asked from the focused view: a buffer in the next slot
 over `text`, whose history is `history`, with the minibuffer's mode

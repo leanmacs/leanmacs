@@ -1167,7 +1167,7 @@ view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: w KeyW control
 key arrived: H KeyH shift
-scene 640x480, focused 0, echo "window-edge-left: the last tiled window cannot move to an edge", echo padding 8, preedit -, published 26, theme "default"
+scene 640x480, focused 0, echo "window-edge-left: the last tiled window cannot leave the tiles", echo padding 8, preedit -, published 26, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```

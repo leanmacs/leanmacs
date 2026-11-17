@@ -152,4 +152,22 @@ structure Floating where
   spot : Option Display.Spot := none
   deriving DecidableEq, Repr
 
+/-- Where `float` goes, in `area` (the tiled area), given the rectangles
+`laid` the layout gave the tiles and the docked windows: centred in the
+area for the frame; centred in its window's rectangle for a window, or in
+the area when the window has none (monocle hides it); beside its spot for a
+position, or as for its window before it has a spot. -/
+def Floating.placed (float : Floating) (area : Rect) (laid : Array (ViewId × Rect)) : Rect :=
+  let inWindow (view : ViewId) : Rect :=
+    match laid.find? (·.1 == view) with
+    | some (_, rect) => Floating.centred float.share rect
+    | none => Floating.centred float.share area
+  match float.anchor with
+  | .frame => Floating.centred float.share area
+  | .window view => inWindow view
+  | .position view _ =>
+    match float.spot with
+    | some spot => Floating.beside float.share spot area
+    | none => inWindow view
+
 end Editor
