@@ -20,7 +20,9 @@
 //! the bottom of its `rect`, above which its text has what is left, with
 //! each field on its side and padded, the row in the view's
 //! `status_face` over the mode line's; each inset from the view's edges
-//! by its `padding`, and the echo by the scene's `echo_padding`. What
+//! by its `padding`, and the echo by the scene's `echo_padding`; and each
+//! of the scene's `dividers` as a fill of its rect in its face's
+//! foreground. What
 //! it carries and lays out nothing of: the scene's `echo`, `pending`,
 //! `preedit` and `focused`, which no phase of the display pipeline draws
 //! yet.
@@ -476,12 +478,24 @@ pub struct View {
     /// Its status line, field by field.
     pub status: Vec<StatusField>,
     /// The face of its status row, over the mode line's and under every
-    /// field's, which gives the row its background: an unselected
-    /// window's `mode-line.inactive`, and `None` for a selected one.
+    /// field's, which gives the row its background: Lean's choice, which
+    /// marks the selected window apart from the others; `None` draws the
+    /// row in the mode line's alone.
     pub status_face: Option<String>,
     /// How far its text and its status fields are inset from its edges, in
     /// points; none by default.
     pub padding: Padding,
+}
+
+/// A divider: a strip of the frame between two tiled views, filled in the
+/// foreground of its face. Which strips are dividers, and their face, are
+/// Lean's.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Divider {
+    /// Where it is in the frame.
+    pub rect: Rect,
+    /// The name of the face whose foreground it is filled in.
+    pub face: String,
 }
 
 /// Everything the display shows, as published after a command.
@@ -491,6 +505,9 @@ pub struct Scene {
     pub size: Size,
     /// The views, in drawing order.
     pub views: Vec<View>,
+    /// The dividers between the tiled views, drawn before every view;
+    /// none by default.
+    pub dividers: Vec<Divider>,
     /// The view with the keyboard focus, if one has.
     pub focused: Option<ViewId>,
     /// The echo area's text.

@@ -359,10 +359,11 @@ def encodeMenu (encoded : Encoded) (menu : Menu) : Encoded :=
       submenu.items.foldl encodeMenuItem encoded)
     { encoded with words := encoded.words.push menu.menus.size.toUInt64 }
 
-/-- `scene` as it crosses to the library, with the definitions `faces`
-after its views when there are any to send: none is sent as their absence,
-which is "as last published". A view whose snapshot the table does not
-hold is sent with none, and shows nothing. -/
+/-- `scene` as it crosses to the library, its dividers after its views,
+each its rectangle and its face, then the definitions `faces` when there
+are any to send: none is sent as their absence, which is "as last
+published". A view whose snapshot the table does not hold is sent with
+none, and shows nothing. -/
 def encode (real : RealDisplay) (scene : Scene) (faces : Option Theme) : IO Encoded := do
   let words :=
     pushOptional #[RealTexts.word scene.size.width, RealTexts.word scene.size.height]
@@ -378,6 +379,17 @@ def encode (real : RealDisplay) (scene : Scene) (faces : Option Theme) : IO Enco
   let encoded := (scene.menu.map (encodeMenu encoded)).getD encoded
   let encoded := { encoded with words := encoded.words.push scene.views.size.toUInt64 }
   let encoded ← scene.views.foldlM real.encodeView encoded
+  let encoded :=
+    scene.dividers.foldl
+      (fun encoded divider =>
+        let rect := divider.rect
+        pushText
+          { encoded with
+            words :=
+              encoded.words ++
+                #[rect.x, rect.y, rect.width, rect.height].map RealTexts.word }
+          divider.face.name)
+      { encoded with words := encoded.words.push scene.dividers.size.toUInt64 }
   match faces with
   | none =>
     return { encoded with words := encoded.words.push 0 }

@@ -467,6 +467,7 @@ fn scene_directly() -> Scene {
         pending: String::new(),
         preedit: None,
         faces: None,
+        dividers: Vec::new(),
     }
 }
 
@@ -515,6 +516,7 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
         }],
         echo_padding: 0,
         faces: None,
+        dividers: Vec::new(),
     };
     let (words, strings) = wire.encode();
     assert!(publish(display, &words, &strings, &[snapshot]));

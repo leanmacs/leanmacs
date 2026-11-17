@@ -2418,7 +2418,8 @@ bar; view 1, of a snapshot the table does not hold and padded, before view
 2, of the one it holds, scrolled to its second row with a selection, a
 right status field with a padding and a status face; and view 3, of the
 same snapshot, whose scroll marker is `scroll` and whose selection markers
-are `selections`. Each view is 4 columns by 3 rows. -/
+are `selections`. Each view is 4 columns by 3 rows. Between views 1 and 2
+is one divider, in a face of its own. -/
 def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
     (selections : Array Editor.MarkerId) : Editor.Scene :=
   let rect (y : Nat) : Editor.Rect := { x := 0, y, width := 32, height := 48 }
@@ -2439,6 +2440,7 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
           statusFace := some ⟨"dim"⟩ },
         { id := ⟨3⟩, rect := rect 96, snapshot := fixture.snapshot, scroll, selections
           cursor := { shape := .underline, face := ⟨"c3"⟩ }, decorations := #[], status := #[] }]
+    dividers := #[{ rect := { x := 0, y := 46, width := 32, height := 2 }, face := ⟨"rule"⟩ }]
     focused := some ⟨2⟩, echo := "fixture", echoPadding := 14, pending := "g"
     preedit := some "é", title := "notes.txt", menu := some fixtureMenu }
 
@@ -2503,7 +2505,7 @@ and a frame with another frame, never with a colour or a size written
 here. -/
 def sceneChecks (_ : Unit) : List Check :=
   [{  name :=
-        "a scene with a pending prefix, a preedit, a title, a menu bar with each kind of item, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
+        "a scene with a pending prefix, a preedit, a title, a menu bar with each kind of item, a view of a snapshot the table does not hold, a view whose markers are of two texts and a divider is the words and the string of the library's layout"
       run := do
         let fixture ← sceneFixture
         let encoded ← fixture.real.encode fixture.mixed none
@@ -2533,10 +2535,12 @@ def sceneChecks (_ : Unit) : List Check :=
         -- The second handle; no scroll marker and no selection; an
         -- underline cursor.
         let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0]
+        -- One divider: its rectangle and its face's length.
+        let dividers : Array UInt64 := #[1, 0, 46, 32, 2, 4]
         -- No faces: as last published.
         let faces : Array UInt64 := #[0]
-        return encoded.words == scene ++ menu ++ first ++ second ++ third ++ faces &&
-            encoded.strings == "fixturegénotes.txtApQSéUundoc1c2kwNORMALmode1:1posdimc3" &&
+        return encoded.words == scene ++ menu ++ first ++ second ++ third ++ dividers ++ faces &&
+            encoded.strings == "fixturegénotes.txtApQSéUundoc1c2kwNORMALmode1:1posdimc3rule" &&
             encoded.snapshots.size == 2 },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
@@ -2582,7 +2586,8 @@ def sceneChecks (_ : Unit) : List Check :=
         let fixture ← sceneFixture everyTheme
         let real := fixture.real
         let encoded ← real.encode emptyScene (some everyTheme)
-        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        -- The scene, no view and no divider.
+        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- Present, and seven definitions.
         let faces : Array UInt64 := #[1, 7]
         -- Its name; a family; 20 pixels; weight 700; italic; a foreground

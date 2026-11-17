@@ -218,6 +218,7 @@ fn scene() -> Scene {
         pending: String::new(),
         preedit: None,
         faces: Some(theme()),
+        dividers: Vec::new(),
     }
 }
 

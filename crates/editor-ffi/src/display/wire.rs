@@ -9,10 +9,11 @@
 //! |---|---|
 //! | The scene | its width and height; the focus's presence and view id; the echo's length; the echo's padding in whole points; the pending prefix's length; the preedit's presence and length; the title's length; the menu bar's presence (0 or 1), and when present its layout (`crate::menu`: the count of menus, each menu's title's length, role and items); the count of views; each view |
 //! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length, face's length, side (0 left, 1 right) and padding in whole points; its status face's presence and length; its padding across, down and top, in whole points |
+//! | The dividers, after the last view | their count; each one's rectangle's x, y, width and height and its face's length |
 //! | The faces, after the last view | their presence (0: as last published); when present, the count of definitions and each definition |
 //! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a point; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 a length in 64ths of a point) followed by its value; the vertical padding in 64ths of a point |
 //!
-//! A view is at least 18 words, and a definition is 24 words.
+//! A view is at least 18 words, a divider 5, and a definition 24.
 //!
 //! A point is a logical one: a physical pixel at scale 1. A face's three
 //! lengths, a status field's padding, a view's padding and the echo's
@@ -26,8 +27,8 @@
 //! if present, the title, the menu bar's texts if present (each menu's
 //! title, then its items' titles and command names, in order), then for
 //! each view its cursor's face, its decorations' faces, its status
-//! fields' texts and faces and its status face if present, then for each
-//! definition its
+//! fields' texts and faces and its status face if present, then each
+//! divider's face, then for each definition its
 //! name and its family when present. A length that does not end on a
 //! character boundary, and text left over, are refusals.
 //!
@@ -72,7 +73,8 @@
 
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Cursor, CursorShape, Decoration, Padding, Rect, Scene, Side, Size, StatusField, View, ViewId,
+    Cursor, CursorShape, Decoration, Divider, Padding, Rect, Scene, Side, Size, StatusField, View,
+    ViewId,
 };
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
 use editor_platform::Menu;
@@ -107,6 +109,15 @@ pub struct WireView {
     pub status_face: Option<String>,
     /// Its padding across, down and top, in whole points.
     pub padding: Padding,
+}
+
+/// A divider as it crossed: its rectangle and its face.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WireDivider {
+    /// Its rectangle: x, y, width and height.
+    pub rect: [u64; 4],
+    /// The name of its face.
+    pub face: String,
 }
 
 /// A status field as it crossed: its text and its face, its side, and its
@@ -159,6 +170,8 @@ pub struct WireScene {
     pub menu: Option<Menu>,
     /// The views, in drawing order.
     pub views: Vec<WireView>,
+    /// The dividers between the tiled views.
+    pub dividers: Vec<WireDivider>,
     /// The definitions of the faces, in the order they were made; `None`
     /// when the scene carried none, which is "as last published".
     pub faces: Option<Vec<WireFace>>,
@@ -546,6 +559,14 @@ impl WireScene {
         let views = (0..count)
             .map(|_| view(&mut words, &mut texts))
             .collect::<Option<_>>()?;
+        // A divider is five words.
+        let count = words.count(5)?;
+        let mut dividers = Vec::with_capacity(count);
+        for _ in 0..count {
+            let rect = [words.word()?, words.word()?, words.word()?, words.word()?];
+            let face = texts.take(words.size()?)?;
+            dividers.push(WireDivider { rect, face });
+        }
         let faces = if presence(&mut words)? {
             Some(definitions(&mut words, &mut texts)?)
         } else {
@@ -562,6 +583,7 @@ impl WireScene {
             title,
             menu,
             views,
+            dividers,
             faces,
         })
     }
@@ -636,6 +658,13 @@ impl WireScene {
             words.word(u64::from(view.padding.across));
             words.word(u64::from(view.padding.down));
             words.word(u64::from(view.padding.top));
+        }
+        words.size(self.dividers.len());
+        for divider in &self.dividers {
+            for value in divider.rect {
+                words.word(value);
+            }
+            text(&mut words, &mut strings, &divider.face);
         }
         words.word(u64::from(self.faces.is_some()));
         if let Some(faces) = &self.faces {
@@ -716,6 +745,19 @@ impl WireScene {
                 height: pixels(self.size[1]),
             },
             views,
+            dividers: self
+                .dividers
+                .iter()
+                .map(|divider| Divider {
+                    rect: Rect {
+                        x: pixels(divider.rect[0]),
+                        y: pixels(divider.rect[1]),
+                        width: pixels(divider.rect[2]),
+                        height: pixels(divider.rect[3]),
+                    },
+                    face: divider.face.clone(),
+                })
+                .collect(),
             focused: self.focused.map(ViewId),
             echo: self.echo.clone(),
             echo_padding: self.echo_padding,
@@ -734,7 +776,7 @@ fn pixels(count: u64) -> u32 {
 #[cfg(test)]
 mod tests {
     use editor_layout::face::{Color, Face, Underline, UnderlineStyle};
-    use editor_layout::scene::{CursorShape, Padding, Side, StatusField};
+    use editor_layout::scene::{CursorShape, Divider, Padding, Rect, Side, StatusField};
     use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
     use editor_text::{Anchor, Bias, Marker, Selection, SelectionRange};
 
@@ -742,7 +784,8 @@ mod tests {
     use editor_platform::{Menu, Modifiers};
 
     use super::{
-        WireFace, WireField, WireScene, WireView, decode_definitions, encode_definitions, pixels,
+        WireDivider, WireFace, WireField, WireScene, WireView, decode_definitions,
+        encode_definitions, pixels,
     };
     use crate::document::Document;
     use crate::snapshot::Snapshot;
@@ -782,6 +825,10 @@ mod tests {
                     top: 28,
                 },
             }],
+            dividers: vec![WireDivider {
+                rect: [94, 0, 2, 80],
+                face: "rule".to_owned(),
+            }],
             faces: None,
         }
     }
@@ -798,12 +845,13 @@ mod tests {
                 1, 6, 4, 1, 8, // its status field: right, padded 8
                 1, 3, // its status face
                 8, 4, 28, // its padding across, down and top
-                0,  // no faces
+                1, 94, 0, 2, 80, 4, // one divider: its rectangle and its face's length
+                0, // no faces
             ])
         );
         assert_eq!(
             strings,
-            "fixturegénotes.txtcursor.normalkeywordNORMALmodedim"
+            "fixturegénotes.txtcursor.normalkeywordNORMALmodedimrule"
         );
         assert_eq!(WireScene::decode(&words, &strings), Some(full()));
     }
@@ -817,8 +865,8 @@ mod tests {
         };
         let (words, strings) = titled.encode();
         // The preedit's presence and length, then the title's length, then
-        // no menu, no view and no faces.
-        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 1, 2, 8, 0, 0, 0]));
+        // no menu, no view, no divider and no faces.
+        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 1, 2, 8, 0, 0, 0, 0]));
         assert_eq!(strings, "étodo.txt");
         assert_eq!(WireScene::decode(&words, &strings), Some(titled));
     }
@@ -894,7 +942,7 @@ mod tests {
                 2, 2, 1, // "é", the windows menu, one item
                 1, 1, 1, 0x5a, 15, 4, // command "undo", "U", every modifier and Z
                 0, 0, 0, // untitled, plain, no items
-                0, 0, // no view, no faces
+                0, 0, 0, // no view, no divider, no faces
             ])
         );
         assert_eq!(strings, "tApQSéUundo");
@@ -909,7 +957,7 @@ mod tests {
         };
         assert_eq!(plain.menu, None);
         let (words, strings) = plain.encode();
-        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0]));
+        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]));
         assert_eq!(WireScene::decode(&words, &strings), Some(plain));
         let empty = WireScene {
             menu: Some(Menu::default()),
@@ -963,16 +1011,16 @@ mod tests {
     fn absent_parts_are_written_as_zero_and_read_back_absent() {
         let empty = WireScene::default();
         let (words, strings) = empty.encode();
-        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         assert_eq!(WireScene::decode(&words, &strings), Some(empty));
         // A view with nothing in it is its nineteen words, between the
-        // scene's twelve and the faces' presence.
+        // scene's twelve and the dividers' count and the faces' presence.
         let bare = WireScene {
             views: vec![WireView::default()],
             ..WireScene::default()
         };
         let (words, strings) = bare.encode();
-        assert_eq!(words.len(), (12 + 19 + 1) * 8);
+        assert_eq!(words.len(), (12 + 19 + 2) * 8);
         assert_eq!(WireScene::decode(&words, &strings), Some(bare));
     }
 
@@ -1042,7 +1090,7 @@ mod tests {
         };
         let scene = with_faces(vec![every, unset]);
         let (words, strings) = scene.encode();
-        let mut expected = vec![0; 12];
+        let mut expected = vec![0; 13];
         // Present, and two definitions.
         expected.extend([1, 2]);
         expected.extend(every_words);
@@ -1059,7 +1107,7 @@ mod tests {
         let (words, strings) = full.encode();
         assert_eq!(
             strings,
-            "fixturegénotes.txtcursor.normalkeywordNORMALmodedimkwmono"
+            "fixturegénotes.txtcursor.normalkeywordNORMALmodedimrulekwmono"
         );
         assert_eq!(WireScene::decode(&words, &strings), Some(full));
     }
@@ -1068,9 +1116,9 @@ mod tests {
     fn faces_that_are_absent_are_one_word_and_no_definitions_are_two() {
         let absent = WireScene::default();
         let none = with_faces(vec![]);
-        assert_eq!(absent.encode().0, buffer(&[0; 13]));
+        assert_eq!(absent.encode().0, buffer(&[0; 14]));
         let (words, strings) = none.encode();
-        let mut expected = vec![0; 12];
+        let mut expected = vec![0; 13];
         expected.extend([1, 0]);
         assert_eq!(words, buffer(&expected));
         // They read back apart: absent is "as last published", and no
@@ -1078,7 +1126,7 @@ mod tests {
         assert_eq!(WireScene::decode(&words, &strings), Some(none));
         assert_ne!(
             WireScene::decode(&words, &strings),
-            WireScene::decode(&buffer(&[0; 13]), "")
+            WireScene::decode(&buffer(&[0; 14]), "")
         );
     }
 
@@ -1095,7 +1143,7 @@ mod tests {
                 WireScene::decode(&words, &strings),
                 Some(with_faces(vec![definition]))
             );
-            crate::words::tests::words_of(&words)[21..].to_vec()
+            crate::words::tests::words_of(&words)[22..].to_vec()
         };
         let slants = [Slant::Upright, Slant::Italic, Slant::Oblique];
         for (tag, slant) in (0..).zip(slants) {
@@ -1153,12 +1201,13 @@ mod tests {
         let (every, _) = every();
         let (bytes, strings) = with_faces(vec![every]).encode();
         let words = crate::words::tests::words_of(&bytes);
-        assert_eq!(words.len(), 12 + 2 + 24);
+        assert_eq!(words.len(), 13 + 2 + 24);
         // The scene's words with the word at `index` made `value`, the
-        // index counted from the faces' presence, after the scene's twelve.
+        // index counted from the faces' presence, after the scene's twelve
+        // and the dividers' count.
         let with = |index: usize, value: u64| {
             let mut words = words.clone();
-            words[12 + index] = value;
+            words[13 + index] = value;
             WireScene::decode(&buffer(&words), &strings)
         };
         // As they are, they spell it.
@@ -1233,8 +1282,10 @@ mod tests {
         longer.extend_from_slice(&[0; 8]);
         assert_eq!(WireScene::decode(&longer, &strings), None);
         assert_eq!(WireScene::decode(&bytes, &format!("{strings}x")), None);
-        // Words that stop where the faces' presence would be.
+        // Words that stop where the dividers' count or the faces' presence
+        // would be.
         assert_eq!(WireScene::decode(&buffer(&[0; 11]), ""), None);
+        assert_eq!(WireScene::decode(&buffer(&[0; 13]), ""), None);
     }
 
     #[test]
@@ -1257,9 +1308,10 @@ mod tests {
             Some(definitions.clone())
         );
         // The words and the string a scene of no view carries them in,
-        // after its twelve words and the faces' presence.
+        // after its twelve words, the dividers' count and the faces'
+        // presence.
         let (scene_words, scene_strings) = with_faces(definitions).encode();
-        assert_eq!(scene_words[13 * 8..], words[..]);
+        assert_eq!(scene_words[14 * 8..], words[..]);
         assert_eq!(scene_strings, strings);
         // No definitions is a count of 0, and undefines every face.
         let (none, none_strings) = encode_definitions(&[]);
@@ -1389,6 +1441,67 @@ mod tests {
             assert_eq!(decoded.encode(), (words, strings));
             assert_eq!(decoded, scene);
         }
+    }
+
+    #[test]
+    fn a_scenes_dividers_cross_after_the_views_come_back_as_sent_and_reach_layout() {
+        let divided = WireScene {
+            dividers: vec![
+                WireDivider {
+                    rect: [318, 0, 2, 464],
+                    face: "rule".to_owned(),
+                },
+                WireDivider {
+                    rect: [0, 230, 318, 2],
+                    face: "é".to_owned(),
+                },
+            ],
+            ..WireScene::default()
+        };
+        let (words, strings) = divided.encode();
+        assert_eq!(
+            words,
+            buffer(&[
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // the scene, with no view
+                2, // two dividers
+                318, 0, 2, 464, 4, // the first: its rectangle and its face's length
+                0, 230, 318, 2, 2, // the second
+                0, // no faces
+            ])
+        );
+        assert_eq!(strings, "ruleé");
+        let decoded = WireScene::decode(&words, &strings).expect("a scene");
+        assert_eq!(decoded, divided);
+        assert_eq!(decoded.encode(), (words.clone(), strings.clone()));
+        // A face's length that ends inside a character is refused.
+        let mut inside = words;
+        inside[22 * 8] = 1;
+        assert_eq!(WireScene::decode(&inside, &strings), None);
+        let scene = divided.resolve(&[]);
+        assert_eq!(
+            scene.dividers,
+            vec![
+                Divider {
+                    rect: Rect {
+                        x: 318,
+                        y: 0,
+                        width: 2,
+                        height: 464,
+                    },
+                    face: "rule".to_owned(),
+                },
+                Divider {
+                    rect: Rect {
+                        x: 0,
+                        y: 230,
+                        width: 318,
+                        height: 2,
+                    },
+                    face: "é".to_owned(),
+                },
+            ]
+        );
+        assert!(WireScene::default().resolve(&[]).dividers.is_empty());
     }
 
     #[test]
