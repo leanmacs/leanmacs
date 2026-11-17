@@ -27,6 +27,7 @@ key <Escape> Escape -
 scene
 
 # `:` opens the ex prompt: the window that asked keeps its badge, its buffer
-# and its position, and the minibuffer's view has the prompt's line.
+# and its position, the minibuffer's view has the prompt's label, and the
+# candidate list's view, after it, the first ten ex names.
 key : Semicolon shift
 scene

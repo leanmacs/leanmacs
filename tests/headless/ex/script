@@ -24,11 +24,13 @@ key <Enter> Enter -
 scene
 
 # The ex line's candidates are the ex names that are bound. With `e` in the
-# minibuffer the scene lists, after the line's label, `e`, which is the
-# text, and then `reload`, which holds an `e`; no other name does. `<Tab>`
-# chooses the first, and `<Enter>` runs it: `e` with no path asks for one,
-# with a prompt of its own, which has no candidates, so its status line is
-# its label alone. `<Escape>` cancels that prompt.
+# minibuffer the status line is the line's label alone, and the candidate
+# list, a view of its own, lists `e`, which is the text, first, then the
+# other names that hold an `e`, at most ten, each with what matched in the
+# match face. `<Tab>` chooses the first, and `<Enter>` runs it: `e` with no
+# path asks for one, with a prompt of its own, which has no candidates, so
+# it lists none and its status line is its label alone. `<Escape>` cancels
+# that prompt.
 key : Semicolon shift
 commit e
 scene

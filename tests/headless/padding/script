@@ -12,6 +12,8 @@ resize 640 480
 scene
 
 # `:` opens the ex prompt: the minibuffer's view is padded 12 across and
-# none down, its place staying a text row and the bottom row tall.
+# none down, its place staying a text row and the bottom row tall, and so is
+# the candidate list's view above it, ten text rows tall; the window is
+# shorter by the list.
 key : Semicolon shift
 scene

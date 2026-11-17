@@ -23,6 +23,8 @@ key o KeyO -
 scene
 
 # `:` opens the ex prompt: monocle still shows view 1, the prompt's asker,
-# above the minibuffer's strip, and not the minibuffer.
+# above the minibuffer's strip, and not the minibuffer. The strip holds the
+# candidate list's ten rows above the minibuffer's view, so the asker is
+# shorter by them.
 key : Semicolon shift
 scene

@@ -9,9 +9,11 @@ settle
 
 # `pick` is config's: it asks `Pick: ` with the completion source config
 # registers under `picks`, by name, whose candidates are `wq`, `edit` and
-# `w`. A `w` is typed into the minibuffer. The scene lists the candidates
-# the text matches after the prompt's label, in the minibuffer's status
-# line: `w` and then `wq`. The library's matcher scores the two the same,
+# `w`. A `w` is typed into the minibuffer. The minibuffer's status line is
+# the prompt's label alone, and the scene lists the candidates the text
+# matches in the candidate list, a view of its own after the minibuffer's,
+# one a line, each in the candidate face with the `w` it matched in the
+# match face: `w` and then `wq`. The library's matcher scores the two the same,
 # and `wq` came first, so only the rule that a candidate that is the text
 # is first puts `w` before it. `edit` holds no `w` and is not listed.
 run pick
@@ -21,8 +23,8 @@ scene
 # `<Tab>` moves to the next candidate, with the compiled command
 # `minibuffer-next`: under the Vim scheme the minibuffer's view is in a Vim
 # state of its own, which binds the key. Once chooses `w`, twice `wq`,
-# whose field is then in the face of the chosen candidate. The minibuffer's
-# text is still `w`.
+# whose row of the list is then in the face of the chosen candidate. The
+# minibuffer's text is still `w`.
 key <Tab> Tab -
 key <Tab> Tab -
 scene
@@ -32,8 +34,11 @@ scene
 key <Enter> Enter -
 scene
 
-# A text no candidate matches: the scene lists none, `<Tab>` chooses
-# nothing, and `<Enter>` gives `picked` the typed text.
+# A text no candidate matches: the list is empty, though its view stays in
+# the scene, since the list's place grows and never shrinks while the
+# prompt is open (the empty initial text listed all three). It took its
+# view id the first time it was drawn, so this prompt's minibuffer is view
+# 3. `<Tab>` chooses nothing, and `<Enter>` gives `picked` the typed text.
 run pick
 key z KeyZ -
 scene
