@@ -155,19 +155,21 @@ does: the workspace is rooted right but is its own project, with no branch.
   so one worktree's modes are found within that worktree; a file with no
   workspace looks in its own directory alone. A marker is there by the
   marker adapter's rule, a directory included. Each mode with a marker
-  there is on, rooted at its nearest marker's directory, which may be
-  below the workspace's root; the buffer keeps them as its local
-  `marker-modes`, nearest first, and has each as a minor mode
+  there is on, rooted at its nearest marker's directory, or an outermost
+  mode's farthest within the workspace, which may be below the
+  workspace's root; the buffer keeps them as its local `marker-modes`,
+  nearest first, and has each as a minor mode
   ([keymaps-and-modes.md](keymaps-and-modes.md), "A buffer's modes"). With
-  no contribution registered no job starts.
+  no contribution registered no job starts; the shipped `cargo-mode`,
+  `lake-mode` and `mise-mode` are registered in every host.
 
 ## What lives where
 
 | State | Where | Examples |
 |---|---|---|
-| What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer, its last line, its run in flight and the on-modes it started with, its error list and current location (`compile`), running jobs |
+| What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer, its last line, its run in flight and the on-modes it started with, its error list and current location (`compile`), the commands each mode's listing gave at its root, such as mise's tasks (`compile-listings`), running jobs |
 | What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` lines, `shell-history`; compile lines, `compile-history`) |
-| What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers; their compile history (`compile-history`), and each directory scope's compile record by directory (`compile-directories`) |
+| What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers; their compile history (`compile-history`), each directory scope's compile record by directory (`compile-directories`), and their modes' listings by mode and root (`compile-listings`) |
 
 The stores are `Value` trees by name, as a buffer's locals are, so a
 reload leaves them; they live as long as the session. The unscoped store
@@ -246,7 +248,12 @@ open when the table has it: found or registered this session.
   every worktree of the codebase offers them, no other project does, and a
   reload's change is read at once.
   The on-modes a run started with are part of the workspace's record.
-  Phase 6: the shipped modes, the same way.
+- `shell-and-compile` phase 6 (built): the shipped `cargo-mode`,
+  `lake-mode` and `mise-mode` turn on per workspace, so two worktrees of
+  one repository each have their own modes and roots. `mise-mode`'s tasks
+  are listed in each worktree's own root and kept in that workspace's
+  store (`compile-listings`), so each worktree offers its own tasks, while
+  both share the project's compile history and config's commands for it.
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)
   and `remote-workspace-execution` (running in a `reachable` location).
 

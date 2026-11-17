@@ -2712,12 +2712,15 @@ contributes nothing.
   workspace's root, never above it, or in the directory alone for a file
   with no workspace ([projects.md](projects.md), "A buffer's workspace").
   Each mode with a marker there is added as a minor mode, its root the
-  directory of its nearest marker. The buffer keeps its on-modes as the
+  directory of its nearest marker, or of its farthest for an outermost
+  mode (`cargo-mode`). The buffer keeps its on-modes as the
   local `marker-modes`, nearest root first and, at one root, in
   registration order; they are added so that `Buffer.minors` lists the
   nearest first, so its keymap wins as its command is `compile`'s default.
   It happens once, when the file opens; a reload's contributions apply to
-  files opened after it. With no contribution registered no job starts.
+  files opened after it. With no contribution registered no job starts;
+  every host ships three, so every file's open starts it. A mode that
+  computes its commands checks its listing as it turns on.
   A mode turned on so needs no `Mode` record: one registered under its
   name contributes its keys as any minor mode's do.
 
@@ -2984,10 +2987,12 @@ library's matcher.
 
 ### The compile mode, as built
 
-Status: built by `shell-and-compile` phases 3, 4 and 5
+Status: built by `shell-and-compile` phases 3 to 6
 (`lean/Editor/Compile.lean`, `lean/Editor/Compile/Errors.lean`,
-`lean/Editor/Compile/Contribution.lean`, `lean/Editor/Compile/Compiled.lean`,
-`lean/Editor/Workspace/Modes.lean`; the module docs have the detail).
+`lean/Editor/Compile/Contribution.lean`, `lean/Editor/Compile/Listing.lean`,
+`lean/Editor/Compile/Shipped.lean`, `lean/Editor/Compile/Compiled.lean`,
+`lean/Editor/Json.lean`, `lean/Editor/Workspace/Modes.lean`; the module
+docs have the detail).
 Emacs's `M-x compile`, one per workspace: a build or test command runs as
 `/bin/sh -c <line>` and its output arrives in the workspace's compilation
 buffer while editing goes on.
@@ -3038,13 +3043,24 @@ buffer while editing goes on.
   compile mode writes it inside `BufferId.writing`, Emacs's
   `inhibit-read-only`. The mode line has no read-only mark yet.
 - **Error formats** are data (`Compile.Format`): a name, a pattern over
-  one output line whose pieces capture the file, the line, the column and
-  the severity (error, warning or note), and optionally the pattern of a
-  following line that continues a location. Patterns are matched by a
-  small anchored matcher the editor owns, not a regex: the search port's
-  regex answers no submatches and its model answers literal patterns
-  alone. One format ships, `general`: `file:line:col: message` and
-  `file:line: message`, with an optional severity word.
+  one output line whose pieces capture the file, the line, the column, the
+  severity (error, warning or note) and the message; optionally the
+  pattern of a following line that continues a location; and optionally a
+  lead, the pattern of the line before a location that gives its severity
+  and message, for a tool that prints the location after its message.
+  A location found after a lead starts at the lead's row, so it is visited
+  from either line, and a lead and its location that arrive in two posts
+  give the one location. The message is kept with the location and not
+  yet said. Patterns are matched by a small anchored matcher the editor
+  owns, not a regex: the search port's regex answers no submatches and its
+  model answers literal patterns alone. Three formats ship: `general`,
+  `file:line:col: message` and `file:line: message`, with an optional
+  severity word, read with every run; `rustc`, cargo's arrow line ` -->
+  src/main.rs:4:18` with the `error[E0308]: …` line before it as its lead
+  and the snippet under it (`|`, `=` and `:::` lines) continuing it; and
+  `lean`, Lake's `error: ./Foo/Bar.lean:12:4: …`, with `warning` and
+  `info` (a note), whose columns count from 0. `general` reads none of
+  rustc's or Lake's lines.
 - **Locations** are found as lines arrive, in each post and at the run's
   end, never in the header or the last line, and kept per workspace in its
   compile record, with the run's directory resolving a relative file
@@ -3072,16 +3088,50 @@ buffer while editing goes on.
 - **Contributions.** A minor mode gives the compile mode what fits a kind
   of project as data (`Compile.Contribution`), registered under the mode's
   name in config (`compileContribution`) or by compiled code (a host's
-  `contributions`; none ship until phase 6): marker files, named commands
-  (`build`, `test`, each a name and a command line) and error formats.
+  `contributions`): marker files, named commands (`build`, `test`, each a
+  name and a command line, and maybe a directory of its own), error
+  formats, whether its root is its outermost marker, and a listing that
+  computes more commands.
   The registration order is config's contributions in its order, then the
   compiled ones config does not register; config's contribution of a
   compiled one's name replaces it whole. A contribution with no marker,
   one registered twice and one naming a command twice refuse the `setup`.
 - **On-modes.** A buffer's markers turn their modes on inside its
-  workspace, each with its root ("A buffer's modes"); more than one may be
-  on, ordered nearest root first, then by registration order. That one
-  order picks the default command and the order formats are tried.
+  workspace, each with its root ("A buffer's modes"): its nearest marker's
+  directory, or, for an outermost mode, the farthest directory within the
+  workspace that holds one of its markers. More than one may be on,
+  ordered, once their roots are chosen, nearest root first, then by
+  registration order. That one order picks the default command and the
+  order formats are tried.
+- **The shipped modes.** Every host registers three contributions for the
+  owner `compiled` (`Compile.shipped`), which config's of the same name
+  replaces whole, and which config can build on (`{ Compile.cargoMode with
+  … }`):
+  - `cargo-mode`: marker `Cargo.toml`, outermost, because cargo prints
+    paths relative to the Cargo workspace's root, so in a member crate it
+    runs and resolves there; `build`, `test` and `clippy`, as `cargo
+    build`, `cargo test` and `cargo clippy`; the `rustc` format.
+  - `lake-mode`: marker `lakefile.lean` or `lakefile.toml`; `build` and
+    `test`, as `lake build` and `lake test`; the `lean` format.
+  - `mise-mode`: marker `mise.toml` or `.mise.toml`; one command a task,
+    computed from `mise tasks ls --json` (`mise` by bare name on the
+    child's `PATH`): `mise run <task>`, the name quoted for the shell when
+    it must be, run in the task's `dir`. No format of its own: a task's
+    output is read by the other on-modes' formats and `general`, so `mise
+    run test` in a Cargo crate inside a mise project reads rustc's errors
+    through `cargo-mode`.
+- **Computed commands.** A contribution's listing is a program run in its
+  mode's root, whose output it reads into named commands. It runs as a job
+  (`compile-list`) when the mode turns on in a buffer, and at each use,
+  `compile`'s prompt and `compile-command`, but only when its markers'
+  stamps in the root differ from those read before it last ran, or after a
+  reload. A use offers what was last listed: the list a changed marker
+  gives is offered from the use after the job ends. What it gave is kept
+  per workspace, by mode and root (`compile-listings`), so two worktrees
+  list their own. A listing that fails offers none of its commands and
+  says why once, `<mode> in <root>: <why>`, until the stamps change or a
+  reload. Listed commands come after the contribution's own, a listed name
+  replacing its own in place.
 - **Where and what `compile` runs.** With on-modes, `compile` runs its
   line, typed or default, in the first on-mode's root, which may be below
   the workspace's root (a crate inside a Cargo workspace); its prompt's
@@ -3094,7 +3144,8 @@ buffer while editing goes on.
 - **`compile-command`** prompts `Mode command: ` with every on-mode's named
   commands as candidates, `<name> (<mode>)`, in on-mode order; the answer
   chooses a whole candidate, else the first command of that bare name,
-  and its line runs in its mode's root with no second prompt. With no
+  and its line runs in its mode's root, or the directory the command
+  names, with no second prompt. With no
   mode offering a command it says so and asks nothing. It is a command and
   an ex name, bound to no key.
 - **Formats in use** are the on-modes' contributions' formats, in on-mode
@@ -3107,29 +3158,38 @@ buffer while editing goes on.
   store: `compile`, `compile-command` and `Compile.projectSettings` read
   them from there, so every worktree of the codebase has them, no other
   project does, and a reload's change is read at once, before any compile.
-  A project's command of a name the contribution gives replaces it in
-  place, and a new name comes after the contribution's; they are offered
-  only while their mode is on. Settings are read for phase 6's computed
-  commands; nothing here acts on them.
+  A project's command of a name the contribution gives, or its listing
+  gave, replaces it in place, and a new name comes after them; they are
+  offered only while their mode is on. Settings are read by
+  `Compile.projectSettings`; no shipped mode acts on them yet.
 - **The mode** `compilation` fills the role `refresh` with `recompile` and
   `activate` with `compile-goto-error`. It leaves `next-item` and
   `previous-item` unfilled, so under the Vim scheme `j` and `k` stay
   motions in a compilation buffer.
-- **Not built here**: the shipped `cargo-mode`, `lake-mode` and
-  `mise-mode` and commands computed from a project (phase 6), turning a
-  buffer's on-modes on again after a reload, make's directory tracking
-  (`Entering directory`), global keys for `next-error` and `previous-error` (such as
-  Vim's `]q` and `[q`), a location's message in the echo area,
-  `next-error-follow`, and a time limit (a build may run for many minutes;
+- **Not built here**: turning a buffer's on-modes on again after a
+  reload, make's directory tracking (`Entering directory`), and resolving a
+  mise task's output against a directory its commands `cd` to; cargo's
+  root by `cargo locate-project --workspace`, for a crate nested in but not
+  a member of an outer Cargo workspace; a format of its own for bare
+  `lean`'s `file:line:col: error(code):` form, which `general` reads one
+  column off; global keys for `next-error` and `previous-error` (such as
+  Vim's `]q` and `[q`); a location's message in the echo area;
+  replacing an open prompt's candidates when a listing ends;
+  `next-error-follow`; and a time limit (a build may run for many minutes;
   `kill-compilation` ends it, and `C-g` does not, as in Emacs).
 
 Pinned by `ModelTest.compileChecks`, `compileErrorChecks`,
-`compileLocationChecks`, `compileHookChecks`, `modeMarkerChecks` and
-`readOnlyChecks` on the models; by the mode marker search's contract
-(`Workspace.MarkerContract`), on its model and on the job model by
-`model-test` and over the real file service by `contract-test`; and by
-`ContractTest.compileChecks` over the real process service, with the
-fixture `tests/compile/three-lines`.
+`compileLocationChecks`, `compileHookChecks`, `projectFormatChecks`,
+`jsonChecks`, `listingChecks`, `projectModeChecks`, `modeMarkerChecks` and
+`readOnlyChecks` on the models; by `ConfigTest`'s checks that the hosts
+start with the shipped contributions and that config can override a field
+of one; by the mode marker search's contract (`Workspace.MarkerContract`),
+on its model and on the job model by `model-test` and over the real file
+service by `contract-test`; and over the real process service by
+`ContractTest.compileChecks`, with the fixture `tests/compile/three-lines`,
+and `ContractTest.projectModeChecks`, with the programs in
+`tests/compile/bin` standing in for cargo, lake and mise, the git fixture
+`tests/workspaces/git`, and the trees in `tests/compile`.
 
 ## The ex command line
 
