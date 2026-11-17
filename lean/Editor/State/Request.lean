@@ -1,4 +1,5 @@
 import Editor.Command.Call
+import Editor.Compile.Contribution
 import Editor.Ex.Line
 import Editor.Invocation
 import Editor.State
@@ -161,6 +162,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   no root and generation 0.
 - **Config's shell time limit is asked by one request**, `shellTimeLimit`,
   which the loop answers the same way; here it is answered `none`.
+- **The compile contributions are asked by one request**, `compileHook`:
+  the registered contributions in registration order and config's project
+  commands (`Compile.Hook`), which the loop answers the same way; here it
+  is answered empty.
 
 ## Where an addition goes
 
@@ -315,6 +320,9 @@ inductive StateRequest where
   /-- How long a `:!` or a filter may run, in milliseconds, as config set
   it, which the loop that runs the command answers with. -/
   | shellTimeLimit
+  /-- The compile contributions, in registration order, and config's
+  project commands, which the loop that runs the command answers with. -/
+  | compileHook
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -371,6 +379,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .workspaceSettings => Workspace.Settings × Nat
   | .setUnscopedValue .. => Unit
   | .shellTimeLimit => Option Nat
+  | .compileHook => Compile.Hook
 
 namespace EditorState
 
@@ -460,6 +469,9 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   -- Config's limit is the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, config set none.
   | .shellTimeLimit, state => (none, state)
+  -- The contributions are the loop's to answer with (`Program.dispatched`):
+  -- here, with no loop, none is registered.
+  | .compileHook, state => ({}, state)
 
 end EditorState
 

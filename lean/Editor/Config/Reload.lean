@@ -89,6 +89,10 @@ the model tests run it with outcomes built by hand
   opened after an install asks its directory's workspace again, as an
   install drops every directory's cached environment. A rejected outcome
   changes neither.
+- **An install replaces config's compile contributions and project
+  commands** (`Registry.replaceContributions`, `Registry.projectCommands`):
+  a file opened after it turns on the modes they give, and the compile mode
+  uses their commands at its next use. A rejected outcome changes neither.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -283,20 +287,22 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         chunks := built.chunks,
         registry :=
           {
-            (((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                                      built.registrations.jobs).replaceBindings
-                                  .config built.registrations.bindings).replaceModes
-                              .config built.registrations.modes).replaceEx
-                          .config built.registrations.ex).replaceFaces
-                      .config built.registrations.faces).replaceThemes
-                  .config built.registrations.themes).replaceSegments
+            ((((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                                          built.registrations.jobs).replaceBindings
+                                      .config built.registrations.bindings).replaceModes
+                                  .config built.registrations.modes).replaceEx
+                              .config built.registrations.ex).replaceFaces
+                          .config built.registrations.faces).replaceThemes
+                      .config built.registrations.themes).replaceSegments
+                  .config built.registrations.segments).replaceContributions
               .config
-              built.registrations.segments with
+              built.registrations.contributions with
             environment := built.registrations.environment
             autoReload := built.registrations.autoReload.back?.getD false
             workspaceRoots := built.registrations.workspaceRoots
             generation := state.registry.generation + 1
-            shellTimeLimit := built.registrations.shellTimeLimit },
+            shellTimeLimit := built.registrations.shellTimeLimit
+            projectCommands := built.registrations.projectCommands },
         cells }
     let (themeName, unknownTheme) :=
       chooseAt state.registry state.themeName built.registrations.theme

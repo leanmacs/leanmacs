@@ -175,6 +175,12 @@ from the next command.
   answered config's limit the loop was told of
   (`Loop.Registered.shellTimeLimit`), or `none`, the state not read and
   not changed. `:!` asks, for its run's limit (`Editor/Shell.lean`).
+- **Asking for the compile hook** (`StateRequest.compileHook`) is answered
+  the compile contributions and config's project commands the loop was
+  told of (`Loop.Registered.compile`), the state not read and not changed.
+  The compile mode asks (`Editor/Compile.lean`, "The hook"). The workspace
+  settings carry the contributions' marker modes too
+  (`Workspace.Settings.markerModes`), for what opens a file.
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -312,6 +318,9 @@ structure Loop.Registered where
   (`shellTimeLimit`, `Editor/Setup.lean`); `none` for the shell's
   default. -/
   shellTimeLimit : Option Nat := none
+  /-- The compile contributions, in registration order, and config's
+  project commands (`Config.Registry.compileHook`). -/
+  compile : Compile.Hook := {}
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -382,7 +391,11 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     dispatched registered state (next registered.shellTimeLimit)
   | state, .step (.state .workspaceSettings) next =>
     dispatched registered state
-      (next ({ roots := registered.workspaceRoots }, registered.generation))
+      (next
+        ({ roots := registered.workspaceRoots,
+           markerModes := registered.compile.contributions.map (·.markerMode) },
+          registered.generation))
+  | state, .step (.state .compileHook) next => dispatched registered state (next registered.compile)
   | state, .step (.state (.runCommand name call)) next =>
     match registered.command name with
     | none => dispatched registered state (next false)

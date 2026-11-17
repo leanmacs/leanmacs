@@ -816,6 +816,10 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   config. The default is the shipped set, so every host draws the shipped
   mode line unless it is told otherwise. -/
   segments : Array Segment := ModeLine.shipped
+  /-- The compiled compile contributions (`Editor/Compile/Contribution.lean`):
+  registered for the owner `compiled` when the loop starts, before any
+  config. None ship yet. -/
+  contributions : Array Compile.Contribution := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`.
   The editor thread calls it. It is not `emit`: the output is what a test
   compares, and a log entry depends on how long the machine took. -/
@@ -1633,17 +1637,18 @@ structure Progress where
   titleBar : Option Window.TitleBar := none
 
 /-- The registry a host starts with: what compiled code hands it, its
-commands, jobs, key bindings, modes, ex bindings, themes and segments, for
-the owner `compiled`, before any config. -/
+commands, jobs, key bindings, modes, ex bindings, themes, segments and
+compile contributions, for the owner `compiled`, before any config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  ((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
-                        collaborators.compiledJobs).replaceBindings
-                    .compiled collaborators.bindings).replaceModes
-                .compiled collaborators.modes).replaceEx
-            .compiled collaborators.ex).replaceThemes
-        .compiled collaborators.themes).replaceSegments
-    .compiled collaborators.segments
+  (((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
+                            collaborators.compiledJobs).replaceBindings
+                        .compiled collaborators.bindings).replaceModes
+                    .compiled collaborators.modes).replaceEx
+                .compiled collaborators.ex).replaceThemes
+            .compiled collaborators.themes).replaceSegments
+        .compiled collaborators.segments).replaceContributions
+    .compiled collaborators.contributions
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of

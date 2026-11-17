@@ -3762,7 +3762,41 @@ def reloadChecks (context : Context) : List Check :=
                   output.contains s!"job 2 {Files.reloadJob}: ok" &&
                   output.contains s!"text 1: {new.quote}" &&
                   echo == "".quote &&
-                  lines == #[viewLine new 16, status] }]
+                  lines == #[viewLine new 16, status] },
+    { name :=
+        "a real config whose setup registers a compile contribution with a format of its own, and project commands, elaborates, and installs them: the format reads its line and the project's commands are kept"
+      run := do
+        let text :=
+          "def atFormat : Compile.Format :=
+  { name := \"at\"
+    pattern :=
+      [Compile.step
+          [{ atom := .literal \"at \" }, { atom := .noneOf [' '], into := some .file },
+            { atom := .literal \" line \" }, { atom := .digits, into := some .line }]] }
+
+def setup : SetupM Unit := do
+  compileContribution
+      { mode := \"a-mode\", markers := #[\"a.toml\"], commands := #[{ name := \"build\", line := \"make\" }]
+        formats := #[atFormat] }
+  projectCommands (.remote \"github.com/o/r\") \"a-mode\" [(\"lint\", \"make lint\")]
+      [(\"profile\", .str \"dev\")]
+"
+        let some state := (← onBase context "config.lean" text).state | return false
+        let .ok program ← context.elaborator.setup state | return false
+        let .ok registrations := Config.Registrations.ofSetup program | return false
+        let registry :=
+          { ({} : Config.Registry).replaceContributions .config registrations.contributions with
+            projectCommands := registrations.projectCommands }
+        let hook := registry.compileHook
+        return hook.contributions.map (·.mode) == #["a-mode"] &&
+            (hook.contributions.map fun contribution =>
+                contribution.formats.map fun format =>
+                  (format.read? "at src/x.rs line 4").map fun reading =>
+                    (reading.file, reading.line)) ==
+              #[#[some ("src/x.rs", 4)]] &&
+            hook.projects.map
+                (fun entry => (entry.mode, entry.commands.map (·.line), entry.settings)) ==
+              #[("a-mode", #["make lint"], [("profile", Value.str "dev")])] }]
 
 /-- Rewrites the file at `path` with `text` from another process, as agents
 and editors write: a temporary file beside it, renamed over it. Waits for

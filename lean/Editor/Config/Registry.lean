@@ -156,6 +156,24 @@ A `setup` that defines a segment name twice, or lists the mode line twice
 (`modeLine`), is refused. Listing a segment nobody registered is not
 refused here: it is left out at install, and the report names it.
 
+## Compile contributions
+
+A compile contribution (`Compile.Contribution`,
+`Editor/Compile/Contribution.lean`) is held by owner like a mode, in a
+`ContributionEntry`, and replaced as a set (`replaceContributions`).
+`compileContributions` is the registration order the compile mode uses:
+config's contributions in the order its `setup` registered them, then the
+others whose names config does not register, in their order. So config's
+contribution of a compiled one's name replaces it whole, markers, commands
+and formats, in config's place, until a reload drops it. Config's project
+commands (`projectCommands`) are config's alone, replaced by each install.
+The loop is told both (`compileHook`, `Loop.Registered.compile`).
+
+A `setup` that registers a contribution twice, or one that names a command
+twice, or that gives project commands twice for one project and mode, or
+names a command twice in them, is refused (`Registrations.problem?`); one
+with no marker is refused by `compileContribution` itself.
+
 ## Compiled commands
 
 Compiled code is an owner too (`Owner.compiled`). A host registers its
@@ -268,6 +286,14 @@ structure SegmentEntry where
   /-- The segment. -/
   segment : Segment
 
+/-- A contribution entry of the registry: a compile contribution and who
+registered it. -/
+structure ContributionEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The contribution. -/
+  contribution : Compile.Contribution
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -311,8 +337,38 @@ it did not, which a host reads as `auto`. -/
   (`shellTimeLimit`, `Editor/Setup.lean`); `none` when it did not, which
   the shell reads as its default. -/
   shellTimeLimit : Option Nat := none
+  /-- The compile contribution entries ("Compile contributions", in the
+  module docs). -/
+  contributions : Array ContributionEntry := #[]
+  /-- Config's project commands (`projectCommands`, `Editor/Setup.lean`), in
+  the order it gave them. -/
+  projectCommands : Array Compile.ProjectCommands := #[]
 
 namespace Registry
+
+/-- `registry` with every contribution entry of `owner` removed and
+`contributions` added as its entries, in their order. -/
+def replaceContributions (registry : Registry) (owner : Owner)
+    (contributions : Array Compile.Contribution) : Registry :=
+  { registry with
+    contributions :=
+      registry.contributions.filter (·.owner != owner) ++
+        contributions.map fun contribution => { owner, contribution } }
+
+/-- The compile contributions in registration order ("Compile
+contributions", in the module docs): config's in its order, then the others
+whose names config does not register. -/
+def compileContributions (registry : Registry) : Array Compile.Contribution :=
+  let config := (registry.contributions.filter (·.owner == .config)).map (·.contribution)
+  let others :=
+    (registry.contributions.filter (·.owner != .config)).map (·.contribution) |>.filter
+      fun contribution => !config.any (·.mode == contribution.mode)
+  config ++ others
+
+/-- What the loop is told of the compile contributions: them in
+registration order, and config's project commands. -/
+def compileHook (registry : Registry) : Compile.Hook :=
+  { contributions := registry.compileContributions, projects := registry.projectCommands }
 
 /-- `registry` with every ex binding of `owner` removed and `bindings` added
 as its ex bindings. -/
@@ -518,7 +574,8 @@ command to start; and the ex binding of an ex name (`ex?`) and the ex
 names that are bound (`exNames`), for the ex line; and the names themes
 are registered under (`themeNames`), for the command that loads one; and
 config's workspace roots and the config generation, for the finder; and
-config's shell time limit, for `:!`. Which command a name stands for, for a command run inside another,
+config's shell time limit, for `:!`; and the compile contributions and
+config's project commands (`compileHook`), for the compile mode. Which command a name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
 another"). -/
@@ -527,7 +584,8 @@ def registered (registry : Registry) : Loop.Registered :=
     jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex?
     exNames := registry.exNames, themeNames := registry.themeNames
     autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
-    generation := registry.generation, shellTimeLimit := registry.shellTimeLimit }
+    generation := registry.generation, shellTimeLimit := registry.shellTimeLimit
+    compile := registry.compileHook }
 
 end Registry
 
@@ -577,6 +635,10 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The shell time limits `setup` set (`shellTimeLimit`), in order: one at
   most, in a `setup` that is not refused. -/
   shellTimeLimits : Array Nat := #[]
+  /-- The compile contributions, in the order they were registered. -/
+  contributions : Array Compile.Contribution := #[]
+  /-- The project commands, in the order they were given. -/
+  projectCommands : Array Compile.ProjectCommands := #[]
 
 namespace Registrations
 
@@ -643,6 +705,10 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with workspaceRoots := collected.workspaceRoots.push { root, project } })
   | .shellTimeLimit milliseconds, collected =>
     ((), { collected with shellTimeLimits := collected.shellTimeLimits.push milliseconds })
+  | .compileContribution contribution, collected =>
+    ((), { collected with contributions := collected.contributions.push contribution })
+  | .projectCommands entry, collected =>
+    ((), { collected with projectCommands := collected.projectCommands.push entry })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -658,6 +724,26 @@ with. -/
 def workspaceTwice (root : System.FilePath) : String :=
   s!"the workspace root `{root}` is declared twice"
 
+/-- What a `setup` that registers the compile contribution of `mode` twice
+is refused with. -/
+def contributionTwice (mode : String) : String :=
+  s!"the compile contribution `{mode}` is registered twice"
+
+/-- What a `setup` whose compile contribution of `mode` names the command
+`name` twice is refused with. -/
+def contributionCommandTwice (mode name : String) : String :=
+  s!"the compile contribution `{mode}` names the command `{name}` twice"
+
+/-- What a `setup` that gives the project commands of `mode` for the
+project `project` twice is refused with. -/
+def projectCommandsTwice (mode : String) (project : Project.Identity) : String :=
+  s!"the project commands of `{mode}` for {project.describe} are given twice"
+
+/-- What a `setup` whose project commands of `mode` for the project
+`project` name the command `name` twice is refused with. -/
+def projectCommandTwice (mode : String) (project : Project.Identity) (name : String) : String :=
+  s!"the project commands of `{mode}` for {project.describe} name the command `{name}` twice"
+
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
   for index in [0:items.size] do
@@ -672,7 +758,7 @@ theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
 twice, the title bar chosen twice, a key sequence bound twice, a binding of
 no keys, an ex name bound twice, the process environment set twice,
-auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a mode name defined twice, or a
+auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a compile contribution registered twice or naming a command twice, project commands given twice for one project and mode or naming a command twice, a command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named.
 
@@ -717,6 +803,17 @@ def problem? (collected : Registrations) : Option String := do
     return workspaceTwice root
   if collected.shellTimeLimits.size > 1 then
     return shellTimeLimitTwice
+  if let some mode := repeated? (collected.contributions.map (·.mode)) then
+    return contributionTwice mode
+  for contribution in collected.contributions do
+    if let some name := repeated? (contribution.commands.map (·.name)) then
+      return contributionCommandTwice contribution.mode name
+  if let some (project, mode) :=
+      repeated? (collected.projectCommands.map fun entry => (entry.project, entry.mode)) then
+    return projectCommandsTwice mode project
+  for entry in collected.projectCommands do
+    if let some name := repeated? (entry.commands.map (·.name)) then
+      return projectCommandTwice entry.mode entry.project name
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command

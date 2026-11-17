@@ -2828,6 +2828,68 @@ def setupChecks : List Check :=
               refusal twice == some Config.Registrations.shellTimeLimitTwice)
         | _, _ => pure false },
     { name :=
+        "a setup's compile contributions and project commands are collected in the order it registered them; a setup that registers none collects none"
+      run :=
+        let setup : SetupM Unit := do
+          compileContribution
+              { mode := "b-mode", markers := #["b.toml"]
+                commands := #[{ name := "build", line := "b-build" }] }
+          projectCommands (.remote "github.com/o/r") "cargo-mode" [("lint", "cargo clippy")]
+              [("profile", .str "dev")]
+          compileContribution
+              { mode := "a-mode", markers := #["a.toml"], formats := #[Compile.Format.general] }
+        let lint : Compile.ProjectCommands :=
+          { project := .remote "github.com/o/r", mode := "cargo-mode"
+            commands := #[{ name := "lint", line := "cargo clippy" }]
+            settings := [("profile", .str "dev")] }
+        match Config.Registrations.ofSetup setup,
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.contributions.map (·.mode) == #["b-mode", "a-mode"] &&
+              collected.contributions.map (·.markers) == #[#["b.toml"], #["a.toml"]] &&
+              collected.contributions.map (·.commands) ==
+                #[#[{ name := "build", line := "b-build" }], #[]] &&
+              (collected.contributions.map fun contribution => contribution.formats.map (·.name)) ==
+                #[#[], #["general"]] &&
+              collected.projectCommands == #[lint] &&
+              plain.contributions.isEmpty &&
+              plain.projectCommands.isEmpty)
+        | _, _ => pure false },
+    { name :=
+        "a setup that registers a compile contribution with no marker, one twice, one that names a command twice, or project commands for one project and mode twice or naming a command twice, is refused with a message that says so"
+      run :=
+        let a : Compile.Contribution := { mode := "a-mode", markers := #["a.toml"] }
+        let remote : Project.Identity := .remote "github.com/o/r"
+        let twice : SetupM Unit := do
+          compileContribution a
+          compileContribution { a with markers := #["other.toml"] }
+        let given : SetupM Unit := do
+          projectCommands remote "a-mode" []
+          projectCommands remote "a-mode" [("lint", "make lint")]
+        let apart : SetupM Unit := do
+          compileContribution a
+          compileContribution { mode := "b-mode", markers := #["a.toml"] }
+          projectCommands remote "a-mode" []
+          projectCommands (.remote "github.com/o/other") "a-mode" []
+          projectCommands remote "b-mode" []
+        pure
+          (refusal (compileContribution { mode := "a-mode", markers := #[] }) ==
+              some "the compile contribution `a-mode` has no marker" &&
+            refusal twice == some "the compile contribution `a-mode` is registered twice" &&
+            refusal
+                (compileContribution
+                  { a with
+                    commands :=
+                      #[{ name := "build", line := "x" }, { name := "build", line := "y" }] }) ==
+              some "the compile contribution `a-mode` names the command `build` twice" &&
+            refusal given ==
+              some "the project commands of `a-mode` for remote github.com/o/r are given twice" &&
+            refusal (projectCommands remote "a-mode" [("lint", "a"), ("lint", "b")]) ==
+              some
+                "the project commands of `a-mode` for remote github.com/o/r name the command `lint` twice" &&
+            refusal apart == none) },
+    { name :=
         "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
       run :=
         let twice : SetupM Unit := do
@@ -2924,7 +2986,34 @@ def boundTo (registry : Config.Registry) (text : String) : Option Invocation :=
 
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
-  [{
+  [{  name :=
+        "the registry's compile contributions are config's in config's order, then the compiled ones config does not register; config's a-mode replaces the compiled a-mode whole, and replacing config's with none brings the compiled one back"
+      run :=
+        let compiledA : Compile.Contribution :=
+          { mode := "a-mode", markers := #["a.toml"]
+            commands :=
+              #[{ name := "build", line := "compiled-build" },
+                { name := "lint", line := "compiled-lint" }]
+            formats := #[Compile.Format.general] }
+        let compiledC : Compile.Contribution := { mode := "c-mode", markers := #["c.toml"] }
+        let configB : Compile.Contribution := { mode := "b-mode", markers := #["b.toml"] }
+        let configA : Compile.Contribution :=
+          { mode := "a-mode", markers := #["x.toml"]
+            commands := #[{ name := "build", line := "config-build" }] }
+        let compiled :=
+          ({} : Config.Registry).replaceContributions .compiled #[compiledA, compiledC]
+        let both := compiled.replaceContributions .config #[configB, configA]
+        let dropped := both.replaceContributions .config #[]
+        let shape (contributions : Array Compile.Contribution) :=
+          contributions.map fun contribution =>
+            (contribution.mode, contribution.markers, contribution.commands,
+              contribution.formats.map (·.name))
+        pure
+          (shape compiled.compileContributions == shape #[compiledA, compiledC] &&
+            shape both.compileContributions == shape #[configB, configA, compiledC] &&
+            shape dropped.compileContributions == shape #[compiledA, compiledC] &&
+            shape both.compileHook.contributions == shape #[configB, configA, compiledC]) },
+    {
       name :=
         "replace for an owner leaves exactly the new commands of that owner, and a second replace does not add to the first",
       run :=
@@ -3949,6 +4038,28 @@ def reloadChecks : List Check :=
         pure
           (told (reduce []).1 == none && told loaded == some 5000 && told kept == some 5000 &&
             told bare == none) },
+    { name :=
+        "an installed reload puts config's compile contributions and project commands in the registry, which tells the loop of them; a rejected reload leaves them, and a config that registers none leaves the compiled ones alone"
+      run :=
+        let start : Config.State Elaborated :=
+          {
+            registry :=
+              ({} : Config.Registry).replaceContributions .compiled
+                #[{ mode := "a-mode", markers := #["a.toml"] }] }
+        let setup : SetupM Unit := do
+          compileContribution { mode := "b-mode", markers := #["b.toml"] }
+          projectCommands (.remote "github.com/o/r") "b-mode" [("lint", "b-lint")]
+        let (loaded, _) := reduceFrom start [.requested, .finished (accepted ["a"] setup)]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let told (state : Config.State Elaborated) : Array String × Array String :=
+          let hook := state.registry.registered.compile
+          (hook.contributions.map (·.mode), hook.projects.map (·.mode))
+        pure
+          (told start == (#["a-mode"], #[]) &&
+            told loaded == (#["b-mode", "a-mode"], #["b-mode"]) &&
+            told kept == told loaded &&
+            told bare == (#["a-mode"], #[])) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -27701,6 +27812,31 @@ def workspaceStateChecks : List Check :=
     { name :=
         "with no loop to answer, the workspace settings are config's defaults under generation 0"
       run := pure ((EditorState.none.handle .workspaceSettings).1 == ({}, 0)) },
+    { name := "with no loop to answer, the compile hook is empty"
+      run :=
+        let hook := (EditorState.none.handle .compileHook).1
+        pure (hook.contributions.isEmpty && hook.projects.isEmpty) },
+    { name :=
+        "a dispatched command that asks for the compile hook is answered what the loop was told, and the workspace settings carry the contributions' marker modes in registration order"
+      run :=
+        let hook : Compile.Hook :=
+          { contributions :=
+              #[{ mode := "b-mode", markers := #["b.toml"] },
+                { mode := "a-mode", markers := #["a.toml", "a2.toml"] }]
+            projects := #[{ project := .remote "github.com/o/r", mode := "b-mode" }] }
+        let asking : EditorM (Compile.Hook × Workspace.Settings) := do
+          return (← EditorState.ask .compileHook, (← EditorState.ask .workspaceSettings).1)
+        let program : EditorM (Guarded (Compile.Hook × Workspace.Settings) × EditorState) := do
+          asking.dispatched { compile := hook } (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished (told, settings), _) =>
+            told.contributions.map (·.mode) == #["b-mode", "a-mode"] &&
+              told.projects == hook.projects &&
+              settings.markerModes ==
+                #[{ mode := "b-mode", markers := #["b.toml"] },
+                  { mode := "a-mode", markers := #["a.toml", "a2.toml"] }]
+          | _ => false },
     { name :=
         "a dispatched command that asks for the workspace settings is answered config's roots and the config generation the loop was told of"
       run :=
