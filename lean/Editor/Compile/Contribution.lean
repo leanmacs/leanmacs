@@ -25,9 +25,11 @@ is added with a default, so every contribution written now stays valid.
 ## Project commands
 
 Config can give one project (by its identity, `Project.Identity`) its own
-named commands and settings for a mode (`ProjectCommands`). The compile
-mode keeps them in the project's store (`Compile.projectStore`), so every
-worktree of that codebase has them and no other project does.
+named commands and settings for a mode (`ProjectCommands`). They have one
+source, the hook the loop is told (`Hook.projects`), which holds config's
+latest; a project's are read from it by its identity (`Hook.projectsOf`,
+`Hook.settingsOf`), so every worktree of that codebase has them, no other
+project does, and a reload's change is read at once.
 
 ## The rules
 
@@ -49,22 +51,6 @@ Pinned by `ModelTest.setupChecks`, `ModelTest.registryChecks` and
 -/
 
 namespace Editor
-
-/-- A project's identity as a plain tree: one named field, the kind's. -/
-def Project.Identity.encode : Project.Identity → Value
-  | .remote normalised => .record [("remote", .str normalised)]
-  | .commonDir path => .record [("commonDir", .str path.toString)]
-  | .root path => .record [("root", .str path.toString)]
-  | .declared name => .record [("declared", .str name)]
-
-/-- The identity a tree stands for (`Project.Identity.encode`), if it is
-one. -/
-def Project.Identity.decode? : Value → Option Project.Identity
-  | .record [("remote", .str normalised)] => some (.remote normalised)
-  | .record [("commonDir", .str path)] => some (.commonDir path)
-  | .record [("root", .str path)] => some (.root path)
-  | .record [("declared", .str name)] => some (.declared name)
-  | _ => none
 
 namespace Compile
 
@@ -116,6 +102,18 @@ structure Hook where
   /-- Config's project commands, in the order config gave them. -/
   projects : Array ProjectCommands := #[]
 
+/-- Config's project commands for the project of `identity`, in the order
+config gave them ("Project commands", in the module docs). -/
+def Hook.projectsOf (hook : Hook) (identity : Project.Identity) : Array ProjectCommands :=
+  hook.projects.filter (·.project == identity)
+
+/-- The settings config gives the project of `identity` for the mode
+`mode`; none when it gives none ("Project commands", in the module
+docs). -/
+def Hook.settingsOf (hook : Hook) (identity : Project.Identity) (mode : String) :
+    List (String × Value) :=
+  (((hook.projectsOf identity).find? (·.mode == mode)).map (·.settings)).getD []
+
 /-- A named command offered in a buffer: its mode, its name, its line and
 the mode's root, where it runs. -/
 structure Offer where
@@ -151,15 +149,15 @@ def withProject (commands project : Array NamedCommand) : Array NamedCommand :=
     commands
 
 /-- The named commands offered for the on-modes `modes`, given the
-registered `contributions` and the project's `stored` commands ("Offers",
-in the module docs). -/
-def offers (contributions : Array Contribution) (stored : Array ProjectCommands)
+registered `contributions` and the project's commands `projects`
+("Offers", in the module docs). -/
+def offers (contributions : Array Contribution) (projects : Array ProjectCommands)
     (modes : Array Workspace.OnMode) : Array Offer :=
   modes.flatMap fun on =>
     match contributions.find? (·.mode == on.mode) with
     | none => #[]
     | some contribution =>
-      let project := (stored.filter (·.mode == on.mode)).flatMap (·.commands)
+      let project := (projects.filter (·.mode == on.mode)).flatMap (·.commands)
       (withProject contribution.commands project).map fun command =>
         { mode := on.mode, name := command.name, line := command.line, root := on.root }
 
@@ -170,36 +168,6 @@ def formatsOf (contributions : Array Contribution) (modes : Array Workspace.OnMo
   (modes.flatMap fun on =>
         ((contributions.find? (·.mode == on.mode)).map (·.formats)).getD #[]).push
     Format.general
-
-/-- A named command as a tree: its name, then its line. -/
-def NamedCommand.encode (command : NamedCommand) : Value :=
-  .list [.str command.name, .str command.line]
-
-/-- The named command a tree stands for (`NamedCommand.encode`), if it is
-one. -/
-def NamedCommand.decode? : Value → Option NamedCommand
-  | .list [.str name, .str line] => some { name, line }
-  | _ => none
-
-/-- A project's commands as a tree. -/
-def ProjectCommands.encode (entry : ProjectCommands) : Value :=
-  .record
-    [("project", entry.project.encode), ("mode", .str entry.mode),
-      ("commands", .list (entry.commands.toList.map NamedCommand.encode)),
-      ("settings", .record entry.settings)]
-
-/-- The project's commands a tree stands for (`ProjectCommands.encode`), if
-it is them. -/
-def ProjectCommands.decode? : Value → Option ProjectCommands
-  |
-  .record
-      [("project", project), ("mode", .str mode), ("commands", .list commands),
-        ("settings", .record settings)] =>
-    do
-    let project ← Project.Identity.decode? project
-    let commands ← commands.toArray.mapM NamedCommand.decode?
-    return { project, mode, commands, settings }
-  | _ => none
 
 end Compile
 

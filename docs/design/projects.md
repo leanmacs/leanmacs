@@ -166,13 +166,18 @@ does: the workspace is rooted right but is its own project, with no branch.
 | State | Where | Examples |
 |---|---|---|
 | What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer, its last line, its run in flight and the on-modes it started with, its error list and current location (`compile`), running jobs |
-| What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` lines, `shell-history`; compile lines, `compile-history`), the commands and settings config gives the project for a mode (`compile-project`) |
+| What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` lines, `shell-history`; compile lines, `compile-history`) |
 | What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers; their compile history (`compile-history`), and each directory scope's compile record by directory (`compile-directories`) |
 
 The stores are `Value` trees by name, as a buffer's locals are, so a
 reload leaves them; they live as long as the session. The unscoped store
 is read with `Workspace.Table.getUnscoped` and written with
 `Workspace.setUnscoped`, and is never refused: it is always there.
+
+What config gives a project, such as its commands and settings for a mode
+(`projectCommands`), is not kept in any store: it is read by the project's
+identity from config's latest as the loop is told it, so a reload's change
+is read at once.
 
 A command run for a buffer runs in its workspace's root, or, with no
 workspace, in its file's directory (`BufferId.workingDirectory`). A
@@ -236,8 +241,10 @@ open when the table has it: found or registered this session.
   worktree finds its own; a mode's root may be below the workspace's root,
   and `compile` runs there, its output still in the workspace's
   compilation buffer. Config's commands and settings for a project, by its
-  identity, are kept in the project's store (`Compile.projectStore`), so
-  every worktree of the codebase offers them and no other project does.
+  identity, are read from config's latest as the loop is told it
+  (`StateRequest.compileHook`), not copied into the project's store, so
+  every worktree of the codebase offers them, no other project does, and a
+  reload's change is read at once.
   The on-modes a run started with are part of the workspace's record.
   Phase 6: the shipped modes, the same way.
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)

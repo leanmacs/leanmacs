@@ -3101,14 +3101,16 @@ buffer while editing goes on.
   order, then `general`, so a line two modes read is the nearest mode's
   location, and a mode's format finds nothing while the mode is off.
 - **Project commands.** Config gives one project, by its identity, its own
-  named commands and settings for a mode (`projectCommands`). They are
-  kept in the project's store (`compile-project`), written before
-  `compile` or `compile-command` reads it, so every worktree of the
-  codebase has them and no other project does, and a reload's change holds
-  at the next use. A project's command of a name the contribution gives
-  replaces it in place, and a new name comes after the contribution's;
-  they are offered only while their mode is on. Settings are stored for
-  phase 6's computed commands; nothing here acts on them.
+  named commands and settings for a mode (`projectCommands`). They have
+  one source, config's latest as the loop is told it
+  (`StateRequest.compileHook`), keyed by identity, and are copied into no
+  store: `compile`, `compile-command` and `Compile.projectSettings` read
+  them from there, so every worktree of the codebase has them, no other
+  project does, and a reload's change is read at once, before any compile.
+  A project's command of a name the contribution gives replaces it in
+  place, and a new name comes after the contribution's; they are offered
+  only while their mode is on. Settings are read for phase 6's computed
+  commands; nothing here acts on them.
 - **The mode** `compilation` fills the role `refresh` with `recompile` and
   `activate` with `compile-goto-error`. It leaves `next-item` and
   `previous-item` unfilled, so under the Vim scheme `j` and `k` stay

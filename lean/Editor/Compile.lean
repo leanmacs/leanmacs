@@ -209,8 +209,8 @@ Minor modes give the compile mode what fits a kind of project
 on-modes (`Workspace.onModesOf`, `Editor/Workspace/Modes.lean`), nearest
 root first, then in registration order, decide where a run goes, what
 `compile` offers and how the output is read. The contributions are asked of
-the loop (`StateRequest.compileHook`), so a reload's hold from the next
-command.
+the loop (`StateRequest.compileHook`), so a reload's change holds from the
+next command.
 
 - **Where.** With on-modes, `compile` runs its line, typed or default, in
   the first on-mode's root; with none, in the scope's root.
@@ -227,14 +227,15 @@ command.
   (`offers`) and runs the chosen one's line in its mode's root.
 - **Formats.** A run's output is read with its modes' formats, then the
   general one ("Locations").
-- **Project commands.** Config's project commands for the scope's project
-  (`projectCommands`, `Editor/Setup.lean`) are written to the project's
-  store (`projectStore`, `compile-project`) when they differ from what it
-  keeps, before the store is read (`hookOffers`), so a reload's change
-  holds at the next use in any open buffer, and every worktree of the
-  project reads the same. They are offered only while their mode is on.
-  `projectSettings` reads a mode's settings there. A directory scope has no
-  project, and no project commands.
+- **Project commands.** Config's project commands (`projectCommands`,
+  `Editor/Setup.lean`) have one source: the hook the loop answers, which
+  holds config's latest, keyed by the project's identity. `compile` and
+  `compile-command` take the scope's project's from it (`hookOffers`), and
+  `projectSettings` reads a mode's settings from it, so a reload's change
+  holds at the next read in any open buffer, with or without a compile
+  first, and every worktree of the project reads the same. Nothing copies
+  them into a store. They are offered only while their mode is on. A
+  directory scope has no project, and no project commands.
 
 ## The mode
 
@@ -530,39 +531,23 @@ def remember (scope : Scope) (line : String) : EditorM Unit := do
   | .directory _ =>
     Workspace.setUnscoped historyStore lines
 
-/-- Config's project commands for one project, as its store keeps them
-("The hook", in the module docs). -/
-def projectStore : Store (Array ProjectCommands) :=
-  { name := "compile-project", version := 1, initial := #[]
-    encode := fun all => .list (all.toList.map ProjectCommands.encode)
-    decode := fun
-      | .list items => items.toArray.mapM ProjectCommands.decode?
-      | _ => none }
-
 /-- The settings config gives the project of `identity` for the mode
-`mode`, as its store keeps them; none when it gives none. -/
-def projectSettings (state : EditorState) (identity : Project.Identity) (mode : String) :
-    List (String × Value) :=
-  (((state.workspaces.getOfProject projectStore identity).find? (·.mode == mode)).map
-        (·.settings)).getD
-    []
+`mode`, as the hook the loop answers holds them ("The hook", in the module
+docs); none when it gives none. -/
+def projectSettings (identity : Project.Identity) (mode : String) :
+    EditorM (List (String × Value)) := do
+  return (← EditorState.ask .compileHook).settingsOf identity mode
 
 /-- The commands the on-modes `modes` offer in `scope` ("The hook", in the
-module docs): the hook asked of the loop and, for a workspace scope, its
-project's commands, which config's are written to first when they differ
-from what the store keeps. -/
+module docs): the hook asked of the loop, with, for a workspace scope, its
+project's commands. -/
 def hookOffers (scope : Scope) (modes : Array Workspace.OnMode) : EditorM (Array Offer) := do
   let hook ← EditorState.ask .compileHook
-  let stored ←
+  let projects :=
     match scope with
-    | .workspace _ project =>
-      let given := hook.projects.filter (·.project == project.identity)
-      if (← editorState).workspaces.getOfProject projectStore project.identity != given then
-        discard <| Project.set projectStore project.identity given
-      pure ((← editorState).workspaces.getOfProject projectStore project.identity)
-    | .directory _ =>
-      pure #[]
-  return offers hook.contributions stored modes
+    | .workspace _ project => hook.projectsOf project.identity
+    | .directory _ => #[]
+  return offers hook.contributions projects modes
 
 /-- The on-modes `modes` as arguments: each one's name, then its root. -/
 def modeArguments (modes : Array Workspace.OnMode) : List Argument :=

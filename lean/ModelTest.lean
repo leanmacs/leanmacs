@@ -30099,6 +30099,19 @@ def toldProject (driver : TestDriver) (project : SetupM Unit) : TestDriver :=
   let compile := (hookRegistry (hookSetup aCommands project)).compileHook
   { driver with keys := { driver.keys with registered := { driver.keys.registered with compile } } }
 
+/-- The settings `Compile.projectSettings` gives the project of `identity`
+for the mode `mode`, run as the loop runs a command in `driver`; `none` if
+it does not finish. -/
+def settingsIn (driver : TestDriver) (identity : Project.Identity) (mode : String) :
+    Option (List (String × Value)) :=
+  let program : EditorM (Guarded (List (String × Value))) := do
+    return (←
+          (Compile.projectSettings identity mode).dispatched driver.keys.registered
+              driver.loop.state).1
+  match (program.runModel driver.model).1 with
+  | .ok (.finished settings) => some settings
+  | _ => none
+
 /-- The checks of the compile hook (`Editor/Workspace/Modes.lean`,
 `Editor/Compile.lean`, "The hook"), on the loop's driver over the editor's
 models, the job model and the process model, in the world of `hookWorld`
@@ -30325,21 +30338,6 @@ def compileHookChecks : List Check :=
                 (·.name) ==
               #["general"]) },
     { name :=
-        "a project's commands cross as a tree and back in the project store, with each kind of identity and with settings; a tree that is none reads as none"
-      run :=
-        let entries : Array Compile.ProjectCommands :=
-          #[{ project := .remote "github.com/o/r", mode := "cargo-mode"
-              commands := #[{ name := "lint", line := "cargo clippy" }]
-              settings := [("profile", .str "dev"), ("jobs", .nat 4)] },
-            { project := .commonDir "/r/.git", mode := "a-mode" },
-            { project := .root "/x", mode := "a-mode" },
-            { project := .declared "tools", mode := "b" }]
-        pure
-          (Compile.projectStore.decode (Compile.projectStore.encode entries) == some entries &&
-            Compile.projectStore.decode (.list [.str "x"]) == none &&
-            Compile.projectStore.name == "compile-project" &&
-            Compile.projectStore.version == 1) },
-    { name :=
         "hook criterion 6: compile-command offers build (a-mode), test (a-mode), build (b-mode) and check (b-mode); test runs a-test in /r/hook/one/two, and check (b-mode) given whole runs b-check in /r/hook"
       run :=
         pure <|
@@ -30400,7 +30398,7 @@ def compileHookChecks : List Check :=
             ran.jobs.processes.started.back? == some (shellCommand "/r/hook/one/two" "a-test") &&
               ran.loop.state.prompt.isNone },
     { name :=
-        "hook criterion 9: lint, a command config gives cargo-mode for the project github.com/o/r, is offered in /r/crate and in its worktree /w/crate and not in /o of github.com/o/other; it runs cargo clippy in /r/crate, and is kept in that project's store with its settings"
+        "hook criterion 9: lint, a command config gives cargo-mode for the project github.com/o/r, is offered in /r/crate and in its worktree /w/crate and not in /o of github.com/o/other; it runs cargo clippy in /r/crate, and its settings are read for that project and not the other"
       run :=
         pure <|
           match hookDriver with
@@ -30411,7 +30409,6 @@ def compileHookChecks : List Check :=
             let inW := pressedOn worktree "C-k i"
             let inO := pressedOn (settledAfter driver "C-o 4") "C-k i"
             let linted := (fedTo inR ([.commit "lint"] ++ presses "C-e y")).1
-            let state := linted.loop.state
             let cargo := #["build (cargo-mode)", "test (cargo-mode)"]
             let dev : List (String × Value) := [("profile", .str "dev")]
             (candidatesOf inR).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
@@ -30421,12 +30418,43 @@ def compileHookChecks : List Check :=
               (candidatesOf inO).map (·.all) == some cargo &&
               linted.jobs.processes.started.back? ==
                 some (shellCommand "/r/crate" "cargo clippy") &&
-              (state.workspaces.getOfProject Compile.projectStore (.remote "github.com/o/r")).map
-                  (fun entry => (entry.mode, entry.commands.map (·.line), entry.settings)) ==
-                #[("cargo-mode", #["cargo clippy"], dev)] &&
-              Compile.projectSettings state (.remote "github.com/o/r") "cargo-mode" == dev &&
-              Compile.projectSettings inO.loop.state (.remote "github.com/o/other") "cargo-mode" ==
-                [] },
+              settingsIn linted (.remote "github.com/o/r") "cargo-mode" == some dev &&
+              settingsIn inO (.remote "github.com/o/other") "cargo-mode" == some [] },
+    { name :=
+        "a project's settings are read as soon as a file of it opens, in either worktree, before compile or compile-command runs there; another project's are none"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let inR := settledAfter driver "C-o k"
+            let inW := settledAfter driver "C-o 3"
+            let inO := settledAfter driver "C-o 4"
+            let dev : List (String × Value) := [("profile", .str "dev")]
+            (shownWorkspace inR).map (·.2.identity) == some (.remote "github.com/o/r") &&
+              (shownWorkspace inW).map (·.2.identity) == some (.remote "github.com/o/r") &&
+              settingsIn inR (.remote "github.com/o/r") "cargo-mode" == some dev &&
+              settingsIn inW (.remote "github.com/o/r") "cargo-mode" == some dev &&
+              settingsIn inO (.remote "github.com/o/other") "cargo-mode" == some [] },
+    { name :=
+        "a project's settings follow a reload at once, with no compile between: a changed setting reads the new value, and dropped ones read none"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o k"
+            let linted :=
+              drained (fedTo (pressedOn opened "C-k i") ([.commit "lint"] ++ presses "C-e y")).1
+            let changed :=
+              toldProject linted
+                (projectCommands (.remote "github.com/o/r") "cargo-mode"
+                  [("lint", "cargo clippy -D warnings")] [("profile", .str "release")])
+            let dropped := toldProject changed (pure ())
+            let r : Project.Identity := .remote "github.com/o/r"
+            settingsIn linted r "cargo-mode" == some [("profile", .str "dev")] &&
+              settingsIn changed r "cargo-mode" == some [("profile", .str "release")] &&
+              settingsIn dropped r "cargo-mode" == some [] },
     { name :=
         "a reload that changes a project's commands is seen at the next compile-command: it offers lint and runs its new line; after a reload that drops them it offers no lint"
       run :=

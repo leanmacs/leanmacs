@@ -592,8 +592,9 @@ def compileContribution (contribution : Compile.Contribution) : SetupM Unit := d
 
 /-- Gives the project identified by `project` its own `commands`, each a name
 and a command line, and `settings` for the minor mode `mode`: the compile
-mode keeps them in that project's store, so every worktree of the codebase
-has them while the mode is on there, and no other project does. A command
+mode reads them by that project's identity from what the loop is told of
+config, so every worktree of the codebase has them while the mode is on
+there, and no other project does. A command
 of a name the mode's contribution gives replaces it; one of a new name comes
 after the contribution's. The editor refuses the `setup` for project
 commands given twice for one project and mode, or naming a command
