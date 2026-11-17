@@ -14,7 +14,7 @@
 //! only links are navigation (`<a href>`): the image, its checksum, the
 //! commit and the source. The tests hold every fixture's page to that.
 //!
-//! The first-launch steps and the version command are [`install`]'s, the
+//! The first-launch steps and the version command are [`install`](crate::install)'s, the
 //! words `packaging/macos/README.txt` and the release notes use too; this
 //! module adds only their HTML.
 
