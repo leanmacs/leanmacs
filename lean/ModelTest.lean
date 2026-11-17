@@ -21269,8 +21269,7 @@ def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
 /-- `candidateDriver` whose prompts are matched by a job over more than
 `inline` candidates (`Loop.Keys.inlineMatches`), two unless given, so the
 four pick candidates are. -/
-def smallLimitDriver (model : EditorModel := editorModel) (inline : Nat := 2) :
-    Option TestDriver :=
+def smallLimitDriver (model : EditorModel := editorModel) (inline : Nat := 2) : Option TestDriver :=
   (Loop.Driver.over { candidateKeys with inlineMatches := inline } driverJobs
       (EditorState.initial ⟨640, 480⟩) model).toOption
 
@@ -22305,24 +22304,29 @@ def laterLoopChecks : List Check :=
                 -- The match delivers before the second batch.
                 let (listed, _) := one.finish firstMatch
                 let (two, twoStep) := listed.posted job.id
-                let (all, _) := match matchOf two with
+                let (all, _) :=
+                  match matchOf two with
                   | some id => two.finish id
                   | none => (two, none)
                 -- The second batch lands while the match runs.
                 let (both, bothStep) := one.posted job.id
                 let (stale, staleStep) := both.finish firstMatch
-                let (caught, caughtStep) := match matchOf stale with
+                let (caught, caughtStep) :=
+                  match matchOf stale with
                   | some id => stale.finish id
                   | none => (stale, none)
-                minibufferText one == some "" &&
-                  oneStep.map (·.spawns.size) == some 1 &&
-                  texts listed == some first && current listed &&
+                minibufferText one == some "" && oneStep.map (·.spawns.size) == some 1 &&
+                  texts listed == some first &&
+                  current listed &&
                   twoStep.map (·.spawns.size) == some 1 &&
-                  texts all == some every && current all &&
+                  texts all == some every &&
+                  current all &&
                   bothStep.map (·.spawns.size) == some 0 &&
-                  texts stale == some first && !current stale &&
+                  texts stale == some first &&
+                  !current stale &&
                   staleStep.map (·.spawns.size) == some 1 &&
-                  texts caught == some every && current caught &&
+                  texts caught == some every &&
+                  current caught &&
                   caughtStep.map (·.spawns.size) == some 0 },
     { name :=
         "over the inline limit, a key undone while the match for it runs leaves the listing it had, current again: the undoing step cancels that match and spawns none, the driver holds no job, a choice made then stays through the match's delivery, even one that raced the cancel, and that delivery spawns nothing"
@@ -22353,9 +22357,9 @@ def laterLoopChecks : List Check :=
                     match third.outcome with
                     | .finished command =>
                       some
-                          (chosen.stepped
-                            (chosen.loop.deliver chosen.handed s!"job {third.id} {third.name}"
-                              command))
+                        (chosen.stepped
+                          (chosen.loop.deliver chosen.handed s!"job {third.id} {third.name}"
+                            command))
                     | _ => none
                   let kept (driver : TestDriver) : Bool :=
                     (candidatesOf driver).map (·.listedFor) == some (some "w") &&
@@ -22371,9 +22375,9 @@ def laterLoopChecks : List Check :=
                     (chosenText chosen).isSome &&
                     kept delivered &&
                     deliveredStep.all (·.spawns.isEmpty) &&
-                    raced.any (fun (racedDriver, racedStep) =>
-                      kept racedDriver &&
-                        racedStep.toOption.any (·.spawns.isEmpty))
+                    raced.any
+                      (fun (racedDriver, racedStep) =>
+                        kept racedDriver && racedStep.toOption.any (·.spawns.isEmpty))
                 | _, _ => false },
     { name :=
         "a match that fails does not freeze the listing: its delivery says `completion-match: fuzzy: ` and why in the echo area, the listing stays empty and its scene spawns nothing; a key typed once the matcher answers again spawns a new match, whose delivery lists the fuzzy model's order for the typed text"
