@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 use crate::build_id::BuildId;
 use crate::commit::Commit;
 use crate::dmg;
+use crate::install;
 use crate::ports::{Env, Invocation, Process, RunError, text};
 
 /// The image's fixed name, the permanent download link's.
@@ -390,11 +391,17 @@ pub fn sha256_line(build: &Build) -> String {
 }
 
 /// The release's body, in Markdown: the build, where it runs, how to get
-/// past Gatekeeper on first launch (as `packaging/macos/README.txt` says),
-/// and how to see which build is installed.
+/// past Gatekeeper on first launch, and how to see which build is
+/// installed. The last two are [`install`]'s text, which the download page
+/// and `packaging/macos/README.txt` say too; this adds only the Markdown.
 #[must_use]
 pub fn notes(build: &Build, target: &Target) -> String {
     let (id, commit) = (&build.id, &build.commit);
+    let steps: String = install::FIRST_LAUNCH
+        .iter()
+        .enumerate()
+        .map(|(n, step)| format!("{}. {step}\n", n + 1))
+        .collect();
     format!(
         "The newest build of `main`: unreleased, made on every push that passes CI.
 
@@ -412,22 +419,24 @@ Download [`{FIXED}`]({download}), open it, and drag Leanmacs.app onto Applicatio
 
 ## First launch
 
-The app is ad-hoc signed and not notarized (Developer ID signing is not done yet), so macOS blocks it the first time:
+{why}
 
-1. Open Leanmacs once. macOS says it cannot check it; click **Done**.
-2. Open **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** beside the message about Leanmacs.
-3. Open Leanmacs again and confirm.
+{steps}
+{quarantine_why}
 
-If that does not work, remove the quarantine flag in Terminal:
-
-    xattr -dr com.apple.quarantine /Applications/Leanmacs.app
+    {quarantine_fix}
 
 ## Which build is installed
 
-    /Applications/Leanmacs.app/Contents/MacOS/editor --version
+    {version_command}
 
-prints the version, the build ID and the commit.
+{version_prints}
 ",
+        why = install::FIRST_LAUNCH_WHY,
+        quarantine_why = install::QUARANTINE_WHY,
+        quarantine_fix = install::QUARANTINE_FIX,
+        version_command = install::VERSION_COMMAND,
+        version_prints = install::VERSION_PRINTS,
         url = target.commit_url(commit),
         download = target.download_url(FIXED),
         date = id.timestamp(),
@@ -1459,15 +1468,41 @@ mod tests {
             "https://github.com/leanmacs/leanmacs/releases/download/nightly/Leanmacs.dmg",
             "`Leanmacs-20010203040506.dmg`",
             "shasum -a 256 -c Leanmacs.dmg.sha256",
-            "click **Done**",
-            "**System Settings > Privacy & Security**",
-            "**Open Anyway**",
-            "xattr -dr com.apple.quarantine /Applications/Leanmacs.app",
-            "/Applications/Leanmacs.app/Contents/MacOS/editor --version",
-            "Developer ID signing is not done yet",
         ] {
             assert!(notes.contains(part), "the notes lack {part}:\n{notes}");
         }
+    }
+
+    /// The install text is `install`'s, held to the README there; here the
+    /// notes must give every piece of it, as Markdown.
+    #[test]
+    fn the_notes_give_the_install_text() {
+        let notes = notes(&build(), &leanmacs());
+        let steps = format!(
+            "\n\n1. {}\n2. {}\n3. {}\n\n",
+            install::FIRST_LAUNCH[0],
+            install::FIRST_LAUNCH[1],
+            install::FIRST_LAUNCH[2]
+        );
+        assert!(notes.contains(&steps), "the notes lack the steps:\n{notes}");
+        for line in [
+            install::FIRST_LAUNCH_WHY,
+            install::QUARANTINE_WHY,
+            install::VERSION_PRINTS,
+        ] {
+            assert!(
+                notes.contains(&format!("\n{line}\n")),
+                "the notes lack {line}:\n{notes}"
+            );
+        }
+        for command in [install::QUARANTINE_FIX, install::VERSION_COMMAND] {
+            assert!(
+                notes.contains(&format!("\n\n    {command}\n\n")),
+                "the notes lack {command} as a code block:\n{notes}"
+            );
+        }
+        assert!(notes.contains("click Done"));
+        assert!(notes.contains("\"Open Anyway\""));
     }
 
     /// A process for the stamp: `plutil` answers from `version` and

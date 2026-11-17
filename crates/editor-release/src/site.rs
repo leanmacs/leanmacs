@@ -14,13 +14,16 @@
 //! only links are navigation (`<a href>`): the image, its checksum, the
 //! commit and the source. The tests hold every fixture's page to that.
 //!
-//! The first-launch steps are `packaging/macos/README.txt`'s, word for
-//! word, and a test holds them to it: the page and the README in the image
-//! say the same thing.
+//! The first-launch steps and the version command are [`install`]'s, the
+//! words `packaging/macos/README.txt` and the release notes use too; this
+//! module adds only their HTML.
 
 use std::error::Error;
 use std::fmt;
 
+use crate::install::{
+    FIRST_LAUNCH, FIRST_LAUNCH_WHY, QUARANTINE_FIX, QUARANTINE_WHY, VERSION_COMMAND, VERSION_PRINTS,
+};
 use crate::nightly::{self, Build, BuildJsonError, FIXED, SHA256, Target};
 
 /// The page's file name.
@@ -28,27 +31,6 @@ pub const INDEX: &str = "index.html";
 
 /// The one-line summary, as the README's.
 pub const SUMMARY: &str = "A text editor whose config and extensions are written in Lean.";
-
-/// Why the first launch needs steps, as `packaging/macos/README.txt` says
-/// it.
-pub const FIRST_LAUNCH_WHY: &str = "The app is ad-hoc signed and not notarized, so macOS blocks it the first time. Since macOS 15, Control-click > Open no longer gets past this. Instead:";
-
-/// The first-launch steps, as `packaging/macos/README.txt` numbers them.
-pub const FIRST_LAUNCH: [&str; 3] = [
-    "Open Leanmacs once. macOS says it cannot check it; click Done.",
-    "Open System Settings > Privacy & Security, scroll down, and click \"Open Anyway\" beside the message about Leanmacs.",
-    "Open Leanmacs again and confirm.",
-];
-
-/// The fallback, as `packaging/macos/README.txt` introduces it.
-pub const QUARANTINE_WHY: &str = "If that does not work, remove the quarantine flag in Terminal:";
-
-/// The fallback's command.
-pub const QUARANTINE_FIX: &str = "xattr -dr com.apple.quarantine /Applications/Leanmacs.app";
-
-/// The command that prints the installed build, as
-/// `packaging/macos/README.txt` gives it.
-pub const VERSION_COMMAND: &str = "/Applications/Leanmacs.app/Contents/MacOS/editor --version";
 
 /// A macOS version: one to three dot-separated numbers, as
 /// `MACOSX_DEPLOYMENT_TARGET` holds it (`26.0`).
@@ -320,7 +302,7 @@ pub fn render(page: &Page) -> String {
 <pre><code>{quarantine_fix}</code></pre>
 <h2>Which build is installed</h2>
 <pre><code>{version_command}</code></pre>
-<p>prints the version, the build ID and the commit.</p>
+<p>{version_prints}</p>
 <footer>
 <p><a href="{source}">Source, issues and licence</a></p>
 </footer>
@@ -344,6 +326,7 @@ pub fn render(page: &Page) -> String {
         quarantine_why = e(QUARANTINE_WHY),
         quarantine_fix = e(QUARANTINE_FIX),
         version_command = e(VERSION_COMMAND),
+        version_prints = e(VERSION_PRINTS),
         source = e(&target.source_url()),
     )
 }
@@ -479,21 +462,17 @@ mod tests {
     }
 
     #[test]
-    fn the_first_launch_steps_are_the_readmes() {
-        let readme = collapsed(README);
-        for (n, step) in FIRST_LAUNCH.iter().enumerate() {
-            let numbered = format!("{}. {}", n + 1, collapsed(step));
-            assert!(readme.contains(&numbered), "README.txt lacks {numbered}");
-        }
-        for line in [
-            SUMMARY,
-            FIRST_LAUNCH_WHY,
-            QUARANTINE_WHY,
-            QUARANTINE_FIX,
-            VERSION_COMMAND,
-        ] {
-            assert!(readme.contains(&collapsed(line)), "README.txt lacks {line}");
-        }
+    fn the_summary_is_the_readmes() {
+        assert!(
+            collapsed(README).contains(SUMMARY),
+            "README.txt lacks {SUMMARY}"
+        );
+    }
+
+    /// The install text is `install`'s, held to the README there; here the
+    /// page must show every piece of it.
+    #[test]
+    fn the_page_shows_the_install_text() {
         let html = rendered("26.0");
         for step in FIRST_LAUNCH {
             assert!(
@@ -501,7 +480,15 @@ mod tests {
                 "{step}"
             );
         }
-        assert!(html.contains(&escape(QUARANTINE_FIX)));
+        for line in [FIRST_LAUNCH_WHY, QUARANTINE_WHY, VERSION_PRINTS] {
+            assert!(html.contains(&format!("<p>{}</p>", escape(line))), "{line}");
+        }
+        for command in [QUARANTINE_FIX, VERSION_COMMAND] {
+            assert!(
+                html.contains(&format!("<pre><code>{}</code></pre>", escape(command))),
+                "{command}"
+            );
+        }
     }
 
     #[test]

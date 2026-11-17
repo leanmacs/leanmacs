@@ -250,7 +250,10 @@ newline:
 time of the run. The release notes give the build ID, the commit with its
 link, the date, the size, the SHA-256, "macOS 26.0 or later, on Apple
 silicon", the first-launch steps of `packaging/macos/README.txt` ("Open
-Anyway", and the `xattr` fallback) and `editor --version`.
+Anyway", and the `xattr` fallback) and `editor --version`. The
+first-launch and `--version` text is `crates/editor-release`'s `install`
+module, which the download page renders too, so the notes, the page and
+the README say the same words.
 
 `pages` needs `publish` and has no `if:`, so it runs only after a publish
 that succeeded. On `ubuntu-24.04`, with exactly `pages: write` and

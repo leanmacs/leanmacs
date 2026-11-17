@@ -7,6 +7,9 @@
 //!   is set.
 //! - [`dmg`]: the `.dmg`'s name, the plan of programs that packs it, and the
 //!   check of a mounted volume's root.
+//! - [`install`]: the first-launch steps and the version command, as
+//!   `packaging/macos/README.txt` says them, kept once for the page and the
+//!   notes.
 //! - [`nightly`]: the rolling `nightly` prerelease: the check of the
 //!   mounted app's stamp against the build, `build.json`, the `.sha256`
 //!   line, the release notes, which old build-ID copies to prune, and the
@@ -28,6 +31,7 @@ pub mod commit;
 pub mod contract;
 pub mod dmg;
 pub mod fake;
+pub mod install;
 pub mod nightly;
 pub mod ports;
 pub mod site;
