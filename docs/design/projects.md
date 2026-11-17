@@ -137,16 +137,20 @@ does: the workspace is rooted right but is its own project, with no branch.
   buffer, `*shell output: <label>*`, is made with the workspace of the
   buffer `:!` ran in (`lean/Editor/Shell.lean`), so a `:!` typed in it
   runs in that workspace again; outside any workspace it is `*shell
-  output*`, with none. The compilation buffer arrives with the phase that
-  makes it.
+  output*`, with none. A workspace's compilation buffer,
+  `*compilation: <label>*` (`lean/Editor/Compile.lean`), is made with the
+  workspace of the buffer `compile` ran in, so `compile`, `recompile` and
+  `kill-compilation` in it act on that workspace; a directory scope's has
+  no workspace and keeps its directory in its `compile-directory` local
+  instead. Each is found by the number its scope keeps, never by its name.
 
 ## What lives where
 
 | State | Where | Examples |
 |---|---|---|
-| What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer and its error list, running jobs |
-| What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` and compile lines), the commands and settings config gives the project |
-| What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers |
+| What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer, its last line and its run in flight (`compile`), running jobs |
+| What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` lines, `shell-history`; compile lines, `compile-history`), the commands and settings config gives the project |
+| What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers; their compile history (`compile-history`), and each directory scope's compile record by directory (`compile-directories`) |
 
 The stores are `Value` trees by name, as a buffer's locals are, so a
 reload leaves them; they live as long as the session. The unscoped store
@@ -194,8 +198,17 @@ open when the table has it: found or registered this session.
   to run for a location that cannot run commands; its history is the
   project's (`Shell.historyStore`), its output buffer and what it runs the
   workspace's (`Shell.outputStore`, `Shell.runningStore`), each in the
-  unscoped store for a buffer outside any workspace. Phases 3 to 6:
-  `compile`, the same way.
+  unscoped store for a buffer outside any workspace.
+- `shell-and-compile` phase 3 (built): `compile` runs in the workspace's
+  root, and a buffer with no workspace uses its file's directory, or the
+  editor's working directory, as a workspace of its own; it refuses a
+  location that cannot run commands. Its record (the compilation buffer's
+  number, the last line and the run in flight) is the workspace's
+  (`Compile.store`), or the unscoped store's by directory
+  (`Compile.directoryStore`); its history is the project's
+  (`Compile.historyStore`). Its job is keyed by the workspace, so
+  compiles in two worktrees run at once. Phases 4 to 6: errors, the hook
+  and the rest, the same way.
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)
   and `remote-workspace-execution` (running in a `reachable` location).
 
