@@ -1,6 +1,7 @@
 import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Compile.Compiled
+import Editor.Compile.Shipped
 import Editor.Config.Directory
 import Editor.Config.Display
 import Editor.Config.Elaborate
@@ -196,8 +197,8 @@ as before, so reload and job completion work as they did.
   and `find-workspace`, which a file's open starts for its directory when
   no answer is cached, so a script that opens a file has that job too; and
   `find-mode-markers`, which gives a buffer the minor modes the compile
-  contributions' markers turn on, and which no file's open starts while no
-  contribution is registered. The ex line is handed no key
+  contributions' markers turn on, and which every file's open starts once
+  its workspace is known, since contributions ship. The ex line is handed no key
   binding: the Vim scheme's keys are its states' own keymaps. The frame's
   bindings bind `s-q` to `quit`. Every default key names a command the host
   is handed.
@@ -821,7 +822,8 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   segments : Array Segment := ModeLine.shipped
   /-- The compiled compile contributions (`Editor/Compile/Contribution.lean`):
   registered for the owner `compiled` when the loop starts, before any
-  config. None ship yet. -/
+  config. The default is none, for a host that wants none; the executable's
+  hosts are handed the shipped ones (`shippedOver`). -/
   contributions : Array Compile.Contribution := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`.
   The editor thread calls it. It is not `emit`: the output is what a test
@@ -2211,7 +2213,9 @@ mode, evil's commands, the ex line's commands with the ex names that ship,
 the buffer commands, the frame's commands with their bindings, the command that loads a theme
 with the themes that ship, the workspace command with the job that finds a
 file's workspace, the shell's command with the job that runs `:!`, the
-compile mode's commands, its job and its mode (`Editor/Compile.lean`), and the menu bar (`Menu.standard`) with its
+compile mode's commands, its jobs, its mode and the contributions that ship,
+`cargo-mode`, `lake-mode` and `mise-mode` (`Editor/Compile.lean`,
+`Editor/Compile/Shipped.lean`), and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
 
@@ -2234,7 +2238,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
     compiledJobs := Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs
     modes := Minibuffer.modes ++ Compile.modes, ex := Ex.bindings, themes := Themes.shipped
-    segments := ModeLine.shipped, log := IO.eprintln }
+    segments := ModeLine.shipped, contributions := Compile.shipped, log := IO.eprintln }
 
 /-- The environments every job of a host shares, over `state`
 (`Job.sharedEnvironments`), which report what they have to say by posting it
