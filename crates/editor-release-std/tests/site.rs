@@ -64,6 +64,37 @@ fn site_writes_each_fixture_s_golden_page() {
     }
 }
 
+/// With no out-dir, the page goes to `<root>/target/site`, made if
+/// missing, and its path is printed. The root is a temporary directory
+/// given with `--root`, so the workspace's `target/` is not touched.
+#[test]
+fn site_without_an_out_dir_writes_into_the_root_s_target_site() {
+    let dir = fixtures().join("nightly-26.0");
+    let minimum = std::fs::read_to_string(dir.join("minimum")).expect("minimum");
+    let tmp = TempDir::new().expect("a temporary directory");
+    let root = tmp.path().canonicalize().expect("the root exists");
+    let run = Command::new(env!("CARGO_BIN_EXE_leanmacs-release"))
+        .arg("--root")
+        .arg(&root)
+        .arg("site")
+        .arg(dir.join("build.json"))
+        .env_remove("GITHUB_SERVER_URL")
+        .env_remove("GITHUB_REPOSITORY")
+        .env("MACOSX_DEPLOYMENT_TARGET", minimum.trim_end())
+        .output()
+        .expect("leanmacs-release runs");
+    assert!(run.status.success(), "{run:?}");
+    let index = root.join("target").join("site").join("index.html");
+    assert_eq!(
+        String::from_utf8(run.stdout).expect("UTF-8"),
+        format!("{}\n", index.display())
+    );
+    assert_eq!(
+        std::fs::read_to_string(&index).expect("index.html written"),
+        std::fs::read_to_string(dir.join("index.html")).expect("the golden page")
+    );
+}
+
 #[test]
 fn site_refuses_an_unset_minimum_and_writes_nothing() {
     let tmp = TempDir::new().expect("a temporary directory");
