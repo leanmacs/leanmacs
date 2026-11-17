@@ -1,4 +1,5 @@
 import Editor.File.Model
+import Editor.Fuzzy.Contract
 import Editor.Job
 import Editor.Process.Model
 
@@ -32,6 +33,12 @@ library's watch service on real files, each property in a temporary
 directory. A job's posts have a list of their own, `postProperties`, last:
 against the model, and against the runner over the fake clock and over the
 library's timer service, each with a host that records what it is handed.
+The fuzzy request has one too, `fuzzyProperties`, after them: against the
+model, against the runner over the fake clock given the fuzzy model's
+handler, and against the runner given the library's binding. What needs
+equality (that the request registers no wait and moves no clock) is
+checked against the model and the fake alone
+(`ModelTest.jobModelChecks`, `runnerChecks`).
 
 Every property is an inequality. A real clock only promises "not before": a
 wait may return late, and time passes between two requests. So nothing here
@@ -1363,5 +1370,27 @@ def postFailures (run : JobM Unit → IO (Array Invocation)) (properties : List 
       return none
     else
       return some s!"{property.name} (posted {repr posted})"
+
+/-! ## The matcher
+
+A property of the fuzzy request (`JobRequest.fuzzy`) is a `Property`, run
+by `failures`, as the clock's are. Whoever runs the list gives the runner a
+matcher: the fuzzy model's handler for the fake, the library's binding for
+the real services. The answers are the fuzzy port's own contract
+(`Editor/Fuzzy/Contract.lean`) asked from inside a job, so a job is
+answered what a command is; and the request waits for nothing. -/
+
+/-- The properties every implementation of the job port's fuzzy request
+has. -/
+def fuzzyProperties : List Property :=
+  {   name :=
+        "a fuzzy request is answered without a wait: the job goes on, and the clock has not gone back across it"
+      holds := do
+        let before ← now
+        let ranked ← Job.embedFuzzy (Fuzzy.rank "w" #["wq", "w"])
+        return before ≤ (← now) && ranked.size == 2 } ::
+    FuzzyContract.properties.map fun property =>
+      { name := s!"a fuzzy request in a job: {property.name}"
+        holds := Job.embedFuzzy property.holds }
 
 end Editor.JobContract

@@ -490,10 +490,12 @@ structure Compiled where
 hands it. Hosts follow one another on one queue: each gets source ids of its
 own, so none takes a late event of an earlier one for its own. Its jobs wait
 in a table of waits of its own, unless it is handed one (`waits`), as a
-stage over a real service is. -/
+stage over a real service is. Its jobs ask the library's matcher
+(`Fuzzy.real`), as the executable's do, unless it is handed another
+(`fuzzy`). -/
 def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
-    (source : Config.Source) (compiled : Compiled := {}) (waits : Option Job.Completions := none) :
-    IO (Stage σ) := do
+    (source : Config.Source) (compiled : Compiled := {}) (waits : Option Job.Completions := none)
+    (fuzzy : FuzzyHandler := Fuzzy.real) : IO (Stage σ) := do
   let output ← IO.mkRef #[]
   let threads ← IO.mkRef #[]
   let log ← IO.mkRef #[]
@@ -512,7 +514,8 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           emit := fun line => do
             threads.modify (·.push (← IO.getTID))
             output.modify (·.push line),
-          services := { completions, timers := clock.timers, fileWatches := watches.fileWatches }
+          services :=
+            { completions, timers := clock.timers, fileWatches := watches.fileWatches, fuzzy }
           published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
           wakeups := requests + 1, jobs := requests + 2, environment := requests + 3
           posts := requests + 4

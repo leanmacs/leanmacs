@@ -1,5 +1,6 @@
 import Editor.File.Model
 import Editor.FileWatch.Model
+import Editor.Fuzzy.Model
 import Editor.Job
 import Editor.Process.Model
 
@@ -54,6 +55,11 @@ here.
   `JobModel.posted`, oldest first: what a host would run on the editor
   thread. `runParking` parks a job at each post, so a driver runs it before
   the job goes on.
+- A fuzzy request is answered at once, without moving the clock, with the
+  fuzzy model's answer (`Editor/Fuzzy/Model.lean`); while
+  `JobModel.fuzzyRefusal` is set, with an error, `fuzzy: ` and the refusal,
+  as the runner answers a service that threw. A test sets it, as it sets
+  the files.
 
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities
@@ -83,6 +89,10 @@ structure JobModel where
   reported : Array String := #[]
   /-- What the job posted to the editor (`post`), oldest first. -/
   posted : Array Invocation := #[]
+  /-- What the matcher is refused with, if it is: every fuzzy request is
+  then answered `fuzzy: ` and this, as an error. `none` answers with the
+  fuzzy model. -/
+  fuzzyRefusal : Option String := none
   deriving DecidableEq
 
 namespace JobModel
@@ -117,6 +127,10 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
       { model with
         environments, reported := model.reported ++ said.toArray })
   | .post invocation, model => ((), { model with posted := model.posted.push invocation })
+  | .fuzzy request, model =>
+    match model.fuzzyRefusal with
+    | some refusal => (.error s!"fuzzy: {refusal}", model)
+    | none => (.ok (FuzzyModel.handle request ()).1, model)
 
 /-- The model once the job has ended: every streaming child it started is
 ended (`ProcessModel.endAll`), as the runner cancels them, and every watch

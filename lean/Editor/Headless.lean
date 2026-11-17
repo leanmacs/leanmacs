@@ -2297,7 +2297,8 @@ def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64)
 /-- The collaborators the executable's hosts are made of, the headless
 mode's and the window mode's: `shippedOver` the library's timer service,
 file service, process service, watch service and diff service for the
-jobs, and the environments they share for the mode `host` (`reportedEnvironments`).
+jobs, the library's matcher (`Fuzzy.real`), which the loop's match jobs ask,
+and the environments they share for the mode `host` (`reportedEnvironments`).
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
@@ -2323,7 +2324,7 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
         processes := Job.realProcesses completions refused timers timed
         fileWatches := Job.realFileWatches completions watches
         diffs := Job.realDiffs completions published.reader held refusedDiffs
-        environments := reportedEnvironments environments 4 } published held
+        environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real } published held
 
 /-- The headless mode of the executable, handed the command line after
 `headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>

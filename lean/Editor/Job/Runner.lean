@@ -153,12 +153,19 @@ none has `Diffs.absent`.
 answers at once and registers no wait (`Environments.inherited`, the
 default, and `sharedEnvironments`, state behind a reference).
 
+The fuzzy matcher is a `FuzzyHandler` (`Editor/Fuzzy.lean`), which answers
+at once and registers no wait. It is `IO`, and may throw: the runner
+catches what it throws and answers the job `.error`, `fuzzy: ` and the
+message, since an answer cannot throw.
+
 `Services` is what a runner is given: the table, the clock, the files, the
-processes, the file watches, the diffs and the environments. A runner that is given no file service has `Files.absent`,
+processes, the file watches, the diffs, the environments and the matcher. A runner that is given no file service has `Files.absent`,
 and one that is given no process service has `Processes.absent`, each of
 which refuses every request as failed, at once: an error as a value, and
 the job goes on; one that is given no watch service has
-`FileWatches.absent`, which does the same.
+`FileWatches.absent`, which does the same. One that is given no matcher
+has `Fuzzy.absent`, which throws, so a fuzzy request there is answered an
+error, and never a model's order as if it were a library's.
 
 ## What a job holds
 
@@ -404,6 +411,8 @@ structure Services where
   /-- The environments its jobs share. A runner that is given none has
   `Environments.inherited`. -/
   environments : Environments := Environments.inherited
+  /-- The fuzzy matcher. A runner that is given none has `Fuzzy.absent`. -/
+  fuzzy : FuzzyHandler := Fuzzy.absent
 
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
@@ -630,6 +639,14 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     unless ← handle.cancelled do
       handle.posted invocation
     return .now ()
+  | .fuzzy request => do
+    -- The matcher answers in the call, and may throw: what it throws is the
+    -- job's error, as a value.
+    match ← (handle.services.fuzzy request).toBaseIO with
+    | .ok reply =>
+      return .now (.ok reply)
+    | .error error =>
+      return .now (.error s!"fuzzy: {error}")
   | .fileWatch (.next watch) => do
     -- A watch is named for the job that started it, and for no other.
     unless (← handle.watches.get).contains watch do

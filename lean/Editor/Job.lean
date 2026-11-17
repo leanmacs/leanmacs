@@ -103,6 +103,23 @@ hands a post over only while the job is not cancelled
 while the job is in its table (`Job.Jobs.has`). It is how a compile streams
 its output into its buffer (`Editor/Compile.lean`).
 
+## Asking the matcher
+
+A job asks the fuzzy matcher (`Editor/Fuzzy.lean`) through one request,
+`fuzzy`, which carries a `FuzzyRequest`. It is answered at once, as
+`environment` is: it waits for nothing and moves no clock, since the
+matcher answers in the call. A program over the fuzzy port, a completion
+style's (`Editor/Completion/Style.lean`), runs in a job with
+`Job.embedFuzzy`, as one runs in a command with `Fuzzy.lift`. It is how the
+loop matches a long list off the editor thread (`Editor/Loop.lean`,
+"Prompts").
+
+**Its reply is an `Except String`**: the matcher's own port has no error,
+but the service that answers it in a runner is `IO` and can throw, and the
+runner's answer cannot (`Job.answer`), so what was thrown is answered as
+`.error`, `fuzzy: ` and the message. `Job.embedFuzzy` throws it, so a job
+that does not catch it fails with it.
+
 ## Cancellation is not a reply
 
 A job is cancelled at a wait, and from outside: no request has a reply that
@@ -156,6 +173,16 @@ The diff service is the fourth: `JobRequest.diff`, whose requests are
 answers it with (`FileModel.diff`), since that holds the snapshots a diff
 names; its fake is `FakeFiles.diffs`, over the same model, and its real
 implementation `realDiffs`. Withdrawing a wait tells the diff service too.
+
+The matcher is the last, and answers at once: `JobRequest.fuzzy`, whose
+requests are `FuzzyRequest`s, so a new question of the matcher is a
+constructor of the fuzzy port and not of this one. Its model answers with
+the fuzzy model (`JobModel.handle`), or with the error a test sets
+(`JobModel.fuzzyRefusal`); the runner's service is a `FuzzyHandler`
+(`Job.Services.fuzzy`), which is `Fuzzy.absent` unless the runner is given
+one: the hosts give the library's binding, `Fuzzy.real`. Its contract is a
+list of its own, `JobContract.fuzzyProperties`: the fuzzy port's contract,
+asked from inside a job, and that it registers no wait.
 
 ## The pieces
 
@@ -213,6 +240,9 @@ inductive JobRequest where
   arguments, to run on the editor thread while the job goes on: answered
   at once. -/
   | post (invocation : Invocation)
+  /-- Ask the fuzzy matcher (`Editor/Fuzzy.lean`): answered at once, or
+  with the error the service that answers it threw. -/
+  | fuzzy (request : FuzzyRequest)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -227,6 +257,7 @@ def JobRequest.Reply : JobRequest → Type
   | .diff request => request.Reply
   | .environment request => request.Reply
   | .post _ => Unit
+  | .fuzzy request => Except String request.Reply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -279,6 +310,24 @@ answered at once and never waits; a cancelled or removed job's posts are
 dropped. -/
 def post (invocation : Invocation) : JobM Unit :=
   ExceptT.lift (Program.request (port := jobPort) (.post invocation))
+
+/-- `program`, a program over the fuzzy port, as one over the job port that
+ends with its value or with the error a fuzzy request was answered: each
+request is the fuzzy constructor's, and an `.error` reply ends it there. -/
+def Program.embedFuzzyJob {α : Type} : Program fuzzyPort α → Program jobPort (Except String α)
+  | .done value => .done (.ok value)
+  | .step request next =>
+    .step (.fuzzy request) fun reply =>
+      match reply with
+      | .ok answer => embedFuzzyJob (next answer)
+      | .error message => .done (.error message)
+
+/-- `program`, a program over the fuzzy port, as a job: each request asks
+the matcher at once ("Asking the matcher", in the module docs), and an
+error the service threw is thrown here, so a job that does not catch it
+fails with it. -/
+def Job.embedFuzzy {α : Type} (program : Program fuzzyPort α) : JobM α :=
+  ExceptT.mk program.embedFuzzyJob
 
 /-- Loads the file at `path`, unless it is longer than `limit` bytes, and
 waits for it: the file's text as a snapshot this job holds, its stamp and

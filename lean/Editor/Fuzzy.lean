@@ -91,6 +91,12 @@ in order, and a candidate that is the pattern comes first. -/
 def rank (pattern : String) (candidates : Array String) : FuzzyM (Array Nat) :=
   Program.request (port := fuzzyPort) (.rank pattern candidates)
 
+/-- No matcher: every request throws `this runner has no fuzzy service`. It
+is what a job runner has when it was given none (`Job.Services.fuzzy`,
+`Editor/Job/Runner.lean`), so a job that asks the matcher there is answered
+an error, and never a model's order as if it were a library's. -/
+def absent : FuzzyHandler := fun _ => throw (IO.userError "this runner has no fuzzy service")
+
 end Fuzzy
 
 end Editor

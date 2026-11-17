@@ -55,6 +55,11 @@ def rank (pattern : String) (candidates : Array String) : Array Nat :=
 def handle : (request : FuzzyRequest) → Unit → request.Reply × Unit
   | .rank pattern candidates, state => (rank pattern candidates, state)
 
+/-- The model as a handler of the fuzzy port in `IO`: what a job runner is
+given where a test needs a matcher and no library (`Job.Services.fuzzy`).
+It never throws. -/
+def handler : FuzzyHandler := fun request => pure (handle request ()).1
+
 end FuzzyModel
 
 end Editor

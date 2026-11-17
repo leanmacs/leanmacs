@@ -959,6 +959,22 @@ def jobModelChecks : List Check :=
           | .ended none model => model.posted == #[JobContract.posting "first"] && model.now == 5
           | _ => false) },
     { name :=
+        "in the job model, a fuzzy request is answered with the fuzzy model's ranking and moves no clock; with a refusal set it is answered as an error, `fuzzy: ` and the refusal, which the job can catch and go on from, and which, uncaught, fails the job"
+      run :=
+        let candidates := #["wq", "edit", "w"]
+        let ranked : JobM (Array Nat) := Job.embedFuzzy (Fuzzy.rank "w" candidates)
+        let caught : JobM String := do
+          try
+            discard ranked
+            return "answered"
+          catch message =>
+            sleep 1
+            return message
+        pure
+          (modelled ranked { now := 4 } == (.finished (FuzzyModel.rank "w" candidates), 4) &&
+            modelled caught { fuzzyRefusal := some "broken" } == (.finished "fuzzy: broken", 1) &&
+            modelled ranked { fuzzyRefusal := some "broken" } == (.failed "fuzzy: broken", 0)) },
+    { name :=
         "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
       run := do
         let properties : List JobContract.Property :=
@@ -1211,6 +1227,22 @@ def postFailures : IO (List String) := do
   let onModel ←
     JobContract.postFailures (fun job => pure (job.runModel {}).2.posted) JobContract.postProperties
   let onFake ← JobContract.postFailures postedOnFake JobContract.postProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake clock: {·}")
+
+/-- The names of the job port's fuzzy properties that do not hold of the job
+model, and of those that do not hold of the runner over the fake clock given
+the fuzzy model as its fuzzy service (`FuzzyModel.handler`). -/
+def fuzzyJobFailures : IO (List String) := do
+  let onModel ←
+    JobContract.failures (fun job => pure (job.runModel {}).1) JobContract.fuzzyProperties
+  let onFake ←
+    JobContract.failures
+        (fun job => do
+          let rig ← Rig.new
+          runOnFake job
+              (some { rig with services := { rig.services with fuzzy := FuzzyModel.handler } }))
+        JobContract.fuzzyProperties
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake clock: {·}")
 
@@ -1798,6 +1830,33 @@ def runnerChecks : List Check :=
           return false
         rig.clock.advance 2
         return (← ends.endedAs (.finished #["42"])) && (← throws.endedAs (.failed "no thanks")) },
+    { name :=
+        "a fuzzy request on the runner is answered at once by the fuzzy service it was given, registering no wait and moving no clock; a service that throws is answered to the job as an error, `fuzzy: ` and its message, which the job can catch and go on from, and which, uncaught, fails the job; a runner given no fuzzy service answers `fuzzy: this runner has no fuzzy service`"
+      run := do
+        let rig ← Rig.new
+        let given := { rig with services := { rig.services with fuzzy := FuzzyModel.handler } }
+        let broken :=
+          { rig with
+            services := { rig.services with fuzzy := fun _ => throw (IO.userError "broken") } }
+        let candidates := #["wq", "edit", "w"]
+        let ranked : Unit → JobM (Array Nat) := fun _ => Job.embedFuzzy (Fuzzy.rank "w" candidates)
+        let caught : Unit → JobM String := fun _ => do
+          try
+            discard <| ranked ()
+            return "answered"
+          catch message =>
+            return message
+        let answered ← given.spawn (reporting ranked)
+        let refused ← broken.spawn (reporting caught)
+        let failed ← broken.spawn (reporting ranked)
+        let absent ← rig.spawn (reporting caught)
+        return (← answered.endedAs (.finished #[toString (FuzzyModel.rank "w" candidates)])) &&
+            (← refused.endedAs (.finished #["fuzzy: broken"])) &&
+            (← failed.endedAs (.failed "fuzzy: broken")) &&
+            (← absent.endedAs (.finished #["fuzzy: this runner has no fuzzy service"])) &&
+            (← rig.clock.started).isEmpty &&
+            (← rig.clock.now) == 0 &&
+            (← rig.services.completions.register).1 == 1 },
     { name :=
         "100,000 now requests in one job are answered on one thread, and none of them registers a wait"
       run := do
@@ -37890,6 +37949,7 @@ def main : IO UInt32 := do
       (← ModelTest.jobModelFailures) ++
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.postFailures) ++
+      (← ModelTest.fuzzyJobFailures) ++
       (← ModelTest.fileFailures) ++
       (← ModelTest.processFailures) ++
       (← ModelTest.fileWatchFailures) ++
@@ -37909,6 +37969,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model"
   (← IO.getStdout).flush
   IO.Process.exit 0
