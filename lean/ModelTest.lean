@@ -26220,18 +26220,22 @@ def windowCommandChecks : List Check :=
               stateOf more 0 == "insert"
           | _, _ => false },
     { name :=
-        "window-close on the minibuffer's view, by a config's binding that holds there, is refused with ofMinibuffer, the echo area says why, and the prompt stays open"
+        "window-close, window-only and window-quit on the minibuffer's view, by a config's binding that holds there, over two windows: each is refused with ofMinibuffer, the echo area says why under the command's name, no window is closed, and the prompt stays open"
       run :=
         pure <|
-          let handed :=
-            windowHanded Layout.manual (windowMaps [("C-w C-c", WindowCommands.closeName)])
-          match (windowDriver 1 Layout.manual 0 handed).map (evilFed · ": C-w C-c") with
-          | none => false
-          | some driver =>
-            let state := driver.loop.state
-            state.prompt.isSome &&
-              state.echo ==
-                s!"{WindowCommands.closeName}: {(LayoutRefusal.ofMinibuffer ⟨0⟩).describe}" }]
+          let table :=
+            [("C-w C-c", WindowCommands.closeName), ("C-w o", WindowCommands.onlyName),
+              ("C-w q", WindowCommands.quitName)]
+          let refused (typed name : String) : Bool :=
+            match
+              (windowDriver 2 Layout.manual 0 (windowHanded Layout.manual (windowMaps table))).map
+                (evilFed · s!": {typed}") with
+            | none => false
+            | some driver =>
+              let state := driver.loop.state
+              state.prompt.isSome && (windowOrder state).1 == [0, 1] && !state.quitting &&
+                state.echo == s!"{name}: {(LayoutRefusal.ofMinibuffer ⟨0⟩).describe}"
+          table.all fun (typed, name) => refused typed name }]
 
 /-- The checks of a request of the window through the display interface,
 on its model. -/
