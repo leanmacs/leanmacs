@@ -7972,7 +7972,76 @@ def layoutChecks : List Check :=
             (Layout.masterStack { share := 150 }).problem? == some (Layout.shareTooLarge 150) &&
             (Layout.edge .left 100 (.edge .right 0 d)).problem? == none &&
             [d, .monocle, Layout.manual].all (·.problem? == none) &&
-            Layout.edgeTooLarge 101 != Layout.edgeTwice .left }]
+            Layout.edgeTooLarge 101 != Layout.edgeTwice .left },
+    { name :=
+        "the carve: of two side-by-side tiles the left one gives up the divider's width at its right, and the divider is that strip, full height; of two stacked tiles the upper one gives up the width at its foot, the divider across its width"
+      run :=
+        pure <|
+          let whole := rect 0 0 640 480
+          Layout.carve whole 2 #[(⟨0⟩, rect 0 0 320 480), (⟨1⟩, rect 320 0 320 480)] ==
+              (#[(⟨0⟩, rect 0 0 318 480), (⟨1⟩, rect 320 0 320 480)], #[rect 318 0 2 480]) &&
+            Layout.carve whole 2 #[(⟨0⟩, rect 0 0 640 240), (⟨1⟩, rect 0 240 640 240)] ==
+              (#[(⟨0⟩, rect 0 0 640 238), (⟨1⟩, rect 0 240 640 240)], #[rect 0 238 640 2]) &&
+            Layout.carve whole 2 (Layout.default.place (windowsUpTo 3) ⟨0⟩ whole) ==
+              (#[(⟨0⟩, rect 0 0 318 480), (⟨1⟩, rect 320 0 320 238),
+                  (⟨2⟩, rect 320 240 320 240)],
+                #[rect 318 0 2 480, rect 320 238 320 2]) },
+    { name :=
+        "the carve of one tile, and of monocle's, gives no divider and leaves the tile as it was; a tile short of both edges gives up its right strip, full height, and then its foot, short of that strip"
+      run :=
+        pure <|
+          let whole := rect 0 0 640 480
+          let grid := Splits.split .rows 1 1 (.split .columns 1 1 .tile .tile) .tile
+          Layout.carve whole 2 #[(⟨0⟩, whole)] == (#[(⟨0⟩, whole)], #[]) &&
+            Layout.carve whole 2 (Layout.monocle.place (windowsUpTo 3) ⟨1⟩ whole) ==
+              (#[(⟨1⟩, whole)], #[]) &&
+            Layout.carve whole 2 ((Layout.splits grid).place (windowsUpTo 3) ⟨0⟩ whole) ==
+              (#[(⟨0⟩, rect 0 0 318 238), (⟨1⟩, rect 320 0 320 238), (⟨2⟩, rect 0 240 640 240)],
+                #[rect 318 0 2 240, rect 0 238 318 2, rect 320 238 320 2]) &&
+            Layout.carve whole 2 #[] == (#[], #[]) },
+    { name :=
+        "the carve of a tile narrower or shorter than the divider's width gives up the whole tile and no more, and no divider is empty"
+      run :=
+        pure <|
+          let whole := rect 0 0 3 3
+          let narrow := Splits.split .columns 1 2 .tile .tile
+          let short := Splits.split .rows 1 2 .tile .tile
+          Layout.carve whole 2 ((Layout.splits narrow).place (windowsUpTo 2) ⟨0⟩ whole) ==
+              (#[(⟨0⟩, rect 0 0 0 3), (⟨1⟩, rect 1 0 2 3)], #[rect 0 0 1 3]) &&
+            Layout.carve whole 2 ((Layout.splits short).place (windowsUpTo 2) ⟨0⟩ whole) ==
+              (#[(⟨0⟩, rect 0 0 3 0), (⟨1⟩, rect 0 1 3 2)], #[rect 0 0 3 1]) &&
+            Layout.carve whole 2 #[(⟨0⟩, rect 0 0 0 3), (⟨1⟩, rect 0 0 3 3)] ==
+              (#[(⟨0⟩, rect 0 0 0 3), (⟨1⟩, rect 0 0 3 3)], #[]) },
+    { name :=
+        "the carve keeps every window's place in the list and every tile's top left corner, and the carved rectangles and the dividers tile the area together, with no divider empty; a tile along the area's right edge or foot keeps that edge, so no divider runs along the area's edges, for master-and-stack at every side, share and count, every manual split tree reached by up to three splits, monocle, and edges with docked windows over each, for one to five windows, at even, odd, small and zero sizes"
+      run :=
+        pure <|
+          let edged : List (Layout × Array (ViewId × Side)) :=
+            [Layout.default, .monocle, Layout.manual].flatMap fun inner =>
+              [(Layout.edge .left 25 inner, #[(⟨10⟩, .left)]),
+                (Layout.edge .right 30 inner, #[(⟨10⟩, .right), (⟨11⟩, .right)]),
+                (Layout.edge .left 20 (.edge .bottom 30 inner), #[(⟨10⟩, .left), (⟨11⟩, .bottom)])]
+          let layouts : List (Layout × Array (ViewId × Side)) :=
+            (shares.flatMap fun share =>
+                sides.flatMap fun side =>
+                  [0, 1, 2].map fun count => (Layout.masterStack { share, side, count }, #[])) ++
+              (splitsReached 3).map (fun tree => (Layout.splits tree, #[])) ++
+              [(Layout.monocle, #[])] ++ edged
+          layouts.all fun (layout, docked) =>
+            (List.range 5).all fun index =>
+              let windows := windowsUpTo (index + 1)
+              sampleRects.all fun whole =>
+                let laid := layout.place windows ⟨0⟩ whole docked
+                let (carved, dividers) := Layout.carve whole 2 laid
+                let right := whole.x + whole.width
+                let foot := whole.y + whole.height
+                carved.map (·.1) == laid.map (·.1) &&
+                  tiles whole (carved.map (·.2) ++ dividers) &&
+                  (dividers.all fun divider => 0 < divider.width && 0 < divider.height) &&
+                  (laid.zip carved).all fun ((_, before), (_, after)) =>
+                    after.x == before.x && after.y == before.y &&
+                      (before.x + before.width != right || after.x + after.width == right) &&
+                      (before.y + before.height != foot || after.y + after.height == foot) }]
 
 /-- Whether `rect` is inside `area`. -/
 def inside (area rect : Rect) : Bool :=
