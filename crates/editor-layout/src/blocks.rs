@@ -29,9 +29,9 @@ use std::sync::Arc;
 use editor_text::{Snapshot, Text};
 
 use crate::cache::{Counters, TextState};
-use crate::decoration::{DecorationSource, FaceSpanSource, Span, Styles, fonts_of, merge};
+use crate::decoration::{DecorationSource, FaceSpanSource, Span, Styles, fonts_of};
 use crate::face::{FaceId, Paint};
-use crate::frame::hash;
+use crate::frame::paint_line;
 use crate::query::{Shown, Walker};
 use crate::scene::Block;
 use crate::shaper::{FontId, Shaper, VisualLine};
@@ -134,43 +134,14 @@ impl<S: Shaper> BlockLayout<'_, S> {
                 {
                     let range = walker.range(at);
                     let row_start = snapshot.row_range(at.row).map_or(0, |row| row.start);
-                    let drawn = entry.drawn_bytes(at.line).unwrap_or(0..0);
-                    let mut found = Vec::new();
-                    source.spans(
-                        &snapshot,
-                        row_start + drawn.start..row_start + drawn.end,
-                        &mut found,
+                    let painted = paint_line(
+                        &entry, at.line, &line, row_start, &snapshot, &sources, styles, shaper,
                     );
-                    let columns = line.bytes.clone();
-                    let column = |offset: usize| {
-                        entry
-                            .column(offset - row_start)
-                            .clamp(columns.start, columns.end)
-                            - columns.start
-                    };
-                    let on_row: Vec<Span> = found
-                        .iter()
-                        .filter_map(|span| {
-                            let covered = column(span.bytes.start)..column(span.bytes.end);
-                            (!covered.is_empty()).then_some(Span {
-                                bytes: covered,
-                                face: span.face,
-                            })
-                        })
-                        .collect();
-                    let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
-                    for run in merge(0..columns.len(), &on_row) {
-                        let paint = styles.style(shaper, &run.faces).paint;
-                        match runs.last_mut() {
-                            Some((bytes, last)) if *last == paint => bytes.end = run.bytes.end,
-                            _ => runs.push((run.bytes, paint)),
-                        }
-                    }
                     lines.push(BlockLine {
-                        hash: hash(&line, &runs),
                         line,
                         bytes: range.start..range.stop,
-                        runs,
+                        runs: painted.runs,
+                        hash: painted.hash,
                     });
                 }
                 visual = walker.next(at);

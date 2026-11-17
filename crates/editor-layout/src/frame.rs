@@ -218,11 +218,13 @@ use crate::blocks::{BlockKey, BlockLayout, ViewBlocks};
 
 use crate::cache::{FieldKept, StatusKept, state};
 use crate::decoration::{
-    DecorationSource, FaceSpanSource, SelectionSource, Span, TextSpansSource, fonts_of, merge,
+    DecorationSource, FaceSpanSource, SelectionSource, Span, Styles, TextSpansSource, fonts_of,
+    merge,
 };
 use crate::face::{
     Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
 };
+use crate::line::LineEntry;
 use crate::query::{Shown, Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, Side, Size, StatusField, TextKey, View, ViewId};
 use crate::shaper::{
@@ -1090,17 +1092,6 @@ impl<S: Shaper> Layout<S> {
         sources.extend_from_slice(extra);
         sources.push(&face_source);
         sources.push(&selection_source);
-        // Every source's spans of `bytes`, lowest layer first, and how
-        // many of them are below the selections', which are last.
-        let spans_of = |bytes: Range<usize>| {
-            let mut spans = Vec::new();
-            let mut below = 0;
-            for source in &sources {
-                below = spans.len();
-                source.spans(snapshot, bytes.clone(), &mut spans);
-            }
-            (spans, below)
-        };
         let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
         let fonts = |bytes: Range<usize>| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
         let mut held = state(&mut self.texts, text, self.tab_width, Some(text_width));
@@ -1163,31 +1154,22 @@ impl<S: Shaper> Layout<S> {
             let range = walker.range(visual);
             let bytes = range.start..range.stop;
             let row_start = snapshot.row_range(visual.row).map_or(0, |row| row.start);
-            // The spans of the characters the row draws any of, which is
-            // more than its bytes when it starts inside a tab's spaces.
-            let drawn = entry.drawn_bytes(visual.line).unwrap_or(0..0);
-            let (spans, below) = spans_of(row_start + drawn.start..row_start + drawn.end);
-            // Each span as the columns of the row it covers, from the row's
-            // start: a tab's span is cut to the spaces of it the row holds.
-            let columns = line.bytes.clone();
-            let column = |offset: usize| {
-                entry
-                    .column(offset - row_start)
-                    .clamp(columns.start, columns.end)
-                    - columns.start
-            };
-            let on_row = |span: &Span| {
-                let covered = column(span.bytes.start)..column(span.bytes.end);
-                (!covered.is_empty()).then_some(Span {
-                    bytes: covered,
-                    face: span.face,
-                })
-            };
+            let painted = paint_line(
+                &entry,
+                visual.line,
+                &line,
+                row_start,
+                snapshot,
+                &sources,
+                styles,
+                shaper,
+            );
             // What each selected span covers of the row: an area for each
             // run of cells next to each other that it holds, so one area
             // in text of one direction, and several where it crosses a
-            // change of direction.
-            for span in spans[below..].iter().filter_map(on_row) {
+            // change of direction. The selections are the last source.
+            let columns = &line.bytes;
+            for span in &painted.spans[painted.last..] {
                 let held = columns.start + span.bytes.start..columns.start + span.bytes.end;
                 let covered = entry.cells(visual.line).map(|cells| cells.covered(held));
                 for (left, right) in covered.unwrap_or_default() {
@@ -1199,26 +1181,14 @@ impl<S: Shaper> Layout<S> {
                     });
                 }
             }
-            let spans: Vec<Span> = spans.iter().filter_map(on_row).collect();
-            // Each run with what its faces come to, neighbours of one
-            // paint made one run.
-            let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
-            for run in merge(0..columns.len(), &spans) {
-                let paint = styles.style(shaper, &run.faces).paint;
-                match runs.last_mut() {
-                    Some((bytes, last)) if *last == paint => bytes.end = run.bytes.end,
-                    _ => runs.push((run.bytes, paint)),
-                }
-            }
-            let hash = hash(&line, &runs);
             shown.push((visual, frame.rows.len()));
             frame.rows.push(FrameRow::text_row(
                 across,
                 y,
                 bytes,
                 Arc::clone(&line),
-                runs,
-                hash,
+                painted.runs,
+                painted.hash,
             ));
             y += line.height;
         }
@@ -1293,9 +1263,85 @@ fn moved_back(snapshot: &Snapshot, selection: &Selection) -> Option<Selection> {
     Selection::shaped(selection.shape(), ranges, selection.primary())
 }
 
+/// A visual line painted ([`paint_line`]).
+pub(crate) struct PaintedLine {
+    /// Each span of the line's sources as the columns of the line it
+    /// covers, from the line's start, lowest layer first; a span that
+    /// covers none of them is left out.
+    pub spans: Vec<Span>,
+    /// Where the last source's spans start in `spans`.
+    pub last: usize,
+    /// Its runs, each with what its faces come to, neighbours of one paint
+    /// made one run.
+    pub runs: Vec<(Range<usize>, Paint)>,
+    /// Its content hash ([`hash`]).
+    pub hash: u64,
+}
+
+/// Visual line `index` of `entry`, which is `line`, painted: the entry is
+/// of a buffer row of `snapshot` that starts at `row_start`, its spans are
+/// what `sources` give, lowest layer first, and their faces come to paints
+/// in `styles`. A view's text rows and its blocks' rows are painted so.
+///
+/// The spans asked for are those of the characters the line draws any of,
+/// which is more than its bytes when it starts inside a tab's spaces, and
+/// each is cut to the columns of the line it covers: a tab's span to the
+/// spaces of it the line holds.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_line<L, S: Shaper>(
+    entry: &LineEntry<L>,
+    index: usize,
+    line: &VisualLine,
+    row_start: usize,
+    snapshot: &Snapshot,
+    sources: &[&dyn DecorationSource],
+    styles: &Styles,
+    shaper: &S,
+) -> PaintedLine {
+    let drawn = entry.drawn_bytes(index).unwrap_or(0..0);
+    let bytes = row_start + drawn.start..row_start + drawn.end;
+    let mut found = Vec::new();
+    let mut below = 0;
+    for source in sources {
+        below = found.len();
+        source.spans(snapshot, bytes.clone(), &mut found);
+    }
+    let columns = line.bytes.clone();
+    let column = |offset: usize| {
+        entry
+            .column(offset - row_start)
+            .clamp(columns.start, columns.end)
+            - columns.start
+    };
+    let on_line = |span: &Span| {
+        let covered = column(span.bytes.start)..column(span.bytes.end);
+        (!covered.is_empty()).then_some(Span {
+            bytes: covered,
+            face: span.face,
+        })
+    };
+    let mut spans: Vec<Span> = found[..below].iter().filter_map(on_line).collect();
+    let last = spans.len();
+    spans.extend(found[below..].iter().filter_map(on_line));
+    let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
+    for run in merge(0..columns.len(), &spans) {
+        let paint = styles.style(shaper, &run.faces).paint;
+        match runs.last_mut() {
+            Some((bytes, last)) if *last == paint => bytes.end = run.bytes.end,
+            _ => runs.push((run.bytes, paint)),
+        }
+    }
+    PaintedLine {
+        hash: hash(line, &runs),
+        spans,
+        last,
+        runs,
+    }
+}
+
 /// The content hash of a row of `line` with `runs`: its glyphs and runs
 /// relative to its start, and its height.
-pub(crate) fn hash(line: &VisualLine, runs: &[(Range<usize>, Paint)]) -> u64 {
+fn hash(line: &VisualLine, runs: &[(Range<usize>, Paint)]) -> u64 {
     let mut hasher = DefaultHasher::new();
     line.height.to_bits().hash(&mut hasher);
     line.baseline.to_bits().hash(&mut hasher);
