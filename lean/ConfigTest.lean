@@ -2952,6 +2952,15 @@ def setup : SetupM Unit := do
   command \"ask\" (discard <| prompt \"Name: \" { command := \"bump\" })
 "
 
+/-- A chunk whose `setup` registers `pick`, which asks `Pick: ` with the
+completion source registered under `picks`, by name, and, when `defines`,
+that source: `wq`, `edit` and `w`. -/
+def sourceChunk (defines : Bool) : String :=
+  let source := "  defineSource (.ofTexts \"picks\" \"pick\" #[\"wq\", \"edit\", \"w\"])\n"
+  "def setup : SetupM Unit := do\n" ++ (if defines then source else "") ++
+    "  command \"pick\" (discard <| prompt \"Pick: \" { command := \"picked\" }\n" ++
+    "    (sources := [.named \"picks\"]))\n"
+
 /-- The line of the minibuffer's view, view 1 in a frame of no size, showing
 `text` with its one cursor at `cursor`. -/
 def minibufferLine (text : String) (cursor : Nat) : String :=
@@ -3096,6 +3105,29 @@ def promptChecks (context : Context) : List Check :=
             let shown ← session.shown
             return shown.contains "store counter v1: 2" &&
                 (← session.scene) == ("".quote, #[viewLine "" 0]))
+          minibufferCompiled },
+    { name :=
+        "a completion source config registers supplies the candidates of a prompt that asks for it by name: after `w` is committed the minibuffer's status line is the label, then `w` and `wq`, the candidates the library's matcher lists; reloaded with a config that registers no such source, the same ask opens no prompt, leaves one view and refuses no step"
+      run :=
+        withHost context [("10-source.lean", sourceChunk true)]
+          (fun session => do
+            session.ask [.reload]
+            session.ask [.run "pick"]
+            unless ← Event.post (.commit "w") do
+              return false
+            let asking ← session.sceneLines
+            session.pressKeys cancelKeys
+            session.write "10-source.lean" (sourceChunk false)
+            session.ask [.reload]
+            session.ask [.run "pick"]
+            let (_, views) ← session.scene
+            return asking.contains
+                  (Headless.statusLine ⟨1⟩
+                    #[{ text := "Pick: ", face := Loop.promptFace },
+                      { text := "w", face := Loop.candidateFace },
+                      { text := "wq", face := Loop.candidateFace }]) &&
+                views == #[viewLine "" 0] &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled }]
 
 /-- What compiled code hands every host of the ex checks: the ex line's

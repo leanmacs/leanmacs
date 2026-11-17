@@ -57,4 +57,9 @@ def shipped : Array NamedTheme :=
   #[{ name := Theme.defaultName, theme := Theme.builtin }, Solarized.dark, Solarized.light,
     FairyFloss.fairyFloss]
 
+/-- The theme completion source, as a host registers it for the owner
+`compiled`, so config can ask for it by name. -/
+def sources : Array Completion.Source :=
+  #[source]
+
 end Editor.Themes

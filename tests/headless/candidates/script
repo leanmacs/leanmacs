@@ -7,7 +7,8 @@
 reload
 settle
 
-# `pick` is config's: it asks `Pick: ` with the candidates `wq`, `edit` and
+# `pick` is config's: it asks `Pick: ` with the completion source config
+# registers under `picks`, by name, whose candidates are `wq`, `edit` and
 # `w`. A `w` is typed into the minibuffer. The scene lists the candidates
 # the text matches after the prompt's label, in the minibuffer's status
 # line: `w` and then `wq`. The library's matcher scores the two the same,

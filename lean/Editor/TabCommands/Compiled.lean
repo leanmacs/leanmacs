@@ -39,4 +39,9 @@ def commands : Array Config.Registration :=
     (Array.range 9).map fun index =>
       { name := selectName (index + 1), action := .call (selectNumbered (index + 1)) }
 
+/-- The tab completion source, as a host registers it for the owner
+`compiled`, so config can ask for it by name. -/
+def sources : Array Completion.Source :=
+  #[source]
+
 end Editor.TabCommands

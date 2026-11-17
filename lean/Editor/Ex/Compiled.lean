@@ -119,4 +119,10 @@ def bindings : Array Binding :=
     { name := "next-error", command := Compile.nextName },
     { name := "previous-error", command := Compile.previousName }]
 
+/-- The ex line's completion sources, as a host registers them for the owner
+`compiled`, so config can ask for them by name: the `:!` history, then the
+ex names. -/
+def sources : Array Completion.Source :=
+  #[historySource, namesSource]
+
 end Editor.Ex

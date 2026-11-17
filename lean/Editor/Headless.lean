@@ -835,6 +835,11 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   config. The default is none, for a host that wants none; the executable's
   hosts are handed the shipped ones (`shippedOver`). -/
   contributions : Array Compile.Contribution := #[]
+  /-- The compiled completion sources (`Editor/Completion.lean`):
+  registered for the owner `compiled` when the loop starts, before any
+  config. The default is none; the executable's hosts are handed the
+  shipped ones (`shippedOver`). -/
+  sources : Array Completion.Source := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`.
   The editor thread calls it. It is not `emit`: the output is what a test
   compares, and a log entry depends on how long the machine took. -/
@@ -1664,7 +1669,7 @@ languages and compile contributions, for the owner `compiled`, before any
 config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  ((((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
+  (((((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
                                 collaborators.compiledJobs).replaceBindings
                             .compiled collaborators.bindings).replaceModes
                         .compiled collaborators.modes).replaceEx
@@ -1672,7 +1677,8 @@ def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators �
                 .compiled collaborators.themes).replaceSegments
             .compiled collaborators.segments).replaceLanguages
         .compiled collaborators.languages).replaceContributions
-    .compiled collaborators.contributions
+      .compiled collaborators.contributions).replaceSources
+    .compiled collaborators.sources
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of
@@ -2262,7 +2268,9 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     compiledJobs := Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs
     modes := Minibuffer.modes ++ Compile.modes ++ Language.modes, ex := Ex.bindings
     themes := Themes.shipped, languages := Language.shipped
-    segments := ModeLine.shipped, contributions := Compile.shipped, log := IO.eprintln }
+    segments := ModeLine.shipped, contributions := Compile.shipped
+    sources := Ex.sources ++ Buffers.sources ++ TabCommands.sources ++ Themes.sources
+    log := IO.eprintln }
 
 /-- The environments every job of a host shares, over `state`
 (`Job.sharedEnvironments`), which report what they have to say by posting it

@@ -44,4 +44,9 @@ def commands : Array Config.Registration :=
     { name := listName, action := .call listCommand },
     { name := closeName, action := .call closeCommand }]
 
+/-- The buffer completion source, as a host registers it for the owner
+`compiled`, so config can ask for it by name. -/
+def sources : Array Completion.Source :=
+  #[source]
+
 end Editor.Buffers

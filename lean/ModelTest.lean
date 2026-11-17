@@ -5,6 +5,7 @@ import Editor.Clipboard.Model
 import Editor.Command.Append
 import Editor.Command.Dispatch
 import Editor.Command.Model
+import Editor.Completion.Contract
 import Editor.Completion.Fake
 import Editor.Compile.Compiled
 import Editor.Compile.Shipped
@@ -299,6 +300,10 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   the choice and is in the scene's echo. What is
   listed is compared with what the fuzzy model answers
   (`FuzzyModel.rank`), never with an order written out;
+- `sourceContractChecks`: the completion sources' contract
+  (`Editor/Completion/Contract.lean`) on the model, the fake and each
+  shipped source, run on `twoBuffers` over the editor's models, and seen
+  to report a source that writes and one that is refused;
 - `fileCommandChecks`: the file commands (`Editor/Files.lean`) on that
   driver, over the model of files (`Editor/File/Model.lean`), with keys
   bound to the commands and jobs registered as the test says: opening a
@@ -20881,6 +20886,57 @@ def candidateChecks : List Check :=
                 #[{ text := "w", annotation := some (toString asked.asker.index),
                     group := some "echo" }] }]
 
+/-- The contract's runner on the editor's models (`Completion.Contract.Runner`):
+the source asked with `text` from the focused view of `twoBuffers`, dispatched
+with a loop told two ex names and two themes, so the shipped sources that ask
+for them answer some. `some` with what it answered and whether the editor
+state and the texts the store holds were left as they were; `none` when it
+was refused, or the fixture could not be made. -/
+def sourceRunner : Completion.Contract.Runner := fun text source =>
+  let fixture : EditorM EditorState := do
+    return ← twoBuffers
+  match fixture.runModel editorModel with
+  | (.error _, _) => none
+  | (.ok start, model) =>
+    match start.focusedTarget? with
+    | none => none
+    | some target =>
+      let registered : Loop.Registered :=
+        { exNames := #["w", "q"], themeNames := #["default", "second"] }
+      let asking : EditorM (Guarded (Array Completion.Candidate) × EditorState) :=
+        (source.candidates { text, view := target.window.id }).dispatched registered start
+      match asking.runModel model with
+      | (.ok (.finished answer, after), left) =>
+        some (answer, after == start && left.texts.contents == model.texts.contents)
+      | _ => none
+
+/-- The checks of the completion sources' contract
+(`Editor/Completion/Contract.lean`): it holds of the model, of the fake that
+answers what it was asked and of every shipped source, and it reports a
+source that makes a text and one that is refused. -/
+def sourceContractChecks : List Check :=
+  let subjects : List Completion.Source :=
+    [.fixed "fixed" "test" (offered #["wq", "w"]), Completion.Fake.echo "echo" "test",
+      Ex.historySource, Ex.namesSource, Buffers.source, TabCommands.source, Themes.source]
+  let writes : Completion.Source :=
+    { name := "writes", category := "test"
+      candidates := fun _ => do
+        discard <| createText "made"
+        return #[] }
+  let holds (source : Completion.Source) : Bool :=
+    Completion.Contract.properties.all (·.holds sourceRunner source)
+  (subjects.flatMap fun source =>
+      Completion.Contract.properties.map fun property =>
+        { name := s!"the source {source.name}: {property.name}"
+          run := pure (property.holds sourceRunner source) }) ++
+    [{  name :=
+          "the contract reports a source that makes a text and one that is refused, and the shipped ones answer something on the fixture"
+        run :=
+          pure <|
+            !holds writes && !holds (Completion.Fake.refusing "no" "test") &&
+              [Ex.namesSource, Buffers.source, TabCommands.source, Themes.source].all fun source =>
+                (sourceRunner "" source).any (!·.1.isEmpty) }]
+
 /-- A file of three lines of which two end in CRLF and one in a line
 feed. -/
 def mostlyCrlf : ByteArray :=
@@ -37045,6 +37101,7 @@ def checks : List Check :=
     driverChecks ++
     promptChecks ++
     candidateChecks ++
+    sourceContractChecks ++
     fileCommandChecks ++
     openFilesChecks ++
     languageOpenChecks ++
