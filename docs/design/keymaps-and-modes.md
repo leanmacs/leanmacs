@@ -3518,7 +3518,8 @@ completion's phase 2, a source config registers in `buffer` added to
 replacing it), `apiStateChecks` again (criterion 6: a category with no
 source lists nothing and is not refused), `candidateChecks` again (a
 category's defaults, its other sources after them, and a default
-replaced by name; a filtered source's candidates after the matches),
+replaced by name; a filtered source's candidates after the matches, and
+a prompt of filtered sources alone, which asks no style),
 `registryChecks` (`sourcesIn`), `ConfigTest.shippedChecks` (the shipped
 sources in each shipped category, in the defaults' order), and the fixture
 `tests/headless/candidates`, whose config registers its source with

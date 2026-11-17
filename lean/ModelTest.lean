@@ -20781,7 +20781,8 @@ def filteredSource : Completion.Source :=
 - `ask-named` asks with the source registered under `pick`, by name, and
   says the refusal in the echo area when the prompt is refused.
 - `ask-filtered` asks with `pickSource` and `filteredSource`, a source
-  that has filtered already.
+  that has filtered already; `ask-only-filtered` asks with
+  `filteredSource` alone.
 - `ask-category` asks for the sources of the category `pick`, with
   `pickSource` as its default.
 - `ask-other` asks with a source of the category `other` over
@@ -20803,6 +20804,7 @@ def candidateCommands : List (String × Dispatched) :=
     ("ask-refusing", asks "" [.given (Completion.Fake.refusing "no" "pick")]),
     ("ask-echo", asks "w" [.given (Completion.Fake.echo "echo" "pick")]),
     ("ask-filtered", asks "" [.given pickSource, .given filteredSource]),
+    ("ask-only-filtered", asks "" [.given filteredSource]),
     ("ask-category", asks "" [.category "pick" [pickSource]]),
     ("ask-other", asks "" [.given (.ofTexts "other" "other" pickCandidates)]),
     ("ask-named", fun _ => do
@@ -20837,7 +20839,8 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
       ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
       ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
       ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"), ("C-c 5", invoke "ask-filtered"),
-      ("C-c 7", invoke "ask-category"), ("C-c 6", invoke "ask-other")]
+      ("C-c 7", invoke "ask-category"), ("C-c 6", invoke "ask-other"),
+      ("C-c 8", invoke "ask-only-filtered")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -21029,6 +21032,31 @@ def candidateChecks : List Check :=
               candidatesOf typed == some (withPassed (pickListed "w")) &&
               (candidatesOf typed).map (fun listed => (listed.listed.map (·.text)).toList.drop 3) ==
                 some ["zz", "w"] },
+    { name :=
+        "a prompt asked with only a source that has filtered already holds no candidate to match, the filtered one's apart in its group, and that source's category; after a text is typed it lists them in the order the source gave, and the listing asks no style: its step costs the read of the minibuffer and no ranking"
+      run :=
+        pure <|
+          match candidateDriver countingModel with
+          | none => false
+          | some driver =>
+            -- How many requests the last of `keys` took.
+            let cost (keys : String) : Nat :=
+              let events := presses keys
+              let (before, _) := fedTo driver events.dropLast
+              let (after, _) := fedTo before (events.drop (events.length - 1))
+              after.model.watch.clock - before.model.watch.clock
+            let (asking, _) := fedTo driver (presses "C-c 8")
+            let (typed, _) := fedTo asking (presses "w")
+            let passed := (offered #["zz", "w"]).map (·.inGroup filteredSource.name)
+            let listing (pattern : String) : Candidates :=
+              { passed, category := some filteredSource.category, listedFor := some pattern
+                listed := passed.map Completion.Listed.of }
+            candidatesOf asking == some (listing "") &&
+              (candidatesOf asking).map (·.all) == some #[] &&
+              (candidatesOf asking).map (·.category) == some (some "other") &&
+              candidatesOf typed == some (listing "w") &&
+              (candidatesOf typed).map (·.listed.map (·.text)) == some #["zz", "w"] &&
+              cost "C-c 8 w" == cost "C-c p w" + 1 && cost "C-c a w" == cost "C-c p w" + 2 },
     { name :=
         "after the step that asked for a prompt with candidates the listing is for the initial text, the empty one or one given, and nothing is chosen"
       run :=
