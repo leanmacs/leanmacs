@@ -241,9 +241,11 @@ mutate_release release-page "the upload's path target" "($page_upload | .with.pa
 mutate_release pages-job 'pages not needing publish' 'del(.jobs.pages.needs)'
 mutate_release pages-job 'pages deploying always' ".jobs.pages.if = \"\${{ always() }}\""
 mutate_release pages-job 'pages also reading contents' '.jobs.pages.permissions.contents = "read"'
+mutate_release pages-job 'pages on a runner outside the matrix' '.jobs.pages["runs-on"] = "macos-15"'
 mutate_release pages-job 'pages without id-token' 'del(.jobs.pages.permissions["id-token"])'
 mutate_release pages-job 'pages in another environment' '.jobs.pages.environment.name = "pages"'
 mutate_release pages-job 'a checkout in pages' '.jobs.pages.steps = [{"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "with": {"persist-credentials": false}}] + .jobs.pages.steps | .jobs.pages.steps[0].uses line_comment = "v7.0.1"'
+mutate_release pages-job 'the deploy without its id' "del(($deploy).id)"
 mutate_release pages-concurrency 'the deploy cancelled in progress' '.jobs.pages.concurrency["cancel-in-progress"] = true'
 mutate_release pages-concurrency 'the pages group renamed' '.jobs.pages.concurrency.group = "deploy"'
 
