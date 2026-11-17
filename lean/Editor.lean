@@ -11,7 +11,6 @@ import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
 import Editor.Ex
 import Editor.FrameCommands
-import Editor.Indent
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
