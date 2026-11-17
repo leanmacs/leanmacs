@@ -216,6 +216,12 @@ impl Target {
         format!("{}/{}/commit/{commit}", self.server, self.repo)
     }
 
+    /// The repository's page on this server, its source.
+    #[must_use]
+    pub fn source_url(&self) -> String {
+        format!("{}/{}", self.server, self.repo)
+    }
+
     /// The permanent link to the nightly's asset `name`.
     #[must_use]
     pub fn download_url(&self, name: &str) -> String {
@@ -818,6 +824,108 @@ pub fn read_build(
         return Err(ReadError::BuildJson {
             expected,
             found: build_json_text.to_owned(),
+        });
+    }
+    Ok(build)
+}
+
+/// Why a text is not a [`BUILD_JSON`] that [`build_json`] wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuildJsonError {
+    /// No `"<key>": ` line holds this key.
+    Missing(&'static str),
+    /// The key's value is not one: the value as found.
+    Garbled {
+        /// The key.
+        key: &'static str,
+        /// Its value, its trailing comma removed, and a string's quotes.
+        value: String,
+    },
+    /// The values read, but [`build_json`] would write another text for
+    /// them: a wrong date or name, keys out of order, another indent, no
+    /// final newline.
+    NotCanonical {
+        /// What [`build_json`] writes for the values read.
+        expected: String,
+        /// The text.
+        found: String,
+    },
+}
+
+impl fmt::Display for BuildJsonError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Missing(key) => write!(f, "{BUILD_JSON} has no \"{key}\" line"),
+            Self::Garbled { key, value } => {
+                write!(f, "{BUILD_JSON}'s \"{key}\" is `{value}`, which is not one")
+            }
+            Self::NotCanonical { expected, found } => write!(
+                f,
+                "{BUILD_JSON} is not as build_json writes it: it is\n{found}it should be\n{expected}"
+            ),
+        }
+    }
+}
+
+impl Error for BuildJsonError {}
+
+/// The build a [`BUILD_JSON`] text describes, as the download page reads
+/// it: its build ID, commit, size and SHA-256, each from its own
+/// `"<key>": <value>` line and checked, and then the whole text must be
+/// exactly what [`build_json`] writes for them, so the date, both names,
+/// the order of the keys, the indent and the final newline are checked
+/// too. Unlike [`read_build`], it needs no image beside it.
+///
+/// # Errors
+///
+/// The first key missing or garbled, in the order [`build_json`] writes
+/// them, else a text that is not [`build_json`]'s.
+pub fn parse_build_json(text: &str) -> Result<Build, BuildJsonError> {
+    // The value on the key's line, its trailing comma removed.
+    let value = |key: &'static str| {
+        let prefix = format!("\"{key}\": ");
+        text.lines()
+            .find_map(|line| line.trim_start().strip_prefix(&prefix))
+            .map(|v| v.strip_suffix(',').unwrap_or(v).to_owned())
+            .ok_or(BuildJsonError::Missing(key))
+    };
+    // A string value, its quotes removed; one without them stays as it is,
+    // and fails its check.
+    let string = |key: &'static str| {
+        value(key).map(|v| {
+            v.strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .map_or_else(|| v.clone(), str::to_owned)
+        })
+    };
+    let garbled = |key: &'static str, value: &str| BuildJsonError::Garbled {
+        key,
+        value: value.to_owned(),
+    };
+    let raw_id = string("build_id")?;
+    let id = BuildId::parse(&raw_id).map_err(|_| garbled("build_id", &raw_id))?;
+    let raw_commit = string("commit")?;
+    let commit = Commit::parse(&raw_commit).map_err(|_| garbled("commit", &raw_commit))?;
+    let raw_size = value("size")?;
+    let size = raw_size
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| raw_size.parse::<u64>().ok())
+        .flatten()
+        .ok_or_else(|| garbled("size", &raw_size))?;
+    let raw_sha256 = string("sha256")?;
+    let sha256 = Sha256::parse(&raw_sha256).map_err(|_| garbled("sha256", &raw_sha256))?;
+    let build = Build {
+        id,
+        commit,
+        size,
+        sha256,
+    };
+    let expected = build_json(&build);
+    if expected != text {
+        return Err(BuildJsonError::NotCanonical {
+            expected,
+            found: text.to_owned(),
         });
     }
     Ok(build)
@@ -1716,6 +1824,106 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn parse_build_json_reads_back_what_build_json_writes() {
+        assert_eq!(parse_build_json(&build_json(&build())), Ok(build()));
+        let other = Build { size: 0, ..build() };
+        assert_eq!(parse_build_json(&build_json(&other)), Ok(other));
+    }
+
+    #[test]
+    fn parse_build_json_refuses_a_garbled_value_naming_its_key() {
+        let json = build_json(&build());
+        for (key, from, to) in [
+            ("build_id", ID, "20011303040506"),
+            ("commit", SHA, "0123456"),
+            ("size", "\"size\": 123456", "\"size\": \"123456\""),
+            ("size", "\"size\": 123456", "\"size\": -1"),
+            ("sha256", HEX, "nothex"),
+        ] {
+            let bad = json.replacen(from, to, 1);
+            match parse_build_json(&bad) {
+                Err(BuildJsonError::Garbled { key: k, .. }) => assert_eq!(k, key, "{bad}"),
+                other => panic!("{key}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_build_json_refuses_a_missing_key_naming_it() {
+        let json = build_json(&build());
+        let without = json.replacen("  \"sha256\"", "  \"digest\"", 1);
+        assert_eq!(
+            parse_build_json(&without),
+            Err(BuildJsonError::Missing("sha256"))
+        );
+        assert_eq!(
+            parse_build_json(""),
+            Err(BuildJsonError::Missing("build_id"))
+        );
+    }
+
+    #[test]
+    fn parse_build_json_refuses_any_text_build_json_would_not_write() {
+        let json = build_json(&build());
+        let reordered = {
+            let lines: Vec<&str> = json.lines().collect();
+            let mut swapped = lines.clone();
+            swapped.swap(1, 2);
+            // Keep the commas where build_json puts them.
+            format!("{}\n", swapped.join("\n"))
+        };
+        for bad in [
+            json.replacen("2001-02-03T04:05:06Z", "2001-02-03T04:05:07Z", 1),
+            json.replacen("Leanmacs-20010203040506.dmg", "Leanmacs-x.dmg", 1),
+            json.replacen("\"file\": \"Leanmacs.dmg\"", "\"file\": \"L.dmg\"", 1),
+            reordered,
+            json.trim_end().to_owned(),
+            json.replace("  \"", "    \""),
+            format!("{json}\n"),
+        ] {
+            match parse_build_json(&bad) {
+                Err(BuildJsonError::NotCanonical { expected, found }) => {
+                    assert_eq!(expected, json, "{bad}");
+                    assert_eq!(found, bad);
+                }
+                other => panic!("{bad}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_build_json_error_names_the_key_or_shows_both_texts() {
+        assert_eq!(
+            BuildJsonError::Missing("size").to_string(),
+            "build.json has no \"size\" line"
+        );
+        assert_eq!(
+            BuildJsonError::Garbled {
+                key: "size",
+                value: "x".into()
+            }
+            .to_string(),
+            "build.json's \"size\" is `x`, which is not one"
+        );
+        assert_eq!(
+            BuildJsonError::NotCanonical {
+                expected: "a\n".into(),
+                found: "b\n".into()
+            }
+            .to_string(),
+            "build.json is not as build_json writes it: it is\nb\nit should be\na\n"
+        );
+    }
+
+    #[test]
+    fn the_source_is_the_repository_on_its_server() {
+        assert_eq!(
+            leanmacs().source_url(),
+            "https://github.com/leanmacs/leanmacs"
+        );
     }
 
     fn copies(ids: &[&str]) -> Vec<String> {
