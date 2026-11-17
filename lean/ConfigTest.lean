@@ -4470,6 +4470,18 @@ def shippedChecks (_ : Unit) : List Check :=
         return !WindowCommands.commands.isEmpty && WindowCommands.commands.all (compiled ·.name) &&
             Vim.Default.windowKeys.all (compiled ·.2) },
     { name :=
+        "the executable's hosts start with every tab command registered for the owner compiled, every command the Vim scheme's tab table names among them"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        return !TabCommands.commands.isEmpty && TabCommands.commands.all (compiled ·.name) &&
+            Vim.Default.tabKeys.all (compiled ·.2) },
+    { name :=
         "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation and compilation-output, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile and kill-compilation bound to them"
       run := do
         let completions ← Job.Completions.new

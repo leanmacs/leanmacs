@@ -14,6 +14,7 @@ import Editor.Indent
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
+import Editor.TabCommands
 import Editor.Themes
 import Editor.WindowCommands
 
@@ -80,7 +81,9 @@ imported. The window commands are here too (`Editor/WindowCommands.lean`):
 `window-split`, `window-close`, `window-focus-left` and the rest, which
 split, close, focus and arrange the frame's windows, so a config's command
 can call them; their registrations (`Editor/WindowCommands/Compiled.lean`)
-are not imported. The command that switches the theme in force is here too
+are not imported. So are the tab commands (`Editor/TabCommands.lean`):
+`tab-new`, `tab-close`, `tab-next`, `tab-switch` and the rest; their
+registrations (`Editor/TabCommands/Compiled.lean`) are not imported. The command that switches the theme in force is here too
 (`Editor/Themes.lean`): `load-theme`, which a command of config's calls
 with `Themes.loadThemeCommand`, over `themeNames` and `loadTheme`
 (`Editor/Api.lean`); `setup` registers a theme with `defineTheme` and names

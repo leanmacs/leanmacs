@@ -22,6 +22,7 @@ import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.Shell.Compiled
 import Editor.SyntaxTree.Real
+import Editor.TabCommands.Compiled
 import Editor.Text.Real
 import Editor.Themes.Compiled
 import Editor.Watch.Real
@@ -2228,6 +2229,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
         FrameCommands.commands ++
         WindowCommands.commands ++
+        TabCommands.commands ++
         Themes.commands ++
         Workspace.commands ++
         Shell.commands ++

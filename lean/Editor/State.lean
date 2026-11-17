@@ -1698,6 +1698,21 @@ when that view has no window, which a well-formed state rules out. -/
 def title (state : EditorState) : String :=
   ((state.target? state.selectedView).map (·.buffer.name)).getD ""
 
+/-- The label of the tab at `index`, from 0 (Vim's tab label, Emacs's
+`tab-bar-tab-name-current`): the name it was given (`Tab.name`), or else
+the name of its focused window's buffer. For the tab in view that is the
+selected view's (`selectedView`), so an open prompt does not relabel it.
+Empty for an index past the last. -/
+def tabLabel (state : EditorState) (index : Nat) : String :=
+  match state.frame.tabs[index]? with
+  | none => ""
+  | some tab =>
+    match tab.name with
+    | some name => name
+    | none =>
+      let view := if index == state.frame.tabIndex then state.selectedView else tab.focused
+      ((state.target? view).map (·.buffer.name)).getD ""
+
 /-- The minibuffer's buffer: the one the open prompt's window shows, if a
 prompt is open. -/
 def minibufferBuffer? (state : EditorState) : Option BufferId := do

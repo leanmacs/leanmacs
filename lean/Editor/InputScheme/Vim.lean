@@ -111,9 +111,11 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   view's Vim state does not insert text: a digit is text exactly where
   typing is text, so one field of the record says both. `0` is a
   digit only while a count is being typed; otherwise it is looked up like
-  any key, so it can be bound to a motion. Digits are not bound in a
-  keymap: the rule for `0` needs the count typed so far, which a keymap
-  does not see.
+  any key, so it can be bound to a motion. Digits are not bound at the
+  start of a sequence: the rule for `0` needs the count typed so far,
+  which a keymap does not see. After a prefix a digit is looked up like
+  any key, so `C-w 1` to `C-w 9` are the tab keys (`Vim.Default.tabKeys`),
+  and there is no count after `C-w`.
 
 ## Motions that take a character
 

@@ -62,6 +62,7 @@ import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
 import Editor.WindowCheck
+import Editor.TabCommands.Compiled
 import Editor.WindowCommands.Compiled
 import Editor.Workspace.Compiled
 import Editor.Workspace.Contract
@@ -16938,11 +16939,27 @@ def vimDefaultChecks : List Check :=
             fun (text, name) =>
             vimDefaultCommand text == some { name } && (vimDefault text).2.head? == some .nothing },
     { name :=
-        "C-w n, C-w p, C-w c and C-w w are left for tab pages: each yields nothing and leaves nothing pending"
+        "criterion 4: in normal state each key of the tab table runs its tab command, changing no text and entering no state: C-w n the next tab, C-w p the previous, C-w c a new one, C-w & close, C-w w switch, and C-w 1 to C-w 9 the tab of that number"
       run :=
         pure <|
-          ["C-w n", "C-w p", "C-w c", "C-w w"].all fun text =>
-            (vimDefault text).2.getLast? == some .nothing && (vimDefault text).1.typed == [] },
+          let rows : List (String × String) :=
+            [("C-w n", TabCommands.nextName), ("C-w p", TabCommands.previousName),
+                ("C-w c", TabCommands.newName), ("C-w &", TabCommands.closeName),
+                ("C-w w", TabCommands.switchName)] ++
+              (List.range 9).map fun index =>
+                (s!"C-w {index + 1}", TabCommands.selectName (index + 1))
+          rows.all fun (text, name) =>
+            vimDefaultCommand text == some { name } && (vimDefault text).2.head? == some .nothing },
+    { name :=
+        "every row of the tab commands' table binds its keys in normal state to the command it names, and every command it names is a tab command that is registered"
+      run :=
+        pure <|
+          let registered := TabCommands.commands.map (·.name)
+          Vim.Default.tabKeys.length == 14 &&
+            (Vim.Default.keymap Vim.Default.tabCommands).bindings.length ==
+              Vim.Default.tabKeys.length &&
+            Vim.Default.tabKeys.all fun (text, name) =>
+              vimDefaultCommand text == some { name } && registered.contains name },
     { name :=
         "C-w alone is pending in normal state; after an operator's key C-w s resets and leaves nothing pending; in the state i enters C-w runs a command that changes no text and enters no state, so the view stays there"
       run :=
@@ -29266,6 +29283,165 @@ x, y, width and height. -/
 def windowRects (state : EditorState) : List (Nat × Nat × Nat × Nat × Nat) :=
   state.rects.toList.map fun (view, rect) => (view.index, rect.x, rect.y, rect.width, rect.height)
 
+/-- What a step of the tab checks is handed: `windowHanded`'s commands and
+the tab commands, `layout` as config's layout, and `maps` as the active
+keymaps. -/
+def tabHanded (layout : Layout := Layout.default)
+    (maps : EditorState → ViewId → List (Keymap Vim.Bound) := fun _ _ => []) :
+    Loop.Keys Vim.Default.scheme :=
+  { evilHanded (Ex.commands ++ WindowCommands.commands ++ TabCommands.commands) with
+    layout := some layout, maps }
+
+/-- The state of a driver of the tab checks over one window under the
+default layout, `tab-rename` bound to `C-c r`, `tab-move-right` to `C-c m`
+and `tab-move-left` to `C-c M`, once the keys `typed` name were pressed. -/
+def tabsAfter (typed : String) : Option EvilDriver :=
+  let maps :=
+    windowMaps
+      [("C-c r", TabCommands.renameName), ("C-c m", TabCommands.moveRightName),
+        ("C-c M", TabCommands.moveLeftName)]
+  (windowDriver 1 Layout.default (handed := tabHanded Layout.default maps)).map (evilFed · typed)
+
+/-- The windows of each tab of `state`, as indices, in order. -/
+def tabOrder (state : EditorState) : List (List Nat) :=
+  state.frame.tabs.toList.map fun tab => tab.windows.toList.map (·.index)
+
+/-- The checks of the tab commands (`Editor/TabCommands.lean`), by key, on
+the loop's driver over the editor's models, under the Vim scheme that
+ships with the tab commands handed: tmux's keys under `C-w`, the refusals
+in the echo area, the prompts of `tab-switch` and `tab-rename`, and that
+each command acts on the tab of its call's window. -/
+def tabCommandChecks : List Check :=
+  let delivered (driver : EvilDriver) (command : EditorM Unit) : EvilDriver :=
+    (driver.stepped (driver.loop.deliver driver.handed "tab" command)).1
+  let state (driver : Option EvilDriver) : Option EditorState := driver.map (·.loop.state)
+  [{  name := "C-w c makes a tab after the one in view, on the same buffer, and selects it"
+      run :=
+        pure <|
+          match state (tabsAfter "C-w c") with
+          | some after =>
+            after.frame.tabs.size == 2 && after.frame.tabIndex == 1 &&
+              tabOrder after == [[0], [1]] &&
+              after.frame.focused == ⟨1⟩ &&
+              (after.window? ⟨1⟩).map (·.buffer) == some ⟨0⟩ &&
+              after.wellFormed
+          | none => false },
+    { name :=
+        "C-w n and C-w p go to the next and the previous tab, wrapping, and with a count C-w n goes to the tab of that number"
+      run :=
+        pure <|
+          match state (tabsAfter "C-w c C-w c C-w n"), state (tabsAfter "C-w c C-w c C-w n C-w p"),
+            state (tabsAfter "C-w c C-w c C-w p C-w p"),
+            state (tabsAfter "C-w c C-w c C-w n 3 C-w n") with
+          | some wrapped, some back, some twice, some counted =>
+            wrapped.frame.tabIndex == 0 && back.frame.tabIndex == 2 && twice.frame.tabIndex == 0 &&
+              counted.frame.tabIndex == 2
+          | _, _, _, _ => false },
+    { name := "C-w 2 selects tab 2, and C-w 5 says there is no tab 5"
+      run :=
+        pure <|
+          match state (tabsAfter "C-w c C-w 1 C-w 2"), state (tabsAfter "C-w c C-w 1 C-w 5") with
+          | some second, some missing =>
+            second.frame.tabIndex == 1 && missing.frame.tabIndex == 0 &&
+              missing.echo == s!"{TabCommands.selectName 5}: {(LayoutRefusal.noSuchTab 4).describe}"
+          | _, _ => false },
+    { name :=
+        "criterion 3: C-w & with one tab says the last tab cannot be closed and leaves the state; with two it closes the tab in view and its window"
+      run :=
+        pure <|
+          match tabsAfter "", state (tabsAfter "C-w &"), state (tabsAfter "C-w c C-w &") with
+          | some start, some refused, some closed =>
+            refused.echo == s!"{TabCommands.closeName}: {LayoutRefusal.onlyTab.describe}" &&
+              refused.frame == start.loop.state.frame &&
+              refused.windows == start.loop.state.windows &&
+              closed.frame.tabs.size == 1 &&
+              tabOrder closed == [[0]] &&
+              (closed.window? ⟨1⟩).isNone &&
+              closed.wellFormed
+          | _, _, _ => false },
+    { name :=
+        "C-w w asks for a tab, labelled Tab:, with a candidate of number and label for every tab; typing 2 and accepting selects tab 2, and a name that matches nothing says so"
+      run :=
+        pure <|
+          match tabsAfter "C-w c C-w p C-w w", state (tabsAfter "C-w c C-w p C-w w 2 RET"),
+            state (tabsAfter "C-w c C-w p C-w w z q RET") with
+          | some asking, some chosen, some missed =>
+            asking.loop.state.prompt.map (·.label) == some TabCommands.switchPrompt &&
+              asking.loop.state.prompt.map (·.candidates.all) == some #["1 scratch", "2 scratch"] &&
+              chosen.frame.tabIndex == 1 &&
+              chosen.prompt.isNone &&
+              missed.frame.tabIndex == 0 &&
+              missed.echo == TabCommands.noMatch "zq"
+          | _, _, _ => false },
+    { name :=
+        "tab-rename asks for a name, labelled Rename tab:, and names the tab of its window; an empty answer goes back to the generated label, its focused window's buffer's name"
+      run :=
+        pure <|
+          match tabsAfter "C-c r", state (tabsAfter "C-c r n o t e s RET"),
+            state (tabsAfter "C-c r n o t e s RET C-c r C-u RET") with
+          | some asking, some named, some back =>
+            asking.loop.state.prompt.map (·.label) == some TabCommands.renamePrompt &&
+              named.frame.name == some "notes" &&
+              named.tabLabel 0 == "notes" &&
+              back.frame.name == none &&
+              back.tabLabel 0 == "scratch"
+          | _, _, _ => false },
+    { name :=
+        "tab-move-right and tab-move-left move the tab of their window one place, clamped at the ends, and it stays in view"
+      run :=
+        pure <|
+          match state (tabsAfter "C-w c C-w c C-w 1 C-c m"),
+            state (tabsAfter "C-w c C-w c C-w 1 C-c m C-c m C-c m"),
+            state (tabsAfter "C-w c C-w c C-w 1 C-c M"), state (tabsAfter "C-w c C-w c C-c M") with
+          | some right, some clamped, some still, some left =>
+            tabOrder right == [[1], [0], [2]] && right.frame.tabIndex == 1 &&
+              tabOrder clamped == [[1], [2], [0]] &&
+              clamped.frame.tabIndex == 2 &&
+              tabOrder still == [[0], [1], [2]] &&
+              tabOrder left == [[0], [2], [1]] &&
+              left.frame.tabIndex == 1
+          | _, _, _, _ => false },
+    { name :=
+        "criterion 1 by key: after C-w s C-w c C-w s C-w z C-w p the first tab's windows, focus and rectangles are as they were before C-w c, and after C-w n the second tab is zoomed with its focus where it was left"
+      run :=
+        pure <|
+          match state (tabsAfter "C-w s"), state (tabsAfter "C-w s C-w c C-w s C-w z"),
+            state (tabsAfter "C-w s C-w c C-w s C-w z C-w p"),
+            state (tabsAfter "C-w s C-w c C-w s C-w z C-w p C-w n") with
+          | some split, some zoomed, some first, some second =>
+            windowOrder first == windowOrder split && windowRects first == windowRects split &&
+              first.frame.tabIndex == 0 &&
+              second.frame.tabIndex == 1 &&
+              second.frame.layout == .monocle &&
+              windowOrder second == windowOrder zoomed &&
+              second.frame.toTab == zoomed.frame.toTab
+          | _, _, _, _ => false },
+    { name :=
+        "each tab command acts on the tab of its call's window, not on the tab in view: run on a hidden tab's window, tab-close closes that tab, tab-rename names it, tab-move-left moves it, tab-next selects the tab after it and tab-new opens a tab after it"
+      run :=
+        pure <|
+          match tabsAfter "C-w c C-w c C-w 1" with
+          | none => false
+          | some driver =>
+            let onView (view : Nat) (name : String) (arguments : List Argument := []) :
+              EditorM Unit := do
+              let some target := (← editorState).target? ⟨view⟩ | giveUp "no window"
+              discard <| runCommand name { target, arguments }
+            let closed := delivered driver (onView 2 TabCommands.closeName)
+            let renamed := delivered driver (onView 1 TabCommands.renameName [.str "far"])
+            let moved := delivered driver (onView 2 TabCommands.moveLeftName)
+            let next := delivered driver (onView 1 TabCommands.nextName)
+            let made := delivered driver (onView 1 TabCommands.newName)
+            tabOrder closed.loop.state == [[0], [1]] && closed.loop.state.frame.tabIndex == 0 &&
+              renamed.loop.state.frame.tabs.map (·.name) == #[none, some "far", none] &&
+              tabOrder moved.loop.state == [[0], [2], [1]] &&
+              moved.loop.state.frame.tabIndex == 0 &&
+              next.loop.state.frame.tabIndex == 2 &&
+              tabOrder made.loop.state == [[0], [1], [3], [2]] &&
+              made.loop.state.frame.tabIndex == 2 &&
+              made.loop.state.frame.focused == ⟨3⟩ &&
+              [closed, renamed, moved, next, made].all (·.loop.state.wellFormed) }]
+
 /-- The checks of the window commands (`Editor/WindowCommands.lean`), by
 key, on the loop's driver over the editor's models, under the Vim scheme
 that ships, with evil's, the minibuffer's, the ex line's and the window
@@ -32882,6 +33058,7 @@ def checks : List Check :=
     floatViewChecks ++
     frameCommandChecks ++
     windowCommandChecks ++
+    tabCommandChecks ++
     titleChecks ++
     menuChecks ++
     clipboardCommandChecks ++
