@@ -5607,7 +5607,8 @@ def modeLineChecks : List Check :=
         let unselected := ModeLine.standard.fields (loopContext (selected := false))
         pure
           (unselected == (selected.extract 1).map ({ · with face := ModeLine.inactiveFace }) &&
-            ModeLine.inactiveFace == ⟨"mode-line.inactive"⟩) },
+            ModeLine.inactiveFace == ⟨"mode-line.inactive"⟩ &&
+            ModeLine.activeFace == ⟨"mode-line.active"⟩) },
     { name :=
         "a segment with nothing to say gives no field: no directory with no file or a bare name, no mode with none, no line:col or position with no cursor, no mark unmodified"
       run :=
@@ -11902,7 +11903,7 @@ def loopChecks : List Check :=
               second.views.all fun view => shownText model view == some ""
           | _ => false },
     { name :=
-        "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, no decorations, and the shipped mode line of its window: the focused one's with no status face, and each other one's in mode-line.inactive, its row too"
+        "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, no decorations, and the shipped mode line of its window: the focused one's row in mode-line.active, and each other one's fields and row in mode-line.inactive"
       run :=
         pure <|
           match looped threeWindows [pressF5] with
@@ -11914,10 +11915,10 @@ def loopChecks : List Check :=
               scene.views.map (·.status) ==
                 #[modeLineOf, modeLineOf (selected := false), modeLineOf (selected := false)] &&
               scene.views.map (·.statusFace) ==
-                #[none, some ModeLine.inactiveFace, some ModeLine.inactiveFace]
+                #[some ModeLine.activeFace, some ModeLine.inactiveFace, some ModeLine.inactiveFace]
           | _ => false },
     { name :=
-        "two windows on one buffer under the Vim scheme: the focused one's mode line has the NORMAL badge and no status face, and the other's has no badge, every field and its row in mode-line.inactive"
+        "two windows on one buffer under the Vim scheme: the focused one's mode line has the NORMAL badge and its row in mode-line.active, and the other's has no badge, every field and its row in mode-line.inactive"
       run :=
         pure <|
           let program : EditorM (Loop Vim.Default.scheme) := do
@@ -11932,7 +11933,8 @@ def loopChecks : List Check :=
                   #[modeLineOf (reported := badge), modeLineOf (selected := false),
                     modeLineOf (selected := false)] &&
                 scene.views.map (·.statusFace) ==
-                  #[none, some ModeLine.inactiveFace, some ModeLine.inactiveFace] &&
+                  #[some ModeLine.activeFace, some ModeLine.inactiveFace,
+                    some ModeLine.inactiveFace] &&
                 (modeLineOf (reported := badge))[0]? ==
                   some { text := "NORMAL", face := ⟨"mode-line.state.normal"⟩, padding := 8 }
             | _ => false
@@ -12141,7 +12143,7 @@ def loopChecks : List Check :=
               model.display.scenes.map (·.echo) == #["", "hi", "hi", "hi", "second", "second", ""]
           | (.error _, _) => false },
     { name :=
-        "with a prompt open the scene has the minibuffer's view after the window's, in the rectangles the tree gives with that view: its snapshot is the minibuffer's text, its scroll anchor and selection are its window's markers, its status line is one field, the label in the prompt's face, and it is the focused view; the window's status line is still its buffer's name"
+        "with a prompt open the scene has the minibuffer's view after the window's, in the rectangles the tree gives with that view: its snapshot is the minibuffer's text, its scroll anchor and selection are its window's markers, its status line is one field, the label in the prompt's face, with no status face, and it is the focused view; the window's status line is still its buffer's name, its row in mode-line.active, since it asked"
       run :=
         pure <|
           match looped (promptedOver "ab") [pressF5] with
@@ -12155,7 +12157,7 @@ def loopChecks : List Check :=
                 minibuffer.selections == #[held.selection] &&
                 minibuffer.status == #[{ text := "Name: ", face := Loop.promptFace }] &&
                 window.status == modeLineOf &&
-                window.statusFace == none &&
+                window.statusFace == some ModeLine.activeFace &&
                 minibuffer.statusFace == none &&
                 Loop.promptFace != ModeLine.bufferFace &&
                 scene.focused == some ⟨1⟩ &&
@@ -12232,7 +12234,7 @@ def loopChecks : List Check :=
               scene.views.map (·.status) ==
                 #[modeLineOf (reported := markedReport.status),
                   #[{ text := "Name: ", face := Loop.promptFace }]] &&
-              scene.views.map (·.statusFace) == #[none, none] &&
+              scene.views.map (·.statusFace) == #[some ModeLine.activeFace, none] &&
               !askedReport.status.isEmpty
           | _ => false },
     { name :=
@@ -31480,6 +31482,18 @@ def windowCommandChecks : List Check :=
             focus "3 C-w C-w" == some 2 &&
             focus "C-w W" == some 2 &&
             focus "2 C-w W" == some 1 },
+    { name :=
+        "the selected window's mode line follows the focus: from view 0 of three, C-w C-w moves mode-line.active to view 1's row and again to view 2's, and the other two rows are in mode-line.inactive; three more come back to view 0"
+      run :=
+        pure <|
+          let faces (typed : String) : Option (Array (Option FaceName)) :=
+            (windowDriver 3 Layout.default).bind fun driver =>
+              (evilFed driver typed).model.display.scenes.back?.map (·.views.map (·.statusFace))
+          let active := some ModeLine.activeFace
+          let inactive := some ModeLine.inactiveFace
+          faces "C-w C-w" == some #[inactive, active, inactive] &&
+            faces "C-w C-w C-w C-w" == some #[inactive, inactive, active] &&
+            faces "C-w C-w C-w C-w C-w C-w" == some #[active, inactive, inactive] },
     { name := "criterion 1, C-w t and C-w b: the first and the last window of the tree's order"
       run :=
         pure <|

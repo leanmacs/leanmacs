@@ -123,6 +123,12 @@ structure ModeLine.Order where
 
 namespace ModeLine
 
+/-- The face of the selected window's status row, Emacs 29's
+`mode-line-active`: its background marks the window the user is working
+in. -/
+def activeFace : FaceName :=
+  ⟨"mode-line.active"⟩
+
 /-- The face every field of a window that is not selected is drawn in, and
 the face of its row. -/
 def inactiveFace : FaceName :=

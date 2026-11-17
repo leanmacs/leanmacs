@@ -1293,12 +1293,15 @@ def promptStatus (asked : Prompt) : Array StatusField :=
 /-- The status line of the view `id` of `state`, whose window `context`
 describes, and the face of its row: for the minibuffer's view the prompt's
 label and the candidates it has listed (`promptStatus`) and no face; for
-any other the fields of `modeLine` (`ModeLine.fields`), and no face for the
-selected window or `mode-line.inactive` for one that is not. -/
+any other the fields of `modeLine` (`ModeLine.fields`), and
+`mode-line.active` for the selected window (`EditorState.selectedView`, the
+asker while a prompt is open) or `mode-line.inactive` for one that is
+not. -/
 def statusOf (modeLine : ModeLine) (state : EditorState) (id : ViewId)
     (context : ModeLine.Context) : Array StatusField × Option FaceName :=
   let lined :=
-    (modeLine.fields context, if context.selected then none else some ModeLine.inactiveFace)
+    (modeLine.fields context,
+      some (if context.selected then ModeLine.activeFace else ModeLine.inactiveFace))
   match state.prompt with
   | some asked => if asked.view == id then (promptStatus asked, none) else lined
   | none => lined
