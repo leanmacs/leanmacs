@@ -191,6 +191,20 @@ pub enum ApplyStatus {
     /// Refused: an edit script was made for a revision the text has moved
     /// past ([`Document::apply_script`]).
     Moved = 4,
+    /// Refused: the document is an excerpt document, whose edits are
+    /// refused ([`crate::excerpts`]). Looked for before anything else.
+    Excerpted = 5,
+}
+
+impl ApplyStatus {
+    /// The status that reports `error`. The text's refusals are few and
+    /// each has a status of its own, so this names every one.
+    pub const fn of(error: ApplyError) -> Self {
+        match error {
+            ApplyError::BadChange => Self::BadChange,
+            ApplyError::BadSelection => Self::BadSelection,
+        }
+    }
 }
 
 /// The result of applying a transaction: one record, filled in one call.
@@ -208,22 +222,21 @@ impl Document {
     /// ([`decode`]), recording `origin` as who made the edit, and says how
     /// it ended. Anything but [`ApplyStatus::Applied`] changed nothing.
     ///
-    /// A selection that is not one is refused before the change set is
-    /// looked at; after that the order is the text's
-    /// ([`editor_text::Text::apply`]).
+    /// An excerpt document is refused first, then a selection that is not
+    /// one, before the change set is looked at; after that the order is
+    /// the text's ([`editor_text::Text::apply`]).
     pub fn apply_words(&self, words: &[u8], inserted: &[u8], origin: u64) -> RawApplied {
         let applied = decode(words, inserted)
             .map_err(|undecoded| match undecoded {
                 Undecoded::Unreadable => ApplyStatus::Unreadable,
                 Undecoded::NotASelection => ApplyStatus::BadSelection,
             })
-            .and_then(|transaction| {
-                self.apply(&transaction, Origin::new(origin))
-                    .map_err(|refused| match refused {
-                        ApplyError::BadChange => ApplyStatus::BadChange,
-                        ApplyError::BadSelection => ApplyStatus::BadSelection,
-                    })
-            });
+            .and_then(|transaction| self.apply(&transaction, Origin::new(origin)));
+        let applied = if self.is_excerpts() {
+            Err(ApplyStatus::Excerpted)
+        } else {
+            applied
+        };
         match applied {
             Ok(revision) => RawApplied {
                 status: ApplyStatus::Applied as u64,
@@ -238,9 +251,20 @@ impl Document {
 
     /// Applies `transaction`, recording `origin` as who made the edit, and
     /// returns the revision it produced ([`editor_text::Text::apply`]). A
-    /// refused transaction changes nothing.
-    pub fn apply(&self, transaction: &Transaction, origin: Origin) -> Result<Revision, ApplyError> {
-        let applied = self.lock().apply(transaction, origin);
+    /// refused transaction changes nothing. An excerpt document's is
+    /// refused with [`ApplyStatus::Excerpted`] before it is locked.
+    pub fn apply(
+        &self,
+        transaction: &Transaction,
+        origin: Origin,
+    ) -> Result<Revision, ApplyStatus> {
+        if self.is_excerpts() {
+            return Err(ApplyStatus::Excerpted);
+        }
+        let applied = self
+            .lock()
+            .apply(transaction, origin)
+            .map_err(ApplyStatus::of);
         if let Ok(revision) = applied {
             crate::syntax::touched(self.key(), revision);
         }
@@ -344,7 +368,9 @@ impl Document {
     /// selection, taking what it puts in from `source` and recording
     /// `origin` as who made the edit, unless the text has moved past the
     /// revision `base`. Refused, changing nothing, with
-    /// [`ApplyStatus::Moved`] when the text's revision is not `base`, and
+    /// [`ApplyStatus::Excerpted`] for an excerpt document, before it is
+    /// locked; with [`ApplyStatus::Moved`] when the text's revision is not
+    /// `base`; and
     /// then with [`ApplyStatus::BadChange`] when the steps do not walk the
     /// whole of the text and of `source`, at character boundaries. An
     /// applied script tells the syntax service, once the lock is let go.
@@ -355,6 +381,9 @@ impl Document {
         steps: &[Step],
         origin: Origin,
     ) -> Result<Revision, ApplyStatus> {
+        if self.is_excerpts() {
+            return Err(ApplyStatus::Excerpted);
+        }
         let applied = {
             let mut text = self.lock();
             if text.current().revision().get() != base {
@@ -362,10 +391,7 @@ impl Document {
             }
             let changes = script_changes(steps, source).ok_or(ApplyStatus::BadChange)?;
             text.apply(&Transaction::new(changes), origin)
-                .map_err(|refused| match refused {
-                    ApplyError::BadChange => ApplyStatus::BadChange,
-                    ApplyError::BadSelection => ApplyStatus::BadSelection,
-                })
+                .map_err(ApplyStatus::of)
         };
         if let Ok(revision) = applied {
             crate::syntax::touched(self.key(), revision);
@@ -377,8 +403,9 @@ impl Document {
 /// [`Document::apply_script`] for C: applies to `document` the script
 /// spelled by the `words_len` bytes at `words` ([`decode_script`]),
 /// taking what it puts in from `source`, with `origin`, unless the text's
-/// revision is not `base`, and fills `out`. Words that cannot be read are
-/// [`ApplyStatus::Unreadable`], looked for after the revision.
+/// revision is not `base`, and fills `out`. An excerpt document is
+/// [`ApplyStatus::Excerpted`], looked for first, and words that cannot be
+/// read are [`ApplyStatus::Unreadable`], looked for after the revision.
 ///
 /// # Safety
 ///
@@ -400,7 +427,9 @@ pub unsafe extern "C" fn editor_ffi_document_apply_script(
     let words = unsafe { crate::words::borrow(words, words_len) };
     // SAFETY: the caller guarantees `document` and `source` are live.
     let (document, source) = unsafe { (&*document, (*source).text()) };
-    let applied = if document.lock().current().revision().get() != base {
+    let applied = if document.is_excerpts() {
+        Err(ApplyStatus::Excerpted)
+    } else if document.lock().current().revision().get() != base {
         Err(ApplyStatus::Moved)
     } else {
         decode_script(words)

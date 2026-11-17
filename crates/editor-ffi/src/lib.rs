@@ -74,7 +74,7 @@
 //! | Option | A presence flag and a value | The function returns whether there is a value and fills the record only if so |
 //! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]) |
 //! | List | *Words*: a buffer of 64-bit numbers, eight bytes each, least significant first, as a pointer and a byte length borrowed for the call. A checked reader takes it apart and refuses a length that is not whole words, a count that runs past the buffer and words left over (the private module `words`) | Words in an owned buffer, pointer and length, in the result record ([`log::RawWords`]); the glue copies it and hands it back with one call to [`text::editor_ffi_text_free`], which frees any buffer the library lent |
-//! | List of handles | A C array of handle pointers and its count, borrowed for the call, which the glue builds from a Lean `Array` of handles; words name a handle by its index in it ([`display::editor_ffi_display_publish`]) | None yet |
+//! | List of handles | A C array of handle pointers and its count, borrowed for the call, which the glue builds from a Lean `Array` of handles; words name a handle by its index in it ([`display::editor_ffi_display_publish`], [`excerpts::editor_ffi_excerpts_set`]) | None yet |
 //! | List of strings | Words, the count and then the byte length of each string, and one string of all of them end to end, both borrowed for the call. Lengths that do not add up to the string, and one that ends inside a character, are refused with the words that cannot be read ([`fuzzy::editor_ffi_fuzzy_rank`], [`syntax::editor_ffi_syntax_highlight`]) | The same words and string, each an owned buffer in one result record ([`syntax::RawStrings`]), which the glue copies and hands back with two calls to [`text::editor_ffi_text_free`] ([`syntax::editor_ffi_syntax_grammars`], [`syntax::editor_ffi_syntax_capture_names`]) |
 //!
 //! Prefer a few scalar arguments or one record to many calls. No
@@ -556,6 +556,7 @@ pub mod diffs;
 pub mod display;
 pub mod document;
 pub mod events;
+pub mod excerpts;
 pub mod files;
 pub mod fuzzy;
 pub mod interrupt;

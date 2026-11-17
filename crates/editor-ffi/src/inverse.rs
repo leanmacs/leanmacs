@@ -42,6 +42,9 @@ pub enum InverseStatus {
     NotKept = 2,
     /// Refused: the text is not in the state the run ended in.
     NotInState = 3,
+    /// Refused: the document is an excerpt document, whose edits are
+    /// refused ([`crate::excerpts`]). Looked for before anything else.
+    Excerpted = 4,
 }
 
 impl InverseStatus {
@@ -76,14 +79,21 @@ impl Document {
     /// Applies the inverse of the run of revisions from `first` to `last`,
     /// recording `origin` as who made the edit
     /// ([`editor_text::Text::apply_inverse`]). A refused one changes
-    /// nothing.
+    /// nothing. An excerpt document's is refused with
+    /// [`InverseStatus::Excerpted`] before it is locked.
     pub fn apply_inverse(
         &self,
         first: Revision,
         last: Revision,
         origin: Origin,
-    ) -> Result<Inverted, InverseError> {
-        let inverted = self.lock().apply_inverse(first, last, origin);
+    ) -> Result<Inverted, InverseStatus> {
+        if self.is_excerpts() {
+            return Err(InverseStatus::Excerpted);
+        }
+        let inverted = self
+            .lock()
+            .apply_inverse(first, last, origin)
+            .map_err(InverseStatus::of);
         if let Ok(inverted) = &inverted {
             crate::syntax::touched(self.key(), inverted.revision);
         }
@@ -126,7 +136,7 @@ pub unsafe extern "C" fn editor_ffi_document_apply_inverse(
         Ok(inverted) => {
             RawWords::with_status(InverseStatus::Done as u64, inverted_words(&inverted))
         }
-        Err(error) => RawWords::with_status(InverseStatus::of(error) as u64, Vec::new()),
+        Err(status) => RawWords::with_status(status as u64, Vec::new()),
     };
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(raw) };
@@ -158,6 +168,7 @@ mod tests {
     use editor_text::{ChangeSet, Selection, SelectionRange, Shape, Text, Transaction};
 
     use super::*;
+    use crate::transaction::ApplyStatus;
     use crate::words::tests::words_of;
 
     /// The shapes of a selection, as words.
@@ -270,7 +281,11 @@ mod tests {
         let (document, mut text) = (Document::new(TEXT), Text::from(TEXT));
         for transaction in two_transactions() {
             let of_document = document.apply(&transaction, Origin::new(1));
-            assert_eq!(of_document, text.apply(&transaction, Origin::new(1)));
+            assert_eq!(
+                of_document,
+                text.apply(&transaction, Origin::new(1))
+                    .map_err(ApplyStatus::of)
+            );
             assert!(of_document.is_ok());
         }
         (document, text)
@@ -294,7 +309,9 @@ mod tests {
         // Accepted, with a selection handed back; then its own inverse.
         for (first, last) in [(1, 2), (3, 3)] {
             let (first, last, origin) = run(first, last);
-            let of_text = text.apply_inverse(first, last, origin);
+            let of_text = text
+                .apply_inverse(first, last, origin)
+                .map_err(InverseStatus::of);
             assert!(of_text.is_ok(), "{of_text:?}");
             assert_eq!(document.apply_inverse(first, last, origin), of_text);
             assert_same(&document, &text);
@@ -302,7 +319,9 @@ mod tests {
         // Each refusal is the text's, and changes nothing.
         for (first, last) in [(1, 9), (0, 1), (1, 1)] {
             let (first, last, origin) = run(first, last);
-            let of_text = text.apply_inverse(first, last, origin);
+            let of_text = text
+                .apply_inverse(first, last, origin)
+                .map_err(InverseStatus::of);
             assert!(of_text.is_err(), "{of_text:?}");
             assert_eq!(document.apply_inverse(first, last, origin), of_text);
             assert_same(&document, &text);
@@ -329,6 +348,7 @@ mod tests {
             assert_eq!(
                 document.apply_inverse(first, last, Origin::new(9)),
                 text.apply_inverse(first, last, Origin::new(9))
+                    .map_err(InverseStatus::of)
             );
             assert_same(&document, &text);
         }
