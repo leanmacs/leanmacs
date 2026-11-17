@@ -23,7 +23,7 @@ use editor_ffi::syntax::{
     AttachStatus, HighlightStatus, InjectLanguageStatus, InjectStatus, QueryStatus, RawQuery,
     ShippedStatus, SyntaxQuery, editor_ffi_syntax_highlight, editor_ffi_syntax_inject,
     editor_ffi_syntax_inject_language, editor_ffi_syntax_query_free, editor_ffi_syntax_query_new,
-    editor_ffi_syntax_shipped_query, strings_words, syntaxes,
+    editor_ffi_syntax_refresh_after, editor_ffi_syntax_shipped_query, strings_words, syntaxes,
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::face::{Color, Face};
@@ -36,6 +36,17 @@ use editor_text::{ChangeSet, Origin, Transaction};
 
 /// The longest a test waits for a delivery.
 const BOUND: Duration = Duration::from_secs(10);
+
+/// Waits, with a bound, for the tree delivered of `document` to be exact
+/// for its text as it is now, with the process's service set, through C,
+/// to refresh a text as soon as it is quiet: an edit's incremental reparse
+/// equals a fresh parse only once the text is quiet. Every test of this
+/// binary that sets the interval sets the same value, so tests in
+/// parallel agree.
+fn settled_quiet(document: &Document) -> bool {
+    editor_ffi_syntax_refresh_after(0);
+    syntaxes().settle_exact(&Snapshot::of(document), BOUND)
+}
 
 /// The Rust fixture the highlights are drawn over.
 const ITEMS: &str = include_str!("../../../tests/syntax/rust/items.rs");
@@ -236,8 +247,7 @@ fn highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
         ],
     );
 
-    let snapshot = Snapshot::of(&document);
-    assert!(syntaxes().settle(&snapshot, BOUND));
+    assert!(settled_quiet(&document));
     let drawn = drawn(&document).expect("highlights of the delivered tree");
     assert_eq!(drawn, fresh(&document, "rust", &source, &faces));
     // Something is drawn: a keyword, the string and the comment.
@@ -407,7 +417,7 @@ const FENCED: &str = include_str!("../../../tests/syntax/markdown/fenced.md");
 
 /// The languages a Markdown document is given: each with its shipped
 /// highlights, a face for each capture, and its shipped injections.
-const LANGUAGES: [&str; 2] = ["rust", "json"];
+const LANGUAGES: [&str; 3] = ["rust", "json", "markdown_inline"];
 
 /// The kind tag of injections.
 const INJECTIONS: u8 = 1;
@@ -622,7 +632,7 @@ fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
     let closing = find(&document, "null]}\n```\n") + "null]}\n".len();
     assert!(document.replace(closing, closing + 4, ""));
 
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled_quiet(&document));
     let text = document.read().to_string();
     let drawn = drawn(&document).unwrap();
     assert_eq!(
@@ -630,6 +640,24 @@ fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
         fresh_with(&text, "markdown", Some(&markdown_injections()))
     );
     assert!(drawn.iter().any(|(_, face)| face == "syntax.keyword"));
+}
+
+#[test]
+fn markdown_emphasis_and_inline_code_are_drawn_with_the_inline_grammars_captures() {
+    let text = "Some *emphasis* and `code`.\n";
+    let document = injected_markdown(text);
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+
+    let drawn = drawn(&document).unwrap();
+    let emphasis = find(&document, "*emphasis*");
+    let code = find(&document, "`code`");
+    let at = |range: Range<usize>, face: &str| (range, face.to_owned());
+    assert!(drawn.contains(&at(emphasis..emphasis + 10, "syntax.text.emphasis")));
+    assert!(drawn.contains(&at(code..code + 6, "syntax.text.literal")));
+    assert_eq!(
+        drawn,
+        fresh_with(text, "markdown", Some(&markdown_injections()))
+    );
 }
 
 #[test]

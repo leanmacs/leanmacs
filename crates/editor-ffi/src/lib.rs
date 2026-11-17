@@ -356,7 +356,11 @@
 //! waits for it. The process's syntax service ([`syntax`]) parses each
 //! document attached to it with a grammar, on a worker thread of its own
 //! started at the first attach, and reparses it from its edit log after
-//! each edit, which every edit path of a document tells it of. A query is a
+//! each edit, which every edit path of a document tells it of; once a text
+//! has gone the idle interval unchanged after an edit, measured on the job
+//! clock ([`timers::Monotonic`]) and set from Lean
+//! ([`syntax::editor_ffi_syntax_refresh_after`]), the worker parses it
+//! whole and delivers that tree again only when it differs. A query is a
 //! handle ([`syntax::SyntaxQuery`]), and its captures in a range of a
 //! snapshot are answered at once from the tree the document's session last
 //! delivered, if that tree is of the snapshot's revision, and are otherwise
@@ -366,7 +370,8 @@
 //! and keeps one query of each structural kind (text objects, indents),
 //! whose captures are answered as a query's are.
 //! [`syntax::editor_ffi_syntax_settle`] waits for a delivery, with a bound,
-//! for tests. The rules of when a document is reparsed, which tree is
+//! for tests, and [`syntax::Syntaxes::settle_exact`] for a tree known to
+//! equal a fresh parse. The rules of when a document is reparsed, which tree is
 //! handed out and what an injection is are `editor-syntax`'s, pinned there
 //! on the fake.
 //!
