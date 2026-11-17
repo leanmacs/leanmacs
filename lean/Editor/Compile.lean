@@ -38,15 +38,30 @@ it and never by its name; the last line it ran and the directory it ran in;
 how many runs it has started; and the run in flight, with its line and the
 clock's reading when it started (`Watch.now`). A workspace's is in its store
 (`store`), a directory's in the unscoped store, by directory
-(`directoryStore`).
+(`directoryStore`). The lines compiled are a history, newest first, each
+once (`Shell.remember`): the project's (`historyStore`), so every worktree of
+a codebase offers the same lines, or for a directory scope the unscoped
+store's, which every directory shares. A line is recorded when its run
+starts.
 
 ## The commands
 
 - **`compile`** (`compileName`): a location that cannot run commands
   (`Location.can`) refuses before anything is asked or started. With no
-  line, or an empty one, it prompts, `Compile command: `, and the answer
-  comes back to it; an empty answer says `compile: no command`. With a line
-  it starts the run ("The run").
+  line, or an empty one, it prompts, `Compile command: `, with the scope's
+  last line as its text and the scope's history as its candidates, and the
+  answer comes back to it; an empty answer says `compile: no command`. With
+  a line it starts the run ("The run").
+- **`recompile`** (`recompileName`): the same location refusal; then the
+  scope's last line, in the directory it ran in, with no prompt; with none
+  it says `recompile: nothing has been compiled in <label>`.
+- **A restart asks first.** When the scope's own run is in flight, `compile`
+  and `recompile` open a prompt, `Kill the compilation running in <label>?
+  (y or n) `, whose continuation, `compile-confirm` (`confirmName`), starts
+  the run on `y` or `yes`, in any case, which cancels the old job through
+  its key and empties the buffer; any other answer says `<command>: left
+  the compilation running in <label>`, and a cancelled prompt runs
+  nothing.
 - **`kill-compilation`** (`killName`): with the scope's run in flight, its
   job is cancelled by its key, which kills the child with its process
   group, the run is cleared, and `Compilation killed after <elapsed>` is
@@ -104,6 +119,16 @@ namespace Editor.Compile
 /-- The name the command that compiles is registered under. -/
 def compileName : String :=
   "compile"
+
+/-- The name the command that reruns the scope's last line is registered
+under. -/
+def recompileName : String :=
+  "recompile"
+
+/-- The name the continuation of the prompt that asks before a restart is
+registered under. -/
+def confirmName : String :=
+  "compile-confirm"
 
 /-- The name the command that kills the scope's compilation is registered
 under. -/
@@ -313,6 +338,25 @@ def setRecord (place : Place) (record : Record) : EditorM Unit := do
       else all.push (key, record)
     Workspace.setUnscoped directoryStore all
 
+/-- The lines compiled in a scope, newest first, each once: its project's, or,
+for a directory scope, the unscoped store's, which every directory shares. -/
+def historyStore : Store (Array String) :=
+  { Shell.historyStore with name := "compile-history" }
+
+/-- The history `scope` offers in `state`. -/
+def history (state : EditorState) : Scope → Array String
+  | .workspace _ project => state.workspaces.getOfProject historyStore project.identity
+  | .directory _ => state.workspaces.getUnscoped historyStore
+
+/-- Records `line` first in the history of `scope` (`Shell.remember`). -/
+def remember (scope : Scope) (line : String) : EditorM Unit := do
+  let lines := Shell.remember line (history (← editorState) scope)
+  match scope with
+  | .workspace _ project =>
+    discard <| Project.set historyStore project.identity lines
+  | .directory _ =>
+    Workspace.setUnscoped historyStore lines
+
 /-! ## What is said -/
 
 /-- What `name` says in a workspace whose location cannot run commands. -/
@@ -322,6 +366,25 @@ def cannotRun (name : String) (workspace : Workspace) : String :=
 /-- What `compile` says of an empty line. -/
 def noCommand : String :=
   s!"{compileName}: no command"
+
+/-- What `recompile` says in the scope labelled `label` when nothing was
+compiled there. -/
+def nothingCompiled (label : String) : String :=
+  s!"{recompileName}: nothing has been compiled in {label}"
+
+/-- What `name` says when the confirm prompt was answered no. -/
+def leftRunning (name : String) (label : String) : String :=
+  s!"{name}: left the compilation running in {label}"
+
+/-- The label of the prompt that asks before the run in flight in the scope
+labelled `label` is killed. -/
+def confirmLabel (label : String) : String :=
+  s!"Kill the compilation running in {label}? (y or n) "
+
+/-- Whether `answer` confirms: `y` or `yes`, trimmed and in any case. -/
+def confirms (answer : String) : Bool :=
+  let answer := answer.trimAscii.toString.toLower
+  answer == "y" || answer == "yes"
 
 /-- What `kill-compilation` says with nothing running in the scope labelled
 `label`. -/
@@ -496,6 +559,7 @@ def start (name : String) (view : ViewId) (scope : Scope) (line : String)
   | .error refusal =>
     message (notStarted name refusal)
   | .ok () =>
+    remember scope line
     let started ← Watch.now
     let prepared ← prepare scope record (header scope.label directory line ++ "\n")
     setRecord place
@@ -519,8 +583,22 @@ def scopeOf (call : Call) (name : String) : EditorM (Scope × Option String) := 
   | .directory _ =>
     return (scope, none)
 
+/-- Starts a run of `line` in `directory` for `scope`, asked from `view` by
+the command `name`, unless the scope's own run is in flight: then it asks
+first, the confirm prompt's continuation carrying the run ("The commands",
+in the module docs). -/
+def startOrAsk (name : String) (view : ViewId) (scope : Scope) (line : String)
+    (directory : System.FilePath) : EditorM Unit := do
+  if (recordOf (← editorState) scope.place).running.isSome then
+    discard <|
+      prompt (confirmLabel scope.label)
+        { command := confirmName, arguments := [.str name, .str line, .str directory.toString] }
+  else
+    start name view scope line directory
+
 /-- `compile` ("The commands", in the module docs): the line is its first
-argument; an answer of its prompt comes back with `true` after it. -/
+argument; an answer of its prompt comes back with `true` after it. The
+prompt offers the scope's last line and its history. -/
 def compileCommand (call : Call) : EditorM Unit := do
   let (scope, refusal) ← scopeOf call compileName
   if let some reason := refusal then
@@ -529,18 +607,48 @@ def compileCommand (call : Call) : EditorM Unit := do
   match call.arguments with
   | .str line :: rest =>
     if !line.trimAscii.isEmpty then
-      start compileName call.target.window.id scope line scope.root
+      startOrAsk compileName call.target.window.id scope line scope.root
     else
       if rest matches .bool true :: _ then
         message noCommand
       else
-        ask
+        ask scope
   | _ =>
-    ask
+    ask scope
 where
   /-- Opens the prompt for a line, whose answer comes back to `compile`. -/
-  ask : EditorM Unit := do
-    discard <| prompt promptLabel { command := compileName, arguments := [.bool true] }
+  ask (scope : Scope) : EditorM Unit := do
+    let state ← editorState
+    let initial := ((recordOf state scope.place).last.map (·.1)).getD ""
+    discard <|
+      prompt promptLabel { command := compileName, arguments := [.bool true] } initial
+        (pure (history state scope))
+
+/-- `recompile` ("The commands", in the module docs): reruns the scope's last
+line in the directory it ran in, with no prompt, asking first when the
+scope's own run is in flight. -/
+def recompileCommand (call : Call) : EditorM Unit := do
+  let (scope, refusal) ← scopeOf call recompileName
+  if let some reason := refusal then
+    message reason
+    return
+  match (recordOf (← editorState) scope.place).last with
+  | none =>
+    message (nothingCompiled scope.label)
+  | some (line, directory) =>
+    startOrAsk recompileName call.target.window.id scope line directory
+
+/-- `compile-confirm`, the confirm prompt's continuation: its answer, then
+the asking command's name, the line and the directory. A yes starts the run,
+which cancels the one in flight through its key; anything else leaves both
+alone and says so. -/
+def confirmCommand (call : Call) : EditorM Unit := do
+  let .str answer :: .str name :: .str line :: .str directory :: _ := call.arguments | return
+  let scope := Scope.of (← editorState) call.target.window.buffer
+  if confirms answer then
+    start name call.target.window.id scope line directory
+  else
+    message (leftRunning name scope.label)
 
 /-- `kill-compilation` ("The commands", in the module docs). -/
 def killCommand (call : Call) : EditorM Unit := do

@@ -7,11 +7,14 @@ import Editor.Config.Registry
 What a host is handed so that `compile` runs (`Editor/Compile.lean`). A host
 registers them for the owner `compiled` when its loop starts, before any
 config (`Editor/Config/Registry.lean`, "Compiled commands"), beside the ex
-line's (`Editor/Ex/Compiled.lean`), which binds the ex names `compile` and
-`kill-compilation` to them.
+line's (`Editor/Ex/Compiled.lean`), which binds the ex names `compile`,
+`recompile` and `kill-compilation` to them.
 
 - **`Compile.commands`**: `compile`, which starts a run in the focused
-  buffer's scope (`Compile.compileCommand`); `kill-compilation`, which kills
+  buffer's scope (`Compile.compileCommand`); `recompile`, which reruns its
+  last line (`Compile.recompileCommand`); `compile-confirm`, which no key
+  runs: the prompt that asks before a restart answers it
+  (`Compile.confirmCommand`); `kill-compilation`, which kills
   the scope's run in flight (`Compile.killCommand`); and
   `compilation-output`, which no key runs: the run job posts its output to
   it (`Compile.outputCommand`).
@@ -33,6 +36,8 @@ namespace Editor.Compile
 `compiled`. -/
 def commands : Array Config.Registration :=
   #[{ name := compileName, action := .call compileCommand },
+    { name := recompileName, action := .call recompileCommand },
+    { name := confirmName, action := .call confirmCommand },
     { name := killName, action := .call killCommand },
     { name := outputName, action := .call outputCommand }]
 

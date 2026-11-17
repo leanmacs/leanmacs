@@ -27727,8 +27727,8 @@ cursors), `C-k 0` (`to-start`, which puts the window's cursor at offset 0),
 `C-k o` (`focus-compilation`, which focuses the first view that shows a
 compilation buffer), `C-k s` (`squat`, which makes a buffer
 `*compilation: r@main (clone)*` the compile did not make), `C-k z` (a stale
-`compilation-output` of `/r`'s first run) and `C-o q`, which opens
-`/clone/r/src/a.lean`. -/
+`compilation-output` of `/r`'s first run), `C-k q`, which cancels the open
+prompt, and `C-o q`, which opens `/clone/r/src/a.lean`. -/
 def compileBindings : List (String × Invocation) :=
   shellBindings ++
     [("C-k c", invoke Compile.compileName),
@@ -27739,7 +27739,7 @@ def compileBindings : List (String × Invocation) :=
       ("C-k z",
         { command := Compile.outputName
           arguments := placeR.arguments ++ [.nat 1, .str "stale"] }),
-      ("C-o q", opens "/clone/r/src/a.lean")]
+      ("C-k q", invoke Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean")]
 
 /-- The commands of the compile checks (`compileBindings`). -/
 def compileCommands : List (String × Dispatched) :=
@@ -27908,13 +27908,87 @@ def compileChecks : List Check :=
             let kube := settledAfter (settledAfter driver "C-o a") "C-e k"
             let asked := pressedOn kube "C-k c"
             let given := pressedOn kube "C-k m"
+            let again := pressedOn kube "C-k r"
             asked.loop.state.prompt.isNone && asked.next == kube.next &&
               asked.jobs.processes.started == kube.jobs.processes.started &&
               echoOf asked ==
                 some
                   "compile: r@app is reachable through kube pod at /app, where commands cannot run" &&
               given.next == kube.next &&
-              echoOf given == echoOf asked },
+              echoOf given == echoOf asked &&
+              again.loop.state.prompt.isNone && again.next == kube.next &&
+              echoOf again ==
+                some
+                  "recompile: r@app is reachable through kube pod at /app, where commands cannot run" },
+    { name :=
+        "criterion 3: a line compiled in /r is offered in /w's compile prompt history, while each recompile reruns its own workspace's last line"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := drained (compiledLine (settledAfter driver "C-o a") "make")
+            let asked := pressedOn (settledAfter inR "C-o w") "C-k c"
+            let cancelled := pressedOn asked "C-k q"
+            let inW := drained (compiledLine cancelled "build")
+            let again := drained (pressedOn (pressedOn (pressedOn inW "C-o a") "C-k r") "C-o w C-k r")
+            let started := again.jobs.processes.started
+            (candidatesOf asked).map (·.all) == some #["make"] &&
+              (showing asked asked.loop.state.frame.focused).bind (·.text) == some "" &&
+              cancelled.loop.state.prompt.isNone &&
+              inW.jobs.processes.started.back? == some (shellCommand "/w" "build") &&
+              started.extract (started.size - 2) started.size ==
+                #[shellCommand "/r" "make", shellCommand "/w" "build"] &&
+              inW.loop.state.workspaces.getOfProject Compile.historyStore (.remote "github.com/o/r") ==
+                #["build", "make"] },
+    { name :=
+        "criterion 6: recompile reruns the workspace's last line in its directory without a prompt, and another workspace's recompile runs its own last line; in the compilation buffer it reruns that buffer's"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := drained (pressedOn (settledAfter driver "C-o a") "C-k m")
+            let both := drained (pressedOn (settledAfter inR "C-o w") "C-k m")
+            let inW := pressedOn both "C-k r"
+            let inRAgain := pressedOn (drained inW) "C-o a C-k r"
+            let fromBuffer := pressedOn (drained inRAgain) "C-k o C-k r"
+            inW.loop.state.prompt.isNone &&
+              inW.jobs.processes.started.back? == some (shellCommand "/w" "make") &&
+              inRAgain.loop.state.prompt.isNone &&
+              inRAgain.jobs.processes.started.back? == some (shellCommand "/r" "make") &&
+              (showing fromBuffer fromBuffer.loop.state.frame.focused).map (·.buffer.name) ==
+                some "*compilation: r@main*" &&
+              fromBuffer.loop.state.prompt.isNone &&
+              fromBuffer.jobs.processes.started.size == inRAgain.jobs.processes.started.size + 1 &&
+              fromBuffer.jobs.processes.started.back? == some (shellCommand "/r" "make") &&
+              echoOf (pressedOn (settledAfter driver "C-o a") "C-k r") ==
+                some "recompile: nothing has been compiled in r@main" },
+    { name :=
+        "criterion 7: compile while the workspace's own one runs asks; yes kills the old child and empties the buffer, no leaves both alone"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let running := postedNext (pressedOn (settledAfter driver "C-o a") "C-k m")
+            let asked := pressedOn running "C-k m"
+            let refused := (fedTo asked ([.commit "n"] ++ presses "C-e y")).1
+            let confirmed := (fedTo (pressedOn refused "C-k m") ([.commit " Yes "] ++ presses "C-e y")).1
+            let makes (driver : TestDriver) :=
+              (driver.jobs.processes.started.filter (· == shellCommand "/r" "make")).size
+            let name := "*compilation: r@main*"
+            asked.loop.state.prompt.map (·.label) ==
+                some "Kill the compilation running in r@main? (y or n) " &&
+              refused.posting.map (·.id) == running.posting.map (·.id) &&
+              compiledText refused name == compiledText running name &&
+              makes refused == 1 &&
+              echoOf refused == some "compile: left the compilation running in r@main" &&
+              confirmed.jobs.processes.killed == #[shellCommand "/r" "make"] &&
+              compiledText confirmed name == some "r@main in /r: make\n" &&
+              makes confirmed == 2 &&
+              confirmed.posting.map (·.key) == #[some "compile local /r"] &&
+              confirmed.posting.map (·.id) != running.posting.map (·.id) },
     { name :=
         "criterion 5: the last line reads finished for exit 0, exited abnormally with code 2 for exit 2 and killed after kill-compilation, and the echo area says the same with r@main"
       run :=
