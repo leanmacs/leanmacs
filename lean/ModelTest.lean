@@ -3755,7 +3755,7 @@ def reloadChecks : List Check :=
           (themed.layout == none && state.layout == some .monocle && dropped.layout == none &&
             kept.layout == some .monocle) },
     { name :=
-        "criterion 4, in the model: an install whose display rules name a float, a left edge the default layout lacks and a new tab is installed and keeps none of them, its report says each rule left out, by its place in the setup, and the echo area says them; under a layout with a left edge the left edge's rule alone is kept; a later install with no rule clears them, and a rejected one changes nothing"
+        "criterion 4, in the model: an install whose display rules name a float, a left edge the default layout lacks and a new tab is installed and keeps the float's alone, its report says each rule left out, by its place in the setup, and the echo area says them; under a layout with a left edge the float's and the left edge's rules are kept; a later install with no rule clears them, and a rejected one changes nothing"
       run :=
         let rules : Array DisplayRule :=
           #[{ opener := some "a", target := .float }, { name := some "b", target := .edge .left },
@@ -3771,26 +3771,27 @@ def reloadChecks : List Check :=
         let (kept, _) := reduceFrom left [.requested, .finished (rejected "a")]
         let both : SetupM Unit := do
           useTheme "gone"
-          displayRule { target := .float }
+          displayRule { target := .newTab }
         pure
-          (report.installed && state.registry.displayRules == #[] &&
+          (report.installed &&
+            state.registry.displayRules == #[{ opener := some "a", target := .float }] &&
             report.unusableRules ==
-              #[Config.Report.leftOut 1 DisplayTarget.noFloats,
-                Config.Report.leftOut 2 (Layout.noEdge .left),
+              #[Config.Report.leftOut 2 (Layout.noEdge .left),
                 Config.Report.leftOut 3 DisplayTarget.noTabs] &&
             report.echo ==
               some
-                "reload: display rule 1 is left out: there are no floating windows yet; display rule 2 is left out: the layout has no left edge; display rule 3 is left out: there are no tabs yet" &&
-            left.registry.displayRules == #[{ name := some "b", target := .edge .left }] &&
+                "reload: display rule 2 is left out: the layout has no left edge; display rule 3 is left out: there are no tabs yet" &&
+            left.registry.displayRules ==
+              #[{ opener := some "a", target := .float },
+                { name := some "b", target := .edge .left }] &&
             (reportFrom themed (accepted ["a"] edged)).unusableRules ==
-              #[Config.Report.leftOut 1 DisplayTarget.noFloats,
-                Config.Report.leftOut 3 DisplayTarget.noTabs] &&
+              #[Config.Report.leftOut 3 DisplayTarget.noTabs] &&
             left.registry.registered.displayRules == left.registry.displayRules &&
             dropped.registry.displayRules == #[] &&
             kept.registry.displayRules == left.registry.displayRules &&
             (reportFrom themed (accepted ["a"] both)).echo ==
               some
-                "reload: no theme is registered as `gone`; display rule 1 is left out: there are no floating windows yet" &&
+                "reload: no theme is registered as `gone`; display rule 1 is left out: there are no tabs yet" &&
             (reportFrom themed (accepted ["a"] (displayRule { target := .stack }))).echo == none) },
     { name :=
         "an install sets the mode line config lists, and its report names each segment nobody registered, which the echo area says after the unknown theme's sentence; a later install that lists none goes back to the default, and a rejected one changes nothing"
@@ -22666,20 +22667,20 @@ def displayRuleChecks : List Check :=
             DisplayRule.choose #[never, toMain] facts (focus := false) == toMain &&
             DisplayRule.choose #[never] facts (focus := true) == DisplayRule.fallback },
     { name :=
-        "a target is missing when the layout lacks it: floats and tabs always, for now, and an edge the layout has no edge at; the focused window, main and the stack never are"
+        "a target is missing when the layout lacks it: tabs always, for now, and an edge the layout has no edge at; the focused window, main, the stack and a float never are, pinned or not"
       run :=
         pure <|
           let edged := Layout.edge .left 25 Layout.default
           [Layout.default, edged].all
               (fun layout =>
-                [DisplayTarget.focused, .main, .stack].all (·.missing? layout == none) &&
-                  DisplayTarget.float.missing? layout == some DisplayTarget.noFloats &&
+                [DisplayTarget.focused, .main, .stack, .float, .float { width := 80 } true].all
+                    (·.missing? layout == none) &&
                   DisplayTarget.newTab.missing? layout == some DisplayTarget.noTabs) &&
             (DisplayTarget.edge .left).missing? Layout.default == some (Layout.noEdge .left) &&
             (DisplayTarget.edge .left).missing? edged == none &&
             (DisplayTarget.edge .right).missing? edged == some (Layout.noEdge .right) },
     { name :=
-        "a window of the frame that shows the buffer is used, a tile or a docked one, whatever the rules say; otherwise the rule's target decides: the focused window, main, a new window in the stack, or at an edge the layout has, else the stack; floats and tabs go to the stack; the focus is the rule's"
+        "a window of the frame that shows the buffer is used, a tile or a docked one, whatever the rules say; otherwise the rule's target decides: the focused window, main, a new window in the stack, or at an edge the layout has, else the stack, or a new float centred in the frame, of the rule's share, transient unless the rule pins it; tabs go to the stack; the focus is the rule's"
       run :=
         pure <|
           match onTextModel twoBuffers,
@@ -22709,7 +22710,11 @@ def displayRuleChecks : List Check :=
               fresh.displaying (rule .main false) ⟨1⟩ ⟨0⟩ "make" == (.showIn ⟨0⟩, false) &&
               fresh.displaying (rule .stack) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
               fresh.displaying (rule (.edge .left)) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
-              fresh.displaying (rule .float) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying (rule .float) ⟨1⟩ ⟨0⟩ "make" ==
+                (.opened (.float .frame {} false), true) &&
+              fresh.displaying (rule (.float { width := 80, height := 70 } true) false) ⟨1⟩ ⟨0⟩
+                  "make" ==
+                (.opened (.float .frame { width := 80, height := 70 } true), false) &&
               fresh.displaying (rule .newTab) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
               ({ fresh with
                         frame := { fresh.frame with layout := .edge .left 25 Layout.default } } :
@@ -22833,7 +22838,38 @@ def displayRuleChecks : List Check :=
                   some (0, 0, 160) &&
                 (state.rect? ⟨0⟩).map (fun rect => (rect.x, rect.width)) == some (160, 480) &&
                 state.wellFormed
-            | _ => false }]
+            | _ => false },
+    { name :=
+        "criterion 2, in the model: a rule that sends what a command opens to a float shows the buffer the command makes in a new view, listed after view 0 in the scene, centred in the tiled area at 60 by 50 percent, focused, and main still shows the file"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let ruled :=
+              { opened with
+                keys :=
+                  { opened.keys with
+                    registered :=
+                      { opened.keys.registered with
+                        displayRules := #[{ opener := some "make-notes", target := .float }] } } }
+            let (noted, _) := fedTo ruled (presses "C-b o")
+            let state := noted.loop.state
+            let tiled := state.tiled
+            match state.frame.floats.toList, noted.model.display.scenes.back? with
+            | [float], some scene =>
+              let notes := float.view
+              state.frame.windows == #[⟨0⟩] && state.frame.focused == notes &&
+                float.anchor == .frame &&
+                !float.pinned &&
+                shownName noted notes == some "notes" &&
+                shownName noted ⟨0⟩ == some "lf.txt" &&
+                scene.views.map (·.id) == #[⟨0⟩, notes] &&
+                (scene.views.find? (·.id == notes)).map (·.rect) ==
+                  some (Floating.centred {} tiled) &&
+                scene.focused == some notes &&
+                state.wellFormed
+            | _, _ => false }]
 
 /-- The command `other` of the theme command's checks: it says `other`. -/
 def saysOther : Dispatched := fun _ => do

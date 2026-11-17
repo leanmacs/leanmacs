@@ -207,7 +207,25 @@ a value, with their `LayoutRefusal`.
   given (the compile mode gives `false`, so the focus stays). It reads the
   rules with a state request the loop answers (`.displayRules`). A docked
   window, at an edge (`Frame.docked`), is a window like any other to every
-  operation here.
+  operation here, and so is a float (`Frame.floats`). A rule's float
+  target opens a float centred in the frame; the spot is handed through.
+- `BufferId.float buffer at share pinned focus` opens a buffer in a new
+  float on top of the others (`Editor/Floating.lean`), placed against
+  `at`: the frame, a window, or a byte offset of a window's buffer
+  (`Floating.At`), of `share`, pinned or transient, and focused when
+  `focus` says, and returns its view. The refusals that apply are checked
+  first, so nothing is marked when one does: `ofMinibuffer` for the
+  minibuffer's buffer, `noSuchBuffer`, `noSuchWindow` for an anchor
+  window that is no tiled or docked window of the frame, and `floating`
+  for a float as the anchor window. Then it marks the new window's scroll
+  anchor and cursor at the buffer's start, of the shape the anchor
+  window's selection has, or the focused window's for the frame, and for a
+  position an anchor marker of the anchor window's buffer's text at the
+  offset, with the bias `before`; an offset that is not a position is
+  refused by the text store, as `Target.scrollTo` is. A transient float
+  closes when the focus leaves it or the window it was opened from, or
+  when its position scrolls out of its window (`Editor/State.lean`, "A
+  floating window"). Completion in a float is to be built on it.
 
 A view's id is never used again (`Editor/State.lean`).
 
@@ -1423,6 +1441,74 @@ def BufferId.display (buffer : BufferId) (asking : ViewId) (opener : String)
       let selection ← shown.text.mark (.selection { ranges := #[⟨0, 0⟩], shape })
       EditorState.ask (.openWindow buffer scroll selection spot)
   match placed with
+  | .ok view =>
+    if focus then
+      if let .error refusal← view.focus then
+        return .error refusal
+    return .ok view
+  | .error refusal =>
+    return .error refusal
+
+/-- What a float a command opens is placed against (`BufferId.float`): the
+frame, the window `view`, or the byte offset `offset` of the buffer the
+window `view` shows, which is marked as the float's anchor. -/
+inductive Floating.At where
+  /-- Centred in the tiled area. -/
+  | frame
+  /-- Centred in the window's rectangle. -/
+  | window (view : ViewId)
+  /-- Beside the position `offset` of the window's buffer. -/
+  | position (view : ViewId) (offset : Nat)
+  deriving DecidableEq, Repr
+
+/-- The window a float placed against `at_` is anchored to, if it is one. -/
+def Floating.At.view? : Floating.At → Option ViewId
+  | .frame => none
+  | .window view => some view
+  | .position view _ => some view
+
+/-- Opens the buffer `buffer` in a new float on top of the others, placed
+against `at_`, of `share`, pinned or transient, and returns its view; the
+float is focused when `focus` says (the module docs, "Windows"). The new
+window gets a scroll anchor at the buffer's start and one cursor at its
+start, of the shape the anchor window's selection has, or the focused
+window's for the frame, and a position its anchor marker on the anchor
+window's buffer's text, with the bias `before`. Refused, with no marker
+made, with `ofMinibuffer` for the minibuffer's buffer, with
+`noSuchBuffer` for a buffer there is none of, with `noSuchWindow` for an
+anchor window that is no tiled or docked window of the frame, and with
+`floating` for a float as the anchor window; an offset that is not a
+position of the text is refused by the text store. -/
+def BufferId.float (buffer : BufferId) (at_ : Floating.At) (share : Floating.Share := {})
+    (pinned : Bool := false) (focus : Bool := true) : EditorM (Except LayoutRefusal ViewId) := do
+  let state ← editorState
+  if let some minibuffer := state.minibufferView? then
+    if state.minibufferBuffer? == some buffer then
+      return .error (.ofMinibuffer minibuffer)
+  let some shown := state.buffer? buffer | return .error (.noSuchBuffer buffer)
+  if let some view := at_.view? then
+    if (state.frame.floating? view).isSome then
+      return .error (.floating view)
+    unless state.frame.anchors view do
+      return .error (.noSuchWindow view)
+  let shape ←
+    match state.target? (at_.view?.getD state.frame.focused) with
+    | some target =>
+      pure (← target.selection).shape
+    | none =>
+      pure Shape.exclusive
+  let scroll ← shown.text.mark (.anchor { offset := 0, bias := .before })
+  let selection ← shown.text.mark (.selection { ranges := #[⟨0, 0⟩], shape })
+  let anchor : Floating.Anchor ←
+    match at_ with
+    | .frame =>
+      pure .frame
+    | .window view =>
+      pure (.window view)
+    | .position view offset =>
+      let some target := state.target? view | return .error (.noSuchWindow view)
+      pure (.position view (← target.buffer.text.mark (.anchor { offset, bias := .before })))
+  match ← EditorState.ask (.openWindow buffer scroll selection (.float anchor share pinned)) with
   | .ok view =>
     if focus then
       if let .error refusal← view.focus then

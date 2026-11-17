@@ -1,3 +1,4 @@
+import Editor.Floating
 import Editor.Layout
 
 /-!
@@ -26,12 +27,20 @@ is pure: the editor state decides with it (`EditorState.displaying`,
   that matches keeps its own `focus` (decided 2026-11-17).
 - **The targets** (`DisplayTarget`): the window the asking command acts on,
   main, a new window at the end of the tiled list, a new window docked at
-  an edge, a float and a new tab. A rule's `focus` says whether the window
-  the buffer is shown in is focused.
+  an edge, a new float centred in the frame and a new tab. A rule's
+  `focus` says whether the window the buffer is shown in is focused.
+- **A float target** (`DisplayTarget.float`) opens a float anchored to the
+  frame, centred in the tiled area (`Editor/Floating.lean`), of the rule's
+  share, 60 by 50 percent unless it says another, and transient unless it
+  says `pinned`. Config writes `.float`, `.float { width := 80, height :=
+  70 }` or `.float (pinned := true)`. With the rule's `focus` true by
+  default, the buffer opens focused in a popup that goes away when the
+  focus leaves it. A window that shows the buffer already, a float among
+  them, is still used first.
 - **A target the layout lacks is missing** (`DisplayTarget.missing?`):
-  floats and tabs, which are not built yet, and an edge the layout config
-  chose has none at. Config's rules are checked against it at install, and
-  a rule whose target is missing is left out and said
+  tabs, which are not built yet, and an edge the layout config chose has
+  none at. Config's rules are checked against it at install, and a rule
+  whose target is missing is left out and said
   (`Editor/Config/Reload.lean`).
 
 The name avoids `Editor.Display`, the display port.
@@ -53,8 +62,9 @@ inductive DisplayTarget where
   | stack
   /-- A new window docked at the edge at `side`. -/
   | edge (side : Side)
-  /-- A floating window: not built yet. -/
-  | float
+  /-- A new floating window, anchored to the frame and centred in the tiled
+  area, of `share`, transient unless `pinned` (`Editor/Floating.lean`). -/
+  | float (share : Floating.Share := {}) (pinned : Bool := false)
   /-- A window in a new tab: not built yet. -/
   | newTab
   deriving DecidableEq, Repr
@@ -107,25 +117,19 @@ end DisplayRule
 
 namespace DisplayTarget
 
-/-- What is said of a float target: there are none to send a buffer to. -/
-def noFloats : String :=
-  "there are no floating windows yet"
-
 /-- What is said of a new-tab target: there are none to send a buffer
 to. -/
 def noTabs : String :=
   "there are no tabs yet"
 
-/-- Why `target` does not exist under `layout`, if it does not: floats and
-tabs are not built yet, and an edge the layout has none at
-(`Layout.edgeSides`) is missing. The focused window, main and the stack
-always exist. -/
+/-- Why `target` does not exist under `layout`, if it does not: tabs are not
+built yet, and an edge the layout has none at (`Layout.edgeSides`) is
+missing. The focused window, main, the stack and a float always exist. -/
 def missing? (target : DisplayTarget) (layout : Layout) : Option String :=
   match target with
-  | .float => some noFloats
   | .newTab => some noTabs
   | .edge side => if layout.edgeSides.contains side then none else some (Layout.noEdge side)
-  | .focused | .main | .stack => none
+  | .focused | .main | .stack | .float .. => none
 
 end DisplayTarget
 

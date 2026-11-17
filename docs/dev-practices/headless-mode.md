@@ -1052,7 +1052,7 @@ A nineteenth, `tests/headless/display-rules/script`, runs on the config in
 `tests/headless/display-rules/config`, which keeps the default layout,
 binds `C-c n` to a command that makes a buffer called `notes` and displays
 it (`BufferId.display`), and makes one display rule, whose target, a
-float, does not exist yet. The reload is installed, with a `rule:` line
+new tab, does not exist yet. The reload is installed, with a `rule:` line
 for the rule left out, and the echo area says the same sentence after
 `reload: `. `:ls` shows the buffer list in a new window at the end of the
 tiled list, the stack, on the right, focused, while main keeps `scratch`,
@@ -1065,8 +1065,8 @@ minibuffer's, which the `:` prompt took. Its output must be exactly
 ```console
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/display-rules/config ../tests/headless/display-rules/script
 reload 1: installed, 1 chunks, 1 commands
-rule: display rule 1 is left out: there are no floating windows yet
-scene 640x480, focused 0, echo "reload: display rule 1 is left out: there are no floating windows yet", echo padding 8, preedit -, published 1, theme "default"
+rule: display rule 1 is left out: there are no tabs yet
+scene 640x480, focused 0, echo "reload: display rule 1 is left out: there are no tabs yet", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: i KeyI -

@@ -1,8 +1,8 @@
 -- Display rules, under the default layout: `C-c n` runs `make-notes`, which
 -- makes a buffer called `notes` holding `a note` and displays it where the
 -- display rules say, as a command shows a buffer it made. The one rule sends
--- what the command `nowhere` opens to a float, which does not exist yet, so
--- the install leaves it out and says so, and every buffer a command shows
+-- what the command `nowhere` opens to a new tab, which does not exist yet,
+-- so the install leaves it out and says so, and every buffer a command shows
 -- goes to the stack.
 
 /-- Makes a buffer called `notes`, or a free name made from it, holding
@@ -15,4 +15,4 @@ def makeNotes (call : Call) : EditorM Unit := do
 def setup : SetupM Unit := do
   commandWith "make-notes" makeNotes
   bindKey "C-c n" "make-notes"
-  displayRule { opener := some "nowhere", target := .float }
+  displayRule { opener := some "nowhere", target := .newTab }

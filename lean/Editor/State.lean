@@ -2860,9 +2860,10 @@ edited never moves. Otherwise the first rule that matches the buffer's
 name, its modes (major first) and `opener` decides, or the fallback
 (`DisplayRule.choose`): `focused` shows it in `shownIn asking`, `main` in
 the first window of the tiled list, `stack` opens a window after the last
-of the list, and `edge side` one docked at `side` when the layout out of
-a zoom has that edge and in the stack otherwise; `float` and `newTab`,
-which config cannot reach, open one in the stack. `focus` is the caller's
+of the list, `edge side` one docked at `side` when the layout out of
+a zoom has that edge and in the stack otherwise, and `float` a float
+anchored to the frame, of the rule's share, pinned when the rule says;
+`newTab`, which config cannot reach, opens one in the stack. `focus` is the caller's
 default: the fallback's focus when no rule matches. -/
 def displaying (state : EditorState) (rules : Array DisplayRule) (buffer : BufferId)
     (asking : ViewId) (opener : String) (focus : Bool := true) : Displaying × Bool :=
@@ -2882,7 +2883,8 @@ def displaying (state : EditorState) (rules : Array DisplayRule) (buffer : Buffe
       | .edge side =>
         if state.frame.underlying.edgeSides.contains side then .opened (.edge side)
         else .opened .stack
-      | .stack | .float | .newTab => .opened .stack
+      | .float share pinned => .opened (.float .frame share pinned)
+      | .stack | .newTab => .opened .stack
     (decided, rule.focus)
 
 /-- Closes the open prompt: the minibuffer's window is removed, its buffer's

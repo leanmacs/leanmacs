@@ -1,7 +1,7 @@
 # The script `mise run ffi-test` has the editor's headless mode run against
 # the config in `config/`, which keeps the default layout, binds `C-c n` to
 # a command that makes a buffer called `notes` and displays it, and makes
-# one display rule, whose target, a float, does not exist yet. It shows the
+# one display rule, whose target, a new tab, does not exist yet. It shows the
 # rule left out at install and said, and a buffer a command opens that is
 # not the one being edited, the buffer list and the command's, going to the
 # stack while main keeps the buffer being edited. What it prints must be

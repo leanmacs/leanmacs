@@ -527,7 +527,66 @@ def windowCases : List Case :=
             shown.frame.windows == opened.frame.windows &&
             refusedAbsent &&
             refusedMinibuffer &&
-            (← nextMarker minibufferText) == before + 1 }]
+            (← nextMarker minibufferText) == before + 1 },
+    { name :=
+        "a buffer opened in a float at a position of a view marks the new window's scroll anchor and cursor on the buffer's text and one anchor marker at that position of the view's buffer's text, opens it on top of the floats and focuses it when asked; the minibuffer's buffer, a buffer there is none of, an anchor window there is none of and a float as the anchor window are each refused, with no marker made"
+      start := holding "first line" (selection #[(2, 4)] .inclusive)
+      run := do
+        let view : ViewId := ⟨0⟩
+        let .ok other ← createBuffer "other" "sécond" | return false
+        let .ok text ← other.text | return false
+        let markedOther ← nextMarker text
+        let markedScratch ← nextMarker scratch
+        let .ok made ←
+          other.float (.position view 6) { width := 50, height := 25 } (focus :=
+              false) | return false
+        let opened ← editorState
+        let some window := opened.window? made | return false
+        let some float := opened.frame.floating? made | return false
+        let .position anchorView anchorMarker := float.anchor | return false
+        let scroll ← text.marker window.scroll
+        let .ok selected ← made.selection | return false
+        let anchor ← scratch.marker anchorMarker
+        let probeOther ← nextMarker text
+        let probeScratch ← nextMarker scratch
+        let absent : BufferId := ⟨9⟩
+        let refusedAbsent := refusedAs (← absent.float .frame) (.noSuchBuffer absent)
+        let refusedWindow := refusedAs (← other.float (.window ⟨9⟩)) (.noSuchWindow ⟨9⟩)
+        let refusedFloat := refusedAs (← other.float (.window made)) (.floating made)
+        let .ok minibuffer ← prompt "Name: " { command := "greet" } | return false
+        let some asked := (← editorState).minibufferBuffer? | return false
+        let refusedMinibuffer := refusedAs (← asked.float .frame) (.ofMinibuffer minibuffer)
+        return made == ⟨1⟩ && window.buffer == other && anchorView == view &&
+            anchorMarker.text == scratch &&
+            float.share == { width := 50, height := 25 } &&
+            !float.pinned &&
+            opened.frame.focused == view &&
+            opened.frame.windows == #[view] &&
+            opened.wellFormed &&
+            scroll == .anchor { offset := 0, bias := .before } &&
+            selected == selection #[(0, 0)] .inclusive &&
+            anchor == .anchor { offset := 6, bias := .before } &&
+            probeOther == markedOther + 3 &&
+            probeScratch == markedScratch + 2 &&
+            refusedAbsent &&
+            refusedWindow &&
+            refusedFloat &&
+            refusedMinibuffer &&
+            (← nextMarker text) == probeOther + 1 &&
+            (← nextMarker scratch) == probeScratch + 1 },
+    { name :=
+        "a buffer opened in a float centred in the frame, focused, is the focused window, and a float that is not focused closes when the focus moves on"
+      start := holding "first" (selection #[(0, 0)])
+      run := do
+        let view : ViewId := ⟨0⟩
+        let .ok other ← createBuffer "other" "sécond" | return false
+        let .ok made ← other.float .frame | return false
+        let focused := (← editorState).frame.focused
+        let .ok () ← view.focus | return false
+        let after ← editorState
+        return focused == made && (after.frame.floating? made).isNone &&
+            after.frame.floats.isEmpty &&
+            after.wellFormed }]
 
 /-- The cases of breaking a line: the break a command inserts is its
 buffer's line ending. -/
