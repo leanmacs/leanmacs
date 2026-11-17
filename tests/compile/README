@@ -1,6 +1,9 @@
-The fixture of contract-test's compile checks (lean/ContractTest.lean,
-compileChecks), which `mise run ffi-test` hands contract-test as its fourth
-argument. It must stay executable (mode 100755).
+The fixtures of contract-test's compile checks and its checks of the
+shipped modes (lean/ContractTest.lean, compileChecks and projectModeChecks),
+whose directory `mise run ffi-test` hands contract-test as its fourth
+argument. Every script must stay executable (mode 100755). None of the
+trees is a member of the repository's Cargo workspace or Lake package, and
+nothing here is ever built.
 
 - three-lines: prints `one`, waits for a file `go-1` in its working
   directory, prints `two`, waits for `go-2`, prints `three` on standard
@@ -10,3 +13,34 @@ argument. It must stay executable (mode 100755).
   once it has seen the line before it in the compilation buffer: the pause
   is the test's to end, not a timer's, so the check is deterministic. Shell
   builtins and `sleep` only.
+
+The checks of the shipped modes (cargo-mode, lake-mode and mise-mode,
+lean/Editor/Compile/Shipped.lean) copy the trees below into a temporary
+directory, with a copy of `cargo` shaped as its worktree (`cargo-wt`), and
+make each a repository for the git fixture (tests/workspaces/git). Every
+child they start gets `bin`, then tests/workspaces, then /usr/bin and /bin as
+its `PATH`, through its command's own environment, so the scripts in `bin`
+stand for the real tools, and no real cargo, lake, mise or git is run. Each
+script writes its canned output, which ends in a line feed, on one stream,
+so the compilation buffer's lines are in the order written; shell builtins
+only.
+
+- bin/cargo: `cargo build` writes `bin/cargo-build.txt` to standard error
+  and exits 101: rustc's error for line 4, column 18 of `src/main.rs`, as
+  cargo 1.98 prints it, with the `Compiling` line's path dropped. Anything
+  else exits 2.
+- bin/lake: `lake build` writes `bin/lake-build.txt` to standard output and
+  exits 1: Lean's error at `./Foo/Bar.lean:12:4`, column counted from 0.
+  Anything else exits 2.
+- bin/mise: `mise tasks ls --json` prints a JSON array of the tasks `build`
+  and `test`, each with the directory it runs in (`pwd -P`) as its `dir`;
+  `mise run <task>` with a file `bin/mise-run-<task>.txt` writes it to
+  standard error and exits 1 (`mise-run-test.txt` is rustc's error for the
+  nested crate, at `crate/src/main.rs:4:18`). Anything else exits 2.
+- cargo: a crate, `Cargo.toml` and `src/main.rs`, whose line 4 is
+  `    let x: i32 = "a";`.
+- lake: a Lake package, `lakefile.lean` and `Foo/Bar.lean`, whose line 12
+  is `    x`.
+- mise: a mise project, `mise.toml` with the tasks `build` and `test`, and
+  a crate inside it, `crate/Cargo.toml` and `crate/src/main.rs`, as
+  `cargo`'s.
