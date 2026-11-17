@@ -1,7 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Files
-import Editor.Fuzzy
 
 /-!
 # Buffers: switching a window to another buffer, listing them, closing one
@@ -22,9 +21,12 @@ checks compare the echo area with that function, never with a sentence.
 
 - **With a string first argument** (`switchCommand`) the command shows the
   buffer it names in the window it was called with: the buffer of exactly
-  that name, and otherwise the best of the open buffers' names the fuzzy
-  matcher answers for it (`Fuzzy.rank`, `Editor/Fuzzy.lean`). Nothing
-  matching is said (`noMatch`), and the window keeps its buffer. A window
+  that name, and otherwise the first of the open buffers' names, in the
+  prompt's order, that the completion style of the category `buffer`
+  matches it with (`matchByCategory`, `Editor/Api.lean`): the fuzzy
+  matcher's best (`Fuzzy.rank`, `Editor/Fuzzy.lean`) unless config chose
+  another style for `buffer`. Nothing matching is said (`noMatch`), and
+  the window keeps its buffer. A window
   that is the minibuffer's shows the buffer in the window the prompt was
   asked from (`Files.shownIn`), as the open command does.
 - **With anything else first** it asks, with a prompt labelled
@@ -41,10 +43,12 @@ checks compare the echo area with that function, never with a sentence.
   registering a source in `buffer`, and replaces them by registering one
   under the name `buffers`; a host that registered none lists the
   buffers.
-- **So a buffer is chosen by fuzzy match both ways.** A pattern typed and
-  accepted with nothing chosen answers the text, and the command takes the
-  best match; a key of the minibuffer that chooses a listed candidate
-  makes the answer exactly that candidate's name.
+- **So a buffer is chosen as the prompt lists it, both ways.** A pattern
+  typed and accepted with nothing chosen answers the text, and the command
+  takes the first open buffer the prompt lists for it, by the style the
+  listing was made with; a key of the minibuffer that chooses a listed
+  candidate makes the answer exactly that candidate's name. A candidate
+  config's source adds is no buffer's name, so it is passed over.
 - Where the prompt is refused, because one is open, the echo area says so
   (`notAsking`).
 
@@ -189,12 +193,18 @@ def beingSaved (name : String) : String :=
 def named (state : EditorState) : Array (BufferId × String) :=
   state.openBuffers.filterMap fun id => (state.buffer? id).map fun buffer => (id, buffer.name)
 
+/-- The open buffers of `state` and their names in the switch prompt's
+order: most recently used first, with `asking`, the asking window's buffer,
+last. -/
+def ordered (state : EditorState) (asking : BufferId) : Array (BufferId × String) :=
+  let all := named state
+  (all.filter (·.1 != asking)) ++ all.filter (·.1 == asking)
+
 /-- The switch prompt's candidates, as `state` is: the open buffers' names,
 most recently used first, with the name of `asking`, the asking window's
 buffer, last. -/
 def candidates (state : EditorState) (asking : BufferId) : Array String :=
-  let all := named state
-  ((all.filter (·.1 != asking)) ++ all.filter (·.1 == asking)).map (·.2)
+  (ordered state asking).map (·.2)
 
 /-- The completion source of the switch prompt's candidates (`candidates`),
 as the state is when it is asked, with the buffer of the view the query is
@@ -207,23 +217,27 @@ def source : Completion.Source :=
       let some target := state.target? query.view | return #[]
       return (candidates state target.window.buffer).map Completion.Candidate.ofText }
 
-/-- The open buffer `text` names, as `state` is: the one of exactly that
-name, and otherwise the best of the open buffers' names the fuzzy matcher
-answers for it; `none` when none matches. -/
-def resolve (state : EditorState) (text : String) : EditorM (Option BufferId) := do
-  let all := named state
+/-- The open buffer `text` names, as `state` is, asked from a window showing
+`asking`: the one of exactly that name, and otherwise the first of the
+open buffers' names, in the switch prompt's order (`ordered`), that the
+style of the category `buffer` matches it with (`matchByCategory`), so the
+first the prompt lists for it; `none` when none matches. -/
+def resolve (state : EditorState) (asking : BufferId) (text : String) : EditorM (Option BufferId) :=
+  do
+  let all := ordered state asking
   if let some (id, _) := all.find? (·.2 == text) then
     return some id
-  let ranked ← Fuzzy.rank text (all.map (·.2))
-  return (ranked[0]?.bind (all[·]?)).map (·.1)
+  let hits ← matchByCategory source.category text (all.map (·.2))
+  return (hits[0]?.bind (all[·.index]?)).map (·.1)
 
 /-- Shows the open buffer `text` names (`resolve`) in `view`, or, for the
 minibuffer's view, in the window its prompt was asked from
-(`Files.shownIn`). Nothing matching is said (`noMatch`), and the window
-keeps its buffer. -/
+(`Files.shownIn`), whose buffer is the asking one. Nothing matching is said
+(`noMatch`), and the window keeps its buffer. -/
 def switchTo (view : ViewId) (text : String) : EditorM Unit := do
   let state ← editorState
-  let some id ← resolve state text | message (noMatch text)
+  let some target := state.target? (Files.shownIn state view) | message (noMatch text)
+  let some id ← resolve state target.window.buffer text | message (noMatch text)
   let name := ((state.buffer? id).map (·.name)).getD text
   if let .error _← (Files.shownIn state view).show id then
     message (notShown name)

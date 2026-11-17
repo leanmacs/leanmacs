@@ -3526,7 +3526,8 @@ def registryChecks : List Check :=
         let keepingAll : Completion.Style := .keeping "fuzzy" fun _ _ => true
         let overridden : Config.Registry := shipped.replaceStyles .config #[keepingAll]
         let dropped := overridden.replaceStyles .config #[]
-        let unshipped : Config.Registry := ({} : Config.Registry).replaceStyles .config #[keepingAll]
+        let unshipped : Config.Registry :=
+          ({} : Config.Registry).replaceStyles .config #[keepingAll]
         let nameOf (registry : Config.Registry) (category : Option String) : String :=
           (registry.matching.styleFor category).name
         let hitsOf (registry : Config.Registry) : Array Completion.Hit :=
@@ -11100,9 +11101,10 @@ def stateRequests : List StateRequest :=
     .setCandidates { all := offered #["one", "two"] }, .chooseCandidate .next,
     .chooseCandidate .previous, .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }),
     .setWanted ⟨1⟩ none, .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames,
-    .themeNames, .categorySources "buffer", .loadTheme "second", .invoke asked, .quit, .reload,
-    .giveUp "no", .breakOff "far enough", .setRegister "a" { text := "a line\n", linewise := true },
-    .setScrollMargin 2, .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
+    .themeNames, .categorySources "buffer", .matchCandidates (some "buffer") "w" #["w"],
+    .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
+    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
+    .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
     .arrange ⟨0⟩ .promote, .arrange ⟨1⟩ (.exchange none), .arrange ⟨0⟩ .zoom, .arrange ⟨9⟩ .zoom,
     .arrange ⟨0⟩ (.mainCount true 1), .arrange ⟨1⟩ (.edge .left),
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .stack,
@@ -11736,6 +11738,15 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (names, after) := state.handle (.categorySources "x")
             names == #[] && after == state },
+    { name :=
+        "the handler knows no style: asked to match a text with a category's style, it answers no hit, asks the matcher nothing, and leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (hits, after) := state.handle (.matchCandidates (some "buffer") "w" #["w", "wq"])
+            hits == #[] && after == state },
     { name :=
         "the handler knows no registry: asked which themes are registered, it answers none and leaves the state as it was; asked to load a theme, it takes any name and keeps the latest until the loop takes it out"
       run :=
@@ -14573,6 +14584,31 @@ def dispatchStateChecks : List Check :=
             (program.runModel editorModel).1.toOption
           asks "buffer" == some (.finished #["buffers", "mine"], true) &&
             asks "other" == some (.finished #[], true) },
+    { name :=
+        "a command that asks for a text to be matched with a category's style is answered the hits of the style the loop was told for that category, and of the default for another category and for none, each run over the matcher; the state is as it was"
+      run :=
+        pure <|
+          let registered : Loop.Registered :=
+            {
+              matching :=
+                { default := Completion.Styles.fuzzy
+                  byCategory := fun category =>
+                    if category == "buffer" then some Completion.Styles.orderless else none } }
+          let candidates := #["wq", "edit", "rewrite", "w"]
+          let asks (category : Option String) : Option (Guarded (Array Completion.Hit) × Bool) :=
+            let program : EditorM (Guarded (Array Completion.Hit) × Bool) := do
+              let start ← EditorState.initial ⟨640, 480⟩
+              let (outcome, state) ←
+                (EditorState.ask (.matchCandidates category "w" candidates) :
+                        EditorM (Array Completion.Hit)).dispatched
+                    registered start
+              return (outcome, state == start)
+            (program.runModel editorModel).1.toOption
+          let orderless := styled Completion.Styles.orderless "w" candidates
+          let fuzzy := styled Completion.Styles.fuzzy "w" candidates
+          orderless != fuzzy && asks (some "buffer") == some (.finished orderless, true) &&
+            asks (some "other") == some (.finished fuzzy, true) &&
+            asks none == some (.finished fuzzy, true) },
     { name :=
         "a source asked by name that is refused refuses the asking command at the request, with nothing of the asking command run after it"
       run :=
@@ -21058,7 +21094,8 @@ def candidateChecks : List Check :=
               (candidatesOf asking).map (·.category) == some (some "other") &&
               candidatesOf typed == some (listing "w") &&
               (candidatesOf typed).map (·.listed.map (·.text)) == some #["zz", "w"] &&
-              cost "C-c 8 w" == cost "C-c p w" + 1 && cost "C-c a w" == cost "C-c p w" + 2 },
+              cost "C-c 8 w" == cost "C-c p w" + 1 &&
+              cost "C-c a w" == cost "C-c p w" + 2 },
     { name :=
         "after the step that asked for a prompt with candidates the listing is for the initial text, the empty one or one given, and nothing is chosen"
       run :=
@@ -24609,22 +24646,21 @@ def bufferCommandChecks : List Check :=
                     minibuffer.any (candidates.all.map (·.text)).contains)
             asked (exLine "b") && asked (presses "C-b b") },
     { name :=
-        "a pattern typed after b and accepted with nothing chosen shows the best match in the window: its status line names it and it is the most recently used; where more than one buffer matches, the one the fuzzy model ranks first"
+        "a pattern typed after b and accepted with nothing chosen shows the best match in the window: its status line names it and it is the most recently used; where more than one buffer matches, the one the fuzzy model ranks first over the names in the switch prompt's order, the window's own buffer last, so the first the prompt would list"
       run :=
         pure <|
-          match buffersOpen with
-          | none => false
-          | some opened =>
+          match buffersOpen, buffersOpen.bind (showing ·) with
+          | some opened, some shown =>
             let (switched, _) := fedTo opened (exLine "b nte")
-            let state := opened.loop.state
-            let names := state.openBuffers.filterMap fun id => (state.buffer? id).map (·.name)
+            let names := Buffers.candidates opened.loop.state shown.id
             let best := (FuzzyModel.rank "txt" names)[0]?.bind (names[·]?)
             let (several, _) := fedTo opened (exLine "b txt")
             shownName switched == some "note.txt" && statusOf switched == some (named "note.txt") &&
               switched.loop.state.recent[0]? == bufferNamed switched "note.txt" &&
               switched.loop.state.prompt == none &&
               best.isSome &&
-              shownName several == best },
+              shownName several == best
+          | _, _ => false },
     { name :=
         "a candidate chosen with the minibuffer's next command and accepted is the buffer shown"
       run :=
@@ -31686,6 +31722,28 @@ def tabCommandChecks : List Check :=
               exactOverLabel.frame.tabIndex == 1 &&
               [labelled, exact, fuzzy, labelOverNumber, exactOverLabel].all (·.prompt.isNone)
           | _, _, _, _, _ => false },
+    { name :=
+        "with orderless chosen for the category tab, a typed text that is no candidate, label or number selects the first tab the prompt lists for it: from tab 1, scratch 2, which the fuzzy matcher matches with no candidate, lists 2 scratch alone and selects tab 2"
+      run :=
+        pure <|
+          let handed : Loop.Keys Vim.Default.scheme :=
+            { tabHanded with
+              matching :=
+                { default := Completion.Styles.fuzzy
+                  byCategory := fun category =>
+                    if category == TabCommands.source.category then some Completion.Styles.orderless
+                    else none } }
+          let after (typed : String) : Option EvilDriver :=
+            (windowDriver 1 Layout.default (handed := handed)).map (evilFed · typed)
+          let typed := "C-w c C-w p C-w w s c r a t c h SPC 2"
+          match after typed, state (after (typed ++ " RET")) with
+          | some asking, some chosen =>
+            asking.loop.state.prompt.map (·.candidates.listed.map (·.text)) ==
+                some #["2 scratch"] &&
+              styled Completion.Styles.fuzzy "scratch 2" #["1 scratch", "2 scratch"] == #[] &&
+              chosen.frame.tabIndex == 1 &&
+              chosen.prompt.isNone
+          | _, _ => false },
     { name :=
         "tab-rename asks for a name, labelled Rename tab:, and names the tab of its window; an empty answer goes back to the generated label, its focused window's buffer's name"
       run :=

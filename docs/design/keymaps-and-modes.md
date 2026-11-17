@@ -2673,7 +2673,7 @@ table `edmacs` settled on (`tabKeys`, the table `tabCommands`):
 | `C-w p` | `tab-previous` | The previous tab, wrapping; with a count N, N tabs back, wrapping (Vim's `{count}gT`) |
 | `C-w c` | `tab-new` | A new tab right after this one, showing this window's buffer (Emacs's `tab-bar-new-tab-choice` default), brought into view |
 | `C-w &` | `tab-close` | Closes the tab and every window of it; the last tab is refused |
-| `C-w w` | `tab-switch` | Asks for a tab through the minibuffer, labelled `Tab: `, its candidates `"{n} {label}"`; an answer is a candidate exactly, then a tab's label, then a number, then the fuzzy matcher's best |
+| `C-w w` | `tab-switch` | Asks for a tab through the minibuffer, labelled `Tab: `, its candidates `"{n} {label}"`; an answer is a candidate exactly, then a tab's label, then a number, then the first candidate the style of the category `tab` matches it with, the first the prompt lists (the fuzzy matcher's best by default) |
 | `C-w 1` … `C-w 9` | `tab-select-1` … `tab-select-9` | The tab of that number, refused when there is none (tmux's `select-window -t :=n`) |
 
 - **`tab-rename` and `tab-move-right`, `tab-move-left` have no default
@@ -3471,7 +3471,9 @@ asked and what accepting gives).
     next from the last and previous from the first choose nothing. So the
     typed text is one stop of the round, as in Vim's wild menu.
   - The minibuffer's text is not changed by a choice. Accepting takes the
-    chosen candidate, and the typed text when nothing is chosen.
+    chosen candidate, and the typed text when nothing is chosen; a
+    command that takes a typed text as its best match resolves it as the
+    prompt listed it ("A prompt's matching styles", below).
   - A change of the text forgets the choice: the next scene lists again.
   - With nothing listed each changes nothing, and with no prompt open
     each says so, as accept and cancel do.
@@ -3612,6 +3614,33 @@ and orderless choose it.
   stays until the text changes.
 - **Ranges are carried, not drawn.** Each listed candidate holds its
   ranges (`Completion.Listed`); phase 4 draws them.
+- **A typed answer is resolved as it was listed.** Accepting with nothing
+  chosen answers the typed text (`Candidates.answer`), and `switch-buffer`
+  and `tab-switch` take a text that is no candidate, label or number as
+  their best match. They match it with `matchByCategory`
+  (`lean/Editor/Api.lean`): one state request,
+  `StateRequest.matchCandidates`, with the category, the text and the
+  candidates in the prompt's order, which the loop answers by running the
+  style it chooses for that category (`Loop.Registered.matching`, filled
+  from `Loop.Keys.matching`). So they take what the prompt lists first
+  for the text, under any style, and `b <pattern>` on the ex line does
+  the same. The request carries the category and the reply the hits,
+  plain data; the decision is the style's, which the listing made too.
+  - **Why not accept the first listed candidate instead.** The answer is
+    the typed text for every prompt, and the ex line, `open-file` and the
+    compile prompts take free text that a candidate must not replace.
+    Only the command knows its answer must name a candidate, and its own
+    rules come first (`tab-switch` takes a label or a number before a
+    match), so the command resolves, with the listing's style.
+  - **Under the fuzzy style** the hits are what `Fuzzy.rank` answered
+    before, with the one request. `switch-buffer` now matches over the
+    prompt's order, the window's own buffer last, so where the window's
+    buffer ties another for the best score the other is taken, as the
+    prompt lists it first.
+  - A candidate a config source adds to `switch-buffer` is no buffer's
+    name, so the first listed buffer is taken, passing it over. The
+    pure handler (`EditorState.handle`) answers no hit: it knows no
+    style.
 
 Pinned by `ModelTest.styleChecks` (the fuzzy style's order and spans, the
 orderless style's rule as a property over every short text and candidate
@@ -3623,7 +3652,11 @@ one category and the fuzzy style for the rest, through the loop; and the
 existing listing checks, criterion 1), `setupChecks`, `registryChecks`
 and `reloadChecks` (registration, the choice, the report),
 `ConfigTest.promptChecks` (criterion 3 through the headless host and the
-real elaborator, and a style config defines), `ConfigTest.shippedChecks`
+real elaborator, a style config defines, and a typed text of two
+components accepted in `switch-buffer` under orderless showing the first
+listed buffer), `tabCommandChecks` (the same of `tab-switch`, on the
+model), `dispatchStateChecks` and `stateRequestChecks`
+(`matchCandidates`), `ConfigTest.shippedChecks`
 (the shipped styles) and `ContractTest.styleFailures` (the contract on the
 real matcher). The fixtures `tests/headless/candidates`, `ex` and `tabs`
 are unchanged: criterion 1 on the executable, under the Vim scheme with
@@ -4064,7 +4097,7 @@ command an ex name runs is a step of its own.**
 | `q` | `quit` | Nothing | Quits the editor |
 | `wq` | `save-and-quit` | Nothing | Starts the save, and quits once it has ended |
 | `reload` | `reload-config` | Nothing | Reloads the config |
-| `b` | `switch-buffer` | Text | Shows the buffer the rest of the line names, exactly or by fuzzy match. With no argument, asks with the open buffers as candidates, by `switch-buffer`'s own rule |
+| `b` | `switch-buffer` | Text | Shows the buffer the rest of the line names, exactly or by the first match of the style of the category `buffer` (the fuzzy matcher's by default). With no argument, asks with the open buffers as candidates, by `switch-buffer`'s own rule |
 | `ls` | `list-buffers` | Nothing | Shows the buffer list, a text view of the open buffers, most recently used first, with `+` for unsaved changes |
 | `bd` | `close-buffer` | Text | Closes the buffer the rest of the line names, or the window's own: refused for a buffer of a file with unsaved changes and for a buffer with a save in flight, and every window that showed it shows the most recently used buffer left |
 | `compile` | `compile` | Text | Runs the rest of the line as `/bin/sh -c` in the buffer's workspace, into its compilation buffer ("The compile mode, as built"); with no argument, asks for the line |
@@ -4092,8 +4125,9 @@ Where they differ from Vim:
 - **`reload` is no Vim command**, nor are `compile`, `recompile`,
   `kill-compilation`, `next-error` and `previous-error`, which are
   Emacs's; Vim's `:cnext` and `:cprevious` are not bound.
-- **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
-  matches more than one buffer.
+- **`b <pattern>` takes the first match**, by the style of the category
+  `buffer` (the best fuzzy match by default), in the switch prompt's order.
+  Vim refuses a pattern that matches more than one buffer.
 - **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it
   cannot be saved.
 - **`bd` refuses a buffer with a save in flight**, until the save is

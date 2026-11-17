@@ -637,6 +637,14 @@ A command asks for a string without waiting for it
   - **a choice made for another text** than the one read is not taken:
     that can only be a command that changed the minibuffer and accepted in
     one step, and it gets the text.
+- **A typed answer is resolved as it was listed.** A command whose answer
+  is one of its candidates, and takes a typed text that is none of them
+  as the best match, matches it with `matchByCategory`: the style the
+  loop chooses for the prompt's category, the one the prompt was listed
+  with, over the candidates in the order the prompt holds them. So
+  accepting with nothing chosen gives what the first listed candidate
+  gives, whichever style config chose, and the command never asks the
+  matcher by another rule than the listing's.
 - **The answer's command runs after the accepting command has ended**, as
   a step of its own (`Editor/Loop.lean`). The loop gives up the
   minibuffer's markers and releases its text then too, by its rule for
@@ -1023,6 +1031,15 @@ with `collected`, and forgets what it has listed and chosen ("Prompts", in
 the module docs). Refused with `notOpen` when no prompt is open. -/
 def setCandidates (collected : Completion.Collected) : EditorM (Except PromptRefusal Unit) :=
   EditorState.ask (.setCandidates collected)
+
+/-- Which of `candidates` `text` matches, in order, each with the ranges
+that matched: the hits of the completion style the loop chooses for
+`category`, the one a prompt of that category is listed with ("Prompts", in
+the module docs). It is run inside this command, over the fuzzy port, and
+is not refused. -/
+def matchByCategory (category : String) (text : String) (candidates : Array String) :
+    EditorM (Array Completion.Hit) :=
+  EditorState.ask (.matchCandidates (some category) text candidates)
 
 /-- Moves the open prompt's choice by `step` through the candidates it has
 listed ("Prompts", in the module docs): from nothing chosen to the first or

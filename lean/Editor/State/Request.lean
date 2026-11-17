@@ -47,13 +47,15 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   which there runs the completion source registered under a name inside
   the asking command (`Editor/Completion.lean`), `categorySources`, which
   there is answered the names of the sources registered in a category,
-  and
+  `matchCandidates`, which there runs the completion style chosen for a
+  category (`Editor/Completion/Style.lean`) inside the asking command, and
   `displayRules`, which there is answered config's display rules
   (`Editor/DisplayRules.lean`). Here
   `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
   answered `none`, `exNames` and `themeNames` are answered no name,
   `runCommand` is answered `false` and runs nothing, `askSource` is answered
-  `none` and runs nothing, `categorySources` is answered no name, and
+  `none` and runs nothing, `categorySources` is answered no name,
+  `matchCandidates` is answered no hit and asks the matcher nothing, and
   `displayRules` is
   answered no rule: this handler knows no registry.
 - **A reply holds plain data too**, so no request is answered a command:
@@ -126,6 +128,14 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   candidates, which are plain data. Which sources a category has is asked
   by another, `categorySources`, whose reply is their names: plain data
   too, so no program crosses the request.
+- **A text is matched with a category's completion style by one
+  request**, `matchCandidates`, with the category, the text and the
+  candidates' texts. It is the loop's to act on: the style the loop
+  chooses for the category is run inside the asking command, over the
+  fuzzy port, and the reply is its hits (`Completion.Hit`). A command
+  that resolves a typed answer asks it, so the answer is resolved as the
+  prompt of that category listed it. The request carries the category and
+  the reply the hits, plain data, so no style crosses it.
 - **The editor is asked to quit by one request**, `quit`, which sets the
   state's flag and nothing else (`Editor/State.lean`, "Quit"). The handler
   does not judge whether the editor may quit: the command that asks
@@ -348,6 +358,10 @@ inductive StateRequest where
   /-- Which completion sources are registered in `category`, by name, in
   registration order. -/
   | categorySources (category : String)
+  /-- Which of `candidates` `text` matches, in order, with the completion
+  style the loop chooses for `category` (`none` for a prompt with no
+  category), as the prompt of that category lists them. -/
+  | matchCandidates (category : Option String) (text : String) (candidates : Array String)
   /-- Ask the editor to quit. -/
   | quit
   /-- Ask for the config to be reloaded. -/
@@ -454,6 +468,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .runCommand .. => Bool
   | .askSource .. => Option Completion.Answer
   | .categorySources _ => Array String
+  | .matchCandidates .. => Array Completion.Hit
   | .quit => Unit
   | .reload => Unit
   | .giveUp _ => Unit
@@ -559,6 +574,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .runCommand .., state => (false, state)
   | .askSource .., state => (none, state)
   | .categorySources _, state => (#[], state)
+  | .matchCandidates .., state => (#[], state)
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with reload := true })
   | .giveUp _, state => ((), state)

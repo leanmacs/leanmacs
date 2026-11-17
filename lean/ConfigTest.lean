@@ -2990,13 +2990,13 @@ def styleChunk (choices : List String) : String :=
     asks "other" "other"
 
 /-- A chunk whose `setup` chooses the orderless style for the category
-`buffer`, so `switch-buffer` lists its candidates in their own order, and
-registers the sources `defines` (lines of `setup`, each indented). -/
-def bufferStyleChunk (defines : List String) : String :=
+`buffer`, so `switch-buffer` lists its candidates in their own order,
+registers the sources `defines` (lines of `setup`, each indented), and
+registers `make`, which makes a buffer of each of `names`, in order. -/
+def bufferStyleChunk (defines : List String) (names : List String := ["alpha", "beta"]) : String :=
   "def setup : SetupM Unit := do\n  useStyleFor \"buffer\" \"orderless\"\n" ++
     "  command \"make\" do\n" ++
-    "    discard <| createBuffer \"alpha\"\n" ++
-    "    discard <| createBuffer \"beta\"\n" ++
+    String.join (names.map (s!"    discard <| createBuffer {·.quote}\n")) ++
     String.join (defines.map (s!"  {·}\n"))
 
 /-- Whether a status line of `lines` lists `fields` after the label
@@ -3293,6 +3293,24 @@ def promptChecks (context : Context) : List Check :=
             return listsAfter shipped Buffers.switchPrompt names &&
                 listsAfter added Buffers.switchPrompt (names ++ ["zz-extra"]) &&
                 listsAfter replaced Buffers.switchPrompt ["mine"] &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          { minibufferCompiled with
+            commands := Minibuffer.commands ++ Buffers.commands, sources := Buffers.sources } },
+    { name :=
+        "with config choosing orderless for buffer, a text of two components that is no buffer's name, typed into switch-buffer and accepted with nothing chosen, shows the first buffer the prompt lists for it, though the fuzzy matcher matches it with no name"
+      run :=
+        withHost context [("10-buffers.lean", bufferStyleChunk [] ["mars.txt", "main.rs"])]
+          (fun session => do
+            session.ask [.reload]
+            session.ask [.run "make"]
+            session.ask [.run Buffers.switchName]
+            unless ← Event.post (.commit "rs ma") do
+              return false
+            let typed ← session.sceneLines
+            session.pressKeys acceptKeys
+            let accepted ← session.sceneLines
+            return listsAfter typed Buffers.switchPrompt ["mars.txt", "main.rs"] &&
+                accepted.contains (statusOf 0 "mars.txt") &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           { minibufferCompiled with
             commands := Minibuffer.commands ++ Buffers.commands, sources := Buffers.sources } }]

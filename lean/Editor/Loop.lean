@@ -2058,6 +2058,7 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
   -- gives this one up if it asks for a write.
   let registered : Registered :=
     { keys.registered with
+      matching := keys.matching
       command := fun inside =>
         (keys.command? inside).map fun run call => do
           if (← run call).isSome then

@@ -1,5 +1,6 @@
 import Editor.Command
 import Editor.Completion
+import Editor.Completion.Styles
 import Editor.Highlight
 import Editor.Language
 import Editor.Mode
@@ -259,6 +260,16 @@ from the next command.
   filled from `Config.Registry.sourcesIn`), none for a category with none.
   The reply is names, so no program crosses it: `prompt` asks each by name
   with `askSource`.
+- **Matching a text with a category's style**
+  (`StateRequest.matchCandidates`) runs the style the loop was told for
+  the category (`Loop.Registered.matching`, `Completion.Matching.styleFor`:
+  the default for a category with none chosen and for none) over the text
+  and the candidates, before the rest of the asking command's program,
+  and the reply is its hits. A style is a program over the fuzzy port
+  alone, so its requests are guarded as the command's own are, and it
+  cannot be refused. The loop fills the styles from the ones it lists
+  prompts with (`Loop.Keys.matching`), so a command that resolves a typed
+  answer with it resolves it as the prompt listed it.
 
 Putting an action's program, or a command's, before the rest of the command
 makes the transformation recurse into a program that is no part of the one
@@ -397,6 +408,11 @@ structure Loop.Registered where
   (`StateRequest.categorySources`). None for a category no source is
   registered in. -/
   categorySources : String → Array String := fun _ => #[]
+  /-- The completion styles chosen by category, for a command that matches
+  a text as a prompt of a category lists it
+  (`StateRequest.matchCandidates`). The loop fills it from the styles it
+  lists prompts with (`Loop.Keys.matching`). -/
+  matching : Completion.Matching := Completion.Matching.standard
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -540,6 +556,9 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           pure (.error error)
   | state, .step (.state (.categorySources category)) next =>
     dispatched registered state (next (registered.categorySources category))
+  | state, .step (.state (.matchCandidates category text candidates)) next =>
+    dispatched registered state do
+      next (← ((registered.matching.styleFor category).hits text candidates).embedFuzzy)
   | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)
   | state, .step (.state (.breakOff reason)) _ => .done (.brokeOff reason, state)
   | state, .step (.state request) next =>
