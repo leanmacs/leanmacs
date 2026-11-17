@@ -114,21 +114,18 @@ impl Record {
     }
 
     /// Takes one input.
-    #[cfg_attr(not(target_os = "macos"), expect(dead_code, reason = "macOS only"))]
     pub fn push(&self, input: Input) {
         self.locked().push(input);
         self.changed.notify_all();
     }
 
     /// Everything reported so far.
-    #[cfg_attr(not(target_os = "macos"), expect(dead_code, reason = "macOS only"))]
     pub fn inputs(&self) -> Vec<Input> {
         self.locked().clone()
     }
 
     /// Waits until `ready` holds of what has been reported, or `limit` has
     /// passed, and returns what has been.
-    #[cfg_attr(not(target_os = "macos"), expect(dead_code, reason = "macOS only"))]
     pub fn wait(&self, limit: Duration, ready: impl Fn(&[Input]) -> bool) -> Vec<Input> {
         let deadline = Instant::now() + limit;
         let mut inputs = self.locked();
