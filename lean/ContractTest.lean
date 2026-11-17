@@ -8,11 +8,11 @@ import Editor.Display.Contract
 import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
-import Editor.File.Cases
 import Editor.Evil.TreeObjects
-import Editor.Indent
+import Editor.File.Cases
 import Editor.Fuzzy.Contract
 import Editor.Fuzzy.Real
+import Editor.Indent
 import Editor.InputScheme.Test
 import Editor.Job.Contract
 import Editor.Job.Fake
@@ -1835,6 +1835,24 @@ def syntaxTreeChecks : List Check :=
               match ← program.runWith handler with
               | .ok captures => capturedTexts text captures == #["zero", "one"]
               | .error _ => false },
+    { name :=
+        "an injection and a keep with a query of another grammar than the text's, and a language whose injections query is of another grammar than its highlights query, are refused as of the wrong grammar"
+      run :=
+        onRealSyntaxTree #["fn one() {}"] fun _ _ ids handler => do
+          let snapshot := SyntaxTreeContract.nth ids 0
+          let program : SyntaxTreeM Bool := do
+            SyntaxTree.attach snapshot "rust"
+            let json ← SyntaxTree.compile "json" "(number) @n"
+            let rust ← SyntaxTree.compile "rust" "(identifier) @id"
+            return (←
+                  SyntaxTreeContract.refusedWith .wrongGrammar (SyntaxTree.inject snapshot json)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .wrongGrammar
+                      (SyntaxTree.keep snapshot .indents json)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .wrongGrammar
+                      (SyntaxTree.injectLanguage snapshot "rust" rust #[none] (some json)))
+          return (← program.runWith handler) matches .ok true },
     { name :=
         "a highlight with a query of another grammar than its text's is refused as of the wrong grammar"
       run :=
