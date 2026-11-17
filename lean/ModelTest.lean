@@ -36912,7 +36912,9 @@ and is then refused; `edit-one` inserts `Z` at the start of `one`'s text;
 `make-unheld` makes an excerpt buffer `ex2` of a text no buffer holds and
 shows it; `insert-x` inserts `x` at the window's cursors; `one-changed` has
 `one` hold the file `one.txt`, at `excerptStamp`, and marks it changed on
-disk, the user not told; and `remove-one` removes `one`, which no window
+disk, the user not told; `edit-redo` inserts `x` at the start of the
+window's buffer and then redoes in it, saying `redo moved` unless the redo
+answered nothing; and `remove-one` removes `one`, which no window
 shows. -/
 def excerptRegistrations : Array Config.Registration :=
   #[{ name := "make-ex"
@@ -36961,6 +36963,13 @@ def excerptRegistrations : Array Config.Registration :=
           let some one ← findBuffer "one" | return
           discard <| one.attachFile "one.txt" excerptStamp .lf
           discard <| one.markChanged excerptStamp (some { excerptStamp with size := 15 }) false },
+    { name := "edit-redo"
+      action :=
+        .call fun call => do
+          discard <| call.target.window.buffer.insertAt 0 "x"
+          let answer ← call.target.window.buffer.redo
+          unless answer matches .ok none do
+            message "redo moved" },
     { name := "remove-one"
       action :=
         .call fun _ => do
@@ -37036,6 +37045,35 @@ def excerptBufferChecks : List Check :=
               undone.loop.state.echo == Evil.sourceMovedSays "one" &&
               excerptRead undone "one" == some "Zone\ntXwo\nthree\n" &&
               excerptRead undone "ex" == some "tXwo\n\nalpha\n" },
+    { name :=
+        "C-r in the excerpt buffer after the source was edited in its own buffer since the undo is refused, saying so, and changes nothing"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let moved := excerptInvoked (evilFed typed "u") "edit-one"
+            let redone := evilFed moved "C-r"
+            excerptRead moved "one" == some "Zone\ntwo\nthree\n" &&
+              redone.loop.state.echo == Evil.sourceMovedSays "one" &&
+              excerptRead redone "one" == some "Zone\ntwo\nthree\n" &&
+              excerptRead redone "ex" == some "two\n\nalpha\n" },
+    { name :=
+        "a redo in the excerpt buffer while an edit through it is pending answers nothing and keeps the edit, which the next u takes back"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let pending := excerptInvoked (evilFed typed "u") "edit-redo"
+            let undone := evilFed pending "u"
+            pending.loop.state.echo.isEmpty &&
+              excerptRead pending "one" == some "one\nxtwo\nthree\n" &&
+              excerptRead pending "ex" == some "xtwo\n\nalpha\n" &&
+              excerptRead undone "one" == some "one\ntwo\nthree\n" &&
+              excerptRead undone "ex" == some "two\n\nalpha\n" },
     { name := "u in the source buffer takes back an edit made through the excerpt buffer"
       run :=
         pure <|
