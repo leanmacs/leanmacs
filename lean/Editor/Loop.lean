@@ -513,12 +513,13 @@ comparing the state from before the command with the state it left:
 
 - **A window's markers.** Each marker of a window of the state before that
   no window of the state after uses is given up (`TextId.unmark`): the
-  window was closed, or shown another buffer.
-- **A float's anchor marker.** The anchor marker of each float of the state
-  before (`Floating.Anchor.position`) that no float of the state after
-  holds is given up: the float was closed, or its anchor went and a pinned
-  float was anchored to the frame (`Editor/State.lean`, "A floating
-  window").
+  window was closed, by itself or with its tab, or shown another buffer.
+- **A float's anchor marker.** The anchor marker of each float of every
+  tab of the state before (`Floating.Anchor.position`) that no float of any
+  tab of the state after holds is given up: the float was closed, its tab
+  was closed, or its anchor went and a pinned float was anchored to the
+  frame (`Editor/State.lean`, "A floating window"). Every tab's floats are
+  read, so selecting another tab gives up none of the tab left.
 - **A buffer's text.** The text of each buffer of the state before whose
   slot is empty in the state after is released, unless a buffer that is
   left is over the same text. The markers go first, so a window closed with

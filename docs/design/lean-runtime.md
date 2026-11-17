@@ -500,14 +500,27 @@ elaborator.
   master-and-stack share above 100, an edge above 100 or a side given
   twice, at any depth (`Layout.problem?`), rejects the reload. It is
   chosen as a value, not by a registered name as a theme is, until a
-  command switches layouts by name.
+  command switches layouts by name. With tabs (window management's phase
+  5) the frame's own fields are the tab in view's, so a reload that
+  changes config's layout rearranges the tab in view, losing none of its
+  windows, and a new tab takes config's layout; the other tabs keep the
+  layouts they had, and selecting one never applies config's layout to
+  it, since `Frame.chosen` is frame-wide. Naming a tab's layout in config
+  is deferred.
+- **The tab bar is config's**: `tabBar .never` or `tabBar .always` chooses
+  when the tab bar is shown (window management's phase 5,
+  `lean/Editor/TabBar.lean`). It is the reducer's state (`State.tabBar`),
+  set at every install, so a config that chooses none has the editor's
+  own, shown while there are two tabs or more, and the host hands it to
+  the loop for each step (`Headless.keys`, `Loop.Keys.tabBar`), whose
+  publish sets it on the state (`EditorState.tabBarShown`). Choosing it
+  twice rejects the reload.
 - **Display rules are config's**: `displayRule { mode := some "notes",
   target := .edge .left }` adds a rule, in order, that says where a buffer
   a command makes is shown (window management's phase 3,
   `lean/Editor/DisplayRules.lean`). At install each rule is checked against
   the layout config chose (`DisplayTarget.missing?`): a rule whose target
-  does not exist, a new tab, which is not built yet, or an edge the
-  layout lacks, is left out, its sentence is in the report
+  does not exist, an edge the layout lacks, is left out, its sentence is in the report
   (`Report.unusableRules`, a headless `rule:` line) and the echo area says
   it after an unknown theme's and the segments', as an unknown theme is
   reported; the config is installed without it. The rest are kept in the

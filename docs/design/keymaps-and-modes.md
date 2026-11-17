@@ -2436,19 +2436,19 @@ table `windowCommands`):
 |---|---|---|
 | `C-w s`, `C-w S`, `C-w C-s` | `window-split` | `CTRL-W s` |
 | `C-w v`, `C-w C-v` | `window-split-vertically` | `CTRL-W v` |
-| `C-w C-n` | `window-new` | `CTRL-W n` (`C-w n` is left for tab pages) |
-| `C-w C-c` | `window-close` | `CTRL-W c` (`C-w c` is left for tab pages) |
+| `C-w C-n` | `window-new` | `CTRL-W n` (`C-w n` is tmux's tab key) |
+| `C-w C-c` | `window-close` | `CTRL-W c` (`C-w c` is tmux's tab key) |
 | `C-w q`, `C-w C-q` | `window-quit` | `CTRL-W q` |
 | `C-w o`, `C-w C-o` | `window-only` | `CTRL-W o` |
 | `C-w h`, `C-w C-h`, `C-w <ArrowLeft>`, `C-w <Backspace>` | `window-focus-left` | `CTRL-W h` |
 | `C-w j`, `C-w C-j`, `C-w <ArrowDown>` | `window-focus-down` | `CTRL-W j` |
 | `C-w k`, `C-w C-k`, `C-w <ArrowUp>` | `window-focus-up` | `CTRL-W k` |
 | `C-w l`, `C-w C-l`, `C-w <ArrowRight>` | `window-focus-right` | `CTRL-W l` |
-| `C-w C-w` | `window-focus-next` | `CTRL-W w` (`C-w w` is left for tab pages) |
+| `C-w C-w` | `window-focus-next` | `CTRL-W w` (`C-w w` is tmux's tab key) |
 | `C-w W` | `window-focus-previous` | `CTRL-W W` |
 | `C-w t`, `C-w C-t` | `window-focus-top` | `CTRL-W t` |
 | `C-w b`, `C-w C-b` | `window-focus-bottom` | `CTRL-W b` |
-| `C-w C-p` | `window-focus-last` | `CTRL-W p` (`C-w p` is left for tab pages) |
+| `C-w C-p` | `window-focus-last` | `CTRL-W p` (`C-w p` is tmux's tab key) |
 | `C-w x`, `C-w C-x` | `window-exchange` | `CTRL-W x` |
 | `C-w r`, `C-w C-r` | `window-rotate` | `CTRL-W r` |
 | `C-w R` | `window-rotate-back` | `CTRL-W R` |
@@ -2461,10 +2461,9 @@ table `windowCommands`):
 | `C-w H`, `C-w J`, `C-w K`, `C-w L` | `window-edge-left`, `window-edge-bottom`, `window-edge-top`, `window-edge-right` | `CTRL-W H`: "Move the current window to be at the far left, using the full height of the screen", and `J`, `K`, `L` the same at the bottom, the top and the right. Here the window is docked at that edge of an edge layout, which is the far side at the full extent of the tiled area (window management's phase 3) |
 | `C-w F` | `window-float` | Displaces `CTRL-W F` (split and edit the file under the cursor at its line number), which is not built. The capital of the family that moves a window (`H J K L`), and the letter is a mnemonic; xmonad's `sink` (`mod-t`) is the prior art for moving a float back into the tiles (window management's phase 4) |
 
-- **`C-w n`, `C-w p`, `C-w c` and `C-w w` are left unbound**, so tab pages
-  (window management's phase 5) only add rows: until then each resets and
-  runs nothing. The Vim commands they displace keep their control
-  spellings, as `edmacs` did.
+- **`C-w n`, `C-w p`, `C-w c` and `C-w w` are tmux's tab keys**
+  (`tabKeys`, "Tab commands as built", below). The Vim commands they
+  displace keep their control spellings, as `edmacs` did.
 - **Normal state only, by default.** Insert state's `C-w` is Vim's word
   delete ("Insert state"); a config that binds the table with `bindKey`
   has the commands in every state ("Extending from config"). The visual
@@ -2554,6 +2553,61 @@ reads no `winheight` or `winwidth`; `equalalways` balances every window,
 where Vim leaves larger ones alone; and focus by direction measures from
 the window's top-left corner, not the cursor ("Open questions").
 
+### Tab commands as built
+
+Status: built, by window management's phase 5
+(`lean/Editor/TabCommands.lean`, `lean/Editor/TabCommands/Compiled.lean`;
+pinned by `tabCommandChecks`, and over the recorder by
+`tests/headless/tabs`).
+
+A tab is a whole arrangement of windows, as a tmux window is
+([text-and-display.md](text-and-display.md), "Views as built", "Tabs").
+The tab commands open, close, select, rename and move tabs over the editor
+API (`ViewId.newTab`, `changeTab`). **Each acts on the tab of its call's
+window** (`TabCommands.tabOf`), never on the tab in view, as the window
+commands act on their call's window, so a config that runs `tab-close` on
+a hidden tab's window closes that tab; the minibuffer's view, which a
+prompt's continuation may be called with, is the window of no tab, and
+there it is the tab in view. Each reads a count from its call's first
+`.nat` argument and gives up with what its refusal says, so
+`tab-close: the last tab cannot be closed` and
+`tab-select-5: there is no tab 5`. They are registered for the owner
+`compiled` by both hosts. Tabs are numbered from 1.
+
+The Vim scheme binds them under `C-w` in normal state with tmux's keys, the
+table `edmacs` settled on (`tabKeys`, the table `tabCommands`):
+
+| Keys (normal state) | Command | What it does |
+|---|---|---|
+| `C-w n` | `tab-next` | The next tab, wrapping; with a count N, tab N (Vim's `{count}gt`) |
+| `C-w p` | `tab-previous` | The previous tab, wrapping; with a count N, N tabs back, wrapping (Vim's `{count}gT`) |
+| `C-w c` | `tab-new` | A new tab right after this one, showing this window's buffer (Emacs's `tab-bar-new-tab-choice` default), brought into view |
+| `C-w &` | `tab-close` | Closes the tab and every window of it; the last tab is refused |
+| `C-w w` | `tab-switch` | Asks for a tab through the minibuffer, labelled `Tab: `, its candidates `"{n} {label}"`; an answer is a candidate exactly, then a tab's label, then a number, then the fuzzy matcher's best |
+| `C-w 1` … `C-w 9` | `tab-select-1` … `tab-select-9` | The tab of that number, refused when there is none (tmux's `select-window -t :=n`) |
+
+- **`tab-rename` and `tab-move-right`, `tab-move-left` have no default
+  key**, as the owner chose; a config binds them (`bindKey "C-c r"
+  "tab-rename"`). `tab-rename` with a string names the tab, an empty one
+  going back to the generated label; otherwise it asks, labelled
+  `Rename tab: `, with the name given as the initial text. The moves move
+  the tab one place, or by the count, clamped at the ends.
+- **A digit after `C-w` is a key, not a count**: binding `C-w 1` to
+  `C-w 9` settles phase 2's deferred count after `CTRL-W` for good. A
+  digit at the start of a sequence is still a count ("Counts").
+- **A tab's label** is the name it was given, or its focused window's
+  buffer's name, the selected view's for the tab in view, so an open
+  prompt does not relabel it: Vim's tab label and Emacs's
+  `tab-bar-tab-name-current`.
+- **The tab in view does not change while a prompt is open**
+  (`promptOpen`), so the prompt's asker stays a window of the tab in view.
+- **Recorded departures and deferrals**: `:close` on a tab's last window
+  does not close the tab (the last window is refused with `onlyWindow`);
+  `C-w T`, `gt`, `gT` on their Vim keys and the ex names `:tabnew`,
+  `:tabclose`, `:tabnext`, `:tabprevious` and `:tabmove` are not built;
+  nor is moving a window to another tab, or selecting a tab by clicking
+  its chip in the tab bar.
+
 ### Default bindings
 
 `Vim.Default` holds the scheme's default keys as data: tables of key string
@@ -2584,6 +2638,7 @@ Which names have something behind them:
 | `keyboard-quit` | Built and registered (`Shell.commands`): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
 | The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
+| The tab commands `tabKeys` names: `tab-next`, `tab-previous`, `tab-new`, `tab-close`, `tab-switch`, `tab-select-1` … `tab-select-9`; and `tab-rename`, `tab-move-right`, `tab-move-left`, with no key | Built and registered (`TabCommands.commands`, `lean/Editor/TabCommands.lean`; "Tab commands as built") |
 | `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (`Evil.commands`, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
@@ -2598,6 +2653,7 @@ Which names have something behind them:
 | `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
 | `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
 | `windowCommands` | `windowKeys` as normal state's table, each key running its window command, which changes no text and enters no state: the table under "Window commands as built", `C-w H`, `J`, `K` and `L` among them (window management's phase 3), and `C-w F` (phase 4). It is not in normal state's pending keymaps, so `d C-w s` resets |
+| `tabCommands` | `tabKeys` as normal state's table, tmux's tab keys under `C-w`, each running its tab command, which changes no text and enters no state: the table under "Tab commands as built" (window management's phase 5) |
 
 The run tables (`StateRecord.runs`), which say what a command name is
 completed as in a state, for a key bound to the name and a menu item that
@@ -2611,7 +2667,7 @@ names it ("So a command enters no state: a key does"):
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
 |---|---|---|---|---|
-| `normal`, the initial state | `normalCommands`, `windowCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | |
+| `normal`, the initial state | `normalCommands`, `windowCommands`, `tabCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | |
 | `insert` | `insertCommands` | Bar | Exclusive | Typing is text |
 | `visual` | `visualCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | Operators act on the selection |
 | `visual-line` | `visualLineCommands`, `scrollCommands`, `operators`, `motions` | Block | Line | Operators act on the selection |
@@ -3137,6 +3193,11 @@ what accepting gives).
   own keys in its command line. A window system may report Shift and Tab
   under another name than `S-TAB`; that has not been checked on a window,
   and `C-p` is bound beside it.
+- **The tab commands ask through it too** (window management's phase 5,
+  "Tab commands as built"): `tab-switch` asks labelled `Tab: ` with a
+  candidate `"{n} {label}"` for every tab, in order, so `C-w w`, a number
+  and `<Enter>` select that tab; `tab-rename` asks labelled `Rename tab: `
+  with the tab's name as the initial text, and no candidates.
 - **Set aside**: putting the chosen candidate's text into the minibuffer;
   a limit on how many candidates the scene lists, or a window of them
   round the choice, which a long list wants; a popup or a view of their
@@ -3532,9 +3593,10 @@ which run the executable on a real file.
   `setup` that binds one ex name twice is rejected. A reload replaces
   config's ex bindings and never the compiled ones.
 - Built: the window commands in every state, with one line that binds the
-  Vim scheme's own `C-w` table (`Vim.Default.windowKeys`, a key string and
-  a command name each): `for (keys, name) in Vim.Default.windowKeys do
-  bindKey keys name`. That is `edmacs`'s layout. A `bindKey` binding holds
+  Vim scheme's own `C-w` tables (`Vim.Default.windowKeys` and
+  `Vim.Default.tabKeys`, a key string and a command name each):
+  `for (keys, name) in Vim.Default.windowKeys ++ Vim.Default.tabKeys do
+  bindKey keys name`. That is `edmacs`'s layout, tabs included. A `bindKey` binding holds
   in every Vim state, and its `C-w` prefix shadows insert state's own
   `C-w`, the word delete ("Which keymaps a key is looked up in"), so `C-w l`
   focuses the window on the right without leaving insert state. A config
@@ -3557,6 +3619,15 @@ which run the executable on a real file.
   out at install, and the echo area says so,
   `reload: display rule 1 is left out: the layout has no right edge`, as an
   unknown theme is said; the rest of the config is installed.
+- Built: tabs (window management's phase 5). `setup` chooses when the tab
+  bar is shown with `tabBar .never`, `tabBar .always`, or none for while
+  there are two tabs or more; choosing it twice is refused. A display rule
+  may send a buffer to a new tab with `target := .newTab`, brought into
+  view when the rule's `focus` says so and opened behind it otherwise. The
+  tab commands with no default key are bound by name:
+  `bindKey "C-c r" "tab-rename"`, `bindKey "C-c m" "tab-move-right"`.
+  Config's `layout` rearranges the tab in view when a reload changes it,
+  and is the layout a new tab takes.
 - Built: the float target (window management's phase 4). A rule may send
   a buffer to a new float centred in the frame, with `target := .float`,
   of 60 by 50 percent of the tiled area; `.float { width := 80, height :=

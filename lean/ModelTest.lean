@@ -202,6 +202,17 @@ master-and-stack, focus by direction under the three layouts, the refusals
 in the echo area, and a config's `C-w` keys reached in insert state while
 one that binds none keeps the word delete.
 
+Tabs (`Editor/State.lean`, "Tabs") are checked on the state's model
+(`tabChecks`): a new tab, selecting, closing, renaming and moving one, the
+refusals, a tab left closing its transient floats, focusing and showing a
+buffer in a hidden tab's window, and config's layout rearranging the tab in
+view alone. The tab commands (`Editor/TabCommands.lean`) are checked by
+key under the Vim scheme that ships (`tabCommandChecks`): tmux's keys under
+`C-w`, the prompts of `tab-switch` and `tab-rename`, each command acting on
+the tab of its call's window, and a publish's layout reaching the tab in
+view alone. The tab bar (`Editor/TabBar.lean`) is checked by `tabBarChecks`:
+its line, its strip, and the view a publish draws it in.
+
 The command loop (`Editor/Loop.lean`) is checked on the editor's models
 (`loopChecks`): events fed to `Loop.step` one by one, the state each leaves
 and the scenes the display model records. Among them is what the loop does

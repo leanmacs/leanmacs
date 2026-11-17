@@ -37,12 +37,14 @@ a scene of it after each.
   in every scene, the buffer it shows, its scroll position as an anchor
   marker of the buffer's text, and its selections as one selection marker
   of that text, whose ranges are its cursors.
-- **The frame** (`Frame`) is the one window of the platform: its size, the
-  editor's windows as an ordered list (`Frame.windows`), the windows docked
-  at an edge (`Frame.docked`) and the floating windows (`Frame.floats`),
-  the layout that arranges the first two (`Frame.layout`,
-  `Editor/Layout.lean`), the window that is focused, and whether the frame
-  has the keyboard focus.
+- **The frame** (`Frame`) is the one window of the platform: its size,
+  whether it has the keyboard focus, and its tabs (`Tab`, "Tabs", below),
+  each a whole arrangement of windows. The tab in view is the frame's own
+  fields: the editor's windows as an ordered list (`Frame.windows`), the
+  windows docked at an edge (`Frame.docked`) and the floating windows
+  (`Frame.floats`), the layout that arranges the first two
+  (`Frame.layout`, `Editor/Layout.lean`), and the window that is
+  focused.
 
 ## The window list, the layout and their invariants
 

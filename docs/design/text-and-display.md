@@ -1425,7 +1425,11 @@ built"). Where a buffer a command makes is shown is config's: display
 rules, matched in order on the buffer's modes, its name and the command
 that opened it, send it to the focused window, main, the stack, an edge
 or a float, and by default to the stack, so main keeps the buffer being
-edited. A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
+edited. The frame holds tabs, each a whole arrangement of windows of its
+own, its layout and its focus, as a tmux window is, over the buffers of
+the one editor; with two tabs or more a tab bar lists them in a strip
+above the minibuffer's, a text view over generated text, as the buffer
+list is. A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
 exists) are part of the data model, and operations that would break one
 return a typed refusal.
 
@@ -1661,8 +1665,9 @@ echo area, the preedit, and the prompt that is open, if one is.
   split of that window would, so under master-and-stack the stack grows and
   main is untouched and under manual splits the last tile is split along
   rows; `edge side` docks it after that side's windows; `float anchor
-  share pinned` puts it on top of the floats (below). The focus stays.
-  Phase 5 adds a new tab as a spot.
+  share pinned` puts it on top of the floats (below); `tab` makes it the
+  only window of a new tab after the one in view, under config's layout
+  (below, "Tabs"). The focus stays.
 - **Display rules say where a buffer a command makes is shown**
   (`lean/Editor/DisplayRules.lean`, `EditorState.displaying`,
   `BufferId.display`; window management's phase 3, decided 2026-11-16).
@@ -1683,8 +1688,12 @@ echo area, the preedit, and the prompt that is open, if one is.
   - The focused window, asked from the minibuffer's view, is the window
     the prompt was asked from, tiled, docked or floating
     (`EditorState.shownIn`). An edge the layout lacks goes to the stack,
-    and so do tabs until phase 5, though install keeps config from naming
-    either. A float target opens a float anchored to the frame, centred in
+    though install keeps config from naming it. A new-tab target opens the
+    buffer in the only window of a new tab after the one in view, brought
+    into view when the rule's focus says so and opened behind it otherwise,
+    as tmux's `new-window -d` (window management's phase 5); the window
+    that shows the buffer already is looked for in the tab in view only,
+    as Emacs looks in the selected frame. A float target opens a float anchored to the frame, centred in
     the tiled area, of the rule's share, transient unless the rule pins
     it (`.float`, `.float { width := 80, height := 70 }`,
     `.float (pinned := true)`; window management's phase 4).
@@ -1703,9 +1712,60 @@ echo area, the preedit, and the prompt that is open, if one is.
 - **The tiled area is the frame above the minibuffer's strip**
   (`EditorState.tiled`): the strip is the frame's bottom `message` height,
   `text + message` while a prompt is open, or the whole frame when that is
-  shorter. `EditorState.rects` is the layout's rectangles in the tiled
+  shorter. While the tab bar is shown its strip is cut off the tiled area's
+  bottom too. `EditorState.rects` is the layout's rectangles in the tiled
   area, then the floats' in stacking order, then the minibuffer's view in
   the strip while a prompt is open.
+- **Tabs** (window management's phase 5, decided 2026-11-17;
+  `lean/Editor/State.lean`, "Tabs"; `lean/Editor/TabBar.lean`).
+  - **A tab is a whole arrangement** (`Tab`): its tiled list, its docked
+    windows, its floats, its layout and the one a zoom returns to, its
+    focus, its last focused window and the name it was given, if any.
+    Buffers are the editor's, shared by every tab, and
+    `EditorState.windows` holds every window of every tab.
+  - **The frame extends the tab in view, as a zipper** (`Frame extends
+    Tab`, `Frame.tabsBefore`, `Frame.tabsAfter`), as xmonad's `StackSet`
+    keeps a current workspace and the hidden ones. Every read of the
+    frame's windows, focus and layout is of the tab in view, and so is
+    every window operation; what stays frame-wide is the frame's size,
+    focus, fullscreen and insets, and the layout config chose
+    (`Frame.chosen`).
+  - **One request changes them** (`StateRequest.tab`, `TabChange`:
+    select, close, rename, move), refused with `onlyTab` for the last tab,
+    `noSuchTab`, and `promptOpen` for changing the tab in view while a
+    prompt is open, so the prompt's asker stays shown. Closing a tab closes
+    every window of it, whose markers the loop gives up; its buffers stay.
+    A new tab is a spot of `openWindow` (`WindowSpot.tab`), right after
+    the tab in view.
+  - **`focusWindow` and `showBuffer` reach a hidden tab's windows**:
+    focusing one brings its tab into view, as Vim's `win_gotoid` does, so a
+    display rule's focus reaches a new tab; showing a buffer in one runs
+    inside that tab, which `close-buffer` uses for a buffer shown only
+    there. The other window operations stay with the tab in view.
+  - **Selecting another tab closes the transient floats of the tab left**,
+    phase 4's rule that a transient float closes when it loses the focus;
+    pinned ones stay with their tab, and the loop keeps the anchor markers
+    of every tab's floats.
+  - **`wellFormed` is stated over every tab**: each tab's tiled list is
+    not empty and its layouts fit it, its docked windows' sides are edges
+    of its layout, its floats are anchored to its own windows, a hidden
+    tab's focus is one of its windows, and no window is in two tabs.
+  - **Config's layout rearranges the tab in view** when a reload changes
+    it, and is the layout a new tab takes; the other tabs keep theirs, and
+    selecting one never applies config's layout to it.
+  - **The tab bar** is a strip one text row tall cut off the tiled area
+    directly above the minibuffer's (`EditorState.tabBarRect?`), tmux's
+    `status-position bottom`: at the top it would sit under the title bar,
+    whose height Lean knows only in points. Floats stay out of it. It is
+    shown while there are two tabs or more, or always, or never, as config
+    chooses (`tabBar`). Its view is a text the state keeps for the
+    editor's life (`EditorState.tabBar`), its line the tabs' chips,
+    `" {n} {label} "` joined by a space, each in `tab-bar` and the tab in
+    view's in `tab-bar.selected`; its view id is taken once and is no
+    window's, so it is not focusable, takes no key and is in no buffer
+    list. A tab's label is its name, or its focused window's buffer's.
+    Selecting a tab by clicking its chip is deferred: tabs are
+    keyboard-only.
 - **The floating layer** (window management's phase 4, decided
   2026-11-17; `lean/Editor/Floating.lean`, `lean/Editor/State.lean`, "A
   floating window").
@@ -1714,7 +1774,8 @@ echo area, the preedit, and the prompt that is open, if one is.
     operation indexes the tiled list. The list is in stacking order, the
     first lowest and the last on top, and `Frame.all` is the tiles, the
     docked windows, then the floats, so cycling and `C-w b` reach them.
-    Phase 5 moves `floats` into a tab with `windows` and `docked`.
+    Phase 5 moved `floats` into a tab with `windows` and `docked`
+    (`Tab`), and a tab left closes its transient floats.
   - **An anchor and a share.** A float is placed against the frame, a
     window, or a position of a window's buffer, an anchor marker of its
     text (`Floating.Anchor`). An anchor window is a tiled or docked window,
@@ -1952,7 +2013,7 @@ The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
 | Field | What it is |
 |---|---|
 | `size` | The frame's size, in physical pixels |
-| `views` | The views, in drawing order |
+| `views` | The views, in drawing order: the windows', then the tab bar's while it is shown, the one view that is no window's (window management's phase 5) |
 | `focused` | The view with the keyboard focus, if any |
 | `echo` | The echo area's text |
 | `echoPadding` | How far the echo is inset from the frame's left and right edges, in whole points, when layout draws it in the bottom row: the bottom row's inset (`EditorState.bottomInset`), the frame padding and at least the window's corner clearance outside fullscreen. 0 by default |
