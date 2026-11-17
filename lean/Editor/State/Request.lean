@@ -233,6 +233,8 @@ inductive StateRequest where
   | tellChanged (id : BufferId)
   /-- Make the buffer `id` read-only to editing commands, or not. -/
   | setReadOnly (id : BufferId) (on : Bool)
+  /-- Set the spans of the buffer `id`, in place of those it had. -/
+  | setSpans (id : BufferId) (spans : Array Decoration)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
   /-- Whether auto-reload is in effect: a command's choice, or else config's
@@ -338,6 +340,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .markChanged .. => Except BufferRefusal Unit
   | .tellChanged _ => Except BufferRefusal Unit
   | .setReadOnly .. => Except BufferRefusal Unit
+  | .setSpans .. => Except BufferRefusal Unit
   | .setAutoReload _ => Unit
   | .autoReloadMode => Bool
   | .unfollow _ => Unit
@@ -411,6 +414,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .markChanged id stamp found told, state => state.markChanged id stamp found told
   | .tellChanged id, state => state.tellChanged id
   | .setReadOnly id on, state => state.setReadOnly id on
+  | .setSpans id spans, state => state.setSpans id spans
   | .setAutoReload on, state => ((), { state with autoReload := some on })
   -- Config's setting is the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, a choice no command made is off.

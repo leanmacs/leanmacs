@@ -737,6 +737,14 @@ buffer there is none of. -/
 def BufferId.setReadOnly (id : BufferId) (on : Bool) : EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setReadOnly id on)
 
+/-- Sets the spans of the buffer `id`, byte ranges of its text each with a
+face, which every view of it draws under the last search's matches
+(`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a buffer
+there is none of. -/
+def BufferId.setSpans (id : BufferId) (spans : Array Decoration) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setSpans id spans)
+
 /-- Runs `action` with the buffer `id` writable, as Emacs's
 `inhibit-read-only` does, for the command that owns a read-only buffer: a
 buffer that is read-only is made writable, `action` runs, and the buffer is

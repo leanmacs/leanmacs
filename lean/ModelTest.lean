@@ -8189,7 +8189,8 @@ def stateRequests : List StateRequest :=
   [.read, .addBuffer "new" ⟨3⟩ (UndoTree.new ⟨3⟩ 0), .addBuffer "other" ⟨3⟩ (UndoTree.new ⟨3⟩ 0),
     .removeBuffer ⟨2⟩, .removeBuffer ⟨1⟩, .removeBuffer ⟨9⟩, .setHistory ⟨0⟩ (UndoTree.new ⟨0⟩ 4),
     .setHistory ⟨0⟩ (UndoTree.new ⟨1⟩ 0), .setValue ⟨0⟩ "count" (.nat 1),
-    .setValue ⟨9⟩ "count" .null, .setMajorMode ⟨0⟩ "listing", .setMajorMode ⟨9⟩ "listing",
+    .setValue ⟨9⟩ "count" .null, .setSpans ⟨0⟩ #[{ start := 0, stop := 1, face := ⟨"a"⟩ }],
+    .setSpans ⟨9⟩ #[], .setMajorMode ⟨0⟩ "listing", .setMajorMode ⟨9⟩ "listing",
     .addMinorMode ⟨1⟩ "one", .removeMinorMode ⟨1⟩ "one", .split ⟨0⟩ .rows (marker 0 8) (marker 0 9),
     .split ⟨1⟩ .columns (marker 1 8) (marker 1 9), .split ⟨0⟩ .rows (marker 1 8) (marker 0 9),
     .split ⟨9⟩ .rows (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩, .removeWindow ⟨9⟩, .focus ⟨1⟩,
@@ -8317,6 +8318,23 @@ def stateRequestChecks : List Check :=
               ((three.buffer? ⟨1⟩).map (·.locals.size)) == some 2 &&
               three.value? ⟨0⟩ "count" == none &&
               three.value? ⟨9⟩ "count" == none &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "a buffer's spans are set, replacing those it had, and other buffers keep theirs; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let spans : Array Decoration := #[{ start := 0, stop := 2, face := ⟨"a"⟩ }]
+            let (set, one) := state.handle (.setSpans ⟨1⟩ spans)
+            let (_, two) := one.handle (.setSpans ⟨1⟩ #[])
+            let (absent, same) := state.handle (.setSpans ⟨9⟩ spans)
+            replied set == .inr () && (state.buffer? ⟨1⟩).map (·.spans) == some #[] &&
+              (one.buffer? ⟨1⟩).map (·.spans) == some spans &&
+              (one.buffer? ⟨0⟩).map (·.spans) == some #[] &&
+              (two.buffer? ⟨1⟩).map (·.spans) == some #[] &&
               replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
               same == state },
     { name :=
@@ -23184,6 +23202,32 @@ def searchDecorationChecks : List Check :=
             fed ("|" ++ decoratedText) "/ \\ ( RET" with
           | some missing, some refused =>
             decorationsOfScene missing == some #[] && decorationsOfScene refused == some #[]
+          | _, _ => false },
+    { name :=
+        "a buffer's spans within a covered range are kept, clipped to it, in order, and those outside it and those left empty are dropped"
+      run :=
+        let span (start stop : Nat) : Decoration := { start, stop, face := ⟨"s"⟩ }
+        pure
+          (Loop.spansIn #[span 0 5, span 8 12, span 15 20, span 30 40, span 10 10] 10 32 ==
+            #[span 10 12, span 15 20, span 30 32]) },
+    { name :=
+        "a view's decorations are its buffer's spans in the rows it covers, with no search too, and then the last search's matches, which are drawn over them"
+      run :=
+        let face : FaceName := ⟨"compilation.error"⟩
+        let spans : Array Decoration :=
+          #[{ start := 0, stop := 3, face }, { start := 30000, stop := 30004, face }]
+        let spanned : TextM EditorState := do
+          let state ← decorationState decoratedText
+          return { state with buffers := state.buffers.modify 0 (·.map ({ · with spans })) }
+        let driver := (Loop.Driver.over evilHanded (fun _ => none) spanned editorModel).toOption
+        pure <|
+          match driver.map (evilFed · "l"), driver.map (evilFed · "/ f o o RET") with
+          | some unsearched, some searched =>
+            let found := (decorationsOfScene searched).map (·.extract 1 1000)
+            decorationsOfScene unsearched == some #[{ start := 0, stop := 3, face }] &&
+              (decorationsOfScene searched).bind (·[0]?) == some { start := 0, stop := 3, face } &&
+              (found.map fun all => !all.isEmpty && all.all (·.face == Loop.searchMatchFace)) ==
+                some true
           | _, _ => false }]
 
 /-- The checks of evil's operators (`Editor/Evil/Operators.lean`) on the
