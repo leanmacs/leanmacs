@@ -19,7 +19,8 @@ check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
   badge face of each of its states (`Vim.cursorFace`, `Vim.stateFace`),
   the mode line's faces (`ModeLine.bufferFace`, `ModeLine.modifiedFace`,
   `ModeLine.changedFace`, `ModeLine.secondaryFace`, `ModeLine.inactiveFace`,
-  `Editor/ModeLine.lean`), the loop's minibuffer fields
+  `ModeLine.activeFace`, `Editor/ModeLine.lean`), the divider between tiled
+  windows (`Loop.dividerFace`), the loop's minibuffer fields
   (`Loop.promptFace`, `Loop.candidateFace`, `Loop.chosenFace`), the
   compile mode's locations by severity (`compilation.error`,
   `compilation.warning`, `compilation.note`; `Compile.Severity.face`), the
@@ -125,9 +126,15 @@ def vocabulary : Array Entry :=
       { name := ⟨"mode-line.secondary"⟩
         meaning :=
           "What recedes in a mode line: the directory, the major mode, line:col and the position (`ModeLine.secondaryFace`)." },
+      { name := ⟨"mode-line.active"⟩
+        meaning :=
+          "The row of the mode line of the selected window, whose background marks it (`ModeLine.activeFace`)." },
       { name := ⟨"mode-line.inactive"⟩
         meaning :=
           "Every field and the row of the mode line of a window that is not selected (`ModeLine.inactiveFace`)." },
+      { name := ⟨"window-divider"⟩
+        meaning :=
+          "The divider between two tiled windows, filled in its foreground (`Loop.dividerFace`)." },
       { name := ⟨"minibuffer.prompt"⟩
         meaning :=
           "The prompt's label in the minibuffer's status line, drawn by the loop (`Loop.promptFace`)." },

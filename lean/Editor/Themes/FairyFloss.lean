@@ -92,7 +92,9 @@ a later definition's set attributes are over an earlier one's
 | `selection` | bg selection | the same | tmTheme `selection`; base.less l.47–49 |
 | `cursor`, `cursor.*` | background on caret | the same | tmTheme `caret`, the same in every state |
 | `mode-line` | foreground on lineHighlight, padded 3 | the same | Not in a syntax theme: shared mapping kept |
-| `mode-line.inactive` | lavender on lineHighlight | the same | Not covered: shared mapping kept |
+| `mode-line.active` | foreground on selection | the same | Not covered: shared mapping kept |
+| `mode-line.inactive` | lavender on background | the same | Not covered: shared mapping kept |
+| `window-divider` | fg lavender | the same | Not covered: shared mapping kept |
 | `echo-area` | fg foreground, padded 3 | the same | The default face's foreground |
 | `mode-line.state.normal` | background on renamed, bold | + background on pink (bold kept) | Not covered; pink is the lead accent. A choice |
 | `mode-line.state.insert` | background on added, bold | the same | Not covered: shared mapping kept |

@@ -303,7 +303,11 @@ mode line and the echo area are padded 3 points above and below, the owner's
 picked look, so the bottom row is the same height whether it holds a
 window's mode line, a prompt or the echo. Each Vim state's badge
 (`mode-line.state.<state>`) is the paper on an accent, bold: normal blue,
-insert green, visual and visual-line magenta, the minibuffer's cyan. The tab
+insert green, visual and visual-line magenta, the minibuffer's cyan. The
+selected window's status row (`mode-line.active`) is strong on selected, and
+every other window's (`mode-line.inactive`) faint on the paper, so the
+selected bar is lit and the others recede into the paper; the divider
+between windows (`window-divider`) is a faint line. The tab
 bar's chips are faint on raised, and the selected one strong on selected,
 bold. The compile mode's locations are bold, an error red, a warning orange
 and a note green, as Emacs's `compilation-error`, `-warning` and `-info`
@@ -337,7 +341,10 @@ def Palette.theme (palette : Palette) : Theme :=
     badges.map (fun (state, accent) => badge state accent) ++
     #[defined "mode-line.buffer" { foreground := some palette.strong, weight := some 700 },
       ink "mode-line.modified" palette.orange, ink "mode-line.changed" palette.red,
-      ink "mode-line.secondary" palette.faint, on "mode-line.inactive" palette.faint palette.raised,
+      ink "mode-line.secondary" palette.faint,
+      defined "mode-line.active"
+        { foreground := some palette.strong, background := some palette.selected },
+      on "mode-line.inactive" palette.faint palette.paper, ink "window-divider" palette.faint,
       defined "minibuffer.prompt" { foreground := some palette.cyan, weight := some 700 },
       ink "minibuffer.candidate" palette.faint, on "minibuffer.chosen" palette.paper palette.cyan,
       on "tab-bar" palette.faint palette.raised,

@@ -57,7 +57,9 @@ dark names, and `+` marks a definition appended after the shared ones
 | `selection` | bg base02 | bg base02 | Emacs `region` bg base02, and the specification's background highlight. Vim's `Visual` (base01 reversed) needs a selection foreground, which the shared mapping does not set: not followed |
 | `cursor`, `cursor.normal/insert/visual/visual-line/minibuffer` | base03 on base0 | base03 on base0 | Vim `Cursor` fg base03 bg base0; Emacs `cursor-color` base0. Vim and Emacs colour the cursor the same in every state |
 | `mode-line` | base1 on base02, padded 3 | base1 on base02, padded 3 | Emacs `mode-line` fg base1 bg base02. Vim's `StatusLine` is the same pair reversed: not followed, because `echo-area` and `mode-line.buffer` share `strong`. The padding is the owner's picked look, shared |
-| `mode-line.inactive` | base01 on base02 | + base0 on base02 | Emacs `mode-line-inactive` fg base0 bg base02 |
+| `mode-line.active` | base1 on base02 | base1 on base02 | Neither theme has one: both predate Emacs 29's `mode-line-active`, which inherits `mode-line`. The shared mapping is kept, which is `mode-line`'s pair |
+| `mode-line.inactive` | base01 on base03 | + base0 on base03 | Emacs `mode-line-inactive` fg base0. Its bg base02 is not followed: here `selected` is `raised`, base02, so the selected window's bar (`mode-line.active`) would not differ, and it must (`Themes.problems`, `modeLinesAlike`). The paper, base03, is a choice |
+| `window-divider` | fg base01 | fg base01 | Neither theme is read for one. The shared mapping is kept: a faint line |
 | `echo-area` | fg base1, padded 3 | + fg base0 (padding kept) | Emacs and Vim draw messages in the default face (Vim `Normal` base0) |
 | `mode-line.state.normal` | base03 on blue, bold | base03 on blue, bold | lualine.nvim `solarized_dark` section `a` of `normal` (below) |
 | `mode-line.state.insert` | base03 on green, bold | base03 on green, bold | lualine.nvim `solarized_dark` `insert` |
@@ -206,7 +208,7 @@ def Colours.schoonover (c : Colours) : Theme :=
     { name := ⟨name⟩, face := { foreground := some foreground } }
   let on (name : String) (foreground background : Color) : FaceDefinition :=
     { name := ⟨name⟩, face := { foreground := some foreground, background := some background } }
-  #[on "mode-line.inactive" c.base0 c.base02, ink "echo-area" c.base0,
+  #[on "mode-line.inactive" c.base0 c.base03, ink "echo-area" c.base0,
     ink "minibuffer.prompt" c.blue, ink "minibuffer.candidate" c.base1,
     on "minibuffer.chosen" c.base02 c.base2, on "tab-bar" c.base0 c.base02,
     { name := ⟨"tab-bar.selected"⟩

@@ -30,9 +30,19 @@ theme and no port.
 - For each: `noCursor` when the theme does not define it; else
   `cursorOnPaper` when its background is the paper, and `cursorInkOnItself`
   when its foreground is its background, which hides a block's glyph.
+- **The selected window must stand out**: `modeLinesAlike` when the
+  background of `mode-line.active` over `mode-line` is that of
+  `mode-line.inactive` over `mode-line` (`effectiveOver`), as layout paints
+  a status row's face over `mode-line` over the default face. So the
+  selected window's bar differs from the others' in every shipped theme,
+  whatever colours each picks.
+- **A divider must be seen**: `dividerOnPaper` when `window-divider`'s
+  foreground over the default face, the colour layout fills a divider in,
+  is the paper.
 
 Problems are listed `noPaper` and `noInk` first, then the undefined faces in
-the vocabulary's order, then each cursor face's in `cursorFaces`' order.
+the vocabulary's order, then each cursor face's in `cursorFaces`' order,
+then `modeLinesAlike` and `dividerOnPaper`.
 
 The check is applied to a theme as it ships (`Themes.shipped`), not to the
 theme with config's definitions after it: those are the user's. A theme
@@ -58,6 +68,10 @@ inductive Problem where
   | cursorOnPaper (face : FaceName)
   /-- A cursor face whose foreground is its own background. -/
   | cursorInkOnItself (face : FaceName)
+  /-- The selected window's status row has the background of the others'. -/
+  | modeLinesAlike
+  /-- The window divider is filled in the paper. -/
+  | dividerOnPaper
   deriving DecidableEq, Repr
 
 /-- One sentence of what is wrong. -/
@@ -69,6 +83,9 @@ def Problem.describe : Problem → String
   | .cursorOnPaper face => s!"the cursor face `{face.name}` has the paper as its background"
   | .cursorInkOnItself face =>
     s!"the cursor face `{face.name}` has its background as its foreground"
+  | .modeLinesAlike =>
+    "the faces `mode-line.active` and `mode-line.inactive` give a status row the same background"
+  | .dividerOnPaper => "the face `window-divider` has the paper as its foreground"
 
 /-- The cursor faces the editor draws: `cursor`, then the shipped Vim
 scheme's face of each of its states, the initial one first. -/
@@ -80,6 +97,13 @@ def cursorFaces : Array FaceName :=
 over its default face, as layout paints a cursor. -/
 def effective (theme : Theme) (face : FaceName) : Option Color × Option Color :=
   let painted := (theme.merged face).over (theme.merged ⟨"default"⟩)
+  (painted.foreground, painted.background)
+
+/-- The foreground and the background `theme` paints the face `face` in,
+over the face `under`, over its default face, as layout paints a status
+row's face over `mode-line`. -/
+def effectiveOver (theme : Theme) (face under : FaceName) : Option Color × Option Color :=
+  let painted := (theme.merged face).over ((theme.merged under).over (theme.merged ⟨"default"⟩))
   (painted.foreground, painted.background)
 
 /-- What is wrong with `theme`, in the order the module docs give; none for
@@ -97,6 +121,11 @@ def problems (theme : Theme) : Array Problem :=
         let (foreground, background) := effective theme face
         (if background == paper then #[.cursorOnPaper face] else #[]) ++
           if foreground == background then #[.cursorInkOnItself face] else #[]
-  colours ++ undefined ++ cursors
+  let row (face : String) := (effectiveOver theme ⟨face⟩ ⟨"mode-line"⟩).2
+  let alike : Array Problem :=
+    if row "mode-line.active" == row "mode-line.inactive" then #[.modeLinesAlike] else #[]
+  let divider : Array Problem :=
+    if (effective theme ⟨"window-divider"⟩).1 == paper then #[.dividerOnPaper] else #[]
+  colours ++ undefined ++ cursors ++ alike ++ divider
 
 end Editor.Themes

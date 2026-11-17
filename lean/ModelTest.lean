@@ -5771,7 +5771,7 @@ them, not from their text: the cursors and status fields the shipped Vim
 scheme reports in each of its states, its cursor face of each default
 state, the cursor of a scheme that names no face, and the status fields the
 loop gives a modified buffer and a prompt with candidates listed, one of
-them chosen. -/
+them chosen, and the faces of a status row and of a divider. -/
 def drawnFaces : Array FaceName :=
   let scheme := Vim.Default.scheme
   let fed (text : String) : Vim.State := (scheme.feed (fun _ => []) ⟨0⟩ scheme.init (keys text)).1
@@ -5790,7 +5790,8 @@ def drawnFaces : Array FaceName :=
     #[({} : InputScheme.Report).cursor.face] ++
     (ModeLine.standard.fields context).map (·.face) ++
     (ModeLine.standard.fields { context with selected := false }).map (·.face) ++
-    (Loop.promptStatus asked).map (·.face)
+    (Loop.promptStatus asked).map (·.face) ++
+    #[ModeLine.activeFace, ModeLine.inactiveFace, Loop.dividerFace]
 
 /-- The checks of the face vocabulary (`Editor/Face/Vocabulary.lean`), of a
 theme written from a palette (`Palette.theme`, `Editor/Face.lean`) and of
@@ -5807,12 +5808,13 @@ def faceVocabularyChecks : List Check :=
                 (List.range later).all fun earlier => names[later]? != names[earlier]?) &&
             Face.vocabulary.all (!·.meaning.isEmpty)) },
     { name :=
-        "the vocabulary lists every face the shipped Vim scheme, the mode line, the loop and a scheme that names no cursor face draw, and the mode line's and the three minibuffer faces among them"
+        "the vocabulary lists every face the shipped Vim scheme, the mode line, the loop and a scheme that names no cursor face draw, and the mode line's, the three minibuffer faces, the selected window's row and the divider among them"
       run :=
         pure
           (drawnFaces.all Face.vocabularyNames.contains &&
             [ModeLine.bufferFace, ModeLine.modifiedFace, ModeLine.secondaryFace,
-                  ModeLine.inactiveFace, Loop.promptFace, Loop.candidateFace, Loop.chosenFace].all
+                  ModeLine.inactiveFace, ModeLine.activeFace, Loop.promptFace, Loop.candidateFace,
+                  Loop.chosenFace, Loop.dividerFace].all
               drawnFaces.contains) },
     { name :=
         "the vocabulary holds the badge face of every state of the shipped Vim scheme, read from the scheme, and no status. face"
@@ -5939,6 +5941,37 @@ def faceVocabularyChecks : List Check :=
               { definition with face := { definition.face with background := none } }
             else definition
         pure ((Themes.problems unpapered).contains .noPaper) },
+    { name :=
+        "a theme whose selected window's mode line has the background of the others' has mode lines alike, and that problem alone; set over mode-line, the background each takes is its own or mode-line's"
+      run :=
+        let theme := Theme.builtin
+        let inactive := (Themes.effectiveOver theme ⟨"mode-line.inactive"⟩ ⟨"mode-line"⟩).2
+        let unset :=
+          theme.map fun definition =>
+            if definition.name == ⟨"mode-line.active"⟩ || definition.name == ⟨"mode-line.inactive"⟩
+            then { definition with face := { definition.face with background := none } }
+            else definition
+        pure
+          (inactive.isSome &&
+            Themes.problems
+                (theme.push { name := ⟨"mode-line.active"⟩, face := { background := inactive } }) ==
+              #[.modeLinesAlike] &&
+            Themes.problems unset == #[.modeLinesAlike]) },
+    { name :=
+        "a theme whose window divider is drawn in the paper has the divider on the paper, and that problem alone: set so, or with no foreground over a default whose ink is the paper"
+      run :=
+        let theme := Theme.builtin
+        let paper := (theme.merged ⟨"default"⟩).background
+        pure
+          (paper.isSome &&
+            Themes.problems
+                (theme.push { name := ⟨"window-divider"⟩, face := { foreground := paper } }) ==
+              #[.dividerOnPaper] &&
+            (Themes.problems
+                  (((theme.filter (·.name != ⟨"window-divider"⟩)).push
+                        { name := ⟨"window-divider"⟩, face := { background := paper } }).push
+                    { name := ⟨"default"⟩, face := { foreground := paper } })).contains
+              .dividerOnPaper) },
     { name := "each problem's sentence names the face it is about"
       run :=
         let names (problem : Themes.Problem) (face : String) : Bool :=
@@ -5947,7 +5980,9 @@ def faceVocabularyChecks : List Check :=
           (names (.undefined ⟨"gutter"⟩) "gutter" &&
             names (.noCursor ⟨"cursor.visual"⟩) "cursor.visual" &&
             names (.cursorOnPaper ⟨"cursor.insert"⟩) "cursor.insert" &&
-            names (.cursorInkOnItself ⟨"cursor.normal"⟩) "cursor.normal") },
+            names (.cursorInkOnItself ⟨"cursor.normal"⟩) "cursor.normal" &&
+            names .modeLinesAlike "mode-line.active" && names .modeLinesAlike "mode-line.inactive" &&
+            names .dividerOnPaper "window-divider") },
     { name :=
         "one palette mapping applied to two palettes gives two themes that define the same names in the same order, and each has no problem the check finds"
       run :=
@@ -5984,7 +6019,9 @@ def solarizedChoices (c : Themes.Solarized.Colours) : List (String × Option Col
   [("default", some c.base0, some c.base03), ("selection", none, some c.base02)] ++
     cursors.map (·, some c.base03, some c.base0) ++
     [("mode-line", some c.base1, some c.base02),
-      ("mode-line.inactive", some c.base0, some c.base02), ("echo-area", some c.base0, none),
+      ("mode-line.active", some c.base1, some c.base02),
+      ("mode-line.inactive", some c.base0, some c.base03), ("window-divider", some c.base01, none),
+      ("echo-area", some c.base0, none),
       ("mode-line.state.normal", some c.base03, some c.blue),
       ("mode-line.state.insert", some c.base03, some c.green),
       ("mode-line.state.visual", some c.base03, some c.magenta),
@@ -6089,7 +6126,9 @@ def fairyFlossChoices (c : Themes.FairyFloss.Colours) :
   [("default", some c.foreground, some c.background), ("selection", none, some c.selection)] ++
     cursors.map (·, some c.background, some c.caret) ++
     [("mode-line", some c.foreground, some c.lineHighlight),
-      ("mode-line.inactive", some c.lavender, some c.lineHighlight),
+      ("mode-line.active", some c.foreground, some c.selection),
+      ("mode-line.inactive", some c.lavender, some c.background),
+      ("window-divider", some c.lavender, none),
       ("echo-area", some c.foreground, none),
       ("mode-line.state.normal", some c.background, some c.pink),
       ("mode-line.state.insert", some c.background, some c.added),
