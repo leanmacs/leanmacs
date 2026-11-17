@@ -29923,12 +29923,18 @@ default. -/
 def aCommands : Array Compile.NamedCommand :=
   #[{ name := "build", line := "a-build" }, { name := "test", line := "a-test" }]
 
+/-- The project commands of the hook checks: `lint` of `cargo-mode` for
+`github.com/o/r`, as `cargo clippy`, with the setting `profile` `dev`. -/
+def lintProject : SetupM Unit :=
+  projectCommands (.remote "github.com/o/r") "cargo-mode" [("lint", "cargo clippy")]
+    [("profile", .str "dev")]
+
 /-- The config of the hook checks, in this order: `b-mode` on `b.toml`,
 `a-mode` on `a.toml` with `aCommands` as its commands unless it is given
 others, `marker-mode` on `marker.toml` and `cargo-mode` on `Cargo.toml`;
-and the project command `lint` of `cargo-mode` for `github.com/o/r`, with a
-setting. -/
-def hookSetup (aCommands : Array Compile.NamedCommand := aCommands) : SetupM Unit := do
+then `project`, by default `lintProject`. -/
+def hookSetup (aCommands : Array Compile.NamedCommand := aCommands)
+    (project : SetupM Unit := lintProject) : SetupM Unit := do
   compileContribution
       { mode := "b-mode", markers := #["b.toml"]
         commands :=
@@ -29943,8 +29949,7 @@ def hookSetup (aCommands : Array Compile.NamedCommand := aCommands) : SetupM Uni
       { mode := "cargo-mode", markers := #["Cargo.toml"]
         commands :=
           #[{ name := "build", line := "cargo build" }, { name := "test", line := "cargo test" }] }
-  projectCommands (.remote "github.com/o/r") "cargo-mode" [("lint", "cargo clippy")]
-      [("profile", .str "dev")]
+  project
 
 /-- The registry of the hook checks: `setup`'s contributions and project
 commands installed for config, over `compiled` for the owner `compiled`. -/
@@ -30020,7 +30025,8 @@ def hookStreams : Array Process.StreamScript :=
     { command := shellCommand "/r/hook/one/two" "a-test", steps := linesSteps ["ok"] },
     { command := shellCommand "/r/hook" "b-check", steps := linesSteps ["ok"] },
     { command := shellCommand "/r/hook/one/two" "config-build", steps := linesSteps ["ok"] },
-    { command := shellCommand "/r/crate" "cargo clippy", steps := linesSteps ["ok"] }]
+    { command := shellCommand "/r/crate" "cargo clippy", steps := linesSteps ["ok"] },
+    { command := shellCommand "/r/crate" "cargo clippy -D warnings", steps := linesSteps ["ok"] }]
 
 /-- A driver of the hook checks: the world of `hookWorld`, with the hook
 checks' keys over `registry` and the compile checks' jobs, the files of both,
@@ -30085,6 +30091,13 @@ def hookOverCompiled : Config.Registry :=
         commands :=
           #[{ name := "build", line := "compiled-build" },
             { name := "lint", line := "compiled-lint" }] }]
+
+/-- `driver` once the loop is told the compile hook of `hookSetup` with
+`project` as its project commands, as a reload that changes them tells
+it. -/
+def toldProject (driver : TestDriver) (project : SetupM Unit) : TestDriver :=
+  let compile := (hookRegistry (hookSetup aCommands project)).compileHook
+  { driver with keys := { driver.keys with registered := { driver.keys.registered with compile } } }
 
 /-- The checks of the compile hook (`Editor/Workspace/Modes.lean`,
 `Editor/Compile.lean`, "The hook"), on the loop's driver over the editor's
@@ -30414,6 +30427,30 @@ def compileHookChecks : List Check :=
               Compile.projectSettings state (.remote "github.com/o/r") "cargo-mode" == dev &&
               Compile.projectSettings inO.loop.state (.remote "github.com/o/other") "cargo-mode" ==
                 [] },
+    { name :=
+        "a reload that changes a project's commands is seen at the next compile-command: it offers lint and runs its new line; after a reload that drops them it offers no lint"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o k"
+            let linted :=
+              drained (fedTo (pressedOn opened "C-k i") ([.commit "lint"] ++ presses "C-e y")).1
+            let changed :=
+              toldProject linted
+                (projectCommands (.remote "github.com/o/r") "cargo-mode"
+                  [("lint", "cargo clippy -D warnings")] [("profile", .str "release")])
+            let asked := pressedOn changed "C-k i"
+            let relinted := drained (fedTo asked ([.commit "lint"] ++ presses "C-e y")).1
+            let dropped := toldProject relinted (pure ())
+            let askedAgain := pressedOn dropped "C-k i"
+            let cargo := #["build (cargo-mode)", "test (cargo-mode)"]
+            linted.jobs.processes.started.back? == some (shellCommand "/r/crate" "cargo clippy") &&
+              (candidatesOf asked).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
+              relinted.jobs.processes.started.back? ==
+                some (shellCommand "/r/crate" "cargo clippy -D warnings") &&
+              (candidatesOf askedAgain).map (·.all) == some cargo },
     { name :=
         "chooseOffer takes a whole candidate first, then the first offer of a bare name, and none for anything else; an offer is shown as its name and its mode"
       run :=
