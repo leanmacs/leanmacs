@@ -96,21 +96,19 @@ On macOS on arm64:
 ```sh
 mise run app          # builds lean/.lake/build/Leanmacs.app, ad-hoc signed
 mise run app-check    # checks the built bundle
-ditto lean/.lake/build/Leanmacs.app /Applications/Leanmacs.app
+mise run install      # does both, then replaces /Applications/Leanmacs.app
 ```
 
-`mise run finder-session-prepare` does the same, on a checkout with no
-uncommitted changes, after moving any existing app and config aside to
-timestamped backups, and installs a small config whose `C-c h` shows
-`finder-session: config loaded`.
+`mise run install` keeps no backup of the app it replaces. When
+`~/.config/leanmacs` does not exist it installs a small config whose
+`C-c h` shows `finder-session: config loaded`.
 
 - The app holds its own toolchain modules
   ([building.md](docs/dev-practices/building.md), "The app bundle").
 - It reads config from `~/.config/leanmacs`, never from
   `~/Library/Application Support`. Opened from Finder it gets launchd's
   environment, not your shell's, so an `XDG_CONFIG_HOME` exported in the
-  shell does not reach it (`launchctl setenv` does);
-  `finder-session-prepare` refuses while one is exported. A config
+  shell does not reach it (`launchctl setenv` does). A config
   chunk may import only what `Editor` imports.
 - Finder offers it under Open With for plain text and source code, and it
   opens a file dropped on its Dock icon. `.lean` files are not offered yet.

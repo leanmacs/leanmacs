@@ -1,4 +1,4 @@
--- The config `mise run finder-session-prepare` installs in ~/.config/leanmacs,
+-- The config `mise run install` installs in ~/.config/leanmacs when none is there,
 -- to show the installed app loaded config. It uses only Editor.
 def hello : EditorM Unit :=
   message "finder-session: config loaded"

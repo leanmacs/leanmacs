@@ -184,8 +184,8 @@ run = [
   # than the time limit.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
   # The config fixture installed with the app (tests/headless/
-  # finder-session), the one tools/prepare-finder-session.sh installs to
-  # ~/.config/leanmacs: it loads, and its command, run by its key `C-c h`
+  # finder-session), the one tools/install-app.sh installs to
+  # ~/.config/leanmacs when none is there: it loads, and its command, run by its key `C-c h`
   # and by its ex name `finder-hello`, says `finder-session: config loaded`
   # in the echo area each time (`finder-session/expected`).
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/finder-session/config ../tests/headless/finder-session/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/finder-session/expected -",
@@ -489,17 +489,16 @@ timeout = "300s"
 run = "tools/app-check.sh lean"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
-# hk.pkl: it writes outside the checkout. It installs the app to use: after
-# `app-check`, on a
-# clean checkout, tools/prepare-finder-session.sh moves any existing
-# /Applications/Leanmacs.app and ~/.config/leanmacs aside to timestamped
-# backups, installs the built bundle and the config fixture
-# tests/headless/finder-session/config in their place, and prints how to
-# restore them. It removes nothing and opens, registers or runs nothing.
-[tasks.finder-session-prepare]
-description = "Opt-in, never part of ci; macOS on arm64 only: build and check Leanmacs.app, install it to /Applications and the Finder-session config fixture to ~/.config/leanmacs, moving any existing ones aside to timestamped backups (tools/prepare-finder-session.sh)"
+# hk.pkl: it writes outside the checkout. After `app-check`,
+# tools/install-app.sh replaces /Applications/Leanmacs.app with the built
+# bundle, installs the config fixture tests/headless/finder-session/config to
+# ~/.config/leanmacs only when no config is there, and deletes the backups
+# the earlier install script left. It keeps no backups and opens, registers
+# or runs nothing.
+[tasks.install]
+description = "Opt-in, never part of ci; macOS on arm64 only: build and check Leanmacs.app and install it to /Applications, replacing the old one and deleting leftover backups (tools/install-app.sh)"
 depends = ["app-check"]
-run = "tools/prepare-finder-session.sh lean"
+run = "tools/install-app.sh lean"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It ends in
 # an abort, and on macOS every abort makes the system write a crash report

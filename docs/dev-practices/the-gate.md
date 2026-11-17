@@ -635,7 +635,7 @@ command that starts a job with an argument, whose result the job's command
 says in the echo area, and whose output must
 be exactly `dispatch/expected`; and with `finder-session/script` on the
 config in `finder-session/config`, the fixture
-`tools/prepare-finder-session.sh` installs with the app, which runs that
+`tools/install-app.sh` installs with the app when no config is there, which runs that
 config's command by its key `C-c h` and by its ex name `finder-hello`, so
 the fixture the installed app loads is known to load and to say
 `finder-session: config loaded`, and whose output must be exactly

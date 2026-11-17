@@ -144,20 +144,18 @@ ends `app-check: ok`.
 ## Installing the app
 
 ```sh
-mise run finder-session-prepare
+mise run install
 ```
 
-This installs the app to use, on macOS on arm64 only. After `mise run app-check`, on a checkout with no uncommitted
-changes, `tools/prepare-finder-session.sh` moves any existing
-`/Applications/Leanmacs.app` and `~/.config/leanmacs` aside to
-`<name>.backup-<timestamp>` (it refuses while the shell exports an
-`XDG_CONFIG_HOME` other than `~/.config`, which an app opened from Finder,
-started with launchd's environment, would not see), installs
-the built bundle with `ditto` and verifies its signature, installs the
-config fixture `tests/headless/finder-session/config` (which the gate runs
-headless, [`the-gate.md`](the-gate.md)), and prints the commands that
-restore what was there. It removes nothing and opens, registers or runs
-nothing.
+This installs the app to use, on macOS on arm64 only. After `mise run
+app-check`, `tools/install-app.sh` replaces `/Applications/Leanmacs.app`
+with the built bundle (`ditto`) and verifies its signature. When
+`~/.config/leanmacs` does not exist it installs the config fixture
+`tests/headless/finder-session/config` there (which the gate runs headless,
+[`the-gate.md`](the-gate.md)); an existing config is never touched. It
+keeps no backups, since any commit's app can be rebuilt, and deletes the
+`Leanmacs.app.backup-*` and `~/.config/leanmacs.backup-*` directories the
+earlier install script left. It opens, registers or runs nothing.
 
 ## The job benchmark, on demand
 

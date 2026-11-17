@@ -1,6 +1,6 @@
 # The script `mise run ffi-test` has the editor's headless mode run against
-# the config in `config/`, the fixture `tools/prepare-finder-session.sh`
-# installs to `~/.config/leanmacs` with the app. It runs the fixture's
+# the config in `config/`, the fixture `tools/install-app.sh`
+# installs to `~/.config/leanmacs` with the app when none is there. It runs the fixture's
 # command by its key and by its ex name, and each scene's echo area must show its
 # message. What it prints must be exactly `expected`. It touches no file.
 
