@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
+import Editor.Compile.Errors
 import Editor.File
 import Editor.Files
 import Editor.Mode
@@ -259,11 +260,6 @@ structure Record where
   running : Option Running := none
   deriving DecidableEq, Repr
 
-/-- An optional value as a tree: `null` for none. -/
-def optional {α : Type} (encode : α → Value) : Option α → Value
-  | some value => encode value
-  | none => .null
-
 /-- A record as a tree. -/
 def Record.encode (record : Record) : Value :=
   .record
@@ -273,10 +269,6 @@ def Record.encode (record : Record) : Value :=
       ("running",
         optional (fun running => .list [.nat running.run, .str running.line, .nat running.started])
           record.running)]
-
-/-- The field `name` of `fields`. -/
-def field (fields : List (String × Value)) (name : String) : Value :=
-  ((fields.find? (·.1 == name)).map (·.2)).getD .null
 
 /-- The record a tree is (`Record.encode`), if it is one. -/
 def Record.decode : Value → Option Record

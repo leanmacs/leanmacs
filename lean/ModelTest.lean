@@ -28998,6 +28998,81 @@ def compileChecks : List Check :=
               Compile.elapsed 1500 == "1.5 s" &&
             Compile.elapsed 61049 == "61.0 s") }]
 
+/-- The format `general` with a continuation: a following line that starts
+with blanks continues a location. -/
+def indentedFormat : Compile.Format :=
+  { Compile.Format.general with
+    name := "indented"
+    continuation := some [{ pieces := [{ atom := .blanks }] }, { pieces := [{ atom := .rest }] }] }
+
+/-- The checks of error formats, the matcher, sites and `resolve`
+(`Editor/Compile/Errors.lean`): pure, with no driver. -/
+def compileErrorChecks : List Check :=
+  let general := Compile.Format.general
+  [{  name :=
+        "locations criterion 1: the general format reads src/main.rs:12:5: error: expected one of as src/main.rs, line 12, column 5, an error, and lib.lean:3: warning: unused with no column"
+      run :=
+        pure
+          (general.read? "src/main.rs:12:5: error: expected one of" ==
+              some
+                { file := "src/main.rs", line := 12, column := some 5, severity := .error
+                  start := 0, stop := 16 } &&
+            general.read? "lib.lean:3: warning: unused" ==
+              some
+                { file := "lib.lean", line := 3, column := none, severity := .warning, start := 0
+                  stop := 10 }) },
+    { name :=
+        "the general format reads a note as a note and a line with no severity word as an error, and the header, a help line, the last line and an empty line as no location"
+      run :=
+        pure
+          ((general.read? "note.txt:7: note: here").map (·.severity) == some .note &&
+            (general.read? "a.c:3: something").map (·.severity) == some .error &&
+            ["r@main in /r: make", "  = help: add a semicolon", "Compilation finished after 1.5 s",
+                  ""].all
+              (general.read? · == none)) },
+    { name :=
+        "locations criterion 2: a format with a continuation joins a location line and its following indented line into one location, in one scan or across two; with the general format they stay apart, and a line that matches nothing stops the join"
+      run :=
+        let lines := #["a.rs:1:2: error: x", "    more", "b.rs:3: warning: y"]
+        let joined := Compile.scan #[indentedFormat] "/r" #[] 1 100 lines
+        let inTwo :=
+          Compile.scan #[indentedFormat] "/r"
+            (Compile.scan #[indentedFormat] "/r" #[] 1 100 #["a.rs:1:2: error: x"]) 2 119
+            #["    more", "b.rs:3: warning: y"]
+        let apart := Compile.scan #[general] "/r" #[] 1 100 lines
+        let stopped :=
+          Compile.scan #[indentedFormat] "/r" #[] 1 100 #["a.rs:1:2: error: x", "plain", "    more"]
+        pure
+          (joined ==
+              #[{ file := "/r/a.rs", line := 1, column := some 2, columnBase := 1
+                  severity := .error, format := "indented", first := 1, last := 2, start := 100
+                  stop := 108 },
+                { file := "/r/b.rs", line := 3, column := none, columnBase := 1
+                  severity := .warning, format := "indented", first := 3, last := 3
+                  start := 128, stop := 134 }] &&
+            inTwo == joined &&
+            apart.map (fun site => (site.first, site.last)) == #[(1, 1), (3, 3)] &&
+            stopped.map (fun site => (site.first, site.last)) == #[(1, 1)]) },
+    { name :=
+        "locations criterion 6: a relative file resolves against the directory, with . and .. taken lexically, and an absolute one is kept"
+      run :=
+        pure
+          (Compile.resolve "/r" "src/main.rs" == "/r/src/main.rs" &&
+            Compile.resolve "/r" "./src/b.lean" == "/r/src/b.lean" &&
+            Compile.resolve "/r" "../w/src/b.lean" == "/w/src/b.lean" &&
+            Compile.resolve "/r/sub" "../src/a.lean" == "/r/src/a.lean" &&
+            Compile.resolve "/r" "/abs/x.rs" == "/abs/x.rs") },
+    { name := "a site crosses as a tree and back, with a column and without"
+      run :=
+        let site : Compile.Site :=
+          { file := "/r/a.rs", line := 4, column := some 2, columnBase := 0, severity := .note
+            format := "general", first := 3, last := 5, start := 40, stop := 48 }
+        pure
+          (Compile.Site.decode site.encode == some site &&
+            Compile.Site.decode { site with column := none }.encode ==
+              some { site with column := none } &&
+            Compile.Site.decode (.str "a.rs") == none) }]
+
 /-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
 `abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts
 `x` at the window's cursors; `C-r d` (`delete-first`) deletes the first byte
@@ -29231,7 +29306,8 @@ def checks : List Check :=
     workspaceChecks ++
     shellChecks ++
     readOnlyChecks ++
-    compileChecks
+    compileChecks ++
+    compileErrorChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
