@@ -17298,13 +17298,16 @@ command with `true` as its argument, and `C-o v` to the save command with
 the arguments the Vim scheme gives a command a key is bound to, a count
 and a register.
 
-Six more commands, written here: `scratch` (`C-o 0`) shows the scratch
+Eight more commands, written here: `scratch` (`C-o 0`) shows the scratch
 buffer in the window it is called with, `split` (`C-o s`) splits that
 window and focuses the new one, `close` (`C-o k`) closes it, `shut`
 (`C-o K`) closes the view 1, the first a split makes, whichever window it
 is called with, `undo` (`C-o u`) undoes one step of its buffer's history,
 `drop` (`C-o d`) removes the buffer 1, the first a file is opened into, and
-`save-absent` (`C-o x`) saves a buffer there is none of. -/
+`save-absent` (`C-o x`) saves a buffer there is none of. Two more visit a
+file in the view 0, focusing it (`Files.visit`): `visit-note` (`C-o g`)
+`note.txt` at row 0, character column 2, and `visit-missing` (`C-o G`)
+`missing.txt`. -/
 def fileKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (openKeys.map (fun (text, path) => (text, opens path)) ++
@@ -17315,6 +17318,7 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         ("C-o f", { command := Files.saveName, arguments := [.bool true] }),
         ("C-o v", { command := Files.saveName, arguments := [.nat 0, .str ""] }),
         ("C-o u", invoke "undo"), ("C-o d", invoke "drop"), ("C-o x", invoke "save-absent"),
+        ("C-o g", invoke "visit-note"), ("C-o G", invoke "visit-missing"),
         ("C-o 2",
           { command := Files.openName
             arguments :=
@@ -17350,6 +17354,12 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         return none),
       ("shut", fun _ => do
         discard <| (⟨1⟩ : ViewId).close
+        return none),
+      ("visit-note", fun _ => do
+        Files.visit ⟨0⟩ (inFiles "note.txt") ⟨0, 2⟩ true
+        return none),
+      ("visit-missing", fun _ => do
+        Files.visit ⟨0⟩ (inFiles "missing.txt") ⟨1, 0⟩ true
         return none)]
 
 /-- The jobs of the file command checks, by name: the load job, whose loads
@@ -18484,7 +18494,79 @@ def fileCommandChecks : List Check :=
               (showing opened).bind (·.text) == some FileCases.noteText &&
               (showing saved).bind (·.text) == some text &&
               bytesOf saved path == some (FileModel.encode text) &&
-              echoOf saved == some (Files.wrote path) }]
+              echoOf saved == some (Files.wrote path) },
+    { name :=
+        "a point's offset is its row's start and the bytes of its first column characters: the row is clamped to the last line, the column to the row's content"
+      run :=
+        let offset (point : Files.At) : Option Nat :=
+          ((do
+                  let text ← createText "ab\nαβγ\n"
+                  Files.offsetAt text point).runModel
+              {}).1.toOption
+        pure
+          (offset ⟨1, 2⟩ == some 7 && offset ⟨1, 9⟩ == some 9 && offset ⟨7, 0⟩ == some 3 &&
+            offset ⟨0, 1⟩ == some 1) },
+    { name :=
+        "a visit of a path no buffer holds loads it, and once the load is delivered the view shows it with one cursor at the row and the character column, and is focused"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, steps) := fedTo driver (presses "C-o s C-o g")
+            let (visited, _) := asked.finish 1
+            started steps ==
+                #[{ name := Files.loadJob
+                    arguments :=
+                      Files.LoadOrder.arguments
+                        { path := inFiles "note.txt", view := ⟨0⟩, point := some ⟨0, 2⟩
+                          focus := true } }] &&
+              asked.loop.state.frame.focused == ⟨1⟩ &&
+              (showing visited).map (·.buffer.name) == some "note.txt" &&
+              (showing visited).bind (·.cursors) == some #[⟨6, 6⟩] &&
+              visited.loop.state.frame.focused == ⟨0⟩ },
+    { name :=
+        "a visit of a path a buffer holds shows that buffer at once, puts its cursor at the point and focuses the view, with no job"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (opened, _) := (fedTo driver (presses "C-o n")).1.finish 1
+            let (visited, steps) := fedTo opened (presses "C-o 0 C-o s C-o g")
+            started steps == #[] && visited.pending.isEmpty &&
+              (showing visited).map (·.buffer.name) == some "note.txt" &&
+              (showing visited).bind (·.cursors) == some #[⟨6, 6⟩] &&
+              visited.loop.state.frame.focused == ⟨0⟩ },
+    { name :=
+        "a visit whose load is refused says so and leaves the view, its cursor and the focus as they were"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-o s C-o G")
+            let (refused, _) := asked.finish 1
+            echoOf refused == some (Files.notOpened (inFiles "missing.txt") .notFound) &&
+              (showing refused).map (·.id) == some ⟨0⟩ &&
+              (showing refused).bind (·.cursors) == some #[⟨0, 0⟩] &&
+              refused.loop.state.frame.focused == ⟨1⟩ &&
+              refused.loop.state.buffers.size == 1 },
+    { name :=
+        "a load order crosses as arguments and back with a point and the focus and without, an order with no point crosses as it did, and arguments of that shape still read"
+      run :=
+        let order : Files.LoadOrder := { path := "/a", view := ⟨2⟩, next := ["/b"] }
+        let pointed : Files.LoadOrder :=
+          { order with
+            point := some ⟨3, 4⟩, focus := true }
+        pure
+          (Files.LoadOrder.ofArguments? order.arguments == some order &&
+            Files.LoadOrder.ofArguments? pointed.arguments == some pointed &&
+            Files.LoadOrder.ofArguments? { pointed with focus := false }.arguments ==
+              some { pointed with focus := false } &&
+            order.arguments == [.str "/a", .nat 2, .str "/b"] &&
+            Files.LoadOrder.ofArguments? [.str "/a", .nat 2] ==
+              some { path := "/a", view := ⟨2⟩ }) }]
 
 /-- What the command `leave` of the quit checks says in the echo area when
 it is refused, for a buffer called `name`. -/

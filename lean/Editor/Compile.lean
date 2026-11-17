@@ -496,14 +496,6 @@ buffer. -/
 def kept (state : EditorState) (record : Record) : Option BufferId :=
   (record.buffer.filter fun index => (state.buffer? ⟨index⟩).isSome).map (⟨·⟩)
 
-/-- Puts the cursor of `view` at `offset`, one bar with its shape kept. -/
-def placeCursor (view : ViewId) (offset : Nat) : EditorM Unit := do
-  if let .ok selection← view.selection then
-    discard <|
-        view.select
-          { selection with
-            ranges := #[⟨offset, offset⟩], primary := 0 }
-
 /-- Appends `lines`, each ended with a line feed, to the buffer `id`, inside
 `writing`. Each view showing it whose cursor is on the last line, or the
 empty row after it, follows: its cursor is put at the start of the new last
@@ -523,7 +515,7 @@ def append (id : BufferId) (lines : Array String) : EditorM Unit := do
       text.insert (← text.byteLength) (String.join (lines.map (· ++ "\n")).toList)
   let last ← text.offsetOf { row := (← text.lineCount) - 1, column := 0 }
   for view in followers do
-    placeCursor view last
+    Files.placeCursor view last
 
 /-- Shows the buffer `id` for a run asked from `view` ("The run", in the
 module docs): in a new view below the asking one when no view shows it, the
@@ -557,7 +549,7 @@ def prepare (scope : Scope) (record : Record) (content : String) :
         text.replaceRange 0 (← text.byteLength) content
     -- Every view of it starts the new run on the header line, so it follows.
     for view in viewsOf state id do
-      placeCursor view 0
+      Files.placeCursor view 0
     return some (id, false)
   | none =>
     let .ok id ← createBuffer (freeBufferName state scope) content | return none
