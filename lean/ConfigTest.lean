@@ -2976,6 +2976,40 @@ def shippedSourceChunk (overrides : Bool) : String :=
     "  command \"pick-theme\" (discard <| prompt \"Theme: \" { command := \"picked\" }\n" ++
     "    (sources := [.named \"themes\"]))\n"
 
+/-- A chunk whose `setup` makes the choices of completion style `choices`
+(lines of `setup`, each indented) and registers two commands, `pick` and
+`other`, that ask `Pick: ` with a source given as a value, of the category
+`pick` and of `other`, each over `wq`, `edit`, `rewrite` and `w`. -/
+def styleChunk (choices : List String) : String :=
+  let asks (command category : String) : String :=
+    s!"  command \"{command}\" (discard <| prompt \"Pick: \" \{ command := \"picked\" }\n" ++
+      s!"    (sources := [.given (.ofTexts \"{command}s\" \"{category}\" " ++
+      "#[\"wq\", \"edit\", \"rewrite\", \"w\"])]))\n"
+  "def setup : SetupM Unit := do\n" ++ String.join (choices.map (s!"  {·}\n")) ++
+    asks "pick" "pick" ++ asks "other" "other"
+
+/-- A chunk whose `setup` chooses the orderless style for the category
+`buffer`, so `switch-buffer` lists its candidates in their own order, and
+registers the sources `defines` (lines of `setup`, each indented). -/
+def bufferStyleChunk (defines : List String) : String :=
+  "def setup : SetupM Unit := do\n  useStyleFor \"buffer\" \"orderless\"\n" ++
+    "  command \"make\" do\n" ++
+    "    discard <| createBuffer \"alpha\"\n" ++
+    "    discard <| createBuffer \"beta\"\n" ++
+    String.join (defines.map (s!"  {·}\n"))
+
+/-- Whether a status line of `lines` lists `fields` after the label
+`label`, the label in the prompt's face and each field in the candidates'
+face, whichever view it is of: each prompt opens a minibuffer view of its
+own. -/
+def listsAfter (lines : Array String) (label : String) (fields : List String) : Bool :=
+  let after (line : String) : String := (line.dropWhile (· != ':')).toString
+  let status :=
+    Headless.statusLine ⟨0⟩
+      (#[{ text := label, face := Loop.promptFace }] ++
+        fields.toArray.map fun text => { text, face := Loop.candidateFace })
+  lines.any fun line => line.startsWith "status " && after line == after status
+
 /-- The line of the minibuffer's view, view 1 in a frame of no size, showing
 `text` with its one cursor at `cursor`. -/
 def minibufferLine (text : String) (cursor : Nat) : String :=
@@ -3181,7 +3215,85 @@ def promptChecks (context : Context) : List Check :=
                   lists restored theme.name &&
                   !(← session.output.get).any (·.startsWith "loop: refused"))
             { minibufferCompiled with
-              themes := shipped.themes, sources := shipped.sources } }]
+              themes := shipped.themes, sources := shipped.sources } },
+    { name :=
+        "criterion 3: a config that chooses orderless for the category pick lists a pick prompt by it and every other by the default: after `w` is committed the pick prompt lists `wq`, `rewrite` and `w`, the candidates' own order, and a prompt of another category lists the same three with `w` first, the library's matcher's; reloaded with a config that chooses no style, the pick prompt lists `w` first too"
+      run :=
+        withHost context [("10-style.lean", styleChunk ["useStyleFor \"pick\" \"orderless\""])]
+          (fun session => do
+            let asked (command : String) : IO (Array String) := do
+              session.ask [.reload]
+              session.ask [.run command]
+              unless ← Event.post (.commit "w") do
+                return #[]
+              let asking ← session.sceneLines
+              session.pressKeys cancelKeys
+              return asking
+            let exactFirst (lines : Array String) : Bool :=
+              listsAfter lines "Pick: " ["w", "wq", "rewrite"] ||
+                listsAfter lines "Pick: " ["w", "rewrite", "wq"]
+            let pick ← asked "pick"
+            let other ← asked "other"
+            session.write "10-style.lean" (styleChunk [])
+            let unchosen ← asked "pick"
+            return listsAfter pick "Pick: " ["wq", "rewrite", "w"] && exactFirst other &&
+                exactFirst unchosen &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          minibufferCompiled },
+    { name :=
+        "a style config defines and chooses as the default lists every prompt: after `w` both prompts list `wq` and `w`, the candidates that begin with it; a config that also chooses a style nobody registered for pick says so in the echo area and on a report line, and pick falls to the default"
+      run :=
+        let defines := "defineStyle (.keeping \"starts\" fun text candidate => candidate.startsWith text)"
+        withHost context [("10-style.lean", styleChunk [defines, "useStyle \"starts\""])]
+          (fun session => do
+            let asked (command : String) : IO (Array String) := do
+              session.ask [.run command]
+              unless ← Event.post (.commit "w") do
+                return #[]
+              let asking ← session.sceneLines
+              session.pressKeys cancelKeys
+              return asking
+            session.ask [.reload]
+            let pick ← asked "pick"
+            let other ← asked "other"
+            session.write "10-style.lean"
+              (styleChunk [defines, "useStyle \"starts\"", "useStyleFor \"pick\" \"nope\""])
+            session.ask [.reload]
+            let (echo, _) ← session.scene
+            let fallen ← asked "pick"
+            return listsAfter pick "Pick: " ["wq", "w"] && listsAfter other "Pick: " ["wq", "w"] &&
+                echo == s!"reload: {Completion.Styles.unknown "nope"}".quote &&
+                (← session.output.get).contains s!"style: {Completion.Styles.unknown "nope"}" &&
+                listsAfter fallen "Pick: " ["wq", "w"] &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          minibufferCompiled },
+    { name :=
+        "criterion 5: a source config registers in the category buffer adds its candidates to switch-buffer's list, after the shipped source's buffer names; one registered under the shipped source's name replaces it; with neither the shipped names alone are listed (config chooses orderless for buffer, so the empty text lists the candidates in their own order and not by the library's scores)"
+      run :=
+        let more := "defineSource (.ofTexts \"more\" \"buffer\" #[\"zz-extra\"])"
+        let mine := "defineSource (.ofTexts \"buffers\" \"buffer\" #[\"mine\"])"
+        withHost context [("10-buffers.lean", bufferStyleChunk [more])]
+          (fun session => do
+            let asked : IO (Array String) := do
+              session.ask [.reload]
+              session.ask [.run Buffers.switchName]
+              let asking ← session.sceneLines
+              session.pressKeys cancelKeys
+              return asking
+            session.ask [.reload]
+            session.ask [.run "make"]
+            let added ← asked
+            session.write "10-buffers.lean" (bufferStyleChunk [mine])
+            let replaced ← asked
+            session.write "10-buffers.lean" (bufferStyleChunk [])
+            let shipped ← asked
+            let names := ["alpha", "beta", EditorState.scratchName]
+            return listsAfter shipped Buffers.switchPrompt names &&
+                listsAfter added Buffers.switchPrompt (names ++ ["zz-extra"]) &&
+                listsAfter replaced Buffers.switchPrompt ["mine"] &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          { minibufferCompiled with
+            commands := Minibuffer.commands ++ Buffers.commands, sources := Buffers.sources } }]
 
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the ex names that ship (`Ex.commands`, `Ex.bindings`,
@@ -5107,6 +5219,22 @@ def shippedChecks (_ : Unit) : List Check :=
         return [Ex.historySource.name, Ex.namesSource.name, Buffers.source.name,
                 TabCommands.source.name, Themes.source.name].all
             fun name => compiled name && (registry.source? name).isSome },
+    { name :=
+        "the executable's hosts start with the shipped completion styles, fuzzy and orderless, registered for the owner compiled, and with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let compiled (name : String) : Bool :=
+          registry.styles.any fun entry => entry.style.name == name && entry.owner == .compiled
+        return ["fuzzy", "orderless"].all compiled &&
+            registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
+            registry.sourcesIn "buffer" == #[Buffers.source.name] &&
+            registry.sourcesIn "tab" == #[TabCommands.source.name] &&
+            registry.sourcesIn "theme" == #[Themes.source.name] },
     { name :=
         "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation, compilation-output, next-error, previous-error and compile-goto-error, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile, kill-compilation, next-error and previous-error bound to them"
       run := do
