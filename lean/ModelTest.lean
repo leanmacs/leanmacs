@@ -34,6 +34,7 @@ import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Key.Notation
+import Editor.Language
 import Editor.Loop.Driver
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
@@ -14640,6 +14641,76 @@ def modeRecordChecks : List Check :=
                 Role.mark] ==
               Role.registered) }]
 
+/-- A language called `name`, chosen for `patterns`, whose text is parsed
+with `grammar`. -/
+def testLanguage (name : String) (patterns : List Language.Pattern) (grammar : String := "json") :
+    Language :=
+  { name, patterns, syntaxTree := { grammar } }
+
+/-- The name of the language `table` chooses for `path` (`Language.forPath`),
+if it chooses one. -/
+def chosenIn (table : List Language) (path : System.FilePath) : Option String :=
+  (Language.forPath table path).map (·.name)
+
+/-- The checks of the matching rule (`Editor/Language.lean`), pure: which
+language a table chooses for a path, how a later owner's entries are put
+over an earlier owner's, and the shipped table. -/
+def languageMatchChecks : List Check :=
+  let shipped := Language.shipped.toList
+  [{  name :=
+        "the shipped table chooses rust for a .rs path, json for a .json path and markdown for a .md path, by extension"
+      run :=
+        pure
+          (chosenIn shipped "/p/src/main.rs" == some "rust" &&
+            chosenIn shipped "/p/data.json" == some "json" &&
+            chosenIn shipped "/p/notes.md" == some "markdown") },
+    { name :=
+        "an exact base-name pattern beats an extension pattern, even an earlier entry's, and the extension entry still has the paths the name does not"
+      run :=
+        let table :=
+          [testLanguage "lock" [.extension "lock"], testLanguage "cargo-lock" [.name "Cargo.lock"]]
+        pure
+          (chosenIn table "/p/Cargo.lock" == some "cargo-lock" &&
+            chosenIn table "/p/yarn.lock" == some "lock" &&
+            chosenIn table "/p/sub/Cargo.lock.bak" == none) },
+    { name :=
+        "between entries of equal pattern the earlier one in the table wins, so an entry of a later owner, which Language.over puts first, beats the shipped one"
+      run :=
+        let rusty := testLanguage "rusty" [.extension "rs"] "rust"
+        let twice := [rusty, testLanguage "rustier" [.extension "rs"] "rust"]
+        pure
+          (chosenIn (Language.over [rusty] shipped) "/p/main.rs" == some "rusty" &&
+            chosenIn (Language.over twice shipped) "/p/main.rs" == some "rusty" &&
+            chosenIn (Language.over [rusty] shipped) "/p/data.json" == some "json") },
+    { name :=
+        "Language.over replaces an earlier owner's entry of a name with the later owner's whole entry, the later owner's entries first and in their order"
+      run :=
+        let mine :=
+          [{ Language.rust with patterns := [.extension "rlib"] },
+            testLanguage "toml" [.extension "toml"]]
+        let table := Language.over mine shipped
+        pure
+          (table.map (·.name) == ["rust", "toml", "json", "markdown"] &&
+            chosenIn table "/p/main.rs" == none &&
+            chosenIn table "/p/x.rlib" == some "rust" &&
+            Language.over [] shipped == shipped) },
+    { name :=
+        "a path that matches no entry has no language: another extension, no extension, a base name that is only the extension with or without its dot, an extension in another case, and a path with no base name"
+      run :=
+        pure
+          (["/p/notes.txt", "/p/Makefile", "/p/rs", "/p/.rs", "/p/main.RS", "/"].all fun path =>
+            chosenIn shipped path == none) },
+    { name :=
+        "the shipped table is rust, json and markdown, each parsed with the grammar of its name and the grammar's own queries, rust indented by four spaces and json and markdown by two"
+      run :=
+        pure
+          (Language.shipped.map (·.name) == #["rust", "json", "markdown"] &&
+            Language.shipped.all
+              (fun language => language.syntaxTree == { grammar := language.name }) &&
+            Language.rust.indentUnit == .spaces 4 &&
+            Language.json.indentUnit == .spaces 2 &&
+            Language.markdown.indentUnit == .spaces 2) }]
+
 /-- A mode called `name` that fills each of `roles` with a command named
 after the mode and the role, and derives from `parent`, if given. -/
 def filling (name : String) (roles : List Role) (parent : Option String := none) : Mode :=
@@ -29240,6 +29311,7 @@ def checks : List Check :=
     vimDefaultChecks ++
     vimContractChecks ++
     modeRecordChecks ++
+    languageMatchChecks ++
     modeRegistryChecks ++
     modeDispatchChecks ++
     modeEnterChecks ++
