@@ -464,6 +464,12 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   `P`, by the same rows;
 - `evilOpenChecks`: `o` and `O`, by the same rows, and their insert
   session;
+- `evilIndentChecks`: `=` by key in a JSON language whose model tree
+  answers the indents query (`indentDriver`): `gg=G` over a mangled text,
+  `=af`, counts, `=j`, a visual selection, one undo step, `.` over another
+  range, a config entry's tab unit, and the give-up with no syntax tree or
+  no indents query; and the new lines `RET`, `o` and `O` start at their
+  level, and as before this phase with neither;
 - `evilUndoChecks`: `u` and `C-r` after one change of each kind
   (`undoRows`): the text and the cursor from before the change, and those
   the change left. They are the phase's rule and are not compared with
@@ -22724,6 +22730,51 @@ def treeSelected (fixture typed : String) : Option (List (Nat × Nat) × Shape �
     ((seen.selection.ranges.map fun range => (range.anchor, range.head)).toList,
       seen.selection.shape, seen.covered.toList)
 
+/-- The test language of the indent checks: the model's JSON grammar with
+`jsonIndents` and `jsonTextObjects`, indented by two spaces. -/
+def modelJsonIndented : Language :=
+  { name := "model-json", patterns := [.extension "json"]
+    syntaxTree := { grammar := "json", indents := some jsonIndents, textObjects := some jsonTextObjects }
+    indentUnit := .spaces 2 }
+
+/-- What a step of the indent checks is handed: evil's commands
+(`evilHanded`), with the `code` mode and `languages` registered as compiled
+code registers them, and `config` registered for config. -/
+def indentHanded (languages : Array Language) (config : Array Language := #[]) :
+    Loop.Keys Vim.Default.scheme :=
+  { evilHanded with
+    registered :=
+      (((({} : Config.Registry).replaceModes .compiled Language.modes).replaceLanguages .compiled
+              languages).replaceLanguages
+          .config config).registered }
+
+/-- A driver of the indent checks over the state the fixture `fixture` says,
+with the unnamed register holding `evilSentinel`, whose buffer's language
+is `language`, `modelJsonIndented` unless another is given, and whose text
+is entered in its tree; the table registers `language`, and `config` for
+config. On the editor's models. -/
+def indentDriver (fixture : String) (language : Language := modelJsonIndented)
+    (config : Array Language := #[]) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  let prepared : EditorM EditorState := do
+    let state ← evilState contents head
+    let named := some language.name
+    let state : EditorState :=
+      { state with buffers := state.buffers.map (·.map ({ · with language := named })) }
+    if let some (some buffer) := state.buffers[0]? then
+      Highlight.enter Language.codeName buffer.text language.syntaxTree
+    return state.setRegister Evil.unnamed evilSentinel
+  match prepared.runModel editorModel with
+  | (.ok state, model) =>
+    (Loop.Driver.over (indentHanded #[language] config) (fun _ => none) (pure state) model).toOption
+  | (.error _, _) => none
+
+/-- The keys `typed` pressed from `fixture` on `indentDriver`: what they
+left. -/
+def indentEdited (fixture typed : String) (language : Language := modelJsonIndented)
+    (config : Array Language := #[]) : Option EvilEdited :=
+  (indentDriver fixture language config).map fun driver => evilLeft (evilFed driver typed)
+
 /-- One row of an oracle table of the operators: keys, the text and the
 cursor they are pressed from, and what Vim leaves. -/
 structure OperatorRow where
@@ -22748,6 +22799,9 @@ structure OperatorRow where
   the row's buffer is set to (`treeRegistered`), so the syntax tree's text
   objects are there; none for a buffer with no syntax tree. -/
   tree : Option String := none
+  /-- Whether the row's buffer is in the indent checks' JSON language
+  (`indentDriver`), so its text has indent levels. -/
+  indented : Bool := false
 
 namespace OperatorRow
 
@@ -22764,6 +22818,12 @@ register are as they were, and the view is in normal state. -/
 def givesUp (before keys : String) : OperatorRow :=
   { before, keys, after := before, register := none, gaveUp := true }
 
+/-- A row whose keys re-indent, in the indent checks' JSON language
+(`indentDriver`): the view is in normal state and the register as it
+was. -/
+def indents (before keys after : String) : OperatorRow :=
+  { before, keys, after, register := none, indented := true }
+
 /-- A row whose keys' command breaks off: the cursor is at `after`'s bar,
 the text and the register are as they were, the view is in normal state,
 and the echo area says something that is no refusal. -/
@@ -22779,7 +22839,7 @@ def wrong (row : OperatorRow) : Option String :=
       match row.tree with
       | some textObjects =>
         (treeRegistered row.before textObjects).map fun driver => evilLeft (evilFed driver row.keys)
-      | none => evilEdited row.before row.keys
+      | none => if row.indented then indentEdited row.before row.keys else evilEdited row.before row.keys
     match edited with
     | none => some s!"no driver for {repr row.before}"
     | some left =>
@@ -23091,6 +23151,21 @@ def operatorSituations : List (String × Bool) :=
   [(plainText, false), (plainText, true), (emptyLineText, false), (endText, false),
     (bareEndText, false)]
 
+/-- The oracle table's rows for `=` over each motion that takes no argument,
+in its five situations, the count before the operator: their buffer has no
+language and no syntax tree, so the indent operator gives up in every one,
+having changed nothing, as Vim's `=` does nothing with no `indentexpr` that
+answers (`Evil.cannotIndent`; a motion that fails gives up first). What
+`=` does over a motion in a text with indent levels is
+`evilIndentChecks`'s. -/
+def indentTableRows : List OperatorRow :=
+  operatorSituations.flatMap fun (before, counted) =>
+    (Vim.Default.motions.filterMap fun (key, bound) =>
+        match bound with
+        | .motion _ => some key
+        | _ => none).map
+      fun motion => .givesUp before (" ".intercalate ((if counted then ["2"] else []) ++ ["=", motion]))
+
 /-- The oracle table's rows for each operator over `;` and `,` in its five
 situations. In each nothing was found before the keys, so there is no last
 find to repeat: Vim fails the motion and cancels the operator, and the
@@ -23162,7 +23237,8 @@ def operatorTable : List OperatorRow :=
     findAgainTableRows ++
     searchAgainTableRows ++
     starTableRows ++
-    percentTableRows
+    percentTableRows ++
+    indentTableRows
 
 /-- The pairs of an operator's key and a motion's key that the rows of
 `operatorTable` have for the situation of the text `before`, with a count
@@ -23310,7 +23386,13 @@ def findOperatorRows : List OperatorRow :=
     .rests "abcab|c" "y F a" "abc|abc" (charwise "ab"),
     .inserts "abcab|c" "c T a" "abca|c" (charwise "b"), .givesUp "|abc" "d f z",
     .givesUp "|abc" "d F a", .givesUp "|ab\nz" "d t z", .givesUp "|abc" "d ;",
-    .givesUp "|abc" "y ,", .givesUp "|abcabc" "d 3 f c"]
+    .givesUp "|abc" "y ,", .givesUp "|abcabc" "d 3 f c",
+    -- `=` re-indents the one row a find stays on, in a text with indent
+    -- levels.
+    .indents "[\n|\"abc\",\n      \"cba\"\n]" "= f c" "[\n  |\"abc\",\n      \"cba\"\n]",
+    .indents "[\n|\"abc\",\n      \"cba\"\n]" "= t c" "[\n  |\"abc\",\n      \"cba\"\n]",
+    .indents "[\n\"abc\"|,\n      \"cba\"\n]" "= F a" "[\n  |\"abc\",\n      \"cba\"\n]",
+    .indents "[\n\"abc\"|,\n      \"cba\"\n]" "= T a" "[\n  |\"abc\",\n      \"cba\"\n]"]
 
 /-- The pairs of an operator's key and a motion's key that take a character
 the rows of `findOperatorRows` have, with the keys typed before the
@@ -23592,7 +23674,11 @@ def searchOperatorRows : List OperatorRow :=
     .rests "x|foo\nbar" "d / b a r RET" "|x\nbar" (charwise "foo"),
     .rests "foo\n|bar" "d ? f o o RET" "|bar" (linewise "foo\n"),
     .rests "foo bar f|oo" "y ? b a r RET" "foo |bar foo" (charwise "bar f"),
-    .givesUp "|abc" "d / z RET", .givesUp "|abc" "c ? z RET", .givesUp "|abc" "d / RET"]
+    .givesUp "|abc" "d / z RET", .givesUp "|abc" "c ? z RET", .givesUp "|abc" "d / RET",
+    -- `=` re-indents the rows from the cursor to where the search leads, in
+    -- a text with indent levels.
+    .indents "[\n|1,\n      2,\n 3\n]" "= / 3 RET" "[\n  |1,\n  2,\n  3\n]",
+    .indents "[\n1,\n      2,\n |3\n]" "= ? 1 RET" "[\n  |1,\n  2,\n  3\n]"]
 
 /-- The pairs of an operator's key and a motion's key that asks that the
 rows of `searchOperatorRows` have, with the keys typed before the operator
@@ -24518,10 +24604,56 @@ def objectNames : List String :=
       | .textObject name => some name
       | _ => none).eraseDups
 
+/-- The JSON text of `indentObjectRows`, its rows mangled: a string holding
+a word, parentheses, single quotes and backquotes; an array over two rows;
+and an object in an object. -/
+def indentObjectText : String :=
+  "{\n\"a\": \"x (y) 'z' `w`\",\n      \"b\": [1,\n2],\n \"c\": {\"d\": 3}\n}"
+
+/-- `indentObjectText` with the cursor at the byte offset `at`. -/
+def indentObjectAt (at_ : Nat) : String :=
+  withBar indentObjectText at_
+
+/-- `indentObjectText` with the rows `rows` re-indented to the levels of its
+two-space pretty form, and the cursor on the first non-blank of the row
+`cursor`. -/
+def indentObjectReindented (rows : List Nat) (cursor : Nat) : String :=
+  let pretty := ["", "  ", "  ", "    ", "  ", ""]
+  let lines :=
+    (indentObjectText.splitOn "\n").zipIdx.map fun (line, row) =>
+      if rows.contains row then pretty.getD row "" ++ (line.dropWhile (· == ' ')).toString else line
+  let before := (lines.take cursor).foldl (fun walked line => walked + line.utf8ByteSize + 1) 0
+  let blanks := ((lines.getD cursor "").takeWhile (· == ' ')).utf8ByteSize
+  withBar ("\n".intercalate lines) (before + blanks)
+
+/-- The rows of `=` over each text object the default tables name, in the
+indent checks' JSON language (`indentDriver`), written by hand: an object
+inside the string re-indents its one row, a bracket and an array the rows
+they cover, `i{` the whole lines inside the outer object and `a{` all of
+them, a function the inner object's row, and an argument its rows. -/
+def indentObjectRows : List OperatorRow :=
+  let row1 := indentObjectReindented [1] 1
+  let rows23 := indentObjectReindented [2, 3] 2
+  [.indents (indentObjectAt 8) "= i w" row1, .indents (indentObjectAt 8) "= a w" row1,
+    .indents (indentObjectAt 8) "= i W" row1, .indents (indentObjectAt 8) "= a W" row1,
+    .indents (indentObjectAt 8) "= i \"" row1, .indents (indentObjectAt 8) "= a \"" row1,
+    .indents (indentObjectAt 15) "= i '" row1, .indents (indentObjectAt 15) "= a '" row1,
+    .indents (indentObjectAt 19) "= i `" row1, .indents (indentObjectAt 19) "= a `" row1,
+    .indents (indentObjectAt 11) "= i (" row1, .indents (indentObjectAt 11) "= a (" row1,
+    .indents (indentObjectAt 36) "= i [" rows23, .indents (indentObjectAt 36) "= a [" rows23,
+    .indents (indentObjectAt 3) "= i {" (indentObjectReindented [1, 2, 3, 4] 1),
+    .indents (indentObjectAt 3) "= a {" (indentObjectReindented [0, 1, 2, 3, 4, 5] 0),
+    .indents (indentObjectAt 51) "= a f" (indentObjectReindented [4] 4),
+    .indents (indentObjectAt 51) "= i f" (indentObjectReindented [4] 4),
+    .indents (indentObjectAt 36) "= a c" rows23, .indents (indentObjectAt 36) "= i c" rows23,
+    .indents (indentObjectAt 39) "= i a" (indentObjectReindented [3] 3),
+    .indents (indentObjectAt 39) "= a a" rows23, .givesUp "a|b" "= a f"]
+
 /-- The pairs of an operator's key and a text object's name that the rows of
-`objectOperatorRows` have, with the counts left out. -/
+`objectOperatorRows`, `treeObjectOperatorRows` and `indentObjectRows` have,
+with the counts left out. -/
 def objectOperatorPairs : List (String × String) :=
-  (objectOperatorRows ++ treeObjectOperatorRows).filterMap fun row =>
+  (objectOperatorRows ++ treeObjectOperatorRows ++ indentObjectRows).filterMap fun row =>
     match (row.keys.splitOn " ").filter (fun token => !token.all Char.isDigit) with
     | operator :: rest => (objectNamed (" ".intercalate rest)).map (operator, ·)
     | [] => none
@@ -24733,6 +24865,9 @@ def evilObjectChecks : List Check :=
         return held &&
             evilSelected "x |(a [b] c)" "v %" == some ([(2, 10)], .inclusive, ["(a [b] c)"]) &&
             evilSelected "|x (a)" "v %" == some ([(0, 4)], .inclusive, ["x (a)"]) },
+    { name :=
+        "= over each text object re-indents the rows the object touches, whole, in a text with indent levels, and the cursor goes to the first row's first non-blank"
+      run := operatorRows indentObjectRows },
     { name :=
         "the object table is complete: every operator key of the default tables has a row over every text object the default tables name"
       run :=
@@ -25111,6 +25246,96 @@ def evilRegisterChecks : List Check :=
             let replaced := evilFed driver "v l \" + <F5>"
             evilText replaced == some "aXYd" && evilHistory replaced == some (2, false) &&
               evilText (evilUndone replaced) == some "abcd" }]
+
+/-- The mangled JSON text of the indent checks' repeats, with the cursor on
+its second row. -/
+def indentRepeatText : String :=
+  "[\n|1,\n      2,\n 3,\n4,\n   5,\n6\n]"
+
+/-- The checks of evil's `=` (`Evil.indent`, `Editor/Evil/Operators.lean`),
+by key, on the models: in the indent checks' JSON language
+(`indentDriver`), where the model's syntax tree answers the indents query,
+and on the plain evil driver, whose buffer has no language. -/
+def evilIndentChecks : List Check :=
+  [{  name :=
+        "g g = G over a mangled JSON text gives the two-space text, a blank row of blanks emptied, with the cursor on the first row's first non-blank; = G from a row whose indent changes leaves the cursor on that row's new first non-blank"
+      run :=
+        let mangled := "{\n\"a\": [\n      1,\n   \n {\n\"b\": null\n    }\n],\n\"c\": {}\n}"
+        let pretty := "{\n  \"a\": [\n    1,\n\n    {\n      \"b\": null\n    }\n  ],\n  \"c\": {}\n}"
+        operatorRows
+          [.indents (withBar mangled 25) "g g = G" (withBar pretty 0),
+            .indents (withBar mangled 2) "= G" (withBar pretty 4)] },
+    { name :=
+        "= a f inside a nested object re-indents exactly that object's rows, and the rows outside it keep their indentation"
+      run :=
+        operatorRows
+          [.indents "[\n{\n\"|x\": 1\n},\n2\n]" "= a f" "[\n  |{\n    \"x\": 1\n  },\n2\n]"] },
+    { name :=
+        "= = re-indents the cursor's row, a count that many rows, = j two rows, and V j = the selection's rows; a row already right is left, and nothing is put in the register"
+      run :=
+        operatorRows
+          [.indents indentRepeatText "= =" "[\n  |1,\n      2,\n 3,\n4,\n   5,\n6\n]",
+            .indents indentRepeatText "3 = =" "[\n  |1,\n  2,\n  3,\n4,\n   5,\n6\n]",
+            .indents indentRepeatText "= j" "[\n  |1,\n  2,\n 3,\n4,\n   5,\n6\n]",
+            .indents indentRepeatText "V j =" "[\n  |1,\n  2,\n 3,\n4,\n   5,\n6\n]",
+            .indents "[\n  |1\n]" "= =" "[\n  |1\n]",
+            .indents "|[\n  1\n]" "= j" "|[\n  1\n]"] },
+    { name :=
+        "one = is one step of the history: u gives back the mangled text and the cursor from before"
+      run :=
+        pure <|
+          match indentDriver indentRepeatText with
+          | none => false
+          | some driver =>
+            let indented := evilFed driver "= j"
+            let nodes (driver : EvilDriver) := (evilHistory driver).map (·.1)
+            evilShown indented == "[\n  |1,\n  2,\n 3,\n4,\n   5,\n6\n]" &&
+              nodes indented == (nodes driver).map (· + 1) &&
+              evilShown (evilFed indented "u") == indentRepeatText },
+    { name :=
+        ". repeats = over another range: = = then j . re-indents the next row, = j then j j j . the two rows from there, and a count before . replaces the count"
+      run :=
+        operatorRows
+          [.indents indentRepeatText "= = j ." "[\n  1,\n  |2,\n 3,\n4,\n   5,\n6\n]",
+            .indents indentRepeatText "= j j j j ." "[\n  1,\n  2,\n 3,\n  |4,\n  5,\n6\n]",
+            .indents indentRepeatText "2 = = j j ." "[\n  1,\n  2,\n  |3,\n  4,\n   5,\n6\n]",
+            .indents indentRepeatText "2 = = j j 3 ." "[\n  1,\n  2,\n  |3,\n  4,\n  5,\n6\n]"] },
+    { name := "= over a visual selection re-indents it and is not repeated by ."
+      run :=
+        pure <|
+          match indentDriver indentRepeatText with
+          | none => false
+          | some driver =>
+            let indented := evilFed driver "V j ="
+            let repeated := evilFed indented "j j ."
+            evilText repeated == some "[\n  1,\n  2,\n 3,\n4,\n   5,\n6\n]" &&
+              repeated.loop.state.echo.endsWith (Evil.notRepeated Evil.overSelection) },
+    { name :=
+        "in a buffer with no language = = , = j and g g = G leave the text and the cursor and say there is no syntax tree; the give-up is not the last change, so . after it repeats the change before it"
+      run :=
+        pure <|
+          let fixture := "    a|b\n  cd"
+          let reason := Evil.cannotIndent .notAttached
+          evilGaveUp (evilEdited fixture "= =") fixture reason &&
+            evilGaveUp (evilEdited fixture "= j") fixture reason &&
+            evilGaveUp (evilEdited fixture "g g = G") "    |ab\n  cd" reason &&
+            (evilDriver fixture).bind (fun driver => evilText (evilFed driver "x = = .")) ==
+              some "    \n  cd" },
+    { name :=
+        "in a buffer whose language's tree keeps no indents query = = leaves the text and says so"
+      run :=
+        pure <|
+          let fixture := "[\n|1\n]"
+          evilGaveUp
+            (indentEdited fixture "= =" { modelJsonIndented with syntaxTree := { grammar := "json" } })
+            fixture (Evil.cannotIndent .noQuery) },
+    { name :=
+        "a config entry of the buffer's language that indents by a tab wins over the compiled one: = = indents with tabs"
+      run :=
+        pure
+          ((indentEdited "[\n[\n|1\n]\n]" "= =" (config := #[{ modelJsonIndented with indentUnit := .tab }])).map
+              (·.shown) ==
+            some "[\n[\n\t\t|1\n]\n]") }]
 
 /-- The checks of the two commands that open a line (`Evil.openBelow`,
 `Evil.openAbove`), by key, as `evilOperatorChecks` are. -/
@@ -29926,6 +30151,7 @@ def checks : List Check :=
     evilObjectChecks ++
     evilRegisterChecks ++
     evilOpenChecks ++
+    evilIndentChecks ++
     evilUndoChecks ++
     evilRepeatChecks ++
     viewChecks ++

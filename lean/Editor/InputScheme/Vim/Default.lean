@@ -30,7 +30,7 @@ The operators' entries are `Evil.operators`
 | Table | Binds |
 |---|---|
 | `motions` | The motions of normal state and the visual states. `f`, `F`, `t` and `T` are motions that take the character the next key names (`Bound.charMotion`), and `/` and `?` motions that ask for a pattern in the minibuffer (`Bound.promptMotion`, labelled `/` and `?`). `%` is the motion `matching-bracket` |
-| `operators` | The operators. `c` names the state `insert`, and `y` changes no text |
+| `operators` | The operators: `d`, `c`, `y` and `=` (`indent`). `c` names the state `insert`, and `y` changes no text |
 | `objects` | The text objects: `i` or `a` and then `w`, `W`, `"`, `'`, `` ` ``, `(`, `[` or `{`, Vim's; or `f`, `c` or `a`, the syntax tree's function, class and argument (`Editor/Evil/TreeObjects.lean`). `)` and `b` are aliases of `(`, `]` of `[`, and `}` and `B` of `{`, bound to the same names |
 | `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo and the command line, `C-g`, which cancels a running `:!` or filter (`keyboard-quit`), the two that enter a visual state, the register prefix, and the repeat key, `.`, which is a part of speech of its own and no command's key (`Bound.repeat`) |
 | `insertCommands` | Insert state's: the key that returns to normal state, and its editing keys, `<Backspace>`, `RET`, `TAB` and the four arrow keys (`Editor/Evil.lean`, "Editing keys"), each bound as a command that changes no text for the grammar, so it is not the last change. `<Backspace>`, `RET` and `TAB` add themselves to the session's recording (`Command.typed`), so `.` replays them; each arrow key restarts the last change as `i` once something is typed after it (`Command.restarts`), as Vim 9.1's `ins-special-special` says |
@@ -206,7 +206,8 @@ def motions : List (String × Bound) :=
 def operators : List (String × Bound) :=
   [("d", .operator { name := "delete" }),
     ("c", .operator { name := "change", enters := some "insert" }),
-    ("y", .operator { name := "yank", changes := false })]
+    ("y", .operator { name := "yank", changes := false }),
+    ("=", .operator { name := "indent" })]
 
 /-- The text objects: each key string, and the object's vocabulary name. -/
 def objects : List (String × Bound) :=

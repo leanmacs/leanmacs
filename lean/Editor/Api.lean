@@ -115,7 +115,11 @@ sorted and apart, so they are the extents an insertion replaces.
 - `Target.replaceCarrying extent s before after` is the edit of a command
   that says both selections itself: one transaction that replaces one
   extent and carries `before` and `after` as they are handed in
-  (`TextId.replaceCarrying`), and then places `after`. The operations above
+  (`TextId.replaceCarrying`), and then places `after`.
+  `Target.replaceEachCarrying edits before after` is the same for several
+  extents, each with its own string, in one transaction: what `=` does.
+  `Target.replaceEach before edits` is `replaceExtents` with a string per
+  extent, leaving a cursor after each. The operations above
   carry the window's selection as it is when they are called. A command
   that has moved the selection since it was called, or that leaves the
   cursor somewhere other than after what it inserted, hands in the
@@ -1138,16 +1142,17 @@ def removeMinorMode (id : BufferId) (name : String) : EditorM (Except BufferRefu
 
 end BufferId
 
-/-- The changes that replace each of `extents`, sorted and apart, of a text
-of `length` bytes, with `text`, and the cursor after each insertion. -/
-def replacingEach (length : Nat) (extents : Array Extent) (text : String) :
+/-- The changes that replace each extent of `edits`, sorted and apart, of a
+text of `length` bytes, with its string, and the cursor after each
+insertion. -/
+def replacing (length : Nat) (edits : Array (Extent × String)) :
     Array Change × Array SelectionRange :=
   Id.run do
     let mut changes := #[]
     let mut cursors := #[]
     let mut walked := 0
     let mut shift : Int := 0
-    for extent in extents do
+    for (extent, text) in edits do
       changes :=
         changes ++
           #[.retain (extent.start - walked), .delete (extent.stop - extent.start), .insert text]
@@ -1156,6 +1161,23 @@ def replacingEach (length : Nat) (extents : Array Extent) (text : String) :
       shift := shift + text.utf8ByteSize - (extent.stop - extent.start)
       walked := extent.stop
     return (changes.push (.retain (length - walked)), cursors)
+
+/-- The changes that replace each of `extents`, sorted and apart, of a text
+of `length` bytes, with `text`, and the cursor after each insertion. -/
+def replacingEach (length : Nat) (extents : Array Extent) (text : String) :
+    Array Change × Array SelectionRange :=
+  replacing length (extents.map (·, text))
+
+/-- Replaces each extent of `edits`, sorted and apart, of `text` with its
+string, as one transaction made by the user that carries `before`, a
+selection of the text as it is, and `after`, one of the text the edits
+leave. Refused, changing nothing, as the store refuses the transaction, as
+`replaceCarrying` is. -/
+def TextId.replaceEachCarrying (text : TextId) (edits : Array (Extent × String))
+    (before after : Selection) : TextM Unit := do
+  let (changes, _) := replacing (← text.byteLength) edits
+  let _ ← text.apply { changes, before := some before, after := some after } Origin.user
+  return ()
 
 namespace Target
 
@@ -1172,18 +1194,26 @@ an end that is not a position of the text. -/
 def select (target : Target) (selection : Selection) : TextM Unit :=
   target.buffer.text.place target.window.selection (.selection selection)
 
+/-- Replaces each extent of `edits`, sorted and apart, of `target`'s text
+with its string, as one transaction made by the user, which carries
+`before` and the cursors after, one after each insertion, with `before`'s
+shape, and places the window's selection at those cursors. -/
+def replaceEach (target : Target) (before : Selection) (edits : Array (Extent × String)) :
+    TextM Unit := do
+  let text := target.buffer.text
+  let (changes, cursors) := replacing (← text.byteLength) edits
+  let after : Selection :=
+    { ranges := cursors, primary := min before.primary (cursors.size - 1), shape := before.shape }
+  let _ ← text.apply { changes, before := some before, after := some after } Origin.user
+  target.select after
+
 /-- Replaces each of `extents`, sorted and apart, of `target`'s text with
 `s`, as one transaction made by the user, which carries `before` and the
 cursors after, one after each insertion, with `before`'s shape, and places
 the window's selection at those cursors. -/
 def replaceExtents (target : Target) (before : Selection) (extents : Array Extent) (s : String) :
-    TextM Unit := do
-  let text := target.buffer.text
-  let (changes, cursors) := replacingEach (← text.byteLength) extents s
-  let after : Selection :=
-    { ranges := cursors, primary := min before.primary (cursors.size - 1), shape := before.shape }
-  let _ ← text.apply { changes, before := some before, after := some after } Origin.user
-  target.select after
+    TextM Unit :=
+  target.replaceEach before (extents.map (·, s))
 
 /-- Replaces `extent` of `target`'s text with `s`, as one transaction made
 by the user that carries `before` and `after` (`TextId.replaceCarrying`),
@@ -1193,6 +1223,15 @@ now. -/
 def replaceCarrying (target : Target) (extent : Extent) (s : String) (before after : Selection) :
     TextM Unit := do
   target.buffer.text.replaceCarrying extent s before after
+  target.select after
+
+/-- Replaces each extent of `edits`, sorted and apart, of `target`'s text
+with its string, as one transaction made by the user that carries `before`
+and `after` (`TextId.replaceEachCarrying`), and places `after` as the
+window's selection, as `replaceCarrying` does for one extent. -/
+def replaceEachCarrying (target : Target) (edits : Array (Extent × String))
+    (before after : Selection) : TextM Unit := do
+  target.buffer.text.replaceEachCarrying edits before after
   target.select after
 
 /-- Replaces what each range of `target`'s selection covers with `s`, as one
@@ -1216,8 +1255,9 @@ def deleteSelections (target : Target) : TextM Unit :=
 /-- Breaks the line at the head of each range of `target`'s selection, with
 its buffer's line ending (`Buffer.lineEnding`): a line feed, or a carriage
 return and a line feed, inserted as `insertAtSelections` inserts. A command
-that breaks a line at the cursors calls this, and none writes the line
-feed itself. -/
+that breaks a line at the cursors calls this, or reads `Buffer.lineEnding`
+as `Evil.newline` and `Evil.openLine` do, and none writes the line feed
+itself. -/
 def insertLineBreak (target : Target) : TextM Unit :=
   target.insertAtSelections target.buffer.lineEnding.text
 
