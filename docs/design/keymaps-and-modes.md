@@ -3074,6 +3074,9 @@ command an ex name runs is a step of its own.**
 | `b` | `switch-buffer` | Text | Shows the buffer the rest of the line names, exactly or by fuzzy match. With no argument, asks with the open buffers as candidates, by `switch-buffer`'s own rule |
 | `ls` | `list-buffers` | Nothing | Shows the buffer list, a text view of the open buffers, most recently used first, with `+` for unsaved changes |
 | `bd` | `close-buffer` | Text | Closes the buffer the rest of the line names, or the window's own: refused for a buffer of a file with unsaved changes and for a buffer with a save in flight, and every window that showed it shows the most recently used buffer left |
+| `compile` | `compile` | Text | Runs the rest of the line as `/bin/sh -c` in the buffer's workspace, into its compilation buffer ("The compile mode, as built"); with no argument, asks for the line |
+| `recompile` | `recompile` | Nothing | Reruns the workspace's last compiled line |
+| `kill-compilation` | `kill-compilation` | Nothing | Kills the workspace's compilation in flight |
 
 Where they differ from Vim:
 
@@ -3091,7 +3094,8 @@ Where they differ from Vim:
 - **`e!` and `w!` are names of their own**, bound with a fixed argument;
   only a leading `!` is parsed, as the shell's.
 - **`w` takes no file name.** Saving under another name is not built.
-- **`reload` is no Vim command.**
+- **`reload` is no Vim command**, nor are `compile`, `recompile` and
+  `kill-compilation`, which are Emacs's.
 - **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
   matches more than one buffer.
 - **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it
@@ -3108,7 +3112,9 @@ Where they differ from Vim:
 Pinned by `ModelTest.exLineChecks` (the parser, ranges and the binding),
 `shellChecks` (`:!` on the models, in the workspaces of a main checkout,
 a linked worktree and a directory in none), `ContractTest.shellChecks`
-(over the real process service),
+(over the real process service), `compileChecks` (`:compile` and the
+compile mode on the models) and `ConfigTest.shippedChecks` (the names
+bound),
 `registryChecks`, `setupChecks` and `reloadChecks` (ex bindings by owner,
 from `setup`, and across an install), `exChecks` (the ex line and the
 first five names, and `bufferCommandChecks` the last three, on the loop's driver over the editor's models and the model of

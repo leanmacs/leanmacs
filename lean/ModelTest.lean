@@ -18904,7 +18904,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread and reload, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile and recompile, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -18914,7 +18914,7 @@ def exChecks : List Check :=
             let (opening, _) := fedTo typed (presses "C-e t C-e y")
             candidatesOf typed == some (exListed "e" none Ex.bindings) &&
               (candidatesOf typed).map (·.listed) ==
-                some #["e", "e!", "autoread", "noautoread", "reload"] &&
+                some #["e", "e!", "autoread", "noautoread", "reload", "compile", "recompile"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
 
@@ -27763,13 +27763,16 @@ def compileCommands : List (String × Dispatched) :=
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
       ("squat-clone", squat)]
 
-/-- The keys of the compile checks, with the compile mode registered. -/
+/-- The keys of the compile checks, with the compile mode and the ex names
+that ship registered. -/
 def compileKeys : Loop.Keys TestScheme.scheme :=
   let keys := dispatchKeys compileBindings compileCommands
   { keys with
     registered :=
       { keys.registered with
-        entering := fun name => (Compile.modes.find? (·.name == name)).map ([·]) } }
+        entering := fun name => (Compile.modes.find? (·.name == name)).map ([·])
+        ex := fun name => Ex.bindings.find? (·.name == name)
+        exNames := Ex.bindings.map (·.name) } }
 
 /-- A driver of the compile checks: the world of `compileWorld`, with the
 compile checks' keys and jobs, the files the keys open, and the children of
@@ -28155,6 +28158,25 @@ def compileChecks : List Check :=
                 (Compile.recordOf again.loop.state placeR).runs == 2 &&
                 compiledText stale name == compiledText again name
             | _, _ => false },
+    { name :=
+        "the ex line runs the compile commands: `:compile make` compiles make, `:compile` alone asks for the line, `:kill-compilation` kills the run and `:recompile` reruns it"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let made := (fedTo opened (exLine "compile make")).1
+            let killed := (fedTo made (exLine "kill-compilation")).1
+            let again := (fedTo (drained killed) (exLine "recompile")).1
+            let asked := (fedTo opened (exLine "compile")).1
+            made.jobs.processes.started.back? == some (shellCommand "/r" "make") &&
+              made.posting.map (·.key) == #[some "compile local /r"] &&
+              killed.posting.isEmpty &&
+              killed.jobs.processes.killed == #[shellCommand "/r" "make"] &&
+              again.posting.map (·.key) == #[some "compile local /r"] &&
+              again.jobs.processes.started.size == made.jobs.processes.started.size + 1 &&
+              asked.loop.state.prompt.map (·.label) == some Compile.promptLabel },
     { name :=
         "a compile order crosses as arguments and back with a place of each kind, arguments that are no order read as none, and the run job started with them fails; each place has its own job key"
       run :=

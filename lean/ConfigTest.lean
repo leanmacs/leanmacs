@@ -4193,6 +4193,26 @@ def shippedChecks (_ : Unit) : List Check :=
             ex "ls" == some Buffers.listName &&
             ex "bd" == some Buffers.closeName },
     { name :=
+        "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation and compilation-output, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile and kill-compilation bound to them"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        return [Compile.compileName, Compile.recompileName, Compile.confirmName, Compile.killName,
+                Compile.outputName].all
+              compiled &&
+            (registry.findJob? Compile.runJob).any (·.owner == .compiled) &&
+            (registry.mode? Compile.modeName).isSome &&
+            (registry.mode? Minibuffer.mode.name).isSome &&
+            registry.ex? "compile" ==
+              some { name := "compile", command := Compile.compileName, takes := .text } &&
+            (registry.ex? "recompile").map (·.command) == some Compile.recompileName &&
+            (registry.ex? "kill-compilation").map (·.command) == some Compile.killName },
+    { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
       run := do
         let completions ← Job.Completions.new
