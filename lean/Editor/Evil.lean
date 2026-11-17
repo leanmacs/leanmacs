@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
+import Editor.Indent
 import Editor.Vocabulary
 
 /-!
@@ -190,10 +191,39 @@ wants one does; no other sets or clears one.
   insert state's report a bar there, and the line and the text typed after
   it are one insert session, one step of the history. Run by its name in
   normal state it opens the line and the cursor rests on it.
+- **The new line starts at its indent level** ("Indenting a new line",
+  below): `o` inserts the line ending and then the indent, `O` the indent
+  and then the line ending, and the bar is after the indent. With nothing
+  to add the edit is the line ending alone.
 - **A recorded departure**: opened below a last line with no line feed and
   then left with `<Escape>`, the new line is the empty last row, where a
   cursor cannot rest ("Where a cursor rests"), so the cursor rests on the
   line above, where Vim's is on the new line.
+
+### Indenting a new line
+
+`RET`, `o` and `O` ask the level of the new row of the text as it is,
+before the line break (`TextId.openingLevel`, `Editor/Indent.lean`, "The
+opening rule"), at the offset the line opens at: the bar for `RET`, where
+the cursor's line's content ends for `o`, and the line's start for `O`. The
+tree asked is the one delivered last, since keys come further apart than an
+incremental reparse; the editor thread never waits for a parse
+(`openingIndent`).
+
+- **A level** is that many of the buffer's indent unit
+  (`Target.indentUnit`, `Editor/Language/IndentUnit.lean`).
+- **Inside a multi-line string or block comment** nothing is added.
+- **A text whose last edit's tree is not delivered yet** (keys faster than
+  a reparse, or a `.` replay that types and breaks lines in one command)
+  gets the opening row's own leading whitespace: Vim's `autoindent`.
+- **No syntax tree or no indents query** (a buffer with no language, a mode
+  with no tree, JSON and Markdown today) adds nothing: the edit is the one
+  before indenting, byte for byte.
+- **A recorded departure**: Vim removes an indent left untouched when the
+  insert is left (`<Escape>` after `o` with nothing typed). Here the blanks
+  stay until `=`, or a `RET` on that row, which replaces them.
+- **No electric closing bracket**: typing `}` as a row's first character
+  does not re-indent the row, where Vim's `indentkeys` has `0}`; `=` does.
 
 ### Editing keys
 
@@ -205,7 +235,7 @@ Vim state. Each follows Vim 9.1 with its default options:
 |---|---|---|
 | `<Backspace>` | `deleteBackward` | Deletes the cell before the bar (`previousCell`, so a carriage return and line feed, or a character of several bytes, goes whole). At a line's start it joins the line to the one above, and it deletes past where the insert began: Vim's `i_<BS>` under `backspace=indent,eol,start`. At the text's start it deletes nothing |
 | `C-w` | `deleteWordBackward` | Deletes the word before the bar and the blanks between it and the bar, from the later of the line's start and the start of the word before the bar (`previousWordStart .word`): a run of punctuation is a word, and blanks back to the line's start go when no word is before them on the line. At a line's start it deletes the line break, joining the line to the one above, as `<Backspace>` does there; at the text's start it deletes nothing. Vim's `i_CTRL-W` under `backspace=indent,eol,start`, as its `ins_bs` deletes with `BACKSPACE_WORD` |
-| `RET` | `newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent` |
+| `RET` | `newline` | Breaks the line at the bar with the buffer's own line ending, as `o` and `O` read it, and starts the new row at its indent level ("Indenting a new line", below): the blanks either side of the bar go, and the bar is after the indent. With nothing to add it inserts the line ending alone, as before indenting. With several ranges it breaks the line at each (`Target.insertLineBreak`), with no indent |
 | `TAB` | `insertTab` | Inserts a tab character: Vim's `noexpandtab` and `softtabstop=0` |
 | `<ArrowLeft>`, `<ArrowRight>`, `<ArrowUp>`, `<ArrowDown>` | `insertMove motions` with `left`, `right`, `up`, `down` | The move command by that motion, with no count. Left and right stop at the line's start and where its content ends, so neither wraps (`whichwrap=b,s`); up and down keep the wanted column across short lines |
 
@@ -230,7 +260,9 @@ Vim state. Each follows Vim 9.1 with its default options:
   `Editor/Evil/Repeat.lean`). `<Backspace>`, `C-w`, `RET` and `TAB` are
   kept in the text recorded for the last change, in the order typed, and
   `.` runs them again: a `<Backspace>` deletes the cell before the bar,
-  past where the insert began too, `C-w` the word before the bar, `RET` breaks the line with the buffer's line ending,
+  past where the insert began too, `C-w` the word before the bar, `RET`
+  breaks the line with the buffer's line ending and indents the new row as
+  `RET` does (`newline`),
   and `TAB` inserts a tab. An arrow key that moved restarts the change as
   `i` once something is typed after it, with the text typed from there on:
   `ins-special-special`'s "only the last change can be redone and always
@@ -495,6 +527,18 @@ register. -/
 def appendLineEnd (call : Call) : EditorM Unit :=
   enterAt (fun text head => text.motion .lineEnd head) call
 
+/-- The whitespace a line opened at `offset` of `call`'s text starts with
+("New lines", `Editor/Indent.lean`), asked of the text as it is, before the
+line break: the opening level in the buffer's indent unit, the opening
+row's own indent when the text is not parsed yet, or none, with nothing to
+add. With `rest`, what follows `offset` on its row moves to the new row. -/
+def openingIndent (call : Call) (offset : Nat) (rest : Bool) : EditorM (Option String) := do
+  let text := call.target.buffer.text
+  let answer ← text.openingLevel offset rest
+  let rowStart ← text.motion .lineStart offset
+  let leading ← text.slice rowStart (← text.motion .lineFirstNonBlank rowStart)
+  return Indent.newLine (← call.target.indentUnit) answer leading
+
 /-- Opens an empty line beside the line of the head of the primary range of
 the target's selection, below it when `below` and above it otherwise, and
 leaves one range of the shape the call's report says on the new line
@@ -508,11 +552,15 @@ def openLine (below : Bool) (call : Call) : EditorM Unit := do
   let some range := before.ranges[before.primary]? | throw .badSelection
   let ending := call.target.buffer.lineEnding.text
   let start ← text.motion (if below then .lineEnd else .lineStart) range.head
+  -- The new row is empty, so nothing moves to it.
+  let indent := (← openingIndent call start false).getD ""
   -- The new line is after the line break put below, and before the one put
-  -- above.
-  let bar := if below then start + ending.utf8ByteSize else start
+  -- above, and the bar after its indent.
+  let (inserted, bar) :=
+    if below then (ending ++ indent, start + ending.utf8ByteSize + indent.utf8ByteSize)
+    else (indent ++ ending, start + indent.utf8ByteSize)
   discard <| call.target.window.id.setWanted none
-  call.target.replaceCarrying ⟨start, start⟩ ending before (cursorAt call bar)
+  call.target.replaceCarrying ⟨start, start⟩ inserted before (cursorAt call bar)
   settle call bar
 
 /-- The command that opens a line below the cursor's and begins an insert
@@ -572,11 +620,30 @@ def deleteWordBackward (call : Call) : EditorM Unit := do
         pure (max lineStart (← text.motion (.previousWordStart .word) range.head))
   call.target.replaceExtents selection #[⟨start, range.head⟩] ""
 
-/-- The command `RET` runs in insert state, as it is called: the line is
-broken at the bar with the buffer's own line ending
-(`Target.insertLineBreak`), with no indent. -/
-def newline (call : Call) : EditorM Unit :=
-  call.target.insertLineBreak
+/-- Whether `char` is a blank: a space or a tab. -/
+private def isBlank (char : Char) : Bool :=
+  char == ' ' || char == '\t'
+
+/-- The command `RET` runs in insert state, as it is called ("Editing
+keys", in the module docs): the line is broken at the bar with the buffer's
+own line ending, and the new row starts at its indent level
+(`openingIndent`), the blanks either side of the bar replaced
+(`Indent.breakAt`), in one transaction that leaves the bar after the
+indent. With nothing to add it inserts the line ending alone. With several
+ranges it breaks the line at each (`Target.insertLineBreak`), with no
+indent. -/
+def newline (call : Call) : EditorM Unit := do
+  let before ← call.target.selection
+  let #[range] := before.ranges | call.target.insertLineBreak
+  let text := call.target.buffer.text
+  let head := range.head
+  let indent ← openingIndent call head true
+  let leading ← text.slice (← text.motion .lineStart head) head
+  let trailing ← text.slice head (← text.motion .lineEnd head)
+  let blanksBefore := (leading.toList.reverse.takeWhile isBlank).length
+  let blanksAfter := (trailing.toList.takeWhile isBlank).length
+  call.target.replaceEach before
+      #[Indent.breakAt call.target.buffer.lineEnding.text indent head blanksBefore blanksAfter]
 
 /-- The command `TAB` runs in insert state, as it is called: a tab character
 is inserted at the bar. -/

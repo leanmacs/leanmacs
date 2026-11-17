@@ -2,6 +2,7 @@ import Editor.Api.Theorems
 import Editor.Buffers
 import Editor.Command.Append
 import Editor.Compile
+import Editor.Compile.Shipped
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
@@ -10,7 +11,6 @@ import Editor.Evil.Theorems
 import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
 import Editor.FrameCommands
-import Editor.Indent
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
@@ -152,11 +152,22 @@ in faces. A major mode says how its text is parsed and drawn
 (`Mode.SyntaxTree`), and setting it asks the port
 (`Editor/Highlight.lean`, which comes with the loop's dispatch). Setting it
 also keeps the mode's indents and text objects queries for its text: the
-indent level of each row is `TextId.indentLevels` (`Editor/Indent.lean`), a
-primitive config's and evil's indent commands call, and the syntax tree's
+indent level of each row is `TextId.indentLevels` (`Editor/Indent.lean`),
+the level of a line opened at a position `TextId.openingLevel`, and the
+edits that re-indent rows `TextId.reindentEdits`: primitives config's and
+evil's indent commands (`=`, `RET`, `o`, `O`) call, in a buffer's indent
+unit (`Target.indentUnit`, `Editor/Language/IndentUnit.lean`); and the syntax tree's
 text objects are entries of evil's vocabulary
 (`Editor/Evil/TreeObjects.lean`). Its model and contract are for tests, and
 are not imported.
+
+Languages are here too (`Editor/Language.lean`, which comes with the file
+commands and `Editor/Setup.lean`): a language as data, the languages that
+ship (`Language.rust`, `Language.json`, `Language.markdown`), the rule that chooses a path's language, and the
+`code` mode, whose text is parsed and drawn as its buffer's language
+says. Opening a file records its language and puts the buffer in `code`;
+`setup` adds a language, or overrides a shipped one by name, with
+`defineLanguage` (`Editor/Setup.lean`).
 
 Projects, workspaces and locations are here too (`Editor/Workspace.lean`):
 which codebase and which checkout a buffer belongs to, as plain values,
@@ -167,7 +178,9 @@ like any other. A buffer's workspace is attached when its file opens
 brings the data and the finder with it), and
 `workspace-current` says it; their registrations
 (`Editor/Workspace/Compiled.lean`) name the registry and are not
-imported. Its model and its contract
+imported. A buffer is given the minor modes its markers turn on when its
+file opens (`Editor/Workspace/Modes.lean`, which comes with the attach).
+Its model and its contract
 (`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
 tests, and are not imported.
 
@@ -178,7 +191,12 @@ registrations (`Editor/Shell/Compiled.lean`) name the registry and are not
 imported. So is `compile` (`Editor/Compile.lean`): a build or test command
 run per workspace, its output streamed into the workspace's compilation
 buffer; its registrations (`Editor/Compile/Compiled.lean`) are not
-imported either.
+imported either. What a minor mode gives it, its markers, named commands
+and error formats (`Editor/Compile/Contribution.lean`, with the formats of
+`Editor/Compile/Errors.lean`), comes with `Editor/Setup.lean`, which
+registers it (`compileContribution`, `projectCommands`). The formats that
+ship (`Editor/Compile/Shipped.lean`) are imported, so config can build on
+them.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

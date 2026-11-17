@@ -1,7 +1,7 @@
 [package]
 name = "editor-syntax-treesitter"
 version = "0.1.0"
-description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON and Markdown grammars compiled in"
+description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON, Markdown, Markdown inline, TOML and Lean grammars compiled in"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -70,13 +70,88 @@ tree-sitter-json = { version = "=0.24.8" }
 # `MarkdownParser` wrapper the adapter does not use. So its dependencies are
 # `tree-sitter-language` and `cc` at build time, both already in the graph.
 #
-# Only the block grammar (`LANGUAGE`) is listed. The inline grammar
-# (`INLINE_LANGUAGE`) was seen, on 2026-11-16, to give 598 of 4,000
-# incremental reparses of random edits a tree other than a fresh parse's,
-# none of them with an error, so the core's fallback to a whole parse would
-# not catch it and the contract's `INCREMENTAL`, which runs on every listed
-# grammar, would fail. The block grammar's 6,000 reparses all equalled the
-# fresh parse. So inline Markdown is not highlighted, and the block
-# grammar's injection of each `(inline)` node names a grammar the service
-# does not have, which injects nothing.
+# Both grammars are listed: the block grammar (`LANGUAGE`) as `markdown`,
+# and the inline grammar (`INLINE_LANGUAGE`) as `markdown_inline`, the name
+# the block grammar's injections query gives each `(inline)` node, so
+# inline Markdown is an injected layer. The inline grammar's reparse policy
+# is `whole`: its incremental reparses of texts without errors differ from
+# a fresh parse (598 of 4,000 reparses of random edits on 2026-11-16, and
+# 136 of 6,400 in a second sweep that day), so it fails the contract's
+# `GRAMMAR_QUALITY`, and each round parses it from scratch. The block
+# grammar's 6,000 reparses all equalled the fresh parse, and it is
+# `incremental`.
 tree-sitter-md = { version = "=0.5.4", default-features = false }
+# TOML, for manifests and settings: `Cargo.toml`, `mise.toml`,
+# `lakefile.toml` and `Cargo.lock`. It is the tree-sitter-grammars
+# project's grammar, the continuation of ikatyang's original and the same
+# project as `tree-sitter-md`; the most used TOML grammar crate. MIT, used
+# unmodified; 0.7.0, released on 2024-12-03, was the newest release when
+# looked at on crates.io on 2026-11-17, and the repository's last commit is
+# its tag (TOML 1.0 is a stable spec). Its build compiles the grammar's
+# `parser.c` and its external scanner `scanner.c`. It has no features; its
+# one normal dependency is `tree-sitter-language`, and `cc` at build time,
+# both already in the graph (its `tree-sitter ^0.24` is a dev-dependency
+# only). It ships a highlights query and no other, so TOML has no
+# injections, indents or text objects.
+#
+# Its reparse policy is `incremental`: on 2026-11-17, 4,221 incremental
+# reparses of texts without errors, of random edits to the fixtures under
+# `tests/syntax/toml/`, all equalled a fresh parse, and the contract
+# (`tests/contract.rs`) passes with the policy `incremental`.
+#
+# Looked at on 2026-11-17 and set aside:
+#
+# - `tree-sitter-toml` 0.20.0 (2022): a normal dependency on
+#   `tree-sitter ^0.20`, and the old `language()` function, so it cannot
+#   hand a `LanguageFn` to the pinned tree-sitter.
+# - `tree-sitter-toml-updated` 0.20.0: a personal fork with a normal
+#   dependency on `tree-sitter >=0.21` and the same old API.
+# - `treease-ts-toml` 0.7.2: a third party's republish of the same
+#   repository, with no grammar change over 0.7.0 (upstream has no commit
+#   after its tag), from a publisher that is not the project.
+# - `konomanoasa-tree-sitter-toml` 0.11.2: a personal fork with few users,
+#   which pins `cc =1.11.0` exactly and so would move the locked `cc`.
+tree-sitter-toml-ng = { version = "=0.7.0" }
+# Lean 4, for the editor's own configuration and most of its code. It is
+# upstream's grammar, `github.com/Julian/tree-sitter-lean`, the original
+# Lean 4 grammar, maintained (commits through November 2026). No crates.io
+# crate fits, so upstream's own crate (`tree-sitter-lean` 0.2.0, its Rust
+# binding included) is vendored under `vendor/tree-sitter-lean/` at commit
+# `0d28e5d6e8c4755f5df7ef9bde3b6ec6f59fae94` (2026-11-01), and named here
+# as a path dependency whose `version` makes Cargo check the copy is the one
+# pinned (`vendor/README.md` says how to update it). MIT, used unmodified;
+# its `LICENSE` is in the copy. Its build compiles the generated `parser.c`
+# (49 MB, ABI 15) and its external scanner `scanner.c`. Its one normal
+# dependency is `tree-sitter-language`, and `cc` at build time, both already
+# in the graph; its `tree-sitter 0.25` is a dev-dependency only, which never
+# enters the lock because the workspace excludes `vendor/`.
+#
+# It ships its highlights query in the same commit as the grammar, so the
+# query cannot drift from the node types; that is the one query used. Its
+# injections query (doc comments as Markdown) is not used: under it each
+# doc comment is a Markdown layer, and its inline layers, parsed whole every
+# round, and doc comments already draw as comments
+# (`docs/design/rust-library.md`, "Injections, indentation and text
+# objects, as built"). Its indents, folds and locals queries are not used.
+#
+# Its reparse policy is `incremental`: on 2026-11-17, 6,894 incremental
+# reparses of texts without errors, of random edits to the fixtures under
+# `tests/syntax/lean/` and to the 20 files of `lean/Editor/` that parse
+# without errors, all equalled a fresh parse, and the contract
+# (`tests/contract.rs`) passes with the policy `incremental`.
+#
+# Looked at on 2026-11-17 and set aside:
+#
+# - `tree-sitter-lean4` 0.3.0, the only Lean grammar crate on crates.io: a
+#   normal dependency on `tree-sitter ^0.25`, which cannot coexist with the
+#   pinned library (both `links = "tree-sitter"`), an exported
+#   `tree_sitter::Language` of 0.25 rather than a `LanguageFn`, a build that
+#   runs the tree-sitter CLI when `parser.c` is missing, and no queries.
+# - Its source, the fork `wvhulle/tree-sitter-lean`, vendored instead: it
+#   parses this repository's Lean with fewer errors, but has no licence file
+#   to vendor (MIT is only declared), no commits since May 2026, and a Rust
+#   binding for tree-sitter 0.25, so we would keep an `unsafe` one of our
+#   own.
+# - A git dependency on upstream: it would make a fetch from GitHub part of
+#   a `--locked` build.
+tree-sitter-lean = { path = "../../vendor/tree-sitter-lean", version = "=0.2.0" }

@@ -4,9 +4,18 @@
 //!
 //! The service is one process-wide [`Syntaxes`]: the real syntax
 //! (`editor-syntax-treesitter`), one worker thread named `syntax`, started
-//! at the first attach and blocked while it has nothing to parse, and a
-//! table of the documents being parsed, by their key, each with its
-//! session (`editor_syntax::Session`). Which tree is handed out, when a
+//! at the first attach and parked while it has nothing to parse and no
+//! refresh is due, and a table of the documents being parsed, by their key,
+//! each with its session (`editor_syntax::Session`).
+//!
+//! **The idle refresh.** An edit's round delivers the incremental reparse,
+//! and once the text has gone the idle interval unchanged the worker parses
+//! it whole (`editor_syntax::worker`, "Idle refreshes"). The interval is
+//! measured on the job clock, [`Monotonic`], which this module implements
+//! `editor_syntax::clock::Clock` for, and is set by Lean
+//! ([`editor_ffi_syntax_refresh_after`], kept by [`Syntaxes::refresh_after`]
+//! and told to the worker, or used when it starts); until then it is
+//! [`REFRESH_AFTER_MS`]. Which tree is handed out, when a
 //! document is reparsed and how, and what a question of captures answers or
 //! why it is refused (`Session::captures`, over `query::captures_in`) are
 //! `editor-syntax`'s rules, pinned by its own tests. This module keeps the
@@ -46,6 +55,7 @@
 //! | [`editor_ffi_syntax_keep`] | keep a query as the snapshot's document's query of a kind; a [`KeepStatus`] |
 //! | [`editor_ffi_syntax_kept_names`] | the capture names of the query kept of a kind, with a [`KeptStatus`] |
 //! | [`editor_ffi_syntax_kept_captures`] | the captures of the query kept of a kind in a range of the snapshot, as words, with a [`KeptStatus`] |
+//! | [`editor_ffi_syntax_refresh_after`] | parse a text whole once it has gone that many milliseconds unchanged after an edit, from now on |
 //! | [`editor_ffi_syntax_settle`] | for tests: wait, with a bound, for the snapshot's revision to be delivered |
 //!
 //! **A query is answered from the tree delivered, never parsed for.**
@@ -76,7 +86,9 @@
 //! [`EventKind::Parsed`](crate::events::EventKind::Parsed) from the
 //! library's source [`SERVICE`] onto the editor queue for each delivery.
 //! Lean publishes a scene for it, laid out with the new tree: the old
-//! highlights stay until then.
+//! highlights stay until then. An idle refresh whose whole parse differs
+//! from the tree delivered is a delivery, and reports once; one that finds
+//! no difference delivers nothing and reports nothing.
 //!
 //! **Injections.** [`editor_ffi_syntax_inject`] gives the document's
 //! session its injections query, and [`editor_ffi_syntax_inject_language`]
@@ -133,6 +145,7 @@ use std::thread;
 use std::time::Duration;
 
 use editor_layout::scene::{SpansAt, TextSpans};
+use editor_syntax::clock::Clock;
 use editor_syntax::inject::Language;
 use editor_syntax::{
     Capture, CapturesRefusal, Consumer, GrammarName, Handle, Highlighter, Highlights, KeptRefusal,
@@ -146,11 +159,24 @@ use crate::events::{Event, Queue, QueueId, Source, SourceKind};
 use crate::fuzzy::candidates;
 use crate::log::RawWords;
 use crate::snapshot::Snapshot;
+use crate::timers::Monotonic;
 use crate::{text, words};
 
 /// The syntax service's id, as the source of the events it reports: the
 /// library's, numbered after the other services'.
 pub const SERVICE: u64 = 6;
+
+/// How long a text goes unchanged after an edit before the worker parses
+/// it whole, until Lean sets the interval ([`Syntaxes::refresh_after`]):
+/// only a text attached before any such call is refreshed after this. The
+/// default users see is Lean's (`Highlight.defaultRefreshDelay`).
+pub const REFRESH_AFTER_MS: u64 = 500;
+
+impl editor_syntax::clock::Clock for Monotonic {
+    fn now_ms(&self) -> u64 {
+        crate::timers::Clock::now_ms(self)
+    }
+}
 
 /// The real syntax's session of one document.
 type SyntaxSession = Session<TreeSitter>;
@@ -356,6 +382,11 @@ pub struct Syntaxes {
     syntax: Arc<TreeSitter>,
     /// The worker's handle, once its thread is started.
     worker: Mutex<Option<Handle<TreeSitter>>>,
+    /// The clock the worker measures the idle interval on.
+    clock: Arc<dyn Clock>,
+    /// The idle interval, in milliseconds: the worker is started with it,
+    /// and told of each change once it is.
+    refresh_after_ms: AtomicU64,
     /// The documents attached, by key, each with its session.
     attached: Mutex<HashMap<u64, Arc<SyntaxSession>>>,
     /// Where a delivery of a highlighted document is reported: the editor
@@ -452,15 +483,42 @@ pub(crate) fn detach(key: u64) {
 
 impl Syntaxes {
     /// A service with nothing attached and no worker started, which reports
-    /// deliveries of highlighted documents on `notices`. The process has
-    /// one ([`syntaxes`]), on the editor queue; a unit test makes one on a
-    /// queue of its own.
+    /// deliveries of highlighted documents on `notices`, and measures the
+    /// idle interval on the job clock. The process has one ([`syntaxes`]),
+    /// on the editor queue; a unit test makes one on a queue of its own.
     pub fn new(notices: &'static Queue) -> Self {
+        Self::with_clock(notices, Arc::new(Monotonic::new()))
+    }
+
+    /// A service as [`Syntaxes::new`] makes one, measuring the idle
+    /// interval on `clock`: for the module's unit tests, on a manual clock.
+    pub fn with_clock(notices: &'static Queue, clock: Arc<dyn Clock>) -> Self {
         Self {
             syntax: Arc::new(TreeSitter),
             worker: Mutex::new(None),
+            clock,
+            refresh_after_ms: AtomicU64::new(REFRESH_AFTER_MS),
             attached: Mutex::new(HashMap::new()),
             notices,
+        }
+    }
+
+    /// Parses a text whole once it has gone `refresh_after` unchanged after
+    /// an edit, for every deadline set from now on: kept, and told to the
+    /// worker when it is running, or used when it starts.
+    pub fn refresh_after(&self, refresh_after: Duration) {
+        let ms = u64::try_from(refresh_after.as_millis()).unwrap_or(u64::MAX);
+        self.refresh_after_ms.store(ms, Ordering::Relaxed);
+        if let Some(worker) = lock(&self.worker).as_ref() {
+            worker.set_refresh_after(refresh_after);
+        }
+    }
+
+    /// Has the worker look at its clock again: for a test that has moved a
+    /// manual clock. Nothing when it is not started.
+    pub fn wake(&self) {
+        if let Some(worker) = lock(&self.worker).as_ref() {
+            worker.wake();
         }
     }
 
@@ -473,7 +531,11 @@ impl Syntaxes {
     fn worker(&self) -> Option<Handle<TreeSitter>> {
         let mut worker = lock(&self.worker);
         if worker.is_none() {
-            let started = Worker::new(self.syntax.clone());
+            let started = Worker::new(
+                self.syntax.clone(),
+                self.clock.clone(),
+                Duration::from_millis(self.refresh_after_ms.load(Ordering::Relaxed)),
+            );
             let handle = started.handle();
             thread::Builder::new()
                 .name("syntax".to_owned())
@@ -720,6 +782,19 @@ impl Syntaxes {
         self.session(snapshot.key()).is_some_and(|session| {
             session
                 .wait_for(snapshot.text().revision(), bound)
+                .is_some()
+        })
+    }
+
+    /// Waits up to `bound` for the tree delivered of `snapshot`'s document to
+    /// be exact for its revision or a newer one: a whole parse, or an
+    /// incremental one the idle refresh found equal to it, once the text is
+    /// quiet (`Session::wait_exact`); whether it was. False at once when its
+    /// document is not attached. For tests.
+    pub fn settle_exact(&self, snapshot: &Snapshot, bound: Duration) -> bool {
+        self.session(snapshot.key()).is_some_and(|session| {
+            session
+                .wait_exact(snapshot.text().revision(), bound)
                 .is_some()
         })
     }
@@ -1235,9 +1310,20 @@ pub unsafe extern "C" fn editor_ffi_syntax_settle(
     syntaxes().settle(unsafe { &*snapshot }, Duration::from_millis(bound_ms))
 }
 
+/// [`Syntaxes::refresh_after`] for C: texts parsed incrementally are parsed
+/// whole once they have gone `milliseconds` unchanged after an edit, from
+/// now on, for every text. Lean sends its setting each time a buffer's
+/// mode is entered.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_syntax_refresh_after(milliseconds: u64) {
+    syntaxes().refresh_after(Duration::from_millis(milliseconds));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use editor_syntax::clock::ManualClock;
+
     use crate::document::Document;
     use crate::events::{EventKind, Queue};
     use crate::words::tests::{buffer, words_of};
@@ -1297,6 +1383,74 @@ mod tests {
         assert!(service.settle(&third, BOUND));
 
         assert_eq!(drained(&NOTICES), [EventKind::Parsed]);
+    }
+
+    /// A JSON document attached to `service`, its first round delivered,
+    /// and then highlighted: from now on each delivery is reported.
+    fn highlighted_json(service: &Syntaxes, text: &str) -> Document {
+        let document = Document::new(text);
+        let snapshot = Snapshot::of(&document);
+        assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
+        assert!(service.settle(&snapshot, BOUND));
+        let grammar = GrammarName::new("json");
+        let query = SyntaxQuery {
+            query: Arc::new(
+                service
+                    .syntax
+                    .compile(&grammar, "(number) @number")
+                    .unwrap(),
+            ),
+            grammar,
+        };
+        assert_eq!(
+            service.highlight(&snapshot, &query, vec![Some("syntax.number".to_owned())]),
+            HighlightStatus::Highlighted
+        );
+        document
+    }
+
+    #[test]
+    fn a_refresh_that_finds_no_difference_pushes_no_parsed_event() {
+        static NOTICES: Queue = Queue::new();
+        let clock = Arc::new(ManualClock::new());
+        let service = Syntaxes::with_clock(&NOTICES, clock.clone());
+        let document = highlighted_json(&service, "{\"a\": 1}");
+        // A valid edit: its incremental reparse equals a fresh parse.
+        assert!(document.replace(7, 8, "2"));
+        let edited = Snapshot::of(&document);
+        service.touched(edited.key(), edited.text().revision());
+        assert!(service.settle(&edited, BOUND));
+
+        clock.advance(REFRESH_AFTER_MS);
+        service.wake();
+        assert!(service.settle_exact(&edited, BOUND));
+
+        // The edit's one delivery is reported, and the refresh's none.
+        assert_eq!(drained(&NOTICES), [EventKind::Parsed]);
+    }
+
+    #[test]
+    fn the_interval_set_before_the_worker_starts_is_its_first_and_a_later_one_is_forwarded() {
+        static NOTICES: Queue = Queue::new();
+        let clock = Arc::new(ManualClock::new());
+        let service = Syntaxes::with_clock(&NOTICES, clock.clone());
+        service.refresh_after(Duration::from_millis(50));
+        let document = highlighted_json(&service, "[1]");
+
+        assert!(document.replace(1, 2, "2"));
+        let edited = Snapshot::of(&document);
+        service.touched(edited.key(), edited.text().revision());
+        assert!(service.settle(&edited, BOUND));
+        clock.advance(50);
+        service.wake();
+        assert!(service.settle_exact(&edited, BOUND));
+
+        // No interval at all: refreshed with the clock where it is.
+        service.refresh_after(Duration::ZERO);
+        assert!(document.replace(1, 2, "3"));
+        let again = Snapshot::of(&document);
+        service.touched(again.key(), again.text().revision());
+        assert!(service.settle_exact(&again, BOUND));
     }
 
     #[test]

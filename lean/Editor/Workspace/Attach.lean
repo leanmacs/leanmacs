@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Workspace.Finder
+import Editor.Workspace.Modes
 
 /-!
 # A buffer's workspace, and `workspace-current`
@@ -41,6 +42,16 @@ code registers them are in `Editor/Workspace/Compiled.lean`.
   workspace.
 - **A buffer with no file** takes the workspace of the buffer it was made
   from (`BufferId.inheritWorkspace`), or none.
+
+## Modes on markers
+
+Once a file's workspace is known, its buffer is given the minor modes the
+registered compile contributions' markers turn on (`markModes`,
+`Editor/Workspace/Modes.lean`), looked for from the file's directory up to
+the workspace's root, or in the directory alone when it has none: at once
+from a cached answer, and from `found` once the finder has answered,
+whether it found a workspace or not. With no contribution registered
+nothing more is started.
 
 ## `workspace-current`
 
@@ -118,8 +129,9 @@ def setBufferWorkspace (id : BufferId) (location : Location) : EditorM Unit :=
 
 /-- What a buffer that holds the file at `path` is given when the file opens
 ("Attach", in the module docs): the cached workspace of its directory under
-the config generation now, with no job; otherwise the find job is started,
-and a start that is refused is silent. -/
+the config generation now, with no job, and its modes on markers looked for
+("Modes on markers"); otherwise the find job is started, and a start that is
+refused is silent. -/
 def attach (id : BufferId) (path : System.FilePath) : EditorM Unit := do
   let some directory := path.parent | return
   let directory := Process.trimmed directory
@@ -127,8 +139,9 @@ def attach (id : BufferId) (path : System.FilePath) : EditorM Unit := do
   match (← editorState).workspaces.cached? directory generation with
   | some (some location) =>
     setBufferWorkspace id location
+    markModes id directory (location.root?.getD directory) settings.markerModes
   | some none =>
-    pure ()
+    markModes id directory directory settings.markerModes
   | none =>
     -- Refused only when no find job is registered: then no buffer has a
     -- workspace, and nothing is said.
@@ -139,15 +152,20 @@ def attach (id : BufferId) (path : System.FilePath) : EditorM Unit := do
 
 /-- The command a finished find job hands the loop ("Attach", in the module
 docs): the answer recorded, and, while the buffer still holds a file in the
-order's directory, the buffer given the workspace. State requests alone. -/
+order's directory, the buffer given the workspace, if one was found, and
+its modes on markers looked for up to its root, or in the directory alone
+("Modes on markers"). State requests alone. -/
 def found (order : FindOrder) (answer : Option Found) : EditorM Unit := do
   discard <| EditorState.ask (.recordWorkspace order.directory order.generation answer)
-  let some answer := answer | return
   let some buffer := (← editorState).buffer? order.buffer | return
   let some file := buffer.file | return
   if (file.path.parent.map Process.trimmed) != some order.directory then
     return
-  setBufferWorkspace order.buffer (.local answer.root)
+  if let some answer := answer then
+    setBufferWorkspace order.buffer (.local answer.root)
+  let (settings, _) ← EditorState.ask .workspaceSettings
+  markModes order.buffer order.directory ((answer.map (·.root)).getD order.directory)
+      settings.markerModes
 
 /-- The find job: runs the finder for its order's directory with its order's
 settings, and finishes with what the answer becomes (`found`). It fails

@@ -173,3 +173,74 @@ def properties (base : System.FilePath) : List Property :=
       asked := #[(at_ "n/src", none)] }]
 
 end Editor.Workspace.FinderContract
+
+/-!
+## The contract of the mode marker search
+
+Properties the search for a minor mode's markers within a workspace must
+have (`Workspace.presentMarkers`, `Editor/Workspace/Finder.lean`; "Modes on
+markers", `Editor/Workspace.lean`): each a world, the markers looked for,
+and for each directory and bound asked about, the markers found with their
+directories. Run the same three ways as the finder's: against
+`World.presentMarkers` and against the real search on the job model by
+`model-test`, and over the library's file service, the world written out
+under a temporary directory, by `contract-test`. Every path is under
+`base`. The search runs no process, so no world needs git.
+-/
+
+namespace Editor.Workspace.MarkerContract
+
+/-- One property: a world, the markers looked for, and what is found for
+each directory and bound asked about. -/
+structure Property where
+  /-- What must hold, as a sentence. -/
+  name : String
+  /-- The world. -/
+  world : World
+  /-- The markers looked for, in order. -/
+  markers : Array String
+  /-- Each directory asked about, its bound, and the markers found, each
+  with its directory, in order. -/
+  asked : Array (System.FilePath × System.FilePath × Array (System.FilePath × String))
+
+/-- What the real search finds for each of the property's directories, in
+order. -/
+def Property.answers (property : Property) : JobM (Array (Array (System.FilePath × String))) :=
+  property.asked.mapM fun (directory, bound, _) => presentMarkers property.markers directory bound
+
+/-- What the property expects found, in order. -/
+def Property.expected (property : Property) : Array (Array (System.FilePath × String)) :=
+  property.asked.map (·.2.2)
+
+/-- Whether the real search finds what the property expects. -/
+def Property.holds (property : Property) : JobM Bool := do
+  return (← property.answers) == property.expected
+
+/-- The mode marker search's properties, every path under `base`. -/
+def properties (base : System.FilePath) : List Property :=
+  let at_ (path : String) : System.FilePath := Process.inDirectory base path
+  [{  name := "a marker two directories above the directory is found, with its directory"
+      world := { markers := #[at_ "p/m.toml"] }
+      markers := #["m.toml"]
+      asked := #[(at_ "p/a/b", at_ "p", #[(at_ "p", "m.toml")])] },
+    { name := "a marker above the bound is not found"
+      world := { markers := #[at_ "q/m.toml"] }
+      markers := #["m.toml"]
+      asked := #[(at_ "q/w/a", at_ "q/w", #[])] },
+    { name :=
+        "markers at two depths are found nearest first, and two in one directory in the order they are looked for"
+      world := { markers := #[at_ "c/x.toml", at_ "c/d/y.toml", at_ "c/d/x.toml"] }
+      markers := #["x.toml", "y.toml"]
+      asked :=
+        #[(at_ "c/d", at_ "c",
+            #[(at_ "c/d", "x.toml"), (at_ "c/d", "y.toml"), (at_ "c", "x.toml")])] },
+    { name := "with a bound that does not hold the directory, the directory alone is looked in"
+      world := { markers := #[at_ "e/m.toml", at_ "e/f/m.toml"] }
+      markers := #["m.toml"]
+      asked := #[(at_ "e/f", at_ "g", #[(at_ "e/f", "m.toml")])] },
+    { name := "a marker that is a directory is found"
+      world := { markerDirectories := #[at_ "h/.marker"] }
+      markers := #[".marker"]
+      asked := #[(at_ "h/src", at_ "h", #[(at_ "h", ".marker")])] }]
+
+end Editor.Workspace.MarkerContract

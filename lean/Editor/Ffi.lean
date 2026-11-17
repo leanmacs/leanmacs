@@ -246,7 +246,8 @@ library's tag of why and an offset; its names are a list of strings out
 in a range of a snapshot, as words, at once from the tree the library last
 delivered, and refuses with `notParsed` when that tree is not of the
 snapshot's revision: it never waits for a parse. `syntaxSettle` waits, with
-a bound, for a delivery, for tests.
+a bound, for a delivery, for tests. `syntaxRefreshAfter` sets how long a
+text goes unchanged after an edit before the library parses it whole.
 
 `syntaxShippedQuery` answers the source of the query of a kind a grammar is
 published with (the kind as a tag: 0 highlights, 1 injections, 2 text
@@ -3598,6 +3599,13 @@ It blocks in the library and does not sleep; `false` at once for a document
 that is not attached. -/
 @[extern "editor_glue_syntax_settle"]
 opaque syntaxSettle (snapshot : @& Snapshot) (boundMs : UInt64) : IO Bool
+
+/-- Has the syntax service parse a text whole once it has gone
+`milliseconds` unchanged after an edit, from now on, for every text: an
+edit's tree is the incremental reparse, and the whole parse once the text
+is quiet makes it exact. -/
+@[extern "editor_glue_syntax_refresh_after"]
+opaque syntaxRefreshAfter (milliseconds : UInt64) : IO Unit
 
 /-- How a child the process service ran ended. -/
 inductive ProcessExit where

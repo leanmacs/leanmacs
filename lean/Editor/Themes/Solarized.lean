@@ -72,6 +72,7 @@ dark names, and `+` marks a definition appended after the shared ones
 | `minibuffer.chosen` | base03 on cyan | + base02 on base2 | Vim `WildMenu` (fg base2 bg base02 reversed) |
 | `tab-bar` | base01 on base02 | + base0 on base02 | Vim `TabLine` fg base0 bg base02; its underline is not followed |
 | `tab-bar.selected` | base1 on base02, bold | + base2 on base01, bold | Vim `TabLineSel` (fg base01 bg base2 reversed, bold); its underline is not followed |
+| `compilation.error`, `compilation.warning`, `compilation.note` | fg red, orange, green, bold | fg red, orange, green, bold | Emacs `compilation-error`, `-warning`, `-info` inherit `error`, `warning`, `success`: the shared mapping's red, orange and green are kept |
 | `syntax.attribute` | yellow | + orange | Vim `PreProc` |
 | `syntax.comment` | base01, italic | base01, italic | Vim `Comment`; Emacs `font-lock-comment-face` |
 | `syntax.constant` | violet | + cyan | Vim `Constant`; Emacs `font-lock-constant-face` |

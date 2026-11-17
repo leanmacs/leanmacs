@@ -154,9 +154,9 @@ sets `HOME` for an app started from Finder, and normally not
 `XDG_CONFIG_HOME`. The toolchain and the modules config is elaborated on
 are the bundle's own, found from the executable's path.
 
-`mise run finder-session-prepare` installs the built bundle to
-`/Applications` and a config fixture to `~/.config/leanmacs`, moving any
-existing ones aside to timestamped backups
+`mise run install` installs the built bundle to `/Applications`, replacing
+any installed one, and a config fixture to `~/.config/leanmacs` when no
+config is there
 ([`on-demand-checks.md`](on-demand-checks.md), "Installing the app").
 
 `mise run app-check` checks the built bundle

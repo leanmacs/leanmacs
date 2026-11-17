@@ -1,5 +1,6 @@
 //! The syntax port's real adapter: [`TreeSitter`], a [`Syntax`] over
-//! tree-sitter, with the Rust, JSON and Markdown grammars compiled in.
+//! tree-sitter, with the Rust, JSON, Markdown, TOML and Lean grammars
+//! compiled in, and Markdown's inline grammar.
 //!
 //! The port, its fake, its contract, the rule for what a range answers and
 //! the worker that reparses are `editor-syntax`'s. This crate is thin: each
@@ -12,11 +13,14 @@
 //! # How grammars are loaded
 //!
 //! **Compiled in.** Each grammar is a crates.io grammar crate, pinned
-//! exactly, whose build compiles the generated parser's C with `cc` when
-//! Cargo builds this crate; the objects end up in the static library Lean
+//! exactly, or, for Lean, which has no usable crates.io crate, upstream's
+//! own crate vendored unmodified under the repository's `vendor/`, and
+//! built the same way: its build compiles the generated parser's C with
+//! `cc` when Cargo builds this crate; the objects end up in the static library Lean
 //! links. Nothing is fetched, generated or loaded at run time, and the
 //! grammars are the private table `GRAMMARS`: a name, the language of the
-//! grammar's crate, and the queries it ships, each with its kind.
+//! grammar's crate, its reparse policy, and the queries it ships, each
+//! with its kind.
 //!
 //! The other two ways were set aside (the decision is in
 //! `docs/design/README.md`'s table and `docs/design/rust-library.md`,
@@ -46,20 +50,48 @@
 //! written for its own editor's rules (`docs/design/rust-library.md`,
 //! "Injections, indentation and text objects, as built").
 //!
-//! | Grammar | Highlights | Injections | Text objects | Indents |
-//! |---|---|---|---|---|
-//! | `json` | the crate's | none | none | none |
-//! | `rust` | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
-//! | `markdown` | the crate's, of its block grammar | the crate's, of its block grammar | none | none |
+//! | Grammar | Reparse | Highlights | Injections | Text objects | Indents |
+//! |---|---|---|---|---|---|
+//! | `json` | incremental | the crate's | none | none | none |
+//! | `rust` | incremental | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
+//! | `markdown` | incremental | the crate's, of its block grammar | the crate's, of its block grammar | none | none |
+//! | `markdown_inline` | whole | the crate's, of its inline grammar | the crate's, of its inline grammar | none | none |
+//! | `toml` | incremental | the crate's | none | none | none |
+//! | `lean` | incremental | upstream's, vendored with the grammar | none | none | none |
 //!
-//! Markdown is `tree-sitter-md`'s block grammar alone; its inline grammar
-//! is not listed, since its incremental reparses were seen to differ from a
-//! fresh parse with no error in the tree (the crate's `Cargo.toml`). The
-//! block grammar's injection of each `(inline)` node, as `markdown_inline`,
-//! names a grammar this adapter does not have.
+//! **The reparse policy** (`editor_syntax::ReparsePolicy`) is declared in
+//! the table and pinned by each grammar's corpus in `tests/contract.rs`.
+//! A grammar is `incremental` when its incremental reparses of texts
+//! without errors equal a fresh parse (the contract's `GRAMMAR_QUALITY`),
+//! and `whole` otherwise: it still ships, and each round parses it from
+//! scratch.
+//!
+//! Markdown is `tree-sitter-md`'s two grammars. The block grammar,
+//! `markdown`, parses a document; its injections query hands each
+//! `(inline)` node, a paragraph's or a heading's text, to the grammar named
+//! `markdown_inline`, which is the inline grammar. The inline grammar is
+//! `whole`: its incremental reparses of texts without errors were seen to
+//! differ from a fresh parse (the crate's `Cargo.toml`). An injected layer
+//! is parsed whole each round anyway. Its injections name `html` and
+//! `latex`, which this adapter does not have, so they inject nothing.
+//!
+//! TOML is `tree-sitter-toml-ng`'s grammar, `toml`, with its crate's
+//! highlights query and no other. It is `incremental`: its incremental
+//! reparses of texts without errors were seen to equal a fresh parse (the
+//! crate's `Cargo.toml`). Since every grammar here is a language a layer
+//! can be injected in, a Markdown fence whose info string is `toml` is a
+//! TOML layer.
+//!
+//! Lean is upstream's grammar, `lean`, vendored with its highlights query
+//! of the same commit, the one query used. It is `incremental`: its
+//! incremental reparses of texts without errors were seen to equal a fresh
+//! parse (the crate's `Cargo.toml`). A Markdown fence whose info string is
+//! `lean` is a Lean layer.
 //!
 //! # What each method forwards to
 //!
+//! - [`Syntax::reparse_policy`]: the grammar's policy in the table; none
+//!   when the grammar is not in it.
 //! - [`Syntax::parser`]: a new parser with the grammar's language set; none
 //!   when the grammar is not in the table, or the library refuses its
 //!   language (an ABI it does not speak).
@@ -103,13 +135,13 @@ use std::ops::Range;
 
 use editor_syntax::{
     Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
-    Setting, Syntax,
+    ReparsePolicy, Setting, Syntax,
 };
 use editor_text::{InputEdit, Point, Snapshot};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
 /// The adapter: tree-sitter, with the grammars compiled in: `json`,
-/// `rust` and `markdown`.
+/// `rust`, `markdown`, `markdown_inline`, `toml` and `lean`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TreeSitter;
 
@@ -122,6 +154,8 @@ struct Grammar {
     name: &'static str,
     /// How to make its language.
     language: MakeLanguage,
+    /// How its texts are reparsed after an edit.
+    policy: ReparsePolicy,
     /// The queries it ships, each with its kind: its crate's own, pinned
     /// with it, where the crate is published with one, and otherwise this
     /// crate's, under `queries/`. A kind not here it ships none of.
@@ -129,15 +163,17 @@ struct Grammar {
 }
 
 /// The grammars compiled in.
-const GRAMMARS: [Grammar; 3] = [
+const GRAMMARS: [Grammar; 6] = [
     Grammar {
         name: "json",
         language: || Language::new(tree_sitter_json::LANGUAGE),
+        policy: ReparsePolicy::Incremental,
         queries: &[(QueryKind::Highlights, tree_sitter_json::HIGHLIGHTS_QUERY)],
     },
     Grammar {
         name: "rust",
         language: || Language::new(tree_sitter_rust::LANGUAGE),
+        policy: ReparsePolicy::Incremental,
         queries: &[
             (QueryKind::Highlights, tree_sitter_rust::HIGHLIGHTS_QUERY),
             (QueryKind::Injections, tree_sitter_rust::INJECTIONS_QUERY),
@@ -154,10 +190,40 @@ const GRAMMARS: [Grammar; 3] = [
     Grammar {
         name: "markdown",
         language: || Language::new(tree_sitter_md::LANGUAGE),
+        policy: ReparsePolicy::Incremental,
         queries: &[
             (QueryKind::Highlights, tree_sitter_md::HIGHLIGHT_QUERY_BLOCK),
             (QueryKind::Injections, tree_sitter_md::INJECTION_QUERY_BLOCK),
         ],
+    },
+    Grammar {
+        name: "markdown_inline",
+        language: || Language::new(tree_sitter_md::INLINE_LANGUAGE),
+        // Its incremental reparses of texts without errors were seen to
+        // differ from a fresh parse (the crate's `Cargo.toml`).
+        policy: ReparsePolicy::Whole,
+        queries: &[
+            (
+                QueryKind::Highlights,
+                tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
+            ),
+            (
+                QueryKind::Injections,
+                tree_sitter_md::INJECTION_QUERY_INLINE,
+            ),
+        ],
+    },
+    Grammar {
+        name: "toml",
+        language: || Language::new(tree_sitter_toml_ng::LANGUAGE),
+        policy: ReparsePolicy::Incremental,
+        queries: &[(QueryKind::Highlights, tree_sitter_toml_ng::HIGHLIGHTS_QUERY)],
+    },
+    Grammar {
+        name: "lean",
+        language: || Language::new(tree_sitter_lean::LANGUAGE),
+        policy: ReparsePolicy::Incremental,
+        queries: &[(QueryKind::Highlights, tree_sitter_lean::HIGHLIGHTS_QUERY)],
     },
 ];
 
@@ -226,6 +292,10 @@ impl Syntax for TreeSitter {
             .iter()
             .map(|grammar| GrammarName::new(grammar.name))
             .collect()
+    }
+
+    fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
+        self::grammar(grammar).map(|grammar| grammar.policy)
     }
 
     fn parser(&self, grammar: &GrammarName) -> Option<TreeSitterParser> {
@@ -523,6 +593,19 @@ mod tests {
             found.iter().map(Capture::range).collect::<Vec<_>>(),
             vec![start..start + name.len()]
         );
+    }
+
+    #[test]
+    fn each_grammar_declares_the_reparse_policy_of_the_table_and_one_not_compiled_in_none() {
+        let policy = |name: &str| TreeSitter.reparse_policy(&GrammarName::new(name));
+
+        assert_eq!(policy("rust"), Some(ReparsePolicy::Incremental));
+        assert_eq!(policy("json"), Some(ReparsePolicy::Incremental));
+        assert_eq!(policy("markdown"), Some(ReparsePolicy::Incremental));
+        assert_eq!(policy("markdown_inline"), Some(ReparsePolicy::Whole));
+        assert_eq!(policy("toml"), Some(ReparsePolicy::Incremental));
+        assert_eq!(policy("lean"), Some(ReparsePolicy::Incremental));
+        assert_eq!(policy("cobol"), None);
     }
 
     #[test]

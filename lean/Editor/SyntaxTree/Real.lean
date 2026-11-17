@@ -29,7 +29,8 @@ query when the last reference to its handle goes.
   refusal of the port says it.
 - Offsets are `Nat` here and machine words in the library: one no word
   holds is sent as the largest word, past the end of every text, so it is
-  refused and never cut down.
+  refused and never cut down. A refresh delay no `UInt64` holds is sent as
+  the largest one.
 - A face crosses as its name, and `none` as the empty string, which is no
   face's name: `some ⟨""⟩` crosses as `none` does. A kind crosses as its
   tag (`kindTag`).
@@ -191,6 +192,9 @@ def handle (real : RealSyntaxTree) : SyntaxTreeHandler
       | .ok () => .ok ()
       | .error .notAttached => .error .notAttached
       | .error .wrongGrammar => .error .wrongGrammar
+  | .refreshAfter milliseconds =>
+    Ffi.syntaxRefreshAfter
+      (if milliseconds < UInt64.size then milliseconds.toUInt64 else UInt64.ofNat (UInt64.size - 1))
   | .capturesOf snapshot kind start stop => do
     let some text ← real.snapshots.find? snapshot | return .error .noSuchSnapshot
     match ← Ffi.syntaxKeptCaptures text (kindTag kind) (offset start) (offset stop) with

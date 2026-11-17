@@ -45,8 +45,12 @@ table of them.
   (`deleteBackward`), past where the insert began too; Vim's `CTRL-W`
   character (`Vim.wordDeleteTyped`), which `C-w` added, deletes the word
   before the bar as `C-w` does (`deleteWordBackward`); and a line feed
-  (`Vim.lineBreakTyped`), which `RET` added, breaks the line with the
-  buffer's own line ending (`Target.insertLineBreak`). `TAB` added a tab,
+  (`Vim.lineBreakTyped`), which `RET` added, is `RET`'s command
+  (`newline`): it breaks the line with the buffer's own line ending and
+  indents the new row. The text recorded holds no indent, only the line
+  feed, so the replay indents as Vim's `.` does under `autoindent`; inside
+  one replay the text after typed text is not parsed yet, so such a line
+  gets its row's own indent. `TAB` added a tab,
   which is inserted as text. So `.` makes the session's result, as Vim
   9.1's does. A line feed or a backspace character in a committed text is
   read the same way.
@@ -124,7 +128,7 @@ private def replayTyped (call : Call) (text : String) : EditorM Unit := do
     else if char.toString == Vim.lineBreakTyped then
       insert run
       run := ""
-      call.target.insertLineBreak
+      newline call
     else
       run := run.push char
   insert run

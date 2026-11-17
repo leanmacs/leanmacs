@@ -1,9 +1,11 @@
 import Editor.Command.Call
+import Editor.Compile.Contribution
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Job
 import Editor.Key.Notation
+import Editor.Language
 import Editor.Layout
 import Editor.Mode
 import Editor.ModeLine
@@ -257,6 +259,30 @@ Config sets how long a `:!` or a filter may run before it is killed with
 30 seconds. Setting it twice is refused, and a reload changes it for the
 next run.
 
+Config sets how long a text goes unchanged after an edit before it is parsed
+whole again with `syntaxRefreshDelay`, in milliseconds
+(`syntaxRefreshDelay 250`); with none it is 500 milliseconds
+(`Highlight.defaultRefreshDelay`). Each edit's tree is the incremental
+reparse, and the whole parse once the text is quiet makes it exact. Setting
+it twice is refused, and a reload changes it from the next buffer whose mode
+is entered.
+
+Config defines a language with `defineLanguage` (`Editor/Language.lean`):
+the file names it is chosen for, its grammar with any query overrides, and
+its indent unit. One of a shipped language's name replaces it whole, so
+config overrides the shipped Rust entry's highlights query with
+
+```lean
+def setup : SetupM Unit := do
+  defineLanguage
+    { Language.rust with
+      syntaxTree := { Language.rust.syntaxTree with highlights := some "(identifier) @variable" } }
+```
+
+Config's entries are matched before the shipped ones. Defining a language
+name twice, or a pattern that is empty or holds `/`, is refused; a reload's
+languages hold from the next file opened.
+
 Config declares a workspace root with `workspace`, for a directory that is
 not a repository, or to split one, with the name of the project it belongs
 to if it gives one (`Editor/Workspace.lean`):
@@ -270,6 +296,26 @@ def setup : SetupM Unit := do
 A root that is not absolute is refused, and so is one root declared twice.
 A reload that installs takes the roots, and bumps the config generation, so
 the next file opened asks its directory's workspace again.
+
+Config gives the compile mode what fits a kind of project with
+`compileContribution` (`Editor/Compile/Contribution.lean`): a minor mode's
+marker files, which turn the mode on in a buffer whose file is under one of
+them inside its workspace, its named commands, and its error formats. And
+it gives one project, by its identity, its own commands and settings for a
+mode with `projectCommands`, so every worktree of that codebase has them:
+
+```lean
+def setup : SetupM Unit := do
+  compileContribution
+    { mode := "make-mode", markers := #["Makefile"]
+      commands := #[{ name := "build", line := "make" }, { name := "test", line := "make check" }] }
+  projectCommands (.remote "github.com/me/tool") "make-mode" [("lint", "make lint")]
+```
+
+Config's contribution of a mode's name replaces a compiled one of that name
+whole. A contribution with no marker is refused, and so is one registered
+twice or naming a command twice, and project commands given twice for one
+project and mode, or naming a command twice.
 
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
@@ -356,6 +402,19 @@ inductive SetupRequest where
   /-- Set how long a `:!` or a filter may run, in milliseconds, before it is
   killed (`Editor/Shell.lean`). -/
   | shellTimeLimit (milliseconds : Nat)
+  /-- Set how long a text goes unchanged after an edit, in milliseconds,
+  before it is parsed whole again (`Editor/Highlight.lean`). -/
+  | syntaxRefreshDelay (milliseconds : Nat)
+  /-- Define the language `language`: a name, the file names it is chosen
+  for, how its text is parsed and drawn, and its indent unit
+  (`Editor/Language.lean`). -/
+  | language (language : Language)
+  /-- Register `contribution`, what its minor mode gives the compile mode
+  (`Editor/Compile/Contribution.lean`). -/
+  | compileContribution (contribution : Compile.Contribution)
+  /-- Give one project its own commands and settings for a mode
+  (`Compile.ProjectCommands`). -/
+  | projectCommands (entry : Compile.ProjectCommands)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -381,6 +440,10 @@ def SetupRequest.Reply : SetupRequest → Type
   | .workspace .. => Unit
   | .displayRule _ => Unit
   | .shellTimeLimit _ => Unit
+  | .syntaxRefreshDelay _ => Unit
+  | .language _ => Unit
+  | .compileContribution _ => Unit
+  | .projectCommands _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -618,6 +681,27 @@ padding is. -/
 def shellTimeLimit (milliseconds : Nat) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.shellTimeLimit milliseconds))
 
+/-- Sets how long a text parsed with a grammar goes unchanged after an edit,
+in milliseconds, before it is parsed whole again: 500 when config says
+nothing (`Highlight.defaultRefreshDelay`, `Editor/Highlight.lean`). An
+edit's tree is the incremental reparse, and the whole parse once the text
+is quiet makes it exact. A reload changes it from the next buffer whose
+mode is entered, for every text. A second call in one `setup` is refused,
+as a second shell time limit is. -/
+def syntaxRefreshDelay (milliseconds : Nat) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.syntaxRefreshDelay milliseconds))
+
+/-- Defines the language `language` (`Editor/Language.lean`): a buffer
+opened from a file whose name it matches records it and is put in the
+`code` mode, whose text is parsed and drawn as the language says. A
+language of a shipped language's name (`Language.shipped`) replaces that
+one whole; config's entries are matched before the shipped ones, in the
+order config defines them. A reload's languages hold from the next file
+opened. The editor refuses the `setup` for a language name defined twice,
+and for a pattern no file name can be meant by (`Language.problems`). -/
+def defineLanguage (language : Language) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.language language))
+
 /-- The message a workspace root is refused with when it is not absolute. -/
 def relativeWorkspace (root : System.FilePath) : String :=
   s!"a workspace root must be absolute: {root}"
@@ -631,5 +715,38 @@ def workspace (root : System.FilePath) (project : Option String := none) : Setup
   unless root.isAbsolute do
     throw (relativeWorkspace root)
   ExceptT.lift (Program.request (port := setupPort) (.workspace root project))
+
+/-- The message a compile contribution with no marker is refused with. -/
+def compileWithoutMarkers (mode : String) : String :=
+  s!"the compile contribution `{mode}` has no marker"
+
+/-- Registers `contribution`, what the minor mode `contribution.mode` gives
+the compile mode: its markers, which turn the mode on in a buffer whose
+file is under one of them inside its workspace, its named commands and its
+error formats (`Editor/Compile/Contribution.lean`). Config's contribution of
+a mode's name replaces a compiled one of that name whole. Refuses the
+`setup` for a contribution with no marker; the editor refuses one registered
+twice, or naming a command twice. -/
+def compileContribution (contribution : Compile.Contribution) : SetupM Unit := do
+  if contribution.markers.isEmpty then
+    throw (compileWithoutMarkers contribution.mode)
+  ExceptT.lift (Program.request (port := setupPort) (.compileContribution contribution))
+
+/-- Gives the project identified by `project` its own `commands`, each a name
+and a command line, and `settings` for the minor mode `mode`: the compile
+mode reads them by that project's identity from what the loop is told of
+config, so every worktree of the codebase has them while the mode is on
+there, and no other project does. A command
+of a name the mode's contribution gives replaces it; one of a new name comes
+after the contribution's. The editor refuses the `setup` for project
+commands given twice for one project and mode, or naming a command
+twice. -/
+def projectCommands (project : Project.Identity) (mode : String) (commands : List (String × String))
+    (settings : List (String × Value) := []) : SetupM Unit :=
+  ExceptT.lift
+    (Program.request (port := setupPort)
+      (.projectCommands
+        { project, mode, settings
+          commands := commands.toArray.map fun (name, line) => { name, line } }))
 
 end Editor

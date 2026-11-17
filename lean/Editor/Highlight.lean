@@ -39,8 +39,17 @@ crosses (`SyntaxTree.highlight`).
 ## Entering a major mode with a syntax tree (`enter`)
 
 The loop runs it, inside the command that set the mode, before the new
-lineage's on-enter actions (`Editor/Command/Dispatch.lean`). With a snapshot
-of the buffer's text (`TextId.withSnapshot`):
+lineage's on-enter actions (`Editor/Command/Dispatch.lean`). The `code`
+mode's tree is its buffer's language's (`Editor/Language.lean`), which the
+loop hands here as it hands any mode's.
+
+0. `refreshAfter` with config's syntax refresh delay (`syntaxRefreshDelay`,
+   `Editor/Setup.lean`), or `defaultRefreshDelay`: how long a text goes
+   unchanged after an edit before the library parses it whole, so its tree
+   is exact. It is for every text, so a reload changes it from the next
+   buffer whose mode is entered.
+
+Then, with a snapshot of the buffer's text (`TextId.withSnapshot`):
 
 1. `attach` the snapshot with the grammar;
 2. the query's source: the mode's own, or the grammar's shipped highlights
@@ -97,6 +106,12 @@ loop's dispatch).
 
 namespace Editor.Highlight
 
+/-- How long a text goes unchanged after an edit, in milliseconds, before
+the syntax service parses it whole again, when config sets nothing
+(`syntaxRefreshDelay`, `Editor/Setup.lean`): the default users see. -/
+def defaultRefreshDelay : Nat :=
+  500
+
 /-- The shipped default: each capture name of the face vocabulary's syntax
 captures, and its face, `syntax.` and the name. -/
 def defaultFaces : List (String × FaceName) :=
@@ -127,6 +142,11 @@ makes (`Editor/Api.lean`), asked here, below the API, since the loop's
 dispatch runs this module's steps. -/
 private def say (text : String) : EditorM Unit :=
   ExceptT.lift (Program.request (port := editorPort) (.state (.message text)))
+
+/-- Config's syntax refresh delay, asked of the state as the API's
+`EditorState.ask` asks it, here below the API. -/
+private def refreshDelay : EditorM (Option Nat) :=
+  ExceptT.lift (Program.request (port := editorPort) (.state .syntaxRefreshDelay))
 
 /-- The source of the query of `kind` a mode with `syntaxTree` uses: its
 own, `own`, or the one its grammar ships; `none` when it has none and the
@@ -211,30 +231,32 @@ for its text `text` (the steps of the module docs): attached with the
 grammar, and highlighted with the query in the faces `faces` gives; or,
 refused, detached, so nothing of the mode before is drawn, and said in the
 echo area under the mode's name `mode`. Never refused itself. -/
-def enter (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree) : EditorM Unit :=
+def enter (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree) : EditorM Unit := do
+  let delay := (← refreshDelay).getD defaultRefreshDelay
+  discard (SyntaxTree.lift (SyntaxTree.refreshAfter delay))
   text.withSnapshot fun snapshot => do
-    let steps : SyntaxTreeM Unit := do
-      SyntaxTree.attach snapshot syntaxTree.grammar
-      let source ←
-        match syntaxTree.highlights with
-        | some source =>
-          pure source
-        | none =>
-          SyntaxTree.shippedQuery syntaxTree.grammar .highlights
-      let query ← SyntaxTree.compile syntaxTree.grammar source
-      try
-        let names ← SyntaxTree.captureNames query
-        SyntaxTree.highlight snapshot query (faces syntaxTree.captures names)
-      catch refusal =>
+      let steps : SyntaxTreeM Unit := do
+        SyntaxTree.attach snapshot syntaxTree.grammar
+        let source ←
+          match syntaxTree.highlights with
+          | some source =>
+            pure source
+          | none =>
+            SyntaxTree.shippedQuery syntaxTree.grammar .highlights
+        let query ← SyntaxTree.compile syntaxTree.grammar source
+        try
+          let names ← SyntaxTree.captureNames query
+          SyntaxTree.highlight snapshot query (faces syntaxTree.captures names)
+        catch refusal =>
+          SyntaxTree.release query
+          throw refusal
         SyntaxTree.release query
-        throw refusal
-      SyntaxTree.release query
-    match ← SyntaxTree.lift steps with
-    | .ok () =>
-      structural mode snapshot syntaxTree
-    | .error refusal =>
-      discard (SyntaxTree.lift (SyntaxTree.detach snapshot))
-      say s!"highlights: `{mode}`: {refusal.describe}"
+      match ← SyntaxTree.lift steps with
+      | .ok () =>
+        structural mode snapshot syntaxTree
+      | .error refusal =>
+        discard (SyntaxTree.lift (SyntaxTree.detach snapshot))
+        say s!"highlights: `{mode}`: {refusal.describe}"
 
 /-- What setting a major mode with no syntax tree over one with a syntax
 tree asks of the syntax tree port for its text `text`: it is detached, which

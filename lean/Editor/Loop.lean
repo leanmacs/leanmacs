@@ -841,17 +841,25 @@ service.
 
 ## Decorations
 
-A view's decorations are the one source of them built: the matches of the
-last search (`EditorState.lastSearch`), each in the face `search-match`
-(`searchMatchFace`, defined in the built-in theme, `Editor/Face.lean`).
+A view's decorations come from two sources, in this order: its buffer's
+spans (`Buffer.spans`, `Editor/State.lean`, "Buffers"), each in the face
+its owner gave it, such as the compile mode's locations
+(`Editor/Compile.lean`, "Locations"); then the matches of the last search
+(`EditorState.lastSearch`), each in the face `search-match`
+(`searchMatchFace`, defined in the built-in theme, `Editor/Face.lean`). A
+later decoration is drawn over an earlier one, so a match is over a span.
 
-- **Every view but the minibuffer's** asks its snapshot the matches of the
-  pattern (`SnapshotId.matches`) from the start of its scroll anchor's row
-  to the start of the row `rows + 1` text rows below, or the text's end,
-  where `rows` is the view's height over the height of a text row
-  (`EditorState.heights.text`) plus 1. A view of `n` display rows shows at
-  most `n` text rows from its anchor's, so every visible row is covered,
-  whatever the wrapping; matches just below the fold are drawn too.
+- **Every view but the minibuffer's** covers the range from the start of
+  its scroll anchor's row to the start of the row `rows + 1` text rows
+  below, or the text's end, where `rows` is the view's height over the
+  height of a text row (`EditorState.heights.text`) plus 1. A view of `n`
+  display rows shows at most `n` text rows from its anchor's, so every
+  visible row is covered, whatever the wrapping; decorations just below the
+  fold are drawn too.
+- **The spans** that meet the range are kept, each clipped to it, in order,
+  and one left empty is dropped (`spansIn`), with or without a last search.
+- **The matches** are what its snapshot answers for the pattern in the
+  range (`SnapshotId.matches`).
 - **It is read after the follow** (step 3 of "After each event"), so the
   anchor is where the scene shows it from: `/` that moves the cursor off
   the view draws the matches round where it went.
@@ -1366,14 +1374,23 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
 def searchMatchFace : FaceName :=
   ⟨"search-match"⟩
 
-/-- The decorations of `view` in `state` ("Decorations", in the module docs):
-when there is a last search and the view is not the minibuffer's, each
-match of its pattern that is not empty and starts from the row of the
-view's scroll anchor through `rect.height / heights.text + 1` rows below,
-in `searchMatchFace`, in order. A pattern the syntax refuses, and a text
-that refuses, draw none. -/
+/-- The spans of `spans` that start before `stop` and end after `start`,
+each clipped to `start` through `stop`, those left empty dropped, in order
+("Decorations", in the module docs). -/
+def spansIn (spans : Array Decoration) (start stop : Nat) : Array Decoration :=
+  (spans.map fun span =>
+        { span with
+          start := max span.start start, stop := min span.stop stop }).filter
+    fun span => span.start < span.stop
+
+/-- The decorations of `view` in `state` ("Decorations", in the module docs),
+for a view that is not the minibuffer's, over the range from the row of the
+view's scroll anchor through `rect.height / heights.text + 1` rows below:
+its buffer's spans in that range (`spansIn`), then, when there is a last
+search, each match of its pattern there that is not empty, in
+`searchMatchFace`, in order. A pattern the syntax refuses draws no match,
+and a text that refuses draws nothing. -/
 def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration) := do
-  let some search := state.lastSearch | return #[]
   if state.prompt.map (·.view) == some view.id then
     return #[]
   let some target := state.target? view.id | return #[]
@@ -1390,12 +1407,15 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
         snapshot.offsetOf ⟨row + rows + 1, 0⟩
       else
         snapshot.byteLength
+    let spans := spansIn target.buffer.spans start stop
+    let some search := state.lastSearch | return spans
     match ← snapshot.matches search.pattern start stop with
     | .ranges all =>
-      return (all.filter fun extent => extent.start < extent.stop).map fun extent =>
-          { start := extent.start, stop := extent.stop, face := searchMatchFace }
+      return spans ++
+          (all.filter fun extent => extent.start < extent.stop).map fun extent =>
+            { start := extent.start, stop := extent.stop, face := searchMatchFace }
     | .invalid _ =>
-      return #[]
+      return spans
   catch _ =>
     return #[]
 

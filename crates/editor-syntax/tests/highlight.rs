@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;
 use std::time::Duration;
 
+use editor_syntax::clock::ManualClock;
 use editor_syntax::fake::{GRAMMAR, Parens, ParensParser, ParensQuery, ParensTree};
 use editor_syntax::highlight::{self, Highlighter};
 use editor_syntax::inject::Language;
@@ -28,6 +29,9 @@ use editor_text::{InputEdit, Revision, Snapshot, Text};
 
 /// The longest any step waits: far above any real wait.
 const BOUND: Duration = Duration::from_secs(10);
+
+/// The worker's idle interval. Its clock never moves, so no refresh runs.
+const REFRESH_AFTER: Duration = Duration::from_millis(500);
 
 /// `mutex`, locked, poisoned or not.
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -70,6 +74,9 @@ impl Syntax for Gated {
     }
     fn parser(&self, grammar: &GrammarName) -> Option<ParensParser> {
         Parens.parser(grammar)
+    }
+    fn reparse_policy(&self, grammar: &GrammarName) -> Option<editor_syntax::ReparsePolicy> {
+        Parens.reparse_policy(grammar)
     }
     fn parse(
         &self,
@@ -223,7 +230,7 @@ fn the_round_takes_the_state_lock_only_briefly() {
     let source = Box::new(TextSource(Arc::downgrade(&text)));
     let session = Arc::new(Session::new(&*syntax, GrammarName::new(GRAMMAR), source).unwrap());
     session.set_highlighter(highlighter());
-    let worker = Worker::new(syntax.clone());
+    let worker = Worker::new(syntax.clone(), Arc::new(ManualClock::new()), REFRESH_AFTER);
     let handle = worker.handle();
     let first = lock(&text).snapshot();
 

@@ -305,21 +305,6 @@ structure Order where
   filter : Option Filter := none
   deriving DecidableEq, Repr
 
-/-- A location as arguments: its kind, then its parts. -/
-def locationArguments : Location → List Argument
-  | .local root => [.str "local", .str root.toString]
-  | .reachable kind target root => [.str "reachable", .str kind, .str target, .str root.toString]
-  | .branchOnly remote branch => [.str "branchOnly", .str remote, .str branch]
-
-/-- The location `arguments` start with (`locationArguments`), and the rest. -/
-def locationOf? : List Argument → Option (Location × List Argument)
-  | .str "local" :: .str root :: rest => some (.local root, rest)
-  | .str "reachable" :: .str kind :: .str target :: .str root :: rest =>
-    some (.reachable kind target root, rest)
-  | .str "branchOnly" :: .str remote :: .str branch :: rest =>
-    some (.branchOnly remote branch, rest)
-  | _ => none
-
 /-- A filter's part as arguments: `true` and its fields, or `false` for
 none. -/
 def filterArguments : Option Filter → List Argument
@@ -346,7 +331,7 @@ def Order.arguments (order : Order) : List Argument :=
       .nat order.buffer.index, .nat order.view.index] ++
     filterArguments order.filter ++
     match order.scope with
-    | some location => locationArguments location
+    | some location => location.arguments
     | none => [.bool false]
 
 /-- The order `arguments` are, if they are one (`Order.arguments`). -/
@@ -358,7 +343,7 @@ def Order.ofArguments? : List Argument → Option Order
     | [.bool false] =>
       some order
     | rest =>
-      match locationOf? rest with
+      match Location.of? rest with
       | some (location, []) =>
         some { order with scope := some location }
       | _ =>

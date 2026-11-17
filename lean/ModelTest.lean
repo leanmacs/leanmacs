@@ -6,6 +6,7 @@ import Editor.Command.Append
 import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Compile.Compiled
+import Editor.Compile.Shipped
 import Editor.Config.Display
 import Editor.Config.Reload
 import Editor.Display.Contract
@@ -34,7 +35,9 @@ import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
+import Editor.Json
 import Editor.Key.Notation
+import Editor.Language
 import Editor.Layout
 import Editor.Loop.Driver
 import Editor.Menu.Compiled
@@ -162,8 +165,10 @@ texts as the snapshots `0`, `1` and so on, and `contract-test` runs the
 same list against the real binding. `syntaxTreeChecks` are what only the
 model shows: the JSON tree of a small text node by node, the root of a text
 of blanks, the `ERROR` answer outside the subset, what the query subset
-refuses as unsupported, and the contract biting on a model written here
-that answers a range with the whole text's captures.
+refuses as unsupported, the contract biting on a model written here
+that answers a range with the whole text's captures, and a model whose
+trees a test says are not delivered refusing questions of captures with
+`notParsed`.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
@@ -530,6 +535,13 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   `P`, by the same rows;
 - `evilOpenChecks`: `o` and `O`, by the same rows, and their insert
   session;
+- `evilIndentChecks`: `=` by key in a JSON language whose model tree
+  answers the indents query (`indentDriver`): `gg=G` over a mangled text,
+  `=af`, counts, `=j`, a visual selection, one undo step, `.` over another
+  range, a config entry's tab unit, and the give-up with no syntax tree, no
+  indents query, or a tree not delivered yet (`undeliveredDriver`); and the
+  new lines `RET`, `o` and `O` start at their level, at the row's own indent
+  while the tree is not delivered, and as before this phase with neither;
 - `evilUndoChecks`: `u` and `C-r` after one change of each kind
   (`undoRows`): the text and the cursor from before the change, and those
   the change left. They are the phase's rule and are not compared with
@@ -592,12 +604,26 @@ names a scheme's key:
   hand-built rows: begins on one row count once, a branch takes a level
   away only as a row's first non-blank, the level never below 0, the rows
   of an ignored node after its first kept, a node ending at a row's start
-  not reaching it, a blank row's level, and names the rule does not read
-  ignored;
-- `indentLevelChecks`: the indent primitive (`TextId.indentLevels`), on the
-  editor's models: a pretty-printed JSON text under a test mode's indents
-  query gets each row's indent in levels, a text with no syntax tree is
-  refused, and an empty indents source answers 0 for every row.
+  not reaching it, a blank row's level, names the rule does not read
+  ignored, and an opening bracket the tree did not close counting for every
+  later row an incomplete node that holds it reaches, and for none after;
+- `indentOpeningChecks`: the opening rule and the widening
+  (`Editor/Indent.lean`), pure, over hand-built nodes: a begin node holding
+  the position counts, an unclosed bracket before it counts, a branch at
+  the first non-blank that moves takes a level away, a position inside an
+  ignored node adds nothing, and an incomplete node widens a question to
+  its start;
+- `indentEditChecks`: levels as edits (`Editor/Indent.lean`), pure: a
+  level's whitespace in spaces or tabs, the re-indent's edits, a blank row
+  emptied and a kept row left, what a new line gets for each answer, and
+  the edit that breaks a line;
+- `indentLevelChecks`: the indent primitives (`TextId.indentLevels`,
+  `TextId.openingLevel`, `TextId.reindentEdits`), on the editor's models: a
+  pretty-printed JSON text under a test mode's indents query gets each
+  row's indent in levels, a text with no syntax tree is refused, an empty
+  indents source answers 0 for every row, a question is widened to an
+  incomplete node's start, a line opened at a position gets its level, and
+  the re-indent's edits are read from the text.
 -/
 
 namespace ModelTest
@@ -2952,6 +2978,104 @@ def setupChecks : List Check :=
               refusal twice == some Config.Registrations.shellTimeLimitTwice)
         | _, _ => pure false },
     { name :=
+        "a setup's languages are collected in order; a setup that defines a language name twice, or a language with a pattern no file name can be meant by, is refused with a message that names it"
+      run :=
+        let toml : Language :=
+          { name := "toml", patterns := [.extension "toml"], syntaxTree := { grammar := "toml" } }
+        let both : SetupM Unit := do
+          defineLanguage toml
+          defineLanguage Language.rust
+        let twice : SetupM Unit := do
+          defineLanguage toml
+          defineLanguage { toml with patterns := [.name "Cargo.lock"] }
+        match Config.Registrations.ofSetup both,
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.languages.map (·.name) == #["toml", "rust"] && plain.languages.isEmpty &&
+              refusal twice == some "the language `toml` is defined twice" &&
+              refusal (defineLanguage { toml with patterns := [.extension ""] }) ==
+                some "the language `toml` cannot be meant: its extension pattern is empty" &&
+              refusal (defineLanguage { toml with patterns := [.extension "rs", .name "a/b"] }) ==
+                some "the language `toml` cannot be meant: its file name pattern `a/b` holds `/`" &&
+              refusal (defineLanguage { toml with patterns := [] }) == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup's syntax refresh delay is collected, a setup that sets none has none, and one that sets it twice is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          syntaxRefreshDelay 250
+          syntaxRefreshDelay 100
+        match Config.Registrations.ofSetup (syntaxRefreshDelay 250),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.syntaxRefreshDelay == some 250 && plain.syntaxRefreshDelay == none &&
+              refusal twice == some Config.Registrations.syntaxRefreshDelayTwice)
+        | _, _ => pure false },
+    { name :=
+        "a setup's compile contributions and project commands are collected in the order it registered them; a setup that registers none collects none"
+      run :=
+        let setup : SetupM Unit := do
+          compileContribution
+              { mode := "b-mode", markers := #["b.toml"]
+                commands := #[{ name := "build", line := "b-build" }] }
+          projectCommands (.remote "github.com/o/r") "cargo-mode" [("lint", "cargo clippy")]
+              [("profile", .str "dev")]
+          compileContribution
+              { mode := "a-mode", markers := #["a.toml"], formats := #[Compile.Format.general] }
+        let lint : Compile.ProjectCommands :=
+          { project := .remote "github.com/o/r", mode := "cargo-mode"
+            commands := #[{ name := "lint", line := "cargo clippy" }]
+            settings := [("profile", .str "dev")] }
+        match Config.Registrations.ofSetup setup,
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.contributions.map (·.mode) == #["b-mode", "a-mode"] &&
+              collected.contributions.map (·.markers) == #[#["b.toml"], #["a.toml"]] &&
+              collected.contributions.map (·.commands) ==
+                #[#[{ name := "build", line := "b-build" }], #[]] &&
+              (collected.contributions.map fun contribution => contribution.formats.map (·.name)) ==
+                #[#[], #["general"]] &&
+              collected.projectCommands == #[lint] &&
+              plain.contributions.isEmpty &&
+              plain.projectCommands.isEmpty)
+        | _, _ => pure false },
+    { name :=
+        "a setup that registers a compile contribution with no marker, one twice, one that names a command twice, or project commands for one project and mode twice or naming a command twice, is refused with a message that says so"
+      run :=
+        let a : Compile.Contribution := { mode := "a-mode", markers := #["a.toml"] }
+        let remote : Project.Identity := .remote "github.com/o/r"
+        let twice : SetupM Unit := do
+          compileContribution a
+          compileContribution { a with markers := #["other.toml"] }
+        let given : SetupM Unit := do
+          projectCommands remote "a-mode" []
+          projectCommands remote "a-mode" [("lint", "make lint")]
+        let apart : SetupM Unit := do
+          compileContribution a
+          compileContribution { mode := "b-mode", markers := #["a.toml"] }
+          projectCommands remote "a-mode" []
+          projectCommands (.remote "github.com/o/other") "a-mode" []
+          projectCommands remote "b-mode" []
+        pure
+          (refusal (compileContribution { mode := "a-mode", markers := #[] }) ==
+              some "the compile contribution `a-mode` has no marker" &&
+            refusal twice == some "the compile contribution `a-mode` is registered twice" &&
+            refusal
+                (compileContribution
+                  { a with
+                    commands :=
+                      #[{ name := "build", line := "x" }, { name := "build", line := "y" }] }) ==
+              some "the compile contribution `a-mode` names the command `build` twice" &&
+            refusal given ==
+              some "the project commands of `a-mode` for remote github.com/o/r are given twice" &&
+            refusal (projectCommands remote "a-mode" [("lint", "a"), ("lint", "b")]) ==
+              some
+                "the project commands of `a-mode` for remote github.com/o/r name the command `lint` twice" &&
+            refusal apart == none) },
+    { name :=
         "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
       run :=
         let twice : SetupM Unit := do
@@ -3048,7 +3172,34 @@ def boundTo (registry : Config.Registry) (text : String) : Option Invocation :=
 
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
-  [{
+  [{  name :=
+        "the registry's compile contributions are config's in config's order, then the compiled ones config does not register; config's a-mode replaces the compiled a-mode whole, and replacing config's with none brings the compiled one back"
+      run :=
+        let compiledA : Compile.Contribution :=
+          { mode := "a-mode", markers := #["a.toml"]
+            commands :=
+              #[{ name := "build", line := "compiled-build" },
+                { name := "lint", line := "compiled-lint" }]
+            formats := #[Compile.Format.general] }
+        let compiledC : Compile.Contribution := { mode := "c-mode", markers := #["c.toml"] }
+        let configB : Compile.Contribution := { mode := "b-mode", markers := #["b.toml"] }
+        let configA : Compile.Contribution :=
+          { mode := "a-mode", markers := #["x.toml"]
+            commands := #[{ name := "build", line := "config-build" }] }
+        let compiled :=
+          ({} : Config.Registry).replaceContributions .compiled #[compiledA, compiledC]
+        let both := compiled.replaceContributions .config #[configB, configA]
+        let dropped := both.replaceContributions .config #[]
+        let shape (contributions : Array Compile.Contribution) :=
+          contributions.map fun contribution =>
+            (contribution.mode, contribution.markers, contribution.commands,
+              contribution.formats.map (·.name))
+        pure
+          (shape compiled.compileContributions == shape #[compiledA, compiledC] &&
+            shape both.compileContributions == shape #[configB, configA, compiledC] &&
+            shape dropped.compileContributions == shape #[compiledA, compiledC] &&
+            shape both.compileHook.contributions == shape #[configB, configA, compiledC]) },
+    {
       name :=
         "replace for an owner leaves exactly the new commands of that owner, and a second replace does not add to the first",
       run :=
@@ -4135,6 +4286,59 @@ def reloadChecks : List Check :=
         pure
           (told (reduce []).1 == none && told loaded == some 5000 && told kept == some 5000 &&
             told bare == none) },
+    { name :=
+        "an installed reload puts config's languages in the registry over the compiled ones, so the loop is told config's rust in place of the shipped one; a rejected reload keeps them, and a config that defines none brings the shipped one back"
+      run :=
+        let mine :=
+          { Language.rust with
+            syntaxTree := { grammar := "rust", highlights := some "(identifier) @variable" } }
+        let start : Config.State Elaborated :=
+          { registry := ({} : Config.Registry).replaceLanguages .compiled Language.shipped }
+        let (loaded, _) :=
+          reduceFrom start [.requested, .finished (accepted ["a"] (defineLanguage mine))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let rustOf (state : Config.State Elaborated) : Option Language :=
+          state.registry.registered.languages.find? (·.name == "rust")
+        pure
+          (rustOf start == some Language.rust && rustOf loaded == some mine &&
+            loaded.registry.registered.languages.map (·.name) ==
+              ["rust", "json", "markdown", "toml", "lean"] &&
+            rustOf kept == some mine &&
+            rustOf bare == some Language.rust) },
+    { name :=
+        "an installed reload puts config's syntax refresh delay in the registry, which tells the loop of it; a rejected reload leaves it, and a config that sets none goes back to none"
+      run :=
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (syntaxRefreshDelay 250))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let told (state : Config.State Elaborated) : Option Nat :=
+          state.registry.registered.syntaxRefreshDelay
+        pure
+          (told (reduce []).1 == none && told loaded == some 250 && told kept == some 250 &&
+            told bare == none) },
+    { name :=
+        "an installed reload puts config's compile contributions and project commands in the registry, which tells the loop of them; a rejected reload leaves them, and a config that registers none leaves the compiled ones alone"
+      run :=
+        let start : Config.State Elaborated :=
+          {
+            registry :=
+              ({} : Config.Registry).replaceContributions .compiled
+                #[{ mode := "a-mode", markers := #["a.toml"] }] }
+        let setup : SetupM Unit := do
+          compileContribution { mode := "b-mode", markers := #["b.toml"] }
+          projectCommands (.remote "github.com/o/r") "b-mode" [("lint", "b-lint")]
+        let (loaded, _) := reduceFrom start [.requested, .finished (accepted ["a"] setup)]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let told (state : Config.State Elaborated) : Array String × Array String :=
+          let hook := state.registry.registered.compile
+          (hook.contributions.map (·.mode), hook.projects.map (·.mode))
+        pure
+          (told start == (#["a-mode"], #[]) &&
+            told loaded == (#["b-mode", "a-mode"], #["b-mode"]) &&
+            told kept == told loaded &&
+            told bare == (#["a-mode"], #[])) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -5646,6 +5850,19 @@ def faceVocabularyChecks : List Check :=
       run :=
         let states := Vim.Default.states.initial :: Vim.Default.states.others
         pure (Themes.cursorFaces == #[⟨"cursor"⟩] ++ states.toArray.map (Vim.cursorFace ·.name)) },
+    { name :=
+        "the compilation faces are in the vocabulary, each with a meaning, and the built-in theme defines each once, bold, in its palette's red, orange and green"
+      run :=
+        let palette := Palette.placeholder
+        let faces :=
+          [("compilation.error", palette.red), ("compilation.warning", palette.orange),
+            ("compilation.note", palette.green)]
+        pure
+          (faces.all fun (name, colour) =>
+            (Face.vocabulary.find? (·.name == ⟨name⟩)).any (!·.meaning.isEmpty) &&
+              (Theme.builtin.filter (·.name == ⟨name⟩)).size == 1 &&
+              (Theme.builtin.merged ⟨name⟩).foreground == some colour &&
+              (Theme.builtin.merged ⟨name⟩).weight == some 700) },
     { name := "the built-in theme has no problem the check finds"
       run := pure (Themes.problems Theme.builtin == #[]) },
     { name :=
@@ -5776,7 +5993,9 @@ def solarizedChoices (c : Themes.Solarized.Colours) : List (String × Option Col
       ("syntax.variable", some c.blue, none), ("diff.added", some c.green, some c.base02),
       ("diff.removed", some c.red, some c.base02), ("diff.changed", some c.yellow, some c.base02),
       ("gutter", some c.base01, some c.base02), ("search-match", some c.base03, some c.yellow),
-      ("review-unexamined", none, none), ("block-header", some c.base1, some c.base02)]
+      ("review-unexamined", none, none), ("block-header", some c.base1, some c.base02),
+      ("compilation.error", some c.red, none), ("compilation.warning", some c.orange, none),
+      ("compilation.note", some c.green, none)]
 
 /-- Whether `theme` gives each face of `solarizedChoices c` the colours
 listed, and keeps the weight, slant and underline the table keeps. -/
@@ -5785,7 +6004,9 @@ def solarizedChosen (theme : Theme) (c : Themes.Solarized.Colours) : Bool :=
   (solarizedChoices c).all
       (fun (name, foreground, background) =>
         (face name).foreground == foreground && (face name).background == background) &&
-    (badgeFaces ++ ["mode-line.buffer", "minibuffer.prompt", "block-header"]).all
+    (badgeFaces ++
+          ["mode-line.buffer", "minibuffer.prompt", "block-header", "compilation.error",
+            "compilation.warning", "compilation.note"]).all
       (fun name => (face name).weight == some 700) &&
     (face "syntax.comment").slant == some .italic &&
     (face "review-unexamined").underline == some { style := .single, color := some c.orange }
@@ -5879,7 +6100,9 @@ def fairyFlossChoices (c : Themes.FairyFloss.Colours) :
       ("diff.added", some c.added, none), ("diff.removed", some c.removed, none),
       ("diff.changed", some c.modified, none), ("gutter", some c.foreground, some c.background),
       ("search-match", some c.background, some c.lemon), ("review-unexamined", none, none),
-      ("block-header", some c.foreground, some c.lineHighlight)]
+      ("block-header", some c.foreground, some c.lineHighlight),
+      ("compilation.error", some c.removed, none), ("compilation.warning", some c.peach, none),
+      ("compilation.note", some c.added, none)]
 
 /-- Whether `theme` gives each face of `fairyFlossChoices c` the colours
 listed, and the weight, slant and underline the table records. -/
@@ -5888,7 +6111,9 @@ def fairyFlossChosen (theme : Theme) (c : Themes.FairyFloss.Colours) : Bool :=
   (fairyFlossChoices c).all
       (fun (name, foreground, background) =>
         (face name).foreground == foreground && (face name).background == background) &&
-    (badgeFaces ++ ["mode-line.buffer", "minibuffer.prompt", "block-header"]).all
+    (badgeFaces ++
+          ["mode-line.buffer", "minibuffer.prompt", "block-header", "compilation.error",
+            "compilation.warning", "compilation.note"]).all
       (fun name => (face name).weight == some 700) &&
     (face "syntax.comment").slant == some .upright &&
     (face "syntax.type").slant == some .italic &&
@@ -6821,6 +7046,49 @@ def syntaxTreeChecks : List Check :=
         let broken ← syntaxTreeBroken wholeRange
         return broken.any (·.startsWith "a range answers the whole text's rows that are in it") &&
             broken.all (·.startsWith "a range ") },
+    { name := "the model records the refresh delay it is handed, and answers nothing else for it"
+      run :=
+        pure <|
+          let (model, ids) := syntaxTreeModelOf #["[1]"]
+          let snapshot := ids[0]?.getD ⟨0⟩
+          let program : SyntaxTreeM (Array SyntaxTree.Capture) := do
+            SyntaxTree.attach snapshot "json"
+            SyntaxTree.refreshAfter 250
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTree.captures snapshot query 0 3
+          match SyntaxTreeM.runModel program model with
+          | (.ok found, after) => after.refreshAfter == some 250 && found.size == 1
+          | _ => false },
+    { name :=
+        "a model whose trees a test says are not delivered refuses captures and capturesOf with notParsed, after the range check, and answers both once they are"
+      run :=
+        pure <|
+          let (model, ids) := syntaxTreeModelOf #["[1]"]
+          let snapshot := ids[0]?.getD ⟨0⟩
+          let program : SyntaxTreeM Bool := do
+            SyntaxTree.attach snapshot "json"
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTree.keep snapshot .indents query
+            return (←
+                  SyntaxTreeContract.refusedWith .notParsed
+                      (SyntaxTree.captures snapshot query 0 3)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .notParsed
+                      (SyntaxTree.capturesOf snapshot .indents 0 3)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .badRange
+                      (SyntaxTree.capturesOf snapshot .indents 0 9)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .noQuery
+                      (SyntaxTree.capturesOf snapshot .textObjects 0 3))
+          let delivered : SyntaxTreeM Nat := do
+            SyntaxTree.attach snapshot "json"
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTree.keep snapshot .indents query
+            return (← SyntaxTree.captures snapshot query 0 3).size +
+                (← SyntaxTree.capturesOf snapshot .indents 0 3).captures.size
+          (SyntaxTreeM.runModel program { model with delivered := false }).1 matches .ok true &&
+            (SyntaxTreeM.runModel delivered model).1 matches .ok 2 },
     { name := "every property of the syntax tree contract holds of the model"
       run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
 
@@ -10409,7 +10677,8 @@ def stateRequests : List StateRequest :=
   [.read, .addBuffer "new" ⟨3⟩ (UndoTree.new ⟨3⟩ 0), .addBuffer "other" ⟨3⟩ (UndoTree.new ⟨3⟩ 0),
     .removeBuffer ⟨2⟩, .removeBuffer ⟨1⟩, .removeBuffer ⟨9⟩, .setHistory ⟨0⟩ (UndoTree.new ⟨0⟩ 4),
     .setHistory ⟨0⟩ (UndoTree.new ⟨1⟩ 0), .setValue ⟨0⟩ "count" (.nat 1),
-    .setValue ⟨9⟩ "count" .null, .setMajorMode ⟨0⟩ "listing", .setMajorMode ⟨9⟩ "listing",
+    .setValue ⟨9⟩ "count" .null, .setSpans ⟨0⟩ #[{ start := 0, stop := 1, face := ⟨"a"⟩ }],
+    .setSpans ⟨9⟩ #[], .setMajorMode ⟨0⟩ "listing", .setMajorMode ⟨9⟩ "listing",
     .addMinorMode ⟨1⟩ "one", .removeMinorMode ⟨1⟩ "one", .split ⟨0⟩ (marker 0 8) (marker 0 9),
     .split ⟨1⟩ (marker 1 8) (marker 1 9), .split ⟨0⟩ (marker 1 8) (marker 0 9),
     .split ⟨9⟩ (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩, .removeWindow ⟨9⟩, .focus ⟨1⟩,
@@ -10446,14 +10715,72 @@ def stateRequests : List StateRequest :=
     .removeWindow ⟨3⟩, .focus ⟨4⟩, .focus ⟨3⟩, .split ⟨4⟩ (marker 0 8) (marker 0 9),
     .show ⟨1⟩ ⟨0⟩ (marker 0 0) (marker 0 1), .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .tab,
     .tab (.select 1), .tab (.rename 1 (some "notes")), .tab (.move 0 1), .tab (.select 0),
-    .tab (.close 1), .tab (.close 0), .tab (.select 7)]
+    .tab (.close 1), .tab (.close 0), .tab (.select 7), .setLanguage ⟨0⟩ (some "rust"),
+    .setLanguage ⟨0⟩ none, .setLanguage ⟨9⟩ (some "rust"), .languageOf notePath,
+    .indentUnitOf "rust"]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
 asks the text store nothing, so a marker's id is written out by hand. -/
 def stateRequestChecks : List Check :=
   let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
-  [{  name := "a read hands back the whole state and changes nothing"
+  [{  name :=
+        "setLanguage records a buffer's language by name and clears it, and refuses a buffer there is none of with the state unchanged; a buffer has no language until one is set"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let languageOf (state : EditorState) : Option String :=
+              (state.buffer? ⟨1⟩).bind (·.language)
+            let (set, recorded) := state.handle (.setLanguage ⟨1⟩ (some "rust"))
+            let (cleared, plain) := recorded.handle (.setLanguage ⟨1⟩ none)
+            let (refused, same) := state.handle (.setLanguage ⟨9⟩ (some "rust"))
+            set.toOption.isSome && languageOf state == none && languageOf recorded == some "rust" &&
+              (recorded.buffer? ⟨0⟩).bind (·.language) == none &&
+              cleared.toOption.isSome &&
+              languageOf plain == none &&
+              (match refused with
+              | .error (.noSuchBuffer id) => id == ⟨9⟩
+              | _ => false) &&
+              same == state },
+    { name :=
+        "with no loop to answer, a path's language is none; a dispatched command that asks is answered the name of the language the loop's table chooses for the path, or none"
+      run :=
+        let program : EditorM (Guarded (Option String × Option String) × EditorState) := do
+          (do
+                  return (← languageOf "/p/main.rs", ← languageOf "/p/notes.txt")).dispatched
+              { languages := Language.shipped.toList } (← twoBuffers)
+        pure <|
+          (EditorState.none.handle (.languageOf "/p/main.rs")).1 == none &&
+            match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) => answer == (some "rust", none)
+            | _ => false },
+    { name :=
+        "with no loop to answer, a language's indent unit is none; a dispatched command that asks is answered the unit of the loop's entry of that name, the first in the table, or none; and a target's unit is its buffer's language's, or four spaces for a buffer with no language or one the table has no entry of"
+      run :=
+        let table := [{ Language.json with indentUnit := .tab }, Language.rust, Language.json]
+        let program :
+          EditorM
+            (Guarded (List (Option Language.IndentUnit) × List Language.IndentUnit) ×
+              EditorState) :=
+          do
+          (do
+                  let asked := [← indentUnitOf "json", ← indentUnitOf "rust", ← indentUnitOf "toml"]
+                  let unitOf (language : Option String) : EditorM Language.IndentUnit := do
+                    discard <| (⟨0⟩ : BufferId).setLanguage language
+                    let some target := (← editorState).target? ⟨0⟩ | throw TextError.noSuchText
+                    target.indentUnit
+                  let units := [← unitOf (some "json"), ← unitOf none, ← unitOf (some "toml")]
+                  return (asked, units)).dispatched
+              { languages := table } (← twoBuffers)
+        pure <|
+          (EditorState.none.handle (.indentUnitOf "rust")).1 == none &&
+            match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) =>
+              answer == ([some .tab, some (.spaces 4), none], [.tab, .spaces 4, .spaces 4])
+            | _ => false },
+    { name := "a read hands back the whole state and changes nothing"
       run :=
         pure <|
           match onTextModel twoBuffers with
@@ -10570,6 +10897,23 @@ def stateRequestChecks : List Check :=
               ((three.buffer? ⟨1⟩).map (·.locals.size)) == some 2 &&
               three.value? ⟨0⟩ "count" == none &&
               three.value? ⟨9⟩ "count" == none &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "a buffer's spans are set, replacing those it had, and other buffers keep theirs; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let spans : Array Decoration := #[{ start := 0, stop := 2, face := ⟨"a"⟩ }]
+            let (set, one) := state.handle (.setSpans ⟨1⟩ spans)
+            let (_, two) := one.handle (.setSpans ⟨1⟩ #[])
+            let (absent, same) := state.handle (.setSpans ⟨9⟩ spans)
+            replied set == .inr () && (state.buffer? ⟨1⟩).map (·.spans) == some #[] &&
+              (one.buffer? ⟨1⟩).map (·.spans) == some spans &&
+              (one.buffer? ⟨0⟩).map (·.spans) == some #[] &&
+              (two.buffer? ⟨1⟩).map (·.spans) == some #[] &&
               replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
               same == state },
     { name :=
@@ -17169,6 +17513,29 @@ def modeRecordChecks : List Check :=
           (listing.syntaxTree == none && Mode.syntaxTreeOf [listing] == none &&
             Mode.syntaxTreeOf [json, listing] == some { grammar := "json" } &&
             Mode.syntaxTreeOf [json, five, listing] == five.syntaxTree) },
+    { name :=
+        "the code mode's syntax tree is its buffer's language's: the nearest mode of a lineage that has its own tree or takes the language's, and has one to give, says; with no language the code mode says nothing, and a mode that does not take the language's never gives it"
+      run :=
+        let rustTree : Mode.SyntaxTree := { grammar := "rust" }
+        let code := Language.codeMode
+        let own : Mode :=
+          { name := "own-json", parent := some "code", syntaxTree := some { grammar := "json" } }
+        let derived : Mode := { name := "derived", parent := some "code" }
+        let json : Mode := { name := "json", syntaxTree := some { grammar := "json" } }
+        pure
+          (code.name == Language.codeName && Language.codeName == "code" &&
+            code.syntaxTree == none &&
+            code.syntaxTreeOfLanguage &&
+            !listing.syntaxTreeOfLanguage &&
+            Language.modes.map (·.name) == #["code"] &&
+            Mode.syntaxTreeOf [code] (some rustTree) == some rustTree &&
+            Mode.syntaxTreeOf [code] none == none &&
+            Mode.syntaxTreeOf [code] == none &&
+            Mode.syntaxTreeOf [code, own] (some rustTree) == own.syntaxTree &&
+            Mode.syntaxTreeOf [code, derived] (some rustTree) == some rustTree &&
+            Mode.syntaxTreeOf [json, code] none == json.syntaxTree &&
+            Mode.syntaxTreeOf [json, listing] (some rustTree) == json.syntaxTree &&
+            Mode.syntaxTreeOf [listing] (some rustTree) == none) },
     { name := "Mode.check reports nothing for a mode with no problem, under a scheme that tunes it"
       run := pure (listing.check TestScheme.scheme == [] && listing.check checkedScheme == []) },
     { name := "Mode.check reports a role that is not registered, by its name"
@@ -17220,6 +17587,117 @@ def modeRecordChecks : List Check :=
             [Role.nextItem, Role.previousItem, Role.activate, Role.quit, Role.refresh, Role.toggle,
                 Role.mark] ==
               Role.registered) }]
+
+/-- A language called `name`, chosen for `patterns`, whose text is parsed
+with `grammar`. -/
+def testLanguage (name : String) (patterns : List Language.Pattern) (grammar : String := "json") :
+    Language :=
+  { name, patterns, syntaxTree := { grammar } }
+
+/-- The name of the language `table` chooses for `path` (`Language.forPath`),
+if it chooses one. -/
+def chosenIn (table : List Language) (path : System.FilePath) : Option String :=
+  (Language.forPath table path).map (·.name)
+
+/-- The checks of the matching rule (`Editor/Language.lean`), pure: which
+language a table chooses for a path, how a later owner's entries are put
+over an earlier owner's, and the shipped table. -/
+def languageMatchChecks : List Check :=
+  let shipped := Language.shipped.toList
+  [{  name :=
+        "the shipped table chooses rust for a .rs path, json for a .json path, markdown for a .md path, toml for a .toml path and lean for a .lean path, lakefile.lean included, by extension, and toml for a file named Cargo.lock, by name"
+      run :=
+        pure
+          (chosenIn shipped "/p/src/main.rs" == some "rust" &&
+            chosenIn shipped "/p/data.json" == some "json" &&
+            chosenIn shipped "/p/notes.md" == some "markdown" &&
+            chosenIn shipped "/p/Cargo.toml" == some "toml" &&
+            chosenIn shipped "/p/mise.toml" == some "toml" &&
+            chosenIn shipped "/p/Cargo.lock" == some "toml" &&
+            chosenIn shipped "/p/Editor/Main.lean" == some "lean" &&
+            chosenIn shipped "/p/lakefile.lean" == some "lean") },
+    { name :=
+        "an exact base-name pattern beats an extension pattern, even an earlier entry's, and the extension entry still has the paths the name does not"
+      run :=
+        let table :=
+          [testLanguage "lock" [.extension "lock"], testLanguage "cargo-lock" [.name "Cargo.lock"]]
+        pure
+          (chosenIn table "/p/Cargo.lock" == some "cargo-lock" &&
+            chosenIn table "/p/yarn.lock" == some "lock" &&
+            chosenIn table "/p/sub/Cargo.lock.bak" == none) },
+    { name :=
+        "between entries of equal pattern the earlier one in the table wins, so an entry of a later owner, which Language.over puts first, beats the shipped one"
+      run :=
+        let rusty := testLanguage "rusty" [.extension "rs"] "rust"
+        let twice := [rusty, testLanguage "rustier" [.extension "rs"] "rust"]
+        pure
+          (chosenIn (Language.over [rusty] shipped) "/p/main.rs" == some "rusty" &&
+            chosenIn (Language.over twice shipped) "/p/main.rs" == some "rusty" &&
+            chosenIn (Language.over [rusty] shipped) "/p/data.json" == some "json") },
+    { name :=
+        "Language.over replaces an earlier owner's entry of a name with the later owner's whole entry, the later owner's entries first and in their order"
+      run :=
+        let mine :=
+          [{ Language.rust with patterns := [.extension "rlib"] },
+            testLanguage "toml" [.extension "toml"]]
+        let table := Language.over mine shipped
+        pure
+          (table.map (·.name) == ["rust", "toml", "json", "markdown", "lean"] &&
+            chosenIn table "/p/main.rs" == none &&
+            chosenIn table "/p/x.rlib" == some "rust" &&
+            Language.over [] shipped == shipped) },
+    { name :=
+        "a path that matches no entry has no language: another extension, no extension, a base name that is only the extension with or without its dot, an extension in another case, a lock file not named Cargo.lock, Cargo.lock in another case or with more after it, Lean's toolchain file and build products, and a path with no base name"
+      run :=
+        pure
+          (["/p/notes.txt", "/p/Makefile", "/p/rs", "/p/.rs", "/p/main.RS", "/p/yarn.lock",
+                "/p/cargo.lock", "/p/Cargo.lock.bak", "/p/lean-toolchain", "/p/x.olean",
+                "/p/x.ilean", "/p/Main.LEAN", "/"].all
+            fun path => chosenIn shipped path == none) },
+    { name :=
+        "the registry's language table is each owner's entries over the earlier owners', the latest owner's first and in its order: config's entry of a shipped language's name replaces it whole, config's entry beats a shipped one of equal pattern, and the loop is told the table"
+      run :=
+        let compiled := ({} : Config.Registry).replaceLanguages .compiled Language.shipped
+        let rusty := testLanguage "rusty" [.extension "rs"] "rust"
+        let mine :=
+          { Language.rust with syntaxTree := { grammar := "rust", highlights := some "q" } }
+        let registry := compiled.replaceLanguages .config #[rusty, mine]
+        let names (table : List Language) : List String := table.map (·.name)
+        pure
+          (names compiled.languageTable == ["rust", "json", "markdown", "toml", "lean"] &&
+            names registry.languageTable == ["rusty", "rust", "json", "markdown", "toml", "lean"] &&
+            registry.languageTable[1]? == some mine &&
+            chosenIn registry.languageTable "/p/main.rs" == some "rusty" &&
+            chosenIn (compiled.replaceLanguages .config #[mine]).languageTable "/p/main.rs" ==
+              some "rust" &&
+            registry.registered.languages == registry.languageTable &&
+            (registry.replaceLanguages .config #[]).languageTable == compiled.languageTable) },
+    { name :=
+        "the shipped table is rust, json, markdown, toml and lean, each parsed with the grammar of its name and the grammar's own queries, toml's booleans drawn in the constant face, lean's booleans in the constant face, its characters in the string face, its namespaces in the module face and its plain identifiers (`variable`) in no face, and no other capture of any mapped; rust indented by four spaces and json, markdown, toml and lean by two; toml for *.toml and Cargo.lock, lean for *.lean"
+      run :=
+        pure
+          (Language.shipped.map (·.name) == #["rust", "json", "markdown", "toml", "lean"] &&
+            Language.shipped.all
+              (fun language =>
+                language.syntaxTree ==
+                  { grammar := language.name, captures := language.syntaxTree.captures }) &&
+            [Language.rust, Language.json, Language.markdown].all (·.syntaxTree.captures.isEmpty) &&
+            Language.toml.syntaxTree.captures == [("boolean", some ⟨"syntax.constant"⟩)] &&
+            Language.toml.patterns == [.extension "toml", .name "Cargo.lock"] &&
+            Language.lean.syntaxTree.captures ==
+              [("boolean", some ⟨"syntax.constant"⟩), ("character", some ⟨"syntax.string"⟩),
+                ("namespace", some ⟨"syntax.module"⟩), ("variable", none)] &&
+            Language.lean.patterns == [.extension "lean"] &&
+            Language.rust.indentUnit == .spaces 4 &&
+            Language.json.indentUnit == .spaces 2 &&
+            Language.markdown.indentUnit == .spaces 2 &&
+            Language.toml.indentUnit == .spaces 2 &&
+            Language.lean.indentUnit == .spaces 2) },
+    { name := "an entry that says no indent unit is indented by the default unit, four spaces"
+      run :=
+        pure
+          (Language.IndentUnit.default == .spaces 4 &&
+            (testLanguage "plain" [.extension "txt"]).indentUnit == Language.IndentUnit.default) }]
 
 /-- A mode called `name` that fills each of `roles` with a command named
 after the mode and the role, and derives from `parent`, if given. -/
@@ -17537,15 +18015,19 @@ def parsedMode (name : String) (syntaxTree : Mode.SyntaxTree := { grammar := "js
 
 /-- Sets each mode of `steps`, in turn, as the major mode of buffer 1
 through view 1, by an invocation of `enter` the loop runs, over the
-registry of the on-enter checks with `modes` registered for config, on the
-editor's models: what each left in the echo area, buffer 1's major mode at
+registry of the on-enter checks with `modes` registered for config, and
+config's syntax refresh delay `refreshDelay`, the compiled languages
+`languages` and buffer 1's language `language`, on the editor's models: what each left in the echo area, buffer 1's major mode at
 the end, and the syntax tree model then. `none` when the run was
 refused. -/
-def highlightedBy (modes : Array Mode) (steps : List String) :
+def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Option Nat := none)
+    (languages : Array Language := #[]) (language : Option String := none) :
     Option (List String × Option String × SyntaxTreeModel) :=
-  let registry := enterRegistry.replaceModes .config modes
+  let registry :=
+    { (enterRegistry.replaceModes .config modes).replaceLanguages .compiled languages with
+      syntaxRefreshDelay := refreshDelay }
   let program : EditorM (List String × EditorState) := do
-    let mut state ← twoBuffers
+    let mut state := ((← twoBuffers).setLanguage ⟨1⟩ language).2
     let mut echoes := []
     for name in steps do
       state := (← Loop.run (enterKeys registry) state (entersMode ⟨1⟩ name) []).state
@@ -17567,6 +18049,50 @@ models through the loop's dispatch: what the syntax tree model is asked and
 records. -/
 def highlightEnterChecks : List Check :=
   [{  name :=
+        "the code mode over a buffer whose language is json attaches its text with json and highlights it with the language's tree, the grammar's shipped query; the language's own query is compiled in its place when it has one"
+      run :=
+        pure <|
+          let numbers :=
+            { Language.json with
+              syntaxTree := { grammar := "json", highlights := some "(number) @number" } }
+          (match
+              highlightedBy Language.modes ["code"] (languages := #[Language.json]) (language :=
+                some "json") with
+            | some (echoes, major, model) =>
+              echoes == [""] && major == some "code" && model.attached.map (·.2) == #["json"] &&
+                highlightedFaces model ==
+                  some #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
+            | none => false) &&
+            match
+              highlightedBy Language.modes ["code"] (languages := #[numbers]) (language :=
+                some "json") with
+            | some (_, _, model) => highlightedFaces model == some #["syntax.number"]
+            | none => false },
+    { name :=
+        "the code mode over a buffer with no language, or with a language no entry is registered under, is set and asks the syntax tree port nothing"
+      run :=
+        pure <|
+          [none, some "cobol"].all fun language =>
+            match
+              highlightedBy Language.modes ["code"] (languages := #[Language.json]) (language :=
+                language) with
+            | some (echoes, major, model) =>
+              echoes == [""] && major == some "code" && model.attached.isEmpty &&
+                model.highlighted.isEmpty &&
+                model.refreshAfter == none
+            | none => false },
+    { name :=
+        "entering a major mode with a syntax tree hands the syntax service config's refresh delay, or the default when config sets none"
+      run :=
+        pure <|
+          (match highlightedBy #[parsedMode "json"] ["json"] with
+            | some (_, _, model) => model.refreshAfter == some Highlight.defaultRefreshDelay
+            | none => false) &&
+            Highlight.defaultRefreshDelay == 500 &&
+            match highlightedBy #[parsedMode "json"] ["json"] (some 250) with
+            | some (_, _, model) => model.refreshAfter == some 250
+            | none => false },
+    { name :=
         "a major mode with a syntax tree attaches its buffer's text and highlights it with the grammar's shipped query, each capture in its syntax face by the shipped default, and releases the query"
       run :=
         pure <|
@@ -17719,7 +18245,17 @@ def highlightEnterChecks : List Check :=
             match highlightedBy #[] ["listing", "other"] with
             | some (_, major, model) =>
               major == some "other" && model.texts.isEmpty && model.attached.isEmpty
-            | none => false }]
+            | none => false },
+    { name :=
+        "a major mode with no syntax tree set over the code mode on a buffer whose language has a tree detaches the text, which drops its highlights"
+      run :=
+        pure <|
+          match
+            highlightedBy Language.modes ["code", "listing"] (languages := #[Language.json])
+              (language := some "json") with
+          | some (_, major, model) =>
+            major == some "listing" && model.attached.isEmpty && model.highlighted.isEmpty
+          | none => false }]
 
 /-- A node of the indents query, for the indent rule's checks: its capture's
 name, where it starts, and its first and last rows. -/
@@ -17777,7 +18313,190 @@ def indentRuleChecks : List Check :=
               #[indentNode "indent.align" 0 0 2, indentNode "function.outer" 0 0 2,
                 indentNode "indent.begin" 0 0 2]
               (indentLines [0, 2, 3]) ==
-            #[some 0, some 1, some 1]) }]
+            #[some 0, some 1, some 1]) },
+    { name :=
+        "an opening bracket the tree did not close counts its row for every row after it, not for its own, and with a begin on the same row it counts once"
+      run :=
+        -- Each is held by an error from the text's start through its last row.
+        let error := indentNode "indent.incomplete" 0 0 2
+        pure
+          (Indent.rule #[indentNode "indent.open" 10 0 0, error] (indentLines [0, 12, 20]) ==
+              #[some 0, some 1, some 1] &&
+            Indent.rule #[indentNode "indent.open" 10 1 1, error] (indentLines [0, 12, 20]) ==
+              #[some 0, some 0, some 1] &&
+            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.begin" 0 0 1, error]
+                (indentLines [0, 12, 20]) ==
+              #[some 0, some 1, some 1] &&
+            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.open" 30 1 1, error]
+                (indentLines [0, 12, 40]) ==
+              #[some 0, some 1, some 2]) },
+    { name :=
+        "an opening bracket counts only on the rows an incomplete node that starts at or before it reaches: a call's `(` whose partner is missing mid-function leaves the rows after its node, the function's `}` and the next function, at their levels"
+      run :=
+        -- fn a() {        row 0
+        --     foo(1;      row 1: `(` at 16, where `arguments` starts
+        -- }               row 2
+        --                 row 3
+        -- fn b() {        row 4
+        --     x           row 5
+        -- }               row 6
+        let captured :=
+          #[indentNode "indent.begin" 7 0 2, indentNode "indent.branch" 21 2 2,
+            indentNode "indent.open" 16 1 1, indentNode "indent.incomplete" 16 1 1,
+            indentNode "indent.begin" 31 4 6, indentNode "indent.branch" 39 6 6]
+        pure
+          (Indent.rule captured (indentLines [0, 13, 21, 23, 24, 37, 39]) ==
+              #[some 0, some 1, some 0, some 0, some 0, some 1, some 0] &&
+            -- An incomplete node that ends before the bracket's row, or
+            -- starts after the bracket, does not hold it.
+            Indent.rule #[indentNode "indent.open" 10 1 1, indentNode "indent.incomplete" 0 0 0]
+                (indentLines [0, 5, 20]) ==
+              #[some 0, some 0, some 0] &&
+            Indent.rule #[indentNode "indent.open" 10 1 1, indentNode "indent.incomplete" 12 1 3]
+                (indentLines [0, 5, 20, 30]) ==
+              #[some 0, some 0, some 0, some 0] &&
+            -- An error that holds the bracket counts it on the rows it
+            -- reaches only.
+            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.incomplete" 0 0 2]
+                (indentLines [0, 12, 20, 30]) ==
+              #[some 0, some 1, some 1, some 0]) },
+    { name := "an incomplete node alone adds no level: the rows it holds keep the level they had"
+      run :=
+        pure
+          (Indent.rule #[indentNode "indent.incomplete" 0 0 2] (indentLines [0, 2, 3]) ==
+            #[some 0, some 0, some 0]) }]
+
+/-- A node of the indents query, for the opening rule's checks: its
+capture's name and the offsets it starts and stops at. -/
+def openingNode (name : String) (start stop : Nat) : Indent.Node :=
+  { name, start, stop }
+
+/-- The checks of the opening rule (`Indent.openingCounts`,
+`Indent.levelOf`) and of the widening (`Indent.widenedStart`), pure, over
+hand-built nodes. -/
+def indentOpeningChecks : List Check :=
+  [{  name :=
+        "a begin node that holds the position counts, and one that ends at it or starts at it does not"
+      run :=
+        pure
+          (Indent.openingCounts #[openingNode "indent.begin" 3 20] { offset := 10 } ==
+              some (#[3], false) &&
+            Indent.openingCounts #[openingNode "indent.begin" 3 10] { offset := 10 } ==
+              some (#[], false) &&
+            Indent.openingCounts #[openingNode "indent.begin" 10 20] { offset := 10 } ==
+              some (#[], false)) },
+    { name := "an opening bracket the tree did not close counts when it starts before the position"
+      run :=
+        pure
+          (Indent.openingCounts #[openingNode "indent.open" 3 4] { offset := 10 } ==
+              some (#[3], false) &&
+            Indent.openingCounts #[openingNode "indent.open" 10 11] { offset := 10 } ==
+              some (#[], false) &&
+            Indent.openingCounts #[openingNode "indent.open" 12 13] { offset := 10 } ==
+              some (#[], false)) },
+    { name :=
+        "a branch at the first non-blank that moves to the new row says so, and none for an empty new row"
+      run :=
+        let nodes := #[openingNode "indent.begin" 0 20, openingNode "indent.branch" 12 13]
+        pure
+          (Indent.openingCounts nodes { offset := 10, firstNonBlank := some 12 } ==
+              some (#[0], true) &&
+            Indent.openingCounts nodes { offset := 10, firstNonBlank := some 11 } ==
+              some (#[0], false) &&
+            Indent.openingCounts nodes { offset := 10 } == some (#[0], false)) },
+    { name := "a position inside an ignored node adds nothing, and one at its ends does"
+      run :=
+        let ignored := openingNode "indent.ignore" 5 15
+        pure
+          (Indent.openingCounts #[openingNode "indent.begin" 0 20, ignored] { offset := 10 } ==
+              none &&
+            Indent.openingCounts #[ignored] { offset := 5 } == some (#[], false) &&
+            Indent.openingCounts #[ignored] { offset := 15 } == some (#[], false)) },
+    { name := "names the opening rule does not read are ignored"
+      run :=
+        pure
+          (Indent.openingCounts
+              #[openingNode "indent.incomplete" 0 20, openingNode "function.outer" 0 20]
+              { offset := 10 } ==
+            some (#[], false)) },
+    { name :=
+        "the level is the number of distinct rows counted, less one for a branch, and never below 0"
+      run :=
+        pure
+          (Indent.levelOf #[0, 0, 2] false == 2 && Indent.levelOf #[0, 0, 2] true == 1 &&
+            Indent.levelOf #[] true == 0 &&
+            Indent.levelOf #[] false == 0) },
+    { name :=
+        "the widened start is the earliest start of an incomplete node, or the asked start when that is earlier"
+      run :=
+        pure
+          (Indent.widenedStart
+                #[openingNode "indent.incomplete" 4 30, openingNode "indent.incomplete" 2 30,
+                  openingNode "indent.begin" 0 30]
+                10 ==
+              2 &&
+            Indent.widenedStart #[openingNode "indent.incomplete" 12 30] 10 == 10 &&
+            Indent.widenedStart #[] 10 == 10) }]
+
+/-- A row of a text, as the re-indent reads it, starting at `start` with
+the whitespace `leading` before what it holds, `content` bytes of it after
+that, and the level `level`. -/
+def reindentRow (start : Nat) (leading : String) (content : Nat) (level : Option Nat) :
+    Indent.Row :=
+  { start, firstNonBlank := start + leading.utf8ByteSize
+    content := start + leading.utf8ByteSize + content, leading, level }
+
+/-- The checks of the indent decisions as edits (`Indent.whitespace`,
+`Indent.reindent`, `Indent.newLine`, `Indent.breakAt`), pure. -/
+def indentEditChecks : List Check :=
+  [{  name := "a level is that many units: spaces times the count, or tabs, and level 0 is nothing"
+      run :=
+        pure
+          (Indent.whitespace (.spaces 4) 2 == "        " && Indent.whitespace .tab 2 == "\t\t" &&
+            Indent.whitespace (.spaces 2) 0 == "" &&
+            Indent.whitespace .tab 0 == "") },
+    { name :=
+        "the re-indent replaces each row's leading whitespace with its level, from its start to its first non-blank, and leaves a row already right"
+      run :=
+        pure
+          (Indent.reindent (.spaces 2)
+              #[reindentRow 0 "" 3 (some 0), reindentRow 4 "" 3 (some 1),
+                reindentRow 8 "      " 3 (some 1), reindentRow 18 "\t" 1 (some 2)] ==
+            #[(⟨4, 4⟩, "  "), (⟨8, 14⟩, "  "), (⟨18, 19⟩, "    ")]) },
+    { name := "a blank row gets no whitespace, whatever its level"
+      run :=
+        pure
+          (Indent.reindent (.spaces 4)
+              #[reindentRow 0 "   " 0 (some 2), reindentRow 4 "" 0 (some 1)] ==
+            #[(⟨0, 3⟩, "")]) },
+    { name := "a row with no level keeps its whitespace, a blank one too"
+      run :=
+        pure
+          (Indent.reindent (.spaces 4)
+              #[reindentRow 0 "   " 4 none, reindentRow 8 "     " 0 none] ==
+            #[]) },
+    { name := "a tab unit indents with tabs"
+      run :=
+        pure
+          (Indent.reindent .tab
+              #[reindentRow 0 "    " 1 (some 1), reindentRow 6 "\t\t" 1 (some 2)] ==
+            #[(⟨0, 4⟩, "\t")]) },
+    { name :=
+        "a new line gets its level as whitespace, nothing inside a string or comment, the row's own indent when the text is not parsed yet, and nothing when the text has no tree or no indents query"
+      run :=
+        pure
+          (Indent.newLine (.spaces 4) (.ok (some 2)) "  " == some "        " &&
+            Indent.newLine (.spaces 4) (.ok none) "  " == none &&
+            Indent.newLine (.spaces 4) (.error .notParsed) "  " == some "  " &&
+            Indent.newLine (.spaces 4) (.error .notAttached) "  " == none &&
+            Indent.newLine (.spaces 4) (.error .noQuery) "  " == none) },
+    { name :=
+        "a line break with no indent is the line ending at the bar; with one it replaces the blanks either side of the bar with the line ending and the indent"
+      run :=
+        pure
+          (Indent.breakAt "\n" none 10 2 3 == (⟨10, 10⟩, "\n") &&
+            Indent.breakAt "\r\n" (some "  ") 10 2 3 == (⟨8, 13⟩, "\r\n  ") &&
+            Indent.breakAt "\n" (some "") 10 0 0 == (⟨10, 10⟩, "\n")) }]
 
 /-- The indents source of the model's test mode: an object and an array
 indent what they hold, and their closing brackets lead out. -/
@@ -17797,6 +18516,44 @@ def indentLevelsOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (first 
     id.indentLevels first last
   match program.runModel editorModel with
   | (.ok (.ok levels), _) => some (.inr levels)
+  | (.ok (.error refusal), _) => some (.inl refusal)
+  | (.error _, _) => none
+
+/-- An indents source of the model's JSON grammar whose array is a node the
+parser could not complete and whose opening bracket one the tree did not
+close: what the widening reads. -/
+def widenedIndents : String :=
+  "(array) @indent.incomplete\n\"[\" @indent.open"
+
+/-- The opening level of a line opened at `offset` of a text of `text`, with
+what follows it on its row moved to the new row when `rest`, set to a test
+mode with `syntaxTree` when given, on the editor's models: the level on the
+right, a refusal on the left; `none` when the command was refused. -/
+def openingLevelOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (offset : Nat)
+    (rest : Bool) : Option (Sum SyntaxTreeError (Option Nat)) :=
+  let program : EditorM (Except SyntaxTreeError (Option Nat)) := do
+    let id ← createText text
+    if let some syntaxTree := syntaxTree then
+      Highlight.enter "test" id syntaxTree
+    id.openingLevel offset rest
+  match program.runModel editorModel with
+  | (.ok (.ok level), _) => some (.inr level)
+  | (.ok (.error refusal), _) => some (.inl refusal)
+  | (.error _, _) => none
+
+/-- The re-indent's edits of rows `first` through `last` of a text of
+`text` in `unit`, set to a test mode with `syntaxTree` when given, on the
+editor's models: the edits on the right, a refusal on the left; `none` when
+the command was refused. -/
+def reindentEditsOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (first last : Nat)
+    (unit : Language.IndentUnit) : Option (Sum SyntaxTreeError (Array (Extent × String))) :=
+  let program : EditorM (Except SyntaxTreeError (Array (Extent × String))) := do
+    let id ← createText text
+    if let some syntaxTree := syntaxTree then
+      Highlight.enter "test" id syntaxTree
+    id.reindentEdits first last unit
+  match program.runModel editorModel with
+  | (.ok (.ok edits), _) => some (.inr edits)
   | (.ok (.error refusal), _) => some (.inl refusal)
   | (.error _, _) => none
 
@@ -17830,7 +18587,45 @@ def indentLevelChecks : List Check :=
       run :=
         pure
           (indentLevelsOf pretty (some { grammar := "json", indents := some "" }) 0 3 ==
-            some (.inr #[some 0, some 0, some 0, some 0])) }]
+            some (.inr #[some 0, some 0, some 0, some 0])) },
+    { name :=
+        "a row inside a node captured incomplete is asked from that node's start, so an opening bracket it holds far above counts"
+      run :=
+        pure <|
+          let mode := some { grammar := "json", indents := some widenedIndents }
+          indentLevelsOf "[\n1,\n2,\n3\n]" mode 3 3 == some (.inr #[some 1]) &&
+            indentLevelsOf "[\n1,\n2,\n3\n]" mode 0 1 == some (.inr #[some 0, some 1]) },
+    { name :=
+        "the opening level is the level of a line opened at a position: one in after an opening bracket, at the body's level after an item, one out with a closing bracket moved to the new row, and none asked of a text with no tree or no indents query"
+      run :=
+        pure <|
+          let mode := some { grammar := "json", indents := some jsonIndents }
+          let text := "{\n  \"a\": [\n  ]\n}"
+          let afterBracket := 10
+          openingLevelOf text mode afterBracket true == some (.inr (some 2)) &&
+            openingLevelOf text mode 9 true == some (.inr (some 1)) &&
+            openingLevelOf text mode 11 true == some (.inr (some 1)) &&
+            openingLevelOf text mode 11 false == some (.inr (some 2)) &&
+            openingLevelOf text mode (text.utf8ByteSize) true == some (.inr (some 0)) &&
+            openingLevelOf text none afterBracket true == some (.inl .notAttached) &&
+            openingLevelOf text (some { grammar := "json" }) afterBracket true ==
+              some (.inl .noQuery) },
+    { name :=
+        "the opening level is asked from the start of a node captured incomplete, so an opening bracket it holds far above counts"
+      run :=
+        pure
+          (openingLevelOf "[\n1,\n2,\n3\n]"
+              (some { grammar := "json", indents := some widenedIndents }) 7 false ==
+            some (.inr (some 1))) },
+    { name :=
+        "the re-indent's edits of rows read from the text: each row's leading whitespace from its start to its first non-blank becomes its level in the unit, a row already right and a blank row already empty have none; refused as the primitive is"
+      run :=
+        pure <|
+          let mode := some { grammar := "json", indents := some jsonIndents }
+          reindentEditsOf "[\n1,\n      2\n\n   \n]" mode 0 5 (.spaces 2) ==
+              some (.inr #[(⟨2, 2⟩, "  "), (⟨5, 11⟩, "  "), (⟨14, 17⟩, "")]) &&
+            reindentEditsOf "[\n1\n]" mode 1 1 .tab == some (.inr #[(⟨2, 2⟩, "\t")]) &&
+            reindentEditsOf "[1]" none 0 0 (.spaces 2) == some (.inl .notAttached) }]
 
 /-- The checks of a mode's on-enter action, on the editor's models: a
 command asks for a major mode by the request, and the loop that runs the
@@ -19926,13 +20721,16 @@ command with `true` as its argument, and `C-o v` to the save command with
 the arguments the Vim scheme gives a command a key is bound to, a count
 and a register.
 
-Six more commands, written here: `scratch` (`C-o 0`) shows the scratch
+Eight more commands, written here: `scratch` (`C-o 0`) shows the scratch
 buffer in the window it is called with, `split` (`C-o s`) splits that
 window and focuses the new one, `close` (`C-o k`) closes it, `shut`
 (`C-o K`) closes the view 1, the first a split makes, whichever window it
 is called with, `undo` (`C-o u`) undoes one step of its buffer's history,
 `drop` (`C-o d`) removes the buffer 1, the first a file is opened into, and
-`save-absent` (`C-o x`) saves a buffer there is none of. -/
+`save-absent` (`C-o x`) saves a buffer there is none of. Two more visit a
+file in the view 0, focusing it (`Files.visit`): `visit-note` (`C-o g`)
+`note.txt` at row 0, character column 2, and `visit-missing` (`C-o G`)
+`missing.txt`. -/
 def fileKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (openKeys.map (fun (text, path) => (text, opens path)) ++
@@ -19943,6 +20741,7 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         ("C-o f", { command := Files.saveName, arguments := [.bool true] }),
         ("C-o v", { command := Files.saveName, arguments := [.nat 0, .str ""] }),
         ("C-o u", invoke "undo"), ("C-o d", invoke "drop"), ("C-o x", invoke "save-absent"),
+        ("C-o g", invoke "visit-note"), ("C-o G", invoke "visit-missing"),
         ("C-o 2",
           { command := Files.openName
             arguments :=
@@ -19978,6 +20777,12 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         return none),
       ("shut", fun _ => do
         discard <| (⟨1⟩ : ViewId).close
+        return none),
+      ("visit-note", fun _ => do
+        Files.visit ⟨0⟩ (inFiles "note.txt") ⟨0, 2⟩ true
+        return none),
+      ("visit-missing", fun _ => do
+        Files.visit ⟨0⟩ (inFiles "missing.txt") ⟨1, 0⟩ true
         return none)]
 
 /-- The jobs of the file command checks, by name: the load job, whose loads
@@ -20108,6 +20913,152 @@ view 0, and the step that opened it: the open command, and its job
 finished. The load is job 1. -/
 def noteOpen (files : FileModel := commandFiles) : Option TestDriver :=
   (filesDriver (files := files)).map fun driver => ((fedTo driver (presses "C-o n")).1.finish 1).1
+
+/-- A test language for the language open checks: `*.rs`, parsed with the
+syntax tree model's one grammar, `json`, so a path's extension is seen to
+choose it on the models. -/
+def modelRs : Language :=
+  { name := "model-rs", patterns := [.extension "rs"], syntaxTree := { grammar := "json" } }
+
+/-- The registry of the language open checks: the `code` mode, and the
+languages `json` and `modelRs`, as compiled code registers them. -/
+def languageRegistry : Config.Registry :=
+  (({} : Config.Registry).replaceModes .compiled Language.modes).replaceLanguages .compiled
+    #[Language.json, modelRs]
+
+/-- The files of the language open checks: the file command checks', and,
+beside `note.txt`, `data.json` and `main.rs`, each holding a JSON text. -/
+def languageFiles : FileModel :=
+  (commandFiles.withFile (inFiles "data.json") "[1, null]".toUTF8).withFile (inFiles "main.rs")
+    "[2]".toUTF8
+
+/-- What a step of the language open checks is handed: `C-o j`, `C-o r` and
+`C-o n` bound to the open command with the paths of `data.json`, `main.rs`
+and `note.txt`, `C-o 1` and `C-o 2` to the on-enter checks' `enter` of the
+modes `own-json` and `derived` through view 0, and what `registry` says of
+its modes and languages. -/
+def languageKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
+  {
+    dispatchKeys
+      [("C-o j", opens (inFiles "data.json")), ("C-o r", opens (inFiles "main.rs")),
+        ("C-o n", opens (inFiles "note.txt")), ("C-o 1", entersMode ⟨0⟩ "own-json"),
+        ("C-o 2", entersMode ⟨0⟩ "derived")]
+      [(Files.openName, fun call => do
+          Files.openCommand call
+          return none),
+        ("enter", enter)] with
+    registered := registry.registered }
+
+/-- A driver of the language open checks over `languageRegistry` with
+`modes` and `languages` registered for config, over `languageFiles`; `none`
+if making the state was refused. -/
+def languageDriver (modes : Array Mode := #[]) (languages : Array Language := #[]) :
+    Option TestDriver :=
+  let registry := (languageRegistry.replaceModes .config modes).replaceLanguages .config languages
+  (Loop.Driver.over (languageKeys registry) fileJobs (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver => { driver with jobs := { files := languageFiles } }
+
+/-- `driver` once the keys `keys` were pressed and the job `job` their open
+started is finished. -/
+def openedBy (driver : TestDriver) (keys : String) (job : Nat := 1) : TestDriver :=
+  ((fedTo driver (presses keys)).1.finish job).1
+
+/-- The language and the major mode of the buffer view 0 of `driver`
+shows. -/
+def languageAndMajor (driver : TestDriver) : Option (Option String × Option String) :=
+  (showing driver).map fun shown => (shown.buffer.language, shown.buffer.major)
+
+/-- The faces the syntax tree model's shipped `json` highlights query is
+drawn in by the shipped default: each of its capture names'. -/
+def modelJsonFaces : Array String :=
+  #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
+
+/-- The checks of what opening a file does with its language
+(`Editor/Files.lean`, "Open"; `Editor/Language.lean`), on the loop's driver
+over the editor's models and the model of files. The syntax tree model
+knows one grammar, `json`, so every language here is parsed with it; Rust
+and Markdown are `ConfigTest.languageChecks`'s, over the real binding. -/
+def languageOpenChecks : List Check :=
+  [{  name :=
+        "opening a .json file gives its buffer the language json and the major mode code, and its text is attached with json and highlighted in the faces of the grammar's shipped query"
+      run :=
+        pure <|
+          match languageDriver with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o j"
+            languageAndMajor opened == some (some "json", some "code") &&
+              opened.model.syntaxTree.attached.map (·.2) == #["json"] &&
+              highlightedFaces opened.model.syntaxTree == some modelJsonFaces },
+    { name :=
+        "opening a .rs file chooses the language whose extension pattern is rs, and puts its buffer in code, attached with that language's grammar"
+      run :=
+        pure <|
+          match languageDriver with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o r"
+            languageAndMajor opened == some (some "model-rs", some "code") &&
+              opened.model.syntaxTree.attached.map (·.2) == #["json"] &&
+              highlightedFaces opened.model.syntaxTree == some modelJsonFaces },
+    { name :=
+        "opening a file whose name matches no language gives its buffer no language and no major mode, and asks the syntax tree port nothing"
+      run :=
+        pure <|
+          match languageDriver with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o n"
+            (showing opened).map (·.buffer.name) == some "note.txt" &&
+              languageAndMajor opened == some (none, none) &&
+              opened.model.syntaxTree.attached.isEmpty &&
+              opened.model.syntaxTree.highlighted.isEmpty &&
+              opened.model.syntaxTree.refreshAfter == none },
+    { name :=
+        "opening a file a buffer already holds shows it and asks the syntax tree port nothing more"
+      run :=
+        pure <|
+          match languageDriver with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o j"
+            let (again, _) := fedTo opened (presses "C-o j")
+            again.pending.isEmpty && languageAndMajor again == some (some "json", some "code") &&
+              again.model.syntaxTree.attached == opened.model.syntaxTree.attached &&
+              again.model.syntaxTree.highlighted == opened.model.syntaxTree.highlighted &&
+              again.model.syntaxTree.queries.size == opened.model.syntaxTree.queries.size },
+    { name :=
+        "a config mode with its own syntax tree, set over an opened json buffer, is highlighted with its own query and not the language's; a config mode derived from code with none is highlighted with the language's"
+      run :=
+        pure <|
+          let own : Mode :=
+            { name := "own-json",
+              syntaxTree := some { grammar := "json", highlights := some "(number) @number" } }
+          let derived : Mode := { name := "derived", parent := some "code" }
+          match languageDriver #[own, derived] with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o j"
+            let (owned, _) := fedTo opened (presses "C-o 1")
+            let (back, _) := fedTo owned (presses "C-o 2")
+            (showing owned).bind (·.buffer.major) == some "own-json" &&
+              highlightedFaces owned.model.syntaxTree == some #["syntax.number"] &&
+              (showing back).bind (·.buffer.major) == some "derived" &&
+              highlightedFaces back.model.syntaxTree == some modelJsonFaces },
+    { name :=
+        "config's entry of the json language, with its own highlights query, is the one an opened .json buffer is highlighted with"
+      run :=
+        pure <|
+          let numbers :=
+            { Language.json with
+              syntaxTree := { grammar := "json", highlights := some "(number) @number" } }
+          match languageDriver (languages := #[numbers]) with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o j"
+            languageAndMajor opened == some (some "json", some "code") &&
+              highlightedFaces opened.model.syntaxTree == some #["syntax.number"] }]
 
 /-- The checks of what the window mode posts to the editor loop before the
 first event (`Window.Options.starts`), and of the loop it starts, on the
@@ -21119,7 +22070,79 @@ def fileCommandChecks : List Check :=
               (showing opened).bind (·.text) == some FileCases.noteText &&
               (showing saved).bind (·.text) == some text &&
               bytesOf saved path == some (FileModel.encode text) &&
-              echoOf saved == some (Files.wrote path) }]
+              echoOf saved == some (Files.wrote path) },
+    { name :=
+        "a point's offset is its row's start and the bytes of its first column characters: the row is clamped to the last line, the column to the row's content"
+      run :=
+        let offset (point : Files.At) : Option Nat :=
+          ((do
+                  let text ← createText "ab\nαβγ\n"
+                  Files.offsetAt text point).runModel
+              {}).1.toOption
+        pure
+          (offset ⟨1, 2⟩ == some 7 && offset ⟨1, 9⟩ == some 9 && offset ⟨7, 0⟩ == some 3 &&
+            offset ⟨0, 1⟩ == some 1) },
+    { name :=
+        "a visit of a path no buffer holds loads it, and once the load is delivered the view shows it with one cursor at the row and the character column, and is focused"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, steps) := fedTo driver (presses "C-o s C-o g")
+            let (visited, _) := asked.finish 1
+            started steps ==
+                #[{ name := Files.loadJob
+                    arguments :=
+                      Files.LoadOrder.arguments
+                        { path := inFiles "note.txt", view := ⟨0⟩, point := some ⟨0, 2⟩
+                          focus := true } }] &&
+              asked.loop.state.frame.focused == ⟨1⟩ &&
+              (showing visited).map (·.buffer.name) == some "note.txt" &&
+              (showing visited).bind (·.cursors) == some #[⟨6, 6⟩] &&
+              visited.loop.state.frame.focused == ⟨0⟩ },
+    { name :=
+        "a visit of a path a buffer holds shows that buffer at once, puts its cursor at the point and focuses the view, with no job"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (opened, _) := (fedTo driver (presses "C-o n")).1.finish 1
+            let (visited, steps) := fedTo opened (presses "C-o 0 C-o s C-o g")
+            started steps == #[] && visited.pending.isEmpty &&
+              (showing visited).map (·.buffer.name) == some "note.txt" &&
+              (showing visited).bind (·.cursors) == some #[⟨6, 6⟩] &&
+              visited.loop.state.frame.focused == ⟨0⟩ },
+    { name :=
+        "a visit whose load is refused says so and leaves the view, its cursor and the focus as they were"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-o s C-o G")
+            let (refused, _) := asked.finish 1
+            echoOf refused == some (Files.notOpened (inFiles "missing.txt") .notFound) &&
+              (showing refused).map (·.id) == some ⟨0⟩ &&
+              (showing refused).bind (·.cursors) == some #[⟨0, 0⟩] &&
+              refused.loop.state.frame.focused == ⟨1⟩ &&
+              refused.loop.state.buffers.size == 1 },
+    { name :=
+        "a load order crosses as arguments and back with a point and the focus and without, an order with no point crosses as it did, and arguments of that shape still read"
+      run :=
+        let order : Files.LoadOrder := { path := "/a", view := ⟨2⟩, next := ["/b"] }
+        let pointed : Files.LoadOrder :=
+          { order with
+            point := some ⟨3, 4⟩, focus := true }
+        pure
+          (Files.LoadOrder.ofArguments? order.arguments == some order &&
+            Files.LoadOrder.ofArguments? pointed.arguments == some pointed &&
+            Files.LoadOrder.ofArguments? { pointed with focus := false }.arguments ==
+              some { pointed with focus := false } &&
+            order.arguments == [.str "/a", .nat 2, .str "/b"] &&
+            Files.LoadOrder.ofArguments? [.str "/a", .nat 2] ==
+              some { path := "/a", view := ⟨2⟩ }) }]
 
 /-- What the command `leave` of the quit checks says in the echo area when
 it is refused, for a buffer called `name`. -/
@@ -22099,7 +23122,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile and recompile, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error and previous-error, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -22109,7 +23132,9 @@ def exChecks : List Check :=
             let (opening, _) := fedTo typed (presses "C-e t C-e y")
             candidatesOf typed == some (exListed "e" none Ex.bindings) &&
               (candidatesOf typed).map (·.listed) ==
-                some #["e", "e!", "autoread", "noautoread", "reload", "compile", "recompile"] &&
+                some
+                  #["e", "e!", "autoread", "noautoread", "reload", "compile", "compile-command",
+                    "recompile", "next-error", "previous-error"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
 
@@ -25091,6 +26116,66 @@ def treeSelected (fixture typed : String) : Option (List (Nat × Nat) × Shape �
     ((seen.selection.ranges.map fun range => (range.anchor, range.head)).toList,
       seen.selection.shape, seen.covered.toList)
 
+/-- The test language of the indent checks: the model's JSON grammar with
+`jsonIndents` and `jsonTextObjects`, indented by two spaces. -/
+def modelJsonIndented : Language :=
+  { name := "model-json", patterns := [.extension "json"]
+    syntaxTree :=
+      { grammar := "json", indents := some jsonIndents, textObjects := some jsonTextObjects }
+    indentUnit := .spaces 2 }
+
+/-- What a step of the indent checks is handed: evil's commands
+(`evilHanded`), with the `code` mode and `languages` registered as compiled
+code registers them, and `config` registered for config. -/
+def indentHanded (languages : Array Language) (config : Array Language := #[]) :
+    Loop.Keys Vim.Default.scheme :=
+  { evilHanded with
+    registered :=
+      (((({} : Config.Registry).replaceModes .compiled Language.modes).replaceLanguages .compiled
+              languages).replaceLanguages
+          .config config).registered }
+
+/-- A driver of the indent checks over the state the fixture `fixture` says,
+with the unnamed register holding `evilSentinel`, whose buffer's language
+is `language`, `modelJsonIndented` unless another is given, and whose text
+is entered in its tree; the table registers `language`, and `config` for
+config. On the editor's models. -/
+def indentDriver (fixture : String) (language : Language := modelJsonIndented)
+    (config : Array Language := #[]) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  let prepared : EditorM EditorState := do
+    let state ← evilState contents head
+    let named := some language.name
+    let state : EditorState :=
+      { state with buffers := state.buffers.map (·.map ({ · with language := named })) }
+    if let some (some buffer) := state.buffers[0]? then
+      Highlight.enter Language.codeName buffer.text language.syntaxTree
+    return state.setRegister Evil.unnamed evilSentinel
+  match prepared.runModel editorModel with
+  | (.ok state, model) =>
+    (Loop.Driver.over (indentHanded #[language] config) (fun _ => none) (pure state) model).toOption
+  | (.error _, _) => none
+
+/-- The keys `typed` pressed from `fixture` on `indentDriver`: what they
+left. -/
+def indentEdited (fixture typed : String) (language : Language := modelJsonIndented)
+    (config : Array Language := #[]) : Option EvilEdited :=
+  (indentDriver fixture language config).map fun driver => evilLeft (evilFed driver typed)
+
+/-- `indentDriver` over `fixture`, its syntax tree model saying the tree of
+the text's last edit is not delivered (`SyntaxTreeModel.delivered`): what a
+command meets when keys come faster than a reparse. -/
+def undeliveredDriver (fixture : String) : Option EvilDriver :=
+  (indentDriver fixture).map fun driver =>
+    { driver with
+      model :=
+        { driver.model with syntaxTree := { driver.model.syntaxTree with delivered := false } } }
+
+/-- The keys `typed` pressed from `fixture` on `undeliveredDriver`: what
+they left. -/
+def undeliveredEdited (fixture typed : String) : Option EvilEdited :=
+  (undeliveredDriver fixture).map fun driver => evilLeft (evilFed driver typed)
+
 /-- One row of an oracle table of the operators: keys, the text and the
 cursor they are pressed from, and what Vim leaves. -/
 structure OperatorRow where
@@ -25115,6 +26200,9 @@ structure OperatorRow where
   the row's buffer is set to (`treeRegistered`), so the syntax tree's text
   objects are there; none for a buffer with no syntax tree. -/
   tree : Option String := none
+  /-- Whether the row's buffer is in the indent checks' JSON language
+  (`indentDriver`), so its text has indent levels. -/
+  indented : Bool := false
 
 namespace OperatorRow
 
@@ -25131,6 +26219,12 @@ register are as they were, and the view is in normal state. -/
 def givesUp (before keys : String) : OperatorRow :=
   { before, keys, after := before, register := none, gaveUp := true }
 
+/-- A row whose keys re-indent, in the indent checks' JSON language
+(`indentDriver`): the view is in normal state and the register as it
+was. -/
+def indents (before keys after : String) : OperatorRow :=
+  { before, keys, after, register := none, indented := true }
+
 /-- A row whose keys' command breaks off: the cursor is at `after`'s bar,
 the text and the register are as they were, the view is in normal state,
 and the echo area says something that is no refusal. -/
@@ -25146,7 +26240,8 @@ def wrong (row : OperatorRow) : Option String :=
       match row.tree with
       | some textObjects =>
         (treeRegistered row.before textObjects).map fun driver => evilLeft (evilFed driver row.keys)
-      | none => evilEdited row.before row.keys
+      | none =>
+        if row.indented then indentEdited row.before row.keys else evilEdited row.before row.keys
     match edited with
     | none => some s!"no driver for {repr row.before}"
     | some left =>
@@ -25458,6 +26553,22 @@ def operatorSituations : List (String × Bool) :=
   [(plainText, false), (plainText, true), (emptyLineText, false), (endText, false),
     (bareEndText, false)]
 
+/-- The oracle table's rows for `=` over each motion that takes no argument,
+in its five situations, the count before the operator: their buffer has no
+language and no syntax tree, so the indent operator gives up in every one,
+having changed nothing, as Vim's `=` does nothing with no `indentexpr` that
+answers (`Evil.cannotIndent`; a motion that fails gives up first). What
+`=` does over a motion in a text with indent levels is
+`evilIndentChecks`'s. -/
+def indentTableRows : List OperatorRow :=
+  operatorSituations.flatMap fun (before, counted) =>
+    (Vim.Default.motions.filterMap fun (key, bound) =>
+          match bound with
+          | .motion _ => some key
+          | _ => none).map
+      fun motion =>
+      .givesUp before (" ".intercalate ((if counted then ["2"] else []) ++ ["=", motion]))
+
 /-- The oracle table's rows for each operator over `;` and `,` in its five
 situations. In each nothing was found before the keys, so there is no last
 find to repeat: Vim fails the motion and cancels the operator, and the
@@ -25529,7 +26640,8 @@ def operatorTable : List OperatorRow :=
     findAgainTableRows ++
     searchAgainTableRows ++
     starTableRows ++
-    percentTableRows
+    percentTableRows ++
+    indentTableRows
 
 /-- The pairs of an operator's key and a motion's key that the rows of
 `operatorTable` have for the situation of the text `before`, with a count
@@ -25677,7 +26789,13 @@ def findOperatorRows : List OperatorRow :=
     .rests "abcab|c" "y F a" "abc|abc" (charwise "ab"),
     .inserts "abcab|c" "c T a" "abca|c" (charwise "b"), .givesUp "|abc" "d f z",
     .givesUp "|abc" "d F a", .givesUp "|ab\nz" "d t z", .givesUp "|abc" "d ;",
-    .givesUp "|abc" "y ,", .givesUp "|abcabc" "d 3 f c"]
+    .givesUp "|abc" "y ,", .givesUp "|abcabc" "d 3 f c",
+    -- `=` re-indents the one row a find stays on, in a text with indent
+    -- levels.
+    .indents "[\n|\"abc\",\n      \"cba\"\n]" "= f c" "[\n  |\"abc\",\n      \"cba\"\n]",
+    .indents "[\n|\"abc\",\n      \"cba\"\n]" "= t c" "[\n  |\"abc\",\n      \"cba\"\n]",
+    .indents "[\n\"abc\"|,\n      \"cba\"\n]" "= F a" "[\n  |\"abc\",\n      \"cba\"\n]",
+    .indents "[\n\"abc\"|,\n      \"cba\"\n]" "= T a" "[\n  |\"abc\",\n      \"cba\"\n]"]
 
 /-- The pairs of an operator's key and a motion's key that take a character
 the rows of `findOperatorRows` have, with the keys typed before the
@@ -25959,7 +27077,11 @@ def searchOperatorRows : List OperatorRow :=
     .rests "x|foo\nbar" "d / b a r RET" "|x\nbar" (charwise "foo"),
     .rests "foo\n|bar" "d ? f o o RET" "|bar" (linewise "foo\n"),
     .rests "foo bar f|oo" "y ? b a r RET" "foo |bar foo" (charwise "bar f"),
-    .givesUp "|abc" "d / z RET", .givesUp "|abc" "c ? z RET", .givesUp "|abc" "d / RET"]
+    .givesUp "|abc" "d / z RET", .givesUp "|abc" "c ? z RET", .givesUp "|abc" "d / RET",
+    -- `=` re-indents the rows from the cursor to where the search leads, in
+    -- a text with indent levels.
+    .indents "[\n|1,\n      2,\n 3\n]" "= / 3 RET" "[\n  |1,\n  2,\n  3\n]",
+    .indents "[\n1,\n      2,\n |3\n]" "= ? 1 RET" "[\n  |1,\n  2,\n  3\n]"]
 
 /-- The pairs of an operator's key and a motion's key that asks that the
 rows of `searchOperatorRows` have, with the keys typed before the operator
@@ -26244,6 +27366,32 @@ def searchDecorationChecks : List Check :=
             fed ("|" ++ decoratedText) "/ \\ ( RET" with
           | some missing, some refused =>
             decorationsOfScene missing == some #[] && decorationsOfScene refused == some #[]
+          | _, _ => false },
+    { name :=
+        "a buffer's spans within a covered range are kept, clipped to it, in order, and those outside it and those left empty are dropped"
+      run :=
+        let span (start stop : Nat) : Decoration := { start, stop, face := ⟨"s"⟩ }
+        pure
+          (Loop.spansIn #[span 0 5, span 8 12, span 15 20, span 30 40, span 10 10] 10 32 ==
+            #[span 10 12, span 15 20, span 30 32]) },
+    { name :=
+        "a view's decorations are its buffer's spans in the rows it covers, with no search too, and then the last search's matches, which are drawn over them"
+      run :=
+        let face : FaceName := ⟨"compilation.error"⟩
+        let spans : Array Decoration :=
+          #[{ start := 0, stop := 3, face }, { start := 30000, stop := 30004, face }]
+        let spanned : TextM EditorState := do
+          let state ← decorationState decoratedText
+          return { state with buffers := state.buffers.modify 0 (·.map ({ · with spans })) }
+        let driver := (Loop.Driver.over evilHanded (fun _ => none) spanned editorModel).toOption
+        pure <|
+          match driver.map (evilFed · "l"), driver.map (evilFed · "/ f o o RET") with
+          | some unsearched, some searched =>
+            let found := (decorationsOfScene searched).map (·.extract 1 1000)
+            decorationsOfScene unsearched == some #[{ start := 0, stop := 3, face }] &&
+              (decorationsOfScene searched).bind (·[0]?) == some { start := 0, stop := 3, face } &&
+              (found.map fun all => !all.isEmpty && all.all (·.face == Loop.searchMatchFace)) ==
+                some true
           | _, _ => false }]
 
 /-- The checks of evil's operators (`Editor/Evil/Operators.lean`) on the
@@ -26885,10 +28033,56 @@ def objectNames : List String :=
       | .textObject name => some name
       | _ => none).eraseDups
 
+/-- The JSON text of `indentObjectRows`, its rows mangled: a string holding
+a word, parentheses, single quotes and backquotes; an array over two rows;
+and an object in an object. -/
+def indentObjectText : String :=
+  "{\n\"a\": \"x (y) 'z' `w`\",\n      \"b\": [1,\n2],\n \"c\": {\"d\": 3}\n}"
+
+/-- `indentObjectText` with the cursor at the byte offset `at`. -/
+def indentObjectAt (at_ : Nat) : String :=
+  withBar indentObjectText at_
+
+/-- `indentObjectText` with the rows `rows` re-indented to the levels of its
+two-space pretty form, and the cursor on the first non-blank of the row
+`cursor`. -/
+def indentObjectReindented (rows : List Nat) (cursor : Nat) : String :=
+  let pretty := ["", "  ", "  ", "    ", "  ", ""]
+  let lines :=
+    (indentObjectText.splitOn "\n").zipIdx.map fun (line, row) =>
+      if rows.contains row then pretty.getD row "" ++ (line.dropWhile (· == ' ')).toString else line
+  let before := (lines.take cursor).foldl (fun walked line => walked + line.utf8ByteSize + 1) 0
+  let blanks := ((lines.getD cursor "").takeWhile (· == ' ')).utf8ByteSize
+  withBar ("\n".intercalate lines) (before + blanks)
+
+/-- The rows of `=` over each text object the default tables name, in the
+indent checks' JSON language (`indentDriver`), written by hand: an object
+inside the string re-indents its one row, a bracket and an array the rows
+they cover, `i{` the whole lines inside the outer object and `a{` all of
+them, a function the inner object's row, and an argument its rows. -/
+def indentObjectRows : List OperatorRow :=
+  let row1 := indentObjectReindented [1] 1
+  let rows23 := indentObjectReindented [2, 3] 2
+  [.indents (indentObjectAt 8) "= i w" row1, .indents (indentObjectAt 8) "= a w" row1,
+    .indents (indentObjectAt 8) "= i W" row1, .indents (indentObjectAt 8) "= a W" row1,
+    .indents (indentObjectAt 8) "= i \"" row1, .indents (indentObjectAt 8) "= a \"" row1,
+    .indents (indentObjectAt 15) "= i '" row1, .indents (indentObjectAt 15) "= a '" row1,
+    .indents (indentObjectAt 19) "= i `" row1, .indents (indentObjectAt 19) "= a `" row1,
+    .indents (indentObjectAt 11) "= i (" row1, .indents (indentObjectAt 11) "= a (" row1,
+    .indents (indentObjectAt 36) "= i [" rows23, .indents (indentObjectAt 36) "= a [" rows23,
+    .indents (indentObjectAt 3) "= i {" (indentObjectReindented [1, 2, 3, 4] 1),
+    .indents (indentObjectAt 3) "= a {" (indentObjectReindented [0, 1, 2, 3, 4, 5] 0),
+    .indents (indentObjectAt 51) "= a f" (indentObjectReindented [4] 4),
+    .indents (indentObjectAt 51) "= i f" (indentObjectReindented [4] 4),
+    .indents (indentObjectAt 36) "= a c" rows23, .indents (indentObjectAt 36) "= i c" rows23,
+    .indents (indentObjectAt 39) "= i a" (indentObjectReindented [3] 3),
+    .indents (indentObjectAt 39) "= a a" rows23, .givesUp "a|b" "= a f"]
+
 /-- The pairs of an operator's key and a text object's name that the rows of
-`objectOperatorRows` have, with the counts left out. -/
+`objectOperatorRows`, `treeObjectOperatorRows` and `indentObjectRows` have,
+with the counts left out. -/
 def objectOperatorPairs : List (String × String) :=
-  (objectOperatorRows ++ treeObjectOperatorRows).filterMap fun row =>
+  (objectOperatorRows ++ treeObjectOperatorRows ++ indentObjectRows).filterMap fun row =>
     match (row.keys.splitOn " ").filter (fun token => !token.all Char.isDigit) with
     | operator :: rest => (objectNamed (" ".intercalate rest)).map (operator, ·)
     | [] => none
@@ -27100,6 +28294,9 @@ def evilObjectChecks : List Check :=
         return held &&
             evilSelected "x |(a [b] c)" "v %" == some ([(2, 10)], .inclusive, ["(a [b] c)"]) &&
             evilSelected "|x (a)" "v %" == some ([(0, 4)], .inclusive, ["x (a)"]) },
+    { name :=
+        "= over each text object re-indents the rows the object touches, whole, in a text with indent levels, and the cursor goes to the first row's first non-blank"
+      run := operatorRows indentObjectRows },
     { name :=
         "the object table is complete: every operator key of the default tables has a row over every text object the default tables name"
       run :=
@@ -27478,6 +28675,173 @@ def evilRegisterChecks : List Check :=
             let replaced := evilFed driver "v l \" + <F5>"
             evilText replaced == some "aXYd" && evilHistory replaced == some (2, false) &&
               evilText (evilUndone replaced) == some "abcd" }]
+
+/-- The mangled JSON text of the indent checks' repeats, with the cursor on
+its second row. -/
+def indentRepeatText : String :=
+  "[\n|1,\n      2,\n 3,\n4,\n   5,\n6\n]"
+
+/-- The checks of evil's `=` (`Evil.indent`, `Editor/Evil/Operators.lean`),
+by key, on the models: in the indent checks' JSON language
+(`indentDriver`), where the model's syntax tree answers the indents query,
+and on the plain evil driver, whose buffer has no language. -/
+def evilIndentChecks : List Check :=
+  [{  name :=
+        "g g = G over a mangled JSON text gives the two-space text, a blank row of blanks emptied, with the cursor on the first row's first non-blank; = G from a row whose indent changes leaves the cursor on that row's new first non-blank"
+      run :=
+        let mangled := "{\n\"a\": [\n      1,\n   \n {\n\"b\": null\n    }\n],\n\"c\": {}\n}"
+        let pretty :=
+          "{\n  \"a\": [\n    1,\n\n    {\n      \"b\": null\n    }\n  ],\n  \"c\": {}\n}"
+        operatorRows
+          [.indents (withBar mangled 25) "g g = G" (withBar pretty 0),
+            .indents (withBar mangled 2) "= G" (withBar pretty 4)] },
+    { name :=
+        "= a f inside a nested object re-indents exactly that object's rows, and the rows outside it keep their indentation"
+      run :=
+        operatorRows
+          [.indents "[\n{\n\"|x\": 1\n},\n2\n]" "= a f" "[\n  |{\n    \"x\": 1\n  },\n2\n]"] },
+    { name :=
+        "= = re-indents the cursor's row, a count that many rows, = j two rows, and V j = the selection's rows; a row already right is left, and nothing is put in the register"
+      run :=
+        operatorRows
+          [.indents indentRepeatText "= =" "[\n  |1,\n      2,\n 3,\n4,\n   5,\n6\n]",
+            .indents indentRepeatText "3 = =" "[\n  |1,\n  2,\n  3,\n4,\n   5,\n6\n]",
+            .indents indentRepeatText "= j" "[\n  |1,\n  2,\n 3,\n4,\n   5,\n6\n]",
+            .indents indentRepeatText "V j =" "[\n  |1,\n  2,\n 3,\n4,\n   5,\n6\n]",
+            .indents "[\n  |1\n]" "= =" "[\n  |1\n]", .indents "|[\n  1\n]" "= j" "|[\n  1\n]"] },
+    { name :=
+        "one = is one step of the history: u gives back the mangled text and the cursor from before"
+      run :=
+        pure <|
+          match indentDriver indentRepeatText with
+          | none => false
+          | some driver =>
+            let indented := evilFed driver "= j"
+            let nodes (driver : EvilDriver) := (evilHistory driver).map (·.1)
+            evilShown indented == "[\n  |1,\n  2,\n 3,\n4,\n   5,\n6\n]" &&
+              nodes indented == (nodes driver).map (· + 1) &&
+              evilShown (evilFed indented "u") == indentRepeatText },
+    { name :=
+        ". repeats = over another range: = = then j . re-indents the next row, = j then j j j . the two rows from there, and a count before . replaces the count"
+      run :=
+        operatorRows
+          [.indents indentRepeatText "= = j ." "[\n  1,\n  |2,\n 3,\n4,\n   5,\n6\n]",
+            .indents indentRepeatText "= j j j j ." "[\n  1,\n  2,\n 3,\n  |4,\n  5,\n6\n]",
+            .indents indentRepeatText "2 = = j j ." "[\n  1,\n  2,\n  |3,\n  4,\n   5,\n6\n]",
+            .indents indentRepeatText "2 = = j j 3 ." "[\n  1,\n  2,\n  |3,\n  4,\n  5,\n6\n]"] },
+    { name := "= over a visual selection re-indents it and is not repeated by ."
+      run :=
+        pure <|
+          match indentDriver indentRepeatText with
+          | none => false
+          | some driver =>
+            let indented := evilFed driver "V j ="
+            let repeated := evilFed indented "j j ."
+            evilText repeated == some "[\n  1,\n  2,\n 3,\n4,\n   5,\n6\n]" &&
+              repeated.loop.state.echo.endsWith (Evil.notRepeated Evil.overSelection) },
+    { name :=
+        "in a buffer with no language = = , = j and g g = G leave the text and the cursor and say there is no syntax tree; the give-up is not the last change, so . after it repeats the change before it"
+      run :=
+        pure <|
+          let fixture := "    a|b\n  cd"
+          let reason := Evil.cannotIndent .notAttached
+          evilGaveUp (evilEdited fixture "= =") fixture reason &&
+            evilGaveUp (evilEdited fixture "= j") fixture reason &&
+            evilGaveUp (evilEdited fixture "g g = G") "    |ab\n  cd" reason &&
+            (evilDriver fixture).bind (fun driver => evilText (evilFed driver "x = = .")) ==
+              some "    \n  cd" },
+    { name :=
+        "while the tree of the text's last edit is not delivered, = = and g g = G leave the text and the cursor and say the tree is not parsed yet, where the tree would re-indent the rows; the give-up is not the last change, so . after it repeats the change before it"
+      run :=
+        pure <|
+          let fixture := "[\n   |1,\n 2\n]"
+          let reason := Evil.cannotIndent .notParsed
+          (indentEdited fixture "= =").map (·.shown) == some "[\n  |1,\n 2\n]" &&
+            evilGaveUp (undeliveredEdited fixture "= =") fixture reason &&
+            evilGaveUp (undeliveredEdited fixture "g g = G") "|[\n   1,\n 2\n]" reason &&
+            (undeliveredDriver "[\n   |12\n]").bind
+                (fun driver => evilText (evilFed driver "x = = .")) ==
+              some "[\n   \n]" },
+    { name :=
+        "while the tree of the text's last edit is not delivered, A RET, o and O start the new row at the cursor row's own leading whitespace, Vim's autoindent, where the tree would give its level, and . replays a RET so"
+      run :=
+        pure <|
+          (indentEdited "[\n   |1\n]" "o").map (·.shown) == some "[\n   1\n  |\n]" &&
+            (undeliveredEdited "[\n   |1\n]" "A RET").map (·.shown) == some "[\n   1\n   |\n]" &&
+            (undeliveredEdited "[\n   |1\n]" "o").map (·.shown) == some "[\n   1\n   |\n]" &&
+            (undeliveredEdited "[\n   |1\n]" "O").map (·.shown) == some "[\n   |\n   1\n]" &&
+            (undeliveredDriver "[\n   |1,\n 2\n]").bind
+                (fun driver => evilText (evilFed driver "A RET <Escape> j .")) ==
+              some "[\n   1,\n   \n 2\n \n]" },
+    { name :=
+        "in a buffer whose language's tree keeps no indents query = = leaves the text and says so"
+      run :=
+        pure <|
+          let fixture := "[\n|1\n]"
+          evilGaveUp
+            (indentEdited fixture "= ="
+              { modelJsonIndented with syntaxTree := { grammar := "json" } })
+            fixture (Evil.cannotIndent .noQuery) },
+    { name :=
+        "a config entry of the buffer's language that indents by a tab wins over the compiled one: = = indents with tabs"
+      run :=
+        pure
+          ((indentEdited "[\n[\n|1\n]\n]" "= =" (config :=
+                  #[{ modelJsonIndented with indentUnit := .tab }])).map
+              (·.shown) ==
+            some "[\n[\n\t\t|1\n]\n]") },
+    { name :=
+        "RET after an opening bracket starts the new line one level deeper than its row; o inside an object and O on its closing row start at the object's level"
+      run :=
+        operatorRows
+          [{
+              OperatorRow.indents "{\n  \"a\": |[\n  ]\n}" "A RET"
+                "{\n  \"a\": [\n    |\n  ]\n}" with
+              insert := true },
+            { OperatorRow.indents "{\n  |\"a\": 1\n}" "o" "{\n  \"a\": 1\n  |\n}" with
+              insert := true },
+            { OperatorRow.indents "{\n  \"a\": 1\n|}" "O" "{\n  \"a\": 1\n  |\n}" with
+              insert := true },
+            { OperatorRow.indents "{\n  \"a\": [\n|  ]\n}" "O" "{\n  \"a\": [\n    |\n  ]\n}" with
+              insert := true }] },
+    { name :=
+        "RET before a closing bracket leads the new row out at the bracket's level; RET between blanks replaces the blanks on both sides, so the row left keeps none and the rest starts at its level; RET RET leaves the first new row empty"
+      run :=
+        operatorRows
+          [{ OperatorRow.indents "{\n  \"a\": [|]\n}" "i RET" "{\n  \"a\": [\n  |]\n}" with
+              insert := true },
+            { OperatorRow.indents "[\n  1,   |   2\n]" "i RET" "[\n  1,\n  |2\n]" with
+              insert := true },
+            { OperatorRow.indents "[\n  |1\n]" "a RET RET" "[\n  1\n\n  |\n]" with
+              insert := true }] },
+    { name :=
+        ". replays an insert session's RET with its new line indented, and o replayed indents itself"
+      run :=
+        pure <|
+          (indentDriver "[\n  |1,\n  2\n]").bind
+                (fun driver => evilText (evilFed driver "o RET <Escape> j .")) ==
+              some "[\n  1,\n\n  \n  2\n\n  \n]" &&
+            (indentDriver "[\n  |1,\n  2\n]").bind
+                (fun driver => evilText (evilFed driver "A RET <Escape> j .")) ==
+              some "[\n  1,\n  \n  2\n  \n]" },
+    { name := "a config entry's tab unit indents new lines with tabs"
+      run :=
+        pure
+          ((indentEdited "[\n[\n|1\n]\n]" "o" (config :=
+                  #[{ modelJsonIndented with indentUnit := .tab }])).map
+              (·.shown) ==
+            some "[\n[\n1\n\t\t|\n]\n]") },
+    { name :=
+        "in a buffer with no language, and in one whose tree keeps no indents query, A RET, o and O insert the bare line break, copying no indent"
+      run :=
+        pure <|
+          let noQuery := { modelJsonIndented with syntaxTree := { grammar := "json" } }
+          (evilEdited "    a|b" "A RET").map (·.shown) == some "    ab\n|" &&
+            (evilEdited "    a|b" "o").map (·.shown) == some "    ab\n|" &&
+            (evilEdited "    a|b" "O").map (·.shown) == some "|\n    ab" &&
+            (indentEdited "[\n  |1\n]" "A RET" noQuery).map (·.shown) == some "[\n  1\n|\n]" &&
+            (indentEdited "[\n  |1\n]" "o" noQuery).map (·.shown) == some "[\n  1\n|\n]" &&
+            (indentEdited "[\n  |1\n]" "O" noQuery).map (·.shown) == some "[\n|\n  1\n]" }]
 
 /-- The checks of the two commands that open a line (`Evil.openBelow`,
 `Evil.openAbove`), by key, as `evilOperatorChecks` are. -/
@@ -31605,8 +32969,44 @@ def workspaceStateChecks : List Check :=
             | .ok (.finished answer, _) => answer == some 5000
             | _ => false },
     { name :=
+        "with no loop to answer, the syntax refresh delay is none; a dispatched command that asks is answered the delay the loop was told of"
+      run :=
+        let program : EditorM (Guarded (Option Nat) × EditorState) := do
+          (EditorState.ask .syntaxRefreshDelay).dispatched { syntaxRefreshDelay := some 250 }
+              (← twoBuffers)
+        pure <|
+          (EditorState.none.handle .syntaxRefreshDelay).1 == none &&
+            match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) => answer == some 250
+            | _ => false },
+    { name :=
         "with no loop to answer, the workspace settings are config's defaults under generation 0"
       run := pure ((EditorState.none.handle .workspaceSettings).1 == ({}, 0)) },
+    { name := "with no loop to answer, the compile hook is empty"
+      run :=
+        let hook := (EditorState.none.handle .compileHook).1
+        pure (hook.contributions.isEmpty && hook.projects.isEmpty) },
+    { name :=
+        "a dispatched command that asks for the compile hook is answered what the loop was told, and the workspace settings carry the contributions' marker modes in registration order"
+      run :=
+        let hook : Compile.Hook :=
+          { contributions :=
+              #[{ mode := "b-mode", markers := #["b.toml"] },
+                { mode := "a-mode", markers := #["a.toml", "a2.toml"] }]
+            projects := #[{ project := .remote "github.com/o/r", mode := "b-mode" }] }
+        let asking : EditorM (Compile.Hook × Workspace.Settings) := do
+          return (← EditorState.ask .compileHook, (← EditorState.ask .workspaceSettings).1)
+        let program : EditorM (Guarded (Compile.Hook × Workspace.Settings) × EditorState) := do
+          asking.dispatched { compile := hook } (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished (told, settings), _) =>
+            told.contributions.map (·.mode) == #["b-mode", "a-mode"] &&
+              told.projects == hook.projects &&
+              settings.markerModes ==
+                #[{ mode := "b-mode", markers := #["b.toml"] },
+                  { mode := "a-mode", markers := #["a.toml", "a2.toml"] }]
+          | _ => false },
     { name :=
         "a dispatched command that asks for the workspace settings is answered config's roots and the config generation the loop was told of"
       run :=
@@ -31701,10 +33101,11 @@ def workspaceWorld : Workspace.World :=
           origin := some workspaceOrigin }]
     markerDirectories := #["/r/.git"], markers := #["/w/.git"] }
 
-/-- The jobs of the workspace driver checks: the find job and the file
-command checks' jobs. -/
+/-- The jobs of the workspace driver checks: the find job, the mode marker
+job and the file command checks' jobs. -/
 def workspaceJobs (name : String) : Option (List Argument → Work) :=
-  if name == Workspace.findJob then some Workspace.findWork else fileJobs Files.limit name
+  if name == Workspace.findJob then some Workspace.findWork
+  else if name == Workspace.markerJob then some Workspace.markerWork else fileJobs Files.limit name
 
 /-- The bindings of the workspace driver checks: `C-o a`, `C-o b`
 and `C-o c` open `a.lean`, `b.lean` and `c.lean` in `/r/src`, `C-o w`
@@ -31946,6 +33347,74 @@ def workspaceChecks : List Check :=
             [[], [.nat 1, .str "/r"], [.nat 1, .str "/r", .str "git", .nat 0, .str "/t"]].all
               (Workspace.FindOrder.ofArguments? · == none) &&
             ((Workspace.findWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
+
+/-- The checks of the pure rules of the search for a minor mode's markers
+within a workspace (`Editor/Workspace.lean`, "Modes on markers"): where it
+looks, which modes the markers it found turn on, and how an on-mode
+crosses as a tree. -/
+def modeMarkerChecks : List Check :=
+  [{  name :=
+        "markerSearchPaths looks from /r/a/b/c up to and including the bound /r, each marker in order, and with a bound that does not hold the directory in the directory alone"
+      run :=
+        let expected : Array (System.FilePath × System.FilePath × String) :=
+          #[("/r/a/b/c", "/r/a/b/c/x.toml", "x.toml"), ("/r/a/b/c", "/r/a/b/c/y.toml", "y.toml"),
+            ("/r/a/b", "/r/a/b/x.toml", "x.toml"), ("/r/a/b", "/r/a/b/y.toml", "y.toml"),
+            ("/r/a", "/r/a/x.toml", "x.toml"), ("/r/a", "/r/a/y.toml", "y.toml"),
+            ("/r", "/r/x.toml", "x.toml"), ("/r", "/r/y.toml", "y.toml")]
+        let alone : Array (System.FilePath × System.FilePath × String) :=
+          #[("/r/a", "/r/a/x.toml", "x.toml")]
+        pure
+          (Workspace.markerSearchPaths #["x.toml", "y.toml"] "/r/a/b/c" "/r" == expected &&
+            Workspace.markerSearchPaths #["x.toml", "y.toml"] "/r/a/b/c/" "/r/" == expected &&
+            Workspace.markerSearchPaths #["x.toml"] "/r/a" "/w" == alone &&
+            Workspace.markerSearchPaths #["x.toml"] "/r/a" "/r/a/b" == alone) },
+    { name :=
+        "onModes puts the nearest root first and, at one root, keeps registration order, whatever order the markers were found in"
+      run :=
+        let modes : Array Workspace.MarkerMode :=
+          #[{ mode := "b-mode", markers := #["b.toml"] },
+            { mode := "a-mode", markers := #["a.toml"] },
+            { mode := "c-mode", markers := #["b.toml"] }]
+        let present : Array (System.FilePath × String) :=
+          #[("/r/k/l", "a.toml"), ("/r/k", "b.toml")]
+        let expected : Array Workspace.OnMode :=
+          #[{ mode := "a-mode", root := "/r/k/l" }, { mode := "b-mode", root := "/r/k" },
+            { mode := "c-mode", root := "/r/k" }]
+        pure
+          (Workspace.onModes modes "/r/k/l" "/r" present == expected &&
+            Workspace.onModes modes "/r/k/l" "/r" present.reverse == expected &&
+            -- A mode is on at its nearest marker only.
+            Workspace.onModes #[{ mode := "a-mode", markers := #["a.toml"] }] "/r/k/l" "/r"
+                #[("/r/k", "a.toml"), ("/r/k/l", "a.toml")] ==
+              #[{ mode := "a-mode", root := "/r/k/l" }] &&
+            Workspace.onModes modes "/r/k/l" "/r" #[] == #[] &&
+            Workspace.markersOf modes == #["b.toml", "a.toml"]) },
+    { name :=
+        "an outermost mode's root is its farthest marker within the bound: a nearest mode at a deeper root still comes first, a marker above the bound is not looked at, and with one marker the root is that one's"
+      run :=
+        let outer : Workspace.MarkerMode :=
+          { mode := "o-mode", markers := #["o.toml"], outermost := true }
+        let nearest : Workspace.MarkerMode := { mode := "n-mode", markers := #["n.toml"] }
+        let present : Array (System.FilePath × String) :=
+          #[("/r/k/l", "o.toml"), ("/r/k", "n.toml"), ("/r", "o.toml"), ("/", "o.toml")]
+        pure
+          (Workspace.onModes #[outer, nearest] "/r/k/l" "/r" present ==
+              #[{ mode := "n-mode", root := "/r/k" }, { mode := "o-mode", root := "/r" }] &&
+            Workspace.onModes #[{ outer with outermost := false }, nearest] "/r/k/l" "/r" present ==
+              #[{ mode := "o-mode", root := "/r/k/l" }, { mode := "n-mode", root := "/r/k" }] &&
+            Workspace.onModes #[outer, nearest] "/r/k/l" "/r" #[("/r/k/l", "o.toml")] ==
+              #[{ mode := "o-mode", root := "/r/k/l" }] &&
+            (Compile.Contribution.markerMode
+                { mode := "o-mode", markers := #["o.toml"], outermost := true }) ==
+              outer) },
+    { name := "an on-mode crosses as a tree and back; a tree that is no on-mode reads as none"
+      run :=
+        let on : Workspace.OnMode := { mode := "a-mode", root := "/a b/é" }
+        pure
+          (Workspace.OnMode.decode? on.encode == some on &&
+            [Value.str "a-mode", .list [.str "a-mode"], .list [.nat 1, .str "/r"]].all
+              (Workspace.OnMode.decode? · == none) &&
+            Workspace.modesLocal == "marker-modes") }]
 
 /-- The jobs of the shell checks: the workspace driver checks', and the
 shell's run job. -/
@@ -32505,16 +33974,42 @@ def compileWorld : Workspace.World :=
         { toplevel := "/clone/r", commonDir := "/clone/r/.git", origin := some workspaceOrigin }
     markerDirectories := workspaceWorld.markerDirectories.push "/clone/r/.git" }
 
-/-- The jobs of the compile checks: the shell checks', and the compile's run
-job. -/
+/-- The jobs of the compile checks: the shell checks', the compile's run job
+and its listing job. -/
 def compileJobs (name : String) : Option (List Argument → Work) :=
-  if name == Compile.runJob then some Compile.runWork else shellJobs name
+  if name == Compile.runJob then some Compile.runWork
+  else if name == Compile.listJob then some Compile.listWork else shellJobs name
 
 /-- What `make` in `/r` does: writes `one`, pauses 100 ms, writes `two`,
 pauses 100 ms and writes `three` on its standard error. -/
 def makeSteps : Array Process.Step :=
   #[.write .out "one\n".toUTF8, .pause 100, .write .out "two\n".toUTF8, .pause 100,
     .write .err "three\n".toUTF8]
+
+/-- Steps that write each of `lines` with a line feed on standard output,
+pausing 100 ms between writes, so each is delivered, and posted, alone. -/
+def linesSteps (lines : List String) : Array Process.Step :=
+  (lines.toArray.map fun line => Process.Step.write .out (line ++ "\n").toUTF8).foldl
+    (fun steps write => if steps.isEmpty then #[write] else steps ++ #[.pause 100, write]) #[]
+
+/-- What `check` in `/r` writes: four locations of the general format, an
+error with a column, a warning without, a note and an error whose path starts
+`./`, with a help line after the first. -/
+def checkLines : List String :=
+  ["src/main.rs:12:5: error: expected one of", "  = help: add a semicolon",
+    "src/lib.lean:3: warning: unused", "src/main.rs:2:7: note: defined here",
+    "./src/b.lean:1:3: error: unknown identifier"]
+
+/-- What `stream` in `/r` writes: a location, a help line, a location and a
+plain line. -/
+def streamLines : List String :=
+  ["src/main.rs:12:5: error: expected one of", "  = help: add a semicolon",
+    "src/lib.lean:3: warning: unused", "done"]
+
+/-- The byte offset where the row `row` (from 1) of a compilation buffer
+starts, whose header is `header` and whose rows after it are `lines`. -/
+def rowStart (header : String) (lines : List String) (row : Nat) : Nat :=
+  header.utf8ByteSize + 1 + ((lines.take (row - 1)).map (·.utf8ByteSize + 1)).sum
 
 /-- The streaming children of the compile checks, `make` in `/r` exiting as
 `exit`. -/
@@ -32526,11 +34021,21 @@ def compileStreams (exit : Process.Exit := .code 0) : Array Process.StreamScript
           .write .out "w3\n".toUTF8] },
     { command := shellCommand "/w" "build", steps := #[.write .out "b1\n".toUTF8] },
     { command := shellCommand "/clone/r" "make", steps := #[.write .out "c1\n".toUTF8] },
-    { command := shellCommand "/x" "make", steps := #[.write .out "x1\n".toUTF8] }]
+    { command := shellCommand "/x" "make", steps := #[.write .out "x1\n".toUTF8] },
+    { command := shellCommand "/r" "check", steps := linesSteps checkLines, exit := .code 1 },
+    { command := shellCommand "/w" "check", steps := linesSteps ["src/main.rs:1:3: error: in w"] },
+    { command := shellCommand "/x" "check", steps := linesSteps ["a.txt:1:1: error: here"] },
+    { command := shellCommand "/r" "stream", steps := linesSteps streamLines },
+    { command := shellCommand "/r" "gone",
+      steps := linesSteps ["src/gone.rs:4:2: error: missing"] }]
 
 /-- The place of the workspace `/r`. -/
 def placeR : Compile.Place :=
   .workspace (.local "/r")
+
+/-- The place of the workspace `/w`. -/
+def placeW : Compile.Place :=
+  .workspace (.local "/w")
 
 /-- The bindings of the compile checks: the shell checks', and `C-k c`
 (`compile`), `C-k m` (`compile` with `make`), `C-k r` (`recompile`), `C-k k`
@@ -32540,7 +34045,14 @@ cursors), `C-k 0` (`to-start`, which puts the window's cursor at offset 0),
 compilation buffer), `C-k s` (`squat`, which makes a buffer
 `*compilation: r@main (clone)*` the compile did not make), `C-k z` (a stale
 `compilation-output` of `/r`'s first run), `C-k q`, which cancels the open
-prompt, and `C-o q`, which opens `/clone/r/src/a.lean`. -/
+prompt, `C-o q`, which opens `/clone/r/src/a.lean`, and `C-k h` (`compile`
+with `check`, asking nothing, so a new compilation buffer is in view 1,
+below view 0). For stepping: `C-k n` (`next-error`), `C-k p`
+(`previous-error`), `C-k e` (`compile-goto-error`), and `C-k g` and `C-k j`
+(`to-point`, which puts the window's cursor at row 4, column 3, and at row
+2, column 0), and `C-k b` (`zero-base`, which has every location `/r` keeps
+count its columns from 0, as those of a format whose `columnBase` is 0
+do). -/
 def compileBindings : List (String × Invocation) :=
   shellBindings ++
     [("C-k c", invoke Compile.compileName),
@@ -32551,7 +34063,13 @@ def compileBindings : List (String × Invocation) :=
       ("C-k z",
         { command := Compile.outputName
           arguments := placeR.arguments ++ [.nat 1, .str "stale"] }),
-      ("C-k q", invoke Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean")]
+      ("C-k q", invoke Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean"),
+      ("C-k h", { command := Compile.compileName, arguments := [.str "check"] }),
+      ("C-k n", invoke Compile.nextName), ("C-k p", invoke Compile.previousName),
+      ("C-k e", invoke Compile.gotoName),
+      ("C-k g", { command := "to-point", arguments := [.nat 4, .nat 3] }),
+      ("C-k j", { command := "to-point", arguments := [.nat 2, .nat 0] }),
+      ("C-k b", invoke "zero-base")]
 
 /-- The commands of the compile checks (`compileBindings`). -/
 def compileCommands : List (String × Dispatched) :=
@@ -32571,20 +34089,53 @@ def compileCommands : List (String × Dispatched) :=
   let squat : Dispatched := fun _ => do
     discard <| createBuffer "*compilation: r@main (clone)*"
     return none
+  let toPoint : Dispatched := fun call => do
+    if let .nat row :: .nat column :: _ := call.arguments then
+      let offset ← call.target.buffer.text.offsetOf ⟨row, column⟩
+      discard <| call.target.window.id.select { ranges := #[⟨offset, offset⟩] }
+    return none
+  let zeroBase : Dispatched := fun _ => do
+    let record := Compile.recordOf (← editorState) placeR
+    Compile.setRecord placeR
+        { record with locations := record.locations.map ({ · with columnBase := 0 }) }
+    return none
   shellCommands ++ dispatchedOf Compile.commands ++
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
-      ("squat-clone", squat)]
+      ("squat-clone", squat), ("to-point", toPoint), ("zero-base", zeroBase)]
 
-/-- The keys of the compile checks, with the compile mode and the ex names
-that ship registered. -/
-def compileKeys : Loop.Keys TestScheme.scheme :=
-  let keys := dispatchKeys compileBindings compileCommands
+/-- The keys of the compile checks over `bindings`, with the compile mode
+and the ex names that ship registered: the active keymaps of a registry
+holding the compile mode's modes, so the mode's roles are on their keys in
+a compilation buffer as a host's registry puts them, then the keymap of
+`bindings`. -/
+def compileKeysOf (bindings : List (String × Invocation)) : Loop.Keys TestScheme.scheme :=
+  let keys := dispatchKeys bindings compileCommands
+  let registry := ({} : Config.Registry).replaceModes .compiled Compile.modes
   { keys with
+    maps := fun state view =>
+      registry.activeMaps TestScheme.scheme state view ++ keys.maps state view
     registered :=
       { keys.registered with
         entering := fun name => (Compile.modes.find? (·.name == name)).map ([·])
         ex := fun name => Ex.bindings.find? (·.name == name)
         exNames := Ex.bindings.map (·.name) } }
+
+/-- The keys of the compile checks (`compileKeysOf`, `compileBindings`). -/
+def compileKeys : Loop.Keys TestScheme.scheme :=
+  compileKeysOf compileBindings
+
+/-- The text of `/r/src/main.rs` in the compile checks: twelve lines, each
+of ten characters, the second of two-byte ones, so a column counts
+characters: row 11 starts at byte 131, and `12:5` is byte 135; `2:7` is
+byte 23. -/
+def mainText : String :=
+  String.join ((List.range 12).map fun row => if row == 1 then "αβγδεζηθικ\n" else "abcdefghij\n")
+
+/-- The files of the compile checks, each a path and a text. -/
+def compileFiles : List (String × String) :=
+  [("/r/src/a.lean", "a"), ("/w/src/b.lean", "w"), ("/x/a.txt", "x"), ("/clone/r/src/a.lean", "c"),
+    ("/r/src/main.rs", mainText), ("/r/src/lib.lean", "one\ntwo\nthree\n"),
+    ("/r/src/b.lean", "xyz123\n"), ("/w/src/main.rs", "wwwwww\n")]
 
 /-- A driver of the compile checks: the world of `compileWorld`, with the
 compile checks' keys and jobs, the files the keys open, and the children of
@@ -32594,9 +34145,8 @@ def compileDriver (exit : Process.Exit := .code 0)
     (registered : String → Option (List Argument → Work) := compileJobs) : Option TestDriver :=
   let model := compileWorld.jobModel "git" #["/r/src", "/w/src", "/x", "/clone/r/src"]
   let files :=
-    [("/r/src/a.lean", "a"), ("/w/src/b.lean", "w"), ("/x/a.txt", "x"),
-          ("/clone/r/src/a.lean", "c")].foldl
-      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
+    compileFiles.foldl (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8)
+      model.files
   (Loop.Driver.over compileKeys registered (EditorState.initial ⟨640, 480⟩)
         editorModel).toOption.map
     fun driver =>
@@ -33118,11 +34668,13 @@ def compileChecks : List Check :=
               again.posting.map (·.key) == #[some "compile local /r"] &&
               again.jobs.processes.started.size == made.jobs.processes.started.size + 1 &&
               asked.loop.state.prompt.map (·.label) == some Compile.promptLabel },
-    { name := "the compilation mode fills the role refresh with recompile"
+    { name :=
+        "the compilation mode fills the role refresh with recompile and activate with compile-goto-error, and neither next-item nor previous-item, so j and k stay motions under Vim"
       run :=
         pure
           (Compile.mode.roles.map (fun (role, command) => (role.name, command)) ==
-              [(Role.refresh.name, Compile.recompileName)] &&
+              [(Role.refresh.name, Compile.recompileName),
+                (Role.activate.name, Compile.gotoName)] &&
             Compile.mode.name == Compile.modeName) },
     { name :=
         "a compile order crosses as arguments and back with a place of each kind, arguments that are no order read as none, and the run job started with them fails; each place has its own job key"
@@ -33143,6 +34695,1916 @@ def compileChecks : List Check :=
                 (Compile.Place.directory "/x").jobKey == "compile directory /x" &&
               Compile.elapsed 1500 == "1.5 s" &&
             Compile.elapsed 61049 == "61.0 s") }]
+
+/-- The format `general` with a continuation: a following line that starts
+with blanks continues a location. -/
+def indentedFormat : Compile.Format :=
+  { Compile.Format.general with
+    name := "indented"
+    continuation := some [{ pieces := [{ atom := .blanks }] }, { pieces := [{ atom := .rest }] }] }
+
+/-- The format `t-lead` of the lead checks: a location line `  at
+<file>:<line>`, maybe followed by ` note`, its severity, after a lead line
+`<error|warning>: <message>` that gives its severity and message. -/
+def leadFormat : Compile.Format :=
+  { name := "t-lead"
+    pattern :=
+      [Compile.step
+          [{ atom := .blanks }, { atom := .literal "at " },
+            { atom := .noneOf [':', ' '], into := some .file }, { atom := .literal ":" },
+            { atom := .digits, into := some .line }],
+        Compile.optionalStep
+          [{ atom := .literal " " }, { atom := .oneOf ["note"], into := some .severity }]]
+    lead :=
+      some
+        [Compile.step
+            [{ atom := .oneOf ["error", "warning"], into := some .severity },
+              { atom := .literal ": " }, { atom := .rest, into := some .message }]] }
+
+/-- The checks of error formats, the matcher, sites and `resolve`
+(`Editor/Compile/Errors.lean`): pure, with no driver. -/
+def compileErrorChecks : List Check :=
+  let general := Compile.Format.general
+  [{  name :=
+        "a format with a lead makes the line before a location its site's first row, with the lead's severity and message; in one scan, across two with the previous line handed in, and with no lead before it a plain site"
+      run :=
+        let lines := #["warning: unused x", "  at a.rs:4"]
+        let one := Compile.scan #[leadFormat] "/r" #[] 1 100 lines
+        let two :=
+          Compile.scan #[leadFormat] "/r" (Compile.scan #[leadFormat] "/r" #[] 1 100 #[lines[0]!]) 2
+            118 #[lines[1]!] (previous := some lines[0]!)
+        let bare := Compile.scan #[leadFormat] "/r" #[] 1 100 #["plain", "  at a.rs:4"]
+        pure
+          (one ==
+              #[{ file := "/r/a.rs", line := 4, column := none, columnBase := 1
+                  severity := .warning, format := "t-lead", first := 1, last := 2, start := 123
+                  stop := 129, message := some "unused x" }] &&
+            two == one &&
+            bare.map (fun site => (site.first, site.last, site.severity, site.message)) ==
+              #[(2, 2, .error, none)]) },
+    { name :=
+        "a lead whose row the last site covers is not joined to the next location, and a lead's severity yields to one the location line captured"
+      run :=
+        let earlier : Compile.Site :=
+          { file := "/r/b.rs", line := 1, column := none, columnBase := 1, severity := .error
+            format := "general", first := 1, last := 1, start := 0, stop := 6 }
+        let covered :=
+          Compile.scan #[leadFormat] "/r" #[earlier] 2 9 #["  at a.rs:4"] (previous :=
+            some "error: e")
+        let captured := Compile.scan #[leadFormat] "/r" #[] 1 0 #["error: e", "  at a.rs:4 note"]
+        pure
+          (covered.map
+                (fun site => (site.format, site.first, site.last, site.severity, site.message)) ==
+              #[("general", 1, 1, .error, none), ("t-lead", 2, 2, .error, none)] &&
+            captured.map (fun site => (site.first, site.severity, site.message)) ==
+              #[(1, .note, some "e")]) },
+    { name :=
+        "a site with a message crosses as a tree and back, and a site's tree with no message field, written before messages were kept, reads with none"
+      run :=
+        let site : Compile.Site :=
+          { file := "/r/a.rs", line := 4, column := some 2, columnBase := 1, severity := .error
+            format := "t-lead", first := 3, last := 5, start := 40, stop := 48
+            message := some "mismatched types" }
+        let older :=
+          match ({ site with message := none } : Compile.Site).encode with
+          | .record fields => Value.record (fields.filter (·.1 != "message"))
+          | other => other
+        pure
+          (Compile.Site.decode site.encode == some site &&
+            Compile.Site.decode older == some { site with message := none }) },
+    { name :=
+        "locations criterion 1: the general format reads src/main.rs:12:5: error: expected one of as src/main.rs, line 12, column 5, an error, and lib.lean:3: warning: unused with no column"
+      run :=
+        pure
+          (general.read? "src/main.rs:12:5: error: expected one of" ==
+              some
+                { file := "src/main.rs", line := 12, column := some 5, severity := .error
+                  start := 0, stop := 16 } &&
+            general.read? "lib.lean:3: warning: unused" ==
+              some
+                { file := "lib.lean", line := 3, column := none, severity := .warning, start := 0
+                  stop := 10 }) },
+    { name :=
+        "the general format reads a note as a note and a line with no severity word as an error, and the header, a help line, the last line and an empty line as no location"
+      run :=
+        pure
+          ((general.read? "note.txt:7: note: here").map (·.severity) == some .note &&
+            (general.read? "a.c:3: something").map (·.severity) == some .error &&
+            ["r@main in /r: make", "  = help: add a semicolon", "Compilation finished after 1.5 s",
+                  ""].all
+              (general.read? · == none)) },
+    { name :=
+        "a location's start and stop are byte offsets: αβ.rs:3:4: error: x reads its location text as bytes 0 to 11, the bytes of its nine characters"
+      run :=
+        pure
+          (general.read? "αβ.rs:3:4: error: x" ==
+            some
+              { file := "αβ.rs", line := 3, column := some 4, severity := .error, start := 0
+                stop := 11 }) },
+    { name :=
+        "scan steps each line on by its bytes: after a line of two-byte characters the next location starts and stops at its bytes, and a location in a line of them stops at its bytes"
+      run :=
+        let lines := #["größe wär", "a.rs:1:2: error: x", "αβ.rs:3: warning: y"]
+        pure
+          ((Compile.scan #[Compile.Format.general] "/r" #[] 1 100 lines).map
+              (fun site => (site.file.toString, site.first, site.start, site.stop)) ==
+            #[("/r/a.rs", 2, 113, 121), ("/r/αβ.rs", 3, 132, 141)]) },
+    { name :=
+        "locations criterion 2: a format with a continuation joins a location line and its following indented line into one location, in one scan or across two; with the general format they stay apart, and a line that matches nothing stops the join"
+      run :=
+        let lines := #["a.rs:1:2: error: x", "    more", "b.rs:3: warning: y"]
+        let joined := Compile.scan #[indentedFormat] "/r" #[] 1 100 lines
+        let inTwo :=
+          Compile.scan #[indentedFormat] "/r"
+            (Compile.scan #[indentedFormat] "/r" #[] 1 100 #["a.rs:1:2: error: x"]) 2 119
+            #["    more", "b.rs:3: warning: y"]
+        let apart := Compile.scan #[general] "/r" #[] 1 100 lines
+        let stopped :=
+          Compile.scan #[indentedFormat] "/r" #[] 1 100 #["a.rs:1:2: error: x", "plain", "    more"]
+        pure
+          (joined ==
+              #[{ file := "/r/a.rs", line := 1, column := some 2, columnBase := 1
+                  severity := .error, format := "indented", first := 1, last := 2, start := 100
+                  stop := 108 },
+                { file := "/r/b.rs", line := 3, column := none, columnBase := 1
+                  severity := .warning, format := "indented", first := 3, last := 3
+                  start := 128, stop := 134 }] &&
+            inTwo == joined &&
+            apart.map (fun site => (site.first, site.last)) == #[(1, 1), (3, 3)] &&
+            stopped.map (fun site => (site.first, site.last)) == #[(1, 1)]) },
+    { name :=
+        "locations criterion 6: a relative file resolves against the directory, with . and .. taken lexically, and an absolute one is kept"
+      run :=
+        pure
+          (Compile.resolve "/r" "src/main.rs" == "/r/src/main.rs" &&
+            Compile.resolve "/r" "./src/b.lean" == "/r/src/b.lean" &&
+            Compile.resolve "/r" "../w/src/b.lean" == "/w/src/b.lean" &&
+            Compile.resolve "/r/sub" "../src/a.lean" == "/r/src/a.lean" &&
+            Compile.resolve "/r" "/abs/x.rs" == "/abs/x.rs") },
+    { name := "a site crosses as a tree and back, with a column and without"
+      run :=
+        let site : Compile.Site :=
+          { file := "/r/a.rs", line := 4, column := some 2, columnBase := 0, severity := .note
+            format := "general", first := 3, last := 5, start := 40, stop := 48 }
+        pure
+          (Compile.Site.decode site.encode == some site &&
+            Compile.Site.decode { site with column := none }.encode ==
+              some { site with column := none } &&
+            Compile.Site.decode (.str "a.rs") == none) },
+    { name :=
+        "a scope's record crosses as a tree and back with its locations and its current one, and a tree of the record's old shape, with neither, is none"
+      run :=
+        let site : Compile.Site :=
+          { file := "/r/a.rs", line := 4, column := some 2, columnBase := 1, severity := .error
+            format := "general", first := 1, last := 1, start := 20, stop := 28 }
+        let record : Compile.Record :=
+          { buffer := some 2, last := some ("make", "/r"), runs := 3
+            locations :=
+              #[site,
+                { site with
+                  first := 2, last := 2 }],
+            current := some 1 }
+        pure
+          (Compile.Record.decode record.encode == some record &&
+            Compile.Record.decode
+                { record with
+                    current := none, locations := #[] }.encode ==
+              some
+                { record with
+                  current := none, locations := #[] } &&
+            Compile.Record.decode
+                (.record
+                  [("buffer", .null), ("last", .null), ("runs", .nat 0), ("running", .null)]) ==
+              none &&
+            Compile.store.version == 3 &&
+            Compile.directoryStore.version == 3) }]
+
+/-- The decorations of the view `view` in the last scene `driver`
+published. -/
+def sceneDecorations (driver : TestDriver) (view : ViewId) : Option (Array Decoration) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map (·.decorations)
+
+/-- The editor's models, with the editor state answering the state requests
+and changed by them, and, when `refuseSplits`, every split refused with
+`noSuchWindow` and nothing changed: a fake written for the one check of a
+visit whose split is refused, which no state refuses for a view that shows
+a compilation buffer. -/
+def splitsRefusedIf (refuseSplits : Bool) :
+    (request : EditorRequest) →
+      EditorState × EditorModel → request.Reply × (EditorState × EditorModel)
+  | .state (.split view axis scroll selection), (state, model) =>
+    if refuseSplits then (.error (.noSuchWindow view), (state, model))
+    else
+      let (reply, state) := state.handle (.split view axis scroll selection)
+      (reply, (state, model))
+  | .state request, (state, model) =>
+    let (reply, state) := state.handle request
+    (reply, (state, model))
+  | request, (state, model) =>
+    let (reply, model) := EditorModel.handle request model
+    (reply, (state, model))
+
+/-- The checks of the locations the compile mode finds in its output
+(`Editor/Compile.lean`, "Locations"), on the loop's driver over the
+editor's models, the job model and the process model, in the world of
+`compileWorld`. -/
+def compileLocationChecks : List Check :=
+  let header := "r@main in /r: check"
+  let rowAt := rowStart header checkLines
+  let files (driver : TestDriver) (place : Compile.Place) : Array String :=
+    (Compile.recordOf driver.loop.state place).locations.map (·.file.toString)
+  let fileOf (driver : TestDriver) (view : ViewId) : Option String :=
+    (showing driver view).bind fun shown => shown.buffer.file.map (·.path.toString)
+  let headsOf (driver : TestDriver) (view : ViewId) : Option (Array Nat) :=
+    ((showing driver view).bind (·.cursors)).map (·.map (·.head))
+  let currentOf (driver : TestDriver) (place : Compile.Place) : Option Nat :=
+    (Compile.recordOf driver.loop.state place).current
+  [{  name :=
+        "locations criterion 3: locations are found as lines arrive: after the first two of four output lines the first location exists while the run is in flight, and the second once the next arrives"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let asked := compiledLine (settledAfter driver "C-o a") "stream"
+            let two := postedNext (postedNext asked)
+            let done := drained two
+            let name := "*compilation: r@main*"
+            let streamHeader := "r@main in /r: stream"
+            let first : Compile.Site :=
+              { file := "/r/src/main.rs", line := 12, column := some 5, columnBase := 1
+                severity := .error, format := "general", first := 1, last := 1
+                start := streamHeader.utf8ByteSize + 1, stop := streamHeader.utf8ByteSize + 17 }
+            let record := Compile.recordOf two.loop.state placeR
+            let after := (Compile.recordOf done.loop.state placeR).locations
+            compiledText two name ==
+                some
+                  (streamHeader ++
+                    "\nsrc/main.rs:12:5: error: expected one of\n  = help: add a semicolon\n") &&
+              record.locations == #[first] &&
+              record.running.isSome &&
+              -- The job holds its next post: the third line.
+              two.posting.map (·.key) == #[some "compile local /r"] &&
+              after.size == 2 &&
+              after[0]? == some first &&
+              (after[1]?.map fun site =>
+                  (site.file.toString, site.line, site.column, site.severity, site.first)) ==
+                some ("/r/src/lib.lean", 3, none, .warning, 3) },
+    { name :=
+        "locations criterion 6: a location's relative file resolves against the directory its compilation ran in: /r's against /r, ./ dropped, and a directory scope's against its directory"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let inX := drained (pressedOn (settledAfter driver "C-o x") "C-k h")
+            files inR placeR ==
+                #["/r/src/main.rs", "/r/src/lib.lean", "/r/src/main.rs", "/r/src/b.lean"] &&
+              files inX (.directory "/x") == #["/x/a.txt"] },
+    { name :=
+        "the compilation buffer's spans are its locations' text in their severities' faces, and the view showing it draws them"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let span (row length : Nat) (face : String) : Decoration :=
+              { start := rowAt row, stop := rowAt row + length, face := ⟨face⟩ }
+            let expected :=
+              #[span 1 16 "compilation.error", span 3 14 "compilation.warning",
+                span 4 15 "compilation.note", span 5 16 "compilation.error"]
+            (compileBuffer ran "*compilation: r@main*").map (·.spans) == some expected &&
+              expected[0]?.map (fun span => (span.start, span.stop)) == some (20, 36) &&
+              (showing ran ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              sceneDecorations ran ⟨1⟩ == some expected },
+    { name :=
+        "locations criterion 4: next-error from no location visits the first, opening its file with the cursor on its line and column; next-error and previous-error move one location each, and stop with a message at either end; with nothing compiled it says so"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let step (driver : TestDriver) (keys : String) := drained (pressedOn driver keys)
+            let first := step ran "C-k n"
+            let second := step first "C-k n"
+            let back := step second "C-k p"
+            let stopped := step back "C-k p"
+            let fourth := step (step (step back "C-k n") "C-k n") "C-k n"
+            let past := step fourth "C-k n"
+            let unstepped := pressedOn (settledAfter driver "C-o a") "C-k n"
+            fileOf first ⟨0⟩ == some "/r/src/main.rs" &&
+              (showing first).bind (·.cursors) == some #[⟨135, 135⟩] &&
+              currentOf first placeR == some 0 &&
+              headsOf first ⟨1⟩ == some #[20] &&
+              first.loop.state.frame.focused == ⟨0⟩ &&
+              fileOf second ⟨0⟩ == some "/r/src/lib.lean" &&
+              headsOf second ⟨0⟩ == some #[8] &&
+              currentOf second placeR == some 1 &&
+              headsOf second ⟨1⟩ == some #[rowAt 3] &&
+              fileOf back ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf back ⟨0⟩ == some #[135] &&
+              currentOf back placeR == some 0 &&
+              echoOf stopped == some "previous-error: no earlier locations in r@main" &&
+              currentOf stopped placeR == some 0 &&
+              fileOf stopped ⟨0⟩ == fileOf back ⟨0⟩ &&
+              headsOf stopped ⟨0⟩ == headsOf back ⟨0⟩ &&
+              fileOf fourth ⟨0⟩ == some "/r/src/b.lean" &&
+              headsOf fourth ⟨0⟩ == some #[2] &&
+              currentOf fourth placeR == some 3 &&
+              echoOf past == some "next-error: no more locations in r@main" &&
+              currentOf past placeR == some 3 &&
+              fileOf past ⟨0⟩ == fileOf fourth ⟨0⟩ &&
+              headsOf past ⟨0⟩ == headsOf fourth ⟨0⟩ &&
+              echoOf unstepped == some "next-error: no locations in r@main" },
+    { name :=
+        "locations criterion 5: with compilations in two worktrees of one repository, next-error in a buffer of each visits that workspace's own first location, in its own checkout's file"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let both := drained (pressedOn (settledAfter inR "C-o w") "C-k h")
+            let inW := drained (pressedOn (settledAfter both "C-o w") "C-k n")
+            let inRAfter := drained (pressedOn (settledAfter inW "C-o a") "C-k n")
+            let again := pressedOn (settledAfter inRAfter "C-o w") "C-k n"
+            fileOf inW ⟨0⟩ == some "/w/src/main.rs" && headsOf inW ⟨0⟩ == some #[2] &&
+              fileOf inRAfter ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf inRAfter ⟨0⟩ == some #[135] &&
+              currentOf inRAfter placeR == some 0 &&
+              currentOf inRAfter placeW == some 0 &&
+              echoOf again == some "next-error: no more locations in r@feature" },
+    { name :=
+        "locations criterion 8: activate in a compilation buffer on a location's line visits that location and focuses its view; on a line with no location it says so and changes nothing"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let onThird := pressedOn ran "C-k o C-k g"
+            let activated := drained (pressedOn onThird "RET")
+            let nothing := drained (pressedOn activated "C-k o C-k j RET")
+            onThird.loop.state.frame.focused == ⟨1⟩ &&
+              fileOf activated ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf activated ⟨0⟩ == some #[23] &&
+              activated.loop.state.frame.focused == ⟨0⟩ &&
+              currentOf activated placeR == some 2 &&
+              headsOf activated ⟨1⟩ == some #[rowAt 4] &&
+              echoOf nothing == some "compile-goto-error: no location on this line" &&
+              currentOf nothing placeR == some 2 &&
+              fileOf nothing ⟨0⟩ == fileOf activated ⟨0⟩ &&
+              headsOf nothing ⟨0⟩ == headsOf activated ⟨0⟩ },
+    { name :=
+        "locations criterion 7: after activate on the third location, moving the compilation buffer's cursor by hand leaves the current location, and next-error visits the fourth, the focus staying in the compilation buffer"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let activated := drained (pressedOn ran "C-k o C-k g RET")
+            let byHand := pressedOn activated "C-k o C-k 0"
+            let next := drained (pressedOn byHand "C-k n")
+            currentOf activated placeR == some 2 && currentOf byHand placeR == some 2 &&
+              headsOf byHand ⟨1⟩ == some #[0] &&
+              fileOf next ⟨0⟩ == some "/r/src/b.lean" &&
+              headsOf next ⟨0⟩ == some #[2] &&
+              currentOf next placeR == some 3 &&
+              headsOf next ⟨1⟩ == some #[rowAt 5] &&
+              next.loop.state.frame.focused == ⟨1⟩ },
+    { name :=
+        "locations criterion 9: a location whose file does not exist says so in the echo area and moves no cursor but the compilation buffer's, which is on the location"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let gone := drained (compiledLine (settledAfter driver "C-o a") "gone")
+            let stepped := drained (pressedOn gone "C-k n")
+            echoOf stepped == some (Files.notOpened "/r/src/gone.rs" .notFound) &&
+              fileOf stepped ⟨0⟩ == some "/r/src/a.lean" &&
+              headsOf stepped ⟨0⟩ == some #[0] &&
+              (stepped.loop.state.findBuffer "gone.rs").isNone &&
+              stepped.loop.state.frame.focused == ⟨0⟩ &&
+              currentOf stepped placeR == some 0 &&
+              (showing stepped ⟨2⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              headsOf stepped ⟨2⟩ == some #["r@main in /r: gone\n".utf8ByteSize] },
+    { name :=
+        "locations criterion 10: a recompile resets that workspace's list only, and its next next-error visits its new first location"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let both := drained (pressedOn (settledAfter inR "C-o w") "C-k h")
+            let steppedW := drained (pressedOn both "C-k n")
+            let steppedR := drained (pressedOn (settledAfter steppedW "C-o a") "C-k n")
+            let wBefore := Compile.recordOf steppedR.loop.state placeW
+            let second :=
+              withStreams steppedR
+                #[{ command := shellCommand "/r" "check"
+                    steps := linesSteps ["src/b.lean:1:2: error: second run"] }]
+            let rerun := drained (pressedOn second "C-o a C-k r")
+            let record := Compile.recordOf rerun.loop.state placeR
+            let after := drained (pressedOn rerun "C-k n")
+            currentOf steppedW placeW == some 0 && currentOf steppedR placeR == some 0 &&
+              record.locations.map (fun site => (site.file.toString, site.first)) ==
+                #[("/r/src/b.lean", 1)] &&
+              record.current == none &&
+              (compileBuffer rerun "*compilation: r@main*").map (·.spans) ==
+                some #[{ start := 20, stop := 34, face := ⟨"compilation.error"⟩ }] &&
+              Compile.recordOf rerun.loop.state placeW == wBefore &&
+              fileOf after ⟨0⟩ == some "/r/src/b.lean" &&
+              headsOf after ⟨0⟩ == some #[1] &&
+              currentOf after placeR == some 0 },
+    { name :=
+        "the ex line steps as the keys do: :next-error visits the first location and :previous-error stops before it; compile-goto-error outside a compilation buffer says so; the test scheme's next-item key in a compilation buffer steps nothing"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let exNext := drained (fedTo ran (exLine "next-error")).1
+            let exPrevious := drained (fedTo exNext (exLine "previous-error")).1
+            let elsewhere := pressedOn (settledAfter driver "C-o a") "C-k e"
+            let activated := drained (pressedOn ran "C-k o C-k g RET")
+            let item := drained (pressedOn activated "C-k o C-n")
+            fileOf exNext ⟨0⟩ == some "/r/src/main.rs" && headsOf exNext ⟨0⟩ == some #[135] &&
+              currentOf exNext placeR == some 0 &&
+              echoOf exPrevious == some "previous-error: no earlier locations in r@main" &&
+              currentOf exPrevious placeR == some 0 &&
+              echoOf elsewhere == some "compile-goto-error: a.lean is not a compilation buffer" &&
+              currentOf item placeR == some 2 &&
+              fileOf item ⟨0⟩ == fileOf activated ⟨0⟩ &&
+              headsOf item ⟨0⟩ == headsOf activated ⟨0⟩ },
+    { name :=
+        "with the compilation buffer in the only view, next-error splits that view and visits the location in the new view, the focus staying in the compilation buffer; activate there visits in the new view and focuses it"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let only := pressedOn ran "C-e c"
+            let stepped := drained (pressedOn only "C-k n")
+            let activated := drained (pressedOn only "C-k g RET")
+            only.loop.state.frame.windows == #[⟨1⟩] && only.loop.state.frame.focused == ⟨1⟩ &&
+              stepped.loop.state.frame.windows == #[⟨1⟩, ⟨2⟩] &&
+              (showing stepped ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              fileOf stepped ⟨2⟩ == some "/r/src/main.rs" &&
+              headsOf stepped ⟨2⟩ == some #[135] &&
+              stepped.loop.state.frame.focused == ⟨1⟩ &&
+              currentOf stepped placeR == some 0 &&
+              activated.loop.state.frame.windows == #[⟨1⟩, ⟨2⟩] &&
+              (showing activated ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              fileOf activated ⟨2⟩ == some "/r/src/main.rs" &&
+              headsOf activated ⟨2⟩ == some #[23] &&
+              activated.loop.state.frame.focused == ⟨2⟩ &&
+              currentOf activated placeR == some 2 },
+    { name :=
+        "with the compilation buffer in the only view and a prompt open, next-error from the compilation buffer never visits in the minibuffer's view: it splits the compilation buffer's view and visits in the new view"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let asking := pressedOn ran "C-e c C-k c C-k o"
+            let stepped := drained (pressedOn asking "C-k n")
+            let minibuffer := asking.loop.state.minibufferView?
+            asking.loop.state.frame.windows == #[⟨1⟩] && minibuffer == some ⟨2⟩ &&
+              asking.loop.state.frame.focused == ⟨1⟩ &&
+              stepped.loop.state.minibufferView? == minibuffer &&
+              stepped.loop.state.frame.windows == #[⟨1⟩, ⟨3⟩] &&
+              (showing stepped ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              fileOf stepped ⟨3⟩ == some "/r/src/main.rs" &&
+              headsOf stepped ⟨3⟩ == some #[135] &&
+              currentOf stepped placeR == some 0 },
+    { name :=
+        "the view a location is visited in, asked from the compilation buffer in the only view, is the asking view where the split is refused, and the new view split from it where it is not"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let only := pressedOn ran "C-e c"
+            let compilation := only.loop.state.findBuffer "*compilation: r@main*"
+            let visiting (refuseSplits : Bool) : Option ViewId :=
+              (Program.run (port := editorPort) (splitsRefusedIf refuseSplits)
+                  (Compile.visitingView ⟨1⟩ compilation).run
+                  (only.loop.state, only.model)).1.toOption
+            only.loop.state.frame.windows == #[⟨1⟩] && compilation.isSome &&
+              visiting true == some ⟨1⟩ &&
+              visiting false == some ⟨2⟩ },
+    { name :=
+        "a location whose format counts columns from 0 is visited at its printed column: 12:5 is byte 136 of main.rs, one on from where the general format puts it, and 2:7 is byte 25, seven two-byte characters into its row"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let based :=
+              pressedOn (drained (pressedOn (settledAfter driver "C-o a") "C-k h")) "C-k b"
+            let step (driver : TestDriver) (keys : String) := drained (pressedOn driver keys)
+            let first := step based "C-k n"
+            let third := step (step first "C-k n") "C-k n"
+            (Compile.recordOf based.loop.state placeR).locations.map (·.columnBase) ==
+                #[0, 0, 0, 0] &&
+              fileOf first ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf first ⟨0⟩ == some #[136] &&
+              currentOf third placeR == some 2 &&
+              fileOf third ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf third ⟨0⟩ == some #[25] },
+    { name :=
+        "previous-error right after a compile, with no current location, stops with a message, leaves the current location none and visits nothing"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let back := drained (pressedOn ran "C-k p")
+            currentOf ran placeR == none &&
+              echoOf back == some "previous-error: no earlier locations in r@main" &&
+              currentOf back placeR == none &&
+              fileOf back ⟨0⟩ == some "/r/src/a.lean" &&
+              headsOf back ⟨0⟩ == headsOf ran ⟨0⟩ &&
+              headsOf back ⟨1⟩ == headsOf ran ⟨1⟩ }]
+
+/-- The error format `name` of the hook checks: `at <file> line <line>`, which
+the general format does not read. -/
+def atFormat (name : String) : Compile.Format :=
+  { name
+    pattern :=
+      [Compile.step
+          [{ atom := .literal "at " }, { atom := .noneOf [' '], into := some .file },
+            { atom := .literal " line " }, { atom := .digits, into := some .line }],
+        Compile.step [{ atom := .rest }]] }
+
+/-- `a-mode`'s formats in the hook checks. -/
+def aFormats : Array Compile.Format :=
+  #[atFormat "a-at"]
+
+/-- `b-mode`'s formats in the hook checks: its own `at` format, then the
+general one under another name. -/
+def bFormats : Array Compile.Format :=
+  #[atFormat "b-at", { Compile.Format.general with name := "b-general" }]
+
+/-- `a-mode`'s commands in the hook checks, as `hookSetup` registers them by
+default. -/
+def aCommands : Array Compile.NamedCommand :=
+  #[{ name := "build", line := "a-build" }, { name := "test", line := "a-test" }]
+
+/-- The project commands of the hook checks: `lint` of `cargo-mode` for
+`github.com/o/r`, as `cargo clippy`, with the setting `profile` `dev`. -/
+def lintProject : SetupM Unit :=
+  projectCommands (.remote "github.com/o/r") "cargo-mode" [("lint", "cargo clippy")]
+    [("profile", .str "dev")]
+
+/-- The config of the hook checks, in this order: `b-mode` on `b.toml`,
+`a-mode` on `a.toml` with `aCommands` as its commands unless it is given
+others, `marker-mode` on `marker.toml` and `cargo-mode` on `Cargo.toml`;
+then `project`, by default `lintProject`. -/
+def hookSetup (aCommands : Array Compile.NamedCommand := aCommands)
+    (project : SetupM Unit := lintProject) : SetupM Unit := do
+  compileContribution
+      { mode := "b-mode", markers := #["b.toml"]
+        commands :=
+          #[{ name := "build", line := "b-build" }, { name := "check", line := "b-check" }]
+        formats := bFormats }
+  compileContribution
+      { mode := "a-mode", markers := #["a.toml"], commands := aCommands, formats := aFormats }
+  compileContribution
+      { mode := "marker-mode", markers := #["marker.toml"]
+        commands := #[{ name := "build", line := "m-build" }] }
+  compileContribution
+      { mode := "cargo-mode", markers := #["Cargo.toml"]
+        commands :=
+          #[{ name := "build", line := "cargo build" }, { name := "test", line := "cargo test" }] }
+  project
+
+/-- The registry of the hook checks: `setup`'s contributions and project
+commands installed for config, over `compiled` for the owner `compiled`. -/
+def hookRegistry (setup : SetupM Unit := hookSetup) (compiled : Array Compile.Contribution := #[]) :
+    Config.Registry :=
+  let base := ({} : Config.Registry).replaceContributions .compiled compiled
+  match Config.Registrations.ofSetup setup with
+  | .ok registrations =>
+    { base.replaceContributions .config registrations.contributions with
+      projectCommands := registrations.projectCommands }
+  | .error _ => base
+
+/-- The world of the hook checks: the compile checks' world, a repository
+`/up/repo` with no origin, a repository `/o` of another origin, and the
+marker files of `hookSetup`'s modes. -/
+def hookWorld : Workspace.World :=
+  { compileWorld with
+    repositories :=
+      compileWorld.repositories ++
+        #[{ toplevel := "/up/repo", commonDir := "/up/repo/.git" },
+          { toplevel := "/o", commonDir := "/o/.git", origin := some "git@github.com:o/other.git" }]
+    markerDirectories :=
+      compileWorld.markerDirectories ++ (#["/up/repo/.git", "/o/.git"] : Array System.FilePath)
+    markers :=
+      compileWorld.markers ++
+        (#["/r/a/marker.toml", "/up/marker.toml", "/loose/marker.toml", "/loose2/marker.toml",
+            "/r/hook/b.toml", "/r/hook/one/two/a.toml", "/r/crate/Cargo.toml",
+            "/w/crate/Cargo.toml", "/o/Cargo.toml"] :
+          Array System.FilePath) }
+
+/-- Every directory a file of the hook checks opens in, each of which git is
+scripted for: one git leaves unscripted would fall to the marker adapter,
+which finds `Cargo.toml` as a root. -/
+def hookDirectories : Array System.FilePath :=
+  #["/r/src", "/w/src", "/x", "/clone/r/src", "/r/a/b/c", "/up/repo/src", "/loose/deep", "/loose2",
+    "/r/hook/one/two/three/four", "/r/crate/src", "/w/crate/src", "/o/src"]
+
+/-- The bindings of the hook checks: the compile checks', `C-k i`
+(`compile-command`), and `C-o m`, `C-o u`, `C-o l`, `C-o 2`, `C-o h`, `C-o
+g`, `C-o k`, `C-o 3` and `C-o 4`, which open the files of `hookFiles` in
+that order. Test-scheme chords only. -/
+def hookBindings : List (String × Invocation) :=
+  compileBindings ++
+    [("C-k i", invoke Compile.commandName), ("C-o m", opens "/r/a/b/c/x.txt"),
+      ("C-o u", opens "/up/repo/src/u.txt"), ("C-o l", opens "/loose/deep/l.txt"),
+      ("C-o 2", opens "/loose2/l.txt"), ("C-o h", opens "/r/hook/one/two/three/four/f.txt"),
+      ("C-o g", opens "/r/hook/one/two/three/four/g.txt"), ("C-o k", opens "/r/crate/src/main.rs"),
+      ("C-o 3", opens "/w/crate/src/main.rs"), ("C-o 4", opens "/o/src/main.rs")]
+
+/-- The files of the hook checks, besides the compile checks'. -/
+def hookFiles : List (String × String) :=
+  [("/r/a/b/c/x.txt", "x"), ("/up/repo/src/u.txt", "u"), ("/loose/deep/l.txt", "l"),
+    ("/loose2/l.txt", "l"), ("/r/hook/one/two/three/four/f.txt", "f"),
+    ("/r/hook/one/two/three/four/g.txt", "g"), ("/r/crate/src/main.rs", "fn main() {}\n"),
+    ("/w/crate/src/main.rs", "fn main() {}\n"), ("/o/src/main.rs", "fn main() {}\n")]
+
+/-- The keys of the hook checks (`hookBindings`), with the loop told of
+`registry`'s compile contributions. -/
+def hookKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
+  let keys := compileKeysOf hookBindings
+  { keys with registered := { keys.registered with compile := registry.compileHook } }
+
+/-- The output both `a-build`s write: a line `a-mode`'s and `b-mode`'s `at`
+formats read, and one the general format reads. -/
+def hookLines : List String :=
+  ["at src/x.rs line 4", "src/main.rs:1:1: error: x"]
+
+/-- The streaming children of the hook checks, besides the compile
+checks'. -/
+def hookStreams : Array Process.StreamScript :=
+  #[{ command := shellCommand "/r/hook/one/two" "a-build", steps := linesSteps hookLines },
+    { command := shellCommand "/r" "a-build", steps := linesSteps hookLines },
+    { command := shellCommand "/r/hook/one/two" "a-test", steps := linesSteps ["ok"] },
+    { command := shellCommand "/r/hook" "b-check", steps := linesSteps ["ok"] },
+    { command := shellCommand "/r/hook/one/two" "config-build", steps := linesSteps ["ok"] },
+    { command := shellCommand "/r/crate" "cargo clippy", steps := linesSteps ["ok"] },
+    { command := shellCommand "/r/crate" "cargo clippy -D warnings", steps := linesSteps ["ok"] }]
+
+/-- A driver of the hook checks: the world of `hookWorld`, with the hook
+checks' keys over `registry` and the compile checks' jobs, the files of both,
+and the children of both; `none` if making the state was refused. -/
+def hookDriver (registry : Config.Registry := hookRegistry) : Option TestDriver :=
+  let model := hookWorld.jobModel "git" hookDirectories
+  let files :=
+    (compileFiles ++ hookFiles).foldl
+      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
+  (Loop.Driver.over (hookKeys registry) compileJobs (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver =>
+    { driver with
+      jobs :=
+        { model with
+          files, processes := { model.processes with streams := hookStreams ++ compileStreams } } }
+
+/-- The on-modes of the buffer the view 0 of `driver` shows. -/
+def shownOnModes (driver : TestDriver) : Option (Array Workspace.OnMode) := do
+  return Workspace.onModesOf driver.loop.state (← showing driver).id
+
+/-- The minor modes of the buffer the view 0 of `driver` shows. -/
+def shownMinors (driver : TestDriver) : Option (Array String) :=
+  (showing driver).map (·.buffer.minors)
+
+/-- `driver` once `keys` are pressed and every job they start, and every job
+those jobs' commands start, is finished, oldest first; with the names of the
+jobs finished, in order. -/
+def settledNames (driver : TestDriver) (keys : String) : TestDriver × Array String :=
+  (List.range 8).foldl
+    (fun (driver, names) _ =>
+      match driver.pending[0]? with
+      | some job => ((driver.finish job.id).1, names.push job.name)
+      | none => (driver, names))
+    ((fedTo driver (presses keys)).1, #[])
+
+/-- The on-modes of `/r/hook/one/two/three/four` in the hook checks:
+`a-mode` at `/r/hook/one/two`, then `b-mode` at `/r/hook`. -/
+def hookModes : Array Workspace.OnMode :=
+  #[{ mode := "a-mode", root := "/r/hook/one/two" }, { mode := "b-mode", root := "/r/hook" }]
+
+/-- The locations a run of `a-build` in `/r/hook/one/two` with `hookModes`
+finds, as each one's format and file: `a-mode`'s format reads the first
+line, and `b-mode`'s copy of the general format the second. -/
+def hookLocations : Array (String × String) :=
+  #[("a-at", "/r/hook/one/two/src/x.rs"), ("b-general", "/r/hook/one/two/src/main.rs")]
+
+/-- The locations `place` keeps in `driver`, as each one's format and
+file. -/
+def locationsOf (driver : TestDriver) (place : Compile.Place) : Array (String × String) :=
+  (Compile.recordOf driver.loop.state place).locations.map fun site =>
+    (site.format, site.file.toString)
+
+/-- The registry of criterion 8 of the hook checks: config's `a-mode` with
+the commands `build` and `test` as `config-build` and `config-test`, over a
+compiled `a-mode` with `build` and `lint`. -/
+def hookOverCompiled : Config.Registry :=
+  hookRegistry
+    (hookSetup
+      #[{ name := "build", line := "config-build" }, { name := "test", line := "config-test" }])
+    #[{ mode := "a-mode", markers := #["a.toml"]
+        commands :=
+          #[{ name := "build", line := "compiled-build" },
+            { name := "lint", line := "compiled-lint" }] }]
+
+/-- `driver` once the loop is told the compile hook of `hookSetup` with
+`project` as its project commands, as a reload that changes them tells
+it. -/
+def toldProject (driver : TestDriver) (project : SetupM Unit) : TestDriver :=
+  let compile := (hookRegistry (hookSetup aCommands project)).compileHook
+  { driver with keys := { driver.keys with registered := { driver.keys.registered with compile } } }
+
+/-- The settings `Compile.projectSettings` gives the project of `identity`
+for the mode `mode`, run as the loop runs a command in `driver`; `none` if
+it does not finish. -/
+def settingsIn (driver : TestDriver) (identity : Project.Identity) (mode : String) :
+    Option (List (String × Value)) :=
+  let program : EditorM (Guarded (List (String × Value))) := do
+    return (←
+          (Compile.projectSettings identity mode).dispatched driver.keys.registered
+              driver.loop.state).1
+  match (program.runModel driver.model).1 with
+  | .ok (.finished settings) => some settings
+  | _ => none
+
+/-- A driver of the hook checks (`hookDriver`) whose loop is also told of
+the `code` mode and of the language `modelRs`, as a host registers them
+beside its contributions, so an opened `.rs` file both chooses a language
+and has its markers' minor modes turned on; `none` if making the state was
+refused. -/
+def hookLanguageDriver : Option TestDriver :=
+  hookDriver.map fun driver =>
+    let registered := driver.keys.registered
+    { driver with
+      keys :=
+        { driver.keys with
+          registered :=
+            { registered with
+              entering := fun name =>
+                (registered.entering name).orElse fun _ =>
+                  (Language.modes.find? (·.name == name)).map ([·])
+              languages := [modelRs] } } }
+
+/-- The checks of the compile hook (`Editor/Workspace/Modes.lean`,
+`Editor/Compile.lean`, "The hook"), on the loop's driver over the editor's
+models, the job model and the process model, in the world of `hookWorld`
+with the contributions of `hookSetup`. -/
+def compileHookChecks : List Check :=
+  [{  name :=
+        "hook criterion 1: a contribution registered in config with marker marker.toml turns marker-mode on in a buffer of /r/a/b/c/x.txt, two directories under /r/a/marker.toml, with /r/a as its root, and not in a buffer of /r/src/a.lean outside it"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let inside := settledAfter driver "C-o m"
+            let outside := settledAfter driver "C-o a"
+            (shownWorkspace inside).map (·.1.location) == some (.local "/r") &&
+              shownMinors inside == some #["marker-mode"] &&
+              shownOnModes inside == some #[{ mode := "marker-mode", root := "/r/a" }] &&
+              (shownWorkspace outside).map (·.1.location) == some (.local "/r") &&
+              shownMinors outside == some #[] &&
+              shownOnModes outside == some #[] },
+    { name :=
+        "hook criterion 2: a marker above the buffer's workspace root turns no mode on: /up/marker.toml above the workspace /up/repo; /loose/marker.toml above /loose/deep/l.txt, which has no workspace and looks in its own directory alone; /loose2/marker.toml beside /loose2/l.txt turns marker-mode on with root /loose2"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let up := settledAfter driver "C-o u"
+            let loose := settledAfter driver "C-o l"
+            let beside := settledAfter driver "C-o 2"
+            (shownWorkspace up).map (·.1.location) == some (.local "/up/repo") &&
+              shownMinors up == some #[] &&
+              shownOnModes up == some #[] &&
+              (showing loose).map (·.buffer.name) == some "l.txt" &&
+              (shownWorkspace loose).isNone &&
+              shownMinors loose == some #[] &&
+              shownOnModes loose == some #[] &&
+              (shownWorkspace beside).isNone &&
+              shownMinors beside == some #["marker-mode"] &&
+              shownOnModes beside == some #[{ mode := "marker-mode", root := "/loose2" }] },
+    { name :=
+        "hook criterion 3: with a-mode's marker two directories above the file and b-mode's four, both inside /r, both modes are on, a-mode first with root /r/hook/one/two and b-mode with root /r/hook, though b-mode was registered first"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o h"
+            shownOnModes opened ==
+                some
+                  #[{ mode := "a-mode", root := "/r/hook/one/two" },
+                    { mode := "b-mode", root := "/r/hook" }] &&
+              shownMinors opened == some #["a-mode", "b-mode"] },
+    { name :=
+        "with no compile contribution registered, opening a file starts no find-mode-markers job and gives the buffer no on-modes"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let (opened, names) := settledNames driver "C-o a"
+            names.contains Workspace.findJob && !names.contains Workspace.markerJob &&
+              shownOnModes opened == some #[] &&
+              shownMinors opened == some #[] },
+    { name :=
+        "a second file of a directory whose workspace is cached gets its on-modes from find-mode-markers, with no git run"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let first := settledAfter driver "C-o h"
+            let (second, names) := settledNames first "C-o g"
+            (showing second).map (·.buffer.name) == some "g.txt" &&
+              second.jobs.processes.started == first.jobs.processes.started &&
+              names.contains Workspace.markerJob &&
+              !names.contains Workspace.findJob &&
+              shownOnModes second == shownOnModes first &&
+              shownMinors second == some #["a-mode", "b-mode"] },
+    { name :=
+        "hook criterion 4: in that set-up compile's prompt holds a-mode's first command, a-build; a line both a-mode's and b-mode's formats read is a-mode's location, and a line b-mode's format and the general one read is b-mode's"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let asked := pressedOn (settledAfter driver "C-o h") "C-k c"
+            let ran := drained (pressedOn asked "C-e y")
+            asked.loop.state.prompt.map (·.label) == some Compile.promptLabel &&
+              (showing asked asked.loop.state.frame.focused).bind (·.text) == some "a-build" &&
+              locationsOf ran placeR == hookLocations &&
+              (Compile.formatsOf hookRegistry.compileContributions hookModes).map (·.name) ==
+                #["a-at", "b-at", "b-general", "general"] },
+    { name :=
+        "hook criterion 5: on the process model, compile accepted with its default starts /bin/sh -c a-build in /r/hook/one/two, the header says r@main in /r/hook/one/two: a-build, and the output is in *compilation: r@main*, the workspace's buffer"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let ran := pressedOn (pressedOn (settledAfter driver "C-o h") "C-k c") "C-e y"
+            let done := drained ran
+            let name := "*compilation: r@main*"
+            let state := done.loop.state
+            ran.jobs.processes.started.back? == some (shellCommand "/r/hook/one/two" "a-build") &&
+              ran.posting.map (·.key) == #[some "compile local /r"] &&
+              (compiledText done name).map
+                  (·.startsWith "r@main in /r/hook/one/two: a-build\nat src/x.rs line 4\n") ==
+                some true &&
+              (state.findBuffer name).bind (fun id => (state.workspaceOf? id).map (·.1.location)) ==
+                some (.local "/r") },
+    { name :=
+        "hook criterion 7: a-mode's format finds at src/x.rs line 4, which the general format does not, in a compile from a buffer where a-mode is on, and not in one from /r/src/a.lean where it is off"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let off := drained (compiledLine (settledAfter driver "C-o a") "a-build")
+            let on := drained (pressedOn (pressedOn (settledAfter driver "C-o h") "C-k c") "C-e y")
+            off.jobs.processes.started.back? == some (shellCommand "/r" "a-build") &&
+              locationsOf off placeR == #[("general", "/r/src/main.rs")] &&
+              locationsOf on placeR == hookLocations },
+    { name :=
+        "hook criterion 8: config's contribution of a-mode replaces the compiled one's commands: compile defaults to config-build, and compile-command offers config's commands alone, its build running config-build"
+      run :=
+        pure <|
+          match hookDriver hookOverCompiled with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o h"
+            let asked := pressedOn opened "C-k c"
+            let offered := pressedOn opened "C-k i"
+            let built := (fedTo offered ([.commit "build (a-mode)"] ++ presses "C-e y")).1
+            (showing asked asked.loop.state.frame.focused).bind (·.text) == some "config-build" &&
+              (candidatesOf offered).map (·.all) ==
+                some #["build (a-mode)", "test (a-mode)", "build (b-mode)", "check (b-mode)"] &&
+              built.jobs.processes.started.back? ==
+                some (shellCommand "/r/hook/one/two" "config-build") },
+    { name :=
+        "recompile reruns the last line in its directory with the run's modes, so a-mode's format still reads its lines, from the compilation buffer too; compile in the compilation buffer defaults to the run's line and runs in its first mode's root"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let first :=
+              drained (pressedOn (pressedOn (settledAfter driver "C-o h") "C-k c") "C-e y")
+            let again := drained (pressedOn first "C-k r")
+            let fromBuffer := drained (pressedOn first "C-k o C-k r")
+            let asked := pressedOn first "C-k o C-k c"
+            let accepted := drained (pressedOn asked "C-e y")
+            let runsThere (driver : TestDriver) :=
+              driver.jobs.processes.started.back? ==
+                  some (shellCommand "/r/hook/one/two" "a-build") &&
+                (Compile.recordOf driver.loop.state placeR).modes == hookModes &&
+                locationsOf driver placeR == hookLocations
+            runsThere first && runsThere again &&
+              again.jobs.processes.started.size == first.jobs.processes.started.size + 1 &&
+              (showing fromBuffer fromBuffer.loop.state.frame.focused).map (·.buffer.name) ==
+                some "*compilation: r@main*" &&
+              runsThere fromBuffer &&
+              (showing asked asked.loop.state.frame.focused).bind (·.text) == some "a-build" &&
+              runsThere accepted &&
+              accepted.jobs.processes.started.size == first.jobs.processes.started.size + 1 },
+    { name :=
+        "a compile record with on-modes crosses as a tree and back, in both stores, now at version 3; a tree of version 2's shape, with no modes, is none"
+      run :=
+        let record : Compile.Record :=
+          { buffer := some 2, last := some ("a-build", "/r/hook/one/two"), runs := 1
+            modes := hookModes }
+        let older :=
+          match record.encode with
+          | .record fields => Value.record (fields.filter (·.1 != "modes"))
+          | other => other
+        pure
+          (Compile.Record.decode record.encode == some record &&
+            Compile.store.decode (Compile.store.encode record) == some record &&
+            Compile.directoryStore.decode (Compile.directoryStore.encode #[("/x", record)]) ==
+              some #[("/x", record)] &&
+            Compile.Record.decode older == none &&
+            Compile.store.version == 3 &&
+            Compile.directoryStore.version == 3) },
+    { name :=
+        "a run asked while one is in flight carries its modes through the restart prompt: yes runs the line in the mode's root with them"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let running := pressedOn (pressedOn (settledAfter driver "C-o h") "C-k c") "C-e y"
+            let asked := pressedOn (pressedOn running "C-k c") "C-e y"
+            let confirmed := drained (fedTo asked ([.commit "y"] ++ presses "C-e y")).1
+            let line := shellCommand "/r/hook/one/two" "a-build"
+            asked.loop.state.prompt.map (·.label) ==
+                some "Kill the compilation running in r@main? (y or n) " &&
+              confirmed.jobs.processes.killed == #[line] &&
+              (confirmed.jobs.processes.started.filter (· == line)).size == 2 &&
+              (Compile.recordOf confirmed.loop.state placeR).modes == hookModes &&
+              locationsOf confirmed placeR == hookLocations },
+    { name :=
+        "offers gives each on-mode's commands in on-mode order with the mode's root, replaces a contribution's command by a project's of the same name in place and appends a new name after, and offers nothing for a mode with no contribution, whose formats are none"
+      run :=
+        let contributions : Array Compile.Contribution :=
+          #[{ mode := "a-mode", markers := #["a.toml"], commands := aCommands },
+            { mode := "b-mode", markers := #["b.toml"]
+              commands := #[{ name := "check", line := "b-check" }] }]
+        let stored : Array Compile.ProjectCommands :=
+          #[{ project := .remote "github.com/o/r", mode := "a-mode"
+              commands :=
+                #[{ name := "lint", line := "a-lint" }, { name := "build", line := "p-build" }] }]
+        let modes : Array Workspace.OnMode :=
+          #[{ mode := "a-mode", root := "/a" }, { mode := "gone-mode", root := "/g" },
+            { mode := "b-mode", root := "/b" }]
+        pure
+          (Compile.offers contributions stored modes ==
+              #[{ mode := "a-mode", name := "build", line := "p-build", root := "/a" },
+                { mode := "a-mode", name := "test", line := "a-test", root := "/a" },
+                { mode := "a-mode", name := "lint", line := "a-lint", root := "/a" },
+                { mode := "b-mode", name := "check", line := "b-check", root := "/b" }] &&
+            (Compile.offers contributions stored #[]).isEmpty &&
+            (Compile.offers contributions #[] #[{ mode := "gone-mode", root := "/g" }]).isEmpty &&
+            (Compile.formatsOf contributions #[{ mode := "gone-mode", root := "/g" }]).map
+                (·.name) ==
+              #["general"]) },
+    { name :=
+        "hook criterion 6: compile-command offers build (a-mode), test (a-mode), build (b-mode) and check (b-mode); test runs a-test in /r/hook/one/two, and check (b-mode) given whole runs b-check in /r/hook"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let asked := pressedOn (settledAfter driver "C-o h") "C-k i"
+            let tested := drained (fedTo asked ([.commit "test"] ++ presses "C-e y")).1
+            let checked :=
+              drained
+                (fedTo (pressedOn tested "C-k i") ([.commit "check (b-mode)"] ++ presses "C-e y")).1
+            let name := "*compilation: r@main*"
+            asked.loop.state.prompt.map (·.label) == some Compile.commandPromptLabel &&
+              Compile.commandPromptLabel == "Mode command: " &&
+              (showing asked asked.loop.state.frame.focused).bind (·.text) == some "" &&
+              (candidatesOf asked).map (·.all) ==
+                some #["build (a-mode)", "test (a-mode)", "build (b-mode)", "check (b-mode)"] &&
+              tested.jobs.processes.started.back? ==
+                some (shellCommand "/r/hook/one/two" "a-test") &&
+              (compiledText tested name).map
+                  (·.startsWith "r@main in /r/hook/one/two: a-test\nok\n") ==
+                some true &&
+              checked.jobs.processes.started.back? == some (shellCommand "/r/hook" "b-check") &&
+              (compiledText checked name).map (·.startsWith "r@main in /r/hook: b-check\nok\n") ==
+                some true },
+    { name :=
+        "compile-command in a buffer with no mode on says compile-command: no mode gives commands in r@main and opens no prompt; an answer that names no command says compile-command: no command make in r@main; an empty one says compile-command: no command; in a workspace that cannot run commands it says so"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let plain := pressedOn (settledAfter driver "C-o a") "C-k i"
+            let opened := settledAfter driver "C-o h"
+            let unknown :=
+              (fedTo (pressedOn opened "C-k i") ([.commit "make"] ++ presses "C-e y")).1
+            let empty := pressedOn (pressedOn opened "C-k i") "C-e y"
+            let kube := pressedOn (settledAfter opened "C-e k") "C-k i"
+            plain.loop.state.prompt.isNone &&
+              echoOf plain == some "compile-command: no mode gives commands in r@main" &&
+              echoOf unknown == some "compile-command: no command make in r@main" &&
+              unknown.jobs.processes.started == opened.jobs.processes.started &&
+              unknown.loop.state.prompt.isNone &&
+              echoOf empty == some "compile-command: no command" &&
+              empty.jobs.processes.started == opened.jobs.processes.started &&
+              kube.loop.state.prompt.isNone &&
+              echoOf kube ==
+                some
+                  "compile-command: r@app is reachable through kube pod at /app, where commands cannot run" },
+    { name :=
+        "the ex line runs compile-command: `:compile-command test` runs a-test in /r/hook/one/two with no prompt"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let ran := (fedTo (settledAfter driver "C-o h") (exLine "compile-command test")).1
+            ran.jobs.processes.started.back? == some (shellCommand "/r/hook/one/two" "a-test") &&
+              ran.loop.state.prompt.isNone },
+    { name :=
+        "hook criterion 9: lint, a command config gives cargo-mode for the project github.com/o/r, is offered in /r/crate and in its worktree /w/crate and not in /o of github.com/o/other; it runs cargo clippy in /r/crate, and its settings are read for that project and not the other"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let inR := pressedOn (settledAfter driver "C-o k") "C-k i"
+            let worktree := settledAfter driver "C-o 3"
+            let inW := pressedOn worktree "C-k i"
+            let inO := pressedOn (settledAfter driver "C-o 4") "C-k i"
+            let linted := (fedTo inR ([.commit "lint"] ++ presses "C-e y")).1
+            let cargo := #["build (cargo-mode)", "test (cargo-mode)"]
+            let dev : List (String × Value) := [("profile", .str "dev")]
+            (candidatesOf inR).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
+              (shownWorkspace worktree).map (·.1.location) == some (.local "/w") &&
+              shownOnModes worktree == some #[{ mode := "cargo-mode", root := "/w/crate" }] &&
+              (candidatesOf inW).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
+              (candidatesOf inO).map (·.all) == some cargo &&
+              linted.jobs.processes.started.back? ==
+                some (shellCommand "/r/crate" "cargo clippy") &&
+              settingsIn linted (.remote "github.com/o/r") "cargo-mode" == some dev &&
+              settingsIn inO (.remote "github.com/o/other") "cargo-mode" == some [] },
+    { name :=
+        "a project's settings are read as soon as a file of it opens, in either worktree, before compile or compile-command runs there; another project's are none"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let inR := settledAfter driver "C-o k"
+            let inW := settledAfter driver "C-o 3"
+            let inO := settledAfter driver "C-o 4"
+            let dev : List (String × Value) := [("profile", .str "dev")]
+            (shownWorkspace inR).map (·.2.identity) == some (.remote "github.com/o/r") &&
+              (shownWorkspace inW).map (·.2.identity) == some (.remote "github.com/o/r") &&
+              settingsIn inR (.remote "github.com/o/r") "cargo-mode" == some dev &&
+              settingsIn inW (.remote "github.com/o/r") "cargo-mode" == some dev &&
+              settingsIn inO (.remote "github.com/o/other") "cargo-mode" == some [] },
+    { name :=
+        "a project's settings follow a reload at once, with no compile between: a changed setting reads the new value, and dropped ones read none"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o k"
+            let linted :=
+              drained (fedTo (pressedOn opened "C-k i") ([.commit "lint"] ++ presses "C-e y")).1
+            let changed :=
+              toldProject linted
+                (projectCommands (.remote "github.com/o/r") "cargo-mode"
+                  [("lint", "cargo clippy -D warnings")] [("profile", .str "release")])
+            let dropped := toldProject changed (pure ())
+            let r : Project.Identity := .remote "github.com/o/r"
+            settingsIn linted r "cargo-mode" == some [("profile", .str "dev")] &&
+              settingsIn changed r "cargo-mode" == some [("profile", .str "release")] &&
+              settingsIn dropped r "cargo-mode" == some [] },
+    { name :=
+        "a reload that changes a project's commands is seen at the next compile-command: it offers lint and runs its new line; after a reload that drops them it offers no lint"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o k"
+            let linted :=
+              drained (fedTo (pressedOn opened "C-k i") ([.commit "lint"] ++ presses "C-e y")).1
+            let changed :=
+              toldProject linted
+                (projectCommands (.remote "github.com/o/r") "cargo-mode"
+                  [("lint", "cargo clippy -D warnings")] [("profile", .str "release")])
+            let asked := pressedOn changed "C-k i"
+            let relinted := drained (fedTo asked ([.commit "lint"] ++ presses "C-e y")).1
+            let dropped := toldProject relinted (pure ())
+            let askedAgain := pressedOn dropped "C-k i"
+            let cargo := #["build (cargo-mode)", "test (cargo-mode)"]
+            linted.jobs.processes.started.back? == some (shellCommand "/r/crate" "cargo clippy") &&
+              (candidatesOf asked).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
+              relinted.jobs.processes.started.back? ==
+                some (shellCommand "/r/crate" "cargo clippy -D warnings") &&
+              (candidatesOf askedAgain).map (·.all) == some cargo },
+    { name :=
+        "chooseOffer takes a whole candidate first, then the first offer of a bare name, and none for anything else; an offer is shown as its name and its mode"
+      run :=
+        let a : Compile.Offer :=
+          { mode := "a-mode", name := "build", line := "a-build", root := "/a" }
+        let b : Compile.Offer :=
+          { mode := "b-mode", name := "build", line := "b-build", root := "/b" }
+        let odd : Compile.Offer :=
+          { mode := "b-mode", name := "build (a-mode)", line := "odd", root := "/b" }
+        pure
+          (Compile.chooseOffer #[a, b] "build" == some a &&
+            Compile.chooseOffer #[a, b] "build (b-mode)" == some b &&
+            Compile.chooseOffer #[a, b] " build (b-mode) " == some b &&
+            Compile.chooseOffer #[odd, a] "build (a-mode)" == some a &&
+            Compile.chooseOffer #[a, b] "make" == none &&
+            Compile.chooseOffer #[a, b] "" == none &&
+            a.candidate == "build (a-mode)") },
+    { name :=
+        "a run whose child writes a lead line, pauses, then writes its location keeps one site whose first row is the lead's, with the lead's message, as one post would"
+      run :=
+        let setup : SetupM Unit :=
+          compileContribution
+            { mode := "a-mode", markers := #["a.toml"], commands := aCommands
+              formats := #[leadFormat] }
+        let steps : Array Process.Step :=
+          #[.write .out "warning: unused x\n".toUTF8, .pause 100,
+            .write .out "  at a.rs:4\n".toUTF8]
+        pure <|
+          match hookDriver (hookRegistry setup) with
+          | none => false
+          | some driver =>
+            let opened :=
+              withStreams (settledAfter driver "C-o h")
+                #[{ command := shellCommand "/r/hook/one/two" "a-build", steps }]
+            let ran := drained (pressedOn (pressedOn opened "C-k c") "C-e y")
+            ran.posting.isEmpty &&
+              (Compile.recordOf ran.loop.state placeR).locations.map
+                  (fun site => (site.file.toString, site.first, site.last, site.message)) ==
+                #[("/r/hook/one/two/a.rs", 1, 2, some "unused x")] },
+    { name :=
+        "a marker order crosses as arguments and back, and arguments that are no order read as none; the marker job started with them fails"
+      run :=
+        let orders : List Workspace.MarkerOrder :=
+          [{ buffer := ⟨1⟩, directory := "/r/src", bound := "/r", markers := #[] },
+            { buffer := ⟨4⟩, directory := "/a b/é", bound := "/a b", markers := #["a.toml", "B"] }]
+        pure
+          (orders.all
+              (fun order => Workspace.MarkerOrder.ofArguments? order.arguments == some order) &&
+            [[], [.nat 1, .str "/r"], [.nat 1, .str "/r", .str "/r", .nat 0]].all
+              (Workspace.MarkerOrder.ofArguments? · == none) &&
+            ((Workspace.markerWork [.nat 1] ()).runModel {}).1 matches .failed _) },
+    { name :=
+        "opening /r/crate/src/main.rs under /r/crate/Cargo.toml gives its buffer the language model-rs and the major mode code, attached with that language's grammar, and, once the marker job's command runs after, the minor mode cargo-mode with root /r/crate: setting the major mode on open and turning the markers' minor modes on later leave each other alone"
+      run :=
+        pure <|
+          match hookLanguageDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o k"
+            (showing opened).map (·.buffer.name) == some "main.rs" &&
+              languageAndMajor opened == some (some "model-rs", some "code") &&
+              opened.model.syntaxTree.attached.map (·.2) == #["json"] &&
+              shownMinors opened == some #["cargo-mode"] &&
+              shownOnModes opened == some #[{ mode := "cargo-mode", root := "/r/crate" }] }]
+
+/-- What cargo prints of rustc's error in the probe crate, after its
+`Compiling` line: the message, its location and the snippet under it. -/
+def rustcLines : Array String :=
+  #["error[E0308]: mismatched types", " --> src/main.rs:4:18", "  |", "4 |     let x: i32 = \"a\";",
+    "  |            ---   ^^^ expected `i32`, found `&str`", "  |            |",
+    "  |            expected due to this", "",
+    "For more information about this error, try `rustc --explain E0308`.",
+    "error: could not compile `probe` (bin \"probe\") due to 1 previous error"]
+
+/-- The checks of the shipped error formats (`Editor/Compile/Shipped.lean`,
+"The formats"): pure, with no driver. -/
+def projectFormatChecks : List Check :=
+  let general := Compile.Format.general
+  [{  name :=
+        "modes criterion 3: rustc's format finds error[E0308]: mismatched types followed by   --> src/main.rs:4:18 as one location at src/main.rs line 4 column 18, severity error, with the message mismatched types"
+      run :=
+        pure
+          (Compile.scan #[Compile.rustcFormat] "/c" #[] 1 0
+              #["error[E0308]: mismatched types", "  --> src/main.rs:4:18"] ==
+            #[{ file := "/c/src/main.rs", line := 4, column := some 18, columnBase := 1
+                severity := .error, format := "rustc", first := 1, last := 2, start := 37
+                stop := 53, message := some "mismatched types" }]) },
+    { name :=
+        "rustc's location line scanned alone after its lead in an earlier post gives the same site; a warning's lead gives a warning with its message; the snippet joins the site up to the blank line; and the general format reads none of rustc's lines"
+      run :=
+        let alone :=
+          Compile.scan #[Compile.rustcFormat] "/c"
+            (Compile.scan #[Compile.rustcFormat] "/c" #[] 1 0 #["error[E0308]: mismatched types"]) 2
+            31 #["  --> src/main.rs:4:18"] (previous := some "error[E0308]: mismatched types")
+        let warned :=
+          Compile.scan #[Compile.rustcFormat] "/c" #[] 1 0
+            #["warning: unused variable: `y`", " --> src/main.rs:2:9"]
+        let whole := Compile.scan #[Compile.rustcFormat, general] "/c" #[] 1 0 rustcLines
+        pure
+          (alone ==
+              Compile.scan #[Compile.rustcFormat] "/c" #[] 1 0
+                #["error[E0308]: mismatched types", "  --> src/main.rs:4:18"] &&
+            warned.map (fun site => (site.severity, site.line, site.column, site.message)) ==
+              #[(.warning, 2, some 9, some "unused variable: `y`")] &&
+            whole.map (fun site => (site.file.toString, site.first, site.last, site.message)) ==
+              #[("/c/src/main.rs", 1, 7, some "mismatched types")] &&
+            (rustcLines.push "   ::: src/lib.rs:3:5").all (general.read? · == none)) },
+    { name :=
+        "modes criterion 4: Lean's format finds error: ./Foo/Bar.lean:12:4: unknown identifier 'x' at Foo/Bar.lean line 12 column 4, counting columns from 0, and the same line with warning: as a warning"
+      run :=
+        let line := "error: ./Foo/Bar.lean:12:4: unknown identifier 'x'"
+        let warning := "warning: ./Foo/Bar.lean:12:4: unknown identifier 'x'"
+        pure
+          (Compile.leanFormat.read? line ==
+              some
+                { file := "./Foo/Bar.lean", line := 12, column := some 4, severity := .error
+                  start := 7, stop := 26, message := some "unknown identifier 'x'" } &&
+            (Compile.scan #[Compile.leanFormat] "/l" #[] 1 0 #[line]).map
+                (fun site => (site.file.toString, site.line, site.column, site.columnBase)) ==
+              #[("/l/Foo/Bar.lean", 12, some 4, 0)] &&
+            (Compile.leanFormat.read? warning).map (·.severity) == some .warning) },
+    { name :=
+        "Lean's format reads info: as a note and Lake's form with no ./, and reads none of Lake's other lines; the general format reads none of Lake's lines"
+      run :=
+        let lake :=
+          #["✖ [2/4] Building Foo.Bar (156ms)", "error: Foo/Bar.lean:13:6: Unknown identifier `x`",
+            "warning: Foo/Bar.lean:14:7: Variable name `y` is not explicitly referenced.",
+            "info: Foo/Bar.lean:14:0: 1", "Some required targets logged failures:", "- Foo.Bar",
+            "error: build failed"]
+        pure
+          ((Compile.leanFormat.read? "info: Foo/Bar.lean:14:0: 1").map (·.severity) == some .note &&
+            (lake.filterMap Compile.leanFormat.read?).map
+                (fun reading => (reading.file, reading.line, reading.severity)) ==
+              #[("Foo/Bar.lean", 13, .error), ("Foo/Bar.lean", 14, .warning),
+                ("Foo/Bar.lean", 14, .note)] &&
+            (lake.push "error: ./Foo/Bar.lean:12:4: unknown identifier 'x'").all
+              (general.read? · == none)) }]
+
+/-- What `mise tasks ls --json` prints in `/m` in the project checks: three
+tasks with the real listing's shape, `build` and `test` in `/m` and `lint`
+in `/m/sub`, each with fields of every JSON kind besides its name and
+directory. -/
+def miseListing : String :=
+  "[\n  {\n    \"name\": \"build\",\n    \"aliases\": [],\n    \"description\": \"\",\n    \"source\": \"/m/mise.toml\",\n    \"depends\": [],\n    \"dir\": \"/m\",\n    \"hide\": false,\n    \"raw\": false,\n    \"sources\": [],\n    \"outputs\": [],\n    \"shell\": null,\n    \"quiet\": false,\n    \"silent\": false,\n    \"tools\": {},\n    \"run\": [\"lake build\"],\n    \"file\": null\n  },\n  {\"name\": \"test\", \"dir\": \"/m\", \"depends\": [\"build\"], \"hide\": false, \"timeout\": 1.5e2, \"env\": {\"A\": \"1\"}, \"run\": [\"lake test\"]},\n  {\"name\": \"lint\", \"dir\": \"/m/sub\", \"depends\": [], \"hide\": false, \"usage\": {\"spec\": {\"args\": [[1, -2.5], true]}}}\n]\n"
+
+/-- The checks of the JSON reader (`Editor/Json.lean`): pure. -/
+def jsonChecks : List Check :=
+  let parsed (text : String) : Option Json.Value := (Json.parse text.toUTF8).toOption
+  let refusal (text : String) : Option String :=
+    match Json.parse text.toUTF8 with
+    | .error why => some why
+    | .ok _ => none
+  [{  name :=
+        "the JSON reader reads nested arrays and objects in order, escapes, numbers as their text, true, false and null, with whitespace around them"
+      run :=
+        pure
+          (parsed
+                " {\"a\": [1, -2.50, 3e+2, {\"b\": null}], \"s\": \"x\\\"y\\u00e9\\n\", \"t\": true, \"f\": false, \"a\": []} " ==
+              some
+                (.object
+                  #[("a",
+                      .array
+                        #[.number "1", .number "-2.50", .number "3e+2", .object #[("b", .null)]]),
+                    ("s", .string "x\"yé\n"), ("t", .bool true), ("f", .bool false),
+                    ("a", .array #[])]) &&
+            (parsed "{\"a\": 1, \"a\": 2}").bind (·.field? "a") == some (.number "1") &&
+            parsed "[]" == some (.array #[]) &&
+            parsed "\"é\"" == some (.string "é")) },
+    { name :=
+        "the JSON reader refuses trailing text, an unclosed array, an unclosed object, a bare word, a number with no digits, an empty document and what is not UTF-8, saying why"
+      run :=
+        pure
+          (refusal "[1] x" == some "there is more after the value" &&
+            refusal "[1, 2" == some "an array is not closed" &&
+            refusal "{\"a\": 1" == some "an object is not closed" &&
+            refusal "nope" == some "nope is not a JSON value" &&
+            refusal "-" == some "a number has no digits" &&
+            refusal "  " == some "a value is missing" &&
+            (match Json.parse (ByteArray.mk #[0xff]) with
+            | .error why => why == "it is not UTF-8"
+            | .ok _ => false)) },
+    { name :=
+        "mise's task list gives one command per task, mise run and the task's name, in the task's dir, in the order listed: build and test in /m, lint in /m/sub; an empty list gives none"
+      run :=
+        pure
+          ((Compile.miseTasks miseListing.toUTF8).toOption.map
+                (·.map fun command =>
+                  (command.name, command.line, command.directory.map (·.toString))) ==
+              some
+                #[("build", "mise run build", some "/m"), ("test", "mise run test", some "/m"),
+                  ("lint", "mise run lint", some "/m/sub")] &&
+            (Compile.miseTasks "[]".toUTF8).toOption.map (·.size) == some 0) },
+    { name :=
+        "a task's name that is not a bare shell word is quoted: my task gives mise run 'my task', it's gives mise run 'it'\\''s; a name listed twice keeps its first, and a task with an empty dir has none"
+      run :=
+        let listing :=
+          "[{\"name\": \"my task\", \"dir\": \"\"}, {\"name\": \"it's\"}, {\"name\": \"my task\", \"dir\": \"/x\"}, {\"name\": \"a:b/c@d%e+f=g,h_i-j.k\"}]"
+        pure
+          ((Compile.miseTasks listing.toUTF8).toOption.map
+                (·.map fun command =>
+                  (command.name, command.line, command.directory.map (·.toString))) ==
+              some
+                #[("my task", "mise run 'my task'", none), ("it's", "mise run 'it'\\''s'", none),
+                  ("a:b/c@d%e+f=g,h_i-j.k", "mise run a:b/c@d%e+f=g,h_i-j.k", none)] &&
+            Compile.shellWord "" == "''" &&
+            Compile.shellWord "a$b" == "'a$b'") },
+    { name :=
+        "mise's task list is refused when it is not an array, a task is not an object, a task has no name or an empty one, or it is no JSON, saying why"
+      run :=
+        let refused (text : String) : Option String :=
+          match Compile.miseTasks text.toUTF8 with
+          | .error why => some why
+          | .ok _ => none
+        pure
+          (refused "{}" == some "it is not an array" &&
+            refused "[{\"name\": \"a\"}, 3]" == some "task 2 is not an object" &&
+            refused "[{\"name\": \"a\"}, {\"dir\": \"/m\"}]" == some "task 2 has no name" &&
+            refused "[{\"name\": \"\"}]" == some "task 1 has no name" &&
+            refused "[{\"name\": 1}]" == some "task 1 has no name" &&
+            refused "[" == some "a value is missing") }]
+
+/-- What `t-mode`'s listing prints, read: one command a line, `name=line`
+or `name=line=directory`. -/
+def tRead (bytes : ByteArray) : Except String (Array Compile.NamedCommand) := do
+  let some text := String.fromUTF8? bytes | throw "it is not UTF-8"
+  ((text.splitOn "\n").filter (!·.isEmpty)).toArray.mapM fun line =>
+      match line.splitOn "=" with
+      | [name, line] => pure { name, line }
+      | [name, line, directory] => pure { name, line, directory := some directory }
+      | _ => throw s!"{line} is no command"
+
+/-- The contribution of the listing checks: `t-mode` on `t.toml`, with the
+commands `build` (`t-fixed-build`) and `check` (`t-check`), and its listing
+`t-list`, read by `tRead`. -/
+def tContribution : Compile.Contribution :=
+  { mode := "t-mode", markers := #["t.toml"]
+    commands :=
+      #[{ name := "build", line := "t-fixed-build" }, { name := "check", line := "t-check" }]
+    listing := some { program := "t-list", read := tRead } }
+
+/-- The listing `t-list` in `directory`. -/
+def tList (directory : System.FilePath) : Process.Command :=
+  { program := "t-list", directory }
+
+/-- The world of the listing checks: the repositories `/t` and `/t2`, each
+holding `t.toml`, and `/u`, a directory holding `t.toml` in no
+repository. -/
+def listingWorld : Workspace.World :=
+  { repositories :=
+      #[{ toplevel := "/t", commonDir := "/t/.git" },
+        { toplevel := "/t2", commonDir := "/t2/.git" }]
+    markerDirectories := #["/t/.git", "/t2/.git"]
+    markers := #["/t/t.toml", "/t2/t.toml", "/u/t.toml"] }
+
+/-- The bindings of the listing checks: the hook checks', and `C-p 1`,
+`C-p 2`, `C-p 3` and `C-p 4`, which open `/t/a.txt`, `/t/b.txt`,
+`/t2/a.txt` and `/u/a.txt`. -/
+def listingBindings : List (String × Invocation) :=
+  hookBindings ++
+    [("C-p 1", opens "/t/a.txt"), ("C-p 2", opens "/t/b.txt"), ("C-p 3", opens "/t2/a.txt"),
+      ("C-p 4", opens "/u/a.txt")]
+
+/-- What each run of the listing checks does: `t-list` in `/t` lists
+`build`, `fmt` and `sub`, in `sub`; in `/t2` it fails; in `/u` it lists
+`u-only`. -/
+def listingScripts : Array Process.Script :=
+  #[{ command := tList "/t", reply := shellReply "build=t-build\nfmt=t-fmt\nsub=t-sub=sub\n" },
+    { command := tList "/t2", reply := shellReply "" "t-list: broken\nmore\n" (.code 3) },
+    { command := tList "/u", reply := shellReply "u-only=u-only\n" }]
+
+/-- The streaming children of the listing checks. -/
+def listingStreams : Array Process.StreamScript :=
+  #[{ command := shellCommand "/t" "t-build", steps := linesSteps ["ok"] },
+    { command := shellCommand "/t/sub" "t-sub", steps := linesSteps ["ok"] },
+    { command := shellCommand "/u" "u-only", steps := linesSteps ["ok"] }]
+
+/-- A driver of the listing checks over `registry`, by default `t-mode`
+registered in config: the world of `listingWorld`, with its bindings, the
+compile checks' jobs, its files, runs and children; `none` if making the
+state was refused. -/
+def listingDriver (registry : Config.Registry := hookRegistry (compileContribution tContribution)) :
+    Option TestDriver :=
+  let model := listingWorld.jobModel "git" #["/t", "/t2", "/u"]
+  let files :=
+    [("/t/a.txt", "a"), ("/t/b.txt", "b"), ("/t2/a.txt", "a"), ("/u/a.txt", "a")].foldl
+      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
+  let keys := compileKeysOf listingBindings
+  let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
+  (Loop.Driver.over keys compileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver =>
+    { driver with
+      jobs :=
+        { model with
+          files
+          processes :=
+            { model.processes with
+              scripts := model.processes.scripts ++ listingScripts, streams := listingStreams } } }
+
+/-- How many times `driver` has started `command`. -/
+def startedCount (driver : TestDriver) (command : Process.Command) : Nat :=
+  (driver.jobs.processes.started.filter (· == command)).size
+
+/-- `driver` once every pending job not called `name` is finished, oldest
+first, with those they start; bounded. -/
+def settledBut (driver : TestDriver) (name : String) : TestDriver :=
+  (List.range 8).foldl
+    (fun driver _ =>
+      match driver.pending.find? (·.name != name) with
+      | some job => (driver.finish job.id).1
+      | none => driver)
+    driver
+
+/-- The checks of a contribution's computed commands
+(`Editor/Compile/Listing.lean`), on the loop's driver over the editor's
+models, the job model and the process model, with `t-mode`. -/
+def listingChecks : List Check :=
+  [{  name :=
+        "turning t-mode on runs its listing t-list in its root once, after find-mode-markers; a second file under the root starts compile-list again and runs nothing"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let (first, names) := settledNames driver "C-p 1"
+            let (second, again) := settledNames first "C-p 2"
+            shownOnModes first == some #[{ mode := "t-mode", root := "/t" }] &&
+              names.filter (fun name => name == Workspace.markerJob || name == Compile.listJob) ==
+                #[Workspace.markerJob, Compile.listJob] &&
+              startedCount first (tList "/t") == 1 &&
+              again.contains Compile.listJob &&
+              startedCount second (tList "/t") == 1 &&
+              (Compile.entriesOf second.loop.state (some (.local "/t"))).size == 1 },
+    { name :=
+        "compile-command offers the listed commands after the contribution's own, a listed name in place of its own: build runs t-build in /t, and sub, listed in sub, runs t-sub in /t/sub"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p 1"
+            let asked := pressedOn opened "C-k i"
+            let built := drained (fedTo opened (exLine "compile-command build")).1
+            let subbed := drained (fedTo opened (exLine "compile-command sub")).1
+            (candidatesOf asked).map (·.all) ==
+                some #["build (t-mode)", "check (t-mode)", "fmt (t-mode)", "sub (t-mode)"] &&
+              built.jobs.processes.started.back? == some (shellCommand "/t" "t-build") &&
+              subbed.jobs.processes.started.back? == some (shellCommand "/t/sub" "t-sub") &&
+              startedCount subbed (tList "/t") == 1 },
+    { name :=
+        "offers puts a mode's listed commands after its own, a listed name in place of its own, and a project's command in place of a listed one; a listed directory resolves against the root and an absolute one is kept"
+      run :=
+        let listed (mode : String) (root : System.FilePath) : Array Compile.NamedCommand :=
+          if mode == "t-mode" && root == "/t" then
+            #[{ name := "build", line := "t-build" }, { name := "fmt", line := "t-fmt" },
+              { name := "sub", line := "t-sub", directory := some "sub" },
+              { name := "abs", line := "t-abs", directory := some "/elsewhere" }]
+          else #[]
+        let project : Array Compile.ProjectCommands :=
+          #[{ project := .remote "github.com/o/r", mode := "t-mode"
+              commands := #[{ name := "fmt", line := "p-fmt" }] }]
+        let offer (name line : String) (root : System.FilePath := "/t") : Compile.Offer :=
+          { mode := "t-mode", name, line, root }
+        pure
+          (Compile.offers #[tContribution] project #[{ mode := "t-mode", root := "/t" }] listed ==
+              #[offer "build" "t-build", offer "check" "t-check", offer "fmt" "p-fmt",
+                offer "sub" "t-sub" "/t/sub", offer "abs" "t-abs" "/elsewhere"] &&
+            Compile.offers #[tContribution] #[] #[{ mode := "t-mode", root := "/t2" }] listed ==
+              #[offer "build" "t-fixed-build" "/t2", offer "check" "t-check" "/t2"]) },
+    { name :=
+        "a listing that fails offers none of its commands and says why once, with its first line of standard error"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p 3"
+            let asked := settledAfter opened "C-k i"
+            echoOf opened == some "t-mode in /t2: t-list exited with status 3: t-list: broken" &&
+              (candidatesOf asked).map (·.all) == some #["build (t-mode)", "check (t-mode)"] &&
+              startedCount asked (tList "/t2") == 1 },
+    { name :=
+        "a listing that could not be run, as mise is not found by an editor started from the Finder, offers none of its commands and says why once"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let refused : Process.Script :=
+              { command := tList "/t2", reply := .error (.notFound "t-list") }
+            let driver :=
+              { driver with
+                jobs :=
+                  { driver.jobs with
+                    processes :=
+                      { driver.jobs.processes with
+                        scripts := #[refused] ++ driver.jobs.processes.scripts } } }
+            let opened := settledAfter driver "C-p 3"
+            let asked := settledAfter opened "C-k i"
+            echoOf opened ==
+                some
+                  "t-mode in /t2: t-list could not be run: the program or the directory is not there: t-list" &&
+              (candidatesOf asked).map (·.all) == some #["build (t-mode)", "check (t-mode)"] &&
+              startedCount asked (tList "/t2") == 1 },
+    { name :=
+        "each end of a listing's run has its own words: a status with its first line of standard error, a status whose first line is empty, a signal, output its read refuses, a run that ran out of time, and one that could not be run"
+      run :=
+        let order : Compile.ListOrder :=
+          { place := none, mode := "mise-mode", root := "/m", generation := 0, markers := #[]
+            held := none, program := "mise", programArguments := #["tasks", "ls", "--json"] }
+        let say := Compile.outcomeOf order tRead
+        pure
+          (say (shellReply "" "not trusted\nmore\n" (.code 1)) ==
+              .failed "mise tasks ls --json exited with status 1: not trusted" &&
+            say (shellReply "" "" (.code 2)) ==
+              .failed "mise tasks ls --json exited with status 2" &&
+            say (shellReply "" "\nsecond\n" (.code 2)) ==
+              .failed "mise tasks ls --json exited with status 2" &&
+            say (shellReply "" "" (.signal 9)) ==
+              .failed "mise tasks ls --json was ended by signal 9" &&
+            say (shellReply "nope\n") ==
+              .failed "mise tasks ls --json printed no list of commands: nope is no command" &&
+            say (.error (.timedOut 10000)) ==
+              .failed "mise tasks ls --json did not finish within 10000 ms and was killed" &&
+            say (.error (.denied "Permission denied")) ==
+              .failed
+                "mise tasks ls --json could not be run: the system does not allow it: Permission denied" &&
+            say (shellReply "a=b\n") == .listed #[{ name := "a", line := "b" }]) },
+    { name :=
+        "with t-mode dropped from the hook before its listing job's command runs, the command keeps no entry"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let waiting := settledBut (fedTo driver (presses "C-p 1")).1 Compile.listJob
+            let dropped :=
+              { waiting with
+                keys :=
+                  { waiting.keys with
+                    registered := { waiting.keys.registered with compile := {} } } }
+            let listed :=
+              match dropped.pending.find? (·.name == Compile.listJob) with
+              | some job => (dropped.finish job.id).1
+              | none => dropped
+            startedCount listed (tList "/t") == 1 &&
+              (Compile.entriesOf listed.loop.state (some (.local "/t"))).isEmpty },
+    { name :=
+        "a file in a directory holding t.toml and no repository has t-mode on there: its listing runs there once, is kept in the unscoped store, and compile-command offers and runs what it lists"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p 4"
+            let asked := settledAfter opened "C-k i"
+            let ran := drained (fedTo opened (exLine "compile-command u-only")).1
+            (shownWorkspace opened).isNone &&
+              shownOnModes opened == some #[{ mode := "t-mode", root := "/u" }] &&
+              startedCount asked (tList "/u") == 1 &&
+              (Compile.entriesOf opened.loop.state none).map
+                  (fun entry => (entry.mode, entry.root.toString)) ==
+                #[("t-mode", "/u")] &&
+              (candidatesOf asked).map (·.all) ==
+                some #["build (t-mode)", "check (t-mode)", "u-only (t-mode)"] &&
+              ran.jobs.processes.started.back? == some (shellCommand "/u" "u-only") },
+    { name :=
+        "in a workspace whose location cannot run commands no listing is started when t-mode turns on, and compile-command offers nothing"
+      run :=
+        let reachable := Location.reachable "kube" "pod" "/app"
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let waiting := settledBut (fedTo driver (presses "C-p 1")).1 Workspace.markerJob
+            let moved := settledOn (pressedOn waiting "C-e k") []
+            let asked := pressedOn moved "C-k i"
+            !reachable.can.runCommands &&
+              (shownWorkspace moved).map (·.1.location) == some reachable &&
+              shownOnModes moved == some #[{ mode := "t-mode", root := "/t" }] &&
+              startedCount asked (tList "/t") == 0 &&
+              !(asked.pending.any (·.name == Compile.listJob)) &&
+              asked.loop.state.prompt.isNone &&
+              (echoOf asked).map (·.endsWith "where commands cannot run") == some true },
+    { name :=
+        "a listing order and an entry cross as arguments and as a tree and back, and arguments that are no order read as none; the listing job started with them fails"
+      run :=
+        let stamp : File.Stamp := { seconds := -3, nanoseconds := 4, size := 5 }
+        let orders : List Compile.ListOrder :=
+          [{ place := some (.local "/t"), mode := "t-mode", root := "/t/a", generation := 2,
+             markers := #["t.toml", "u.toml"], held := some #[some stamp, none],
+             program := "t-list", programArguments := #["a", "b c"] },
+            { place := none, mode := "m", root := "/x", generation := 0, markers := #[],
+              held := none
+              program := "p", programArguments := #[] },
+            { place := some (.reachable "kube" "pod" "/app"), mode := "m", root := "/app",
+              generation := 1, markers := #["m.toml"], held := none, program := "p"
+              programArguments := #["q"] }]
+        let entries : Array Compile.Listing.Entry :=
+          #[{ mode := "t-mode", root := "/t", generation := 1, stamps := #[some stamp, none],
+              outcome :=
+                .listed
+                  #[{ name := "a", line := "x" },
+                    { name := "b", line := "y", directory := some "s" }] },
+            { mode := "u", root := "/u", generation := 0, stamps := #[], outcome := .failed "why" }]
+        pure
+          (orders.all (fun order => Compile.ListOrder.ofArguments? order.arguments == some order) &&
+            [[], [.str "unscoped", .str "m"],
+                  [.str "unscoped", .str "m", .str "/x", .nat 0, .nat 1],
+                  [.str "workspace", .str "/t", .str "m", .str "/x", .nat 0, .nat 0, .bool false,
+                    .str "p"]].all
+              (Compile.ListOrder.ofArguments? · == none) &&
+            Compile.listingStore.decode (Compile.listingStore.encode entries) == some entries &&
+            Compile.listingStore.name == "compile-listings" &&
+            ((Compile.listWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
+
+/-- The world of the project mode checks: repositories `/c` (Cargo), `/l`
+(Lake), `/m` (mise, with a crate in `/m/crate`), `/mw`, a worktree of `/m`'s
+repository on `feature`, and `/r2`, a Cargo workspace with a member crate in
+`/r2/crates/m`; and their marker files. -/
+def projectWorld : Workspace.World :=
+  { repositories :=
+      #[{ toplevel := "/c", commonDir := "/c/.git" }, { toplevel := "/l", commonDir := "/l/.git" },
+        { toplevel := "/m", commonDir := "/m/.git" },
+        { toplevel := "/mw", commonDir := "/m/.git", branch := some "feature" },
+        { toplevel := "/r2", commonDir := "/r2/.git" }]
+    markerDirectories := #["/c/.git", "/l/.git", "/m/.git", "/r2/.git"]
+    markers :=
+      #["/c/Cargo.toml", "/l/lakefile.lean", "/m/mise.toml", "/m/crate/Cargo.toml", "/mw/mise.toml",
+        "/r2/Cargo.toml", "/r2/crates/m/Cargo.toml"] }
+
+/-- The bindings of the project mode checks: the listing checks', and `C-p
+c`, `C-p l`, `C-p m`, `C-p n`, `C-p w` and `C-p r`, which open
+`/c/src/main.rs`, `/l/Foo/Bar.lean`, `/m/notes.txt`, `/m/crate/src/main.rs`,
+`/mw/notes.txt` and `/r2/crates/m/src/main.rs`. Test-scheme chords only. -/
+def projectBindings : List (String × Invocation) :=
+  listingBindings ++
+    [("C-p c", opens "/c/src/main.rs"), ("C-p l", opens "/l/Foo/Bar.lean"),
+      ("C-p m", opens "/m/notes.txt"), ("C-p n", opens "/m/crate/src/main.rs"),
+      ("C-p w", opens "/mw/notes.txt"), ("C-p r", opens "/r2/crates/m/src/main.rs")]
+
+/-- `mise tasks ls --json` in `directory`, as `mise-mode` runs it. -/
+def miseList (directory : System.FilePath) : Process.Command :=
+  { program := "mise", arguments := #["tasks", "ls", "--json"], directory }
+
+/-- What each run of the project mode checks does: the listing in `/m`
+prints `miseListing`, and in `/mw` one task, `wt-only`. -/
+def projectScripts : Array Process.Script :=
+  #[{ command := miseList "/m", reply := shellReply miseListing },
+    { command := miseList "/mw",
+      reply := shellReply "[{\"name\": \"wt-only\", \"dir\": \"/mw\"}]\n" }]
+
+/-- The streaming children of the project mode checks: each line they run,
+writing `ok`. -/
+def projectStreams : Array Process.StreamScript :=
+  #[("/c", "cargo clippy"), ("/l", "lake test"), ("/m", "mise run build"), ("/m", "mise run test"),
+        ("/m/sub", "mise run lint"), ("/m", "mise run fmt")].map
+    fun (directory, line) => { command := shellCommand directory line, steps := linesSteps ["ok"] }
+
+/-- The registry of the project mode checks: the shipped contributions,
+for the owner `compiled`, and no config. -/
+def projectRegistry : Config.Registry :=
+  hookRegistry (pure ()) Compile.shipped
+
+/-- A driver of the project mode checks over `registry`: the world of
+`projectWorld`, with its bindings, the compile checks' jobs, its files, runs
+and children; `none` if making the state was refused. -/
+def projectDriver (registry : Config.Registry := projectRegistry) : Option TestDriver :=
+  let model :=
+    projectWorld.jobModel "git"
+      #["/c/src", "/l/Foo", "/m", "/m/crate/src", "/mw", "/r2/crates/m/src"]
+  let files :=
+    [("/c/src/main.rs", "fn main() {}\n"), ("/l/Foo/Bar.lean", "x\n"), ("/m/notes.txt", "n\n"),
+          ("/m/crate/src/main.rs", "fn main() {}\n"), ("/mw/notes.txt", "w\n"),
+          ("/r2/crates/m/src/main.rs", "fn main() {}\n")].foldl
+      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
+  let keys := compileKeysOf projectBindings
+  let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
+  (Loop.Driver.over keys compileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver =>
+    { driver with
+      jobs :=
+        { model with
+          files
+          processes :=
+            { model.processes with
+              scripts := model.processes.scripts ++ projectScripts, streams := projectStreams } } }
+
+/-- `driver` once the loop is told the next config generation, as a reload
+tells it. -/
+def reloaded (driver : TestDriver) : TestDriver :=
+  { driver with
+    keys :=
+      { driver.keys with
+        registered :=
+          { driver.keys.registered with generation := driver.keys.registered.generation + 1 } } }
+
+/-- The candidates `compile-command`'s prompt offers in `driver` once
+`keys` are pressed and their jobs settled. -/
+def offeredAfter (driver : TestDriver) (keys : String) : Option (Array String) :=
+  (candidatesOf (settledAfter driver keys)).map (·.all)
+
+/-- The checks of the shipped modes (`Editor/Compile/Shipped.lean`), on the
+loop's driver over the editor's models, the job model and the process
+model, in the world of `projectWorld`, with only the shipped contributions
+registered. -/
+def projectModeChecks : List Check :=
+  [{  name :=
+        "modes criterion 1: a buffer under a Cargo.toml has cargo-mode on with that root, one under a lakefile.lean lake-mode, one under a mise.toml mise-mode, and one in a Cargo crate inside a mise project both, the crate's first"
+      run :=
+        pure <|
+          match projectDriver with
+          | none => false
+          | some driver =>
+            let modesOf (keys : String) :=
+              let opened := settledAfter driver keys
+              (shownOnModes opened, shownMinors opened)
+            modesOf "C-p c" ==
+                (some #[{ mode := "cargo-mode", root := "/c" }], some #["cargo-mode"]) &&
+              modesOf "C-p l" ==
+                (some #[{ mode := "lake-mode", root := "/l" }], some #["lake-mode"]) &&
+              modesOf "C-p m" ==
+                (some #[{ mode := "mise-mode", root := "/m" }], some #["mise-mode"]) &&
+              modesOf "C-p n" ==
+                (some
+                    #[{ mode := "cargo-mode", root := "/m/crate" },
+                      { mode := "mise-mode", root := "/m" }],
+                  some #["cargo-mode", "mise-mode"]) },
+    { name :=
+        "lakefile.toml turns lake-mode on and .mise.toml mise-mode; cargo-mode's root is its outermost Cargo.toml, so in a member crate of /r2 it is /r2"
+      run :=
+        let markerModes := Compile.shipped.map (·.markerMode)
+        pure <|
+          Workspace.onModes markerModes "/x/a" "/x"
+                #[("/x", "lakefile.toml"), ("/x/a", ".mise.toml")] ==
+              #[{ mode := "mise-mode", root := "/x/a" }, { mode := "lake-mode", root := "/x" }] &&
+            match projectDriver with
+            | none => false
+            | some driver =>
+              shownOnModes (settledAfter driver "C-p r") ==
+                some #[{ mode := "cargo-mode", root := "/r2" }] },
+    { name :=
+        "modes criterion 2: cargo-mode offers build, test and clippy as compile-command candidates, and clippy runs cargo clippy in /c; lake-mode offers build and test, and test runs lake test in /l"
+      run :=
+        pure <|
+          match projectDriver with
+          | none => false
+          | some driver =>
+            let cargo := settledAfter driver "C-p c"
+            let lake := settledAfter driver "C-p l"
+            let clippy := (fedTo cargo (exLine "compile-command clippy")).1
+            let tested := (fedTo lake (exLine "compile-command test")).1
+            offeredAfter cargo "C-k i" ==
+                some #["build (cargo-mode)", "test (cargo-mode)", "clippy (cargo-mode)"] &&
+              clippy.jobs.processes.started.back? == some (shellCommand "/c" "cargo clippy") &&
+              offeredAfter lake "C-k i" == some #["build (lake-mode)", "test (lake-mode)"] &&
+              tested.jobs.processes.started.back? == some (shellCommand "/l" "lake test") },
+    { name :=
+        "the shipped contributions offer exactly cargo build, cargo test and cargo clippy in a Cargo root, and lake build and lake test in a Lake root, each in its mode's root"
+      run :=
+        let offer (mode name line : String) (root : System.FilePath) : Compile.Offer :=
+          { mode, name, line, root }
+        pure
+          (Compile.offers Compile.shipped #[] #[{ mode := "cargo-mode", root := "/c" }] ==
+              #[offer "cargo-mode" "build" "cargo build" "/c",
+                offer "cargo-mode" "test" "cargo test" "/c",
+                offer "cargo-mode" "clippy" "cargo clippy" "/c"] &&
+            Compile.offers Compile.shipped #[] #[{ mode := "lake-mode", root := "/l" }] ==
+              #[offer "lake-mode" "build" "lake build" "/l",
+                offer "lake-mode" "test" "lake test" "/l"] &&
+            (Compile.formatsOf Compile.shipped
+                    #[{ mode := "cargo-mode", root := "/c" }, { mode := "mise-mode", root := "/m" },
+                      { mode := "lake-mode", root := "/l" }]).map
+                (·.name) ==
+              #["rustc", "lean", "general"]) },
+    { name :=
+        "modes criterion 5: mise-mode turning on runs mise tasks ls --json in its root, once, after find-mode-markers, and offers mise run <task> for each task it lists, each in the task's dir"
+      run :=
+        pure <|
+          match projectDriver with
+          | none => false
+          | some driver =>
+            let (opened, names) := settledNames driver "C-p m"
+            let answered :=
+              (fedTo (pressedOn opened "C-k i") ([.commit "test"] ++ presses "C-e y")).1
+            let built := (fedTo opened (exLine "compile-command build")).1
+            let linted := (fedTo opened (exLine "compile-command lint")).1
+            let offer (name line : String) (root : System.FilePath) : Compile.Offer :=
+              { mode := "mise-mode", name, line, root }
+            names.filter (fun name => name == Workspace.markerJob || name == Compile.listJob) ==
+                #[Workspace.markerJob, Compile.listJob] &&
+              startedCount opened (miseList "/m") == 1 &&
+              offeredAfter opened "C-k i" ==
+                some #["build (mise-mode)", "test (mise-mode)", "lint (mise-mode)"] &&
+              answered.jobs.processes.started.back? == some (shellCommand "/m" "mise run test") &&
+              built.jobs.processes.started.back? == some (shellCommand "/m" "mise run build") &&
+              linted.jobs.processes.started.back? == some (shellCommand "/m/sub" "mise run lint") &&
+              Compile.offers Compile.shipped #[] #[{ mode := "mise-mode", root := "/m" }]
+                  (Compile.listedCommands opened.loop.state (some (.local "/m"))) ==
+                #[offer "build" "mise run build" "/m", offer "test" "mise run test" "/m",
+                  offer "lint" "mise run lint" "/m/sub"] },
+    { name :=
+        "two worktrees list their own tasks: /mw runs its own listing in /mw and offers only wt-only, /m's offers are unchanged, and each listing is in its own workspace's store"
+      run :=
+        pure <|
+          match projectDriver with
+          | none => false
+          | some driver =>
+            let inM := settledAfter driver "C-p m"
+            let inW := settledAfter inM "C-p w"
+            let back := settledAfter inW "C-p m"
+            let state := back.loop.state
+            (shownWorkspace inW).map (·.1.location) == some (.local "/mw") &&
+              startedCount inW (miseList "/mw") == 1 &&
+              offeredAfter inW "C-k i" == some #["wt-only (mise-mode)"] &&
+              offeredAfter back "C-k i" ==
+                some #["build (mise-mode)", "test (mise-mode)", "lint (mise-mode)"] &&
+              (Compile.entriesOf state (some (.local "/m"))).map (·.root.toString) == #["/m"] &&
+              (Compile.entriesOf state (some (.local "/mw"))).map (·.root.toString) == #["/mw"] &&
+              (Compile.entriesOf state none).isEmpty },
+    { name :=
+        "modes criterion 6: a listing that fails offers no task and says why once: compile-command then says no mode gives commands, and its check runs nothing and says nothing; a list that is not one says so"
+      run :=
+        pure <|
+          match projectDriver with
+          | none => false
+          | some driver =>
+            let failing :=
+              withScript driver
+                { command := miseList "/m", reply := shellReply "" "mise ERROR boom\n" (.code 1) }
+            let opened := settledAfter failing "C-p m"
+            let asked := pressedOn opened "C-k i"
+            let settled := settledAfter opened "C-k i"
+            let unread :=
+              settledAfter
+                (withScript driver { command := miseList "/m", reply := shellReply "{}" }) "C-p m"
+            echoOf opened ==
+                some
+                  "mise-mode in /m: mise tasks ls --json exited with status 1: mise ERROR boom" &&
+              asked.loop.state.prompt.isNone &&
+              echoOf asked == some "compile-command: no mode gives commands in m@main" &&
+              echoOf settled == some "compile-command: no mode gives commands in m@main" &&
+              startedCount settled (miseList "/m") == 1 &&
+              echoOf unread ==
+                some
+                  "mise-mode in /m: mise tasks ls --json printed no list of commands: it is not an array" },
+    { name :=
+        "modes criterion 7: after mise.toml's stamp changes, the next use of mise-mode lists the tasks again and the use after it offers the new list; with the stamps unchanged two uses list nothing, and after a reload the next use lists again"
+      run :=
+        pure <|
+          match projectDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p m"
+            let changed :=
+              withScript (rewritten opened "/m/mise.toml" "[tasks.fmt]\n".toUTF8)
+                { command := miseList "/m",
+                  reply := shellReply "[{\"name\": \"fmt\", \"dir\": \"/m\"}]" }
+            let used := settledAfter changed "C-k i"
+            let again := settledAfter used "C-k q C-k i"
+            let twice := settledAfter (settledAfter opened "C-k i") "C-k q C-k i"
+            let afterReload := settledAfter (reloaded (settledAfter opened "C-k i C-k q")) "C-k i"
+            startedCount used (miseList "/m") == 2 &&
+              (candidatesOf used).map (·.all) ==
+                some #["build (mise-mode)", "test (mise-mode)", "lint (mise-mode)"] &&
+              (candidatesOf again).map (·.all) == some #["fmt (mise-mode)"] &&
+              startedCount again (miseList "/m") == 2 &&
+              startedCount twice (miseList "/m") == 1 &&
+              startedCount afterReload (miseList "/m") == 2 }]
 
 /-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
 `abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts
@@ -33260,6 +36722,25 @@ def workspaceFinderFailures : IO (List String) :=
         if property.asksGit || after.processes.started.isEmpty then []
         else [s!"the workspace finder on the job model starts no process: {property.name}"]
 
+/-- The names of the mode marker search's contract properties
+(`Editor/Workspace/Contract.lean`, `Workspace.MarkerContract`) that do not
+hold of the pure model (`World.presentMarkers`), or of the real search run
+on the job model of the property's world (`World.jobModel`); and of a run
+that started a process, which the search never does. -/
+def modeMarkerFailures : IO (List String) :=
+  pure <|
+    (Workspace.MarkerContract.properties "/").flatMap fun property =>
+      let byModel :=
+        property.asked.map fun (directory, bound, _) =>
+          property.world.presentMarkers property.markers directory bound
+      let (outcome, after) := property.answers.runModel (property.world.jobModel "git" #[])
+      (if byModel == property.expected then []
+        else [s!"the mode marker search's model: {property.name}"]) ++
+        (if outcome == .finished property.expected then []
+        else [s!"the mode marker search on the job model: {property.name}"]) ++
+        if after.processes.started.isEmpty then []
+        else [s!"the mode marker search on the job model starts no process: {property.name}"]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -33330,6 +36811,7 @@ def checks : List Check :=
     vimDefaultChecks ++
     vimContractChecks ++
     modeRecordChecks ++
+    languageMatchChecks ++
     modeRegistryChecks ++
     modeDispatchChecks ++
     modeEnterChecks ++
@@ -33337,6 +36819,8 @@ def checks : List Check :=
     highlightEnterChecks ++
     treeObjectRuleChecks ++
     indentRuleChecks ++
+    indentOpeningChecks ++
+    indentEditChecks ++
     indentLevelChecks ++
     apiStateChecks ++
     driverChecks ++
@@ -33344,6 +36828,7 @@ def checks : List Check :=
     candidateChecks ++
     fileCommandChecks ++
     openFilesChecks ++
+    languageOpenChecks ++
     dispatchQuitChecks ++
     systemQuitChecks ++
     exChecks ++
@@ -33368,6 +36853,7 @@ def checks : List Check :=
     evilObjectChecks ++
     evilRegisterChecks ++
     evilOpenChecks ++
+    evilIndentChecks ++
     evilUndoChecks ++
     evilRepeatChecks ++
     viewChecks ++
@@ -33383,9 +36869,17 @@ def checks : List Check :=
     workspaceGitChecks ++
     workspaceStateChecks ++
     workspaceChecks ++
+    modeMarkerChecks ++
     shellChecks ++
     readOnlyChecks ++
-    compileChecks
+    compileChecks ++
+    compileErrorChecks ++
+    compileLocationChecks ++
+    compileHookChecks ++
+    projectFormatChecks ++
+    jsonChecks ++
+    listingChecks ++
+    projectModeChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
@@ -33527,7 +37021,8 @@ def main : IO UInt32 := do
       (← ModelTest.fuzzyFailures) ++
       (← ModelTest.syntaxTreeFailures) ++
       (← ModelTest.apiCaseFailures) ++
-      (← ModelTest.workspaceFinderFailures)
+      (← ModelTest.workspaceFinderFailures) ++
+      (← ModelTest.modeMarkerFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -33535,6 +37030,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model"
   (← IO.getStdout).flush
   IO.Process.exit 0

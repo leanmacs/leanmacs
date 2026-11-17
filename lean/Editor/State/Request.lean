@@ -1,6 +1,8 @@
 import Editor.Command.Call
+import Editor.Compile.Contribution
 import Editor.Ex.Line
 import Editor.Invocation
+import Editor.Language.IndentUnit
 import Editor.State
 
 /-!
@@ -181,7 +183,18 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   (`Editor/Command/Dispatch.lean`). Here, with no registry, it is answered
   no root and generation 0.
 - **Config's shell time limit is asked by one request**, `shellTimeLimit`,
-  which the loop answers the same way; here it is answered `none`.
+  which the loop answers the same way; here it is answered `none`. So is
+  **config's syntax refresh delay**, `syntaxRefreshDelay`, and **a path's
+  language**, `languageOf`, which the loop answers with the name of the
+  language its table chooses for the path (`Language.forPath`), and **a
+  language's indent unit**, `indentUnitOf`, which the loop answers with the
+  unit of its table's first entry of that name.
+- **A buffer's language is recorded by name**, `setLanguage`, as its major
+  mode is: any name is taken, and refused `noSuchBuffer` alone.
+- **The compile contributions are asked by one request**, `compileHook`:
+  the registered contributions in registration order and config's project
+  commands (`Compile.Hook`), which the loop answers the same way; here it
+  is answered empty.
 
 ## Where an addition goes
 
@@ -268,6 +281,8 @@ inductive StateRequest where
   | tellChanged (id : BufferId)
   /-- Make the buffer `id` read-only to editing commands, or not. -/
   | setReadOnly (id : BufferId) (on : Bool)
+  /-- Set the spans of the buffer `id`, in place of those it had. -/
+  | setSpans (id : BufferId) (spans : Array Decoration)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
   /-- Whether auto-reload is in effect: a command's choice, or else config's
@@ -351,6 +366,22 @@ inductive StateRequest where
   /-- How long a `:!` or a filter may run, in milliseconds, as config set
   it, which the loop that runs the command answers with. -/
   | shellTimeLimit
+  /-- How long a text goes unchanged after an edit before it is parsed
+  whole again, in milliseconds, as config set it, which the loop that runs
+  the command answers with. -/
+  | syntaxRefreshDelay
+  /-- Record `name` as the language of the buffer `id`, or that it has
+  none. -/
+  | setLanguage (id : BufferId) (name : Option String)
+  /-- The name of the language the registry's table chooses for `path`,
+  which the loop that runs the command answers with. -/
+  | languageOf (path : System.FilePath)
+  /-- The indent unit of the language called `language`, which the loop
+  that runs the command answers from its table. -/
+  | indentUnitOf (language : String)
+  /-- The compile contributions, in registration order, and config's
+  project commands, which the loop that runs the command answers with. -/
+  | compileHook
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -380,6 +411,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .markChanged .. => Except BufferRefusal Unit
   | .tellChanged _ => Except BufferRefusal Unit
   | .setReadOnly .. => Except BufferRefusal Unit
+  | .setSpans .. => Except BufferRefusal Unit
   | .setAutoReload _ => Unit
   | .autoReloadMode => Bool
   | .unfollow _ => Unit
@@ -411,6 +443,11 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .displayRules => Array DisplayRule
   | .setUnscopedValue .. => Unit
   | .shellTimeLimit => Option Nat
+  | .syntaxRefreshDelay => Option Nat
+  | .setLanguage .. => Except BufferRefusal Unit
+  | .languageOf _ => Option String
+  | .indentUnitOf _ => Option Language.IndentUnit
+  | .compileHook => Compile.Hook
 
 namespace EditorState
 
@@ -469,6 +506,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .markChanged id stamp found told, state => state.markChanged id stamp found told
   | .tellChanged id, state => state.tellChanged id
   | .setReadOnly id on, state => state.setReadOnly id on
+  | .setSpans id spans, state => state.setSpans id spans
   | .setAutoReload on, state => ((), { state with autoReload := some on })
   -- Config's setting is the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, a choice no command made is off.
@@ -517,6 +555,17 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   -- Config's limit is the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, config set none.
   | .shellTimeLimit, state => (none, state)
+  -- So is config's syntax refresh delay.
+  | .syntaxRefreshDelay, state => (none, state)
+  | .setLanguage id name, state => state.setLanguage id name
+  -- The language table is the loop's to answer from (`Program.dispatched`):
+  -- here, with no registry, no path has a language.
+  | .languageOf _, state => (none, state)
+  -- So is a language's indent unit.
+  | .indentUnitOf _, state => (none, state)
+  -- The contributions are the loop's to answer with (`Program.dispatched`):
+  -- here, with no loop, none is registered.
+  | .compileHook, state => ({}, state)
 
 end EditorState
 

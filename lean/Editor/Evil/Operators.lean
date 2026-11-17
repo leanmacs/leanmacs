@@ -2,6 +2,7 @@ import Editor.Evil
 import Editor.Evil.Motions
 import Editor.Evil.Objects
 import Editor.Evil.Registers
+import Editor.Indent
 
 /-!
 # Evil's operators
@@ -154,7 +155,25 @@ order:
 | `yank` | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays | The register is the lines, line-wise. The cursor goes to the operand's `rest`, rested |
 | `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
 | `replace` | The text of the register the call names (`fetch`) goes in place of the cells, as it is, line breaks included. The cursor goes on the last cell put, or on the first when the text holds a line break, as a character-wise `P` leaves it. The unnamed register is the cells' text | The text is put where the cells would start, as for cells | The text goes in place of the lines, with the buffer's line ending added to a character-wise one; below a last line with no line break its last line break is left out, so the text ends the way it ended. The cursor goes to the first non-blank of the first line put. The unnamed register is the lines, line-wise |
+| `indent` | The rows from the first cell's through the last cell's | The row the cells would start on | The lines |
 
+- **`indent` is Vim's `=`.** Whatever it is handed, it acts on whole rows,
+  as Vim's `=` does: each row's leading whitespace becomes its level times
+  the buffer's indent unit (`Target.indentUnit`), and a blank row's
+  becomes nothing; a row inside a multi-line string or block comment keeps
+  its own (`TextId.reindentEdits`, `Editor/Indent.lean`). All the rows'
+  edits are one edit that carries the selection from before the command
+  (`Target.replaceEachCarrying`), so one `u` gives back the text and the
+  cursor; with no edit the text is not touched. The cursor goes to the
+  first non-blank of the first row, rested, as Vim's `op_reindent` leaves
+  it. No register is read or written: a register named before `=` is
+  taken and ignored. With no levels to read, a buffer with no syntax tree,
+  a tree that keeps no indents query, or a text whose last edit's tree is
+  not delivered yet, it gives up (`cannotIndent`), having changed nothing,
+  so it is not the last change. `.` replays it over the rows from the
+  cursor, as for any operator; over a visual selection it is not repeated.
+  Vim's own `=` reads `indentexpr` or `cindent`, so its levels are its own;
+  ours are the indents query's, a recorded departure.
 - **`replace` is the visual Paste** (`Editor/Evil/Clipboard.lean`), which
   no default key binds. It fetches the register first, before any edit,
   so with nothing to put (`nothingToPut`, `clipboardUnavailable`) it gives
@@ -196,7 +215,8 @@ order:
 - **The register is set last** (`store`, `Editor/Evil/Registers.lean`).
 
 Pinned by `ModelTest.evilOperatorChecks`, by key, under the Vim scheme
-that ships.
+that ships, and `indent` by `ModelTest.evilIndentChecks` and, over the
+library's Rust grammar, `ConfigTest.indentChecks`.
 -/
 
 namespace Editor.Evil
@@ -429,11 +449,67 @@ def replace : Vocabulary.Operator :=
         settle call cursor
         setRegister unnamed { text := lines.taken, linewise := true } }
 
+/-- What the indent operator gives up with when its text's indent levels are
+refused: the buffer has no syntax tree, its tree keeps no indents query, or
+the tree of the text's last edit is not delivered yet. -/
+def cannotIndent (refusal : SyntaxTreeError) : String :=
+  match refusal with
+  | .notAttached => "indent: this buffer has no syntax tree"
+  | .noQuery => "indent: its language has no indents query"
+  | .notParsed => "indent: the syntax tree is not parsed yet"
+  | refusal => s!"indent: {refusal.describe}"
+
+/-- The rows from the first through the last an operator's stretch touches,
+as `=` takes them: whole lines, or the rows of the first and last cells. -/
+def rowsOf (text : TextId) (stretched : Vocabulary.Stretch) : TextM (Nat × Nat) := do
+  match stretched with
+  | .lines first last =>
+    return (first, last)
+  | .cells extent _ =>
+    let first ← rowOf text extent.start
+    if extent.stop > extent.start then
+      return (first, ← rowOf text (← text.motion .previousCell extent.stop))
+    return (first, first)
+
+/-- The operator that re-indents the rows of what it is handed by the
+indents query its text keeps, Vim's `=` ("What an operator does", in the
+module docs): each row's leading whitespace becomes its level in the
+buffer's indent unit (`TextId.reindentEdits`, `Editor/Indent.lean`), in one
+edit that carries the selection from before the command, and the cursor
+goes to the first non-blank of the first row, rested. No register is read
+or written. With no indent levels to read it gives up (`cannotIndent`),
+having changed nothing. -/
+def indent : Vocabulary.Operator :=
+  { name := "indent"
+    act := fun call operand => do
+      let text := call.target.buffer.text
+      let (first, last) ← rowsOf text operand.stretch
+      let unit ← call.target.indentUnit
+      match ← text.reindentEdits first last unit with
+      | .error refusal =>
+        giveUp (cannotIndent refusal)
+      | .ok edits =>
+        -- The first row's first non-blank in the text the edits leave: the
+        -- first edit, when it is the first row's, starts where the row does.
+        let firstStart ← text.offsetOf ⟨first, 0⟩
+        let cursor ←
+          match edits[0]? with
+          | some (extent, leading) =>
+            if extent.start == firstStart then
+              pure (firstStart + leading.utf8ByteSize)
+            else
+              text.motion .lineFirstNonBlank firstStart
+          | none =>
+            text.motion .lineFirstNonBlank firstStart
+        unless edits.isEmpty do
+          call.target.replaceEachCarrying edits operand.before (cursorAt call cursor)
+        settle call cursor }
+
 /-- The table the operate command looks an operator's name up in: one entry
 for each name the Vim scheme's default tables bind a key to, and `replace`,
 which the clipboard commands' run tables name (`Editor/Evil/Clipboard.lean`). -/
 def operators : Array Vocabulary.Operator :=
-  #[delete, change, yank, replace]
+  #[delete, change, yank, replace, indent]
 
 /-- The operate command over the vocabulary `operators`, `motions` and
 `objects`, as it is called ("The operate command", in the module docs): its

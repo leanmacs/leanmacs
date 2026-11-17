@@ -633,6 +633,13 @@ A prompt is a request for one string, with a text to show beside the input
   text, with its name, and `readOnlyReason` is what is said. The command
   that owns such a buffer writes it inside `BufferId.writing`
   (`Editor/Api.lean`), as Emacs's `inhibit-read-only`.
+- A buffer may have **spans** (`Buffer.spans`, set by `setSpans`, which
+  refuses `noSuchBuffer`): byte ranges of its text, each with a face, that
+  every view of it draws under the last search's matches
+  (`Editor/Loop.lean`, "Decorations"). Nothing moves them on an edit: they
+  are for a buffer its owner alone writes, such as a compilation buffer,
+  which is read-only and whose spans the compile mode resets with its text
+  (`Editor/Compile.lean`, "Locations").
 
 ### Most recently used
 
@@ -928,6 +935,10 @@ structure Buffer where
   major : Option String := none
   /-- The names of its minor modes, the one added last first. -/
   minors : Array String := #[]
+  /-- The name of its language (`Editor/Language.lean`), if it has one: the
+  entry is looked up in the registry's table when a mode is entered, so a
+  reload's entry of that name is the one used next. -/
+  language : Option String := none
   /-- The file it shows; `none` for a buffer that shows none. -/
   file : Option Buffer.File := none
   /-- The line break a command inserts in it: its file's dominant line
@@ -937,6 +948,9 @@ structure Buffer where
   /-- Whether its text is read-only to editing commands ("Buffers", in the
   module docs). -/
   readOnly : Bool := false
+  /-- Byte ranges of its text, each with a face, set by its owner and drawn
+  under the last search's matches ("Buffers", in the module docs). -/
+  spans : Array Decoration := #[]
   deriving BEq, Repr
 
 /-- Whether the buffer's text is in another state than the one last saved,
@@ -2220,6 +2234,13 @@ def setMajorMode (id : BufferId) (name : String) (state : EditorState) :
       else (true, { buffer with major := some name }))
     state
 
+/-- Records `name` as the language of the buffer `id`, or, with `none`,
+that it has none. Any name is taken. Refused, with the state unchanged,
+with `noSuchBuffer` for a buffer there is none of. -/
+def setLanguage (id : BufferId) (name : Option String) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with language := name })) state
+
 /-- Adds the minor mode `name` to the buffer `id`, first; a minor mode the
 buffer already has changes nothing. Refused, with the state unchanged,
 with `noSuchBuffer` for a buffer there is none of. -/
@@ -2468,6 +2489,13 @@ there is none of. -/
 def setReadOnly (id : BufferId) (on : Bool) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with readOnly := on })) state
+
+/-- Sets the spans of the buffer `id` to `spans`, in place of those it had
+("Buffers", in the module docs). Refused, with the state unchanged, with
+`noSuchBuffer` for a buffer there is none of. -/
+def setSpans (id : BufferId) (spans : Array Decoration) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with spans })) state
 
 /-- The buffer over the text `text` that is read-only, with its name: what
 refuses an edit of that text ("Buffers", in the module docs). -/

@@ -68,9 +68,16 @@ drops it.
     rest of the line is the command line, run in the buffer's workspace;
     with none it asks for one. A host must be handed the compile mode's
     commands and job (`Editor/Compile/Compiled.lean`).
+  - `compile-command` runs `compile-command` and takes text: the rest of
+    the line chooses one of the buffer's on-modes' named commands, by its
+    candidate or its bare name, and with none it asks for one.
   - `recompile` runs `recompile` and takes nothing: it reruns the
     workspace's last line.
   - `kill-compilation` runs `kill-compilation` and takes nothing.
+  - `next-error` and `previous-error` run `next-error` and
+    `previous-error` and take nothing: they step through the locations of
+    the focused buffer's workspace's compilation. No global key binds
+    them.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -106,7 +113,10 @@ def bindings : Array Binding :=
     { name := "ls", command := Buffers.listName },
     { name := "bd", command := Buffers.closeName, takes := .text },
     { name := "compile", command := Compile.compileName, takes := .text },
+    { name := "compile-command", command := Compile.commandName, takes := .text },
     { name := "recompile", command := Compile.recompileName },
-    { name := "kill-compilation", command := Compile.killName }]
+    { name := "kill-compilation", command := Compile.killName },
+    { name := "next-error", command := Compile.nextName },
+    { name := "previous-error", command := Compile.previousName }]
 
 end Editor.Ex

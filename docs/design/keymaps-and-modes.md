@@ -28,6 +28,7 @@ registers, undo and dot repeat, on the editor API:
 | Modes by owner, a mode's lineage, the active keymaps of a view, setting a major mode through a view and its on-enter action | `lean/Editor/Config/Registry.lean` |
 | Defining a mode from `setup`, and its refusals | `lean/Editor/Setup.lean` (`defineMode`), `lean/Editor/Config/Registry.lean` (`Registrations.problem?`) |
 | A buffer's major and minor modes, and the state operations that set them | `lean/Editor/State.lean` |
+| The language entry, the shipped table, the rule that chooses a path's language, and the `code` mode | `lean/Editor/Language.lean`; a buffer's language in `lean/Editor/State.lean`, chosen when a file opens in `lean/Editor/Files.lean` |
 | The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
 | The minibuffer's mode and its six commands (accept, cancel, the next and the previous candidate, delete backward, and delete to the input's start), and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
 | The frame's commands (`toggle-fullscreen`, `minimise-window`) and their compiled bindings `C-s-f` and `s-m` | `lean/Editor/FrameCommands.lean`, `lean/Editor/FrameCommands/Compiled.lean` |
@@ -1614,7 +1615,9 @@ or move inside the session.
   insert state runs it, and the cursor resting there when it is run by its
   name. The line ending is read from the buffer (`Buffer.lineEnding`), and
   the edit carries the selection from before the command ("Undo and
-  redo").
+  redo"). The new line starts at its indent level ("Indenting a new
+  line"): `o` inserts the line ending and then the indent, `O` the indent
+  and then the line ending, and the bar goes after the indent.
 - **Not built: a count before `i a I A o O`.** Vim repeats the inserted
   text. The six commands ignore their count and their register.
 
@@ -1629,7 +1632,7 @@ options:
 |---|---|---|
 | `<Backspace>` | `insert-delete-backward` | Deletes the character before the bar; a carriage return and line feed, or a character of several bytes, goes whole. At a line's start it joins the line to the one above, and it deletes past where the insert began: `i_<BS>` under `backspace=indent,eol,start`, Vim 9.1's default. At the text's start it deletes nothing |
 | `C-w` | `insert-delete-word-backward` | "Delete the word before the cursor" (`i_CTRL-W`): from the later of the line's start and the start of the word before the bar (`previousWordStart .word`) to the bar, so the blanks before the bar and the word before them go, as Vim's `ins_bs` with `BACKSPACE_WORD` does; a run of punctuation is a word; blanks back to the line's start go when no word is before them on the line. At a line's start it joins the line to the one above, as `<Backspace>` does there (`backspace=eol`); at the text's start it deletes nothing |
-| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent`. The primitive an indenting line break would call, each row's level from its mode's indents query (`TextId.indentLevels`, `lean/Editor/Indent.lean`), is built; indenting on `RET`, `o` and `O`, and the `=` operator, are task `syntax-done-signal-mode-and-indent-operator`'s |
+| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending, as `o` and `O` read it, and starts the new row at its indent level ("Indenting a new line", below): the blanks either side of the bar are replaced, so the row left keeps no trailing blanks and the rest starts at its level, and the bar goes after the indent. With no syntax tree or no indents query it inserts the line ending alone, as before indenting; a text not parsed yet gets the row's own indent. With several ranges it breaks the line at each (`Target.insertLineBreak`), with no indent |
 | `TAB` | `insert-tab` | Inserts a tab character: Vim's defaults `noexpandtab` and `softtabstop=0` |
 | `<ArrowLeft>` | `insert-left` | One cell back, no further than the line's start (`whichwrap=b,s`: no wrap) |
 | `<ArrowRight>` | `insert-right` | One cell on, no further than where the line's content ends |
@@ -1659,8 +1662,11 @@ options:
   line feed and a tab), and `.` runs them again, so it makes the session's
   result: after `i x <BS> y <Esc>` it inserts `y`, a `<Backspace>` past
   where the insert began deletes there too, `C-w` deletes the word before
-  the bar, and `RET`
-  breaks the line with the buffer's line ending. An arrow key that moved
+  the bar, and `RET` is replayed by `RET`'s command (`Evil.newline`), so it
+  breaks the line and indents the new row as typing it does. The typed text
+  holds no indent, only the line feed, which is Vim's `.` under
+  `autoindent`; a line break after typed text inside one replay gets its
+  row's own indent, the text not being parsed yet. An arrow key that moved
   restarts the last change as `i` once something is typed after it, with
   the text typed from there on (`Command.restarts`), as
   `ins-special-special` says: "only the last change can be redone and
@@ -1672,6 +1678,46 @@ options:
   as Vim's beep restarts nothing.
 - **Not built: the other keys of Vim's insert state**: `C-u`, `C-o`,
   `C-r`, `<Home>` and `<End>` do nothing there (the open questions).
+
+#### Indenting a new line
+
+Status: built, by language-modes phase 3 (`lean/Editor/Evil.lean`,
+`Evil.openingIndent`; `lean/Editor/Indent.lean`, "The opening rule"; pinned
+by `indentOpeningChecks`, `indentEditChecks`, `evilIndentChecks`,
+`ConfigTest.indentChecks` and `ContractTest`'s opening table).
+
+`RET`, `o` and `O` ask the level of the new row of the text the user sees,
+before the line break (`TextId.openingLevel`), at the offset the line opens
+at: the bar for `RET`, where the cursor's line's content ends for `o`, and
+the line's start for `O`. That text's tree is the one delivered last: keys
+come further apart than an incremental reparse, which is milliseconds, and
+the editor thread never waits for a parse. A position in the text before
+the break answers the new row's level, so nothing is asked of a revision
+that has no tree, and the syntax tree port gains nothing.
+
+| What the opening level is | The new line's whitespace |
+|---|---|
+| A level | That many of the buffer's indent unit |
+| None: inside a multi-line string or block comment | Nothing added |
+| Refused `notParsed`: keys faster than a reparse, or a replay | The opening row's own leading whitespace (Vim's `autoindent`) |
+| Refused otherwise: no language, a mode with no tree, a language with no indents query | Nothing added: the edit is the one before this phase, byte for byte |
+
+- **`RET` truncates the blanks at the split**: with something added, the
+  blanks just before the bar on its row and just after it go, replaced by
+  the line ending and the indent (`Indent.breakAt`), as Vim's `open_line`
+  does under `autoindent`. The row left keeps no trailing blanks (`RET RET`
+  leaves an empty row), and the rest of the line starts at the indent. A
+  closing bracket that moves to the new row leads it a level out.
+- **One undo step with the session**: `o`/`O` with their indent, and `RET`
+  with its, are part of the insert session's one step.
+- **Several ranges**: `RET` breaks the line at each with no indent, as
+  before; evil makes no multi-range insert today.
+- **A recorded departure**: Vim removes an indent left untouched when the
+  insert is left (`<Escape>` after `o` with nothing typed). Here the blanks
+  stay until `=`, or a `RET` on that row, which replaces them.
+- **No electric closing bracket**: typing `}` as a row's first character
+  does not re-indent the row, where Vim's `indentkeys` has `0}`; a later
+  `=` does.
 
 ### Motions as built
 
@@ -2076,7 +2122,9 @@ library as plain rows (`SyntaxTree.capturesOf`), the rule Lean's:
 Status: built, by the command loop's phase 13
 (`lean/Editor/Evil/Operators.lean`, `lean/Editor/Evil/Registers.lean`,
 `lean/Editor/Evil/Motions.lean`; pinned by `evilOperatorChecks`,
-`evilSelectionChecks`, `evilRegisterChecks` and `evilOpenChecks`).
+`evilSelectionChecks`, `evilRegisterChecks` and `evilOpenChecks`). `=`
+is built by language-modes phase 3 (pinned by `evilIndentChecks` and
+`ConfigTest.indentChecks`).
 
 **The oracle is Vim's documented behaviour, written out case by case; no
 test runs Vim.** The reference is Vim 9.1's `motion.txt`, `change.txt`,
@@ -2089,7 +2137,9 @@ register holds a sentinel before the keys, so a register left as it was
 is seen. Every row was run through Vim 9.1 by hand, outside the suite,
 when the phase was planned.
 
-- **The operator × motion table** is five situations of 45 cases: no
+- **The operator × motion table** is five situations of 88 cases, each of
+  the 22 motions that take no argument under each of `d`, `c`, `y` and
+  `=`: no
   count; a count of 2; the cursor on an empty line; and the cursor on the
   buffer's last character, on a text that ends in a line feed and on one
   that does not, because the empty last row makes those two cases here.
@@ -2097,7 +2147,11 @@ when the phase was planned.
   it with each operator (`ModelTest.operatorTable`). A check that reads
   the default tables holds it complete: the pairs of keys each situation's
   rows have are exactly the product of the operators' keys and the
-  motions'.
+  motions'. The situations' buffer has no language, so every `=` row is
+  the indent operator giving up (`Evil.cannotIndent`); what `=` does over
+  a motion with indent levels is `evilIndentChecks`'s, and the find,
+  search and text-object tables each have `=` rows over a JSON text the
+  model's tree indents.
 - **A sweep beside it** (`ModelTest.operatorSweep`) presses every operator
   key with every motion key, with no count and with a count of 2, from
   every resting position of a few texts: nothing is refused, the cursor
@@ -2171,6 +2225,42 @@ What each motion says of itself:
 | **`d`** | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was | The register is the lines, line-wise. They are deleted. The cursor goes to the first non-blank of the line now where the first was, or of the last line when there is none |
 | **`y`** | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays | The register is the lines, line-wise. The cursor goes to the operand's `rest`, rested |
 | **`c`** | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive`, when it is the empty text. The selection is a bar at the head | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
+
+**What `=` does** (`Evil.indent`, the operator `indent`; pinned by
+`evilIndentChecks` on the models and `ConfigTest.indentChecks` over the
+library's Rust grammar):
+
+- **It acts on whole rows**, as Vim's `=` does: lines from `==` (with a
+  count), a linewise motion (`=j`, `=G`, `gg=G`) or `V`; and for cells,
+  from a charwise motion, a text object (`=af`) or `v`, the rows of the
+  first cell through the last, or the first cell's row for an empty
+  stretch.
+- **Each row's leading whitespace becomes its level in the buffer's indent
+  unit** (`TextId.reindentEdits`, `Indent.reindent`, `lean/Editor/Indent.lean`):
+  a blank row's becomes nothing, as Vim's `=` and rustfmt leave one; a row
+  whose level is none, inside a multi-line string or block comment, keeps
+  its own; a row already right is not touched. The unit is the buffer's
+  language's (`Target.indentUnit`, through `indentUnitOf`, "Languages and
+  the code mode").
+- **One edit, one undo step.** Every row's edit is one transaction that
+  carries the selection from before the command
+  (`Target.replaceEachCarrying`), so one `u` gives back the text and the
+  cursor. With no edit there is no transaction, and only the cursor moves.
+- **The cursor** goes to the first non-blank of the first row, rested, as
+  Vim's `op_reindent` leaves it. The window keeps no wanted column.
+- **No register** is read or written; a register named before `=` is
+  taken and ignored, as in Vim.
+- **`.` replays it** over the same rows from the cursor, its count
+  replaced by one typed before `.`; over a visual selection it is not
+  repeated (`notRepeated overSelection`), as for any operator.
+- **With no levels to read it gives up** (`Evil.cannotIndent`), having
+  changed nothing, and is not the last change: a buffer with no syntax
+  tree (`indent: this buffer has no syntax tree`), a tree that keeps no
+  indents query (`indent: its language has no indents query`, JSON,
+  Markdown, TOML and Lean today), or a text whose last edit's tree is not delivered yet
+  (`indent: the syntax tree is not parsed yet`).
+- **A recorded departure**: Vim's own `=` reads `indentexpr` or `cindent`;
+  ours reads the language's indents query, so its levels are the query's.
 
 - **The empty-stretch column is Vim's**, quirks included: `yh` at a line's
   start empties the register, `dh` leaves it, and `c$` on an empty line
@@ -2629,7 +2719,7 @@ Which names have something behind them:
 | `self-insert`, which no table names: typed text | Built and registered |
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
 | `insert-delete-backward`, `insert-delete-word-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
-| The operators (`delete`, `change`, `yank`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
+| The operators (`delete`, `change`, `yank`, `indent`, bound to `d`, `c`, `y` and `=`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
 | The twenty-two text objects of `objects` | Built: entries of `Evil.objects`, Vim's sixteen and the syntax tree's six, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
 | `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
@@ -2714,9 +2804,9 @@ and Testing).
 
 Status: built (`lean/Editor/Role.lean`, `lean/Editor/Mode.lean`, the
 registry's modes in `lean/Editor/Config/Registry.lean`, a buffer's modes in
-`lean/Editor/State.lean`; the module docs have the detail). Two modes
-ship: the minibuffer's ("The minibuffer") and `compilation` ("The compile
-mode, as built").
+`lean/Editor/State.lean`; the module docs have the detail). Three modes
+ship: the minibuffer's ("The minibuffer"), `compilation` ("The compile
+mode, as built") and `code` ("Languages and the code mode").
 
 A mode is a value in a registry keyed by name. It is not a type class,
 because instances resolve at elaboration time and the active mode is chosen
@@ -2730,10 +2820,11 @@ structure Mode where
   roles      : List (Role × String) := []           -- role, command name
   locals     : List (String × String) := []         -- suffix as a key string, command name
   syntaxTree : Option Mode.SyntaxTree := none       -- how its text is parsed and drawn
+  syntaxTreeOfLanguage : Bool := false              -- or as its buffer's language says
   onEnter    : ViewId → EditorM Unit := fun _ => pure ()
 
 structure Mode.SyntaxTree where
-  grammar     : String                               -- the library's grammar: rust, json, markdown
+  grammar     : String                               -- the library's grammar: rust, json, markdown, toml, lean
   highlights  : Option String := none                -- query source; none: the grammar's shipped one
   captures    : List (String × Option FaceName) := [] -- config's capture faces, over the shipped default
   injections  : Option String := none                -- injections query source; none: the shipped one
@@ -2751,6 +2842,10 @@ structure Mode.SyntaxTree where
   called `syntax`, which is a keyword of Lean's. A derived mode with none
   takes the nearest of its lineage (`Mode.syntaxTreeOf`). Config writes it
   in `defineMode`; there is no other registry API.
+- **`syntaxTreeOfLanguage` takes the tree of the buffer's language** in
+  place of one of the mode's own: the `code` mode's ("Languages and the
+  code mode"). In a lineage the nearest mode that has its own tree, or
+  takes the language's and the buffer has one, says.
 
 No `Key` for a top-level binding and no scheme's `Binding` type appears in
 `Mode`. A mode cannot name the binding type of a scheme it has never heard
@@ -2941,14 +3036,131 @@ contributes nothing.
   syntax tree replaces one with a syntax tree, the text is detached, which
   drops its highlights; when neither has one, the port is asked nothing.
   What the port did is not undone on rollback, as the clipboard is not.
-  Choosing a major mode when a file is opened is not built.
+- **The buffer's language is read too.** Both lineages, the old and the
+  new, are read with the tree of the buffer's language
+  (`Mode.syntaxTreeOf lineage language`, the entry looked up by the
+  buffer's `language` in the loop's table), which a mode that takes the
+  language's gives. Opening a file chooses its language and sets `code`
+  ("Languages and the code mode").
 - **Adding a minor mode runs no action** yet (left open).
+- **Minor modes turned on by markers.** A compile contribution
+  (`lean/Editor/Compile/Contribution.lean`; "The compile mode, as built")
+  names marker files. When a buffer's file opens and its workspace is
+  known, the job `find-mode-markers` looks for every registered
+  contribution's markers from the file's directory up to and including the
+  workspace's root, never above it, or in the directory alone for a file
+  with no workspace ([projects.md](projects.md), "A buffer's workspace").
+  Each mode with a marker there is added as a minor mode, its root the
+  directory of its nearest marker, or of its farthest for an outermost
+  mode (`cargo-mode`). The buffer keeps its on-modes as the
+  local `marker-modes`, nearest root first and, at one root, in
+  registration order; they are added so that `Buffer.minors` lists the
+  nearest first, so its keymap wins as its command is `compile`'s default.
+  It happens once, when the file opens; a reload's contributions apply to
+  files opened after it. With no contribution registered no job starts;
+  every host ships three, so every file's open starts it. A mode that
+  computes its commands checks its listing as it turns on.
+  A mode turned on so needs no `Mode` record: one registered under its
+  name contributes its keys as any minor mode's do.
 
 Pinned by `ModelTest.modeEnterChecks`, through the loop,
 `ModelTest.apiStateChecks`, and, for a syntax tree,
 `ModelTest.highlightFaceChecks` and `ModelTest.highlightEnterChecks`, and
 `ConfigTest`'s check that a job's command setting such a mode reaches the
 host's syntax tree.
+
+### Languages and the code mode
+
+Status: built by `language-modes` phase 2 (`lean/Editor/Language.lean`;
+the module docs have the detail). A buffer's language is chosen from its
+file name, and one generic major mode, `code`, parses and draws its text
+as the language says. There is no mode per language.
+
+```lean
+inductive Language.Pattern where
+  | name (fileName : String)        -- the exact base name: Cargo.lock
+  | extension (extension : String)  -- rs for *.rs
+
+structure Language where
+  name       : String                -- how a buffer records it, and how config overrides it
+  patterns   : List Language.Pattern
+  syntaxTree : Mode.SyntaxTree       -- a grammar and the overrides a mode takes
+  indentUnit : Language.IndentUnit := .spaces 4  -- spaces n, or tab
+```
+
+`Language.IndentUnit` is a module of its own,
+`lean/Editor/Language/IndentUnit.lean`, which imports nothing, so the state
+requests can name it (`Language → Mode → Command → State.Request` would
+otherwise be a cycle).
+
+- **The shipped table** (`Language.shipped`) is `rust` (`*.rs`, four
+  spaces), `json` (`*.json`, two), `markdown` (`*.md`, two), `toml`
+  (`*.toml` and `Cargo.lock`, two) and `lean` (`*.lean`, `lakefile.lean`
+  included, two), each parsed with the grammar of its name and its shipped
+  queries. Each is a named definition, so config writes
+  `{ Language.rust with … }`. `toml` draws its booleans, a capture the face
+  vocabulary has no face for, as constants; a TOML file with another name
+  (`uv.lock`) is one line of config. `lean` draws its booleans as
+  constants, its characters as strings and its namespaces as modules, three
+  captures the vocabulary has no face for.
+- **The rule is pure and the core's** (`Language.forPath`). The table is in
+  precedence order: config's entries, in the order config defined them,
+  then the shipped ones config did not replace by name
+  (`Language.over`; the registry's `languageTable`). The first entry with
+  an exact base-name pattern of the path's base name wins; else the first
+  with an extension pattern the base name ends in after a dot, with
+  something before it; else none. So a base name beats an extension, and
+  config's entry beats a shipped one of equal pattern. Patterns are typed
+  and case-sensitive; one that is empty or holds `/` is refused by
+  `setup`.
+- **`code`** (`Language.codeMode`) has no tree of its own and
+  `syntaxTreeOfLanguage` set, so highlighting, injections, text objects
+  and indents come from the buffer's language. It fills no role and has no
+  local command; a user's minor mode for a language is an ordinary minor
+  mode.
+- **A buffer records its language by name** (`Buffer.language`,
+  `BufferId.setLanguage`), as it records its major mode: the entry is
+  looked up in the loop's table when a mode is entered, so a reload's
+  entry of that name is the one used next. An already-highlighted buffer
+  is not highlighted again by a reload.
+- **Opening a file** (`Files.takeIn`): once the new buffer is shown, the
+  path's language is asked (`languageOf`, answered from the loop's table).
+  For one, the buffer records it and is set to `code`, so the mode's entry
+  attaches and highlights the text inside the open's command. For none,
+  nothing is recorded and no mode is set, as before languages. A path a
+  buffer already holds is shown and nothing is chosen again. The minor
+  modes the file's markers turn on ("A buffer's modes") come after, in the
+  command of the `find-mode-markers` job the open starts. Setting a major
+  mode leaves the minor modes alone and adding a minor mode leaves the
+  major mode alone, so a `.rs` file under a `Cargo.toml` ends in `code`,
+  with its language, and with `cargo-mode` on (pinned by
+  `ModelTest.compileHookChecks`).
+- **A config mode with its own tree wins when the user sets it**: it never
+  looks at the language. One derived from `code` with no tree takes the
+  language's.
+- **A grammar loaded at run time** (deferred) would be a registration that
+  makes a name known to the syntax service; entries name grammars and need
+  no new field.
+- **The indent unit is read by `=` and by the commands that open a
+  line** (`Target.indentUnit`): the unit of the buffer's language's entry,
+  which a command asks the loop for by name (`indentUnitOf`, answered from
+  the loop's table, config's entry first), or four spaces
+  (`Language.IndentUnit.default`) for a buffer with no language or one the
+  table has no entry of, which covers a mode with its own tree and an
+  indents query.
+- Not built: setting a language on a buffer with no file by command;
+  comment tokens; a formatter; indents queries for JSON, Markdown, TOML
+  and Lean, whose buffers' `=` says there is none.
+
+Pinned by `ModelTest.languageMatchChecks` (the rule and the table, pure),
+`ModelTest.modeRecordChecks` (`code`'s tree), `ModelTest.languageOpenChecks`
+(opening on the models, over the model's one grammar, `json`), and
+`ConfigTest.languageChecks` (Rust, JSON, Markdown, TOML and Lean, a
+`.toml` file and `Cargo.lock`, a `.lean` file and `lakefile.lean`, and
+config's override of Rust's query, through the host and the real syntax
+binding), and `ContractTest`'s checks that a TOML text is drawn by the real
+display with its keys, string and brackets in their faces' colours, and a
+Lean text with its keyword, string and comment in theirs.
 
 ### Why this shape
 
@@ -3212,8 +3424,12 @@ library's matcher.
 
 ### The compile mode, as built
 
-Status: built by `shell-and-compile` phase 3 (`lean/Editor/Compile.lean`,
-`lean/Editor/Compile/Compiled.lean`; the module docs have the detail).
+Status: built by `shell-and-compile` phases 3 to 6
+(`lean/Editor/Compile.lean`, `lean/Editor/Compile/Errors.lean`,
+`lean/Editor/Compile/Contribution.lean`, `lean/Editor/Compile/Listing.lean`,
+`lean/Editor/Compile/Shipped.lean`, `lean/Editor/Compile/Compiled.lean`,
+`lean/Editor/Json.lean`, `lean/Editor/Workspace/Modes.lean`; the module
+docs have the detail).
 Emacs's `M-x compile`, one per workspace: a build or test command runs as
 `/bin/sh -c <line>` and its output arrives in the workspace's compilation
 buffer while editing goes on.
@@ -3225,15 +3441,17 @@ buffer while editing goes on.
   location that cannot run commands refuses `compile` and `recompile`
   before anything is asked or started, and says why.
 - **The commands.** `compile` takes the line, or asks for it, `Compile
-  command: `, with the scope's last line as the prompt's text and the
-  project's compile history as its candidates. `recompile` reruns the
+  command: `, with the scope's last line as the prompt's text (with none,
+  the first command the buffer's on-modes offer) and the project's compile
+  history as its candidates. `recompile` reruns the
   scope's last line in the directory it ran in, with no prompt.
   `kill-compilation` cancels the scope's run, which kills the child with
   its process group. Starting a run while the scope's own runs asks,
   `Kill the compilation running in <label>? (y or n) `: `y` or `yes`
   kills the old one and empties the buffer, anything else leaves both. The
-  ex line ships `compile` (taking the line), `recompile` and
-  `kill-compilation`; no key binds them yet.
+  ex line ships `compile` (taking the line), `compile-command` (taking
+  the command), `recompile`, `kill-compilation`, `next-error` and
+  `previous-error`; no global key binds them yet.
 - **The buffer** is `*compilation: <label>*`, with the root's parent
   directory in parentheses when that name is taken by another workspace
   of the same label, then the first free name of that. It is found by the
@@ -3271,14 +3489,154 @@ buffer while editing goes on.
   read-only`, undo included, and a committed text is dropped and said. The
   compile mode writes it inside `BufferId.writing`, Emacs's
   `inhibit-read-only`. The mode line has no read-only mark yet.
-- **The mode** `compilation` fills the role `refresh` with `recompile`.
-- **Not built here**: errors and `next-error` (phase 4), the hook a minor
-  mode gives a project (phase 5), a time limit (a build may run for many
-  minutes; `kill-compilation` ends it, and `C-g` does not, as in Emacs).
+- **Error formats** are data (`Compile.Format`): a name, a pattern over
+  one output line whose pieces capture the file, the line, the column, the
+  severity (error, warning or note) and the message; optionally the
+  pattern of a following line that continues a location; and optionally a
+  lead, the pattern of the line before a location that gives its severity
+  and message, for a tool that prints the location after its message.
+  A location found after a lead starts at the lead's row, so it is visited
+  from either line, and a lead and its location that arrive in two posts
+  give the one location. The message is kept with the location and not
+  yet said. Patterns are matched by a small anchored matcher the editor
+  owns, not a regex: the search port's regex answers no submatches and its
+  model answers literal patterns alone. Three formats ship: `general`,
+  `file:line:col: message` and `file:line: message`, with an optional
+  severity word, read with every run; `rustc`, cargo's arrow line ` -->
+  src/main.rs:4:18` with the `error[E0308]: …` line before it as its lead
+  and the snippet under it (`|`, `=` and `:::` lines) continuing it; and
+  `lean`, Lake's `error: ./Foo/Bar.lean:12:4: …`, with `warning` and
+  `info` (a note), whose columns count from 0. `general` reads none of
+  rustc's or Lake's lines.
+- **Locations** are found as lines arrive, in each post and at the run's
+  end, never in the header or the last line, and kept per workspace in its
+  compile record, with the run's directory resolving a relative file
+  lexically (`./` dropped, `..` taken). Each location's text, from the
+  file through the line or column, is a span of the compilation buffer in
+  a face by severity: `compilation.error`, `compilation.warning`,
+  `compilation.note`, drawn under the last search's matches
+  ([text-and-display.md](text-and-display.md), "Decorations"). A rerun in
+  a workspace resets that workspace's list only.
+- **Stepping.** Each workspace's list has a current location, none at
+  first. `next-error` and `previous-error` step through the focused
+  buffer's workspace's list, so a buffer of another worktree or project
+  steps through its own, and stop with a message at either end; in a
+  compilation buffer, `activate` (`compile-goto-error`, `RET`) visits the
+  location on the cursor's line. Each sets the current location and puts
+  the compilation buffer's cursor on its first line; moving that cursor by
+  hand changes nothing.
+- **Visiting** opens the location's file (`Files.visit`) and puts the
+  cursor on its line and column, the column in characters less the
+  format's column base (1 for `general`). From a compilation buffer the
+  file is shown in the first other view, or a new one below; `RET` moves
+  the focus there, as Emacs's does, and `next-error` asked from the
+  compilation buffer keeps it, as `next-error-no-select`. A file that is
+  not there is said by Files, and no other cursor moves.
+- **Contributions.** A minor mode gives the compile mode what fits a kind
+  of project as data (`Compile.Contribution`), registered under the mode's
+  name in config (`compileContribution`) or by compiled code (a host's
+  `contributions`): marker files, named commands (`build`, `test`, each a
+  name and a command line, and maybe a directory of its own), error
+  formats, whether its root is its outermost marker, and a listing that
+  computes more commands.
+  The registration order is config's contributions in its order, then the
+  compiled ones config does not register; config's contribution of a
+  compiled one's name replaces it whole. A contribution with no marker,
+  one registered twice and one naming a command twice refuse the `setup`.
+- **On-modes.** A buffer's markers turn their modes on inside its
+  workspace, each with its root ("A buffer's modes"): its nearest marker's
+  directory, or, for an outermost mode, the farthest directory within the
+  workspace that holds one of its markers. More than one may be on,
+  ordered, once their roots are chosen, nearest root first, then by
+  registration order. That one order picks the default command and the
+  order formats are tried.
+- **The shipped modes.** Every host registers three contributions for the
+  owner `compiled` (`Compile.shipped`), which config's of the same name
+  replaces whole, and which config can build on (`{ Compile.cargoMode with
+  … }`):
+  - `cargo-mode`: marker `Cargo.toml`, outermost, because cargo prints
+    paths relative to the Cargo workspace's root, so in a member crate it
+    runs and resolves there; `build`, `test` and `clippy`, as `cargo
+    build`, `cargo test` and `cargo clippy`; the `rustc` format.
+  - `lake-mode`: marker `lakefile.lean` or `lakefile.toml`; `build` and
+    `test`, as `lake build` and `lake test`; the `lean` format.
+  - `mise-mode`: marker `mise.toml` or `.mise.toml`; one command a task,
+    computed from `mise tasks ls --json` (`mise` by bare name on the
+    child's `PATH`): `mise run <task>`, the name quoted for the shell when
+    it must be, run in the task's `dir`. No format of its own: a task's
+    output is read by the other on-modes' formats and `general`, so `mise
+    run test` in a Cargo crate inside a mise project reads rustc's errors
+    through `cargo-mode`.
+- **Computed commands.** A contribution's listing is a program run in its
+  mode's root, whose output it reads into named commands. It runs as a job
+  (`compile-list`) when the mode turns on in a buffer, and at each use,
+  `compile`'s prompt and `compile-command`, but only when its markers'
+  stamps in the root differ from those read before it last ran, or after a
+  reload. A use offers what was last listed: the list a changed marker
+  gives is offered from the use after the job ends. What it gave is kept
+  per workspace, by mode and root (`compile-listings`), so two worktrees
+  list their own. A listing that fails offers none of its commands and
+  says why once, `<mode> in <root>: <why>`, until the stamps change or a
+  reload. Listed commands come after the contribution's own, a listed name
+  replacing its own in place.
+- **Where and what `compile` runs.** With on-modes, `compile` runs its
+  line, typed or default, in the first on-mode's root, which may be below
+  the workspace's root (a crate inside a Cargo workspace); its prompt's
+  text is the scope's last line, as projectile keeps the last command per
+  project, else the first on-mode's first command. The compilation is
+  still the workspace's: its buffer and its error list. A run keeps its
+  on-modes in its scope's record, so `recompile`, the restart prompt and
+  the scan of its output use the modes it started with, and `compile` in
+  the compilation buffer uses them too.
+- **`compile-command`** prompts `Mode command: ` with every on-mode's named
+  commands as candidates, `<name> (<mode>)`, in on-mode order; the answer
+  chooses a whole candidate, else the first command of that bare name,
+  and its line runs in its mode's root, or the directory the command
+  names, with no second prompt. With no
+  mode offering a command it says so and asks nothing. It is a command and
+  an ex name, bound to no key.
+- **Formats in use** are the on-modes' contributions' formats, in on-mode
+  order, then `general`, so a line two modes read is the nearest mode's
+  location, and a mode's format finds nothing while the mode is off.
+- **Project commands.** Config gives one project, by its identity, its own
+  named commands and settings for a mode (`projectCommands`). They have
+  one source, config's latest as the loop is told it
+  (`StateRequest.compileHook`), keyed by identity, and are copied into no
+  store: `compile`, `compile-command` and `Compile.projectSettings` read
+  them from there, so every worktree of the codebase has them, no other
+  project does, and a reload's change is read at once, before any compile.
+  A project's command of a name the contribution gives, or its listing
+  gave, replaces it in place, and a new name comes after them; they are
+  offered only while their mode is on. Settings are read by
+  `Compile.projectSettings`; no shipped mode acts on them yet.
+- **The mode** `compilation` fills the role `refresh` with `recompile` and
+  `activate` with `compile-goto-error`. It leaves `next-item` and
+  `previous-item` unfilled, so under the Vim scheme `j` and `k` stay
+  motions in a compilation buffer.
+- **Not built here**: turning a buffer's on-modes on again after a
+  reload, make's directory tracking (`Entering directory`), and resolving a
+  mise task's output against a directory its commands `cd` to; cargo's
+  root by `cargo locate-project --workspace`, for a crate nested in but not
+  a member of an outer Cargo workspace; a format of its own for bare
+  `lean`'s `file:line:col: error(code):` form, which `general` reads one
+  column off; global keys for `next-error` and `previous-error` (such as
+  Vim's `]q` and `[q`); a location's message in the echo area;
+  replacing an open prompt's candidates when a listing ends;
+  `next-error-follow`; and a time limit (a build may run for many minutes;
+  `kill-compilation` ends it, and `C-g` does not, as in Emacs).
 
-Pinned by `ModelTest.compileChecks` and `readOnlyChecks` on the models, and
-by `ContractTest.compileChecks` over the real process service, with the
-fixture `tests/compile/three-lines`.
+Pinned by `ModelTest.compileChecks`, `compileErrorChecks`,
+`compileLocationChecks`, `compileHookChecks`, `projectFormatChecks`,
+`jsonChecks`, `listingChecks`, `projectModeChecks`, `modeMarkerChecks` and
+`readOnlyChecks` on the models; by `ConfigTest`'s checks that the hosts
+start with the shipped contributions and that config can override a field
+of one; by the mode marker search's contract (`Workspace.MarkerContract`),
+on its model and on the job model by `model-test` and over the real file
+service by `contract-test`; and over the real process service by
+`ContractTest.compileChecks`, with the fixture `tests/compile/three-lines`,
+and `ContractTest.projectModeChecks`, with the programs in
+`tests/compile/bin` standing in for cargo, lake and mise, the git fixture
+`tests/workspaces/git`, and the trees in `tests/compile`.
 
 ## The ex command line
 
@@ -3505,6 +3863,8 @@ command an ex name runs is a step of its own.**
 | `compile` | `compile` | Text | Runs the rest of the line as `/bin/sh -c` in the buffer's workspace, into its compilation buffer ("The compile mode, as built"); with no argument, asks for the line |
 | `recompile` | `recompile` | Nothing | Reruns the workspace's last compiled line |
 | `kill-compilation` | `kill-compilation` | Nothing | Kills the workspace's compilation in flight |
+| `next-error` | `next-error` | Nothing | Visits the next location of the workspace's compilation |
+| `previous-error` | `previous-error` | Nothing | Visits the previous location of the workspace's compilation |
 
 Where they differ from Vim:
 
@@ -3522,8 +3882,9 @@ Where they differ from Vim:
 - **`e!` and `w!` are names of their own**, bound with a fixed argument;
   only a leading `!` is parsed, as the shell's.
 - **`w` takes no file name.** Saving under another name is not built.
-- **`reload` is no Vim command**, nor are `compile`, `recompile` and
-  `kill-compilation`, which are Emacs's.
+- **`reload` is no Vim command**, nor are `compile`, `recompile`,
+  `kill-compilation`, `next-error` and `previous-error`, which are
+  Emacs's; Vim's `:cnext` and `:cprevious` are not bound.
 - **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
   matches more than one buffer.
 - **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it
@@ -3639,6 +4000,12 @@ which run the executable on a real file.
   `.window view` or `.position view offset`, beside a byte offset of that
   window's buffer ([text-and-display.md](text-and-display.md), "Views as
   built").
+- Built: `setup` defines a language with `defineLanguage`
+  (`lean/Editor/Setup.lean`; "Languages and the code mode"). One of a
+  shipped language's name replaces it whole; config's entries are matched
+  before the shipped ones. A `setup` that defines a language name twice,
+  or a pattern that is empty or holds `/`, is rejected. A reload's
+  languages hold from the next file opened.
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
   a mistyped key is an error in config before it runs. It is not built. See
   the open questions for its cost.
@@ -3767,13 +4134,18 @@ names a scheme's key:
 | `modeDispatchChecks` | On the editor's models, through the loop: a major mode's role runs its command in a view of its buffer and the global binding elsewhere; a minor mode's wins; a derived mode falls to its parent; the leader then a suffix |
 | `modeEnterChecks` | On the editor's models: the on-enter action runs once, with the view, when the mode becomes the major mode; a derived mode's lineage root first; a refusal runs nothing |
 | `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it; then its injections and a language for the model's grammar, its text objects and indents queries kept, and a refusal of one of those steps said and stopping it alone |
+| `languageMatchChecks`, `languageOpenChecks` | The language rule, pure: by extension, an exact base name over an extension, config's entry over a shipped one and the earlier over the later, no match, `Language.over` and the registry's table, and the shipped table; and, on the loop's driver over the editor's models, a `.json` and a `.rs` file opened into `code` with their language and highlighted, a file of no language opened as before, one already open asking nothing more, a config mode with its own tree winning, and config's entry of a language's name used |
+| `ConfigTest.languageChecks` | Through the headless host, the real elaborator and the real syntax binding: a `.rs`, a `.json` and a `.md` file opened into `code` and highlighted with their grammar's shipped query, a file of no language asking the syntax tree port nothing, and config's `rust` with its own highlights query used in place of the shipped one |
 | `treeObjectRuleChecks` | The syntax tree's text-object rule (`Evil.TreeObjects.choose`), pure, over hand-built rows: the smallest node first, a count, a node no bigger than a wider selection passed over, the inside as the longest inner row within, no inside, and no node round the cursor |
 | `indentRuleChecks`, `indentLevelChecks` | The indent rule (`Indent.rule`), pure, over hand-built rows; and the indent primitive (`TextId.indentLevels`) on the editor's models, under a test mode of the model's JSON grammar with an indents query of its own, refused for a text with no syntax tree or no indents query |
+| `indentOpeningChecks`, `indentEditChecks` | The opening rule (`Indent.openingCounts`, `Indent.levelOf`) and the widening (`Indent.widenedStart`), pure, over hand-built nodes; and levels as edits, pure: a level's whitespace in spaces or tabs, the re-indent's edits (a row already right left, a blank row emptied, a kept row untouched), what a new line gets for each answer, and `RET`'s edit (`Indent.breakAt`) |
+| `evilIndentChecks` | `=` and the indented new lines by key, in a JSON language whose model tree answers the indents query (`indentDriver`): `gg=G` over a mangled text, `=af`, counts, `=j`, `V j =`, one undo step, `.` over another range and with a new count, not over a selection, a config entry's tab unit; `RET` after an opening bracket and before a closing one, between blanks and twice, `o` and `O`, and `.` replaying them; and with no language or no indents query, `=` giving up with its sentence and `RET`, `o` and `O` as before |
+| `ConfigTest.indentChecks` | Through a headless host of the Vim scheme that ships and the library's Rust grammar: `gg=G` on the Rust indent fixture mangled in code gives the fixture back, its string and comment rows kept; `=af` on one of two functions, then `u` and `.`; `A RET` after an unclosed brace at the text's end and two deep, `o` then `if a {` and `RET`, `o` and `O` in a method; and a plain and a JSON buffer as before. The host waits for a text's tree before a question of its captures, so keys that edit and then ask are deterministic. `ContractTest` holds the opening rule's table over the real grammar through `TextId.openingLevel` |
 | `ConfigTest.modeChecks` | Through the headless host and the real elaborator: a config mode's role runs its store command, and once a reload drops the mode the role's key runs the global binding; a compiled mode's role runs its command before any reload and after a reload of a config that defines no mode |
 
 Beside them, `stateChecks` pin the three state operations, `registryChecks`
 and `reloadChecks` modes by owner and their install, `setupChecks`
-`defineMode` and its refusals, `keymapChecks` `Keymap.filter`, and
+`defineMode`, `defineLanguage` and their refusals, `keymapChecks` `Keymap.filter`, and
 `vimStateChecks` that a mode's key, a hand-tuned one among them, is typed
 text in insert state, that a mode's binding is reached as what it wraps,
 and that `Mode.check` under the Vim scheme reads every state's keymaps.
@@ -4025,6 +4397,16 @@ every build). The second is proved on the text model
   of a text that ends in a line feed is a place a normal-state cursor may
   rest, which removes the consequence after an insert and makes `G` on a
   file land one row below Vim's.
+- **Carried structural captures.** A new line's level is asked of the
+  text before the break, whose tree is delivered, so the syntax tree port
+  gains nothing ("Indenting a new line"). A replay or a macro that types
+  and breaks lines in one command asks of a revision with no tree, and
+  gets the row's own indent. Carrying the delivered tree's indents captures
+  through the patch to a newer revision, as highlights are carried, would
+  answer it; it is a Rust, FFI, model and contract addition, and sits
+  beside "a job's wait for a parse".
+- **An electric closing bracket.** `}` typed as a row's first character
+  does not re-indent the row (Vim's `indentkeys` `0}`); `=` does.
 - **Insert state's other editing keys** ("Insert state"). `<Backspace>`,
   `C-w`, `RET`, `TAB` and the arrow keys are built; `C-u`, `C-o`, `C-r`,
   `<Home>` and `<End>` are not. Dot repeat replays the built keys as Vim

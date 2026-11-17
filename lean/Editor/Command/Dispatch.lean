@@ -1,5 +1,6 @@
 import Editor.Command
 import Editor.Highlight
+import Editor.Language
 import Editor.Mode
 
 /-!
@@ -142,6 +143,12 @@ from the next command.
   detached (`Highlight.leave`). When neither says, the syntax tree port is
   asked nothing. It runs inside the command as an on-enter action does, so
   its requests are guarded.
+- **The buffer's language is the `code` mode's tree.** Both lineages, the
+  old and the new, are read with the tree of the buffer's language
+  (`Buffer.language`, looked up by name in `Loop.Registered.languages`),
+  which a mode that takes the language's (`Mode.syntaxTreeOfLanguage`,
+  `Editor/Language.lean`) gives. A buffer with no language, or one no
+  entry is registered under, gives none: `code` over it is plain text.
 - **An on-enter action runs inside the command.** Its program is put before
   the rest of the command's and goes through this same transformation: its
   state requests are answered from the state the command had reached, its
@@ -189,6 +196,26 @@ from the next command.
   answered config's limit the loop was told of
   (`Loop.Registered.shellTimeLimit`), or `none`, the state not read and
   not changed. `:!` asks, for its run's limit (`Editor/Shell.lean`).
+- **Asking for the syntax refresh delay**
+  (`StateRequest.syntaxRefreshDelay`) is answered the same way, from
+  `Loop.Registered.syntaxRefreshDelay`. A mode's entry asks, for the
+  interval it hands the syntax service (`Editor/Highlight.lean`).
+- **Asking for a path's language** (`StateRequest.languageOf`) is answered
+  the name of the language the loop's table chooses for the path
+  (`Language.forPath` over `Loop.Registered.languages`), or `none`, the
+  state not read and not changed. A file's open asks, for the language its
+  buffer records (`Editor/Files.lean`).
+- **Asking for a language's indent unit** (`StateRequest.indentUnitOf`) is
+  answered the unit of the first entry of that name in the loop's table
+  (`Loop.Registered.languages`, config's entries first), or `none`. `=`
+  and the commands that open a line ask (`Target.indentUnit`,
+  `Editor/Api.lean`).
+- **Asking for the compile hook** (`StateRequest.compileHook`) is answered
+  the compile contributions and config's project commands the loop was
+  told of (`Loop.Registered.compile`), the state not read and not changed.
+  The compile mode asks (`Editor/Compile.lean`, "The hook"). The workspace
+  settings carry the contributions' marker modes too
+  (`Workspace.Settings.markerModes`), for what opens a file.
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -330,6 +357,16 @@ structure Loop.Registered where
   (`shellTimeLimit`, `Editor/Setup.lean`); `none` for the shell's
   default. -/
   shellTimeLimit : Option Nat := none
+  /-- How long a text goes unchanged after an edit before it is parsed
+  whole again, in milliseconds, as config set it (`syntaxRefreshDelay`,
+  `Editor/Setup.lean`); `none` for the default. -/
+  syntaxRefreshDelay : Option Nat := none
+  /-- The language table, in precedence order (`Language.forPath`): config's
+  entries, then the compiled ones it did not replace by name. -/
+  languages : List Language := []
+  /-- The compile contributions, in registration order, and config's
+  project commands (`Config.Registry.compileHook`). -/
+  compile : Compile.Hook := {}
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -339,11 +376,14 @@ instance {α : Type} : Inhabited (Program editorPort (Guarded α × EditorState)
 /-- What runs when the mode `name`, of `lineage` (root first), has become
 the major mode of a buffer over `text` whose old major mode said
 `before` of how its text is parsed: the text highlighted with the new
-lineage's syntax tree, or detached when only the old said one, then the
-lineage's on-enter actions, root first, once with each of `views`. -/
+lineage's syntax tree, the buffer's `language`'s for a mode that reads its
+language's (`Mode.syntaxTreeOf`), or detached when only the old said one,
+then the lineage's on-enter actions, root first, once with each of
+`views`. -/
 def enteringMode (name : String) (text : TextId) (lineage : List Mode)
-    (before : Option Mode.SyntaxTree) (views : List ViewId) : EditorM Unit := do
-  match Mode.syntaxTreeOf lineage, before with
+    (language : Option Mode.SyntaxTree) (before : Option Mode.SyntaxTree) (views : List ViewId) :
+    EditorM Unit := do
+  match Mode.syntaxTreeOf lineage language, before with
   | some syntaxTree, _ =>
     Highlight.enter name text syntaxTree
   | none, some _ =>
@@ -380,11 +420,15 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     | none, _ => dispatched registered state (next (.error (.noSuchWindow view)))
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
     | some target, some lineage =>
-      let before := (target.buffer.major.bind registered.entering).bind Mode.syntaxTreeOf
+      let language :=
+        (target.buffer.language.bind fun name => registered.languages.find? (·.name == name)).map
+          (·.syntaxTree)
+      let before :=
+        (target.buffer.major.bind registered.entering).bind (Mode.syntaxTreeOf · language)
       match state.handle (.setMajorMode view name) with
       | (.ok true, state) =>
         dispatched registered state do
-          match ← (enteringMode name target.buffer.text lineage before [view]).run with
+          match ← (enteringMode name target.buffer.text lineage language before [view]).run with
           | .ok () =>
             next (.ok true)
           | .error error =>
@@ -395,12 +439,15 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     | none, _ => dispatched registered state (next (.error (.noSuchBuffer id)))
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
     | some buffer, some lineage =>
-      let before := (buffer.major.bind registered.entering).bind Mode.syntaxTreeOf
+      let language :=
+        (buffer.language.bind fun name => registered.languages.find? (·.name == name)).map
+          (·.syntaxTree)
+      let before := (buffer.major.bind registered.entering).bind (Mode.syntaxTreeOf · language)
       let views := (state.windows.filter (·.buffer == id)).toList.map (·.id)
       match state.handle (.setBufferMajorMode id name) with
       | (.ok true, state) =>
         dispatched registered state do
-          match ← (enteringMode name buffer.text lineage before views).run with
+          match ← (enteringMode name buffer.text lineage language before views).run with
           | .ok () =>
             next (.ok true)
           | .error error =>
@@ -424,9 +471,20 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     dispatched registered state (next (state.autoReload.getD registered.autoReload))
   | state, .step (.state .shellTimeLimit) next =>
     dispatched registered state (next registered.shellTimeLimit)
+  | state, .step (.state .syntaxRefreshDelay) next =>
+    dispatched registered state (next registered.syntaxRefreshDelay)
+  | state, .step (.state (.languageOf path)) next =>
+    dispatched registered state (next ((Language.forPath registered.languages path).map (·.name)))
+  | state, .step (.state (.indentUnitOf name)) next =>
+    dispatched registered state
+      (next ((registered.languages.find? (·.name == name)).map (·.indentUnit)))
   | state, .step (.state .workspaceSettings) next =>
     dispatched registered state
-      (next ({ roots := registered.workspaceRoots }, registered.generation))
+      (next
+        ({ roots := registered.workspaceRoots,
+           markerModes := registered.compile.contributions.map (·.markerMode) },
+          registered.generation))
+  | state, .step (.state .compileHook) next => dispatched registered state (next registered.compile)
   | state, .step (.state .displayRules) next =>
     dispatched registered state (next registered.displayRules)
   | state, .step (.state (.runCommand name call)) next =>

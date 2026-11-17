@@ -11,14 +11,18 @@
 //!   each once, by start, the longer first, then by pattern and capture.
 //!   The port may answer more; the rule decides.
 //! - **A session** ([`Session`]) is one text's parse state: it pulls the
-//!   text and the edit log's patch through a [`Source`], reparses
-//!   incrementally from its last tree (and parses whole instead when the
-//!   incremental tree has an error, so every tree equals a fresh parse's),
-//!   and delivers each result, tagged
-//!   with the revision it parsed, to its [`Consumer`]s, unless a newer
-//!   revision has been told by then: a stale result is never handed out.
+//!   text and the edit log's patch through a [`Source`], reparses from its
+//!   last tree as its grammar's [`ReparsePolicy`] says (incrementally,
+//!   keeping the tree whatever it holds, or whole), and delivers each
+//!   result, tagged with the revision it parsed, to its [`Consumer`]s,
+//!   unless a newer revision has been told by then: a stale result is never
+//!   handed out. Its refresh round ([`Session::refresh_once`]) parses a
+//!   quiet text whole and delivers that only when it differs: incremental
+//!   now, exactly a fresh parse once the text is quiet.
 //! - **The worker** ([`Worker`]) runs sessions' rounds on whichever thread
-//!   runs its loop. The crate starts no thread.
+//!   runs its loop, and each session's refresh once its text has gone an
+//!   idle interval unchanged after an edit, measured on a [`clock::Clock`].
+//!   The crate starts no thread.
 //! - **Highlighting** ([`highlight`]) is a query's captures drawn in faces
 //!   by the highlight rule ([`highlight::spans`]), from a [`Highlighter`]
 //!   a session is given; a session answers what a snapshot is drawn with
@@ -54,9 +58,12 @@
 //! | A rule of how captures are drawn, or carried through edits | [`highlight`] | Its unit tests, on the fake and hand-built patches |
 //! | A rule of which injections a query's matches say, or how layers nest | [`inject`] | Its unit tests, on a mock that answers canned matches and on the fake; the adapter's `tests/injections.rs` on the real grammars |
 //! | A rule of which tree a snapshot is drawn from | [`session`] ("Highlights") | Its unit tests, single-threaded, and `tests/highlight.rs` on a real thread with a parse held |
-//! | A rule of what runs next | [`worker`] | Its unit tests, stepped by hand, and `tests/worker.rs` on a real thread |
+//! | A rule of what runs next, or of when a refresh runs | [`worker`] | Its unit tests, stepped by hand on a [`clock::ManualClock`], and `tests/worker.rs` on a real thread |
+//! | A rule of what a refresh does | [`session`] ("The refresh round") | Its unit tests, single-threaded, and the contract's [`contract::CONVERGES`] |
 //! | A grammar | The real adapter's table, with a corpus its contract test runs | That crate's `tests/contract.rs` |
+//! | A grammar's reparse policy | The real adapter's table, and the `policy` of its corpus | The contract's [`contract::REPARSE_POLICY`] and [`contract::GRAMMAR_QUALITY`]; the real Rust grammar's convergence after the idle interval in the adapter's `tests/refresh.rs` |
 
+pub mod clock;
 pub mod contract;
 pub mod fake;
 pub mod highlight;
@@ -69,7 +76,7 @@ pub mod worker;
 pub use highlight::{BadFaces, HighlightSpan, Highlighter, Highlights};
 pub use port::{
     Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
-    Setting, Syntax,
+    ReparsePolicy, Setting, Syntax,
 };
 pub use session::{
     CapturesRefusal, Consumer, Kept, KeptRefusal, Latest, Outcome, Parsed, Session, Source,

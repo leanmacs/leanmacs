@@ -229,9 +229,9 @@ that turns captures into spans and the carrying of spans through a patch
 its touch, a language set for injections and a read of the highlights on
 other threads each complete within a bound. `crates/editor-ffi/tests/syntax.rs` runs the syntax service on real
 documents through their edit paths and the C functions, and
-`crates/editor-ffi/tests/highlight.rs` highlights a Rust fixture through
-the C functions, edits it, and holds its spans once reparsed to a fresh
-highlight of its text; it runs layout's spans contract on the service, and
+`crates/editor-ffi/tests/highlight.rs` highlights a Rust fixture, a TOML
+fixture and a Lean fixture through the C functions, edits each, and holds its spans once
+reparsed to a fresh highlight of its text; it runs layout's spans contract on the service, and
 checks that a published scene paints a keyword in its face. It does the
 same for a Markdown document given its injections and languages through the
 C functions: a Rust fence drawn in Rust's captures, a JSON fence in JSON's,
@@ -365,7 +365,9 @@ runner over a fake clock; that jobs in a wait hold no thread, that
 cancelling a sleeping job ends it at once, that a job whose owner is removed
 is cancelled, and that none of a job runs on the thread that spawned it,
 each with the clock or a promise the test holds and no sleeping; and that
-warming Lean's task pool makes all its threads. Loading and saving a file
+warming Lean's task pool makes all its threads. The workspace finder's
+contract and the mode marker search's run there against their pure models
+and against the real finder and search on the job model. Loading and saving a file
 from a job are tested there too, with no file: the job interface's file
 properties run against a pure model of files and against the job runner
 over a fake of the file service, in a made-up directory, and cases play a
@@ -609,17 +611,24 @@ driver does not need it. The tests of the pool pin no size, so they pass
 whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, handed four
+linked against the real library, then `contract-test`, handed five
 directories: `tests/process-environment` (the fixtures that stand in for
 mise in the checks of a child's environment), `tests/workspaces` (the
 fixture that stands in for git in the workspace finder's checks, which run
-the finder's contract over the real process and file services),
+the finder's contract over the real process and file services; the mode
+marker search's contract runs there too, over the real file service, with
+no fixture),
 `tests/shell` (the fixture `:!` runs over the real process service, and the
 editor's working directory in those checks), `tests/compile` (the
 fixture `compile` runs over the real process service, which waits for files
-the check makes, so its pauses are the check's to end) and `tests/syntax`
+the check makes, so its pauses are the check's to end; and the programs that
+stand for cargo, lake and mise, put first on each child's `PATH` with the git
+fixture after them, and the trees the shipped modes are checked in, which
+the checks copy into a temporary directory, so no real tool runs) and `tests/syntax`
 (the syntax fixtures, whose Rust fixtures the indent and text-object checks
-read); each fixture must stay executable. Then `config-test`, and
+read); each fixture must stay executable. Then `config-test`, handed
+`tests/syntax` too, whose Rust indent fixture its indent checks mangle and
+re-indent through a headless host, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must
@@ -635,7 +644,7 @@ command that starts a job with an argument, whose result the job's command
 says in the echo area, and whose output must
 be exactly `dispatch/expected`; and with `finder-session/script` on the
 config in `finder-session/config`, the fixture
-`tools/prepare-finder-session.sh` installs with the app, which runs that
+`tools/install-app.sh` installs with the app when no config is there, which runs that
 config's command by its key `C-c h` and by its ex name `finder-hello`, so
 the fixture the installed app loads is known to load and to say
 `finder-session: config loaded`, and whose output must be exactly
@@ -1010,8 +1019,13 @@ job's command run by `Job.finishWith` reaching the syntax tree it is
 handed. Over the fixtures of `tests/syntax`, its third argument, it checks
 that the indent levels of `rust/indent.rs` are its own indentation and the
 tree's text objects of `rust/objects.rs` cover the ranges written by hand,
-each before and after an edit, and that the shipped Rust indents and text
-objects queries name only what their rules read.
+each before and after an edit, that the shipped Rust indents and text
+objects queries name only what their rules read, and that the opening
+level of Rust texts at unclosed brackets counts every bracket the tree did
+not close. `config-test` mangles `rust/indent.rs` (77 rustfmt-formatted
+rows; its two rows inside a multi-line string and a block comment are
+found by their content, not their number) and re-indents it with `gg=G`
+through a headless host.
 `ffi-test`'s own `syntaxChecks` pin that a list of strings out, a query
 handle with its refusals, captures with each of their refusals, a shipped
 query, a highlight, an injection, a language and a kept query with each
@@ -1075,4 +1089,6 @@ cargo fmt --all        # Rust
 ```
 
 `mise run c-format` and its check, `mise run c-fmt`, look at tracked files
-only, so `git add` a new C file before running them.
+only, so `git add` a new C file before running them. They leave `vendor/`
+out: vendored C is upstream's generated code (`vendor/README.md`), neither
+checked nor rewritten here.

@@ -62,6 +62,12 @@ scheme's key grammar (`Editor/InputScheme.lean`).
 - **`capturesOf snapshot kind start stop`** answers the capture names of the
   query the text keeps of `kind` and its captures in the range, as
   `captures` answers them (`Kept`).
+- **`refreshAfter milliseconds`**: texts parsed incrementally are parsed
+  whole once they have gone `milliseconds` unchanged after an edit, from
+  now on, for every text. An edit's tree is the incremental reparse, which
+  while the text has an error may differ from a fresh parse; the whole
+  parse once the text is quiet makes it exact, and is delivered only when
+  it differs. It changes no answer of the port: the model records it.
 
 `detach`, and an attach with another grammar, drop the injections, the
 languages and the kept queries with the highlighter.
@@ -275,6 +281,9 @@ inductive SyntaxTreeRequest where
   /-- The capture names of the query the text keeps of `kind`, and its
   captures in the range from `start` to `stop`. -/
   | capturesOf (snapshot : SnapshotId) (kind : QueryKind) (start stop : Nat)
+  /-- Parse a text whole once it has gone `milliseconds` unchanged after an
+  edit, from now on, for every text. -/
+  | refreshAfter (milliseconds : Nat)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request. -/
@@ -292,6 +301,7 @@ def SyntaxTreeRequest.Reply : SyntaxTreeRequest → Type
   | .injectLanguage _ _ _ _ _ => Except SyntaxTreeError Unit
   | .keep _ _ _ => Except SyntaxTreeError Unit
   | .capturesOf _ _ _ _ => Except SyntaxTreeError SyntaxTree.Kept
+  | .refreshAfter _ => Unit
 
 /-- The syntax tree port: `SyntaxTreeRequest` and the reply to each request. -/
 abbrev syntaxTreePort : Port :=
@@ -391,6 +401,12 @@ def keep (snapshot : SnapshotId) (kind : QueryKind) (query : QueryId) : SyntaxTr
 def capturesOf (snapshot : SnapshotId) (kind : QueryKind) (start stop : Nat) : SyntaxTreeM Kept :=
   ExceptT.mk (Program.request (port := syntaxTreePort) (.capturesOf snapshot kind start stop))
 
+/-- Texts parsed incrementally are parsed whole once they have gone
+`milliseconds` unchanged after an edit, from now on, for every text. Never
+refused. -/
+def refreshAfter (milliseconds : Nat) : SyntaxTreeM Unit :=
+  ExceptT.lift (Program.request (port := syntaxTreePort) (.refreshAfter milliseconds))
+
 /-- Whether a node over `start`..`stop` is in the range `first`..`last`: it
 shares a byte with it, or, when the node or the range is empty, it starts
 within it, its ends included. The Rust core's `query::overlaps`. -/
@@ -417,7 +433,7 @@ end SyntaxTree
 grammars, so an attach and a compile are refused with `unknownGrammar`, as
 is a shipped query; it holds no query, so a question of one, an injection, a
 language, a keep and a question of a kept query are refused with
-`noSuchQuery`; and a detach and a release do nothing. What a command run
+`noSuchQuery`; and a detach, a release and a refresh delay do nothing. What a command run
 where no host handed one in reaches (`EditorM.runReal`,
 `Editor/Command/Real.lean`). -/
 def SyntaxTree.none : SyntaxTreeHandler
@@ -434,6 +450,7 @@ def SyntaxTree.none : SyntaxTreeHandler
   | .injectLanguage _ _ _ _ _ => pure (.error .noSuchQuery)
   | .keep _ _ _ => pure (.error .noSuchQuery)
   | .capturesOf _ _ _ _ => pure (.error .noSuchQuery)
+  | .refreshAfter _ => pure ()
 
 /-- Runs a syntax tree program against `handler`: its result, or the refusal
 it failed with. -/

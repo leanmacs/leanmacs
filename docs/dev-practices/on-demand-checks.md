@@ -144,20 +144,18 @@ ends `app-check: ok`.
 ## Installing the app
 
 ```sh
-mise run finder-session-prepare
+mise run install
 ```
 
-This installs the app to use, on macOS on arm64 only. After `mise run app-check`, on a checkout with no uncommitted
-changes, `tools/prepare-finder-session.sh` moves any existing
-`/Applications/Leanmacs.app` and `~/.config/leanmacs` aside to
-`<name>.backup-<timestamp>` (it refuses while the shell exports an
-`XDG_CONFIG_HOME` other than `~/.config`, which an app opened from Finder,
-started with launchd's environment, would not see), installs
-the built bundle with `ditto` and verifies its signature, installs the
-config fixture `tests/headless/finder-session/config` (which the gate runs
-headless, [`the-gate.md`](the-gate.md)), and prints the commands that
-restore what was there. It removes nothing and opens, registers or runs
-nothing.
+This installs the app to use, on macOS on arm64 only. After `mise run
+app-check`, `tools/install-app.sh` replaces `/Applications/Leanmacs.app`
+with the built bundle (`ditto`) and verifies its signature. When
+`~/.config/leanmacs` does not exist it installs the config fixture
+`tests/headless/finder-session/config` there (which the gate runs headless,
+[`the-gate.md`](the-gate.md)); an existing config is never touched. It
+keeps no backups, since any commit's app can be rebuilt, and deletes the
+`Leanmacs.app.backup-*` and `~/.config/leanmacs.backup-*` directories the
+earlier install script left. It opens, registers or runs nothing.
 
 ## The job benchmark, on demand
 
@@ -186,6 +184,28 @@ of the three loaded rows are within bound: a row whose median is at most
 twice the larger of the two idle medians and whose 99th percentile is under
 100 µs. That is an observation about one run, and the maximum is printed and
 not judged. Run it on a quiet machine.
+
+## The syntax round, measured on demand
+
+```sh
+mise run syntax-bench
+```
+
+This times the syntax rounds on the largest Lean file in the repository,
+`lean/ModelTest.lean`, through the real tree-sitter adapter in a release
+build, and asserts nothing, so it is not part of the gate, which only
+builds it. It is the example of `crates/editor-syntax-treesitter`
+(`examples/round.rs`), which takes any path and grammar name. It prints the
+file's bytes and lines, the grammar's reparse policy and its tree's error
+nodes, the time of the first parse, and the median, minimum and maximum of
+20 rounds after an edit (`Session::parse_once`) and of 20 idle refreshes (a
+whole parse and its compare, `Session::refresh_once`).
+
+Run it on a quiet machine when the Lean grammar is updated
+(`vendor/README.md`) or the round changes, and record its figures, dated, in
+`docs/design/rust-library.md` ("Lean, measured"). The largest Lean file is
+found again with `find lean tests -name '*.lean' -not -path '*/.lake/*' |
+xargs ls -S | head -1`.
 
 ## The keyboard check, on demand
 

@@ -156,6 +156,40 @@ A `setup` that defines a segment name twice, or lists the mode line twice
 (`modeLine`), is refused. Listing a segment nobody registered is not
 refused here: it is left out at install, and the report names it.
 
+## Languages
+
+A language (`Editor/Language.lean`) is held by owner like a theme, in a
+`LanguageEntry`, and replaced as a set (`replaceLanguages`). Compiled code
+registers the languages that ship (`Language.shipped`, through
+`Headless.Collaborators.languages`); `setup` registers more with
+`defineLanguage` (`Editor/Setup.lean`). The table a path's language is
+chosen from (`languageTable`) is each owner's entries over the earlier
+owners' (`Language.over`): config's first, in the order it defined them,
+then the compiled ones it did not replace by name. So config's entry of a
+shipped name is used in that one's place until a reload drops it, and the
+loop is told the table (`registered`).
+
+A `setup` that defines a language name twice, or a language with a pattern
+no file name can be meant by (`Language.problems`), is refused.
+
+## Compile contributions
+
+A compile contribution (`Compile.Contribution`,
+`Editor/Compile/Contribution.lean`) is held by owner like a mode, in a
+`ContributionEntry`, and replaced as a set (`replaceContributions`).
+`compileContributions` is the registration order the compile mode uses:
+config's contributions in the order its `setup` registered them, then the
+others whose names config does not register, in their order. So config's
+contribution of a compiled one's name replaces it whole, markers, commands
+and formats, in config's place, until a reload drops it. Config's project
+commands (`projectCommands`) are config's alone, replaced by each install.
+The loop is told both (`compileHook`, `Loop.Registered.compile`).
+
+A `setup` that registers a contribution twice, or one that names a command
+twice, or that gives project commands twice for one project and mode, or
+names a command twice in them, is refused (`Registrations.problem?`); one
+with no marker is refused by `compileContribution` itself.
+
 ## Compiled commands
 
 Compiled code is an owner too (`Owner.compiled`). A host registers its
@@ -268,6 +302,22 @@ structure SegmentEntry where
   /-- The segment. -/
   segment : Segment
 
+/-- A language entry of the registry: a language and who registered it. -/
+structure LanguageEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The language. -/
+  language : Language
+  deriving DecidableEq, Repr
+
+/-- A contribution entry of the registry: a compile contribution and who
+registered it. -/
+structure ContributionEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The contribution. -/
+  contribution : Compile.Contribution
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -294,6 +344,8 @@ structure Registry where
   themes : Array ThemeEntry := #[]
   /-- The segment entries. -/
   segments : Array SegmentEntry := #[]
+  /-- The language entries. -/
+  languages : Array LanguageEntry := #[]
   /-- Where a child's environment comes from, as config set it; `none` when
 it did not, which a host reads as `auto`. -/
   environment : Option Process.Setting := none
@@ -315,8 +367,43 @@ it did not, which a host reads as `auto`. -/
   (`shellTimeLimit`, `Editor/Setup.lean`); `none` when it did not, which
   the shell reads as its default. -/
   shellTimeLimit : Option Nat := none
+  /-- How long a text goes unchanged after an edit before it is parsed
+  whole again, in milliseconds, as config set it (`syntaxRefreshDelay`,
+  `Editor/Setup.lean`); `none` when it did not, which a mode's entry reads
+  as its default. -/
+  syntaxRefreshDelay : Option Nat := none
+  /-- The compile contribution entries ("Compile contributions", in the
+  module docs). -/
+  contributions : Array ContributionEntry := #[]
+  /-- Config's project commands (`projectCommands`, `Editor/Setup.lean`), in
+  the order it gave them. -/
+  projectCommands : Array Compile.ProjectCommands := #[]
 
 namespace Registry
+
+/-- `registry` with every contribution entry of `owner` removed and
+`contributions` added as its entries, in their order. -/
+def replaceContributions (registry : Registry) (owner : Owner)
+    (contributions : Array Compile.Contribution) : Registry :=
+  { registry with
+    contributions :=
+      registry.contributions.filter (·.owner != owner) ++
+        contributions.map fun contribution => { owner, contribution } }
+
+/-- The compile contributions in registration order ("Compile
+contributions", in the module docs): config's in its order, then the others
+whose names config does not register. -/
+def compileContributions (registry : Registry) : Array Compile.Contribution :=
+  let config := (registry.contributions.filter (·.owner == .config)).map (·.contribution)
+  let others :=
+    (registry.contributions.filter (·.owner != .config)).map (·.contribution) |>.filter
+      fun contribution => !config.any (·.mode == contribution.mode)
+  config ++ others
+
+/-- What the loop is told of the compile contributions: them in
+registration order, and config's project commands. -/
+def compileHook (registry : Registry) : Compile.Hook :=
+  { contributions := registry.compileContributions, projects := registry.projectCommands }
 
 /-- `registry` with every ex binding of `owner` removed and `bindings` added
 as its ex bindings. -/
@@ -467,6 +554,29 @@ def replaceModes (registry : Registry) (owner : Owner) (modes : Array Mode) : Re
   { registry with
     modes := registry.modes.filter (·.owner != owner) ++ modes.map fun mode => { owner, mode } }
 
+/-- `registry` with every language entry of `owner` removed and
+`languages` added as its language entries, in their order. -/
+def replaceLanguages (registry : Registry) (owner : Owner) (languages : Array Language) :
+    Registry :=
+  { registry with
+    languages :=
+      registry.languages.filter (·.owner != owner) ++
+        languages.map fun language => { owner, language } }
+
+/-- The language table, in precedence order (`Language.forPath`): each
+owner's entries, in order, over the owners' before it (`Language.over`),
+so the latest owner's come first and a name it registers replaces an
+earlier owner's entry of that name whole. -/
+def languageTable (registry : Registry) : List Language :=
+  let owners :=
+    registry.languages.foldl
+      (fun owners entry => if owners.contains entry.owner then owners else owners.push entry.owner)
+      #[]
+  owners.foldl
+    (fun table owner =>
+      Language.over ((registry.languages.filter (·.owner == owner)).map (·.language)).toList table)
+    []
+
 /-- The mode called `name`: the latest entry of that name. -/
 def mode? (registry : Registry) (name : String) : Option Mode :=
   (registry.modes.findRev? (·.mode.name == name)).map (·.mode)
@@ -522,8 +632,11 @@ command to start; and the ex binding of an ex name (`ex?`) and the ex
 names that are bound (`exNames`), for the ex line; and the names themes
 are registered under (`themeNames`), for the command that loads one;
 config's workspace roots and the config generation, for the finder;
-config's display rules, for a command that displays a buffer; and config's
-shell time limit, for `:!`. Which command a name stands for, for a command run inside another,
+config's display rules, for a command that displays a buffer; config's
+shell time limit, for `:!`; the language table (`languageTable`), for a
+file's open and a mode's entry; and the compile contributions and config's
+project commands (`compileHook`), for the compile mode. Which command a
+name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
 another"). -/
@@ -533,7 +646,8 @@ def registered (registry : Registry) : Loop.Registered :=
     exNames := registry.exNames, themeNames := registry.themeNames
     autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
     generation := registry.generation, displayRules := registry.displayRules
-    shellTimeLimit := registry.shellTimeLimit }
+    shellTimeLimit := registry.shellTimeLimit, syntaxRefreshDelay := registry.syntaxRefreshDelay
+    languages := registry.languageTable, compile := registry.compileHook }
 
 end Registry
 
@@ -592,6 +706,15 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The shell time limits `setup` set (`shellTimeLimit`), in order: one at
   most, in a `setup` that is not refused. -/
   shellTimeLimits : Array Nat := #[]
+  /-- The syntax refresh delays `setup` set (`syntaxRefreshDelay`), in
+  order: one at most, in a `setup` that is not refused. -/
+  syntaxRefreshDelays : Array Nat := #[]
+  /-- The languages, in the order they were defined. -/
+  languages : Array Language := #[]
+  /-- The compile contributions, in the order they were registered. -/
+  contributions : Array Compile.Contribution := #[]
+  /-- The project commands, in the order they were given. -/
+  projectCommands : Array Compile.ProjectCommands := #[]
 
 namespace Registrations
 
@@ -626,6 +749,14 @@ def shellTimeLimit (collected : Registrations) : Option Nat :=
 /-- What a `setup` that sets the shell time limit twice is refused with. -/
 def shellTimeLimitTwice : String :=
   "the shell time limit is set twice"
+
+/-- The syntax refresh delay a `setup` set, in milliseconds, if it set one. -/
+def syntaxRefreshDelay (collected : Registrations) : Option Nat :=
+  collected.syntaxRefreshDelays[0]?
+
+/-- What a `setup` that sets the syntax refresh delay twice is refused with. -/
+def syntaxRefreshDelayTwice : String :=
+  "the syntax refresh delay is set twice"
 
 /-- The handler of the setup port that collects: its answer to each request,
 and what has been registered after it. -/
@@ -670,6 +801,14 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with displayRules := collected.displayRules.push rule })
   | .shellTimeLimit milliseconds, collected =>
     ((), { collected with shellTimeLimits := collected.shellTimeLimits.push milliseconds })
+  | .syntaxRefreshDelay milliseconds, collected =>
+    ((), { collected with syntaxRefreshDelays := collected.syntaxRefreshDelays.push milliseconds })
+  | .language language, collected =>
+    ((), { collected with languages := collected.languages.push language })
+  | .compileContribution contribution, collected =>
+    ((), { collected with contributions := collected.contributions.push contribution })
+  | .projectCommands entry, collected =>
+    ((), { collected with projectCommands := collected.projectCommands.push entry })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -685,6 +824,26 @@ with. -/
 def workspaceTwice (root : System.FilePath) : String :=
   s!"the workspace root `{root}` is declared twice"
 
+/-- What a `setup` that registers the compile contribution of `mode` twice
+is refused with. -/
+def contributionTwice (mode : String) : String :=
+  s!"the compile contribution `{mode}` is registered twice"
+
+/-- What a `setup` whose compile contribution of `mode` names the command
+`name` twice is refused with. -/
+def contributionCommandTwice (mode name : String) : String :=
+  s!"the compile contribution `{mode}` names the command `{name}` twice"
+
+/-- What a `setup` that gives the project commands of `mode` for the
+project `project` twice is refused with. -/
+def projectCommandsTwice (mode : String) (project : Project.Identity) : String :=
+  s!"the project commands of `{mode}` for {project.describe} are given twice"
+
+/-- What a `setup` whose project commands of `mode` for the project
+`project` name the command `name` twice is refused with. -/
+def projectCommandTwice (mode : String) (project : Project.Identity) (name : String) : String :=
+  s!"the project commands of `{mode}` for {project.describe} name the command `{name}` twice"
+
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
   for index in [0:items.size] do
@@ -699,9 +858,11 @@ theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
 twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, a key sequence bound twice, a binding of
 no keys, an ex name bound twice, the process environment set twice,
-auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a mode name defined twice, or a
+auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a compile contribution registered twice or naming a command twice, project commands given twice for one project and mode or naming a command twice, a command over a store that is not declared, a mode name defined twice, a
 mode with a problem under any scheme (`Mode.problems`), of which the first
-is named.
+is named, a language name defined twice, or a language with a pattern no
+file name can be meant by (`Language.problems`), of which the first is
+named.
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
@@ -748,6 +909,19 @@ def problem? (collected : Registrations) : Option String := do
     return workspaceTwice root
   if collected.shellTimeLimits.size > 1 then
     return shellTimeLimitTwice
+  if collected.syntaxRefreshDelays.size > 1 then
+    return syntaxRefreshDelayTwice
+  if let some mode := repeated? (collected.contributions.map (·.mode)) then
+    return contributionTwice mode
+  for contribution in collected.contributions do
+    if let some name := repeated? (contribution.commands.map (·.name)) then
+      return contributionCommandTwice contribution.mode name
+  if let some (project, mode) :=
+      repeated? (collected.projectCommands.map fun entry => (entry.project, entry.mode)) then
+    return projectCommandsTwice mode project
+  for entry in collected.projectCommands do
+    if let some name := repeated? (entry.commands.map (·.name)) then
+      return projectCommandTwice entry.mode entry.project name
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command
@@ -764,6 +938,11 @@ def problem? (collected : Registrations) : Option String := do
   for mode in collected.modes do
     if let some problem := mode.problems.head? then
       return s!"the mode `{mode.name}` cannot be meant: {problem.describe}"
+  if let some name := repeated? (collected.languages.map (·.name)) then
+    return s!"the language `{name}` is defined twice"
+  for language in collected.languages do
+    if let some problem := language.problems.head? then
+      return s!"the language `{language.name}` cannot be meant: {problem}"
   none
 
 /-- What `setup` registers, or the message it is refused with: the one it

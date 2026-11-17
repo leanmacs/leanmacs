@@ -15,8 +15,10 @@ import Editor.Themes.Compiled
 
 The `config-test` executable is linked exactly like `editor`, with the glue
 object, the Rust archive and Lean's elaborator. `mise run ffi-test` runs it
-as `config-test <sysroot> <olean dir>`: the Lean toolchain's directory and
-the directory holding the package's `.olean` files. It reads nothing from the
+as `config-test <sysroot> <olean dir> <syntax fixtures>`: the Lean
+toolchain's directory, the directory holding the package's `.olean` files,
+and the directory of the syntax fixtures (`tests/syntax`), whose Rust
+indent fixture the indent checks read. It reads nothing from the
 environment or the working directory. It runs every check in `checks`, names
 the ones that failed, and exits non-zero if any did.
 
@@ -98,6 +100,14 @@ fakes. The checks here pin what only real collaborators can show:
   not run; a `q` that is refused leaves the script running; and a wait on
   a host whose loop a command ended answers `ended`. They are apart from
   `scriptChecks`, which are defined before what these hosts are handed;
+- `indentChecks`: `=` and the indented new lines through a host of the Vim
+  scheme that ships, over the library's Rust grammar: `gg=G` on the
+  mangled Rust indent fixture (`tests/syntax/rust/indent.rs`, read from the
+  directory the third argument names) gives the fixture back, `=af`
+  re-indents one function, one `u` undoes it and `.` repeats it, rows
+  inside a string and a comment keep their indent, `RET` after an opening
+  brace and `o`/`O` in a body start at the tree's level, and a buffer with
+  no language or no indents query is as before;
 - `evilChecks`: evil from config through the host, with the test scheme:
   a config that the real elaborator loads names the vocabulary the editor
   ships (`Evil.motions`) and hands it to evil's move command, as it is and
@@ -191,6 +201,9 @@ structure Context where
   once the first of them has asked for it (`Context.fileWaits`); none until
   then. -/
   waits : IO.Ref (Option Job.Completions)
+  /-- The directory of the syntax fixtures (`tests/syntax`), whose Rust
+  fixtures the indent checks read. -/
+  syntaxFixtures : System.FilePath
 
 /-- The table of waits every host over the library's file service is staged
 over, with the process's one completion pump running over it. It is made,
@@ -444,7 +457,7 @@ structure Stage (σ : Type) where
   log : IO.Ref (Array String)
 
 /-- What compiled code hands a host: its commands, its jobs, its key
-bindings, its modes, its ex bindings, how long a command may take before it
+bindings, its modes, its ex bindings, its themes, its languages, how long a command may take before it
 is logged, and the major mode the scratch buffer starts in. -/
 structure Compiled where
   /-- The compiled commands. -/
@@ -459,6 +472,8 @@ structure Compiled where
   ex : Array Ex.Binding := #[]
   /-- The compiled themes. -/
   themes : Array NamedTheme := #[]
+  /-- The compiled languages. -/
+  languages : Array Language := #[]
   /-- How long a command may take before it is logged, in milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
   /-- The major mode the scratch buffer starts in, if any: the host's frame
@@ -498,8 +513,8 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           posts := requests + 4
           commands := compiled.commands, compiledJobs := compiled.jobs,
           bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
-          themes := compiled.themes, log := fun entry => log.modify (·.push entry),
-          slowAfter := compiled.slowAfter,
+          themes := compiled.themes, languages := compiled.languages,
+          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
             match compiled.major with
@@ -1274,6 +1289,24 @@ def recordedRequest : SyntaxTreeRequest → String
   | .injectLanguage _ name .. => s!"injectLanguage {name}"
   | .keep _ kind _ => s!"keep {kind.name}"
   | .capturesOf _ kind .. => s!"capturesOf {kind.name}"
+  | .refreshAfter milliseconds => s!"refreshAfter {milliseconds}"
+
+/-- The real syntax tree binding over the library's syntax service, with
+every request recorded (`recordedRequest`) in `asked`, which after an
+attach waits, with a bound, for the attached text's tree to be delivered. -/
+def recordingSyntaxTree (asked : IO.Ref (Array String)) (snapshots : SnapshotReader) :
+    IO SyntaxTreeHandler := do
+  let real ← RealSyntaxTree.new snapshots
+  return fun request => do
+    asked.modify (·.push (recordedRequest request))
+    let reply ← real.handle request
+    -- An attach waits for the attached text's tree, so the highlighter
+    -- set after it sees no delivery of that parse, and no `parsed`
+    -- event of it is left for a later check's host to take.
+    if let .attach snapshot _ := request then
+      if let some found← snapshots.find? snapshot then
+        discard (Ffi.syntaxSettle found 5000)
+    return reply
 
 /-- Runs `check` against a host over a config of `highlightChunk`, whose
 syntax tree collaborator is the real binding over the library's syntax
@@ -1289,18 +1322,7 @@ def withRecordedSyntaxTree (context : Context)
     writeFiles directory [("10-setup.lean", highlightChunk)]
     let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
     let asked ← IO.mkRef #[]
-    let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
-      let real ← RealSyntaxTree.new snapshots
-      return fun request => do
-        asked.modify (·.push (recordedRequest request))
-        let reply ← real.handle request
-        -- An attach waits for the attached text's tree, so the highlighter
-        -- set after it sees no delivery of that parse, and no `parsed`
-        -- event of it is left for a later check's host to take.
-        if let .attach snapshot _ := request then
-          if let some found← snapshots.find? snapshot then
-            discard (Ffi.syntaxSettle found 5000)
-        return reply
+    let syntaxTree := recordingSyntaxTree asked
     let made : IO.Ref (Option Headless.Host.Display) ← IO.mkRef none
     let display (snapshots : SnapshotReader) : IO Headless.Host.Display := do
       let shown ← Headless.Host.Display.recorder Headless.cells snapshots
@@ -1322,14 +1344,15 @@ def withRecordedSyntaxTree (context : Context)
           { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock
             watches := stage.watches, log := stage.log } asked published
 
-/-- The faces the shipped default draws the captures of the library's
-shipped JSON highlights query in, by name, `-` for none, as
-`recordedRequest` writes a highlight: read from the library, so no check
-repeats its query. -/
-def jsonDefaultFaces : IO String := do
-  let .ok source ← Ffi.syntaxShippedQuery "json" 0 | return "none shipped"
-  let .ok query ← Ffi.SyntaxQuery.new "json" source | return "does not compile"
-  let faces := Highlight.faces [] (← query.captureNames)
+/-- The faces the captures of the library's shipped highlights query for
+`grammar` are drawn in, by name, `-` for none, as `recordedRequest` writes a
+highlight: by the shipped default over the language's `captures`, none by
+default. Read from the library, so no check repeats its query. -/
+def shippedFaces (grammar : String) (captures : List (String × Option FaceName) := []) :
+    IO String := do
+  let .ok source ← Ffi.syntaxShippedQuery grammar 0 | return "none shipped"
+  let .ok query ← Ffi.SyntaxQuery.new grammar source | return "does not compile"
+  let faces := Highlight.faces captures (← query.captureNames)
   return s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
 
 /-- The Rust text of `rustObjectsChunk`: a method in an `impl`, after a
@@ -1363,8 +1386,8 @@ def setup : SetupM Unit := do
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
 with the real elaborator, a config directory of `files` and the services of
 a stage of its own; its syntax tree is the real binding over the library's
-syntax service, which after an attach waits, with a bound, for the attached
-text's tree to be delivered. Stops the host; `false` if the check did not
+syntax service, which after an attach, and before a question of a text's
+captures, waits, with a bound, for the text's tree to be delivered. Stops the host; `false` if the check did not
 hold or the host did not stop. The directory is removed. -/
 def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool) :
     IO Bool :=
@@ -1378,6 +1401,11 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do
+        -- A question of the captures waits for its snapshot's tree, so keys
+        -- that edit and then ask are answered of a delivered tree.
+        if let .capturesOf snapshot .. := request then
+          if let some found← snapshots.find? snapshot then
+            discard (Ffi.syntaxSettle found 5000)
         let reply ← real.handle request
         if let .attach snapshot _ := request then
           if let some found← snapshots.find? snapshot then
@@ -1546,7 +1574,7 @@ def jobChecks (context : Context) : List Check :=
             working != Headless.Failure.describe 30000 (.reloading (some 12)) &&
             working != Headless.Failure.describe 30000 (.unanswered (some 12))) },
     { name :=
-        "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the text is attached, the grammar's shipped query compiled and its text highlighted in the default faces, and the grammar's injections, text objects and indents asked for, none of which json ships"
+        "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the refresh delay handed over, the text attached, the grammar's shipped query compiled and its text highlighted in the default faces, and the grammar's injections, text objects and indents asked for, none of which json ships"
       run :=
         -- Seen to bite once by hand: with `Running.ended` handing
         -- `Job.finishWith` no syntax tree, the job's command reaches
@@ -1562,8 +1590,8 @@ def jobChecks (context : Context) : List Check :=
           let scene ← session.sceneLines
           return joined == .settled && (← session.output.get).contains "job 1 highlight: ok" &&
               (← asked.get) ==
-                #["attach json", "shippedQuery json highlights", "compile json", "captureNames",
-                  ← jsonDefaultFaces, "release", "shippedQuery json injections",
+                #["refreshAfter 500", "attach json", "shippedQuery json highlights", "compile json",
+                  "captureNames", ← shippedFaces "json", "release", "shippedQuery json injections",
                   "shippedQuery json textObjects", "shippedQuery json indents"] &&
               scene.any fun line =>
                 line.startsWith "scene " && (line.splitOn "highlights:").length == 1 },
@@ -3404,6 +3432,228 @@ def treeObjectChecks (context : Context) : List Check :=
             throw (IO.userError selected)
           return true }]
 
+/-- The rows of the Rust indent fixture (`tests/syntax/rust/indent.rs`) inside
+its multi-line string and block comment, which the indent rule keeps: found
+by their content, never by their number. -/
+def indentKept : List String :=
+  ["not indented by the rule\";", "       comment */"]
+
+/-- `source` with the indentation of its rows mangled: a row of `kept`, and
+the last, empty after the final line feed, stays as it is; a blank row
+becomes three spaces; any other row loses its leading blanks and gains, by
+its number, nothing, two spaces, a tab or six spaces. Made in code from the
+fixture, so no second fixture can drift from it. -/
+def mangledRust (source : String) (kept : List String) : String :=
+  let lines := source.splitOn "\n"
+  "\n".intercalate <|
+    lines.zipIdx.map fun (line, row) =>
+      if kept.contains line || row + 1 == lines.length then line
+      else
+        let content := (line.dropWhile fun char => char == ' ' || char == '\t').toString
+        if content.isEmpty then "   " else ["", "  ", "\t", "      "].getD (row % 4) "" ++ content
+
+/-- The byte offset of the first occurrence of `needle` in `text`, or 0 when
+it holds none. -/
+def cursorAt (text needle : String) : Nat :=
+  (offsetOf text needle).getD 0
+
+/-- The texts the indent checks load, each with where the cursor goes and
+the language its buffer is set to, if any (`indentChunk`): the mangled Rust
+fixture `mangled`, and texts written here. -/
+def indentFixtures (mangled : String) : List (String × String × Nat × Option String) :=
+  let twoFns :=
+    "struct S;\n\nfn one() {\nlet a = 1;\n        a\n}\n\nfn two() {\nlet b = 2;\n        b\n}\n"
+  let mid := "fn main() {\n    x();\n}\n"
+  let nested := "impl S {\n    fn one(&self) {"
+  [("mangled", mangled, 0, some "rust"), ("two-fns", twoFns, cursorAt twoFns "let b", some "rust"),
+    ("strings", "fn f() {\nlet s = \"a\n   b\";\n/* c\n     d */\n        s\n}\n", 0, some "rust"),
+    ("closed", "fn main() {\n    let x = 1;\n}\n", 0, some "rust"),
+    ("eof", "fn main() {", 0, some "rust"),
+    ("nested-eof", nested, cursorAt nested "fn one", some "rust"),
+    ("mid", mid, cursorAt mid "x()", some "rust"),
+    ("method", rustObjectsText, cursorAt rustObjectsText "let x", some "rust"),
+    ("method-closing", rustObjectsText, cursorAt rustObjectsText "}\n}\n", some "rust"),
+    ("plain", "    ab", 5, none), ("json", "[\n  1\n]", 4, some "json")]
+
+/-- A chunk whose `setup` registers, for each of `indentFixtures mangled`,
+the command `load-<name>`: it puts the fixture's text in the scratch
+buffer's text, in place of what it held, and the cursor where the fixture
+says, and then, for a fixture with a language, records the language and
+makes `code` the buffer's major mode, so the text is parsed as the language
+says. -/
+def indentChunk (mangled : String) : String :=
+  let commands :=
+    (indentFixtures mangled).map fun (name, text, cursor, language) =>
+      let language :=
+        match language with
+        | some name => s!"(some {name.quote})"
+        | none => "none"
+      s!"  command {("load-" ++ name).quote} (load {text.quote} {cursor} {language})"
+  "def load (contents : String) (cursor : Nat) (language : Option String) : EditorM Unit := do
+  let text : TextId := ⟨0⟩
+  text.delete 0 (← text.byteLength)
+  text.insert 0 contents
+  discard <| (⟨0⟩ : ViewId).select { ranges := #[⟨cursor, cursor⟩], shape := .inclusive }
+  if let some language := language then
+    discard <| (⟨0⟩ : BufferId).setLanguage (some language)
+    discard <| (⟨0⟩ : ViewId).setMajorMode \"code\"
+
+def setup : SetupM Unit := do
+" ++
+    "\n".intercalate commands ++
+    "\n"
+
+/-- Runs `check` against a host of the Vim scheme that ships
+(`withVimHost`) over `indentChunk` of the mangled Rust indent fixture, with
+the config loaded: handed the fixture's text and the mangled one. -/
+def withIndentHost (context : Context) (check : Session → String → String → IO Bool) : IO Bool := do
+  let source ← IO.FS.readFile (context.syntaxFixtures / "rust" / "indent.rs")
+  let mangled := mangledRust source indentKept
+  withVimHost context [("10-indent.lean", indentChunk mangled)] fun session => do
+      session.ask [.reload]
+      check session source mangled
+
+/-- Whether the view line `line` shows the text `text` and one selection
+from `anchor` to `head`. -/
+def showsText (line text : String) (anchor head : Nat) : Bool :=
+  (line.splitOn s!"{text.quote}, scroll").length == 2 &&
+    (line.splitOn s!"selections {anchor}..{head},").length == 2
+
+/-- The view line after `load-<name>` and then the keys `keys`. -/
+def Session.loadedAndTyped (session : Session) (name keys : String) : IO String := do
+  session.ask [.run ("load-" ++ name)]
+  session.typed keys
+  return lastViewLine (← session.sceneLines)
+
+/-- The checks of `=` and of indented new lines through a host of the Vim
+scheme that ships (`withVimHost`), with the real elaborator, the real text
+binding and the library's syntax service with Rust's shipped indents query,
+each through keys: the acceptance criteria of `=` and of `RET`, `o` and
+`O` in a Rust buffer, and in a buffer with no language and one whose
+language has no indents query. Which level a row gets is
+`Editor/Indent.lean`'s, pinned by `ModelTest`'s indent checks and, over the
+library, by `ContractTest`. -/
+def indentChecks (context : Context) : List Check :=
+  [{  name :=
+        "in a Rust buffer whose indentation was mangled, g g = G gives text equal to the rustfmt-formatted fixture it came from, with the cursor on the first row's first non-blank, through the host's loop and the library's syntax tree; the rows inside its multi-line string and block comment, which the rule would indent by four spaces, keep theirs"
+      run :=
+        withIndentHost context fun session source mangled => do
+          let line ← session.loadedAndTyped "mangled" "g g = G"
+          let leading (row : String) := (row.takeWhile (· == ' ')).toString
+          unless showsText line source 0 0 do
+            throw (IO.userError line)
+          return mangled != source &&
+              indentKept.all (fun row => (source.splitOn ("\n" ++ row ++ "\n")).length == 2) &&
+              indentKept.all (leading · != "    ") },
+    { name :=
+        "= keeps the leading whitespace of a row inside a multi-line string and inside a block comment, and re-indents the rows around them"
+      run :=
+        withIndentHost context fun session _ _ => do
+          let line ← session.loadedAndTyped "strings" "g g = G"
+          let indented := "fn f() {\n    let s = \"a\n   b\";\n    /* c\n     d */\n    s\n}\n"
+          unless showsText line indented 0 0 do
+            throw (IO.userError line)
+          return true },
+    { name :=
+        "in a Rust buffer, = a f inside the second of two mangled functions re-indents exactly that function's rows: the first function and the struct above keep their mangled indentation byte for byte"
+      run :=
+        withIndentHost context fun session _ _ => do
+          let line ← session.loadedAndTyped "two-fns" "= a f"
+          let indented :=
+            "struct S;\n\nfn one() {\nlet a = 1;\n        a\n}\n\nfn two() {\n    let b = 2;\n    b\n}\n"
+          let some at_ := offsetOf indented "fn two" | return false
+          unless showsText line indented at_ at_ do
+            throw (IO.userError line)
+          return true },
+    { name :=
+        "in a Rust buffer, one = a f is undone by one u, which gives back the whole mangled text, and . then re-indents the other function, leaving the first as u left it"
+      run :=
+        withIndentHost context fun session _ _ => do
+          discard <| session.loadedAndTyped "two-fns" "= a f u"
+          let undone := lastViewLine (← session.sceneLines)
+          session.typed "g g j j j ."
+          let repeated := lastViewLine (← session.sceneLines)
+          let mangled :=
+            "struct S;\n\nfn one() {\nlet a = 1;\n        a\n}\n\nfn two() {\nlet b = 2;\n        b\n}\n"
+          let some letB := offsetOf mangled "let b" | return false
+          let indented :=
+            "struct S;\n\nfn one() {\n    let a = 1;\n    a\n}\n\nfn two() {\nlet b = 2;\n        b\n}\n"
+          let some fnOne := offsetOf indented "fn one" | return false
+          unless showsText undone mangled letB letB && showsText repeated indented fnOne fnOne do
+            throw (IO.userError s!"{undone} / {repeated}")
+          return true },
+    { name :=
+        "in a Rust buffer, A RET after an opening brace starts the new line one indent unit deeper than the brace's line: above a closing brace, at the text's end with none, and two deep in a method of an impl at the text's end"
+      run :=
+        withIndentHost context fun session _ _ => do
+          let closed ← session.loadedAndTyped "closed" "A RET"
+          session.typed "<Escape>"
+          let eof ← session.loadedAndTyped "eof" "A RET"
+          session.typed "<Escape>"
+          let nested ← session.loadedAndTyped "nested-eof" "A RET"
+          let closedText := "fn main() {\n    \n    let x = 1;\n}\n"
+          let nestedText := "impl S {\n    fn one(&self) {\n        "
+          unless
+            showsText closed closedText 16 16 && showsText eof "fn main() {\n    " 16 16 &&
+              showsText nested nestedText nestedText.utf8ByteSize nestedText.utf8ByteSize do
+            throw (IO.userError s!"{closed} / {eof} / {nested}")
+          return true },
+    { name :=
+        "in a Rust function body, o opens a row at the body's level, and typing if a { and RET there starts the next row a level deeper, though the if is not closed"
+      run :=
+        withIndentHost context fun session _ _ => do
+          let line ← session.loadedAndTyped "mid" "o i f SPC a SPC { RET"
+          let typed := "fn main() {\n    x();\n    if a {\n        "
+          unless showsText line (typed ++ "\n}\n") typed.utf8ByteSize typed.utf8ByteSize do
+            throw (IO.userError line)
+          return true },
+    { name :=
+        "in a Rust method's body, o and O on a statement start the new row at the body's level, and O on the method's closing brace does too"
+      run :=
+        withIndentHost context fun session _ _ => do
+          let below ← session.loadedAndTyped "method" "o"
+          session.typed "<Escape>"
+          let above ← session.loadedAndTyped "method" "O"
+          session.typed "<Escape>"
+          let closing ← session.loadedAndTyped "method-closing" "O"
+          let opened (needle : String) : Option (String × Nat) := do
+            let at_ ← offsetOf rustObjectsText needle
+            let bar := at_ + needle.utf8ByteSize + 8
+            return ((rustObjectsText.take (at_ + needle.length)).toString ++ "        \n" ++
+                  (rustObjectsText.drop (at_ + needle.length)).toString,
+                bar)
+          let some (belowText, belowBar) := opened "let x = 1;\n" | return false
+          let some (aboveText, aboveBar) := opened "u8 {\n" | return false
+          let some (closingText, closingBar) := opened "        x\n" | return false
+          unless
+            showsText below belowText belowBar belowBar &&
+              showsText above aboveText aboveBar aboveBar &&
+              showsText closing closingText closingBar closingBar do
+            throw (IO.userError s!"{below} / {above} / {closing}")
+          return true },
+    { name :=
+        "in a buffer with no language = = leaves the text and says the buffer has no syntax tree, and A RET, o and O insert bare line breaks as before; in a JSON buffer, whose language has no indents query, = = says so and A RET inserts a bare line break"
+      run :=
+        withIndentHost context fun session _ _ => do
+          let plain ← session.loadedAndTyped "plain" "= ="
+          let (plainEcho, _) ← session.scene
+          session.typed "A RET <Escape> o <Escape> O <Escape>"
+          let opened := lastViewLine (← session.sceneLines)
+          let json ← session.loadedAndTyped "json" "= ="
+          let (jsonEcho, _) ← session.scene
+          session.typed "A RET"
+          let broken := lastViewLine (← session.sceneLines)
+          let said (refusal : SyntaxTreeError) :=
+            s!"{Vim.operateCommand}: {Evil.cannotIndent refusal}".quote
+          unless
+            showsText plain "    ab" 5 5 && plainEcho == said .notAttached &&
+              (opened.splitOn s!"{"    ab\n\n\n".quote}, scroll").length == 2 &&
+              showsText json "[\n  1\n]" 4 4 &&
+              jsonEcho == said .noQuery &&
+              showsText broken "[\n  1\n\n]" 6 6 do
+            throw (IO.userError s!"{plain} {plainEcho} / {opened} / {json} {jsonEcho} / {broken}")
+          return true }]
+
 /-- A chunk whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in
 `directory`, and `missing`, of a file that is not there. A load that is
@@ -3523,6 +3773,213 @@ def noteStatus (path : System.FilePath) (modified : Bool := false) (column : Nat
     (changed : Bool := false) : String :=
   statusOf (name := "note.txt") (modified := modified) (cursor := ⟨0, column⟩) (lines := 2) (file :=
     some path) (changed := changed)
+
+/-- A chunk whose `setup` registers `language-report`, which says in the
+echo area the language and the major mode of the buffer the focused window
+shows, each `none` when it has none (`rust code`, `none none`), and then
+runs `more`, lines of a `do` block indented by two spaces. -/
+def languageReportChunk (more : String := "") : String :=
+  "def report : EditorM Unit := do
+  let state ← editorState
+  match state.target? state.frame.focused with
+  | some target =>
+    message (target.buffer.language.getD \"none\" ++ \" \" ++ target.buffer.major.getD \"none\")
+  | none => message \"no window\"
+
+def setup : SetupM Unit := do
+  command \"language-report\" report
+" ++
+    more
+
+/-- Lines of a `setup` that define a language `rust` over the shipped one,
+whose highlights query is its own, `(identifier) @variable`. -/
+def rustOverride : String :=
+  "  defineLanguage
+    { Language.rust with
+      syntaxTree := { Language.rust.syntaxTree with highlights := some \"(identifier) @variable\" } }
+"
+
+/-- Runs `check` against a host over the library's file service
+(`Stage.overFiles`), with a config directory of its own holding
+`languageReportChunk` with `more` lines of its `setup`, that is handed the file commands and
+their jobs, the minibuffer's commands and its mode, the `code` mode and the
+languages that ship (`Language.modes`, `Language.shipped`), as the
+executable is, and, for each name and path of `opens`, a command of that
+name that opens that path (`opening`). Its syntax tree is the real binding
+with every request recorded in the array `check` is handed
+(`recordingSyntaxTree`). The config is loaded before `check` runs. Stops the
+host: `false` if the check did not hold or the host did not stop. -/
+def withLanguageHost (context : Context) (more : String) (opens : List (String × System.FilePath))
+    (check : Session → IO.Ref (Array String) → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory [("10-report.lean", languageReportChunk more)]
+    let asked ← IO.mkRef #[]
+    let stage ←
+      Stage.overFiles context (Config.Directory.source directory)
+          { commands :=
+              Files.commands ++ Minibuffer.commands ++
+                (opens.map fun (name, path) => opening name path).toArray
+            jobs := Files.jobs
+            modes := Minibuffer.modes ++ Language.modes
+            languages := Language.shipped }
+    onStage
+        { stage with
+          collaborators := { stage.collaborators with syntaxTree := recordingSyntaxTree asked } }
+        fun host stage => do
+        let session : Session :=
+          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
+            watches := stage.watches, log := stage.log }
+        session.ask [.reload]
+        check session asked
+
+/-- What the host's `language-report` says of the focused buffer once the
+command `name` has opened its file: its language and its major mode,
+quoted as the scene line has the echo area, or none when the open's jobs
+did not settle. -/
+def reportedAfter (session : Session) (name : String) : IO (Option String) := do
+  unless ← session.ran name do
+    return none
+  session.ask [.run "language-report"]
+  return some (← session.scene).1
+
+/-- Whether no line of the host's scene says a highlights refusal. -/
+def noHighlightsRefusal (session : Session) : IO Bool := do
+  return (← session.sceneLines).all fun line => (line.splitOn "highlights:").length == 1
+
+/-- The requests the entry of a buffer's mode makes of the syntax tree
+port before its injections, for a language parsed with `grammar` and
+highlighted with the grammar's shipped query, its captures mapped by
+`captures` over the shipped default, as `recordedRequest` writes them. -/
+def shippedHighlightRequests (grammar : String) (captures : List (String × Option FaceName) := []) :
+    IO (Array String) :=
+  return #["refreshAfter 500", s!"attach {grammar}", s!"shippedQuery {grammar} highlights",
+      s!"compile {grammar}", "captureNames", ← shippedFaces grammar captures, "release"]
+
+/-- The checks of a file's language through the headless host
+(`Editor/Files.lean`, "Open"; `Editor/Language.lean`): the file commands
+and the languages that ship as compiled code registers them, on real files,
+with the real elaborator and the real syntax binding. They share the file
+checks' table of waits (`Stage.overFiles`). -/
+def languageChecks (context : Context) : List Check :=
+  [{  name :=
+        "opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted with Rust's shipped query in the default faces, with no refusal said"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "main.rs"
+          IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
+          withLanguageHost context "" [("open-rs", path)] fun session asked => do
+              let report ← reportedAfter session "open-rs"
+              let requests ← asked.get
+              return report == some "rust code".quote &&
+                  requests.extract 0 7 == (← shippedHighlightRequests "rust") &&
+                  (← noHighlightsRefusal session) },
+    { name :=
+        "opening a .json file and a .md file gives each buffer that language and the major mode code, and highlights its text with that grammar's shipped query; Markdown's inline grammar is injected"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let json := files / "data.json"
+          let markdown := files / "notes.md"
+          IO.FS.writeFile json "{\"a\": [1, true]}\n"
+          IO.FS.writeFile markdown "# Title\n\nSome *text* here.\n"
+          let jsonHeld ←
+            withLanguageHost context "" [("open-json", json)] fun session asked => do
+                let report ← reportedAfter session "open-json"
+                return report == some "json code".quote &&
+                    (← asked.get).extract 0 7 == (← shippedHighlightRequests "json") &&
+                    (← noHighlightsRefusal session)
+          let markdownHeld ←
+            withLanguageHost context "" [("open-md", markdown)] fun session asked => do
+                let report ← reportedAfter session "open-md"
+                let requests ← asked.get
+                return report == some "markdown code".quote &&
+                    requests.extract 0 7 == (← shippedHighlightRequests "markdown") &&
+                    requests.contains "injectLanguage markdown_inline" &&
+                    (← noHighlightsRefusal session)
+          return jsonHeld && markdownHeld },
+    { name :=
+        "opening a .toml file and a file named Cargo.lock gives each buffer the language toml and the major mode code, and highlights its text with TOML's shipped query, keys and table headers in the type face, strings in the string face, brackets in the punctuation face and booleans in the constant face, with no refusal said"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let toml := files / "mise.toml"
+          let lock := files / "Cargo.lock"
+          IO.FS.writeFile toml "[tools]\nrust = \"1.91\"\nenabled = true\n"
+          IO.FS.writeFile lock "version = 4\n\n[[package]]\nname = \"cc\"\n"
+          let expected ← shippedHighlightRequests "toml" Language.toml.syntaxTree.captures
+          let faces := ((expected[5]?.getD "").replace "highlight " "").splitOn ", "
+          let drawn :=
+            ["syntax.type", "syntax.string", "syntax.punctuation", "syntax.operator",
+                  "syntax.constant"].all
+              faces.contains
+          let opened (name : String) (path : System.FilePath) : IO Bool :=
+            withLanguageHost context "" [(name, path)] fun session asked => do
+              let report ← reportedAfter session name
+              return report == some "toml code".quote && (← asked.get).extract 0 7 == expected &&
+                  (← noHighlightsRefusal session)
+          return drawn && (← opened "open-toml" toml) && (← opened "open-lock" lock) },
+    { name :=
+        "opening a .lean file and a file named lakefile.lean gives each buffer the language lean and the major mode code, and asks the syntax tree port to highlight its text with Lean's shipped query and the lean entry's captures, the faces asked for including the keyword, string, comment, constant and module faces, with no refusal said"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let main := files / "Main.lean"
+          let lakefile := files / "lakefile.lean"
+          IO.FS.writeFile main
+              "/-- Says hello. -/\ndef main : IO Unit := IO.println \"hi\" -- greet\n"
+          IO.FS.writeFile lakefile "import Lake\nopen Lake DSL\n\npackage demo\n"
+          let expected ← shippedHighlightRequests "lean" Language.lean.syntaxTree.captures
+          let faces := ((expected[5]?.getD "").replace "highlight " "").splitOn ", "
+          let drawn :=
+            ["syntax.keyword", "syntax.string", "syntax.comment", "syntax.constant",
+                  "syntax.module"].all
+              faces.contains
+          let opened (name : String) (path : System.FilePath) : IO Bool :=
+            withLanguageHost context "" [(name, path)] fun session asked => do
+              let report ← reportedAfter session name
+              return report == some "lean code".quote && (← asked.get).extract 0 7 == expected &&
+                  (← noHighlightsRefusal session)
+          return drawn && (← opened "open-lean" main) && (← opened "open-lake" lakefile) },
+    { name :=
+        "opening a file whose name matches no language gives its buffer no language and no major mode, and asks the syntax tree port nothing"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "notes.txt"
+          IO.FS.writeFile path "plain\n"
+          withLanguageHost context "" [("open-txt", path)] fun session asked => do
+              let report ← reportedAfter session "open-txt"
+              return report == some "none none".quote && (← asked.get).isEmpty },
+    { name :=
+        "a major mode with no syntax tree set over the code mode of an opened .rs file detaches its text"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "main.rs"
+          IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
+          let plain :=
+            "  defineMode { name := \"plain\" }
+  command \"to-plain\" (do discard <| (← editorState).frame.focused.setMajorMode \"plain\")
+"
+          withLanguageHost context plain [("open-rs", path)] fun session asked => do
+              unless (← reportedAfter session "open-rs") == some "rust code".quote do
+                return false
+              let opened := (← asked.get).size
+              session.ask [.run "to-plain", .run "language-report"]
+              let report := (← session.scene).1
+              let requests ← asked.get
+              return report == "rust plain".quote &&
+                  (requests.extract opened requests.size).contains "detach" },
+    { name :=
+        "config's language rust, over the shipped one, with its own highlights query, is the one an opened .rs file is highlighted with: its query is compiled in place of the shipped one, and its one capture drawn in its default face"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "main.rs"
+          IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
+          withLanguageHost context rustOverride [("open-rs", path)] fun session asked => do
+              let report ← reportedAfter session "open-rs"
+              let requests ← asked.get
+              return report == some "rust code".quote &&
+                  requests.extract 0 6 ==
+                    #["refreshAfter 500", "attach rust", "compile rust", "captureNames",
+                      "highlight syntax.variable", "release"] &&
+                  !requests.contains "shippedQuery rust highlights" &&
+                  (← noHighlightsRefusal session) }]
 
 /-- The checks of files through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue, the real text binding and the
@@ -3761,7 +4218,62 @@ def reloadChecks (context : Context) : List Check :=
                   output.contains s!"job 2 {Files.reloadJob}: ok" &&
                   output.contains s!"text 1: {new.quote}" &&
                   echo == "".quote &&
-                  lines == #[viewLine new 16, status] }]
+                  lines == #[viewLine new 16, status] },
+    { name :=
+        "a real config overrides one field of a shipped contribution: { Compile.cargoMode with commands := … } elaborates, and over the shipped contributions the hook's cargo-mode has config's one command with the shipped marker, root rule and rustc format, and lake-mode and mise-mode follow"
+      run := do
+        let text :=
+          "def setup : SetupM Unit := do
+  compileContribution
+      { Compile.cargoMode with commands := #[{ name := \"build\", line := \"cargo build --release\" }] }
+"
+        let some state := (← onBase context "config.lean" text).state | return false
+        let .ok program ← context.elaborator.setup state | return false
+        let .ok registrations := Config.Registrations.ofSetup program | return false
+        let registry :=
+          (({} : Config.Registry).replaceContributions .compiled
+                Compile.shipped).replaceContributions
+            .config registrations.contributions
+        let hook := registry.compileHook
+        return hook.contributions.map (·.mode) == #["cargo-mode", "lake-mode", "mise-mode"] &&
+            (hook.contributions[0]?.map fun cargo =>
+                (cargo.commands.map (·.line), cargo.markers, cargo.outermost,
+                  cargo.formats.map (·.name))) ==
+              some (#["cargo build --release"], #["Cargo.toml"], true, #["rustc"]) },
+    { name :=
+        "a real config whose setup registers a compile contribution with a format of its own, and project commands, elaborates, and installs them: the format reads its line and the project's commands are kept"
+      run := do
+        let text :=
+          "def atFormat : Compile.Format :=
+  { name := \"at\"
+    pattern :=
+      [Compile.step
+          [{ atom := .literal \"at \" }, { atom := .noneOf [' '], into := some .file },
+            { atom := .literal \" line \" }, { atom := .digits, into := some .line }]] }
+
+def setup : SetupM Unit := do
+  compileContribution
+      { mode := \"a-mode\", markers := #[\"a.toml\"], commands := #[{ name := \"build\", line := \"make\" }]
+        formats := #[atFormat] }
+  projectCommands (.remote \"github.com/o/r\") \"a-mode\" [(\"lint\", \"make lint\")]
+      [(\"profile\", .str \"dev\")]
+"
+        let some state := (← onBase context "config.lean" text).state | return false
+        let .ok program ← context.elaborator.setup state | return false
+        let .ok registrations := Config.Registrations.ofSetup program | return false
+        let registry :=
+          { ({} : Config.Registry).replaceContributions .config registrations.contributions with
+            projectCommands := registrations.projectCommands }
+        let hook := registry.compileHook
+        return hook.contributions.map (·.mode) == #["a-mode"] &&
+            (hook.contributions.map fun contribution =>
+                contribution.formats.map fun format =>
+                  (format.read? "at src/x.rs line 4").map fun reading =>
+                    (reading.file, reading.line)) ==
+              #[#[some ("src/x.rs", 4)]] &&
+            hook.projects.map
+                (fun entry => (entry.mode, entry.commands.map (·.line), entry.settings)) ==
+              #[("a-mode", #["make lint"], [("profile", Value.str "dev")])] }]
 
 /-- Rewrites the file at `path` with `text` from another process, as agents
 and editors write: a temporary file beside it, renamed over it. Waits for
@@ -4435,6 +4947,21 @@ keymap of its bindings. Its services are a fake clock's over a table of
 waits of its own, which no pump reads: nothing here starts a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
+        "the executable's hosts start with the code mode and the languages rust, json, markdown, toml and lean, in that order, registered for the owner compiled"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return registry.modes.any
+              (fun entry => entry.mode.name == Language.codeName && entry.owner == .compiled) &&
+            (registry.mode? Language.codeName).any (·.syntaxTreeOfLanguage) &&
+            registry.languages.map (fun entry => (entry.language.name, entry.owner == .compiled)) ==
+              #[("rust", true), ("json", true), ("markdown", true), ("toml", true),
+                ("lean", true)] },
+    { name :=
         "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, each registered for the owner compiled; with switch-buffer, list-buffers and close-buffer registered for it, and the ex names b, ls and bd bound to them"
       run := do
         let completions ← Job.Completions.new
@@ -4482,7 +5009,7 @@ def shippedChecks (_ : Unit) : List Check :=
         return !TabCommands.commands.isEmpty && TabCommands.commands.all (compiled ·.name) &&
             Vim.Default.tabKeys.all (compiled ·.2) },
     { name :=
-        "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation and compilation-output, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile and kill-compilation bound to them"
+        "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation, compilation-output, next-error, previous-error and compile-goto-error, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile, kill-compilation, next-error and previous-error bound to them"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -4492,7 +5019,7 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := Headless.compiled shipped
         let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
         return [Compile.compileName, Compile.recompileName, Compile.confirmName, Compile.killName,
-                  Compile.outputName].all
+                  Compile.outputName, Compile.nextName, Compile.previousName, Compile.gotoName].all
               compiled &&
             (registry.findJob? Compile.runJob).any (·.owner == .compiled) &&
             (registry.mode? Compile.modeName).isSome &&
@@ -4500,7 +5027,36 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.ex? "compile" ==
               some { name := "compile", command := Compile.compileName, takes := .text } &&
             (registry.ex? "recompile").map (·.command) == some Compile.recompileName &&
-            (registry.ex? "kill-compilation").map (·.command) == some Compile.killName },
+            (registry.ex? "kill-compilation").map (·.command) == some Compile.killName &&
+            (registry.ex? "next-error").map (·.command) == some Compile.nextName &&
+            (registry.ex? "previous-error").map (·.command) == some Compile.previousName },
+    { name :=
+        "the executable's hosts start with compile-command registered for the owner compiled, and the ex name compile-command, which takes text, bound to it; no default key binds it"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return (registry.find? Compile.commandName).any (·.owner == .compiled) &&
+            registry.ex? "compile-command" ==
+              some { name := "compile-command", command := Compile.commandName, takes := .text } &&
+            !(registry.bindings.any (·.binding.command == Compile.commandName)) },
+    { name :=
+        "the executable's hosts start with the jobs find-mode-markers and compile-list registered for the owner compiled, beside find-workspace, and with cargo-mode, lake-mode and mise-mode as the compiled contributions, in that order"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return (registry.findJob? Workspace.markerJob).any (·.owner == .compiled) &&
+            (registry.findJob? Workspace.findJob).any (·.owner == .compiled) &&
+            (registry.findJob? Compile.listJob).any (·.owner == .compiled) &&
+            (registry.contributions.filter (·.owner == .compiled)).map (·.contribution.mode) ==
+              #["cargo-mode", "lake-mode", "mise-mode"] },
     { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
       run := do
@@ -4688,6 +5244,7 @@ def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
     treeObjectChecks context ++
+    indentChecks context ++
     watchReloadChecks context ++
     agreementChecks () ++
     shippedChecks () ++
@@ -4704,6 +5261,7 @@ def checks (context : Context) : List Check :=
     themeChecks context ++
     environmentHostChecks context ++
     fileChecks context ++
+    languageChecks context ++
     reloadChecks context ++
     autoReloadChecks context ++
     exScriptChecks context
@@ -4722,7 +5280,7 @@ failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
 holding the package's `.olean` files. -/
-def run (sysroot oleanDir : String) : IO UInt8 := do
+def run (sysroot oleanDir : String) (syntaxFixtures : System.FilePath) : IO UInt8 := do
   let real :=
     Config.Elaborate.elaborator { sysroot, oleanDir, imports := #[`Editor, `ConfigFixture] }
   -- Compiled code writes to the fixture's cell before the base is imported.
@@ -4730,7 +5288,7 @@ def run (sysroot oleanDir : String) : IO UInt8 := do
   let base ← real.base
   let context : Context :=
     { elaborator := { real with base := pure base }, base, bumped, ids := ← IO.mkRef 100
-      waits := ← IO.mkRef none }
+      waits := ← IO.mkRef none, syntaxFixtures }
   let checks := checks context
   let failed ← failures checks
   for name in failed do
@@ -5148,13 +5706,15 @@ end Bench
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples>"
+      "usage: config-test <sysroot> <olean dir> <syntax fixtures> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples>"
   return 2
 
 end ConfigTest
 
-/-- `config-test <sysroot> <olean dir>` runs the checks: exits 0 when all
-hold, and 1 after naming the ones that do not.
+/-- `config-test <sysroot> <olean dir> <syntax fixtures>` runs the checks:
+exits 0 when all hold, and 1 after naming the ones that do not. The third
+argument is the directory of the syntax fixtures (`tests/syntax`), which the
+indent checks read.
 
 `bench-start`, `bench-reload` and `bench-soak` are the benchmark
 (`ConfigTest.Bench`; `mise run config-bench`), which the gate never runs.
@@ -5170,8 +5730,6 @@ library, and a benchmark leaves its host's loop running; returning from
 `main` would wait for either for ever. -/
 def main (args : List String) : IO UInt32 := do
   match args with
-  | [sysroot, oleanDir] =>
-    IO.Process.exit (← ConfigTest.run sysroot oleanDir)
   | "bench-start" :: sysroot :: oleanDir :: module :: modules =>
     IO.Process.exit (← ConfigTest.Bench.start sysroot oleanDir (module :: modules))
   | "bench-modules" :: sysroot :: oleanDir :: module :: modules =>
@@ -5198,5 +5756,7 @@ def main (args : List String) : IO UInt32 := do
       IO.Process.exit status
     | none =>
       ConfigTest.usage
+  | [sysroot, oleanDir, syntaxFixtures] =>
+    IO.Process.exit (← ConfigTest.run sysroot oleanDir syntaxFixtures)
   | _ =>
     ConfigTest.usage

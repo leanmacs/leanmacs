@@ -1,6 +1,7 @@
 //! Highlighting wired to real documents, the real adapter and the display:
 //! a document highlighted through the C functions, edited, and reparsed is
-//! drawn as a fresh highlight of its text draws it; the adapter keeps the
+//! drawn as a fresh highlight of its text draws it, a Rust document, a
+//! TOML one and a Lean one; the adapter keeps the
 //! layout's spans contract; and a published scene paints a keyword in its
 //! face. The same holds of a Markdown document given its injections through
 //! the C functions: its fences are drawn in their languages' captures over
@@ -23,7 +24,7 @@ use editor_ffi::syntax::{
     AttachStatus, HighlightStatus, InjectLanguageStatus, InjectStatus, QueryStatus, RawQuery,
     ShippedStatus, SyntaxQuery, editor_ffi_syntax_highlight, editor_ffi_syntax_inject,
     editor_ffi_syntax_inject_language, editor_ffi_syntax_query_free, editor_ffi_syntax_query_new,
-    editor_ffi_syntax_shipped_query, strings_words, syntaxes,
+    editor_ffi_syntax_refresh_after, editor_ffi_syntax_shipped_query, strings_words, syntaxes,
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::face::{Color, Face};
@@ -36,6 +37,23 @@ use editor_text::{ChangeSet, Origin, Transaction};
 
 /// The longest a test waits for a delivery.
 const BOUND: Duration = Duration::from_secs(10);
+
+/// Has the process's service refresh a text as soon as it is quiet, through
+/// C: what a test that waits for [`settled_quiet`] sets before its first
+/// edit, since an edit's incremental reparse equals a fresh parse only
+/// once the text is quiet, and an edit's deadline is set with the interval
+/// at the time of the edit. Every test of this binary that sets the
+/// interval sets the same value, so tests in parallel agree.
+fn refresh_at_once() {
+    editor_ffi_syntax_refresh_after(0);
+}
+
+/// Waits, with a bound, for the tree delivered of `document` to be exact
+/// for its text as it is now. The test sets the interval first
+/// ([`refresh_at_once`]).
+fn settled_quiet(document: &Document) -> bool {
+    syntaxes().settle_exact(&Snapshot::of(document), BOUND)
+}
 
 /// The Rust fixture the highlights are drawn over.
 const ITEMS: &str = include_str!("../../../tests/syntax/rust/items.rs");
@@ -175,16 +193,25 @@ fn apply(document: &Document, changes: &[(Range<usize>, &str)]) {
 }
 
 /// A document of [`ITEMS`], attached to `rust` and highlighted with its
+/// shipped query through C ([`highlighted`]).
+fn highlighted_items() -> (Document, String, Vec<String>) {
+    highlighted("rust", ITEMS)
+}
+
+/// A document of `text`, attached to `grammar` and highlighted with its
 /// shipped query through C, each capture in `syntax.` and its name; and
 /// that query's source and faces. The query's handle is freed once the
 /// highlighter is set: the highlighter keeps the query.
-fn highlighted_items() -> (Document, String, Vec<String>) {
-    let document = Document::new(ITEMS);
+fn highlighted(grammar: &str, text: &str) -> (Document, String, Vec<String>) {
+    let document = Document::new(text);
     let snapshot = Snapshot::of(&document);
-    assert_eq!(syntaxes().attach(&snapshot, "rust"), AttachStatus::Attached);
-    let source = shipped("rust", 0).unwrap();
-    let (_, faces) = names_and_faces("rust", &source);
-    let query = query_new("rust", &source);
+    assert_eq!(
+        syntaxes().attach(&snapshot, grammar),
+        AttachStatus::Attached
+    );
+    let source = shipped(grammar, 0).unwrap();
+    let (_, faces) = names_and_faces(grammar, &source);
+    let query = query_new(grammar, &source);
     assert_eq!(
         highlight_through_c(&snapshot, query, &faces),
         HighlightStatus::Highlighted as u64
@@ -196,6 +223,7 @@ fn highlighted_items() -> (Document, String, Vec<String>) {
 
 #[test]
 fn highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    refresh_at_once();
     let (document, source, faces) = highlighted_items();
     assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
     assert_eq!(
@@ -236,12 +264,125 @@ fn highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
         ],
     );
 
-    let snapshot = Snapshot::of(&document);
-    assert!(syntaxes().settle(&snapshot, BOUND));
+    assert!(settled_quiet(&document));
     let drawn = drawn(&document).expect("highlights of the delivered tree");
     assert_eq!(drawn, fresh(&document, "rust", &source, &faces));
     // Something is drawn: a keyword, the string and the comment.
     for face in ["syntax.keyword", "syntax.string", "syntax.comment"] {
+        assert!(drawn.iter().any(|(_, drawn)| drawn == face), "{face}");
+    }
+}
+
+/// The TOML fixture of a manifest.
+const MANIFEST: &str = include_str!("../../../tests/syntax/toml/manifest.toml");
+
+#[test]
+fn toml_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    refresh_at_once();
+    let (document, source, faces) = highlighted("toml", MANIFEST);
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert_eq!(
+        drawn(&document),
+        Some(fresh(&document, "toml", &source, &faces))
+    );
+
+    // A new table, at the end.
+    let end = document.snapshot().len();
+    apply(
+        &document,
+        &[(end..end, "\n[features]\ndefault = [\"std\"]\n")],
+    );
+    // An insert inside a string.
+    let at = find(&document, "editor-ffi\"") + "editor-ffi".len();
+    assert!(document.replace(at, at, "-x"));
+    // A delete across lines: from inside `[dependencies]`'s first value to
+    // inside the next key.
+    let start = find(&document, "../editor-text") + 3;
+    let stop = find(&document, "tree-sitter = {") + 4;
+    assert!(document.replace(start, stop, ""));
+    // A line commented out.
+    let line = find(&document, "publish = false");
+    assert!(document.replace(line, line, "# "));
+    // One transaction of several changes: a boolean flipped, a new header,
+    // and a key renamed.
+    let first = find(&document, "= true") + 2;
+    let second = find(&document, "[dev-dependencies]");
+    let third = find(&document, "name = \"editor\"");
+    apply(
+        &document,
+        &[
+            (first..first + 4, "false"),
+            (second..second, "[build-dependencies]\ncc = \"1\"\n\n"),
+            (third..third + 4, "title"),
+        ],
+    );
+
+    assert!(settled_quiet(&document));
+    let drawn = drawn(&document).expect("highlights of the delivered tree");
+    assert_eq!(drawn, fresh(&document, "toml", &source, &faces));
+    // Something is drawn: a key, a string, a header's bracket and the
+    // comment.
+    for face in [
+        "syntax.type",
+        "syntax.string",
+        "syntax.punctuation.bracket",
+        "syntax.comment",
+    ] {
+        assert!(drawn.iter().any(|(_, drawn)| drawn == face), "{face}");
+    }
+}
+
+/// The Lean fixture of programs in `do` notation.
+const PROGRAMS: &str = include_str!("../../../tests/syntax/lean/Programs.lean");
+
+#[test]
+fn lean_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    refresh_at_once();
+    let (document, source, faces) = highlighted("lean", PROGRAMS);
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert_eq!(
+        drawn(&document),
+        Some(fresh(&document, "lean", &source, &faces))
+    );
+
+    // A new definition, at the end.
+    let end = document.snapshot().len();
+    apply(&document, &[(end..end, "\ndef extra : Nat := 1\n")]);
+    // An insert inside a string.
+    let at = find(&document, "small\"") + "small".len();
+    assert!(document.replace(at, at, "ish"));
+    // A delete across lines: from inside `"zero"` to inside `"one"`, which
+    // leaves the strings' quotes paired, so what follows is still code.
+    let start = find(&document, "\"zero\"") + 2;
+    let stop = find(&document, "\"one\"") + 2;
+    assert!(document.replace(start, stop, ""));
+    // A line commented out.
+    let line = find(&document, "private def helper");
+    assert!(document.replace(line, line, "-- "));
+    // One transaction of several changes, in the text's order: an
+    // operator replaced, a definition renamed, and a theorem inserted.
+    let first = find(&document, "total > 10") + "total ".len();
+    let second = find(&document, "twice");
+    let third = find(&document, "def main");
+    apply(
+        &document,
+        &[
+            (first..first + 1, "≥"),
+            (second..second + "twice".len(), "thrice"),
+            (third..third, "theorem t : True := trivial\n\n"),
+        ],
+    );
+
+    assert!(settled_quiet(&document));
+    let drawn = drawn(&document).expect("highlights of the delivered tree");
+    assert_eq!(drawn, fresh(&document, "lean", &source, &faces));
+    // Something is drawn: a keyword, a string, a comment and an operator.
+    for face in [
+        "syntax.keyword",
+        "syntax.string",
+        "syntax.comment",
+        "syntax.operator",
+    ] {
         assert!(drawn.iter().any(|(_, drawn)| drawn == face), "{face}");
     }
 }
@@ -407,7 +548,7 @@ const FENCED: &str = include_str!("../../../tests/syntax/markdown/fenced.md");
 
 /// The languages a Markdown document is given: each with its shipped
 /// highlights, a face for each capture, and its shipped injections.
-const LANGUAGES: [&str; 2] = ["rust", "json"];
+const LANGUAGES: [&str; 3] = ["rust", "json", "markdown_inline"];
 
 /// The kind tag of injections.
 const INJECTIONS: u8 = 1;
@@ -606,6 +747,7 @@ fn a_fenced_rust_block_in_markdown_is_drawn_with_rusts_captures() {
 
 #[test]
 fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    refresh_at_once();
     let document = injected_markdown(FENCED);
     assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
 
@@ -622,7 +764,7 @@ fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
     let closing = find(&document, "null]}\n```\n") + "null]}\n".len();
     assert!(document.replace(closing, closing + 4, ""));
 
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled_quiet(&document));
     let text = document.read().to_string();
     let drawn = drawn(&document).unwrap();
     assert_eq!(
@@ -630,6 +772,24 @@ fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
         fresh_with(&text, "markdown", Some(&markdown_injections()))
     );
     assert!(drawn.iter().any(|(_, face)| face == "syntax.keyword"));
+}
+
+#[test]
+fn markdown_emphasis_and_inline_code_are_drawn_with_the_inline_grammars_captures() {
+    let text = "Some *emphasis* and `code`.\n";
+    let document = injected_markdown(text);
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+
+    let drawn = drawn(&document).unwrap();
+    let emphasis = find(&document, "*emphasis*");
+    let code = find(&document, "`code`");
+    let at = |range: Range<usize>, face: &str| (range, face.to_owned());
+    assert!(drawn.contains(&at(emphasis..emphasis + 10, "syntax.text.emphasis")));
+    assert!(drawn.contains(&at(code..code + 6, "syntax.text.literal")));
+    assert_eq!(
+        drawn,
+        fresh_with(text, "markdown", Some(&markdown_injections()))
+    );
 }
 
 #[test]

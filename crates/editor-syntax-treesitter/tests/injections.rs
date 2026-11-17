@@ -1,6 +1,6 @@
 //! The injection rule (`editor_syntax::inject`) on the real grammars:
-//! Markdown's fences, by the block grammar's own injections query, and a
-//! Rust macro's token tree, by the Rust grammar's.
+//! Markdown's fences and its inline text, by the block grammar's own
+//! injections query, and a Rust macro's token tree, by the Rust grammar's.
 //!
 //! A layer's tree is held to the content parsed alone and shifted by its
 //! offset, the oracle a spike grounded on 2026-11-16 (a fence's content
@@ -126,18 +126,37 @@ fn a_fenced_json_block_is_a_json_layer_and_an_unknown_language_none() {
 
     let json = nth(FENCED, "{\"a\": [1, true, null]}\n", 0);
     assert!(found.contains(&("json", 1, vec![json])));
-    // `cobol` names no grammar, and inline text names `markdown_inline`,
-    // which is not listed: neither is a layer.
+    // `cobol` names no grammar, so it is no layer; inline text is a
+    // `markdown_inline` layer.
     assert!(
         found
             .iter()
-            .all(|(language, _, _)| ["rust", "json"].contains(language))
+            .all(|(language, _, _)| ["rust", "json", "markdown_inline"].contains(language))
     );
     let cobol = nth(FENCED, "DISPLAY", 0);
     assert!(
         found
             .iter()
             .all(|(_, _, ranges)| ranges.iter().all(|range| !range.contains(&cobol.start)))
+    );
+}
+
+#[test]
+fn a_paragraphs_inline_node_is_a_markdown_inline_layer() {
+    let layers = layers_of("markdown", FENCED);
+    let content = "A Rust block:";
+    let range = nth(FENCED, content, 0);
+    let row = FENCED[..range.start].matches('\n').count();
+
+    let inline = layers
+        .iter()
+        .find(|layer| layer.language == "markdown_inline" && layer.ranges == [range.clone()])
+        .unwrap();
+    assert_eq!(inline.grammar, GrammarName::new("markdown_inline"));
+    assert_eq!(inline.depth, 1);
+    assert_eq!(
+        TreeSitter.nodes(&inline.tree),
+        alone_at("markdown_inline", content, range.start, row)
     );
 }
 

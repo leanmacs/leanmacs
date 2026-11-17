@@ -1,0 +1,5 @@
+[2/4] Building Foo.Bar
+error: ./Foo/Bar.lean:12:4: unknown identifier 'x'
+Some required targets logged failures:
+- Foo.Bar
+error: build failed

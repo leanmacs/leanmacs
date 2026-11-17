@@ -3309,7 +3309,7 @@ def syntaxChecks (_ : Unit) : List Check :=
   [{  name := "the grammars the library has cross as a list of strings"
       run := do
         let grammars ← Editor.Ffi.syntaxGrammars
-        return ["json", "rust", "markdown"].all grammars.contains },
+        return ["json", "rust", "markdown", "toml", "lean"].all grammars.contains },
     { name :=
         "a query crosses as a handle, with its capture names as a list of strings, and is freed when the last reference to it goes"
       run := do

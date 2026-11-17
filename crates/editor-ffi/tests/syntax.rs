@@ -1,7 +1,7 @@
 //! The syntax service wired to real documents and the real adapter: edits
-//! made through a document reach its session, the tree delivered is the
-//! one a fresh parse of the document's text gives, and a query is answered
-//! only from a tree of the snapshot's own revision.
+//! made through a document reach its session, the tree delivered is, once
+//! the text is quiet, the one a fresh parse of the document's text gives,
+//! and a query is answered only from a tree of the snapshot's own revision.
 //!
 //! Every test runs on the process's service, as the edit paths reach it
 //! (the module docs of `editor_ffi::syntax`), in parallel: each makes
@@ -21,7 +21,8 @@ use editor_ffi::syntax::{
     AttachStatus, CapturesStatus, QueryStatus, RawQuery, RawStrings, SyntaxQuery,
     editor_ffi_syntax_attach, editor_ffi_syntax_capture_names, editor_ffi_syntax_captures,
     editor_ffi_syntax_detach, editor_ffi_syntax_grammars, editor_ffi_syntax_query_free,
-    editor_ffi_syntax_query_new, editor_ffi_syntax_settle, kind_tag, syntaxes,
+    editor_ffi_syntax_query_new, editor_ffi_syntax_refresh_after, editor_ffi_syntax_settle,
+    kind_tag, syntaxes,
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_syntax::{GrammarName, QueryErrorKind, Syntax};
@@ -73,12 +74,23 @@ fn strings(raw: RawStrings) -> Vec<String> {
         .collect()
 }
 
+/// Has the process's service refresh a text as soon as it is quiet, through
+/// C: what a test that compares the tree delivered with a fresh parse sets
+/// before its first edit, since an edit's incremental reparse is exact
+/// only once the text is quiet, and an edit's deadline is set with the
+/// interval at the time of the edit. Every test of this binary that sets
+/// it sets the same value, so tests in parallel agree.
+fn refresh_at_once() {
+    editor_ffi_syntax_refresh_after(0);
+}
+
 /// Whether the tree the service delivered of `document` is of its text as
-/// it is now and equals a fresh parse of it, once a delivery of that
-/// revision has come.
+/// it is now and equals a fresh parse of it, once the text is quiet and
+/// the tree delivered is exact. The test sets the interval first
+/// ([`refresh_at_once`]).
 fn delivered_is_fresh(document: &Document) -> bool {
     let snapshot = Snapshot::of(document);
-    if !syntaxes().settle(&snapshot, BOUND) {
+    if !syntaxes().settle_exact(&snapshot, BOUND) {
         return false;
     }
     let text = document.snapshot();
@@ -123,6 +135,7 @@ fn the_grammars_compiled_in_cross_as_a_list_of_strings() {
 
 #[test]
 fn edits_made_through_a_document_are_reparsed_to_the_tree_a_fresh_parse_gives() {
+    refresh_at_once();
     let document = Document::new(RUST);
     assert_eq!(
         syntaxes().attach(&Snapshot::of(&document), "rust"),

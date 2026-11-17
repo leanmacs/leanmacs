@@ -21,6 +21,8 @@ check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
   `ModeLine.changedFace`, `ModeLine.secondaryFace`, `ModeLine.inactiveFace`,
   `Editor/ModeLine.lean`), the loop's minibuffer fields
   (`Loop.promptFace`, `Loop.candidateFace`, `Loop.chosenFace`), the
+  compile mode's locations by severity (`compilation.error`,
+  `compilation.warning`, `compilation.note`; `Compile.Severity.face`), the
   matches of the last search (`Loop.searchMatchFace`), and the tab bar's
   chips (`TabBar.face`, `TabBar.selectedFace`, `Editor/TabBar.lean`).
 - **What is declared ahead.** The faces of features not built yet, so a
@@ -140,7 +142,16 @@ def vocabulary : Array Entry :=
           "Each tab's chip in the tab bar, its number and label, drawn by the loop (`TabBar.face`)." },
       { name := ⟨"tab-bar.selected"⟩
         meaning :=
-          "The chip of the tab in view in the tab bar, drawn by the loop (`TabBar.selectedFace`)." }] ++
+          "The chip of the tab in view in the tab bar, drawn by the loop (`TabBar.selectedFace`)." },
+      { name := ⟨"compilation.error"⟩
+        meaning :=
+          "The location text of an error in a compilation buffer, a span the compile mode sets (`Compile.Severity.face`)." },
+      { name := ⟨"compilation.warning"⟩
+        meaning :=
+          "The location text of a warning in a compilation buffer, a span the compile mode sets (`Compile.Severity.face`)." },
+      { name := ⟨"compilation.note"⟩
+        meaning :=
+          "The location text of a note in a compilation buffer, a span the compile mode sets (`Compile.Severity.face`)." }] ++
     syntaxEntries ++
     #[{ name := ⟨"diff.added"⟩
         meaning := "Text a diff adds: drawn by a diff view, declared ahead." },

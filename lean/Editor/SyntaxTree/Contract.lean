@@ -50,6 +50,7 @@ the library has:
 - json's shipped queries of the other kinds refused, as neither ships one;
 - an injection and a keep refused for a text not attached, and a language
   with faces of the wrong size;
+- a refresh delay accepted, and no answer changed by it;
 - a question of a kept query refused with nothing kept, with a bad range,
   and after a detach; and, after a keep and its query's release, answering
   what `captures` answers of the same source newly compiled.
@@ -308,6 +309,15 @@ def properties : List Property :=
           SyntaxTree.detach snapshot
           return before &&
               (← refusedWith .notAttached (SyntaxTree.capturesOf snapshot .indents 0 3)) },
+      { name := "a refresh delay handed to the service changes no answer"
+        texts := #["[1, 2]"]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          SyntaxTree.attach snapshot json
+          let before ← rows snapshot "(number) @n" 0 6
+          SyntaxTree.refreshAfter 500
+          return before == #[(0, 0, 1, 2), (0, 0, 4, 5)] &&
+              (← rows snapshot "(number) @n" 0 6) == before },
       { name := "a highlight with a released query is refused"
         texts := #["[1]"]
         holds := fun snapshots => do
