@@ -15432,7 +15432,152 @@ def indentRuleChecks : List Check :=
               #[indentNode "indent.align" 0 0 2, indentNode "function.outer" 0 0 2,
                 indentNode "indent.begin" 0 0 2]
               (indentLines [0, 2, 3]) ==
-            #[some 0, some 1, some 1]) }]
+            #[some 0, some 1, some 1]) },
+    { name :=
+        "an opening bracket the tree did not close counts its row for every row after it, not for its own, and with a begin on the same row it counts once"
+      run :=
+        pure
+          (Indent.rule #[indentNode "indent.open" 10 0 0] (indentLines [0, 12, 20]) ==
+              #[some 0, some 1, some 1] &&
+            Indent.rule #[indentNode "indent.open" 10 1 1] (indentLines [0, 12, 20]) ==
+              #[some 0, some 0, some 1] &&
+            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.begin" 0 0 1]
+                (indentLines [0, 12, 20]) ==
+              #[some 0, some 1, some 1] &&
+            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.open" 30 1 1]
+                (indentLines [0, 12, 40]) ==
+              #[some 0, some 1, some 2]) },
+    { name := "an incomplete node is read by no rule: the rows it holds keep the level they had"
+      run :=
+        pure
+          (Indent.rule #[indentNode "indent.incomplete" 0 0 2] (indentLines [0, 2, 3]) ==
+            #[some 0, some 0, some 0]) }]
+
+/-- A node of the indents query, for the opening rule's checks: its
+capture's name and the offsets it starts and stops at. -/
+def openingNode (name : String) (start stop : Nat) : Indent.Node :=
+  { name, start, stop }
+
+/-- The checks of the opening rule (`Indent.openingCounts`,
+`Indent.levelOf`) and of the widening (`Indent.widenedStart`), pure, over
+hand-built nodes. -/
+def indentOpeningChecks : List Check :=
+  [{  name :=
+        "a begin node that holds the position counts, and one that ends at it or starts at it does not"
+      run :=
+        pure
+          (Indent.openingCounts #[openingNode "indent.begin" 3 20] { offset := 10 } ==
+              some (#[3], false) &&
+            Indent.openingCounts #[openingNode "indent.begin" 3 10] { offset := 10 } ==
+              some (#[], false) &&
+            Indent.openingCounts #[openingNode "indent.begin" 10 20] { offset := 10 } ==
+              some (#[], false)) },
+    { name := "an opening bracket the tree did not close counts when it starts before the position"
+      run :=
+        pure
+          (Indent.openingCounts #[openingNode "indent.open" 3 4] { offset := 10 } ==
+              some (#[3], false) &&
+            Indent.openingCounts #[openingNode "indent.open" 10 11] { offset := 10 } ==
+              some (#[], false) &&
+            Indent.openingCounts #[openingNode "indent.open" 12 13] { offset := 10 } ==
+              some (#[], false)) },
+    { name := "a branch at the first non-blank that moves to the new row says so, and none for an empty new row"
+      run :=
+        let nodes := #[openingNode "indent.begin" 0 20, openingNode "indent.branch" 12 13]
+        pure
+          (Indent.openingCounts nodes { offset := 10, firstNonBlank := some 12 } ==
+              some (#[0], true) &&
+            Indent.openingCounts nodes { offset := 10, firstNonBlank := some 11 } ==
+              some (#[0], false) &&
+            Indent.openingCounts nodes { offset := 10 } == some (#[0], false)) },
+    { name := "a position inside an ignored node adds nothing, and one at its ends does"
+      run :=
+        let ignored := openingNode "indent.ignore" 5 15
+        pure
+          (Indent.openingCounts #[openingNode "indent.begin" 0 20, ignored] { offset := 10 } ==
+              none &&
+            Indent.openingCounts #[ignored] { offset := 5 } == some (#[], false) &&
+            Indent.openingCounts #[ignored] { offset := 15 } == some (#[], false)) },
+    { name := "names the opening rule does not read are ignored"
+      run :=
+        pure
+          (Indent.openingCounts
+              #[openingNode "indent.incomplete" 0 20, openingNode "function.outer" 0 20]
+              { offset := 10 } ==
+            some (#[], false)) },
+    { name :=
+        "the level is the number of distinct rows counted, less one for a branch, and never below 0"
+      run :=
+        pure
+          (Indent.levelOf #[0, 0, 2] false == 2 && Indent.levelOf #[0, 0, 2] true == 1 &&
+            Indent.levelOf #[] true == 0 && Indent.levelOf #[] false == 0) },
+    { name :=
+        "the widened start is the earliest start of an incomplete node, or the asked start when that is earlier"
+      run :=
+        pure
+          (Indent.widenedStart
+                #[openingNode "indent.incomplete" 4 30, openingNode "indent.incomplete" 2 30,
+                  openingNode "indent.begin" 0 30]
+                10 ==
+              2 &&
+            Indent.widenedStart #[openingNode "indent.incomplete" 12 30] 10 == 10 &&
+            Indent.widenedStart #[] 10 == 10) }]
+
+/-- A row of a text, as the re-indent reads it, starting at `start` with
+the whitespace `leading` before what it holds, `content` bytes of it after
+that, and the level `level`. -/
+def reindentRow (start : Nat) (leading : String) (content : Nat) (level : Option Nat) :
+    Indent.Row :=
+  { start, firstNonBlank := start + leading.utf8ByteSize
+    content := start + leading.utf8ByteSize + content, leading, level }
+
+/-- The checks of the indent decisions as edits (`Indent.whitespace`,
+`Indent.reindent`, `Indent.newLine`, `Indent.breakAt`), pure. -/
+def indentEditChecks : List Check :=
+  [{  name := "a level is that many units: spaces times the count, or tabs, and level 0 is nothing"
+      run :=
+        pure
+          (Indent.whitespace (.spaces 4) 2 == "        " && Indent.whitespace .tab 2 == "\t\t" &&
+            Indent.whitespace (.spaces 2) 0 == "" && Indent.whitespace .tab 0 == "") },
+    { name :=
+        "the re-indent replaces each row's leading whitespace with its level, from its start to its first non-blank, and leaves a row already right"
+      run :=
+        pure
+          (Indent.reindent (.spaces 2)
+              #[reindentRow 0 "" 3 (some 0), reindentRow 4 "" 3 (some 1),
+                reindentRow 8 "      " 3 (some 1), reindentRow 18 "\t" 1 (some 2)] ==
+            #[(⟨4, 4⟩, "  "), (⟨8, 14⟩, "  "), (⟨18, 19⟩, "    ")]) },
+    { name := "a blank row gets no whitespace, whatever its level"
+      run :=
+        pure
+          (Indent.reindent (.spaces 4) #[reindentRow 0 "   " 0 (some 2), reindentRow 4 "" 0 (some 1)] ==
+            #[(⟨0, 3⟩, "")]) },
+    { name := "a row with no level keeps its whitespace, a blank one too"
+      run :=
+        pure
+          (Indent.reindent (.spaces 4) #[reindentRow 0 "   " 4 none, reindentRow 8 "     " 0 none] ==
+            #[]) },
+    { name := "a tab unit indents with tabs"
+      run :=
+        pure
+          (Indent.reindent .tab #[reindentRow 0 "    " 1 (some 1), reindentRow 6 "\t\t" 1 (some 2)] ==
+            #[(⟨0, 4⟩, "\t")]) },
+    { name :=
+        "a new line gets its level as whitespace, nothing inside a string or comment, the row's own indent when the text is not parsed yet, and nothing when the text has no tree or no indents query"
+      run :=
+        pure
+          (Indent.newLine (.spaces 4) (.ok (some 2)) "  " == some "        " &&
+            Indent.newLine (.spaces 4) (.ok none) "  " == none &&
+            Indent.newLine (.spaces 4) (.error .notParsed) "  " == some "  " &&
+            Indent.newLine (.spaces 4) (.error .notAttached) "  " == none &&
+            Indent.newLine (.spaces 4) (.error .noQuery) "  " == none) },
+    { name :=
+        "a line break with no indent is the line ending at the bar; with one it replaces the blanks either side of the bar with the line ending and the indent"
+      run :=
+        pure
+          (Indent.breakAt "\n" none 10 2 3 == (⟨10, 10⟩, "\n") &&
+            Indent.breakAt "\r\n" (some "  ") 10 2 3 == (⟨8, 13⟩, "\r\n  ") &&
+            Indent.breakAt "\n" (some "") 10 0 0 == (⟨10, 10⟩, "\n")) }]
 
 /-- The indents source of the model's test mode: an object and an array
 indent what they hold, and their closing brackets lead out. -/
@@ -29657,6 +29802,8 @@ def checks : List Check :=
     highlightEnterChecks ++
     treeObjectRuleChecks ++
     indentRuleChecks ++
+    indentOpeningChecks ++
+    indentEditChecks ++
     indentLevelChecks ++
     apiStateChecks ++
     driverChecks ++

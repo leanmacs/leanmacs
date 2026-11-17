@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Language.IndentUnit
 
 /-!
 # Indentation from a syntax tree
@@ -56,9 +57,10 @@ real-only, by `ContractTest`'s check of the Rust fixture
 
 namespace Editor.Indent
 
-/-- The capture names the rule reads. -/
+/-- The capture names the rules read: the row rule and the opening rule
+read the first four, and the primitives widen what they ask by the last. -/
 def names : List String :=
-  ["indent.begin", "indent.branch", "indent.ignore"]
+  ["indent.begin", "indent.branch", "indent.ignore", "indent.open", "indent.incomplete"]
 
 /-- A node a capture of the indents query captured, as the rule reads it:
 the capture's name, where the node starts, and its first and last rows. -/
@@ -97,11 +99,132 @@ def rule (captured : Array Captured) (lines : Array Line) : Array (Option Nat) :
       let begins :=
         captured.filterMap fun node =>
           if node.name == "indent.begin" && node.holdsAfterFirst line.row then some node.firstRow
+          -- An opening bracket the tree did not close reaches every later row.
+          else if node.name == "indent.open" && node.firstRow < line.row then some node.firstRow
           else none
       let level := (begins.toList.eraseDups).length
       let branch :=
         captured.any fun node => node.name == "indent.branch" && node.start == line.firstNonBlank
       some (if branch then level - 1 else level)
+
+/-- A node a capture of the indents query captured, as the opening rule
+reads it: the capture's name and the offsets the node starts and stops
+at. -/
+structure Node where
+  /-- The capture's name. -/
+  name : String
+  /-- The offset the node starts at. -/
+  start : Nat
+  /-- The offset it stops at, not included. -/
+  stop : Nat
+  deriving DecidableEq, Repr
+
+/-- Where a new line opens: the offset of the text before the line break
+it is opened at, and the offset of the first non-blank after it on its row
+that moves to the new row, if one does. -/
+structure Opening where
+  /-- Where the line break goes. -/
+  offset : Nat
+  /-- The first non-blank after `offset` on its row, which moves to the new
+  row: none when the new row is empty. -/
+  firstNonBlank : Option Nat := none
+  deriving DecidableEq, Repr
+
+/-- What the opening rule ("The opening rule", in the module docs) counts
+of `nodes` for a line opened at `opening`: `none`, add nothing, when the
+position is inside a node captured `indent.ignore`; otherwise the starts of
+the nodes that count, and whether a node captured `indent.branch` starts at
+the first non-blank that moves to the new row. -/
+def openingCounts (nodes : Array Node) (opening : Opening) : Option (Array Nat × Bool) :=
+  let at_ := opening.offset
+  if nodes.any fun node => node.name == "indent.ignore" && node.start < at_ && at_ < node.stop then
+    none
+  else
+    let counted :=
+      nodes.filterMap fun node =>
+        if node.name == "indent.begin" && node.start < at_ && at_ < node.stop then some node.start
+        else if node.name == "indent.open" && node.start < at_ then some node.start
+        else none
+    let branch :=
+      match opening.firstNonBlank with
+      | some first => nodes.any fun node => node.name == "indent.branch" && node.start == first
+      | none => false
+    some (counted, branch)
+
+/-- The level of a new line whose counted nodes start on `rows`: the number
+of distinct rows, less one for a `branch`, and never below 0. -/
+def levelOf (rows : Array Nat) (branch : Bool) : Nat :=
+  let level := rows.toList.eraseDups.length
+  if branch then level - 1 else level
+
+/-- Where a question of the indents query asked from `start` is asked
+again from, so the bare brackets an incomplete node holds are seen: the
+earliest start of the nodes of `nodes` captured `indent.incomplete`, or
+`start` when that is earlier. -/
+def widenedStart (nodes : Array Node) (start : Nat) : Nat :=
+  nodes.foldl (fun least node => if node.name == "indent.incomplete" then min least node.start else least)
+    start
+
+/-- `level` levels of `unit`: that many times the unit's spaces, or that
+many tabs. -/
+def whitespace (unit : Language.IndentUnit) (level : Nat) : String :=
+  match unit with
+  | .spaces count => String.ofList (List.replicate (level * count) ' ')
+  | .tab => String.ofList (List.replicate level '\t')
+
+/-- A row as the re-indent reads it: where it starts, where its first
+non-blank is (where its content ends on a blank row), where its content
+ends, the whitespace before its first non-blank, and its level, `none` for
+a row whose indent is kept. -/
+structure Row where
+  /-- The offset it starts at. -/
+  start : Nat
+  /-- The offset of its first non-blank, or of its content's end on a blank
+  row. -/
+  firstNonBlank : Nat
+  /-- The offset its content ends at, before its line break. -/
+  content : Nat
+  /-- The text from its start to its first non-blank. -/
+  leading : String
+  /-- Its level; `none` when its indent is kept. -/
+  level : Option Nat
+  deriving DecidableEq, Repr
+
+/-- The edits that re-indent `rows`, in order ("Re-indenting", in the
+module docs): each row's leading whitespace, from its start to its first
+non-blank, becomes its level in `unit`, and a blank row's becomes nothing.
+A row with no level, and a row whose leading whitespace is already that,
+is left. -/
+def reindent (unit : Language.IndentUnit) (rows : Array Row) : Array (Extent × String) :=
+  rows.filterMap fun row =>
+    match row.level with
+    | none => none
+    | some level =>
+      let wanted := if row.firstNonBlank == row.content then "" else whitespace unit level
+      if row.leading == wanted then none else some (⟨row.start, row.firstNonBlank⟩, wanted)
+
+/-- What a new line starts with ("New lines", in the module docs), from
+the opening level `answer` and the leading whitespace `leading` of the row
+the line opens on: its level in `unit`; nothing added inside a string or
+comment; the row's own indent when the text is not parsed yet; and nothing
+added when it has no tree or no indents query. -/
+def newLine (unit : Language.IndentUnit) (answer : Except SyntaxTreeError (Option Nat))
+    (leading : String) : Option String :=
+  match answer with
+  | .ok (some level) => some (whitespace unit level)
+  | .ok none => none
+  | .error .notParsed => some leading
+  | .error _ => none
+
+/-- The edit that breaks a line at `head` with `ending` ("New lines", in
+the module docs): with no indent, the line ending at the bar; with the
+indent `ws`, the `blanksBefore` blanks before the bar and the `blanksAfter`
+after it are replaced with the line ending and the indent. -/
+def breakAt (ending : String) (ws : Option String) (head blanksBefore blanksAfter : Nat) :
+    Extent × String :=
+  match ws with
+  | none => (⟨head, head⟩, ending)
+  | some ws => (⟨head - blanksBefore, head + blanksAfter⟩, ending ++ ws)
 
 end Indent
 
