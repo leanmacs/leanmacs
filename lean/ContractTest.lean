@@ -1646,6 +1646,46 @@ def rustIndentLevels (table : Snapshots) (texts : RealTexts) (text : TextId) :
         settling table real.handle) | return none
   return some answered
 
+/-- The opening level of a Rust text, written with a bar where the line
+opens (`fixture`), whose major mode is the shipped Rust one, over the real
+syntax tree binding, with what follows the bar on its row moved to the new
+row when `rest`: `none` when the run was refused. The question waits for
+its snapshot's tree (`settling`). -/
+def rustOpeningLevel (fixture : String) (rest : Bool) :
+    IO (Option (Except SyntaxTreeError (Option Nat))) := do
+  let offset := ((fixture.splitOn "|").headD "").utf8ByteSize
+  let source := fixture.replace "|" ""
+  let table ← Snapshots.new
+  let real ← RealSyntaxTree.new table.reader
+  let asked : EditorM (Except SyntaxTreeError (Option Nat)) := do
+    let text ← createText source
+    Highlight.enter "rust" text { grammar := "rust" }
+    text.openingLevel offset rest
+  let (.ok answered, _) ←
+    asked.runReal (.over table) (← recorderOf table).handle (syntaxTree :=
+        settling table real.handle) | return none
+  return some answered
+
+/-- The rows of the opening rule's table over the real Rust grammar: a text
+with a bar where a line opens, whether what follows the bar moves to the
+new row (`RET`) or the new row is empty (`o`, `O`), and the level. -/
+def rustOpeningRows : List (String × Bool × Option Nat) :=
+  [("fn main() {|\n    let x = 1;\n}\n", true, some 1), ("fn main() {|}\n", true, some 0),
+    ("fn main() {|", true, some 1), ("struct S {|", true, some 1),
+    ("impl A {\n    fn f(&self) {|", true, some 2),
+    ("fn main() {\n    if a {\n        if b {|", true, some 3),
+    ("fn main() {\n    match x {|\n}\n", true, some 2),
+    ("fn main() {\n    if a {|\n    let y = 2;\n}\n", true, some 2),
+    ("fn main() {\n    foo(|\n}\n", true, some 2),
+    ("fn main() {\n    let v = vec![|\n}\n", true, some 2),
+    ("fn main() {\n    let x = ;\n    if a {|\n    }\n}\n", true, some 2),
+    ("fn main() {\n    let x = 1;\n}|\n", false, some 0),
+    ("fn main() {\n    let x = 1;\n|}\n", false, some 1),
+    ("fn main() {\n    let x = 1;\n|}\n", true, some 0),
+    ("fn main() {\n|    let x = 1;\n}\n", false, some 1),
+    ("impl A {\n    fn f() {\n        x();|\n    }\n}\n", false, some 2),
+    ("fn main() {\n    let s = \"ab|c\";\n}\n", true, none)]
+
 /-- The levels the indent rule must give `source`, a rustfmt-formatted Rust
 text indented four spaces a level, for each of its rows: `none` for the
 rows in `kept`, kept as they are, `some` of the leading spaces divided by
@@ -1840,7 +1880,23 @@ def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
         let read : EditorM String := text.read
         let (.ok now, _) ← read.runReal texts (← recorderOf table).handle | return false
         return now == edited && rustIndentHolds source kept before &&
-            rustIndentHolds edited kept after }]
+            rustIndentHolds edited kept after },
+    { name :=
+        "the opening level of Rust texts at an unclosed bracket counts every bracket the tree did not close, widened to the incomplete node that holds them: closed and unclosed at the text's end, three deep, a match, an if, a call and a vec! opened mid-function, a balanced error elsewhere, o and O on a closing row and in a body, and nothing inside a string"
+      run := do
+        let mut wrong := #[]
+        for (fixture, rest, level) in rustOpeningRows do
+          let answered ← rustOpeningLevel fixture rest
+          let said :=
+            match answered with
+            | some (.ok got) => if got == level then none else some (repr got)
+            | some (.error refusal) => some (repr refusal)
+            | none => some "nothing"
+          if let some said := said then
+            wrong := wrong.push s!"{repr fixture} (rest {rest}) answered {said}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong.toList))
+        return true }]
 
 /-- What only the real syntax tree binding shows: the library's Rust
 grammar, a query of one grammar asked of a text parsed with another, and a

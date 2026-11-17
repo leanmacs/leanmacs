@@ -4,55 +4,132 @@ import Editor.Language.IndentUnit
 /-!
 # Indentation from a syntax tree
 
-The indent level of each row of a text, from the captures of the indents
-query its major mode's text keeps (`Mode.SyntaxTree.indents`,
-`Editor/Highlight.lean`): a primitive Lean's indent commands use. The rule
-(`Indent.rule`) is pure and lives here alone; the library only answers the
-query's captures as plain rows (`SyntaxTree.capturesOf`), and has no indent
-rule of its own (`docs/design/rust-library.md`, "Injections, indentation
-and text objects, as built").
+The indent level of each row of a text, and of a line opened at a
+position, from the captures of the indents query its major mode's text
+keeps (`Mode.SyntaxTree.indents`, `Editor/Highlight.lean`), and the edits
+that turn levels into whitespace: what evil's `=` and its commands that
+open a line do (`Editor/Evil/Operators.lean`, `Editor/Evil.lean`). The
+rules are pure and live here alone; the library only answers the query's
+captures as plain rows (`SyntaxTree.capturesOf`), and has no indent rule of
+its own (`docs/design/rust-library.md`, "Injections, indentation and text
+objects, as built").
+
+## The names
+
+The rules read captures named `indent.begin`, `indent.branch`,
+`indent.ignore` (nvim-treesitter's names, so a config author can read
+them), `indent.open` and `indent.incomplete` (ours), and ignore every other
+name (`Indent.names`). Every rule is ours.
 
 ## The rule (`Indent.rule`)
 
-It reads captures named `indent.begin`, `indent.branch` and `indent.ignore`
-(nvim-treesitter's names, so a config author can read them; the rule is
-ours), and ignores every other name. A node's rows are the row it starts on
-through the row of its last byte, so a node that ends at a row's start does
-not reach that row. For a row `r`:
+A node's rows are the row it starts on through the row of its last byte, so
+a node that ends at a row's start does not reach that row. For a row `r`:
 
 1. **None**, "keep the row's indent", when `r` lies after the first row of
    a node captured `indent.ignore` and within its rows: a row inside a
    multi-line string or block comment.
 2. **Otherwise the level**: the number of distinct start rows of the nodes
    captured `indent.begin` that start on a row before `r` and whose rows
-   reach `r` (nodes that begin on one row count once), less one when the
+   reach `r`, and of the nodes captured `indent.open` (an opening bracket
+   the tree did not close) that start on a row before `r`, whatever their
+   last row (nodes that begin on one row count once); less one when the
    row's first non-blank is where a node captured `indent.branch` starts (a
    closing bracket), and never below 0.
 
 A blank row gets a level by the same rule: the level a line typed there
 would have.
 
-## The primitive (`TextId.indentLevels`)
+## The opening rule (`Indent.openingCounts`, `Indent.levelOf`)
 
-`indentLevels text first last` gives each row from `first` through `last`
-its level, from a snapshot of the text: the kept indents query's captures
-over the bytes from the first row's start to the last row's end, widened by
-a position at each end where the text has one, so every node that encloses
-a row shares a byte with the range, an empty one too; each row's start and
-first non-blank, and each capture's first and last rows, from the text
-port; then the rule. A refusal is a value: `notAttached`, `noQuery` (the
-text keeps no indents query), or `notParsed` (the tree of the text's last
-edit is not delivered yet; the caller keeps the row's indent). The levels
-are counts: turning one into columns (the indent's width, tabs) is the
-caller's.
+The level of a new line, asked of the text before the line break, at the
+offset `at` the line opens at (`Indent.Opening`), from the nodes captured
+there with their offsets (`Indent.Node`), and the first non-blank after
+`at` on its row when that moves to the new row (`RET` before text):
 
-Not built here: the evil `=` operator and indenting on a line break, which
-are task `syntax-done-signal-mode-and-indent-operator`'s.
+1. **None**, "add nothing", when a node captured `indent.ignore` has
+   `start < at < stop`: the line opens inside a multi-line string or block
+   comment.
+2. **Otherwise the level**: the number of distinct rows of the starts of
+   each node captured `indent.begin` with `start < at < stop` (it holds a
+   byte at or after `at`, so it reaches the new row) and of each node
+   captured `indent.open` with `start < at`; less one when the first
+   non-blank that moves starts a node captured `indent.branch`; never below
+   0. Only the counted starts are turned into rows.
+
+So a position in the text before the break answers what the new row's
+level will be, and nothing is asked of a revision that has no tree.
+
+## Widening (`Indent.widenedStart`)
+
+An opening bracket the tree did not close may be far above the rows asked:
+`fn main() {` at the text's end is an `ERROR` that holds a bare `{`. A
+question of the captures that answers a node captured `indent.incomplete`
+(an `ERROR`, or a node with a `MISSING` child) is asked again from the
+earliest such node's start, so the brackets it holds are seen. Valid code
+has no such capture, so it costs nothing there.
+
+## The primitives
+
+- `TextId.indentLevels text first last` gives each row from `first` through
+  `last` its level, from a snapshot of the text: the kept indents query's
+  captures over the bytes from the first row's start to the last row's end,
+  widened by a position at each end where the text has one, so every node
+  that encloses a row shares a byte with the range, an empty one too, and
+  then widened as above; each row's start and first non-blank, and each
+  capture's first and last rows, from the text port; then the rule.
+- `TextId.openingLevel text at rest` gives the level of a line opened at
+  `at`: the captures over a position either side of `at`, through the cell
+  of the first non-blank that moves when `rest`, widened as above; then the
+  opening rule.
+- `TextId.reindentEdits text first last unit` reads each row's start, first
+  non-blank, content's end and leading whitespace and its level from
+  `indentLevels`, then `Indent.reindent`.
+
+A refusal is a value: `notAttached`, `noQuery` (the text keeps no indents
+query), or `notParsed` (the tree of the text's last edit is not delivered
+yet). The levels are counts, which `Indent.whitespace` turns into a unit's
+spaces or tabs (`Editor/Language/IndentUnit.lean`).
+
+## Re-indenting (`Indent.reindent`)
+
+Each row's leading whitespace, from its start to its first non-blank,
+becomes its level in the unit; a blank row's becomes nothing, as Vim's `=`
+and rustfmt leave one. A row with no level, a blank one too, and a row
+whose whitespace is already that, gets no edit. The edits are sorted and
+apart, for one transaction.
+
+## New lines (`Indent.newLine`, `Indent.breakAt`)
+
+What a new line starts with, from the opening level:
+
+| The opening level | The new line's whitespace |
+|---|---|
+| A level | That level in the unit |
+| None (inside a string or comment) | Nothing added |
+| Refused `notParsed` (keys faster than a reparse, or a replay) | The opening row's own leading whitespace: Vim's `autoindent`, never a wait |
+| Refused otherwise (`notAttached`, `noQuery`, ...) | Nothing added, as before indenting |
+
+`breakAt` is `RET`'s edit: with nothing added, the line ending at the bar;
+with whitespace, the blanks either side of the bar on its row and the line
+ending go, replaced by the line ending and the whitespace, as Vim's
+`open_line` truncates the spaces left at the split under `autoindent`.
+
+## Known limits
+
+- An `ERROR` that holds a bare `{` and its bare `}` counts the `{` for the
+  rows after the `}` too; a later `=` on code that parses corrects it.
+- A continuation in an error state (`let x =` with nothing after) is one
+  level in where rustfmt would give two.
+- Indentation inside an injected layer is not asked.
 
 Pinned by `ModelTest.indentRuleChecks` (the rule, pure),
-`ModelTest.indentLevelChecks` (the primitive, on the editor's models) and,
-real-only, by `ContractTest`'s check of the Rust fixture
-`tests/syntax/rust/indent.rs`, whose levels are its own indentation.
+`ModelTest.indentOpeningChecks` (the opening rule and the widening, pure),
+`ModelTest.indentEditChecks` (whitespace, re-indent, new line and break,
+pure), `ModelTest.indentLevelChecks` (the primitives, on the editor's
+models) and, real-only, by `ContractTest`'s checks of the Rust fixture
+`tests/syntax/rust/indent.rs`, whose levels are its own indentation, and of
+the opening level of Rust texts at unclosed brackets.
 -/
 
 namespace Editor.Indent
@@ -228,6 +305,31 @@ def breakAt (ending : String) (ws : Option String) (head blanksBefore blanksAfte
 
 end Indent
 
+/-- The nodes the indents query `snapshot` keeps captures over `start`
+through `stop`, of the names the rules read (`Indent.names`), asked again
+from the start of the earliest node captured `indent.incomplete` when that
+is earlier (`Indent.widenedStart`), so the bare brackets an incomplete node
+holds are seen. Refused, as a value, as `capturesOf` is. -/
+private def indentNodes (snapshot : SnapshotId) (start stop : Nat) :
+    EditorM (Except SyntaxTreeError (Array Indent.Node)) := do
+  let ask (start : Nat) : EditorM (Except SyntaxTreeError (Array Indent.Node)) := do
+    match ← SyntaxTree.lift (SyntaxTree.capturesOf snapshot .indents start stop) with
+    | .error refusal =>
+      return .error refusal
+    | .ok kept =>
+      return .ok <|
+          kept.captures.filterMap fun capture =>
+            (kept.names[capture.capture]?).bind fun name =>
+              if Indent.names.contains name then
+                some { name, start := capture.start, stop := capture.stop }
+              else none
+  match ← ask start with
+  | .error refusal =>
+    return .error refusal
+  | .ok nodes =>
+    let widened := Indent.widenedStart nodes start
+    if widened < start then ask widened else return .ok nodes
+
 /-- The indent level of each row of `text` from `first` through `last`, by
 the indents query its text keeps (`Indent.rule`, "The primitive" in
 `Editor/Indent.lean`): `none` for a row whose indent is kept. A row past the
@@ -253,28 +355,89 @@ def TextId.indentLevels (text : TextId) (first last : Nat) :
         text.motion .nextCell lastEnd
       else
         pure lastEnd
-    match ← SyntaxTree.lift (SyntaxTree.capturesOf snapshot .indents start stop) with
+    match ← indentNodes snapshot start stop with
     | .error refusal =>
       return .error refusal
-    | .ok kept =>
+    | .ok nodes =>
       let mut captured := #[]
-      for capture in kept.captures do
-        let some name := kept.names[capture.capture]? | continue
-        unless Indent.names.contains name do
-          continue
-        let firstRow := (← text.pointOf capture.start).row
+      for node in nodes do
+        let firstRow := (← text.pointOf node.start).row
         let lastByte ←
-          if capture.stop > capture.start then
-            text.motion .previousCell capture.stop
+          if node.stop > node.start then
+            text.motion .previousCell node.stop
           else
-            pure capture.start
+            pure node.start
         captured :=
           captured.push
-            { name, start := capture.start, firstRow, lastRow := (← text.pointOf lastByte).row }
+            { name := node.name, start := node.start, firstRow
+              lastRow := (← text.pointOf lastByte).row }
       let mut lines := #[]
       for row in [first:last + 1] do
         let rowStart ← text.offsetOf { row, column := 0 }
         lines := lines.push { row, firstNonBlank := ← text.motion .lineFirstNonBlank rowStart }
       return .ok (Indent.rule captured lines)
+
+/-- The level of a line opened at `offset` of `text`, by the indents query
+its text keeps ("The opening rule", in the module docs), asked of the text
+as it is, before the line break: `none` when the line opens inside a node
+whose indent is kept. With `rest`, what follows `offset` on its row moves
+to the new row, so a closing bracket there leads the new row out. Refused,
+as a value, with `notAttached`, `noQuery` or `notParsed`. -/
+def TextId.openingLevel (text : TextId) (offset : Nat) (rest : Bool) :
+    EditorM (Except SyntaxTreeError (Option Nat)) :=
+  text.withSnapshot fun snapshot => do
+    let length ← text.byteLength
+    let firstNonBlank ←
+      if rest then do
+        let lineEnd ← text.motion .lineEnd offset
+        let after ← text.slice offset lineEnd
+        let blanks := (after.takeWhile fun char => char == ' ' || char == '\t').utf8ByteSize
+        pure (if offset + blanks < lineEnd then some (offset + blanks) else none)
+      else
+        pure none
+    let start ←
+      if offset > 0 then
+        text.motion .previousCell offset
+      else
+        pure 0
+    -- Through the cell after the position, or after the first non-blank
+    -- that moves, so a closing bracket there is asked.
+    let last := firstNonBlank.getD offset
+    let stop ←
+      if last < length then
+        text.motion .nextCell last
+      else
+        pure last
+    match ← indentNodes snapshot start stop with
+    | .error refusal =>
+      return .error refusal
+    | .ok nodes =>
+      match Indent.openingCounts nodes { offset, firstNonBlank } with
+      | none =>
+        return .ok none
+      | some (starts, branch) =>
+        let rows ← starts.mapM fun start => return (← text.pointOf start).row
+        return .ok (some (Indent.levelOf rows branch))
+
+/-- The edits that re-indent the rows of `text` from `first` through `last`
+in `unit` (`Indent.reindent`, "Re-indenting" in the module docs): each
+row's levels from `indentLevels`, and its start, first non-blank, content's
+end and leading whitespace from the text. Refused, as a value, as
+`indentLevels` is. -/
+def TextId.reindentEdits (text : TextId) (first last : Nat) (unit : Language.IndentUnit) :
+    EditorM (Except SyntaxTreeError (Array (Extent × String))) := do
+  match ← text.indentLevels first last with
+  | .error refusal =>
+    return .error refusal
+  | .ok levels =>
+    let mut rows := #[]
+    for (level, index) in levels.zipIdx do
+      let start ← text.offsetOf { row := first + index, column := 0 }
+      let firstNonBlank ← text.motion .lineFirstNonBlank start
+      rows :=
+        rows.push
+          { start, firstNonBlank, content := ← text.motion .lineEnd start
+            leading := ← text.slice start firstNonBlank, level }
+    return .ok (Indent.reindent unit rows)
 
 end Editor

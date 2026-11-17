@@ -526,12 +526,26 @@ names a scheme's key:
   hand-built rows: begins on one row count once, a branch takes a level
   away only as a row's first non-blank, the level never below 0, the rows
   of an ignored node after its first kept, a node ending at a row's start
-  not reaching it, a blank row's level, and names the rule does not read
-  ignored;
-- `indentLevelChecks`: the indent primitive (`TextId.indentLevels`), on the
-  editor's models: a pretty-printed JSON text under a test mode's indents
-  query gets each row's indent in levels, a text with no syntax tree is
-  refused, and an empty indents source answers 0 for every row.
+  not reaching it, a blank row's level, names the rule does not read
+  ignored, and an opening bracket the tree did not close counting for every
+  later row;
+- `indentOpeningChecks`: the opening rule and the widening
+  (`Editor/Indent.lean`), pure, over hand-built nodes: a begin node holding
+  the position counts, an unclosed bracket before it counts, a branch at
+  the first non-blank that moves takes a level away, a position inside an
+  ignored node adds nothing, and an incomplete node widens a question to
+  its start;
+- `indentEditChecks`: levels as edits (`Editor/Indent.lean`), pure: a
+  level's whitespace in spaces or tabs, the re-indent's edits, a blank row
+  emptied and a kept row left, what a new line gets for each answer, and
+  the edit that breaks a line;
+- `indentLevelChecks`: the indent primitives (`TextId.indentLevels`,
+  `TextId.openingLevel`, `TextId.reindentEdits`), on the editor's models: a
+  pretty-printed JSON text under a test mode's indents query gets each
+  row's indent in levels, a text with no syntax tree is refused, an empty
+  indents source answers 0 for every row, a question is widened to an
+  incomplete node's start, a line opened at a position gets its level, and
+  the re-indent's edits are read from the text.
 -/
 
 namespace ModelTest
@@ -15600,6 +15614,44 @@ def indentLevelsOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (first 
   | (.ok (.error refusal), _) => some (.inl refusal)
   | (.error _, _) => none
 
+/-- An indents source of the model's JSON grammar whose array is a node the
+parser could not complete and whose opening bracket one the tree did not
+close: what the widening reads. -/
+def widenedIndents : String :=
+  "(array) @indent.incomplete\n\"[\" @indent.open"
+
+/-- The opening level of a line opened at `offset` of a text of `text`, with
+what follows it on its row moved to the new row when `rest`, set to a test
+mode with `syntaxTree` when given, on the editor's models: the level on the
+right, a refusal on the left; `none` when the command was refused. -/
+def openingLevelOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (offset : Nat)
+    (rest : Bool) : Option (Sum SyntaxTreeError (Option Nat)) :=
+  let program : EditorM (Except SyntaxTreeError (Option Nat)) := do
+    let id ← createText text
+    if let some syntaxTree := syntaxTree then
+      Highlight.enter "test" id syntaxTree
+    id.openingLevel offset rest
+  match program.runModel editorModel with
+  | (.ok (.ok level), _) => some (.inr level)
+  | (.ok (.error refusal), _) => some (.inl refusal)
+  | (.error _, _) => none
+
+/-- The re-indent's edits of rows `first` through `last` of a text of
+`text` in `unit`, set to a test mode with `syntaxTree` when given, on the
+editor's models: the edits on the right, a refusal on the left; `none` when
+the command was refused. -/
+def reindentEditsOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (first last : Nat)
+    (unit : Language.IndentUnit) : Option (Sum SyntaxTreeError (Array (Extent × String))) :=
+  let program : EditorM (Except SyntaxTreeError (Array (Extent × String))) := do
+    let id ← createText text
+    if let some syntaxTree := syntaxTree then
+      Highlight.enter "test" id syntaxTree
+    id.reindentEdits first last unit
+  match program.runModel editorModel with
+  | (.ok (.ok edits), _) => some (.inr edits)
+  | (.ok (.error refusal), _) => some (.inl refusal)
+  | (.error _, _) => none
+
 /-- The checks of the indent primitive (`TextId.indentLevels`,
 `Editor/Indent.lean`), on the editor's models through the syntax tree
 model. -/
@@ -15630,7 +15682,45 @@ def indentLevelChecks : List Check :=
       run :=
         pure
           (indentLevelsOf pretty (some { grammar := "json", indents := some "" }) 0 3 ==
-            some (.inr #[some 0, some 0, some 0, some 0])) }]
+            some (.inr #[some 0, some 0, some 0, some 0])) },
+    { name :=
+        "a row inside a node captured incomplete is asked from that node's start, so an opening bracket it holds far above counts"
+      run :=
+        pure <|
+          let mode := some { grammar := "json", indents := some widenedIndents }
+          indentLevelsOf "[\n1,\n2,\n3\n]" mode 3 3 == some (.inr #[some 1]) &&
+            indentLevelsOf "[\n1,\n2,\n3\n]" mode 0 1 == some (.inr #[some 0, some 1]) },
+    { name :=
+        "the opening level is the level of a line opened at a position: one in after an opening bracket, at the body's level after an item, one out with a closing bracket moved to the new row, and none asked of a text with no tree or no indents query"
+      run :=
+        pure <|
+          let mode := some { grammar := "json", indents := some jsonIndents }
+          let text := "{\n  \"a\": [\n  ]\n}"
+          let afterBracket := 10
+          openingLevelOf text mode afterBracket true == some (.inr (some 2)) &&
+            openingLevelOf text mode 9 true == some (.inr (some 1)) &&
+            openingLevelOf text mode 11 true == some (.inr (some 1)) &&
+            openingLevelOf text mode 11 false == some (.inr (some 2)) &&
+            openingLevelOf text mode (text.utf8ByteSize) true == some (.inr (some 0)) &&
+            openingLevelOf text none afterBracket true == some (.inl .notAttached) &&
+            openingLevelOf text (some { grammar := "json" }) afterBracket true ==
+              some (.inl .noQuery) },
+    { name :=
+        "the opening level is asked from the start of a node captured incomplete, so an opening bracket it holds far above counts"
+      run :=
+        pure
+          (openingLevelOf "[\n1,\n2,\n3\n]" (some { grammar := "json", indents := some widenedIndents }) 7
+              false ==
+            some (.inr (some 1))) },
+    { name :=
+        "the re-indent's edits of rows read from the text: each row's leading whitespace from its start to its first non-blank becomes its level in the unit, a row already right and a blank row already empty have none; refused as the primitive is"
+      run :=
+        pure <|
+          let mode := some { grammar := "json", indents := some jsonIndents }
+          reindentEditsOf "[\n1,\n      2\n\n   \n]" mode 0 5 (.spaces 2) ==
+              some (.inr #[(⟨2, 2⟩, "  "), (⟨5, 11⟩, "  "), (⟨14, 17⟩, "")]) &&
+            reindentEditsOf "[\n1\n]" mode 1 1 .tab == some (.inr #[(⟨2, 2⟩, "\t")]) &&
+            reindentEditsOf "[1]" none 0 0 (.spaces 2) == some (.inl .notAttached) }]
 
 /-- The checks of a mode's on-enter action, on the editor's models: a
 command asks for a major mode by the request, and the loop that runs the
