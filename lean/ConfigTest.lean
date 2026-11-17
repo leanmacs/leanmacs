@@ -4203,7 +4203,7 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := Headless.compiled shipped
         let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
         return [Compile.compileName, Compile.recompileName, Compile.confirmName, Compile.killName,
-                Compile.outputName].all
+                  Compile.outputName].all
               compiled &&
             (registry.findJob? Compile.runJob).any (·.owner == .compiled) &&
             (registry.mode? Compile.modeName).isSome &&

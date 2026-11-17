@@ -1754,7 +1754,8 @@ def compileChecks (services : Job.Services) (fixtures : System.FilePath) : List 
           let .ok loop := started | return false
           let line := s!"'{fixtures / "three-lines"}'"
           let (stepped, texts) ←
-            (loop.invoke compileKeys { command := Compile.compileName, arguments := [.str line] }).runReal
+            (loop.invoke compileKeys
+                    { command := Compile.compileName, arguments := [.str line] }).runReal
                 texts display
           let .ok stepped := stepped | return false
           let some start := stepped.starts[0]? | return false
@@ -1777,8 +1778,7 @@ def compileChecks (services : Job.Services) (fixtures : System.FilePath) : List 
             let (text, after) ← (compilationText next.loop).runReal (← textsRef.get) display
             textsRef.set after
             return (text.toOption).join
-          let postsAt (count : Nat) : IO Bool :=
-            eventually (return (← posts.get).size ≥ count)
+          let postsAt (count : Nat) : IO Bool := eventually (return (← posts.get).size ≥ count)
           let deliverPost (index : Nat) : IO (Option String) := do
             let some invocation := (← posts.get)[index]? | return none
             deliver (runPosted invocation)
@@ -1810,9 +1810,11 @@ def compileChecks (services : Job.Services) (fixtures : System.FilePath) : List 
             text.any fun text => (text.splitOn "\n").contains part
           return has first "one" && !has first "two" &&
               !(first.any fun text => (text.splitOn "Compilation").length > 1) &&
-              has second "two" && !has second "three" &&
+              has second "two" &&
+              !has second "three" &&
               has last "three" &&
-              (last.map lastLine).any (·.startsWith "Compilation exited abnormally with code 2 after ") &&
+              (last.map lastLine).any
+                (·.startsWith "Compilation exited abnormally with code 2 after ") &&
               reaped
         finally
           IO.FS.removeDirAll directory }]
@@ -2092,8 +2094,8 @@ def main (arguments : List String) : IO UInt32 := do
     match arguments with
     | [directory, workspaces, shell, compile] =>
       pure
-        (← IO.FS.realPath directory, ← IO.FS.realPath workspaces, ← IO.FS.realPath shell,
-          ← IO.FS.realPath compile)
+          (← IO.FS.realPath directory, ← IO.FS.realPath workspaces, ← IO.FS.realPath shell,
+            ← IO.FS.realPath compile)
     | _ =>
       IO.eprintln
           "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures> <the directory of the shell fixtures> <the directory of the compile fixtures>"

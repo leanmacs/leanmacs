@@ -27919,7 +27919,8 @@ def compileChecks : List Check :=
                   "compile: r@app is reachable through kube pod at /app, where commands cannot run" &&
               given.next == kube.next &&
               echoOf given == echoOf asked &&
-              again.loop.state.prompt.isNone && again.next == kube.next &&
+              again.loop.state.prompt.isNone &&
+              again.next == kube.next &&
               echoOf again ==
                 some
                   "recompile: r@app is reachable through kube pod at /app, where commands cannot run" },
@@ -27934,7 +27935,8 @@ def compileChecks : List Check :=
             let asked := pressedOn (settledAfter inR "C-o w") "C-k c"
             let cancelled := pressedOn asked "C-k q"
             let inW := drained (compiledLine cancelled "build")
-            let again := drained (pressedOn (pressedOn (pressedOn inW "C-o a") "C-k r") "C-o w C-k r")
+            let again :=
+              drained (pressedOn (pressedOn (pressedOn inW "C-o a") "C-k r") "C-o w C-k r")
             let started := again.jobs.processes.started
             (candidatesOf asked).map (·.all) == some #["make"] &&
               (showing asked asked.loop.state.frame.focused).bind (·.text) == some "" &&
@@ -27942,7 +27944,8 @@ def compileChecks : List Check :=
               inW.jobs.processes.started.back? == some (shellCommand "/w" "build") &&
               started.extract (started.size - 2) started.size ==
                 #[shellCommand "/r" "make", shellCommand "/w" "build"] &&
-              inW.loop.state.workspaces.getOfProject Compile.historyStore (.remote "github.com/o/r") ==
+              inW.loop.state.workspaces.getOfProject Compile.historyStore
+                  (.remote "github.com/o/r") ==
                 #["build", "make"] },
     { name :=
         "criterion 6: recompile reruns the workspace's last line in its directory without a prompt, and another workspace's recompile runs its own last line; in the compilation buffer it reruns that buffer's"
@@ -27977,7 +27980,8 @@ def compileChecks : List Check :=
             let running := postedNext (pressedOn (settledAfter driver "C-o a") "C-k m")
             let asked := pressedOn running "C-k m"
             let refused := (fedTo asked ([.commit "n"] ++ presses "C-e y")).1
-            let confirmed := (fedTo (pressedOn refused "C-k m") ([.commit " Yes "] ++ presses "C-e y")).1
+            let confirmed :=
+              (fedTo (pressedOn refused "C-k m") ([.commit " Yes "] ++ presses "C-e y")).1
             let makes (driver : TestDriver) :=
               (driver.jobs.processes.started.filter (· == shellCommand "/r" "make")).size
             let name := "*compilation: r@main*"
@@ -28177,8 +28181,7 @@ def compileChecks : List Check :=
               again.posting.map (·.key) == #[some "compile local /r"] &&
               again.jobs.processes.started.size == made.jobs.processes.started.size + 1 &&
               asked.loop.state.prompt.map (·.label) == some Compile.promptLabel },
-    { name :=
-        "the compilation mode fills the role refresh with recompile"
+    { name := "the compilation mode fills the role refresh with recompile"
       run :=
         pure
           (Compile.mode.roles.map (fun (role, command) => (role.name, command)) ==

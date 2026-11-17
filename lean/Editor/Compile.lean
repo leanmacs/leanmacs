@@ -506,8 +506,11 @@ def kept (state : EditorState) (record : Record) : Option BufferId :=
 
 /-- Puts the cursor of `view` at `offset`, one bar with its shape kept. -/
 def placeCursor (view : ViewId) (offset : Nat) : EditorM Unit := do
-  if let .ok selection ← view.selection then
-    discard <| view.select { selection with ranges := #[⟨offset, offset⟩], primary := 0 }
+  if let .ok selection← view.selection then
+    discard <|
+        view.select
+          { selection with
+            ranges := #[⟨offset, offset⟩], primary := 0 }
 
 /-- Appends `lines`, each ended with a line feed, to the buffer `id`, inside
 `writing`. Each view showing it whose cursor is on the last line, or the
@@ -520,7 +523,7 @@ def append (id : BufferId) (lines : Array String) : EditorM Unit := do
   let count ← text.lineCount
   let mut followers := #[]
   for view in viewsOf (← editorState) id do
-    if let .ok selection ← view.selection then
+    if let .ok selection← view.selection then
       let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
       if (← text.pointOf head).row + 1 ≥ count then
         followers := followers.push view
@@ -620,8 +623,8 @@ def startOrAsk (name : String) (view : ViewId) (scope : Scope) (line : String)
     (directory : System.FilePath) : EditorM Unit := do
   if (recordOf (← editorState) scope.place).running.isSome then
     discard <|
-      prompt (confirmLabel scope.label)
-        { command := confirmName, arguments := [.str name, .str line, .str directory.toString] }
+        prompt (confirmLabel scope.label)
+          { command := confirmName, arguments := [.str name, .str line, .str directory.toString] }
   else
     start name view scope line directory
 
@@ -650,8 +653,8 @@ where
     let state ← editorState
     let initial := ((recordOf state scope.place).last.map (·.1)).getD ""
     discard <|
-      prompt promptLabel { command := compileName, arguments := [.bool true] } initial
-        (pure (history state scope))
+        prompt promptLabel { command := compileName, arguments := [.bool true] } initial
+          (pure (history state scope))
 
 /-- `recompile` ("The commands", in the module docs): reruns the scope's last
 line in the directory it ran in, with no prompt, asking first when the
