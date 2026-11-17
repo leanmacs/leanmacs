@@ -670,7 +670,8 @@ changed the state or not (`Loop.publish`):
    rows, and whether it is the selected window
    (`EditorState.selectedView`). A window that is not selected has no
    badge, every field in `mode-line.inactive`, and that face as its row's
-   (`View.statusFace`); the selected one has none. "Modified" is the
+   (`View.statusFace`); the selected one's row is in `mode-line.active`
+   (`ModeLine.activeFace`), whose background marks it. "Modified" is the
    `modified` segment's mark (`Buffer.isModified`): a buffer that is not
    has no such field. The answer is right because the histories were told
    their texts' revisions in step 1. A selection marker the text does not

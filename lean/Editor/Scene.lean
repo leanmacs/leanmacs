@@ -23,7 +23,11 @@ the last scene published, on its own thread, so painting never waits on Lean
   or the default order lists for each side, the input scheme's reported
   fields drawn by the `state` segment as a badge; and, for a window that
   is not selected, every field and the row (`View.statusFace`) in
-  `mode-line.inactive`. For the minibuffer's view while a prompt is open
+  `mode-line.inactive`, and for the selected one the row in
+  `mode-line.active`. Which strips of the frame are dividers between
+  tiled views is the editor state's (`EditorState.dividers`,
+  `Layout.carve`), and their face the loop's (`Loop.dividerFace`);
+  layout fills each in its face's foreground. For the minibuffer's view while a prompt is open
   it is the prompt's label and then a field for each candidate the prompt
   has listed, in the matcher's order, the chosen one in a face of its own.
   Where the fields go across the row, and what is cut when they do not
@@ -181,8 +185,8 @@ structure View where
   status : Array StatusField
   /-- The face of its status row, over `mode-line` and under every field's,
   which gives the row its background: `mode-line.inactive` for a window
-  that is not selected, and none for the selected one and the minibuffer's
-  view. It neither makes the row taller nor moves its line. -/
+  that is not selected, `mode-line.active` for the selected one, and none
+  for the minibuffer's view. It neither makes the row taller nor moves its line. -/
   statusFace : Option FaceName := none
   /-- How far its text and its status fields are inset from its edges, in
   points (`EditorState.paddingOf`). The status row's background still spans

@@ -1106,8 +1106,9 @@ of a run is that of the highest layer over the run that sets it:
 The same rule orders definitions: where what is sent defines a name more
 than once, a later definition's set attributes are over an earlier one's.
 So a theme is overridden by appending to it. A status field's face is over
-the view's status face (`mode-line.inactive` for a window that is not
-selected), over `mode-line`, over `default`, and a cursor's face is over
+the view's status face (`mode-line.active` for the selected window,
+`mode-line.inactive` for a window that is not), over `mode-line`, over
+`default`, and a cursor's face is over
 `default`. A face's vertical padding is neither font nor paint: layout
 reads it only from `mode-line` and `echo-area`, to size the status rows,
 and it is a length in points like a size. A name
@@ -1177,8 +1178,10 @@ state of the shipped Vim scheme; the mode line's (theming phase 5):
 `mode-line.state.<state>`, the badge, for each state of the shipped Vim
 scheme, `mode-line.buffer`, `mode-line.modified`, `mode-line.changed` for
 a file changed on disk, `mode-line.secondary` for the directory, the major
-mode, line:col and the position, and `mode-line.inactive` for every field
-and the row of a window that is not selected; the minibuffer's
+mode, line:col and the position, `mode-line.inactive` for every field
+and the row of a window that is not selected, and `mode-line.active` for
+the row of the selected one; `window-divider`, the divider between tiled
+windows; the minibuffer's
 (`minibuffer.prompt`, `minibuffer.candidate`, `minibuffer.chosen`); the
 compile mode's locations by severity (`compilation.error`,
 `compilation.warning`, `compilation.note`, `lean/Editor/Compile.lean`,
@@ -1727,8 +1730,51 @@ echo area, the preedit, and the prompt that is open, if one is.
   `text + message` while a prompt is open, or the whole frame when that is
   shorter. While the tab bar is shown its strip is cut off the tiled area's
   bottom too. `EditorState.rects` is the layout's rectangles in the tiled
-  area, then the floats' in stacking order, then the minibuffer's view in
-  the strip while a prompt is open.
+  area with the dividers taken out, then the floats' in stacking order,
+  then the minibuffer's view in the strip while a prompt is open.
+- **A divider separates two tiled windows** (decided 2026-11-17, task
+  `window-divider-and-selected-window`). It is 2 physical pixels wide
+  (`EditorState.dividerWidth`), one point on the owner's display of scale
+  2: Lean handles no scale and a scene's rectangles are physical pixels,
+  so the width is in pixels, a constant and not config for now. It is
+  taken out of the layout, not drawn over it: `Layout.carve`
+  (`lean/Editor/Layout.lean`, "The dividers") runs after `Layout.place`,
+  whose rule that the rectangles tile the area is kept, so every layout
+  and its operations stay as they were. Each tile whose right edge is
+  short of the tiled area's gives up the width at its right, the full
+  height of the tile, and each whose foot is short of the area's gives up
+  the width at its foot, short of the right strip; the strips given up are
+  the dividers (`EditorState.dividers`), and the carved tiles and the
+  dividers tile the area together. Every layout tiles its area, so a
+  divider always lies between two tiles, on the left or upper one's side:
+  none is along the frame's edges, monocle's one tile has none, and a
+  docked strip's outer edge, which is the area's, has none. Floats are
+  placed against the carved rectangles and are not carved, so a float has
+  no divider, and the minibuffer's view is outside the tiled area. The
+  loop puts them in the scene (`Scene.dividers`) in the face
+  `window-divider` (`Loop.dividerFace`), Emacs's name; layout fills each
+  in its face's **foreground** over the default face, as Emacs colours
+  `window-divider` and `vertical-border` with `:foreground`, so a face
+  nothing defines is the ink and stays visible. The palette mapping makes
+  it the faint colour, a thin faint line, and the theme check refuses a
+  divider drawn in the paper (`dividerOnPaper`). The renderer fills the
+  dividers before every view. Direction focus reads the carved rectangles:
+  every neighbour is the same divider's width away, so it picks as
+  before.
+- **The selected window's mode line is lit** (the same task). Its row is
+  in `mode-line.active`, Emacs 29's `mode-line-active`, and every other
+  window's in `mode-line.inactive` (`Loop.statusOf`); the minibuffer's view
+  has no status face. The selected window is `EditorState.selectedView`,
+  so the mark follows every focus change, `C-w C-w` and the rest, and
+  stays on the asker while a prompt is open. The palette mapping draws the
+  active row strong on `selected` and the inactive rows faint on the
+  paper, so the selected bar is lit and the others recede, and the divider
+  does the separating the inactive bar's raised background did. Solarized,
+  whose `selected` is its `raised`, puts its inactive row on its paper,
+  base03. The theme check holds every shipped theme to rows whose
+  backgrounds differ (`modeLinesAlike`), so no test names a colour. No
+  accent edge is drawn on the selected window's divider: the owner's
+  preference.
 - **Tabs** (window management's phase 5, decided 2026-11-17;
   `lean/Editor/State.lean`, "Tabs"; `lean/Editor/TabBar.lean`).
   - **A tab is a whole arrangement** (`Tab`): its tiled list, its docked
@@ -2027,6 +2073,7 @@ The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
 |---|---|
 | `size` | The frame's size, in physical pixels |
 | `views` | The views, in drawing order: the windows', then the tab bar's while it is shown, the one view that is no window's (window management's phase 5) |
+| `dividers` | The dividers between the tiled views (`EditorState.dividers`), each a rectangle in physical pixels and a face, `window-divider`; drawn before every view. Empty by default, as for one window |
 | `focused` | The view with the keyboard focus, if any |
 | `echo` | The echo area's text |
 | `echoPadding` | How far the echo is inset from the frame's left and right edges, in whole points, when layout draws it in the bottom row: the bottom row's inset (`EditorState.bottomInset`), the frame padding and at least the window's corner clearance outside fullscreen. 0 by default |
@@ -2047,7 +2094,7 @@ Each view (`View`):
 | `decorations` | Byte ranges of its snapshot, each naming a face |
 | (its text's own spans) | Not a field of Lean's scene: the binding hands layout the highlights of the snapshot's document as the text's own spans (`TextRef::spans`), which never pass through Lean |
 | `status` | Its status line: text fields, each naming a face, with a side (left, the default, or right) and a horizontal padding in whole points, which its face's background fills |
-| `statusFace` | The face of its status row, over `mode-line` and under every field's, which gives the row its background: `mode-line.inactive` for a window that is not selected, none for the selected one and the minibuffer's view. It neither makes the row taller nor moves its line |
+| `statusFace` | The face of its status row, over `mode-line` and under every field's, which gives the row its background: `mode-line.inactive` for a window that is not selected, `mode-line.active` for the selected one, none for the minibuffer's view. It neither makes the row taller nor moves its line |
 | `padding` | How far its content is inset from its edges, in whole points, across and down, and how far further its text rows start from its top (`top`) (`EditorState.paddingOf`): the frame padding both ways for a window, with the window's top inset (`EditorState.topInset`: what the title bar covers, none in fullscreen) at the top of a window along the frame's top edge; and for the minibuffer's view the bottom row's inset across and none down. 0 by default, which lays out as before there was one |
 
 A field's side and padding and a view's status face cross the wire as
@@ -2057,7 +2104,11 @@ a face definition is 24 words with its vertical padding last
 (`crates/editor-ffi/src/display/wire.rs`). A view's padding ends its words
 (across, down, then top) and the echo's follows the echo's length, in whole
 points like a field's padding: no scale crosses with any of them. Their
-defaults keep every scene that names none as it was.
+defaults keep every scene that names none as it was. The dividers cross
+after the views and before the faces' presence: their count, then each
+one's x, y, width and height and its face's length, the face's text after
+the views' texts (`WireScene::dividers`, which `WireScene::resolve` maps
+into layout's `Scene::dividers`).
 
 Content is named only by handles, never by copied text, so an unchanged
 view is sent as the same handles. Faces are names; what they look like is
@@ -2264,7 +2315,8 @@ decided 2026-11-13 by its phase 2):
   (the prompt's asker while one is open), whether or not the frame has the
   keyboard focus; a window that is not has no badge and every field in
   `mode-line.inactive`, and the view carries that face for its row
-  (`View.statusFace`). Whether a buffer is modified is its undo tree's
+  (`View.statusFace`); the selected one carries `mode-line.active`, whose
+  background marks it. Whether a buffer is modified is its undo tree's
   answer, and it is right in a scene because every tree is told its
   text's revision before the scene is made; a buffer is modified while its
   group is open, so during an insert session. A status field carries a
@@ -2631,6 +2683,13 @@ part are in the module docs; these are the decisions.
   id and no rasterised glyph, and `Frame::describe` prints neither the
   generation nor the table. The `Renderer` port that takes these frames
   was made later, in a crate of its own ("The renderer, as built").
+- **The dividers.** Each of the scene's dividers is a fill of its
+  rectangle (`Frame::dividers`, `Fill`) in its face's foreground over the
+  default face, kept apart from the views; layout reads no face name of
+  its own for them. The painter fills them first, clipped to the target,
+  so a view drawn over one, a float's, covers it
+  (`crates/editor-render-wgpu/src/painter.rs`, "What is drawn, in
+  order").
 - **The mode line.** A view with at least one status field has a status
   row at the bottom of its rectangle. Each field is shaped through the
   `Shaper` port as a line of its own, in its face over the view's status

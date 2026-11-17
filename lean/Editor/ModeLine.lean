@@ -69,7 +69,11 @@ not selected (`EditorState.selectedView`: the open prompt's asker while a
 prompt is open, and otherwise the focused window, whether or not the frame
 has the keyboard focus) the `state` segment gives no badge and every field
 is in `ModeLine.inactiveFace` (`mode-line.inactive`), as the loop also
-puts the row in it (`View.statusFace`).
+puts the row in it (`View.statusFace`). The selected window's row is in
+`ModeLine.activeFace` (`mode-line.active`, Emacs 29's `mode-line-active`),
+and its fields in their own faces: every shipped theme gives the two rows
+backgrounds that differ (`Themes.problems`, `modeLinesAlike`), so the
+selected window reads at a glance.
 
 A listing that names a segment nobody registered keeps the rest, in order,
 and `ModeLine.resolve` names the unknown ones; a reload says so in the echo
