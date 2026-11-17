@@ -9,6 +9,9 @@ pkl = "0.32.1"
 # PyPI wheel is an exact pin of the binary; mise installs it with `uv` or
 # `pipx`, whichever the machine has.
 "pipx:clang-format" = "23.1.4"
+# The secret scanner (`mise run secrets-scan`), never part of `ci`. Like
+# cargo-deny, a prebuilt release binary whose checksum aqua checks.
+"aqua:gitleaks/gitleaks" = "8.30.1"
 # Lean (lean, lake) is not listed here: `lean/lean-toolchain` is its one pin
 # (AGENTS.md, "Toolchains"). mise reads that file through the `lean` plugin,
 # which the global mise config declares along with
@@ -996,3 +999,27 @@ run = "tools/linux/run.sh render"
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
 depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "bundle-test", "c-fmt"]
+
+# Never part of `ci` or hk.pkl: `linux-ci` runs `ci` in a copy of the
+# checkout with no history, where a history scan has nothing to read.
+#
+# gitleaks (pinned above), with `.gitleaks.toml` (the default rules) and
+# `.gitleaksignore` (reviewed findings that are not secrets), over every
+# commit reachable from the local `main`, then again with each merge diffed
+# against its first parent (a secret typed into a conflict resolution is in
+# no parent's diff), then the unstaged and the staged changes to tracked
+# files. `tools/secrets-scan-probe.sh` runs first and proves each pass
+# catches a token planted where only it looks. `infra-apply` runs this
+# before it changes anything on GitHub. A CI job that runs it needs the full
+# history and a local `main` (docs/dev-practices/publishing.md, "The secret
+# scan", which also says what to do with a finding).
+[tasks.secrets-scan]
+description = "gitleaks (pinned) over every commit reachable from main, merges included, and the uncommitted tree; never part of ci (linux-ci's copy has no history). infra-apply runs it first"
+run = [
+  "sh tools/secrets-scan-probe.sh",
+  "gitleaks git --no-banner --redact --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --log-opts=main .",
+  "gitleaks git --no-banner --redact --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --log-opts='-m --first-parent main' .",
+  "gitleaks git --no-banner --redact --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --pre-commit .",
+  "gitleaks git --no-banner --redact --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --staged .",
+]
+
