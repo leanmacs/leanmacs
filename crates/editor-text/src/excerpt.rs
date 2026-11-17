@@ -33,6 +33,47 @@
 //! assembled text is at the revision the list last wrote
 //! ([`ExcerptError::Moved`]).
 //!
+//! **Edits.** An edit of the excerpt text is its sources' edits
+//! ([`Excerpts::edit`]). The excerpt text is caught up, the transaction is
+//! checked as a plain text's would be, and each range it changes is mapped
+//! into the excerpt that holds it. Every source it changes is then given
+//! one transaction, with the caller's origin and no selection, and the
+//! excerpt text catches up from them once, which is its one revision. Every
+//! check comes before any write, so a refused edit changes no source. In
+//! order, an edit is refused:
+//!
+//! 1. when the assembled text was written behind the list's back
+//!    ([`ExcerptError::Moved`]);
+//! 2. as a plain text refuses it: the change set does not fit
+//!    ([`ExcerptError::BadChange`]), or a selection's end is not a position
+//!    of its text ([`ExcerptError::BadSelection`]), in [`Text::apply`]'s
+//!    order;
+//! 3. when a range it changes is not inside one excerpt, both its ends
+//!    included, which every edit of a separator byte is, and every edit of
+//!    an empty list; or when the range it changes in the source also meets
+//!    another excerpt of that source, both ends included, since the edit
+//!    would then show twice and the excerpt text would not read what was
+//!    asked for ([`ExcerptError::OutsideExcerpt`]);
+//! 4. when a source it changes was not given ([`ExcerptError::NoSuchSource`]);
+//! 5. when a source's share does not fit the source
+//!    ([`ExcerptError::BadChange`]), which bytes copied from it cannot make.
+//!
+//! So an accepted edit leaves the excerpt text reading exactly what the
+//! transaction asked for, and its markers move as the transaction says.
+//! A transaction that changes nothing is one revision of the excerpt text
+//! and of no source. Undo is the sources': each keeps the inverse of the
+//! transaction it was given, and the excerpt text still keeps none.
+//!
+//! **The edges.** An offset at an excerpt's start maps to its source
+//! range's start, and one at its end to its source range's end. The start
+//! anchor is [`Bias::Before`] and the end anchor [`Bias::After`], so text
+//! inserted at either edge is inside the excerpt. When an excerpt ends in
+//! a line feed, the only position on the separator row is the end of that
+//! excerpt: text typed there lands at the start of the source row after
+//! the excerpt, and the excerpt grows to hold it. An excerpt whose whole
+//! range was deleted stays, empty, until the list is replaced, and since
+//! an excerpt holds both its ends, an insert at it lands in its source.
+//!
 //! There is no port here. The sources are texts in the same process, and
 //! the caller passes them in, with the key it names each by, for each call
 //! that reads or marks them. A source the caller leaves out is not read:
@@ -42,6 +83,7 @@
 //! by a binary search over the placed excerpts. A tree with running totals
 //! waits for a measured need.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::ops::Range;
@@ -51,8 +93,8 @@ use crate::change::{Bias, ChangeSet};
 use crate::log::Origin;
 use crate::marker::{Marker, MarkerId};
 use crate::snapshot::{Revision, Snapshot};
-use crate::text::Text;
-use crate::transaction::Transaction;
+use crate::text::{Text, checked};
+use crate::transaction::{ApplyError, Transaction};
 
 /// The caller's name for a source text: whatever it tells its texts apart
 /// by. Keys are compared, never read.
@@ -97,6 +139,29 @@ pub enum ExcerptError {
     BadRange,
     /// The assembled text was written by something other than the list.
     Moved,
+    /// An edit of the excerpt text changes bytes outside one excerpt: a
+    /// separator, or an excerpt and the next; or the list is empty; or the
+    /// range it changes in its source also meets another excerpt of that
+    /// source, both ends included ([`Excerpts::edit`]).
+    OutsideExcerpt,
+    /// An edit's change set does not fit the excerpt text, or a source's
+    /// share of it does not fit the source
+    /// ([`ApplyError::BadChange`]).
+    BadChange,
+    /// An end of an edit's selection before or after is not a position of
+    /// its excerpt text
+    /// ([`ApplyError::BadSelection`]).
+    BadSelection,
+}
+
+/// What an accepted edit of an excerpt text made ([`Excerpts::edit`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Edited {
+    /// The excerpt text's revision after the edit.
+    pub revision: Revision,
+    /// Each source the edit changed and the revision its transaction
+    /// produced, in ascending key order.
+    pub sources: Vec<(SourceKey, Revision)>,
 }
 
 /// The snapshot is shown by its revision: what it holds is the source's.
@@ -118,6 +183,9 @@ impl fmt::Display for ExcerptError {
             Self::Excerpted => "a source is an excerpt text",
             Self::BadRange => "a range is not two positions of its source in order",
             Self::Moved => "the assembled text was written by something other than its list",
+            Self::OutsideExcerpt => "an edit changes bytes outside one excerpt",
+            Self::BadChange => "the change set does not fit the text",
+            Self::BadSelection => "a selection's end is not a position of its text",
         })
     }
 }
@@ -402,6 +470,125 @@ impl Excerpts {
         Ok(revision)
     }
 
+    /// Makes `transaction`, an edit of the excerpt text `assembled`, of
+    /// its sources: one transaction on each source it changes, with
+    /// `origin` and no selection, in ascending key order, and then one
+    /// catch-up of `assembled`, whose revision is returned with the
+    /// sources'. The module docs give the rules ("Edits").
+    ///
+    /// It catches up first ([`refresh`](Self::refresh)), which may be a
+    /// revision of its own even when the edit is then refused. Refused,
+    /// changing no source and nothing more of `assembled`, in this order:
+    ///
+    /// 1. [`ExcerptError::Moved`] when something other than the list wrote
+    ///    `assembled` since the list last did;
+    /// 2. [`ExcerptError::BadChange`] or [`ExcerptError::BadSelection`] when
+    ///    a plain text would refuse `transaction` so
+    ///    ([`Text::apply`]), in its order;
+    /// 3. [`ExcerptError::OutsideExcerpt`] when a range it changes is not
+    ///    inside one excerpt, both ends included, or its range in the
+    ///    source meets another excerpt of that source, both ends included;
+    /// 4. [`ExcerptError::NoSuchSource`] when a source it changes is not
+    ///    among `sources`;
+    /// 5. [`ExcerptError::BadChange`] when a source's share does not fit
+    ///    it, which bytes copied from the source cannot make happen.
+    ///
+    /// A transaction that changes nothing is one revision of `assembled`
+    /// and of no source.
+    pub fn edit(
+        &mut self,
+        assembled: &mut Text,
+        transaction: &Transaction,
+        origin: Origin,
+        sources: &mut [(SourceKey, &mut Text)],
+    ) -> Result<Edited, ExcerptError> {
+        self.refresh(assembled, sources)?;
+        // The selections are checked against the excerpt text and then
+        // dropped: in its offsets they mean nothing to a source.
+        let next = checked(assembled.current(), transaction).map_err(|error| match error {
+            ApplyError::BadChange => ExcerptError::BadChange,
+            ApplyError::BadSelection => ExcerptError::BadSelection,
+        })?;
+
+        // Each changed range, as the range of its source it replaces and
+        // the bytes that replace it, by source.
+        let mut edits: BTreeMap<SourceKey, Vec<(Range<usize>, String)>> = BTreeMap::new();
+        for (old, new) in transaction.changes().runs() {
+            let (index, source, start) =
+                self.locate(old.start).ok_or(ExcerptError::OutsideExcerpt)?;
+            let placed = &self.excerpts[index].placed;
+            if old.end > placed.range.end {
+                return Err(ExcerptError::OutsideExcerpt);
+            }
+            let range = start..start + old.len();
+            let shown_twice = self.excerpts.iter().enumerate().any(|(other, excerpt)| {
+                other != index
+                    && excerpt.placed.source == source
+                    && meet(range.clone(), &excerpt.placed.source_range).is_some()
+            });
+            if shown_twice {
+                return Err(ExcerptError::OutsideExcerpt);
+            }
+            let inserted = next.slice_to_string(new).unwrap_or_default();
+            edits.entry(source).or_default().push((range, inserted));
+        }
+        if edits.keys().any(|key| find(sources, *key).is_none()) {
+            return Err(ExcerptError::NoSuchSource);
+        }
+
+        // One change set for each source, checked against it before any
+        // source is written.
+        let mut transactions = Vec::with_capacity(edits.len());
+        for (key, mut ranges) in edits {
+            let Some(text) = find(sources, key) else {
+                return Err(ExcerptError::NoSuchSource);
+            };
+            ranges.sort_by_key(|(range, _)| range.start);
+            let len = text.current().len();
+            let mut changes = ChangeSet::new();
+            let mut at = 0;
+            for (range, inserted) in ranges {
+                changes.retain(range.start.saturating_sub(at));
+                changes.insert(&inserted);
+                changes.delete(range.len());
+                at = range.end;
+            }
+            changes.retain(len.saturating_sub(at));
+            if !changes.fits(&text.current().rope) {
+                return Err(ExcerptError::BadChange);
+            }
+            transactions.push((key, Transaction::new(changes)));
+        }
+
+        let mut edited = Vec::with_capacity(transactions.len());
+        for (key, transaction) in transactions {
+            let Some(text) = find_mut(sources, key) else {
+                return Err(ExcerptError::NoSuchSource);
+            };
+            // The change set fits and carries no selection, which is every
+            // check `apply` makes, so no refusal is left for it to make.
+            let revision = text
+                .apply(&transaction, origin)
+                .map_err(|_| ExcerptError::BadChange)?;
+            edited.push((key, revision));
+        }
+
+        // With no source changed, or none whose excerpts still hold their
+        // anchors, nothing is caught up: the edit is still one revision.
+        let revision = match self.refresh(assembled, sources)? {
+            Some(revision) => revision,
+            None => {
+                let mut identity = ChangeSet::new();
+                identity.retain(assembled.current().len());
+                self.write(assembled, identity)?
+            }
+        };
+        Ok(Edited {
+            revision,
+            sources: edited,
+        })
+    }
+
     /// Gives up every anchor the list holds in `sources` and empties the
     /// list. The assembled text is left as it is.
     pub fn release(&mut self, sources: &mut [(SourceKey, &mut Text)]) {
@@ -542,6 +729,7 @@ mod tests {
     use super::*;
     use crate::motion::Motion;
     use crate::point::Point;
+    use crate::selection::{Selection, SelectionRange};
     use crate::word::WordKind;
 
     /// The first source: excerpts take its second row, `4..8`.
@@ -1105,6 +1293,403 @@ mod tests {
             assert!(one.marker(MarkerId::new(id)).is_none());
             assert!(two.marker(MarkerId::new(id)).is_none());
         }
+    }
+
+    /// The transaction that replaces `range` of a text of `len` bytes with
+    /// `text`.
+    fn replacing(len: usize, range: Range<usize>, text: &str) -> Transaction {
+        Transaction::new(ChangeSet::replacing(len, range, text).expect("a range within the length"))
+    }
+
+    /// Edits the excerpt text through `excerpts` with `transaction` and
+    /// `origin`, over `one` and `two`.
+    fn edit(
+        excerpts: &mut Excerpts,
+        assembled: &mut Text,
+        one: &mut Text,
+        two: &mut Text,
+        transaction: &Transaction,
+        origin: Origin,
+    ) -> Result<Edited, ExcerptError> {
+        excerpts.edit(
+            assembled,
+            transaction,
+            origin,
+            &mut [(ONE, one), (TWO, two)],
+        )
+    }
+
+    /// What `text` reads and its revision.
+    fn state(text: &Text) -> (String, Revision) {
+        (text.current().to_string(), text.current().revision())
+    }
+
+    #[test]
+    fn an_edit_inside_an_excerpt_is_one_transaction_on_its_source_with_the_callers_origin() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+        let (one_before, two_before) = (state(&one), state(&two));
+        let before = assembled.current().revision();
+
+        let edited = edit(
+            &mut excerpts,
+            &mut assembled,
+            &mut one,
+            &mut two,
+            &replacing(11, 1..1, "X"),
+            Origin::new(7),
+        )
+        .expect("accepted");
+
+        let revision = Revision::new(one_before.1.get() + 1);
+        assert_eq!(state(&one), ("one\ntXwo\nthree\n".to_owned(), revision));
+        let entry = one.entry(revision).expect("the log holds it");
+        assert_eq!(entry.origin(), Origin::new(7));
+        assert_eq!(entry.edits().len(), 1);
+        assert_eq!(
+            (entry.edits()[0].old.start, entry.edits()[0].old.end),
+            (5, 5)
+        );
+        assert_eq!(state(&two), two_before);
+        assert_eq!(
+            state(&assembled),
+            (
+                "tXwo\n\nalpha\n".to_owned(),
+                Revision::new(before.get() + 1)
+            )
+        );
+        assert_eq!(
+            edited,
+            Edited {
+                revision: Revision::new(before.get() + 1),
+                sources: vec![(ONE, revision)],
+            }
+        );
+    }
+
+    #[test]
+    fn a_transaction_across_excerpts_of_two_sources_is_one_transaction_on_each() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+        let before = assembled.current().revision();
+        let mut changes = ChangeSet::new();
+        changes.retain(1);
+        changes.insert("X");
+        changes.retain(4);
+        changes.insert("A");
+        changes.delete(1);
+        changes.retain(5);
+
+        let edited = edit(
+            &mut excerpts,
+            &mut assembled,
+            &mut one,
+            &mut two,
+            &Transaction::new(changes),
+            Origin::new(3),
+        )
+        .expect("accepted");
+
+        assert_eq!(one.current().to_string(), "one\ntXwo\nthree\n");
+        assert_eq!(two.current().to_string(), "Alpha\nbeta\n");
+        assert_eq!(assembled.current().to_string(), "tXwo\n\nAlpha\n");
+        assert_eq!(edited.revision, Revision::new(before.get() + 1));
+        assert_eq!(assembled.current().revision(), edited.revision);
+        assert_eq!(
+            edited.sources,
+            [
+                (ONE, one.current().revision()),
+                (TWO, two.current().revision())
+            ]
+        );
+        for text in [&one, &two] {
+            let entry = text
+                .entry(text.current().revision())
+                .expect("the log holds it");
+            assert_eq!(entry.origin(), Origin::new(3));
+        }
+    }
+
+    #[test]
+    fn an_edit_of_a_separator_byte_is_refused_and_changes_no_source() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+        let states = (state(&one), state(&two), state(&assembled));
+
+        // The separator alone, and a change from one excerpt into the next.
+        for range in [4..5, 3..6] {
+            let refused = edit(
+                &mut excerpts,
+                &mut assembled,
+                &mut one,
+                &mut two,
+                &replacing(11, range.clone(), "!"),
+                Origin::new(1),
+            );
+
+            assert_eq!(refused, Err(ExcerptError::OutsideExcerpt), "{range:?}");
+            assert_eq!((state(&one), state(&two), state(&assembled)), states);
+        }
+    }
+
+    #[test]
+    fn an_edit_in_an_excerpt_of_a_source_not_given_is_refused_and_changes_no_source() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+        let (one_before, two_before) = (state(&one), state(&two));
+        let mut changes = ChangeSet::new();
+        changes.retain(1);
+        changes.insert("X");
+        changes.retain(5);
+        changes.insert("A");
+        changes.retain(5);
+
+        let refused = excerpts.edit(
+            &mut assembled,
+            &Transaction::new(changes),
+            Origin::new(1),
+            &mut [(ONE, &mut one)],
+        );
+
+        assert_eq!(refused, Err(ExcerptError::NoSuchSource));
+        assert_eq!(state(&one), one_before);
+        assert_eq!(state(&two), two_before);
+        assert_eq!(assembled.current().to_string(), "two\n\nalpha\n");
+    }
+
+    #[test]
+    fn an_edit_meeting_two_excerpts_of_one_source_is_refused() {
+        let (mut one, mut two) = sources();
+        // Two excerpts of the first source that touch at 8, and two that
+        // overlap.
+        for list in [
+            vec![wanted(ONE, 4..8), wanted(ONE, 8..14)],
+            vec![wanted(ONE, 4..10), wanted(ONE, 8..14)],
+        ] {
+            let (mut excerpts, mut assembled) = made(&mut one, &mut two, &list);
+            let one_before = state(&one);
+            let len = assembled.current().len();
+
+            // At the first one's end, which is where the second starts or
+            // inside it.
+            let end = list[0].range.len();
+            let refused = edit(
+                &mut excerpts,
+                &mut assembled,
+                &mut one,
+                &mut two,
+                &replacing(len, end..end, "!"),
+                Origin::new(1),
+            );
+            assert_eq!(refused, Err(ExcerptError::OutsideExcerpt), "{list:?}");
+            assert_eq!(state(&one), one_before);
+            excerpts.release(&mut [(ONE, &mut one), (TWO, &mut two)]);
+        }
+    }
+
+    #[test]
+    fn a_bad_selection_or_change_is_refused_first_and_changes_no_source() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+        let states = (state(&one), state(&two));
+        let selection =
+            |at| Selection::new(vec![SelectionRange::new(at, at)], 0).expect("one range");
+
+        // A selection after past the text after, on an edit inside an
+        // excerpt; and on an edit of a separator, which a bad selection is
+        // refused before.
+        let inside = replacing(11, 1..1, "X").with_after(selection(99));
+        let separator = replacing(11, 4..5, "").with_after(selection(99));
+        // A change set for another length.
+        let short = replacing(10, 1..1, "X");
+        for (transaction, error) in [
+            (inside, ExcerptError::BadSelection),
+            (separator, ExcerptError::BadSelection),
+            (short, ExcerptError::BadChange),
+        ] {
+            let refused = edit(
+                &mut excerpts,
+                &mut assembled,
+                &mut one,
+                &mut two,
+                &transaction,
+                Origin::new(1),
+            );
+            assert_eq!(refused, Err(error));
+        }
+
+        assert_eq!((state(&one), state(&two)), states);
+        assert_eq!(assembled.current().to_string(), "two\n\nalpha\n");
+    }
+
+    #[test]
+    fn an_edit_of_an_empty_list_is_refused() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &[]);
+
+        let refused = edit(
+            &mut excerpts,
+            &mut assembled,
+            &mut one,
+            &mut two,
+            &replacing(0, 0..0, "!"),
+            Origin::new(1),
+        );
+
+        assert_eq!(refused, Err(ExcerptError::OutsideExcerpt));
+        assert_eq!(assembled.current().to_string(), "");
+    }
+
+    #[test]
+    fn an_identity_transaction_is_one_revision_of_the_excerpt_text_and_none_of_any_source() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+        let (one_before, two_before) = (state(&one), state(&two));
+        let before = assembled.current().revision();
+
+        let edited = edit(
+            &mut excerpts,
+            &mut assembled,
+            &mut one,
+            &mut two,
+            &replacing(11, 3..3, ""),
+            Origin::new(1),
+        )
+        .expect("accepted");
+
+        assert_eq!(edited.revision, Revision::new(before.get() + 1));
+        assert_eq!(edited.sources, []);
+        assert_eq!((state(&one), state(&two)), (one_before, two_before));
+        assert_eq!(assembled.current().to_string(), "two\n\nalpha\n");
+        // The list still wrote it last.
+        assert_eq!(
+            refresh(&mut excerpts, &mut assembled, &mut one, &mut two),
+            None
+        );
+    }
+
+    #[test]
+    fn an_assembled_text_written_behind_the_lists_back_refuses_an_edit() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+        assembled.replace(0..0, "!").expect("0 is a position");
+        let one_before = state(&one);
+
+        let refused = edit(
+            &mut excerpts,
+            &mut assembled,
+            &mut one,
+            &mut two,
+            &replacing(12, 2..2, "X"),
+            Origin::new(1),
+        );
+
+        assert_eq!(refused, Err(ExcerptError::Moved));
+        assert_eq!(state(&one), one_before);
+    }
+
+    #[test]
+    fn an_insert_at_an_excerpts_start_lands_at_its_source_ranges_start_inside_it() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+
+        // The first excerpt's start, then the second's.
+        for (at, len) in [(0, 11), (6, 12)] {
+            edit(
+                &mut excerpts,
+                &mut assembled,
+                &mut one,
+                &mut two,
+                &replacing(len, at..at, "A"),
+                Origin::new(1),
+            )
+            .expect("accepted");
+        }
+
+        assert_eq!(one.current().to_string(), "one\nAtwo\nthree\n");
+        assert_eq!(two.current().to_string(), "Aalpha\nbeta\n");
+        assert_eq!(assembled.current().to_string(), "Atwo\n\nAalpha\n");
+        assert_eq!(source_ranges(&excerpts), [4..9, 0..7]);
+    }
+
+    #[test]
+    fn an_insert_at_an_excerpts_end_lands_at_its_source_ranges_end_inside_it() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+
+        // The second excerpt's end, then the first's, which is the
+        // separator row: the first excerpt ends in a line feed.
+        for (at, len, text) in [(11, 11, "Z"), (4, 12, "B")] {
+            edit(
+                &mut excerpts,
+                &mut assembled,
+                &mut one,
+                &mut two,
+                &replacing(len, at..at, text),
+                Origin::new(1),
+            )
+            .expect("accepted");
+        }
+
+        assert_eq!(two.current().to_string(), "alpha\nZbeta\n");
+        assert_eq!(one.current().to_string(), "one\ntwo\nBthree\n");
+        assert_eq!(assembled.current().to_string(), "two\nB\nalpha\nZ");
+        assert_eq!(source_ranges(&excerpts), [4..9, 0..7]);
+    }
+
+    #[test]
+    fn deleting_all_of_an_excerpt_through_it_leaves_it_empty_and_an_insert_there_lands_in_its_source()
+     {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+
+        edit(
+            &mut excerpts,
+            &mut assembled,
+            &mut one,
+            &mut two,
+            &replacing(11, 0..4, ""),
+            Origin::new(1),
+        )
+        .expect("accepted");
+        assert_eq!(assembled.current().to_string(), "\nalpha\n");
+        assert_eq!(source_ranges(&excerpts), [4..4, 0..6]);
+
+        edit(
+            &mut excerpts,
+            &mut assembled,
+            &mut one,
+            &mut two,
+            &replacing(7, 0..0, "q"),
+            Origin::new(1),
+        )
+        .expect("accepted");
+        assert_eq!(one.current().to_string(), "one\nqthree\n");
+        assert_eq!(assembled.current().to_string(), "q\nalpha\n");
+    }
+
+    #[test]
+    fn a_marker_on_the_excerpt_text_moves_as_the_edit_asked() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+        let marked = assembled
+            .mark(Marker::Anchor(Anchor::new(2, Bias::After)))
+            .expect("2 is a position");
+
+        edit(
+            &mut excerpts,
+            &mut assembled,
+            &mut one,
+            &mut two,
+            &replacing(11, 1..1, "XY"),
+            Origin::new(1),
+        )
+        .expect("accepted");
+
+        assert_eq!(
+            assembled.marker(marked),
+            Some(&Marker::Anchor(Anchor::new(4, Bias::After)))
+        );
     }
 
     #[test]

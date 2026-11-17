@@ -329,6 +329,14 @@
 //!   alike, anchors and bytes, and gives up the anchors of those dropped.
 //! - The assembled text keeps no inverse, and the list refuses to go on
 //!   over one written by anything else.
+//! - **An edit of it is its sources' edits**
+//!   ([`excerpt::Excerpts::edit`]): each range it changes, inside one
+//!   excerpt, both ends included, is mapped to its source, every source it
+//!   changes is given one transaction with the caller's origin, and the
+//!   excerpt text catches up from them once. Every check comes first, so a
+//!   refused edit changes no source; an edit of a separator byte, or one
+//!   whose range in its source meets another excerpt of that source, is
+//!   refused.
 //!
 //! # Files
 //!
@@ -400,10 +408,9 @@
 //!   the crash guarantee, and is not built.
 //! - A load that streams into the rope without holding the file's bytes
 //!   whole, and an override of the binary rule.
-//! - An edit made through an excerpt text, turned into its sources'
-//!   transactions; a trace through an excerpt text to the edits of its
-//!   sources; an excerpt text as another's source; and a tree of running
-//!   totals over the list, which waits for a measured need.
+//! - A trace through an excerpt text to the edits of its sources; an
+//!   excerpt text as another's source; and a tree of running totals over
+//!   the list, which waits for a measured need.
 //! - Noticing that a file changed on disk at any time but a save, and a
 //!   change inside the file system's clock granularity that keeps the size.
 //!
@@ -427,7 +434,7 @@
 //! | A change to what a word character or a blank is | The private module `word`, and nowhere else | Its unit tests on named characters, and the reference of `tests/properties/motions.rs`, which states the rule again and changes with it |
 //! | Another motion | A variant of [`Motion`], with its arm in [`Snapshot::motion`] | Its unit tests beside it, on the fixture's table, and the reference of `tests/properties/motions.rs`, which gains the motion |
 //! | Another kind of bracket or quote, or another read of a pair | A variant of [`Bracket`] or [`Quote`], or a method of [`Snapshot`] in the private module `pair` | The unit tests of `pair`, one for each rule |
-//! | Another rule about how an excerpt follows its sources, or about a list that replaces another | The module [`excerpt`] | Its unit tests on two named sources, and the properties in `tests/properties/excerpts.rs`, whose reference keeps each excerpt's ends as anchors mapped by hand |
+//! | Another rule about how an excerpt follows its sources, about a list that replaces another, or about how an edit of an excerpt text reaches its sources | The module [`excerpt`] | Its unit tests on two named sources, and the properties in `tests/properties/excerpts.rs`, whose reference keeps each excerpt's ends as anchors mapped by hand and maps each run of an edit through the excerpt it is in |
 //! | Another thing the crate needs of a file system | A method of [`fs::Fs`], as the module docs of [`fs`] say | Its rule in [`fs::contract::check`], with a fake written to break it, which the fake and every real adapter are then held to |
 
 mod anchor;

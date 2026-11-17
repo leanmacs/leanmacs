@@ -155,8 +155,15 @@ impl Document {
             Err(ExcerptError::BadRange) => ExcerptStatus::BadRange,
             Err(ExcerptError::Excerpted) => ExcerptStatus::Excerpted,
             // Every source of both lists was given, and only the list
-            // writes the text: neither is expected.
-            Err(ExcerptError::NoSuchSource | ExcerptError::Moved) => ExcerptStatus::Unreadable,
+            // writes the text: neither is expected. The rest are an edit's
+            // refusals, which replacing a list does not make.
+            Err(
+                ExcerptError::NoSuchSource
+                | ExcerptError::Moved
+                | ExcerptError::OutsideExcerpt
+                | ExcerptError::BadChange
+                | ExcerptError::BadSelection,
+            ) => ExcerptStatus::Unreadable,
         }
     }
 }
