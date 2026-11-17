@@ -326,9 +326,32 @@ loop has little of its own to do.
       other jobs, and the first scene after the install, which reconciles
       too (`Headless.Running.publish`), finds the stamp old and spawns a
       match with the new config's style.
-  - **The status line shows the first `Loop.shownCandidates`** (10) of the
-    listing (`promptStatus`), as Emacs's vertico and ivy list ten: a
-    listing of 100,000 would otherwise be 100,000 fields built at every key.
+- **The display shows them** (`EditorState.displayed`, in `Loop.publish`,
+  right after the listing). The display the keys hand for the prompt's
+  category (`Loop.Keys.displaying`, `Completion.Displaying.displayFor`,
+  `Editor/Completion/Display.lean`) is handed the whole listing, the
+  choice and where its window started last, and answers its rows: by
+  default the minibuffer display's (`Completion.Displays.minibuffer`), at
+  most ten (`Completion.Displays.rows`, as Emacs's vertico and ivy list
+  ten), in a window round the choice, so moving the choice past the last
+  row shown scrolls the list. The listing is handed over as it is and
+  never copied, so each publish builds text for at most the display's
+  rows, whatever the listing's size. The state keeps what it answered on
+  the prompt (`Prompt.sheet`) and draws it in the candidate list's view
+  (`candidateListView`), in the top of the minibuffer's place, directly
+  above the minibuffer's own view; the minibuffer's status line is the
+  label alone (`promptStatus`). The list is not written into the
+  minibuffer's buffer: the whole text of that buffer is the input.
+  - **The display is looked up for each step**, from the keys the host
+    hands, and never kept in the state: a display is a pure function,
+    so it runs inside the publish, on the editor thread, and cannot be
+    refused or interrupted. So the scene an install publishes draws with
+    the new config's display, and no code of the old config runs after
+    it.
+  - **The list's place grows and never shrinks while the prompt is open**
+    (`Prompt.tallest`, `EditorState.listRows`): typing that cuts the
+    matches leaves the strip as tall as it has been, with blank rows under
+    the list, and closing the prompt gives the windows the height back.
 - **Sources that answer later** (`Editor/Completion/Later.lean`) are asked
   by the loop, after each publish, by the same reconciler
   (`completionJobs`), pure over the state and the text the publish read
@@ -711,9 +734,11 @@ changed the state or not (`Loop.publish`):
    chooses another layout, and a config that does rearranges the same
    windows. A loop handed none keeps the frame's own. While a prompt
    is open the minibuffer's
-   window is a view too, in the strip the minibuffer's place then takes
-   (`Editor/State.lean`, "The window list, the layout and their
-   invariants"): its text is the input typed so far,
+   window is a view too, in the lower part of the strip the minibuffer's
+   place then takes, below the candidate list's rows (`Editor/State.lean`,
+   "The window list, the layout and their invariants"; the listing is made
+   and shown first, so the rows are this scene's): its text is the input
+   typed so far,
    its selection the cursor in it, and it is the focused view while it has
    the focus. A view
    whose buffer's text is at the revision it was last shown at keeps the
@@ -747,19 +772,13 @@ changed the state or not (`Loop.publish`):
    their texts' revisions in step 1. A selection marker the text does not
    answer for gives a context with no cursor, and so no line:col and no
    position. The minibuffer's view has another status line
-   (`Loop.promptStatus`): the prompt's label, in the face
+   (`Loop.promptStatus`): the prompt's label alone, in the face
    `Loop.promptFace`, with no segment and none of the scheme's fields,
    and no status face; its cursor is the scheme's report's. That is how the
    scene shows the prompt text: the scene's shape is the display
-   contract, and it has no field for a prompt. **After the label comes one
-   field for each of the first `Loop.shownCandidates` (10) candidates the
-   prompt has listed**, in the listing's order, in the face `Loop.candidateFace`; the chosen one, if
-   one is chosen, is in `Loop.chosenFace` instead. So the candidates the
-   typed text matches, their order and which is chosen are in the scene as
-   data, and with nothing listed the line is the label alone, as for a
-   prompt with no candidates. A face nothing defines sets nothing
-   (`Editor/Face.lean`), so the fields draw as the rest of the line does
-   until a theme or config defines the two names. The input is the whole text
+   contract, and it has no field for a prompt. The candidates the prompt
+   has listed are not in it: they are the candidate list's view's rows
+   (step 5). The input is the whole text
    of the minibuffer's buffer, so the label is no part of it: the text
    store has no read-only range to keep a label in. The focused view is named only while the frame has
    the keyboard focus. The pending prefix is the scheme's pending keys
@@ -784,10 +803,20 @@ changed the state or not (`Loop.publish`):
    is listed after every tile and docked window, so the display, which
    draws views in scene order each over its own background, draws it
    above them.
-5. **The tab bar** (`Loop.tabBarView`, `Editor/TabBar.lean`). While the
-   bar is shown (`EditorState.tabBarRect?`), its view is appended last, in
-   its strip above the minibuffer's: the one view of the scene that is not
-   a window. The first time, the publish makes its text, an anchor marker
+5. **The candidate list and the tab bar** (`Loop.candidateListView`,
+   `Loop.tabBarView`, `Editor/TabBar.lean`). While a prompt's list has
+   shown a row (`EditorState.candidateListRect?`), the candidate list's
+   view is appended, in the top of the minibuffer's place directly above
+   the minibuffer's view, as tall as the most rows shown since the prompt
+   opened. It is made and kept as the tab bar's is (`EditorState.candidateList`),
+   its text is the rows the display answered for this scene
+   (`Prompt.sheet`, `Completion.Sheet.text`), with blank rows under them
+   when the list shows fewer than it has, its decorations the rows' faces,
+   with no selection and no status field, and its anchor at 0, since the
+   sheet holds only the rows shown. Then, while the bar is shown
+   (`EditorState.tabBarRect?`), the tab bar's view is appended last, in
+   its strip above the minibuffer's place. The two are the views of the
+   scene that are not windows. For the tab bar: The first time, the publish makes its text, an anchor marker
    at 0 and its view id, which the state keeps (`EditorState.tabBar`); when
    the line of the tabs' labels changes, the text's content is replaced
    with it, and a snapshot of it is taken or kept as for any view. Its
@@ -954,7 +983,9 @@ Layout is asked through the display port's two queries and nothing of it
 is kept here.
 
 - **The tab bar's view does not follow**: it is appended after the follow,
-  and its one line is always at its anchor (`Loop.tabBarView`).
+  and its one line is always at its anchor (`Loop.tabBarView`). Nor does
+  the candidate list's (`Loop.candidateListView`): its text is only the
+  rows the display shows, so it is always at its anchor, at 0.
 - **It runs in the publish, after the views are made and before the scene
   is published.** After the views, because a question of layout names a
   snapshot and `Loop.views` is what takes one of a text that changed: the
@@ -1939,7 +1970,8 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   -- The candidate list's view and then the tab bar's come last, once the
   -- views are followed and decorated: they are never followed and get no
   -- search match.
-  let add (views : Array View) (shown : Array Shown) : Option (View × Shown) → Array View × Array Shown
+  let add (views : Array View) (shown : Array Shown) :
+    Option (View × Shown) → Array View × Array Shown
     | some (view, was) =>
       (views.push view, if shown.any (·.snapshot == was.snapshot) then shown else shown.push was)
     | none => (views, shown)
@@ -1947,8 +1979,7 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let (views, shown) := add views shown listedView
   let (placed, barred, unbarred) ← tabBarView placed (shown ++ loop.shown)
   let (views, shown) := add views shown barred
-  let state :=
-    placed.refusedBy (unrecorded <|> unlisted <|> unshown <|> unlistedView <|> unbarred)
+  let state := placed.refusedBy (unrecorded <|> unlisted <|> unshown <|> unlistedView <|> unbarred)
   Display.publish (scene state views loop.pending loop.menu)
   -- A snapshot is kept while a view of the scene names it: one taken for a
   -- float that closed above is released with the last scene's others.

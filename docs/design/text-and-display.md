@@ -1179,7 +1179,9 @@ scheme, `mode-line.buffer`, `mode-line.modified`, `mode-line.changed` for
 a file changed on disk, `mode-line.secondary` for the directory, the major
 mode, line:col and the position, and `mode-line.inactive` for every field
 and the row of a window that is not selected; the minibuffer's
-(`minibuffer.prompt`, `minibuffer.candidate`, `minibuffer.chosen`); the
+(`minibuffer.prompt`) and its candidate list's (`minibuffer.candidate`,
+`minibuffer.chosen`, `minibuffer.match`, `minibuffer.annotation`,
+`minibuffer.group`, completion's phase 4); the
 compile mode's locations by severity (`compilation.error`,
 `compilation.warning`, `compilation.note`, `lean/Editor/Compile.lean`,
 "Locations"); `search-match`, the matches of the last search; and the tab
@@ -1311,7 +1313,11 @@ text layout places:
   its own.
 - **Tables, lists and pickers** are text views over generated text.
 - **Columns are aligned with align-to stops** in text layout, the one
-  primitive this adds. Tab stops are the same mechanism.
+  primitive this adds. Tab stops are the same mechanism. Not built yet:
+  until it is, the minibuffer's completion display aligns candidate
+  annotations by padding with spaces counted in characters, which is exact
+  under the shipped monospace default face and misaligns under a
+  proportional one (rdm task `align-to-stops`).
 - **A popup** (completion, hover, a picker) is a text view in a floating
   rectangle that Lean places against a position it asks layout for
   ("Views as built", the floating layer).
@@ -1442,7 +1448,9 @@ edited. The frame holds tabs, each a whole arrangement of windows of its
 own, its layout and its focus, as a tmux window is, over the buffers of
 the one editor; with two tabs or more a tab bar lists them in a strip
 above the minibuffer's, a text view over generated text, as the buffer
-list is. A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
+list is. While a prompt lists candidates, the minibuffer's strip holds
+the candidate list's view on top, another view over generated text,
+directly above the minibuffer's own view. A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
 exists) are part of the data model, and operations that would break one
 return a typed refusal.
 
@@ -1724,11 +1732,17 @@ echo area, the preedit, and the prompt that is open, if one is.
     edited.
 - **The tiled area is the frame above the minibuffer's strip**
   (`EditorState.tiled`): the strip is the frame's bottom `message` height,
-  `text + message` while a prompt is open, or the whole frame when that is
-  shorter. While the tab bar is shown its strip is cut off the tiled area's
-  bottom too. `EditorState.rects` is the layout's rectangles in the tiled
-  area, then the floats' in stacking order, then the minibuffer's view in
-  the strip while a prompt is open.
+  `tallest·text + text + message` while a prompt is open, or the whole
+  frame when that is shorter. The strip has three parts while a prompt is
+  open (`EditorState.cutStrip`): the candidate list's part on top, as tall
+  as the most rows the list has shown since the prompt opened
+  (`Prompt.tallest`, so it grows and never shrinks while the prompt is
+  open), then the input row and the bottom row, which the minibuffer's
+  view fills; a frame too short for it cuts the list first. While the tab
+  bar is shown its strip is cut off the tiled area's bottom too.
+  `EditorState.rects` is the layout's rectangles in the tiled area, then
+  the floats' in stacking order, then the minibuffer's view in the lower
+  part of the strip while a prompt is open.
 - **Tabs** (window management's phase 5, decided 2026-11-17;
   `lean/Editor/State.lean`, "Tabs"; `lean/Editor/TabBar.lean`).
   - **A tab is a whole arrangement** (`Tab`): its tiled list, its docked
@@ -1779,6 +1793,19 @@ echo area, the preedit, and the prompt that is open, if one is.
     list. A tab's label is its name, or its focused window's buffer's.
     Selecting a tab by clicking its chip is deferred: tabs are
     keyboard-only.
+  - **The candidate list** (completion's phase 4) is the upper part of the
+    minibuffer's strip while a prompt is open and its list has shown a row
+    (`EditorState.candidateListRect?`), directly above the minibuffer's
+    view, the most rows shown since the prompt opened tall. Its view is a
+    text the state keeps for the editor's life
+    (`EditorState.candidateList`), as the tab bar's is, whose content is
+    the rows the prompt's completion display answered at the publish
+    (`Prompt.sheet`), their faces its decorations; its view id is taken
+    once and is no window's, so it is not focusable, takes no key, is never
+    followed and gets no search match. It is padded across as the
+    minibuffer's view is and not down. The rows are not text of the
+    minibuffer's buffer, whose whole text is the input
+    ([keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's sources").
 - **The floating layer** (window management's phase 4, decided
   2026-11-17; `lean/Editor/Floating.lean`, `lean/Editor/State.lean`, "A
   floating window").
@@ -1897,9 +1924,9 @@ echo area, the preedit, and the prompt that is open, if one is.
     need a second one for it.
   - **The strip is outside the tiled area.** With no prompt open it is the
     frame's bottom row, the display's `message` height, and holds the
-    echo; with one open it is a text row and that row, and the
-    minibuffer's view fills it. A frame shorter than the strip is all
-    strip.
+    echo; with one open it is the candidate list's rows, a text row and
+    that row, the list's view on top and the minibuffer's view filling the
+    rest. A frame shorter than the strip is all strip.
   - **The window commands do not have it.** Removing it, splitting it and
     showing another buffer in it are refused (`ofMinibuffer`), and so is
     showing its buffer in another window: it is closed by answering or
@@ -2026,7 +2053,7 @@ The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
 | Field | What it is |
 |---|---|
 | `size` | The frame's size, in physical pixels |
-| `views` | The views, in drawing order: the windows', then the tab bar's while it is shown, the one view that is no window's (window management's phase 5) |
+| `views` | The views, in drawing order: the windows', then the candidate list's while a prompt's list has shown a row (completion's phase 4), then the tab bar's while it is shown (window management's phase 5): the two views that are no window's |
 | `focused` | The view with the keyboard focus, if any |
 | `echo` | The echo area's text |
 | `echoPadding` | How far the echo is inset from the frame's left and right edges, in whole points, when layout draws it in the bottom row: the bottom row's inset (`EditorState.bottomInset`), the frame padding and at least the window's corner clearance outside fullscreen. 0 by default |
@@ -2282,34 +2309,30 @@ decided 2026-11-13 by its phase 2):
     loop's to fill, so the scene's shape did not change, and neither did
     the Rust scene on the display pipeline's branch, which lays a view's
     status out as one row at the bottom of its rectangle.
-  - **A prompt's candidates are fields of that status line** (built by the
-    command loop's phase 14; `Loop.promptStatus`). After the label comes
-    one field for each candidate the typed text matches, its text (its
-    label, annotation and group are not drawn yet), every one, in
-    the prompt's style's order (the fuzzy matcher's by default;
+  - **A prompt's candidates are a view of their own** (completion's
+    phase 4; `Loop.candidateListView`), over generated text, as "Tables,
+    lists and pickers" says: the candidate list, directly above the
+    minibuffer's view, whose rows the prompt's completion display drew
+    ([keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's sources"),
+    each candidate a row, the best match at the top, in the prompt's
+    style's order (the fuzzy matcher's by default;
     [keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's matching
-    styles"), then those a filtered source passed, in the face
-    `minibuffer.candidate`
-    (`Loop.candidateFace`); the chosen one, if one is chosen, is in
-    `minibuffer.chosen` (`Loop.chosenFace`) instead. With nothing listed,
-    and for a prompt with no candidates, the line is the label alone.
-    - So which candidates match, their order and which is chosen are in
-      the scene as data that exists: no field was added to the scene, and
-      nothing of the Rust scene, its wire form or the display's binding
-      changed.
-    - A face nothing defines sets nothing, so the fields draw as the rest
-      of the line does until a theme or config defines the two names. No
-      theme defines them yet.
-    - **How a line of many fields draws in a window has not been seen**:
-      it is one row, and a list longer than the row is wide is cut by
-      whatever lays the row out (the display pipeline's phase 6).
-    - Set aside: a field of the scene for the candidates, which is the
-      display contract, with a Rust half that is the display pipeline's;
-      and a view of their own over generated text, which is where a long
-      list should go ("Tables, lists and pickers"), and needs a buffer, a
-      window and a place in the window list made and unmade with the
-      prompt. The listing in the editor state is what such a view would
-      show.
+    styles"), then those a filtered source passed. Each row is in the face
+    `minibuffer.candidate`, the chosen one's in `minibuffer.chosen`, with
+    the ranges the text matched in `minibuffer.match`, an annotation in a
+    column in `minibuffer.annotation` and a group's header in
+    `minibuffer.group` (`Completion.Displays`). The minibuffer's status
+    line is the label alone (`Loop.promptStatus`).
+    - It needs no buffer and no window: its text, anchor and view id are
+      the state's, made once, as the tab bar's are. Nothing of the Rust
+      scene, its wire form or the display's binding changed: a view over
+      generated text with decorations, no selection and no status field is
+      what the tab bar already is.
+    - Set aside: a view that does not wrap (a row wider than the strip
+      wraps and pushes the last rows below its edge; the fix is a view
+      field the scene and layout would carry), and the chosen face across
+      the whole row (a decoration covers the row's bytes, not the space to
+      its right).
   - **The input is the whole text of the minibuffer's buffer.** So the
     answer is that text, the initial value is what the text is made with,
     and a motion to the start of the line is the start of the input. The
@@ -3469,7 +3492,9 @@ frame journal and the renderer's counters.
   back, and the caller places it.
 - **Tabs** (answered): expanded before shaping, in the tab layer ("Display
   layers", as built). Tab stops on a proportional font are counted in
-  spaces, not in pixels, until an align-to-stop primitive exists.
+  spaces, not in pixels, until an align-to-stop primitive exists, and so
+  are the columns of the minibuffer display's candidate annotations (rdm
+  task `align-to-stops`).
 - **The other choices the survey left open** are listed in
   [rendering-prior-art.md](rendering-prior-art.md).
 - **Embedded terminals**: a fixed row count, or growing with output up to

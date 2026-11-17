@@ -1074,7 +1074,9 @@ later and matching off the editor thread by completion's phase 3.
 | `minibuffer-next`, `minibuffer-previous` and the roles the mode fills with them | `lean/Editor/Minibuffer.lean` |
 | Sources that answer later: `Reask`, `Later`, the asking source a prompt holds, its job's order and batches, `sourceJob`, `minibuffer-candidates` | `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Later.lean`, `lean/Editor/Setup.lean` (`sourceJob`), `lean/Editor/Minibuffer.lean` |
 | The reconciler of a prompt's jobs: a source's job started and started again, the match job spawned, closing cancelling them | `lean/Editor/Loop.lean` ("Prompts": `Loop.completionJobs`, `Loop.matchWork`, `Loop.Spawn`), `lean/Editor/Headless.lean` (`Running.launch`, `Running.publish`) |
-| The match job: the listing made on a pool thread over the job port's matcher, its delivery, a failed match, the cap of the status line | `lean/Editor/Loop.lean` (`Candidates.listing`, `Loop.inlineMatches`, `Loop.shownCandidates`), `lean/Editor/Job.lean` (`JobRequest.fuzzy`, `Job.embedFuzzy`), `lean/Editor/State.lean` (`listMatched`, `matchFailed`) |
+| The match job: the listing made on a pool thread over the job port's matcher, its delivery, a failed match | `lean/Editor/Loop.lean` (`Candidates.listing`, `Loop.inlineMatches`), `lean/Editor/Job.lean` (`JobRequest.fuzzy`, `Job.embedFuzzy`), `lean/Editor/State.lean` (`listMatched`, `matchFailed`) |
+| Displays: the interface, its model and contract, the minibuffer display and its rows; their registration and config's choice by category | `lean/Editor/Completion/Display.lean`, `lean/Editor/Completion/Displays.lean`, `lean/Editor/Completion/DisplayContract.lean`, `lean/Editor/Config/Registry.lean` ("Displays"), `lean/Editor/Setup.lean` (`defineDisplay`, `useDisplay`, `useDisplayFor`) |
+| The candidate list: the sheet shown in the publish, kept on the prompt, the place that grows and never shrinks, and the list's view above the minibuffer's | `lean/Editor/State.lean` ("The minibuffer's place": `displayed`, `Prompt.tallest`, `cutStrip`, `candidateListRect?`), `lean/Editor/Loop.lean` (`Loop.candidateListView`, `Loop.Keys.displaying`) |
 | The `:!` history and the ex names as the ex line's candidates, from two sources | `lean/Editor/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
 | An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `lean/Editor/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
 
@@ -1419,11 +1421,11 @@ accepting hands the continuation the chosen candidate.
     typing fast it can be an earlier text's (owner decision of the phase's
     plan). Config's style runs on the pool too: there it cannot outlive its
     config, since the match job is config's when the style is ("Reload").
-  - **The status line shows the first ten of the listing**
-    (`Loop.shownCandidates`), as vertico and ivy list ten: 100,000 fields
-    built at every key would break the bound above. Phase 4's display
-    replaces the constant with config's maximum of rows and a window round
-    the choice.
+  - **The display builds at most its rows each publish**
+    (`EditorState.displayed`, completion's phase 4): it is handed the
+    listing as it is, never copied or mapped, and answers rows for a
+    window of it round the choice, ten by default, as vertico and ivy list
+    ten. 100,000 rows built at every key would break the bound above.
   - The style is looked up from the step's keys each time and never kept
     in the state, which holds only the prompt's category: a reload
     changes it from the next listing.
@@ -1842,7 +1844,12 @@ elaborate, or whose setup throws, is rejected and the old one stays.
   its listing never runs; the scene after the install finds the match
   stamped with the old config generation and spawns one with the new
   config's style, with no key typed (completion's phase 3,
-  `Headless.Running.publish`).
+  `Headless.Running.publish`). A completion display needs no such stamp
+  (completion's phase 4): it runs only inside the publish, on the editor
+  thread, never in a job, and is looked up from the registry for every
+  step and every publish, so the scene the install publishes already draws
+  an open prompt's list with the new config's display; the state keeps only
+  what a display answered, which is data.
 - Subscriptions and key bindings from config are replaced by owner, never
   accumulated. (`edmacs` repeatedly hit reloads that double-added hooks.)
 - Reloads are serialised, so two in flight cannot install out of order.

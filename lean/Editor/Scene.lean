@@ -24,16 +24,19 @@ the last scene published, on its own thread, so painting never waits on Lean
   fields drawn by the `state` segment as a badge; and, for a window that
   is not selected, every field and the row (`View.statusFace`) in
   `mode-line.inactive`. For the minibuffer's view while a prompt is open
-  it is the prompt's label and then a field for each candidate the prompt
-  has listed, in the prompt's style's order, the chosen one in a face of
-  its own.
+  it is the prompt's label alone. The candidates the prompt has listed are
+  a view of their own, over generated text, as the tab bar is: the
+  candidate list (`Loop.candidateListView`), whose rows the completion
+  display drew (`Editor/Completion/Display.lean`), its spans in faces as
+  decorations.
   Where the fields go across the row, and what is cut when they do not
   fit, is layout's (`crates/editor-layout/src/frame.rs`, "The mode
   line").
   The scene has no field of its own for a
   prompt or for its candidates: the minibuffer's view is a view like any
   other, whose text is the input typed so far, and its status line is
-  fields like any other's. Which cursor shape and face a view has is the
+  fields like any other's; the candidate list is a view like any other,
+  with no selection and no status field. Which cursor shape and face a view has is the
   input scheme's to say (`InputScheme.report`, `Editor/InputScheme.lean`):
   the Vim scheme's is the cursor of the view's Vim state. The pending key
   prefix is rendered by Lean into a string.

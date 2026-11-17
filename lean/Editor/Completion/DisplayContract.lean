@@ -112,14 +112,14 @@ def overTable (display : Display) (holds : Showing → Sheet → Bool) : Bool :=
 
 /-- The properties every display keeps. -/
 def properties : List Property :=
-  [{ name := decorations
-     holds := fun display =>
-       overTable display fun _ sheet =>
-         sheet.rows.all fun row =>
-           let bounds := boundaries row.text
-           row.decorations.all fun decoration =>
-             decoration.start < decoration.stop && bounds.contains decoration.start &&
-               bounds.contains decoration.stop },
+  [{  name := decorations
+      holds := fun display =>
+        overTable display fun _ sheet =>
+          sheet.rows.all fun row =>
+            let bounds := boundaries row.text
+            row.decorations.all fun decoration =>
+              decoration.start < decoration.stop && bounds.contains decoration.start &&
+                bounds.contains decoration.stop },
     { name := lineFeeds
       holds := fun display =>
         overTable display fun _ sheet => sheet.rows.all fun row => !row.text.contains '\n' },

@@ -5,10 +5,11 @@ import Editor.Scene
 
 The strip that lists the frame's tabs, with the tab in view in its own
 face: a text view over generated text, as the buffer list and the
-minibuffer's candidates are, and neither a buffer nor a window.
+candidate list are, and neither a buffer nor a window.
 
 - **Where it goes.** A strip one text row tall, cut off the frame directly
-  above the minibuffer's strip and below the tiled area
+  above the minibuffer's strip, which while a prompt lists holds the
+  candidate list's strip on top, and below the tiled area
   (`EditorState.tabBarRect?`, `Editor/State.lean`): tmux's default
   `status-position bottom`. It is not at the top, where it would sit under
   the title bar the window draws over the frame, whose height Lean knows

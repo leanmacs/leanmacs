@@ -1,8 +1,8 @@
 import Editor.Command.Call
 import Editor.Compile.Contribution
 import Editor.Completion
-import Editor.Completion.Later
 import Editor.Completion.Displays
+import Editor.Completion.Later
 import Editor.Completion.Styles
 import Editor.DisplayRules
 import Editor.Ex.Line

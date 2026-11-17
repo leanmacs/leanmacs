@@ -82,7 +82,12 @@ fakes. The checks here pin what only real collaborators can show:
   written back; a prompt lists the candidates of a source config registers
   and asks for by name, and of one the executable's hosts ship
   (`Headless.shippedOver`), which config's source of its name replaces
-  until a reload drops it. The accept key and the cancel key are the test scheme's
+  until a reload drops it; and completion phase 4's criteria: the list
+  drawn in a view of its own up to the rows config's display sets, the
+  height it takes given back when the prompt closes, an annotation's
+  column and the matched ranges' face, and a display config chooses for
+  one category, redrawn with the default by the install's own scene once a
+  reload drops the choice. The accept key and the cancel key are the test scheme's
   for the roles the minibuffer's mode fills;
 - `exChecks`: the ex command line through the host, with the test scheme
   and the ex line's commands and the ex names that ship as compiled code
@@ -3119,13 +3124,16 @@ def printedRect (lines : Array String) (id : Nat) : Option (Nat × Nat × Nat ×
     match corner.splitOn ",", ((size.dropEnd 1).toString).splitOn "x" with
     | [x, y], [width, height] =>
       return (← x.toNat?, ← y.toNat?, ← width.toNat?, ← height.toNat?)
-    | _, _ => none
-  | _ => none
+    | _, _ =>
+      none
+  | _ =>
+    none
 
 /-- The id of the candidate list's view in `lines`, a printed scene: the
 view with no selection. -/
 def listViewId (lines : Array String) : Option Nat := do
-  let line ← lines.find? fun line => line.startsWith "view " && (line.splitOn "selections , ").length > 1
+  let line ←
+    lines.find? fun line => line.startsWith "view " && (line.splitOn "selections , ").length > 1
   (line.splitOn " ")[1]?.bind (·.toNat?)
 
 /-- The id of the focused view of `lines`, a printed scene. -/
@@ -3325,7 +3333,7 @@ def promptChecks (context : Context) : List Check :=
                 (← session.scene) == ("".quote, #[viewLine "" 0]))
           minibufferCompiled },
     { name :=
-        "a completion source config registers supplies the candidates of a prompt that asks for it by name: after `w` is committed the minibuffer's status line is the label, then `w` and `wq`, the candidates the library's matcher lists; reloaded with a config that registers no such source, the same ask opens no prompt, leaves one view and refuses no step"
+        "a completion source config registers supplies the candidates of a prompt that asks for it by name: after `w` is committed the minibuffer's status line is the label and the candidate list `w` and `wq`, the candidates the library's matcher lists; reloaded with a config that registers no such source, the same ask opens no prompt, leaves one view and refuses no step"
       run :=
         withHost context [("10-source.lean", sourceChunk true)]
           (fun session => do
@@ -3339,8 +3347,7 @@ def promptChecks (context : Context) : List Check :=
             session.ask [.reload]
             session.ask [.run "pick"]
             let (_, views) ← session.scene
-            return listsAfter asking "Pick: " ["w", "wq"] &&
-                views == #[viewLine "" 0] &&
+            return listsAfter asking "Pick: " ["w", "wq"] && views == #[viewLine "" 0] &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
@@ -3605,7 +3612,8 @@ def promptChecks (context : Context) : List Check :=
                   (([] : List String), 0)
               s!"decorations 0: {" ".intercalate spans}"
             let decorated (lines : Array String) (line : String) : Bool :=
-              lines.any fun printed => printed.startsWith "decorations " && afterId printed == afterId line
+              lines.any fun printed =>
+                printed.startsWith "decorations " && afterId printed == afterId line
             return nextItemKeys.length > 0 && listsAfter asking "Pick: " rows &&
                 decorated asking (faced Completion.Displays.candidateFace) &&
                 listsAfter chosen "Pick: " rows &&
@@ -3645,8 +3653,11 @@ def promptChecks (context : Context) : List Check :=
               | _, _ => false
             let matched ← realOrder "ed" fiveTexts
             return heightOf before == some (480 - heights.message) &&
-                heightOf asking == some listed && above asking &&
-                matched.length == 1 && heightOf cut == some listed && above cut &&
+                heightOf asking == some listed &&
+                above asking &&
+                matched.length == 1 &&
+                heightOf cut == some listed &&
+                above cut &&
                 listViewShows cut matched &&
                 heightOf cancelled == some (480 - heights.message) &&
                 (listViewId cancelled).isNone &&
@@ -3659,7 +3670,8 @@ def promptChecks (context : Context) : List Check :=
       run :=
         let choosing :=
           styleChunk
-            ["defineDisplay (Completion.Display.plain \"plain\")", "useDisplayFor \"pick\" \"plain\""]
+            ["defineDisplay (Completion.Display.plain \"plain\")",
+              "useDisplayFor \"pick\" \"plain\""]
         withHost context [("10-display.lean", choosing)]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
@@ -3680,9 +3692,11 @@ def promptChecks (context : Context) : List Check :=
             let listing : Array Completion.Listed :=
               listed.toArray.map fun text => .of (.ofText text)
             let plainRows :=
-              ((Completion.Display.plain "plain").sheet { listed := listing }).rows.toList.map (·.text)
+              ((Completion.Display.plain "plain").sheet { listed := listing }).rows.toList.map
+                (·.text)
             return plainRows.length == listed.length && listsAfter pick "Pick: " plainRows &&
-                listsAfter other "Pick: " listed && listsAfter reopened "Pick: " plainRows &&
+                listsAfter other "Pick: " listed &&
+                listsAfter reopened "Pick: " plainRows &&
                 listsAfter reloaded "Pick: " listed &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
@@ -3718,8 +3732,9 @@ def promptChecks (context : Context) : List Check :=
                   (([] : List String), 0)).1
             let decorations := s!"decorations 0: {" ".intercalate spans}"
             return !listed.contains "zz" && listed.length == 2 && listsAfter lines "Pick: " rows &&
-                lines.any (fun line =>
-                  line.startsWith "decorations " && afterId line == afterId decorations) &&
+                lines.any
+                  (fun line =>
+                    line.startsWith "decorations " && afterId line == afterId decorations) &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           annotatedCompiled }]
 
@@ -5659,9 +5674,10 @@ def shippedChecks (_ : Unit) : List Check :=
         let compiled (name : String) : Bool :=
           registry.styles.any fun entry => entry.style.name == name && entry.owner == .compiled
         return ["fuzzy", "orderless"].all compiled &&
-            Completion.Displays.shipped.all (fun display =>
-              registry.displays.any fun entry =>
-                entry.display.name == display.name && entry.owner == .compiled) &&
+            Completion.Displays.shipped.all
+              (fun display =>
+                registry.displays.any fun entry =>
+                  entry.display.name == display.name && entry.owner == .compiled) &&
             registry.displays.any (·.display.name == "minibuffer") &&
             registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
             registry.sourcesIn "buffer" == #[Buffers.source.name] &&

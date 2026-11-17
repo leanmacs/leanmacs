@@ -106,18 +106,21 @@ inductive Line where
 are used; and while the listing is grouped and `rows` is 2 or more, a
 header before the first and before each whose group differs from the one
 above it, never as the last line. -/
-def lines (showing : Showing) (first rows : Nat) : Array Line := Id.run do
-  let headed := showing.grouped && 2 ≤ rows
-  let mut out : Array Line := #[]
-  for index in [first:showing.listed.size] do
-    if rows ≤ out.size then break
-    let group := (showing.listed[index]?).bind (·.candidate.group)
-    let above := (showing.listed[index - 1]?).bind (·.candidate.group)
-    if headed && (index == first || group != above) then
-      if rows < out.size + 2 then break
-      out := out.push (.header (group.getD ""))
-    out := out.push (.candidate index)
-  return out
+def lines (showing : Showing) (first rows : Nat) : Array Line :=
+  Id.run do
+    let headed := showing.grouped && 2 ≤ rows
+    let mut out : Array Line := #[]
+    for index in [first:showing.listed.size] do
+      if rows ≤ out.size then
+        break
+      let group := (showing.listed[index]?).bind (·.candidate.group)
+      let above := (showing.listed[index - 1]?).bind (·.candidate.group)
+      if headed && (index == first || group != above) then
+        if rows < out.size + 2 then
+          break
+        out := out.push (.header (group.getD ""))
+      out := out.push (.candidate index)
+    return out
 
 /-- Whether the window of `showing` from `first`, `rows` tall, shows the
 candidate at `chosen`. -/
@@ -146,9 +149,11 @@ def window (showing : Showing) (rows : Nat) : Nat :=
   match showing.chosen with
   | some chosen =>
     if size ≤ chosen then start
-    else if chosen < start then chosen
-    else if rows == 0 then start
-    else advance showing rows chosen (rows + 1) (max start (chosen + 1 - rows))
+    else
+      if chosen < start then chosen
+      else
+        if rows == 0 then start
+        else advance showing rows chosen (rows + 1) (max start (chosen + 1 - rows))
   | none => start
 
 /-- The text a candidate is shown by: its label, or its text when it has
@@ -187,7 +192,8 @@ def headerRow (name : String) : Row :=
   let text := oneLine name
   { text
     decorations :=
-      if text.isEmpty then #[] else #[{ start := 0, stop := text.utf8ByteSize, face := groupFace }] }
+      if text.isEmpty then #[]
+      else #[{ start := 0, stop := text.utf8ByteSize, face := groupFace }] }
 
 /-- What the minibuffer display at `rows` rows shows of `showing`: the
 lines of its window (`window`, `lines`), each a header's row or a

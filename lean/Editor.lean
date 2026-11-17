@@ -66,7 +66,14 @@ shipped ones, `fuzzy` and `orderless`, come with `Editor/Setup.lean`
 (`Editor/Completion/Styles.lean`), and config registers one with
 `defineStyle` (`.keeping name keep` for one written as a predicate) and
 chooses the default with `useStyle` and a category's with
-`useStyleFor`. The commands that accept and
+`useStyleFor`. How the listing is drawn is a completion display's
+(`Editor/Completion/Display.lean`): the shipped one, `minibuffer`, which
+lists them one a row above the input, comes with `Editor/Setup.lean`
+(`Editor/Completion/Displays.lean`), and config registers one with
+`defineDisplay` (`defineDisplay (Completion.Displays.minibuffer (rows :=
+15))` replaces the shipped one, which sets its rows) and chooses the
+default with `useDisplay` and a category's with `useDisplayFor`. The
+commands that accept and
 cancel a prompt and move through its candidates and the minibuffer's mode
 are here as well
 (`Editor/Minibuffer.lean`); their registrations

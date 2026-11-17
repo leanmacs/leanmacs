@@ -3243,10 +3243,19 @@ As built, with nothing new for it:
 minibuffer's place is the frame's bottom strip, outside the area the
 window layout tiles, and always takes the frame's bottom row, as tall as the display's `message` height: with no
 prompt open the scene's echo is drawn there, and while a prompt is open
-the place takes the input row above it too (`text + message`), the
-minibuffer's view fills both, and the prompt replaces the message in the
-bottom row. Opening a prompt clears the echo, as Vim does, so once the
-prompt closes the row is empty until a command says something.
+the place takes the input row above it too and, above that, the rows of
+the prompt's candidate list (`tallest·text + text + message`): the list's
+view on top, then the minibuffer's view, which fills the input row and
+the bottom row, and the prompt replaces the message in the bottom row.
+The list's part grows and never shrinks while the prompt is open:
+`Prompt.tallest` is the most rows any sheet has shown since it opened,
+capped at the display's rows, after vertico's default `vertico-resize`
+(grow-only). So typing that cuts the matches leaves the strip as tall as
+it has been, with blank rows under the list. The windows above give the
+height up while the prompt is open and get it back when it closes, at the
+closing step's own scene. A frame too short for the strip cuts the list
+before the input. Opening a prompt clears the echo, as Vim does, so once
+the prompt closes the row is empty until a command says something.
 
 Status: decided 2026-11-14 and built, by the command loop's phase 10
 (`lean/Editor/Minibuffer.lean` and `lean/Editor/Minibuffer/Compiled.lean`
@@ -3497,23 +3506,78 @@ asked and what accepting gives).
   The compile prompts ask with model sources of the lists they made
   (`compile-history`, `compile-commands`), by value and not registered:
   what they list is the asking command's scope.
-- **Carried, not drawn.** A candidate's label, annotation, kind and group
-  are held by the prompt and not drawn: the scene shows each candidate's
-  text, as before, so nothing a user sees changed.
-
-- **The scene lists them in the minibuffer's status line.** After the
-  prompt's label comes one field for each of the first `Loop.shownCandidates`
-  (10) of the listing: the candidates the typed text matches, in the order
-  of the prompt's style, then those a filtered source passed, in the face
-  `minibuffer.candidate`. Ten is what Emacs's vertico (`vertico-count`) and
-  ivy (`ivy-height`) list by default; without a cap a listing of 100,000
-  would be 100,000 fields built at every key. A choice cycled past the
-  tenth is not shown until phase 4's window round the choice and
-  config-set maximum of rows replace the constant. The chosen
-  one is in `minibuffer.chosen`
-  ([text-and-display.md](text-and-display.md), "Views as built"). Under
-  the fuzzy style, the default, a candidate that is the typed text is
-  first. With nothing listed the line is the label alone.
+- **A display draws them** (completion's phase 4,
+  `lean/Editor/Completion/Display.lean`,
+  `lean/Editor/Completion/Displays.lean`).
+  - **The interface.** A display is a name and a pure function from what
+    it is shown (`Showing`: the whole listing, each candidate with its
+    matched ranges, the choice, where its window started in the last
+    scene, whether the listing holds two groups, and the category) to a
+    sheet (`Sheet`): its rows, top to bottom, each a text with spans of it
+    in faces, and where its window starts now. It reads no state and asks
+    no port, so it cannot be refused or interrupted, and the loop runs
+    config's display inside the publish, as it runs config's mode-line
+    segments. Neither the prompt nor the minibuffer appears in it, so a
+    session at point can hand its own candidates to it. Its model is
+    `Display.plain` (each candidate's text a row, `"> "` before the chosen
+    one), and its contract (`DisplayContract`) holds every display to
+    decorations inside their row on character boundaries, no line feed in
+    a row, no rows for an empty listing and a window inside the listing.
+  - **The minibuffer display**, `minibuffer`, the default. At most `rows`
+    rows (10, `Completion.Displays.rows`, as vertico's `vertico-count` and
+    ivy's `ivy-height`), the best match at the top, one candidate a row in
+    the listing's order: the candidates the typed text matches, in the
+    order of the prompt's style, then those a filtered source passed.
+    Under the fuzzy style, the default, a candidate that is the typed text
+    is first. A row is the candidate's label, or its text, the whole row
+    in `minibuffer.candidate`, or in `minibuffer.chosen` for the chosen
+    one ([text-and-display.md](text-and-display.md), "Views as built");
+    over it, when it has no label, each matched range in
+    `minibuffer.match`. An annotation is drawn in a column: the row's text,
+    spaces up to the longest shown text plus 2, counted in characters, and
+    the annotation in `minibuffer.annotation`; a row with none has no
+    trailing spaces. Counted in characters is exact under the shipped
+    monospace default face; align-to stops in pixels are not built
+    ([text-and-display.md](text-and-display.md), "Text is the only layout
+    engine"). While the listing holds two groups and the display has two
+    rows or more, a header row, the group's name in `minibuffer.group`,
+    comes before the first candidate shown and before each whose group
+    differs from the one above it; headers count toward the rows and a
+    header is never the last. The listing keeps the style's order and is
+    never regrouped, so a group that comes back gets its header again.
+  - **The window round the choice.** The listing stays the whole listing,
+    so the choice moves over all of it. The window starts where it last
+    did, at the chosen candidate when that is above it, and later, one at a
+    time, headers counted, while the chosen candidate is past the rows
+    laid out from it; with nothing chosen it is kept. So moving the choice
+    past the last row shown scrolls the list by one. Each publish builds
+    text for at most the rows: the listing is handed over and never
+    copied.
+  - **Config chooses by category, and sets the rows.** Displays are
+    registered by name as styles are (`defineDisplay`, `useDisplay`,
+    `useDisplayFor`, `lean/Editor/Setup.lean`), resolved by the same rule
+    (`Config.Registry.displayEntry`): the category's choice, else the
+    default's, else the latest display named `minibuffer`, else the
+    compiled one. So `defineDisplay (Completion.Displays.minibuffer (rows
+    := 15))` replaces the shipped display under its own name and sets the
+    rows. A chosen name nobody registered is reported, and a `setup` that
+    defines a display twice or chooses one twice is refused.
+  - **The list is a view of its own, not text in the minibuffer's
+    buffer.** The whole text of the minibuffer's buffer is the input:
+    every minibuffer command, undo, the Vim motions and the answer read
+    it, and the text store has no read-only range to keep rows in. So the
+    sheet is drawn in a text view over generated text, as the tab bar is
+    (`EditorState.candidateList`, `Loop.candidateListView`), at the top of
+    the minibuffer's place, directly above the minibuffer's view, with no
+    selection, no status field and its anchor at 0. The minibuffer's
+    status line is the prompt's label alone.
+  - **Reload.** A display runs only inside the publish, on the editor
+    thread, and is looked up from the registry for every step and every
+    publish (`Loop.Keys.displaying`), so the scene an install publishes
+    already draws with the new config's display. The state keeps only
+    what a display answered (`Prompt.sheet`) and where its window started
+    (`Candidates.first`), so no code of the old config runs after the
+    install, and a display needs no owner stamp.
 - **Two commands move a choice through the list**, `minibuffer-next` and
   `minibuffer-previous` (`lean/Editor/Minibuffer.lean`).
   - From nothing chosen, next chooses the first and previous the last;
@@ -3543,16 +3607,24 @@ asked and what accepting gives).
   candidate `"{n} {label}"` for every tab, in order, so `C-w w`, a number
   and `<Enter>` select that tab; `tab-rename` asks labelled `Rename tab: `
   with the tab's name as the initial text, and no candidates.
-- **Set aside**, each to the phase of completion that builds it: drawing
-  labels, annotations and groups, a config-set limit on how many
-  candidates the scene lists and a window round the choice, a popup or a
-  view of their own, and highlighting the characters that matched, to
-  phase 4; completion at point, in a buffer, to phase 5; and file paths
-  for `open-file`, to phase 6. Putting the chosen candidate's text into
-  the minibuffer stays set aside.
+- **Set aside**, each to the phase of completion that builds it:
+  completion at point, in a buffer, to phase 5; and file paths for
+  `open-file`, to phase 6. Putting the chosen candidate's text into the
+  minibuffer stays set aside. Of phase 4's display:
+  - **Align-to stops in pixels.** Annotations are aligned in characters,
+    exact under the monospace default face; a proportional default face
+    would misalign them (rdm task `align-to-stops`).
+  - **A view that does not wrap.** A candidate row wider than the strip
+    wraps and pushes the last rows below the strip's edge; the fix is a
+    view field the scene and layout would carry, which is Rust work.
+  - **The chosen face across the whole row.** A decoration covers the
+    row's bytes, not the space to its right.
+  - **Drawing a candidate's kind**, and **clicking a row**.
+  - **A display in a float** (rdm task `completion-float-displays`): the
+    interface has no placement.
 
-Pinned by `ModelTest.candidateChecks` (the listing, the scene's fields and
-the two commands, on the models and the test scheme, with the keys read
+Pinned by `ModelTest.candidateChecks` (the listing, the scene's candidate
+list and the two commands, on the models and the test scheme, with the keys read
 from its role table; and the sources: two sources' candidates in their
 groups, a named source as a given one, `noSuchSource`, a refused source and
 the query a source is asked), `apiStateChecks` (a source run once, refused,
@@ -3592,7 +3664,21 @@ recorded, never run, `noSuchJob`), `setupChecks` (`sourceJob`),
 entry), and `ConfigTest.promptChecks` (batches over
 the recorder, a config source asked again after its pause, keys over
 100,000 candidates handled while the match is held, and a reload that
-ends a match of config's style).
+ends a match of config's style). The displays (phase 4) are pinned by
+`ModelTest.displayContractChecks` (the contract, on the model and the
+minibuffer display at 0, 1, 3 and 10 rows, and seen to bite),
+`completionDisplayChecks` (the minibuffer display's rule, pure),
+`displayStateChecks` (the sheet on the prompt, the window round the
+choice, the place that grows and never shrinks, the strip's cut),
+`candidateChecks` (the list's view through the loop, the window and the
+grow-only strip), `tabBarChecks` (the tab bar's strip above the list's),
+`faceVocabularyChecks` (the five faces of the list), `setupChecks`,
+`registryChecks` and `reloadChecks` (`defineDisplay`, `displayTwice`,
+`displayChosenTwice`, the resolution, `unknownDisplays`),
+`ConfigTest.promptChecks` (the phase's five criteria through the headless
+host and the real elaborator), `ConfigTest.shippedChecks` (the shipped
+display) and the fixtures `tests/headless/candidates`, `ex`, `mode-line`,
+`monocle` and `padding`.
 
 **A prompt's matching styles** (completion's phase 2). Which of a
 prompt's candidates the typed text matches, and in what order, is a
@@ -3631,8 +3717,8 @@ and orderless choose it.
   span. The matching library's own alignment is not asked: it may pick
   other positions for a repeated character, and asking it would need a new
   request of the port, its contract, a new result shape across the FFI
-  and a decoder. Revisit it when a mismatch a user sees is measured, once
-  phase 4 draws the ranges. **Off the editor thread** (phase 3's decision):
+  and a decoder. Revisit it when a mismatch a user sees is measured, now
+  that phase 4 draws the ranges. **Off the editor thread** (phase 3's decision):
   a list longer than `Loop.inlineMatches` is matched by running the
   prompt's style in a match job on Lean's task pool, its fuzzy requests
   answered by the same stateless call as a request of the job port
@@ -3694,8 +3780,9 @@ and orderless choose it.
   state, be refused or be interrupted, and it cannot outlive its config,
   because the match job is config's when the style is and an install
   cancels it.
-- **Ranges are carried, not drawn.** Each listed candidate holds its
-  ranges (`Completion.Listed`); phase 4 draws them.
+- **Ranges are drawn in `minibuffer.match`.** Each listed candidate holds
+  its ranges (`Completion.Listed`), and the minibuffer display draws them
+  over the candidate's row ("A prompt's sources").
 - **A typed answer is resolved as it was listed.** Accepting with nothing
   chosen answers the typed text (`Candidates.answer`), and `switch-buffer`
   and `tab-switch` take a text that is no candidate, label or number as
@@ -4701,12 +4788,6 @@ every build). The second is proved on the text model
   minibuffer"). Binding it to `minibuffer-cancel` in the minibuffer under
   each scheme is the alternative, and under the Vim scheme whether `C-c`
   should cancel as well as `<Escape>`.
-- **How many candidates the scene lists.** Every one the text matches, in
-  the minibuffer's status line ("A prompt's sources"). The lists that
-  ship are five names. A list of thousands would put thousands of fields
-  in the scene at each key: a limit, or a window of about ten round the
-  choice, is the better design for it, and a view of their own for the
-  candidates once the display pipeline has popups.
 - **Case in fuzzy matching.** Case is kept, so `Re` does not match
   `reload`, and a decomposed character does not match its composed form
   ([rust-library.md](rust-library.md), "Fuzzy matching, as built").

@@ -49,7 +49,7 @@ says who registered the style a category gets (`ownerFor`).
 |---|---|
 | A new style | A value beside its rule (`Editor/Completion/Styles.lean`), registered compiled in `Styles.shipped`, and run by `ModelTest.styleContractChecks` |
 | A rule every style keeps | A property of `Editor/Completion/StyleContract.lean` |
-| Something more a style answers of a candidate | A field of `Hit` (`Editor/Completion/Candidate.lean`), carried on `Listed`, and what draws it is the display's |
+| Something more a style answers of a candidate | A field of `Hit` (`Editor/Completion/Candidate.lean`), carried on `Listed`, and what draws it is the display's (`Editor/Completion/Display.lean`) |
 
 Pinned by `ModelTest.styleChecks` (the model, the shipped styles and the
 choice) and `styleContractChecks` (the contract, on the model and the

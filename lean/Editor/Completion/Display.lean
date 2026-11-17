@@ -132,7 +132,8 @@ def Sheet.decorations (sheet : Sheet) : Array Decoration :=
       (fun (all, offset) row =>
         (all ++
             row.decorations.map fun decoration =>
-              { decoration with start := decoration.start + offset, stop := decoration.stop + offset },
+              { decoration with
+                start := decoration.start + offset, stop := decoration.stop + offset },
           offset + row.text.utf8ByteSize + 1))
       (#[], 0)).1
 
@@ -150,9 +151,12 @@ tests. -/
 def Display.plain (name : String) : Display :=
   { name
     sheet := fun showing =>
-      { rows :=
+      {
+        rows :=
           showing.listed.mapIdx fun index listed =>
-            { text := (if showing.chosen == some index then "> " else "  ") ++ oneLine listed.text } } }
+            {
+              text :=
+                (if showing.chosen == some index then "> " else "  ") ++ oneLine listed.text } } }
 
 /-- The candidate list as the state keeps it once drawn (as
 `TabBar.Drawn`): the view it is drawn in, the text it shows, that text's

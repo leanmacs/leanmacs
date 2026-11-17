@@ -323,9 +323,18 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   initial text and for the text typed so far, what a command that fails
   is rolled back to, what the listing costs in requests, and that a
   refusal of the listing's read refuses no step, leaves the listing and
-  the choice and is in the scene's echo. What is
+  the choice and is in the scene's echo; and the candidate list the scene
+  draws, in a view of its own directly above the minibuffer's, its window
+  scrolled round the choice, its strip kept as tall as it has been while
+  the prompt is open and given back when it closes. What is
   listed is compared with what the fuzzy model answers
   (`FuzzyModel.rank`), never with an order written out;
+- `displayStateChecks`: the candidate list in the state, pure: the sheet
+  the display answered kept on the prompt, the window round the choice,
+  the minibuffer's place that grows and never shrinks while the prompt is
+  open, the strip cut into the list's part and the minibuffer view's, a
+  frame too short for it, and the list's view's rectangle, padding and
+  well-formedness;
 - `laterChecks`, `completionJobChecks` and `laterLoopChecks`: sources that
   answer later (`Editor/Completion/Later.lean`), their orders and batches
   as arguments and their jobs on the job model; the reconciler of a
@@ -3739,7 +3748,8 @@ def registryChecks : List Check :=
           ({} : Config.Registry).replaceDisplays .compiled Completion.Displays.shipped
         let plain := Completion.Display.plain "plain"
         let chosen : Config.Registry :=
-          { shipped.replaceDisplays .config #[plain] with displayChoices := #[(some "pick", "plain")] }
+          { shipped.replaceDisplays .config #[plain] with
+            displayChoices := #[(some "pick", "plain")] }
         let defaulted : Config.Registry :=
           { shipped.replaceDisplays .config #[plain] with displayChoices := #[(none, "plain")] }
         let three := shipped.replaceDisplays .config #[Completion.Displays.minibuffer 3]
@@ -3754,16 +3764,23 @@ def registryChecks : List Check :=
           ((registry.displaying.displayFor category).sheet showing).rows.size
         pure
           (nameOf chosen (some "pick") == "plain" && nameOf chosen (some "other") == "minibuffer" &&
-            nameOf chosen none == "minibuffer" && nameOf defaulted (some "pick") == "plain" &&
-            nameOf defaulted none == "plain" && rowsOf chosen (some "pick") == 15 &&
-            rowsOf shipped none == Completion.Displays.rows && rowsOf three none == 3 &&
-            rowsOf three (some "pick") == 3 && (three.displayEntry none).owner == .config &&
+            nameOf chosen none == "minibuffer" &&
+            nameOf defaulted (some "pick") == "plain" &&
+            nameOf defaulted none == "plain" &&
+            rowsOf chosen (some "pick") == 15 &&
+            rowsOf shipped none == Completion.Displays.rows &&
+            rowsOf three none == 3 &&
+            rowsOf three (some "pick") == 3 &&
+            (three.displayEntry none).owner == .config &&
             rowsOf (three.replaceDisplays .config #[]) none == Completion.Displays.rows &&
-            nameOf {} none == "minibuffer" && rowsOf {} none == Completion.Displays.rows &&
+            nameOf {} none == "minibuffer" &&
+            rowsOf {} none == Completion.Displays.rows &&
             (({} : Config.Registry).displayEntry none).owner == .compiled &&
             nameOf unknown (some "pick") == "minibuffer" &&
-            unknown.unknownDisplays == #["nope", "gone"] && chosen.unknownDisplays == #[] &&
-            (three.display? "minibuffer").isSome && (({} : Config.Registry).display? "plain").isNone) },
+            unknown.unknownDisplays == #["nope", "gone"] &&
+            chosen.unknownDisplays == #[] &&
+            (three.display? "minibuffer").isSome &&
+            (({} : Config.Registry).display? "plain").isNone) },
     { name :=
         "completion sources are held by owner and replaced as a set: the latest entry of a name is the one found, config's source of a compiled source's name while config registers it and the compiled one again once it does not; the loop is told what the lookup answers"
       run :=
@@ -7617,8 +7634,8 @@ def completionDisplayChecks : List Check :=
         pure <|
           let sheet := minibufferSheet { listed := listingOf texts }
           let short := minibufferSheet { listed := listingOf (texts.extract 0 4) }
-          Completion.Displays.rows == 10 &&
-            rowTexts sheet == texts.extract 0 10 && sheet.first == 0 &&
+          Completion.Displays.rows == 10 && rowTexts sheet == texts.extract 0 10 &&
+            sheet.first == 0 &&
             rowTexts short == texts.extract 0 4 &&
             rowTexts (minibufferSheet { listed := listingOf texts } 3) == texts.extract 0 3 },
     { name :=
@@ -7636,7 +7653,10 @@ def completionDisplayChecks : List Check :=
         pure <|
           let sheet :=
             minibufferSheet
-              { listed := #[listedOf "wq" #[⟨0, 1⟩], listedOf "éw" #[⟨2, 3⟩], listedOf "xwyw" #[⟨1, 2⟩, ⟨3, 4⟩]] }
+              {
+                listed :=
+                  #[listedOf "wq" #[⟨0, 1⟩], listedOf "éw" #[⟨2, 3⟩],
+                    listedOf "xwyw" #[⟨1, 2⟩, ⟨3, 4⟩]] }
           let candidate (start stop : Nat) : Decoration :=
             { start, stop, face := Completion.Displays.candidateFace }
           let matched (start stop : Nat) : Decoration :=
@@ -7648,11 +7668,11 @@ def completionDisplayChecks : List Check :=
             sheet.decorations ==
               #[candidate 0 2, matched 0 1, candidate 3 6, matched 5 6, candidate 7 11, matched 8 9,
                 matched 10 11] },
-    { name :=
-        "a candidate with a label is shown by its label, with no matched range drawn"
+    { name := "a candidate with a label is shown by its label, with no matched range drawn"
       run :=
         pure <|
-          let sheet := minibufferSheet { listed := #[listedOf "w" #[⟨0, 1⟩] (label := some "write")] }
+          let sheet :=
+            minibufferSheet { listed := #[listedOf "w" #[⟨0, 1⟩] (label := some "write")] }
           rowTexts sheet == #["write"] &&
             sheet.rows.map (·.decorations) ==
               #[#[{ start := 0, stop := 5, face := Completion.Displays.candidateFace }]] },
@@ -7662,7 +7682,8 @@ def completionDisplayChecks : List Check :=
         pure <|
           let sheet :=
             minibufferSheet
-              { listed :=
+              {
+                listed :=
                   #[listedOf "é" (annotation := some "one"), listedOf "abc",
                     listedOf "w" (label := some "wide") (annotation := some "two")] }
           let column := 4 + Completion.Displays.gap
@@ -7682,11 +7703,12 @@ def completionDisplayChecks : List Check :=
           let listed :=
             #[listedOf "a1" (group := some "A"), listedOf "a2" (group := some "A"),
               listedOf "b1" (group := some "B"), listedOf "a3" (group := some "A")]
-          let showing : Completion.Showing :=
-            { listed, grouped := Completion.grouped listed }
+          let showing : Completion.Showing := { listed, grouped := Completion.grouped listed }
           let header (name : String) : Completion.Row :=
             { text := name
-              decorations := #[{ start := 0, stop := name.utf8ByteSize, face := Completion.Displays.groupFace }] }
+              decorations :=
+                #[{ start := 0, stop := name.utf8ByteSize,
+                    face := Completion.Displays.groupFace }] }
           (minibufferSheet showing).rows.map (·.text) == #["A", "a1", "a2", "B", "b1", "A", "a3"] &&
             (minibufferSheet showing).rows[0]? == some (header "A") &&
             rowTexts (minibufferSheet showing 4) == #["A", "a1", "a2"] &&
@@ -7704,32 +7726,41 @@ def completionDisplayChecks : List Check :=
             (Array.range 6).map fun index =>
               listedOf s!"g{index}" (group := some (if index < 3 then "A" else "B"))
           let headed := fun (chosen first rows : Nat) =>
-            minibufferSheet { listed := groupedListed, chosen := some chosen, first, grouped := true } rows
+            minibufferSheet
+              { listed := groupedListed, chosen := some chosen, first, grouped := true } rows
           (windowAt (some 9) 0 10).first == 0 && (windowAt (some 10) 0 10).first == 1 &&
             rowTexts (windowAt (some 10) 0 10) == texts.extract 1 11 &&
-            (windowAt (some 3) 5 10).first == 3 && (windowAt none 4 10).first == 4 &&
-            (windowAt none 40 10).first == 14 && (windowAt (some 14) 0 10).first == 5 &&
-            (headed 3 0 4).first == 2 && rowTexts (headed 3 0 4) == #["A", "g2", "B", "g3"] &&
-            (headed 5 0 4).first == 3 && rowTexts (headed 5 0 4) == #["B", "g3", "g4", "g5"] &&
-            Completion.Displays.window { listed := groupedListed, chosen := some 5, grouped := true } 4 ==
+            (windowAt (some 3) 5 10).first == 3 &&
+            (windowAt none 4 10).first == 4 &&
+            (windowAt none 40 10).first == 14 &&
+            (windowAt (some 14) 0 10).first == 5 &&
+            (headed 3 0 4).first == 2 &&
+            rowTexts (headed 3 0 4) == #["A", "g2", "B", "g3"] &&
+            (headed 5 0 4).first == 3 &&
+            rowTexts (headed 5 0 4) == #["B", "g3", "g4", "g5"] &&
+            Completion.Displays.window
+                { listed := groupedListed, chosen := some 5, grouped := true } 4 ==
               3 },
-    { name :=
-        "zero rows show nothing, and an empty listing shows no rows with its window at 0"
+    { name := "zero rows show nothing, and an empty listing shows no rows with its window at 0"
       run :=
         pure <|
           (minibufferSheet { listed := listingOf texts, chosen := some 3 } 0).rows.isEmpty &&
-            minibufferSheet { first := 4 } == {} && (Completion.Display.plain "p").sheet {} == {} },
+            minibufferSheet { first := 4 } == {} &&
+            (Completion.Display.plain "p").sheet {} == {} },
     { name :=
         "a sheet's text joins its rows with line feeds and puts a space for a line feed in a row; whether a listing is grouped is whether two of its groups differ"
       run :=
         pure <|
-          ({ rows := #[{ text := "a\nb" }, { text := "c" }] } : Completion.Sheet).text == "a b\nc" &&
+          ({ rows := #[{ text := "a\nb" }, { text := "c" }] } : Completion.Sheet).text ==
+              "a b\nc" &&
             ({} : Completion.Sheet).text == "" &&
-            Completion.grouped #[listedOf "a" (group := some "A"), listedOf "b" (group := some "B")] &&
-            !Completion.grouped #[listedOf "a" (group := some "A"), listedOf "b" (group := some "A")] &&
+            Completion.grouped
+              #[listedOf "a" (group := some "A"), listedOf "b" (group := some "B")] &&
+            !Completion.grouped
+                #[listedOf "a" (group := some "A"), listedOf "b" (group := some "A")] &&
             !Completion.grouped #[] &&
             ((Completion.Display.plain "plain").sheet
-                    { listed := listingOf #["w", "wq"], chosen := some 1 }).text ==
+                  { listed := listingOf #["w", "wq"], chosen := some 1 }).text ==
               "  w\n> wq" },
     { name :=
         "displaying picks a category's display when it has one and the default otherwise, and with no category the default; the standard displaying is the minibuffer display; the shipped displays are the minibuffer's"
@@ -7744,7 +7775,8 @@ def completionDisplayChecks : List Check :=
             (displaying.displayFor none).name == "minibuffer" &&
             (Completion.Displaying.standard.displayFor (some "pick")).name == "minibuffer" &&
             Completion.Displays.shipped.map (·.name) == #["minibuffer"] &&
-            Completion.Displays.unknown "nope" == "no completion display is registered under `nope`" }]
+            Completion.Displays.unknown "nope" ==
+              "no completion display is registered under `nope`" }]
 
 /-- The checks of the completion displays' contract
 (`Editor/Completion/DisplayContract.lean`): it holds of the model and of
@@ -7758,7 +7790,8 @@ def displayContractChecks : List Check :=
           (Completion.DisplayContract.failures (Completion.Display.plain "plain")).isEmpty &&
             [0, 1, 3, 10].all
               (fun rows =>
-                (Completion.DisplayContract.failures (Completion.Displays.minibuffer rows)).isEmpty) &&
+                (Completion.DisplayContract.failures
+                    (Completion.Displays.minibuffer rows)).isEmpty) &&
             !Completion.DisplayContract.properties.isEmpty &&
             Completion.DisplayContract.showings.any (·.listed.size == 30) },
     { name :=
@@ -7767,7 +7800,8 @@ def displayContractChecks : List Check :=
         let past : Completion.Display :=
           { name := "past"
             sheet := fun showing =>
-              { rows :=
+              {
+                rows :=
                   showing.listed.map fun listed =>
                     { text := listed.text
                       decorations :=
@@ -9096,8 +9130,7 @@ the minibuffer view's, and the list's view's rectangle and padding. -/
 def displayStateChecks : List Check :=
   let rect (x y width height : Nat) : Rect := { x, y, width, height }
   let texts := (Array.range 15).map (s!"c{·}")
-  let drawn : Completion.Drawn :=
-    { view := ⟨90⟩, text := ⟨90⟩, scroll := ⟨⟨90⟩, 0⟩, content := "" }
+  let drawn : Completion.Drawn := { view := ⟨90⟩, text := ⟨90⟩, scroll := ⟨⟨90⟩, 0⟩, content := "" }
   [{  name :=
         "moving the choice past the last row shown scrolls the list so the chosen candidate stays shown"
       run :=
@@ -9111,13 +9144,15 @@ def displayStateChecks : List Check :=
             let last := choseShown listing [.previous]
             let first (state : EditorState) : Option Nat := state.prompt.map (·.candidates.first)
             first listing == some 0 && sheetTexts listing == texts.extract 0 10 &&
-              first down == some 1 && sheetTexts down == texts.extract 1 11 &&
+              first down == some 1 &&
+              sheetTexts down == texts.extract 1 11 &&
               (down.prompt.bind (·.sheet.rows.back?)).bind (·.decorations[0]?) ==
                 some { start := 0, stop := 3, face := Completion.Displays.chosenFace } &&
-              first up == some 0 && sheetTexts up == texts.extract 0 10 &&
-              last.prompt.bind (·.candidates.chosen) == some 14 && first last == some 5 },
-    { name :=
-        "the place grows and never shrinks while the prompt is open"
+              first up == some 0 &&
+              sheetTexts up == texts.extract 0 10 &&
+              last.prompt.bind (·.candidates.chosen) == some 14 &&
+              first last == some 5 },
+    { name := "the place grows and never shrinks while the prompt is open"
       run :=
         pure <|
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
@@ -9135,12 +9170,17 @@ def displayStateChecks : List Check :=
             let heights := five.heights
             tallest five == some 5 &&
               five.minibufferPlace == 5 * heights.text + heights.text + heights.message &&
-              sheetTexts two == #["c1", "c10"] && tallest two == some 5 &&
+              sheetTexts two == #["c1", "c10"] &&
+              tallest two == some 5 &&
               two.minibufferPlace == five.minibufferPlace &&
-              two.candidateListRect? == five.candidateListRect? && two.tiled == five.tiled &&
-              tallest seven == some 7 && tallest twelve == some Completion.Displays.rows &&
-              closed.minibufferPlace == heights.message && closed.candidateListRect? == none &&
-              tallest again == some 0 && again.candidateListRect? == none },
+              two.candidateListRect? == five.candidateListRect? &&
+              two.tiled == five.tiled &&
+              tallest seven == some 7 &&
+              tallest twelve == some Completion.Displays.rows &&
+              closed.minibufferPlace == heights.message &&
+              closed.candidateListRect? == none &&
+              tallest again == some 0 &&
+              again.candidateListRect? == none },
     { name :=
         "with three rows listed at 640 by 480 the place is the rows, the input and the bottom row; the tiled area is shorter by the rows; the minibuffer's view is at the strip's bottom, the input and the bottom row tall, and the list's directly above it, with the list view's rectangle and padding"
       run :=
@@ -9161,11 +9201,14 @@ def displayStateChecks : List Check :=
               asking.tiled == rect 0 0 640 (480 - below) &&
               minibuffer == some (rect 0 (480 - below) 640 below) &&
               three.candidateListRect? == some (rect 0 (480 - strip) 640 (3 * heights.text)) &&
-              three.cutStrip == (rect 0 (480 - strip) 640 (3 * heights.text), rect 0 (480 - below) 640 below) &&
+              three.cutStrip ==
+                (rect 0 (480 - strip) 640 (3 * heights.text), rect 0 (480 - below) 640 below) &&
               three.rect? drawn.view == three.candidateListRect? &&
-              three.isCandidateList drawn.view && !three.isCandidateList ⟨0⟩ &&
+              three.isCandidateList drawn.view &&
+              !three.isCandidateList ⟨0⟩ &&
               three.paddingOf drawn.view == { across := three.bottomInset, down := 0 } &&
-              asking.listRows == 0 && asking.candidateListRect? == none },
+              asking.listRows == 0 &&
+              asking.candidateListRect? == none },
     { name :=
         "a frame shorter than the strip cuts the list before the input: at 640 by 40 the list keeps what the input and the bottom row leave, and at 640 by 20 it is 0 tall"
       run :=
@@ -9178,8 +9221,7 @@ def displayStateChecks : List Check :=
             let tall := listed tall
             let short := listed short
             let below := tall.heights.text + tall.heights.message
-            tall.tiled.height == 0 &&
-              tall.candidateListRect? == some (rect 0 0 640 (40 - below)) &&
+            tall.tiled.height == 0 && tall.candidateListRect? == some (rect 0 0 640 (40 - below)) &&
               (tall.minibufferView?.bind tall.rect?) == some (rect 0 (40 - below) 640 below) &&
               short.candidateListRect? == some (rect 0 0 640 0) &&
               (short.minibufferView?.bind short.rect?) == some (rect 0 0 640 20)
@@ -9189,11 +9231,11 @@ def displayStateChecks : List Check :=
       run :=
         pure <|
           let candidates : Candidates :=
-            { all :=
-                #[{ text := "a", group := some "A" }, { text := "b", group := some "B" }]
+            { all := #[{ text := "a", group := some "A" }, { text := "b", group := some "B" }]
               listedFor := some "", first := 3 }
           let listed := #[Completion.Listed.of { text := "a", group := some "A" }]
-          (candidates.relist "" 1 listed).first == 3 && (candidates.relist "x" 1 listed).first == 0 &&
+          (candidates.relist "" 1 listed).first == 3 &&
+            (candidates.relist "x" 1 listed).first == 0 &&
             !(candidates.relist "" 1 listed).grouped &&
             (candidates.list "" #[.ofIndex 0, .ofIndex 1]).grouped &&
             (candidates.list "" #[.ofIndex 0, .ofIndex 1]).first == 0 &&
@@ -9208,8 +9250,7 @@ def displayStateChecks : List Check :=
             let listing := (listingIn (prompted state).2 texts (Array.range 3)).displayed .standard
             { listing with candidateList := some drawn }.wellFormed &&
               !{ listing with candidateList := some { drawn with view := ⟨0⟩ } }.wellFormed },
-    { name :=
-        "displaying with no prompt open leaves the state as it was"
+    { name := "displaying with no prompt open leaves the state as it was"
       run :=
         pure <|
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
@@ -21911,8 +21952,7 @@ def pickShown (driver : TestDriver) : Option (Array StatusField) := do
       else
         ((text.splitOn "\n").foldl
             (fun (fields, offset) row =>
-              let face :=
-                ((view.decorations.find? (·.start == offset)).map (·.face)).getD ⟨""⟩
+              let face := ((view.decorations.find? (·.start == offset)).map (·.face)).getD ⟨""⟩
               (fields.push { text := row, face }, offset + row.utf8ByteSize + 1))
             ((#[] : Array StatusField), 0)).1
   return status ++ rows
@@ -21962,7 +22002,8 @@ def candidateChecks : List Check :=
                   some ("\n".intercalate ((pickListed "").listed.map (·.text)).toList) &&
                 rows == pickCandidates.size &&
                 some (list.rect.y + list.rect.height) == (viewRect asking minibuffer).map (·.y) &&
-                list.rect.height == rows * heights.text && list.selections.isEmpty &&
+                list.rect.height == rows * heights.text &&
+                list.selections.isEmpty &&
                 list.status.isEmpty &&
                 (viewRect asking ⟨0⟩).map (·.height) ==
                   some (480 - heights.message - heights.text - rows * heights.text) &&
@@ -21982,12 +22023,14 @@ def candidateChecks : List Check :=
                 driver
             let order := (FuzzyModel.rank "" manyTexts).filterMap (manyTexts[·]?)
             let window (first : Nat) : Option String :=
-              some ("\n".intercalate (order.extract first (first + Completion.Displays.rows)).toList)
+              some
+                ("\n".intercalate (order.extract first (first + Completion.Displays.rows)).toList)
             let down := stepped asking (List.replicate 11 .next)
             let up := stepped down (List.replicate 10 .previous)
             let last := stepped asking [.previous]
             order.size == 15 && listText asking == window 0 && listText down == window 1 &&
-              listText up == window 0 && listText last == window 5 },
+              listText up == window 0 &&
+              listText last == window 5 },
     { name :=
         "typing that cuts the matches leaves the strip as tall as it has been: the window's view and the list's keep their rectangles and the list shows fewer lines; the cancel key gives the height back"
       run :=
@@ -22004,7 +22047,8 @@ def candidateChecks : List Check :=
               viewRect asking ⟨0⟩ == viewRect typed ⟨0⟩ &&
               (listView typed).isSome &&
               (listView asking).map (·.rect) == (listView typed).map (·.rect) &&
-              lines typed == (pickListed "e").listed.size && lines asking == pickCandidates.size &&
+              lines typed == (pickListed "e").listed.size &&
+              lines asking == pickCandidates.size &&
               (viewRect cancelled ⟨0⟩).map (·.height) ==
                 some (480 - cancelled.loop.state.heights.message) },
     { name :=
@@ -22183,7 +22227,7 @@ def candidateChecks : List Check :=
               cost "C-c a w" == plainTyped + 2 &&
               cost "C-c a w C-c s" == plainStill + 1 },
     { name :=
-        "text typed into a prompt with candidates: in the scene, the minibuffer's view's status line is the label, in the prompt's face, and then one field for each candidate the fuzzy model answers for that text, in its order, each in the candidates' face; the other view's status line lists none"
+        "text typed into a prompt with candidates: in the scene, the minibuffer's view's status line is the label, in the prompt's face, and the candidate list has one row for each candidate the fuzzy model answers for that text, in its order, each in the candidates' face; the other view's status line lists none"
       run :=
         pure <|
           match candidateDriver with
@@ -22195,9 +22239,10 @@ def candidateChecks : List Check :=
               (pickShown asking).map (·.size) == some (1 + pickCandidates.size) &&
               pickShown typed == some (pickFields "e") &&
               (pickShown typed).map (·.size) == some 3 &&
-              (statusIn typed ⟨0⟩).map (·.any (·.face == Completion.Displays.candidateFace)) == some false },
+              (statusIn typed ⟨0⟩).map (·.any (·.face == Completion.Displays.candidateFace)) ==
+                some false },
     { name :=
-        "where a candidate is the typed text and others match it too, its field is the first after the label, though it is the last of the candidates"
+        "where a candidate is the typed text and others match it too, its row is the first of the list, though it is the last of the candidates"
       run :=
         pure <|
           match candidateDriver with
@@ -22210,7 +22255,7 @@ def candidateChecks : List Check :=
               (pickShown typed).map (·.size) == some 4 &&
               pickCandidates.back? == some "w" },
     { name :=
-        "a text no candidate matches: the scene lists none, and the minibuffer's status line is the label alone; so is that of a prompt asked with no candidates"
+        "a text no candidate matches: the scene lists none, and the minibuffer's status line is the label alone, with the list empty; so is that of a prompt asked with no candidates"
       run :=
         pure <|
           match candidateDriver with
@@ -22222,7 +22267,7 @@ def candidateChecks : List Check :=
             pickShown typed == some label && pickShown plain == some label &&
               minibufferText typed == some "z" },
     { name :=
-        "with a candidate chosen, its field of the minibuffer's status line and no other is in the chosen face, and the fields say what they said"
+        "with a candidate chosen, its row of the candidate list and no other is in the chosen face, and the rows say what they said"
       run :=
         pure <|
           match candidateDriver with
@@ -22232,7 +22277,8 @@ def candidateChecks : List Check :=
             let (second, _) := fedTo (chose typed [.next, .next]) (presses "C-c s")
             let (unchosen, _) := fedTo (chose second [.next, .next]) (presses "C-c s")
             pickShown second == some (pickFields "w" (some 1)) &&
-              ((pickShown second).map fun fields => fields.map (·.face == Completion.Displays.chosenFace)) ==
+              ((pickShown second).map fun fields =>
+                  fields.map (·.face == Completion.Displays.chosenFace)) ==
                 some #[false, false, true, false] &&
               Completion.Displays.chosenFace != Completion.Displays.candidateFace &&
               candidatesOf unchosen == some (pickListed "w") &&
@@ -22255,7 +22301,7 @@ def candidateChecks : List Check :=
                 some (promptEcho accepted) &&
               accepted.loop.state.prompt == none },
     { name :=
-        "the keys of the roles next-item and previous-item move the choice through the listing, and the scene's chosen field follows: next twice is the second, previous then the first, previous again nothing, and previous from nothing the last"
+        "the keys of the roles next-item and previous-item move the choice through the listing, and the scene's chosen row follows: next twice is the second, previous then the first, previous again nothing, and previous from nothing the last"
       run :=
         pure <|
           match pickDriver with
@@ -33456,8 +33502,7 @@ def tabBarChecks : List Check :=
           | none => false
           | some one =>
             let (_, asking) := prompted (withTabs one 2)
-            let listing :=
-              (listingIn asking #["a", "b", "c"] #[0, 1, 2]).displayed .standard
+            let listing := (listingIn asking #["a", "b", "c"] #[0, 1, 2]).displayed .standard
             match listing.tabBarRect?, listing.candidateListRect?,
               listing.minibufferView?.bind listing.rect? with
             | some bar, some list, some minibuffer =>

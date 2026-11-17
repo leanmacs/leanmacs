@@ -2050,8 +2050,7 @@ candidate list's while no prompt has listed a row. -/
 def rect? (state : EditorState) (id : ViewId) : Option Rect :=
   (state.rects.find? (·.1 == id)).map (·.2) <|>
     if state.isTabBar id then state.tabBarRect?
-    else if state.isCandidateList id then state.candidateListRect?
-    else none
+    else if state.isCandidateList id then state.candidateListRect? else none
 
 /-- The padding of the view `id`, in points ("The padding of the views", in
 the module docs): the frame padding across and down for a window, with the
