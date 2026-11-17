@@ -112,7 +112,7 @@ left out plans no change and the provider would leave them enabled.
 | Setting | Managed by | Value |
 |---|---|---|
 | Actions enabled | `github_actions_repository_permissions.enabled` | `true` |
-| Allowed actions | `allowed_actions` and `allowed_actions_config` | `selected`: GitHub-owned, no verified creators, `jdx/mise-action@*` |
+| Allowed actions | `allowed_actions` and `allowed_actions_config` | `selected`: GitHub-owned, no verified creators, `Swatinem/rust-cache@*` and `jdx/mise-action@*` (the third-party actions `.github/workflows/` uses; `mise run workflow-lint` fails on one missing here) |
 | SHA pinning | `sha_pinning_required` | `true`: every external `uses:` is a full commit SHA, with the release tag in a trailing comment |
 | Default `GITHUB_TOKEN` permissions | `github_workflow_repository_permissions.default_workflow_permissions` | `read` |
 | Actions may approve PRs | `can_approve_pull_request_reviews` | `false` |

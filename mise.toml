@@ -15,6 +15,14 @@ pkl = "0.32.1"
 # OpenTofu, for infra/ only (`mise run infra-check`, `infra-plan`,
 # `infra-apply`); never part of `ci`.
 opentofu = "1.13.2"
+# The workflow lint (`mise run workflow-lint`, part of `ci`): actionlint and
+# zizmor over .github/workflows, and yq for tools/workflow-check.sh's
+# structural check of ci.yml. Like cargo-deny, prebuilt release binaries
+# whose checksums aqua checks. Each is a release at least two weeks old when
+# pinned (docs/dev-practices/ci.md).
+"aqua:rhysd/actionlint" = "1.7.12"
+"aqua:zizmorcore/zizmor" = "1.32.0"
+"aqua:mikefarah/yq" = "4.54.1"
 # Lean (lean, lake) is not listed here: `lean/lean-toolchain` is its one pin
 # (AGENTS.md, "Toolchains"). mise reads that file through the `lean` plugin,
 # which the global mise config declares along with
@@ -999,9 +1007,29 @@ run = "cargo run --locked --package editor-platform-arboard --example clipboard 
 description = "Opt-in, never part of ci: in the Linux container, on Mesa's software Vulkan, hold the wgpu renderer to the renderer port's contract and compare the frame it draws with the reference image (tools/linux/run.sh). Needs Docker"
 run = "tools/linux/run.sh render"
 
+# The workflow lint (docs/dev-practices/ci.md), part of `ci`. Offline, and it
+# reads no git history, so it runs the same in `linux-ci`'s copy of the
+# checkout. actionlint checks the workflows are valid, zizmor that they are
+# safe, with every `uses:` pinned by a full SHA (.github/zizmor.yml), and
+# tools/workflow-check.sh what this repository needs of ci.yml: the legs,
+# the gate step, the main-only cache saves, the allowlist. The probe last
+# shows zizmor and the check reject a workflow that breaks their rules.
+#
+# actionlint runs with shellcheck and pyflakes off: neither is pinned here,
+# so with them on the result would depend on what the machine has
+# installed.
+[tasks.workflow-lint]
+description = "actionlint and zizmor (pinned) over .github/workflows, the structural check of ci.yml, and the probe that both reject a bad workflow; offline"
+run = [
+  "actionlint -shellcheck= -pyflakes= .github/workflows/*.yml",
+  "zizmor --offline --config .github/zizmor.yml .github/workflows",
+  "sh tools/workflow-check.sh .github/workflows/ci.yml",
+  "sh tools/workflow-lint-probe.sh",
+]
+
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "bundle-test", "c-fmt"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "bundle-test", "c-fmt", "workflow-lint"]
 
 # Never part of `ci` or hk.pkl: `linux-ci` runs `ci` in a copy of the
 # checkout with no history, where a history scan has nothing to read.

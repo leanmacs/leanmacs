@@ -1,0 +1,152 @@
+name: CI
+
+# The gate (`mise run ci`, docs/dev-practices/the-gate.md) on every push to
+# any branch and on every pull request (docs/dev-practices/ci.md). No tags
+# are pushed, so tag pushes are not covered.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# The token reads the checkout and nothing more; no job here writes.
+permissions:
+  contents: read
+
+# Each ref's runs share a group of this workflow alone. GitHub keeps at most
+# one pending run per group and cancels an older pending one when a newer
+# one queues, so a newer push supersedes an older push's pending run.
+# Branches and pull requests also cancel the older run in progress. On main
+# a running run is never cancelled: the release jobs later phases add to
+# main's runs must never be cut off halfway, so a burst of pushes queues one
+# run behind the running one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # The whole gate on each leg. macOS on Apple silicon is the platform the
+  # app ships for; Linux keeps the gate holding there as `mise run linux-ci`
+  # does on the owner's machine. A red leg fails the workflow: no leg may
+  # continue on error, and fail-fast is off only so that one leg's failure
+  # does not cancel the other's result.
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Runner images are pinned by name, so an image change is a reviewed
+        # diff.
+        os: [macos-26, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      # Never auto-install the other mise.toml tools (hk, pkl, OpenTofu,
+      # gitleaks): the gate needs none of them, and the step below installs
+      # exactly what it does need.
+      MISE_AUTO_INSTALL: "false"
+      # Reads mise.ci.toml, which lowers MACOSX_DEPLOYMENT_TARGET to the
+      # runner's macOS: dyld will not start the test binaries the gate builds
+      # for 27.2 on macos-26. Linux ignores the value.
+      MISE_ENV: ci
+      # The runner's disk is small, and nothing the gate checks reads debug
+      # information (tools/linux/run.sh gives the same reasoning).
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      # Don't leave the job's token in .git/config: nothing here pushes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # mise at the version the Linux container uses (tools/linux/Dockerfile,
+      # MISE_VERSION), and only the tools `mise run ci` runs: Rust, and
+      # cargo-deny, clang-format and the workflow lint's three as prebuilt,
+      # checksum-checked binaries. pipx, through which mise installs
+      # clang-format, is on both runner images. The cache of mise's installs
+      # is saved from main only, like every cache here.
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.11.2
+          install: true
+          install_args: rust aqua:EmbarkStudios/cargo-deny pipx:clang-format aqua:rhysd/actionlint aqua:zizmorcore/zizmor aqua:mikefarah/yq
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+      # elan and the Lean toolchains it installed, keyed on the toolchain pin
+      # and on the script that pins elan. Restored on any ref; saved after
+      # the gate, from main only.
+      - id: elan
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.elan
+          key: elan-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'tools/ci/install-elan.sh') }}
+      # A runner has no mise `lean` plugin, so `lean` and `lake` come from
+      # elan, as in the Linux container; elan installs the toolchain
+      # lean/lean-toolchain names on first use. Does nothing but put elan on
+      # the PATH when the cache restored it.
+      - run: sh tools/ci/install-elan.sh
+      # Cargo's registry and the workspace's target/, which also holds the
+      # target/release/libeditor_ffi.a Lake's `rustlib` builds. Saved even
+      # when the gate fails, so a red main still moves the cache to the
+      # current Cargo.lock. Saved only from main: caches saved under a
+      # branch or a PR's refs/pull/N/merge are invisible to main, but every
+      # ref can restore main's.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Lake's build output and fetched packages. The key ends in the commit,
+      # so main saves a fresh entry for every commit, and restore-keys picks
+      # the newest entry for the same toolchain and manifest, from which Lake
+      # rebuilds only what changed. On a re-run of the same commit the exact
+      # key hits and nothing is saved again.
+      - id: lake
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: lean/.lake
+          key: lake-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: |
+            lake-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-
+      # The gate itself, unchanged: the one place it runs.
+      - name: Gate
+        run: mise run ci
+        shell: bash
+      # The saves come after the gate, so they hold the built tree. Like
+      # rust-cache's, they run even when the gate failed (not when the run
+      # was cancelled), from main only, and not when the exact key was
+      # already restored.
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.lake.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: lean/.lake
+          key: lake-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-${{ github.sha }}
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.elan.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.elan
+          key: elan-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'tools/ci/install-elan.sh') }}
+
+  # The secret scan (`mise run secrets-scan`: the probe, then gitleaks over
+  # main's history, merges and the uncommitted tree; docs/dev-practices/
+  # publishing.md, "The secret scan"). A job of its own because it needs the
+  # full history, which the gate does not, and only gitleaks.
+  secrets-scan:
+    runs-on: ubuntu-24.04
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      # The full history: the scan reads every commit reachable from main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.11.2
+          install: true
+          install_args: aqua:gitleaks/gitleaks
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+      # tools/secrets-scan.sh scans the local `main` by name. On main that is
+      # main itself. Elsewhere the checkout is another branch, or a PR's merge
+      # ref, detached, and the local `main` is made the commit checked out:
+      # its history holds main's plus the commits being pushed,
+      # which are public once pushed, so they are scanned too.
+      - name: Make the local main the commit under test
+        run: '[ "$(git rev-parse --abbrev-ref HEAD)" = main ] || git branch --force main HEAD'
+      # The probe sets its own git identity; the scan reads only.
+      - run: mise run secrets-scan

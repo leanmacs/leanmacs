@@ -10,8 +10,11 @@ tests (`mise run lean-test`); the Lean build, lean-fmt's format and lint
 checks; the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); the headless mode run from a staged app
-bundle (`mise run bundle-test`); and the C format check. `hk check` runs the
-same task.
+bundle (`mise run bundle-test`); the C format check; and the workflow lint
+(`mise run workflow-lint`: actionlint, zizmor and the structural check of
+the CI workflow). `hk check` runs the same task, and CI runs it, unchanged,
+on `macos-26` and on `ubuntu-24.04` for every push and pull request
+([`ci.md`](ci.md)).
 
 The gate opens no window, makes no surface on one, reads and writes no
 clipboard, and needs neither a display nor Docker. Every window it runs is

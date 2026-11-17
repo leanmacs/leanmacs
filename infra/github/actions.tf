@@ -21,6 +21,9 @@ resource "github_actions_repository_permissions" "leanmacs" {
     verified_allowed     = false
     # Any ref: pinning refs is sha_pinning_required's job.
     patterns_allowed = [
+      # Caches Cargo's registry and target/ in .github/workflows/ci.yml.
+      "Swatinem/rust-cache@*",
+      # Installs mise and the tools mise.toml pins.
       "jdx/mise-action@*",
     ]
   }

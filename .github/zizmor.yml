@@ -1,0 +1,16 @@
+# zizmor's config for `mise run workflow-lint` (docs/dev-practices/ci.md).
+#
+# zizmor's default lets `actions/*` be pinned by a tag. Here every `uses:`
+# must name a full commit SHA, GitHub's own actions included: the
+# repository's Actions settings require it (infra/github/actions.tf,
+# sha_pinning_required), and this fails the gate before a push would fail
+# the run.
+#
+# No finding is ignored here. Fix the workflow; an ignore that is truly
+# needed goes inline, as `# zizmor: ignore[<rule>]` with a comment saying
+# why.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin

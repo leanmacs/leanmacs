@@ -41,9 +41,9 @@ run "actions_permissions_are_declared" {
   assert {
     condition = (
       toset(github_actions_repository_permissions.leanmacs.allowed_actions_config[0].patterns_allowed) ==
-      toset(["jdx/mise-action@*"])
+      toset(["Swatinem/rust-cache@*", "jdx/mise-action@*"])
     )
-    error_message = "patterns_allowed must be exactly the third-party actions the workflows use: jdx/mise-action."
+    error_message = "patterns_allowed must be exactly the third-party actions the workflows use: Swatinem/rust-cache and jdx/mise-action."
   }
 }
 

@@ -74,7 +74,9 @@ public, or its settings changed, past a red scan.
 It is not part of the gate (`mise run ci`) or the hk hooks: `mise run
 linux-ci` runs the gate in a copy of the checkout with no history, where a
 history scan has nothing to read. A CI job that runs it must check out the
-full history (no shallow clone) and have a local `main` branch.
+full history (no shallow clone) and have a local `main` branch. CI runs it
+as a job of its own, `secrets-scan`, on every push and pull request
+([`ci.md`](ci.md)).
 
 The scan of `main` before going public, on 2026-11-17 (1092 commits, 10 of
 them merges, with gitleaks 8.30.1), found nothing, so `.gitleaksignore`
