@@ -2099,8 +2099,9 @@ register holds a sentinel before the keys, so a register left as it was
 is seen. Every row was run through Vim 9.1 by hand, outside the suite,
 when the phase was planned.
 
-- **The operator × motion table** is five situations of 66 cases, 22
-  motions under each of `d`, `c` and `y`, and `=` under each too: no
+- **The operator × motion table** is five situations of 88 cases, each of
+  the 22 motions that take no argument under each of `d`, `c`, `y` and
+  `=`: no
   count; a count of 2; the cursor on an empty line; and the cursor on the
   buffer's last character, on a text that ends in a line feed and on one
   that does not, because the empty last row makes those two cases here.
