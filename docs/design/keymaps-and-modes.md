@@ -2704,6 +2704,22 @@ contributes nothing.
   What the port did is not undone on rollback, as the clipboard is not.
   Choosing a major mode when a file is opened is not built.
 - **Adding a minor mode runs no action** yet (left open).
+- **Minor modes turned on by markers.** A compile contribution
+  (`lean/Editor/Compile/Contribution.lean`; "The compile mode, as built")
+  names marker files. When a buffer's file opens and its workspace is
+  known, the job `find-mode-markers` looks for every registered
+  contribution's markers from the file's directory up to and including the
+  workspace's root, never above it, or in the directory alone for a file
+  with no workspace ([projects.md](projects.md), "A buffer's workspace").
+  Each mode with a marker there is added as a minor mode, its root the
+  directory of its nearest marker. The buffer keeps its on-modes as the
+  local `marker-modes`, nearest root first and, at one root, in
+  registration order; they are added so that `Buffer.minors` lists the
+  nearest first, so its keymap wins as its command is `compile`'s default.
+  It happens once, when the file opens; a reload's contributions apply to
+  files opened after it. With no contribution registered no job starts.
+  A mode turned on so needs no `Mode` record: one registered under its
+  name contributes its keys as any minor mode's do.
 
 Pinned by `ModelTest.modeEnterChecks`, through the loop,
 `ModelTest.apiStateChecks`, and, for a syntax tree,
@@ -2968,9 +2984,10 @@ library's matcher.
 
 ### The compile mode, as built
 
-Status: built by `shell-and-compile` phases 3 and 4
+Status: built by `shell-and-compile` phases 3, 4 and 5
 (`lean/Editor/Compile.lean`, `lean/Editor/Compile/Errors.lean`,
-`lean/Editor/Compile/Compiled.lean`; the module docs have the detail).
+`lean/Editor/Compile/Contribution.lean`, `lean/Editor/Compile/Compiled.lean`,
+`lean/Editor/Workspace/Modes.lean`; the module docs have the detail).
 Emacs's `M-x compile`, one per workspace: a build or test command runs as
 `/bin/sh -c <line>` and its output arrives in the workspace's compilation
 buffer while editing goes on.
@@ -2982,16 +2999,17 @@ buffer while editing goes on.
   location that cannot run commands refuses `compile` and `recompile`
   before anything is asked or started, and says why.
 - **The commands.** `compile` takes the line, or asks for it, `Compile
-  command: `, with the scope's last line as the prompt's text and the
-  project's compile history as its candidates. `recompile` reruns the
+  command: `, with the scope's last line as the prompt's text (with none,
+  the first command the buffer's on-modes offer) and the project's compile
+  history as its candidates. `recompile` reruns the
   scope's last line in the directory it ran in, with no prompt.
   `kill-compilation` cancels the scope's run, which kills the child with
   its process group. Starting a run while the scope's own runs asks,
   `Kill the compilation running in <label>? (y or n) `: `y` or `yes`
   kills the old one and empties the buffer, anything else leaves both. The
-  ex line ships `compile` (taking the line), `recompile`,
-  `kill-compilation`, `next-error` and `previous-error`; no global key
-  binds them yet.
+  ex line ships `compile` (taking the line), `compile-command` (taking
+  the command), `recompile`, `kill-compilation`, `next-error` and
+  `previous-error`; no global key binds them yet.
 - **The buffer** is `*compilation: <label>*`, with the root's parent
   directory in parentheses when that name is taken by another workspace
   of the same label, then the first free name of that. It is found by the
@@ -3051,19 +3069,63 @@ buffer while editing goes on.
   the focus there, as Emacs's does, and `next-error` asked from the
   compilation buffer keeps it, as `next-error-no-select`. A file that is
   not there is said by Files, and no other cursor moves.
+- **Contributions.** A minor mode gives the compile mode what fits a kind
+  of project as data (`Compile.Contribution`), registered under the mode's
+  name in config (`compileContribution`) or by compiled code (a host's
+  `contributions`; none ship until phase 6): marker files, named commands
+  (`build`, `test`, each a name and a command line) and error formats.
+  The registration order is config's contributions in its order, then the
+  compiled ones config does not register; config's contribution of a
+  compiled one's name replaces it whole. A contribution with no marker,
+  one registered twice and one naming a command twice refuse the `setup`.
+- **On-modes.** A buffer's markers turn their modes on inside its
+  workspace, each with its root ("A buffer's modes"); more than one may be
+  on, ordered nearest root first, then by registration order. That one
+  order picks the default command and the order formats are tried.
+- **Where and what `compile` runs.** With on-modes, `compile` runs its
+  line, typed or default, in the first on-mode's root, which may be below
+  the workspace's root (a crate inside a Cargo workspace); its prompt's
+  text is the scope's last line, as projectile keeps the last command per
+  project, else the first on-mode's first command. The compilation is
+  still the workspace's: its buffer and its error list. A run keeps its
+  on-modes in its scope's record, so `recompile`, the restart prompt and
+  the scan of its output use the modes it started with, and `compile` in
+  the compilation buffer uses them too.
+- **`compile-command`** prompts `Mode command: ` with every on-mode's named
+  commands as candidates, `<name> (<mode>)`, in on-mode order; the answer
+  chooses a whole candidate, else the first command of that bare name,
+  and its line runs in its mode's root with no second prompt. With no
+  mode offering a command it says so and asks nothing. It is a command and
+  an ex name, bound to no key.
+- **Formats in use** are the on-modes' contributions' formats, in on-mode
+  order, then `general`, so a line two modes read is the nearest mode's
+  location, and a mode's format finds nothing while the mode is off.
+- **Project commands.** Config gives one project, by its identity, its own
+  named commands and settings for a mode (`projectCommands`). They are
+  kept in the project's store (`compile-project`), written before
+  `compile` or `compile-command` reads it, so every worktree of the
+  codebase has them and no other project does, and a reload's change holds
+  at the next use. A project's command of a name the contribution gives
+  replaces it in place, and a new name comes after the contribution's;
+  they are offered only while their mode is on. Settings are stored for
+  phase 6's computed commands; nothing here acts on them.
 - **The mode** `compilation` fills the role `refresh` with `recompile` and
   `activate` with `compile-goto-error`. It leaves `next-item` and
   `previous-item` unfilled, so under the Vim scheme `j` and `k` stay
   motions in a compilation buffer.
-- **Not built here**: the hook a minor mode gives a project, with its
-  error formats (phase 5), make's directory tracking (`Entering
-  directory`), global keys for `next-error` and `previous-error` (such as
+- **Not built here**: the shipped `cargo-mode`, `lake-mode` and
+  `mise-mode` and commands computed from a project (phase 6), turning a
+  buffer's on-modes on again after a reload, make's directory tracking
+  (`Entering directory`), global keys for `next-error` and `previous-error` (such as
   Vim's `]q` and `[q`), a location's message in the echo area,
   `next-error-follow`, and a time limit (a build may run for many minutes;
   `kill-compilation` ends it, and `C-g` does not, as in Emacs).
 
 Pinned by `ModelTest.compileChecks`, `compileErrorChecks`,
-`compileLocationChecks` and `readOnlyChecks` on the models, and by
+`compileLocationChecks`, `compileHookChecks`, `modeMarkerChecks` and
+`readOnlyChecks` on the models; by the mode marker search's contract
+(`Workspace.MarkerContract`), on its model and on the job model by
+`model-test` and over the real file service by `contract-test`; and by
 `ContractTest.compileChecks` over the real process service, with the
 fixture `tests/compile/three-lines`.
 

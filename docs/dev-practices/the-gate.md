@@ -365,7 +365,9 @@ runner over a fake clock; that jobs in a wait hold no thread, that
 cancelling a sleeping job ends it at once, that a job whose owner is removed
 is cancelled, and that none of a job runs on the thread that spawned it,
 each with the clock or a promise the test holds and no sleeping; and that
-warming Lean's task pool makes all its threads. Loading and saving a file
+warming Lean's task pool makes all its threads. The workspace finder's
+contract and the mode marker search's run there against their pure models
+and against the real finder and search on the job model. Loading and saving a file
 from a job are tested there too, with no file: the job interface's file
 properties run against a pure model of files and against the job runner
 over a fake of the file service, in a made-up directory, and cases play a
@@ -613,7 +615,9 @@ linked against the real library, then `contract-test`, handed four
 directories: `tests/process-environment` (the fixtures that stand in for
 mise in the checks of a child's environment), `tests/workspaces` (the
 fixture that stands in for git in the workspace finder's checks, which run
-the finder's contract over the real process and file services),
+the finder's contract over the real process and file services; the mode
+marker search's contract runs there too, over the real file service, with
+no fixture),
 `tests/shell` (the fixture `:!` runs over the real process service, and the
 editor's working directory in those checks), `tests/compile` (the
 fixture `compile` runs over the real process service, which waits for files

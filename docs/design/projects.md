@@ -73,6 +73,11 @@ world, and `contract-test` against the real finder over the library's
 process and file services, with the world written to a temporary directory
 and a fixture standing in for git (`tests/workspaces/git`).
 
+The search for a minor mode's markers within a workspace
+(`Workspace.presentMarkers`, "A buffer's workspace") shares the marker
+adapter's rule, and is held the same three ways by a contract of its own
+(`Workspace.MarkerContract`), its model `World.presentMarkers`.
+
 The adapters are tried in order; the first that answers wins.
 
 1. **Config**: the deepest workspace root config declares
@@ -143,13 +148,25 @@ does: the workspace is rooted right but is its own project, with no branch.
   `kill-compilation` in it act on that workspace; a directory scope's has
   no workspace and keeps its directory in its `compile-directory` local
   instead. Each is found by the number its scope keeps, never by its name.
+- **Modes on markers.** Once a file's workspace is known, from the cache
+  or from the find job's command, the job `find-mode-markers` looks for
+  the registered compile contributions' marker files from the file's
+  directory up to and including the workspace's root, and never above it,
+  so one worktree's modes are found within that worktree; a file with no
+  workspace looks in its own directory alone. A marker is there by the
+  marker adapter's rule, a directory included. Each mode with a marker
+  there is on, rooted at its nearest marker's directory, which may be
+  below the workspace's root; the buffer keeps them as its local
+  `marker-modes`, nearest first, and has each as a minor mode
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "A buffer's modes"). With
+  no contribution registered no job starts.
 
 ## What lives where
 
 | State | Where | Examples |
 |---|---|---|
-| What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer, its last line, its run in flight, its error list and current location (`compile`), running jobs |
-| What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` lines, `shell-history`; compile lines, `compile-history`), the commands and settings config gives the project |
+| What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer, its last line, its run in flight and the on-modes it started with, its error list and current location (`compile`), running jobs |
+| What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` lines, `shell-history`; compile lines, `compile-history`), the commands and settings config gives the project for a mode (`compile-project`) |
 | What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers; their compile history (`compile-history`), and each directory scope's compile record by directory (`compile-directories`) |
 
 The stores are `Value` trees by name, as a buffer's locals are, so a
@@ -212,8 +229,17 @@ open when the table has it: found or registered this session.
   output gives and the current one are fields of that same record, so each
   workspace (or directory scope) has its own error list; `next-error` and
   `previous-error` step through the focused buffer's workspace's list, and
-  a rerun resets that workspace's list only. Phases 5 and 6: the hook and
-  the rest, the same way.
+  a rerun resets that workspace's list only.
+- `shell-and-compile` phase 5 (built): a compile contribution's markers
+  are looked for from a buffer's file up to its workspace's root, which
+  bounds them, so a marker above the root turns no mode on and each
+  worktree finds its own; a mode's root may be below the workspace's root,
+  and `compile` runs there, its output still in the workspace's
+  compilation buffer. Config's commands and settings for a project, by its
+  identity, are kept in the project's store (`Compile.projectStore`), so
+  every worktree of the codebase offers them and no other project does.
+  The on-modes a run started with are part of the workspace's record.
+  Phase 6: the shipped modes, the same way.
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)
   and `remote-workspace-execution` (running in a `reachable` location).
 
