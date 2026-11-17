@@ -52,9 +52,45 @@
 //!    the next parse. So a result is delivered at least at every revision
 //!    told and every one delivered before: the revisions delivered never go
 //!    back, and they repeat only for a round of step 4's that found new
-//!    layers, and a result
+//!    layers or a refresh whose whole parse differed (below), and a result
 //!    tagged with a revision older than the current one is never handed
 //!    out.
+//!
+//! # The refresh round ([`Session::refresh_once`])
+//!
+//! When to refresh is the worker's rule ([`crate::worker`], "Idle
+//! refreshes"): once a text has gone the idle interval unchanged after an
+//! edit. What a refresh does is this module's. It runs under the work lock,
+//! as a round does.
+//!
+//! 1. The source is asked for the text as it is now. A text that is gone is
+//!    [`Outcome::Gone`].
+//! 2. **The text has moved past the base, or there is no base:** an
+//!    ordinary round. The edit's touch has scheduled the refresh again.
+//! 3. **The base is already a whole parse** (the first round's, a `whole`
+//!    grammar's, a refresh's): nothing to parse. Step 4 of a round is still
+//!    done when the injections changed; otherwise [`Outcome::UpToDate`].
+//! 4. **Otherwise** the text is parsed whole, handed no old tree, and that
+//!    tree becomes the base. When its nodes ([`Syntax::nodes`]) equal the
+//!    base tree's, nothing is delivered and no consumer is called: the tree
+//!    delivered is marked exact, and the refresh is
+//!    [`Outcome::UpToDate`]. Otherwise its layers are found and it goes
+//!    through the delivery rule at the same revision: delivered, or
+//!    [`Outcome::Stale`] when a newer revision has been told by then. A
+//!    stale refresh still leaves its whole tree as the base of the next
+//!    incremental reparse.
+//!
+//! The base tree is compared, not the tree delivered: the base is the last
+//! tree parsed, and in step 4 it is of the revision delivered, the tree
+//! delivered unless a stale result came between; if one did, the revision
+//! delivered is older and the refresh is in step 2. Equal host nodes give
+//! equal injection matches, so layers are found again only when the host
+//! tree differed.
+//!
+//! **Exact.** The session keeps the revision whose whole parse the tree
+//! delivered equals: set by a delivery of a whole parse and by a refresh
+//! that found no difference, and cleared by a delivery of an incremental
+//! reparse. [`Session::wait_exact`] waits for it, for tests.
 //!
 //! # A question of captures ([`Session::captures`])
 //!
@@ -124,7 +160,9 @@
 //! newest revision told, the result delivered, the consumers, the
 //! highlighter and the injections, which the round takes briefly at its
 //! start, to read the injections and their generation, and then only to
-//! deliver, and which [`Session::touch`] takes to tell. A parse holds the
+//! deliver, and which [`Session::touch`] takes to tell. A refresh takes the
+//! same locks as a round, and the state lock also to mark the tree
+//! delivered exact when it delivers nothing. A parse holds the
 //! work lock and no other: it takes the document's lock only inside
 //! [`Source::latest`], and never the state lock while it parses, so an
 //! edit's touch, and a change of injections, never wait for a parse.
@@ -198,8 +236,10 @@ pub trait Consumer<T>: Send + Sync {
     /// `parsed` is delivered: its revision is at least every revision the
     /// session has been told of and every one delivered before. It is the
     /// same as the last one delivered only when the injections changed and
-    /// the text did not (the module docs, step 4). Called under the
-    /// session's state lock: it must not call back into the session.
+    /// the text did not (the module docs, step 4), or when an idle
+    /// refresh's whole parse differed from the tree delivered (the module
+    /// docs, "The refresh round"). Called under the session's state lock: it
+    /// must not call back into the session.
     fn deliver(&self, parsed: &Parsed<T>);
 }
 
@@ -211,7 +251,9 @@ pub enum Outcome {
     /// A tree of this revision was parsed and not delivered: the session
     /// had been told of a newer revision by then.
     Stale(Revision),
-    /// The text is still at the revision of the last tree parsed.
+    /// The text is still at the revision of the last tree parsed, and
+    /// nothing was delivered: for a refresh, the whole parse equalled that
+    /// tree, or it was a whole parse already.
     UpToDate,
     /// The text is gone: the session has nothing more to do.
     Gone,
@@ -280,6 +322,9 @@ struct Base<T> {
     revision: Revision,
     /// The tree.
     tree: T,
+    /// Whether the tree is a whole parse of its revision, handed no old
+    /// tree: what a refresh need not parse again.
+    whole: bool,
     /// The generation of the injections its layers were found with.
     generation: u64,
     /// Its layers, each as its language, grammar, depth and ranges: what
@@ -324,6 +369,10 @@ struct State<S: Syntax> {
     /// The generation of the injections the result delivered last found
     /// its layers with.
     delivered_generation: u64,
+    /// The revision whose whole parse the tree delivered equals: set by a
+    /// delivery of a whole parse and by a refresh that found no difference,
+    /// and cleared by a delivery of an incremental reparse.
+    exact: Option<Revision>,
     /// The query kept of each kind.
     kept: BTreeMap<QueryKind, Arc<S::Query>>,
 }
@@ -358,6 +407,7 @@ impl<S: Syntax> Session<S> {
                 injections: Arc::new(Injections::default()),
                 generation: 0,
                 delivered_generation: 0,
+                exact: None,
                 kept: BTreeMap::new(),
             }),
             delivered: Condvar::new(),
@@ -411,6 +461,35 @@ impl<S: Syntax> Session<S> {
                     .delivered
                     .as_ref()
                     .is_some_and(|parsed| parsed.revision >= revision)
+        };
+        let (mut state, _) = self
+            .delivered
+            .wait_timeout_while(state, bound, |state| !reached(state))
+            .unwrap_or_else(PoisonError::into_inner);
+        if reached(&mut state) {
+            state.delivered.clone()
+        } else {
+            None
+        }
+    }
+
+    /// The last result delivered once it is exact for a revision of at
+    /// least `revision`: its tree equals a whole parse of its own revision
+    /// (a whole parse delivered, or an incremental one a refresh found
+    /// equal), and its layers were found with the injections as they are
+    /// now. Waits for that up to `bound`; `None` when it has not come by
+    /// then. For tests, and for nothing on the editor thread.
+    pub fn wait_exact(&self, revision: Revision, bound: Duration) -> Option<Arc<Parsed<S::Tree>>> {
+        let state = lock(&self.state);
+        let reached = |state: &mut State<S>| {
+            state.delivered_generation == state.generation
+                && state.exact.is_some_and(|exact| {
+                    exact >= revision
+                        && state
+                            .delivered
+                            .as_ref()
+                            .is_some_and(|parsed| parsed.revision == exact)
+                })
         };
         let (mut state, _) = self
             .delivered
@@ -567,6 +646,20 @@ impl<S: Syntax> Session<S> {
 
     /// One round, as the module docs say.
     pub fn parse_once(&self, syntax: &S) -> Outcome {
+        self.round(syntax, false)
+    }
+
+    /// One refresh round, as the module docs say ("The refresh round"):
+    /// an ordinary round when the text has moved past the last tree
+    /// parsed, and otherwise, when that tree is not a whole parse, a whole
+    /// parse of the text, delivered at the same revision only when it
+    /// differs from that tree.
+    pub fn refresh_once(&self, syntax: &S) -> Outcome {
+        self.round(syntax, true)
+    }
+
+    /// A round, or with `refresh` a refresh round.
+    fn round(&self, syntax: &S, refresh: bool) -> Outcome {
         let mut work = lock(&self.work);
         let (injections, generation) = {
             let state = lock(&self.state);
@@ -582,32 +675,20 @@ impl<S: Syntax> Session<S> {
             parsers,
             base,
         } = &mut *work;
-        let tree = match base.as_mut() {
-            Some(base) if base.revision == revision && base.generation == generation => {
-                return Outcome::UpToDate;
-            }
-            // The text as it was; only the injections are new. Layers alike
-            // in their keys are what was delivered: nothing to deliver.
-            Some(base) if base.revision == revision => {
-                let layers = layers(syntax, &injections, &base.tree, &latest.snapshot, parsers);
-                if keys(&layers) == base.layers {
-                    base.generation = generation;
-                    drop(work);
-                    let mut state = lock(&self.state);
-                    if state
-                        .delivered
-                        .as_ref()
-                        .is_some_and(|parsed| parsed.revision == revision)
-                    {
-                        state.delivered_generation = generation;
-                        self.delivered.notify_all();
-                    }
-                    return Outcome::UpToDate;
-                }
-                let tree = base.tree.clone();
+        // The refresh's whole parse: a text still at the last tree parsed,
+        // which an incremental reparse made.
+        if refresh
+            && let Some(base) = base.as_mut()
+            && base.revision == revision
+            && !base.whole
+        {
+            let tree = syntax.parse(parser, &latest.snapshot, None);
+            if syntax.nodes(&tree) != syntax.nodes(&base.tree) {
+                let layers = layers(syntax, &injections, &tree, &latest.snapshot, parsers);
                 *base = Base {
                     revision,
                     tree: tree.clone(),
+                    whole: true,
                     generation,
                     layers: keys(&layers),
                 };
@@ -618,6 +699,61 @@ impl<S: Syntax> Session<S> {
                         ..Parsed::new(revision, latest.snapshot, tree)
                     },
                     generation,
+                    true,
+                );
+            }
+            // Equal nodes find equal layers: only the tree is new, and it
+            // is the one delivered, so that is exact now.
+            base.tree = tree;
+            base.whole = true;
+            if base.generation == generation {
+                drop(work);
+                self.found_exact(revision);
+                return Outcome::UpToDate;
+            }
+        }
+        let (tree, whole) = match base.as_mut() {
+            Some(base) if base.revision == revision && base.generation == generation => {
+                return Outcome::UpToDate;
+            }
+            // The text as it was; only the injections are new. Layers alike
+            // in their keys are what was delivered: nothing to deliver.
+            Some(base) if base.revision == revision => {
+                let layers = layers(syntax, &injections, &base.tree, &latest.snapshot, parsers);
+                let whole = base.whole;
+                if keys(&layers) == base.layers {
+                    base.generation = generation;
+                    drop(work);
+                    let mut state = lock(&self.state);
+                    if state
+                        .delivered
+                        .as_ref()
+                        .is_some_and(|parsed| parsed.revision == revision)
+                    {
+                        state.delivered_generation = generation;
+                        if whole {
+                            state.exact = Some(revision);
+                        }
+                        self.delivered.notify_all();
+                    }
+                    return Outcome::UpToDate;
+                }
+                let tree = base.tree.clone();
+                *base = Base {
+                    revision,
+                    tree: tree.clone(),
+                    whole,
+                    generation,
+                    layers: keys(&layers),
+                };
+                drop(work);
+                return self.deliver(
+                    Parsed {
+                        layers,
+                        ..Parsed::new(revision, latest.snapshot, tree)
+                    },
+                    generation,
+                    whole,
                 );
             }
             _ => {
@@ -633,13 +769,18 @@ impl<S: Syntax> Session<S> {
                     }
                     _ => None,
                 };
-                syntax.parse(parser, &latest.snapshot, edited.as_ref())
+                let whole = edited.is_none();
+                (
+                    syntax.parse(parser, &latest.snapshot, edited.as_ref()),
+                    whole,
+                )
             }
         };
         let layers = layers(syntax, &injections, &tree, &latest.snapshot, parsers);
         *base = Some(Base {
             revision,
             tree: tree.clone(),
+            whole,
             generation,
             layers: keys(&layers),
         });
@@ -650,11 +791,27 @@ impl<S: Syntax> Session<S> {
                 ..Parsed::new(revision, latest.snapshot, tree)
             },
             generation,
+            whole,
         )
     }
 
-    /// The delivery rule.
-    fn deliver(&self, parsed: Parsed<S::Tree>, generation: u64) -> Outcome {
+    /// Marks the tree delivered exact, when it is of `revision`: a refresh's
+    /// whole parse found it equal to that tree.
+    fn found_exact(&self, revision: Revision) {
+        let mut state = lock(&self.state);
+        if state
+            .delivered
+            .as_ref()
+            .is_some_and(|parsed| parsed.revision == revision)
+        {
+            state.exact = Some(revision);
+            self.delivered.notify_all();
+        }
+    }
+
+    /// The delivery rule. `whole` says the tree is a whole parse of its
+    /// revision, so delivered, it is exact.
+    fn deliver(&self, parsed: Parsed<S::Tree>, generation: u64, whole: bool) -> Outcome {
         let mut state = lock(&self.state);
         let revision = parsed.revision;
         if revision < state.current {
@@ -662,6 +819,7 @@ impl<S: Syntax> Session<S> {
         }
         state.current = revision;
         state.delivered_generation = generation;
+        state.exact = whole.then_some(revision);
         let parsed = Arc::new(parsed);
         for consumer in &state.consumers {
             consumer.deliver(&parsed);
@@ -699,8 +857,9 @@ pub(crate) mod tests {
     }
 
     /// The fake, recording what each parse was handed as its old tree (the
-    /// edits that tree was told, or `None` for a whole parse), and running
-    /// a hook once, inside the next parse.
+    /// edits that tree was told, or `None` for a whole parse, in `olds`; and
+    /// the old tree's nodes, in `old_nodes`), and running a hook once,
+    /// inside the next parse.
     ///
     /// With `recovers`, it recovers from an error as a real library may:
     /// an incremental parse whose tree has an error or a missing node
@@ -710,6 +869,7 @@ pub(crate) mod tests {
     /// for a test of a grammar that declares none.
     pub(crate) struct Recording {
         pub(crate) olds: Mutex<Vec<Option<Vec<InputEdit>>>>,
+        pub(crate) old_nodes: Mutex<Vec<Option<Vec<Node>>>>,
         pub(crate) asked: Mutex<Vec<Range<usize>>>,
         pub(crate) hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
         pub(crate) recovers: Recovers,
@@ -726,6 +886,9 @@ pub(crate) mod tests {
         /// The tree of the text with one more atom: it still has an error,
         /// and its root runs past the text.
         OutsideText,
+        /// The fresh parse's tree with its error and missing nodes left
+        /// out: a whole tree of the text, and not the fresh one.
+        Whole,
     }
 
     impl Recovers {
@@ -741,6 +904,11 @@ pub(crate) mod tests {
                     let other = Text::from(format!("{text} x").as_str()).snapshot();
                     Parens.parse(&mut ParensParser, &other, None)
                 }
+                Self::Whole => {
+                    let mut nodes = Parens.nodes(&tree);
+                    nodes.retain(|node| !node.error && !node.missing);
+                    ParensTree::of_nodes(nodes)
+                }
             }
         }
     }
@@ -749,6 +917,7 @@ pub(crate) mod tests {
         fn default() -> Self {
             Self {
                 olds: Mutex::default(),
+                old_nodes: Mutex::default(),
                 asked: Mutex::default(),
                 hook: Mutex::default(),
                 recovers: Recovers::AsFresh,
@@ -778,6 +947,7 @@ pub(crate) mod tests {
             old: Option<&ParensTree>,
         ) -> ParensTree {
             lock(&self.olds).push(old.map(|old| old.edits().to_vec()));
+            lock(&self.old_nodes).push(old.map(|old| Parens.nodes(old)));
             if let Some(hook) = lock(&self.hook).take() {
                 hook();
             }
@@ -1007,6 +1177,187 @@ pub(crate) mod tests {
             Parens.nodes(&Parens.parse(&mut ParensParser, &recovered, None))
         );
         assert!(!fixture.delivered_is_fresh());
+    }
+
+    /// The nodes of a fresh parse of `text`.
+    fn fresh_nodes(text: &str) -> Vec<Node> {
+        Parens.nodes(&Parens.parse(&mut ParensParser, &Text::from(text).snapshot(), None))
+    }
+
+    #[test]
+    fn a_refresh_whose_whole_parse_differs_delivers_it_at_the_same_revision() {
+        let fixture = Fixture::with(
+            "(a b)",
+            Recording {
+                recovers: Recovers::Whole,
+                ..Recording::default()
+            },
+        );
+        fixture.session.parse_once(&fixture.syntax);
+        let revision = fixture.replace(0..0, "(");
+        fixture.session.parse_once(&fixture.syntax);
+        assert!(!fixture.delivered_is_fresh());
+
+        assert_eq!(
+            fixture.session.refresh_once(&fixture.syntax),
+            Outcome::Delivered(revision)
+        );
+        assert!(fixture.delivered_is_fresh());
+        assert_eq!(fixture.olds().last(), Some(&None));
+        assert_eq!(fixture.delivered(), [Revision::new(0), revision, revision]);
+        assert!(
+            fixture
+                .session
+                .wait_exact(revision, Duration::ZERO)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_refresh_whose_whole_parse_equals_the_delivered_tree_delivers_nothing() {
+        let fixture = Fixture::new("(a b)");
+        fixture.session.parse_once(&fixture.syntax);
+        let revision = fixture.replace(5..5, " c");
+        fixture.session.parse_once(&fixture.syntax);
+        assert!(
+            fixture
+                .session
+                .wait_exact(revision, Duration::ZERO)
+                .is_none()
+        );
+
+        assert_eq!(
+            fixture.session.refresh_once(&fixture.syntax),
+            Outcome::UpToDate
+        );
+        // A whole parse was made, and nothing delivered.
+        assert_eq!(fixture.olds().len(), 3);
+        assert_eq!(fixture.olds().last(), Some(&None));
+        assert_eq!(fixture.delivered(), [Revision::new(0), revision]);
+        let exact = fixture.session.wait_exact(revision, Duration::ZERO);
+        assert_eq!(exact.map(|parsed| parsed.revision), Some(revision));
+    }
+
+    #[test]
+    fn a_refresh_of_a_whole_tree_parses_nothing() {
+        let fixture = Fixture::new("(a b)");
+        fixture.session.parse_once(&fixture.syntax);
+
+        assert_eq!(
+            fixture.session.refresh_once(&fixture.syntax),
+            Outcome::UpToDate
+        );
+        assert_eq!(fixture.olds(), [None]);
+        assert_eq!(fixture.delivered(), [Revision::new(0)]);
+        // A second refresh after one that parsed whole parses nothing more.
+        let revision = fixture.replace(5..5, " c");
+        fixture.session.parse_once(&fixture.syntax);
+        fixture.session.refresh_once(&fixture.syntax);
+        assert_eq!(
+            fixture.session.refresh_once(&fixture.syntax),
+            Outcome::UpToDate
+        );
+        assert_eq!(fixture.olds().len(), 3);
+        assert_eq!(fixture.delivered(), [Revision::new(0), revision]);
+    }
+
+    #[test]
+    fn a_refresh_of_a_text_that_moved_is_an_ordinary_round() {
+        let fixture = Fixture::new("(a b)");
+        fixture.session.parse_once(&fixture.syntax);
+        let revision = fixture.replace(5..5, " c");
+        let patch = lock(&fixture.text).changes_since(Revision::new(0)).unwrap();
+
+        assert_eq!(
+            fixture.session.refresh_once(&fixture.syntax),
+            Outcome::Delivered(revision)
+        );
+        let told: Vec<InputEdit> = patch.edits.iter().map(|edit| edit.input_edit()).collect();
+        assert_eq!(fixture.olds(), [None, Some(told)]);
+
+        // With no base yet, too: the first round.
+        let first = Fixture::new("(a)");
+        assert_eq!(
+            first.session.refresh_once(&first.syntax),
+            Outcome::Delivered(Revision::new(0))
+        );
+        assert_eq!(first.olds(), [None]);
+    }
+
+    #[test]
+    fn a_stale_refresh_leaves_its_whole_tree_as_the_next_base() {
+        let fixture = Fixture::with(
+            "(a b)",
+            Recording {
+                recovers: Recovers::Whole,
+                ..Recording::default()
+            },
+        );
+        fixture.session.parse_once(&fixture.syntax);
+        let revision = fixture.replace(0..0, "(");
+        fixture.session.parse_once(&fixture.syntax);
+        // Inside the refresh's whole parse, the text is edited and the
+        // session told so.
+        let (text, session) = (fixture.text.clone(), fixture.session.clone());
+        *lock(&fixture.syntax.hook) = Some(Box::new(move || {
+            let revision = replace(&text, 6..6, " c");
+            session.touch(revision);
+        }));
+
+        assert_eq!(
+            fixture.session.refresh_once(&fixture.syntax),
+            Outcome::Stale(revision)
+        );
+        assert_eq!(
+            fixture.session.parse_once(&fixture.syntax),
+            Outcome::Delivered(Revision::new(2))
+        );
+        // The next round reparsed from the refresh's whole tree, not the
+        // recovered one.
+        let old_nodes = lock(&fixture.syntax.old_nodes).clone();
+        assert_eq!(old_nodes.last(), Some(&Some(fresh_nodes("((a b)"))));
+    }
+
+    #[test]
+    fn waiting_for_an_exact_tree_waits_for_a_whole_parse_of_the_revision() {
+        let fixture = Fixture::new("(a b)");
+        assert!(
+            fixture
+                .session
+                .wait_exact(Revision::new(0), Duration::ZERO)
+                .is_none()
+        );
+        // The first round parses whole: its tree is exact.
+        fixture.session.parse_once(&fixture.syntax);
+        assert!(
+            fixture
+                .session
+                .wait_exact(Revision::new(0), Duration::ZERO)
+                .is_some()
+        );
+        // An incremental delivery is not, until a refresh finds it so.
+        let revision = fixture.replace(5..5, " c");
+        fixture.session.parse_once(&fixture.syntax);
+        assert!(
+            fixture
+                .session
+                .wait_exact(Revision::new(0), Duration::ZERO)
+                .is_none()
+        );
+        fixture.session.refresh_once(&fixture.syntax);
+        assert!(
+            fixture
+                .session
+                .wait_exact(revision, Duration::ZERO)
+                .is_some()
+        );
+        // Not past what has been parsed.
+        assert!(
+            fixture
+                .session
+                .wait_exact(Revision::new(2), Duration::ZERO)
+                .is_none()
+        );
     }
 
     #[test]

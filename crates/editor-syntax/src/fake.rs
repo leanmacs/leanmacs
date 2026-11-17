@@ -95,6 +95,16 @@ impl ParensTree {
     pub fn edits(&self) -> &[InputEdit] {
         &self.edits
     }
+
+    /// A tree of `nodes`, told no edit: for the crate's tests, whose broken
+    /// syntaxes answer trees no parse of the grammar gives. Not public.
+    #[cfg(test)]
+    pub(crate) fn of_nodes(nodes: Vec<Node>) -> Self {
+        Self {
+            nodes: Arc::new(nodes),
+            edits: Vec::new(),
+        }
+    }
 }
 
 /// A compiled query of the `parens` grammar.
