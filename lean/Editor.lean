@@ -2,6 +2,7 @@ import Editor.Api.Theorems
 import Editor.Buffers
 import Editor.Command.Append
 import Editor.Compile
+import Editor.Compile.Shipped
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
@@ -170,7 +171,9 @@ buffer; its registrations (`Editor/Compile/Compiled.lean`) are not
 imported either. What a minor mode gives it, its markers, named commands
 and error formats (`Editor/Compile/Contribution.lean`, with the formats of
 `Editor/Compile/Errors.lean`), comes with `Editor/Setup.lean`, which
-registers it (`compileContribution`, `projectCommands`).
+registers it (`compileContribution`, `projectCommands`). The formats that
+ship (`Editor/Compile/Shipped.lean`) are imported, so config can build on
+them.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

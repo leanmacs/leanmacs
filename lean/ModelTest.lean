@@ -6,6 +6,7 @@ import Editor.Command.Append
 import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Compile.Compiled
+import Editor.Compile.Shipped
 import Editor.Config.Display
 import Editor.Config.Reload
 import Editor.Display.Contract
@@ -30596,6 +30597,79 @@ def compileHookChecks : List Check :=
               (Workspace.MarkerOrder.ofArguments? · == none) &&
             ((Workspace.markerWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
 
+/-- What cargo prints of rustc's error in the probe crate, after its
+`Compiling` line: the message, its location and the snippet under it. -/
+def rustcLines : Array String :=
+  #["error[E0308]: mismatched types", " --> src/main.rs:4:18", "  |", "4 |     let x: i32 = \"a\";",
+    "  |            ---   ^^^ expected `i32`, found `&str`", "  |            |",
+    "  |            expected due to this", "",
+    "For more information about this error, try `rustc --explain E0308`.",
+    "error: could not compile `probe` (bin \"probe\") due to 1 previous error"]
+
+/-- The checks of the shipped error formats (`Editor/Compile/Shipped.lean`,
+"The formats"): pure, with no driver. -/
+def projectFormatChecks : List Check :=
+  let general := Compile.Format.general
+  [{  name :=
+        "modes criterion 3: rustc's format finds error[E0308]: mismatched types followed by   --> src/main.rs:4:18 as one location at src/main.rs line 4 column 18, severity error, with the message mismatched types"
+      run :=
+        pure
+          (Compile.scan #[Compile.rustcFormat] "/c" #[] 1 0
+              #["error[E0308]: mismatched types", "  --> src/main.rs:4:18"] ==
+            #[{ file := "/c/src/main.rs", line := 4, column := some 18, columnBase := 1
+                severity := .error, format := "rustc", first := 1, last := 2, start := 37
+                stop := 53, message := some "mismatched types" }]) },
+    { name :=
+        "rustc's location line scanned alone after its lead in an earlier post gives the same site; a warning's lead gives a warning with its message; the snippet joins the site up to the blank line; and the general format reads none of rustc's lines"
+      run :=
+        let alone :=
+          Compile.scan #[Compile.rustcFormat] "/c"
+            (Compile.scan #[Compile.rustcFormat] "/c" #[] 1 0 #["error[E0308]: mismatched types"]) 2
+            31 #["  --> src/main.rs:4:18"] (previous := some "error[E0308]: mismatched types")
+        let warned :=
+          Compile.scan #[Compile.rustcFormat] "/c" #[] 1 0
+            #["warning: unused variable: `y`", " --> src/main.rs:2:9"]
+        let whole := Compile.scan #[Compile.rustcFormat, general] "/c" #[] 1 0 rustcLines
+        pure
+          (alone ==
+              Compile.scan #[Compile.rustcFormat] "/c" #[] 1 0
+                #["error[E0308]: mismatched types", "  --> src/main.rs:4:18"] &&
+            warned.map (fun site => (site.severity, site.line, site.column, site.message)) ==
+              #[(.warning, 2, some 9, some "unused variable: `y`")] &&
+            whole.map (fun site => (site.file.toString, site.first, site.last, site.message)) ==
+              #[("/c/src/main.rs", 1, 7, some "mismatched types")] &&
+            (rustcLines.push "   ::: src/lib.rs:3:5").all (general.read? · == none)) },
+    { name :=
+        "modes criterion 4: Lean's format finds error: ./Foo/Bar.lean:12:4: unknown identifier 'x' at Foo/Bar.lean line 12 column 4, counting columns from 0, and the same line with warning: as a warning"
+      run :=
+        let line := "error: ./Foo/Bar.lean:12:4: unknown identifier 'x'"
+        let warning := "warning: ./Foo/Bar.lean:12:4: unknown identifier 'x'"
+        pure
+          (Compile.leanFormat.read? line ==
+              some
+                { file := "./Foo/Bar.lean", line := 12, column := some 4, severity := .error
+                  start := 7, stop := 26, message := some "unknown identifier 'x'" } &&
+            (Compile.scan #[Compile.leanFormat] "/l" #[] 1 0 #[line]).map
+                (fun site => (site.file.toString, site.line, site.column, site.columnBase)) ==
+              #[("/l/Foo/Bar.lean", 12, some 4, 0)] &&
+            (Compile.leanFormat.read? warning).map (·.severity) == some .warning) },
+    { name :=
+        "Lean's format reads info: as a note and Lake's form with no ./, and reads none of Lake's other lines; the general format reads none of Lake's lines"
+      run :=
+        let lake :=
+          #["✖ [2/4] Building Foo.Bar (156ms)", "error: Foo/Bar.lean:13:6: Unknown identifier `x`",
+            "warning: Foo/Bar.lean:14:7: Variable name `y` is not explicitly referenced.",
+            "info: Foo/Bar.lean:14:0: 1", "Some required targets logged failures:", "- Foo.Bar",
+            "error: build failed"]
+        pure
+          ((Compile.leanFormat.read? "info: Foo/Bar.lean:14:0: 1").map (·.severity) == some .note &&
+            (lake.filterMap Compile.leanFormat.read?).map
+                (fun reading => (reading.file, reading.line, reading.severity)) ==
+              #[("Foo/Bar.lean", 13, .error), ("Foo/Bar.lean", 14, .warning),
+                ("Foo/Bar.lean", 14, .note)] &&
+            (lake.push "error: ./Foo/Bar.lean:12:4: unknown identifier 'x'").all
+              (general.read? · == none)) }]
+
 /-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
 `abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts
 `x` at the window's cursors; `C-r d` (`delete-first`) deletes the first byte
@@ -30852,7 +30926,8 @@ def checks : List Check :=
     compileChecks ++
     compileErrorChecks ++
     compileLocationChecks ++
-    compileHookChecks
+    compileHookChecks ++
+    projectFormatChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
