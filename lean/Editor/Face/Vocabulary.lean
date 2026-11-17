@@ -19,8 +19,11 @@ check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
   badge face of each of its states (`Vim.cursorFace`, `Vim.stateFace`),
   the mode line's faces (`ModeLine.bufferFace`, `ModeLine.modifiedFace`,
   `ModeLine.changedFace`, `ModeLine.secondaryFace`, `ModeLine.inactiveFace`,
-  `Editor/ModeLine.lean`), the loop's minibuffer fields
-  (`Loop.promptFace`, `Loop.candidateFace`, `Loop.chosenFace`), the
+  `Editor/ModeLine.lean`), the minibuffer's label
+  (`Loop.promptFace`), the rows of the candidate list the minibuffer
+  display draws (`Completion.Displays.candidateFace`, `chosenFace`,
+  `matchFace`, `annotationFace`, `groupFace`,
+  `Editor/Completion/Displays.lean`), the
   compile mode's locations by severity (`compilation.error`,
   `compilation.warning`, `compilation.note`; `Compile.Severity.face`), the
   matches of the last search (`Loop.searchMatchFace`), and the tab bar's
@@ -133,10 +136,19 @@ def vocabulary : Array Entry :=
           "The prompt's label in the minibuffer's status line, drawn by the loop (`Loop.promptFace`)." },
       { name := ⟨"minibuffer.candidate"⟩
         meaning :=
-          "A listed candidate in the minibuffer's status line, unless it is the chosen one (`Loop.candidateFace`)." },
+          "A row of the candidate list, the minibuffer display's, unless it is the chosen one (`Completion.Displays.candidateFace`)." },
       { name := ⟨"minibuffer.chosen"⟩
         meaning :=
-          "The chosen candidate in the minibuffer's status line, drawn by the loop (`Loop.chosenFace`)." },
+          "The chosen candidate's row of the candidate list, drawn by the minibuffer display (`Completion.Displays.chosenFace`)." },
+      { name := ⟨"minibuffer.match"⟩
+        meaning :=
+          "The ranges of a candidate's text the typed text matched, over its row of the candidate list (`Completion.Displays.matchFace`)." },
+      { name := ⟨"minibuffer.annotation"⟩
+        meaning :=
+          "A candidate's annotation, in its column of the candidate list (`Completion.Displays.annotationFace`)." },
+      { name := ⟨"minibuffer.group"⟩
+        meaning :=
+          "A group's header row in the candidate list (`Completion.Displays.groupFace`)." },
       { name := ⟨"tab-bar"⟩
         meaning :=
           "Each tab's chip in the tab bar, its number and label, drawn by the loop (`TabBar.face`)." },

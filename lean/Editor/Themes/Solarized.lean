@@ -70,6 +70,9 @@ dark names, and `+` marks a definition appended after the shared ones
 | `minibuffer.prompt` | cyan, bold | + fg blue (bold kept) | Emacs `minibuffer-prompt` blue |
 | `minibuffer.candidate` | fg base01 | + fg base1 | Vim's wildmenu draws the other candidates in `StatusLine`, the status-line text (base1) |
 | `minibuffer.chosen` | base03 on cyan | + base02 on base2 | Vim `WildMenu` (fg base2 bg base02 reversed) |
+| `minibuffer.match` | blue, bold | blue, bold | Not covered: shared mapping kept |
+| `minibuffer.annotation` | base01, italic | base01, italic | Not covered: shared mapping kept |
+| `minibuffer.group` | base1, bold | base1, bold | Not covered: shared mapping kept |
 | `tab-bar` | base01 on base02 | + base0 on base02 | Vim `TabLine` fg base0 bg base02; its underline is not followed |
 | `tab-bar.selected` | base1 on base02, bold | + base2 on base01, bold | Vim `TabLineSel` (fg base01 bg base2 reversed, bold); its underline is not followed |
 | `compilation.error`, `compilation.warning`, `compilation.note` | fg red, orange, green, bold | fg red, orange, green, bold | Emacs `compilation-error`, `-warning`, `-info` inherit `error`, `warning`, `success`: the shared mapping's red, orange and green are kept |

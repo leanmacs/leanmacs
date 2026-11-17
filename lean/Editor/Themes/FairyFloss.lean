@@ -105,6 +105,9 @@ a later definition's set attributes are over an earlier one's
 | `minibuffer.prompt` | mint, bold | the same | Not covered: shared mapping kept |
 | `minibuffer.candidate` | fg lavender | the same | Not covered: shared mapping kept |
 | `minibuffer.chosen` | background on mint | the same | Not covered: shared mapping kept |
+| `minibuffer.match` | renamed, bold | the same | Not covered: shared mapping kept |
+| `minibuffer.annotation` | lavender, italic | the same | Not covered: shared mapping kept |
+| `minibuffer.group` | foreground, bold | the same | Not covered: shared mapping kept |
 | `tab-bar` | lavender on lineHighlight | the same | Not covered: shared mapping kept |
 | `tab-bar.selected` | foreground on selection, bold | the same | Not covered: shared mapping kept |
 | `compilation.error`, `compilation.warning`, `compilation.note` | fg removed, peach, added, bold | the same | Not covered: shared mapping kept |

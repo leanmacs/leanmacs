@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
+import Editor.Completion.Displays
 import Editor.Completion.Later
 import Editor.Completion.Styles
 import Editor.Config.Owner
@@ -1393,14 +1394,15 @@ def promptFace : FaceName :=
   ⟨"minibuffer.prompt"⟩
 
 /-- The face of a listed candidate's field of the minibuffer's status line,
-unless it is the chosen one. -/
+unless it is the chosen one: the minibuffer display's
+(`Completion.Displays.candidateFace`). -/
 def candidateFace : FaceName :=
-  ⟨"minibuffer.candidate"⟩
+  Completion.Displays.candidateFace
 
 /-- The face of the chosen candidate's field of the minibuffer's status
-line. -/
+line: the minibuffer display's (`Completion.Displays.chosenFace`). -/
 def chosenFace : FaceName :=
-  ⟨"minibuffer.chosen"⟩
+  Completion.Displays.chosenFace
 
 /-- The fields of the minibuffer's status line for the prompt `asked`: its
 label, in `promptFace`, then one field for each of the first

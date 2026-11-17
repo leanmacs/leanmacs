@@ -305,7 +305,10 @@ window's mode line, a prompt or the echo. Each Vim state's badge
 (`mode-line.state.<state>`) is the paper on an accent, bold: normal blue,
 insert green, visual and visual-line magenta, the minibuffer's cyan. The tab
 bar's chips are faint on raised, and the selected one strong on selected,
-bold. The compile mode's locations are bold, an error red, a warning orange
+bold. The candidate list's matched ranges are blue and bold, as orderless's
+first match face and `completions-common-part`; its annotations faint and
+italic, as `completions-annotations`; and its group headers strong and
+bold, as `vertico-group-title`. The compile mode's locations are bold, an error red, a warning orange
 and a note green, as Emacs's `compilation-error`, `-warning` and `-info`
 inherit `error`, `warning` and `success`. -/
 def Palette.theme (palette : Palette) : Theme :=
@@ -340,6 +343,9 @@ def Palette.theme (palette : Palette) : Theme :=
       ink "mode-line.secondary" palette.faint, on "mode-line.inactive" palette.faint palette.raised,
       defined "minibuffer.prompt" { foreground := some palette.cyan, weight := some 700 },
       ink "minibuffer.candidate" palette.faint, on "minibuffer.chosen" palette.paper palette.cyan,
+      bold "minibuffer.match" palette.blue,
+      defined "minibuffer.annotation" { foreground := some palette.faint, slant := some .italic },
+      defined "minibuffer.group" { foreground := some palette.strong, weight := some 700 },
       on "tab-bar" palette.faint palette.raised,
       defined "tab-bar.selected"
         { foreground := some palette.strong, background := some palette.selected
