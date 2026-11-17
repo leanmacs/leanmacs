@@ -28639,7 +28639,9 @@ with `check`, asking nothing, so a new compilation buffer is in view 1,
 below view 0). For stepping: `C-k n` (`next-error`), `C-k p`
 (`previous-error`), `C-k e` (`compile-goto-error`), and `C-k g` and `C-k j`
 (`to-point`, which puts the window's cursor at row 4, column 3, and at row
-2, column 0). -/
+2, column 0), and `C-k b` (`zero-base`, which has every location `/r` keeps
+count its columns from 0, as those of a format whose `columnBase` is 0
+do). -/
 def compileBindings : List (String × Invocation) :=
   shellBindings ++
     [("C-k c", invoke Compile.compileName),
@@ -28655,7 +28657,8 @@ def compileBindings : List (String × Invocation) :=
       ("C-k n", invoke Compile.nextName), ("C-k p", invoke Compile.previousName),
       ("C-k e", invoke Compile.gotoName),
       ("C-k g", { command := "to-point", arguments := [.nat 4, .nat 3] }),
-      ("C-k j", { command := "to-point", arguments := [.nat 2, .nat 0] })]
+      ("C-k j", { command := "to-point", arguments := [.nat 2, .nat 0] }),
+      ("C-k b", invoke "zero-base")]
 
 /-- The commands of the compile checks (`compileBindings`). -/
 def compileCommands : List (String × Dispatched) :=
@@ -28680,9 +28683,14 @@ def compileCommands : List (String × Dispatched) :=
       let offset ← call.target.buffer.text.offsetOf ⟨row, column⟩
       discard <| call.target.window.id.select { ranges := #[⟨offset, offset⟩] }
     return none
+  let zeroBase : Dispatched := fun _ => do
+    let record := Compile.recordOf (← editorState) placeR
+    Compile.setRecord placeR
+        { record with locations := record.locations.map ({ · with columnBase := 0 }) }
+    return none
   shellCommands ++ dispatchedOf Compile.commands ++
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
-      ("squat-clone", squat), ("to-point", toPoint)]
+      ("squat-clone", squat), ("to-point", toPoint), ("zero-base", zeroBase)]
 
 /-- The keys of the compile checks, with the compile mode and the ex names
 that ship registered: the active keymaps of a registry holding the compile
@@ -29661,7 +29669,41 @@ def compileLocationChecks : List Check :=
             only.loop.state.frame.tree == .split .rows (.window ⟨1⟩) .minibuffer &&
               compilation.isSome &&
               visiting true == some ⟨1⟩ &&
-              visiting false == some ⟨2⟩ }]
+              visiting false == some ⟨2⟩ },
+    { name :=
+        "a location whose format counts columns from 0 is visited at its printed column: 12:5 is byte 136 of main.rs, one on from where the general format puts it, and 2:7 is byte 25, seven two-byte characters into its row"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let based :=
+              pressedOn (drained (pressedOn (settledAfter driver "C-o a") "C-k h")) "C-k b"
+            let step (driver : TestDriver) (keys : String) := drained (pressedOn driver keys)
+            let first := step based "C-k n"
+            let third := step (step first "C-k n") "C-k n"
+            (Compile.recordOf based.loop.state placeR).locations.map (·.columnBase) ==
+                #[0, 0, 0, 0] &&
+              fileOf first ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf first ⟨0⟩ == some #[136] &&
+              currentOf third placeR == some 2 &&
+              fileOf third ⟨0⟩ == some "/r/src/main.rs" &&
+              headsOf third ⟨0⟩ == some #[25] },
+    { name :=
+        "previous-error right after a compile, with no current location, stops with a message, leaves the current location none and visits nothing"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let back := drained (pressedOn ran "C-k p")
+            currentOf ran placeR == none &&
+              echoOf back == some "previous-error: no earlier locations in r@main" &&
+              currentOf back placeR == none &&
+              fileOf back ⟨0⟩ == some "/r/src/a.lean" &&
+              headsOf back ⟨0⟩ == headsOf ran ⟨0⟩ &&
+              headsOf back ⟨1⟩ == headsOf ran ⟨1⟩ }]
 
 /-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
 `abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts
