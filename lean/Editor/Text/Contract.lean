@@ -2812,16 +2812,12 @@ def excerptProperties : List Property :=
               refusedWith .unknownRevision (text.dropInverses 1 (2 ^ 64 + 1))
         return marker && huge && place && selection && unmark && since && forget && drop },
     { name :=
-        "an insert, a delete, a transaction, an inverse, an edit script and a trace of an excerpt text are refused with excerpted, first, change nothing and catch nothing up"
+        "an inverse, an edit script and a trace of an excerpt text are refused with excerpted, first, change nothing and catch nothing up"
       holds := do
         let (one, _, text) ← excerpted
         one.insert 5 "X"
         let refused ←
-          [refusedWith .excerpted (text.insert 0 "x"), refusedWith .excerpted (text.delete 0 99),
-                  refusedWith .excerpted (discard <| text.apply (.replacing 11 0 0 "x")),
-                  refusedWith .excerpted
-                    (discard <| text.apply { changes := #[], before := some { ranges := #[] } }),
-                  refusedWith .excerpted (discard <| text.applyInverse 1 1),
+          [refusedWith .excerpted (discard <| text.applyInverse 1 1),
                   refusedWith .excerpted (discard <| text.applyInverse (2 ^ 64 + 1) 1),
                   refusedWith .excerpted (discard <| text.applyScript 99 (.text one) #[] .disk),
                   refusedWith .excerpted (discard <| text.trace 0 1),
@@ -2862,6 +2858,152 @@ def excerptProperties : List Property :=
         return kept && followed && gone && goneEnd && noText &&
             (← two.mark (anchorAt 0 .before)) == ⟨two, 2⟩ }]
 
+/-- The transaction over the excerpt text of `excerpted` that inserts "X" in
+its first excerpt, at 1, and replaces the first byte of its second, at 5,
+with "A". -/
+def acrossBoth : Transaction :=
+  { changes := #[.retain 1, .insert "X", .retain 4, .insert "A", .delete 1, .retain 5] }
+
+/-- The transaction over the excerpt text of `excerpted` that inserts "X" at 1
+and deletes the separator, at 4. -/
+def acrossSeparator : Transaction :=
+  { changes := #[.retain 1, .insert "X", .retain 3, .delete 1, .retain 6] }
+
+/-- The properties of editing through an excerpt text ("Excerpt texts", in the
+rules of the port: its edits are its sources' edits). -/
+def excerptEditProperties : List Property :=
+  [{  name :=
+        "a transaction typed into an excerpt text with the user's origin is one revision of its source at the mapped offset, traced to the user; the other source is untouched; the excerpt text reads it, one revision on; an insert is traced to nobody"
+      holds := do
+        let (one, two, text) ← excerpted
+        let revision ← text.apply (.replacing 11 1 1 "X") Origin.user
+        let applied :=
+          revision == 2 && (← one.read) == "one\ntXwo\nthree\n" && (← one.revision) == 1 &&
+            (← one.trace 5 6) == #[⟨5, 6, .entry 1 Origin.user⟩] &&
+            (← two.revision) == 0 &&
+            (← text.read) == "tXwo\n\nalpha\n" &&
+            (← text.revision) == 2
+        let (one, _, text) ← excerpted
+        text.insert 1 "X"
+        return applied && (← one.read) == "one\ntXwo\nthree\n" &&
+            (← one.trace 5 6) == #[⟨5, 6, .entry 1 .unattributed⟩] &&
+            (← text.read) == "tXwo\n\nalpha\n" },
+    { name :=
+        "the inverse of the source's revision an edit through an excerpt text made restores the source, and the excerpt text reads as before"
+      holds := do
+        let (one, _, text) ← excerpted
+        discard <| text.apply (.replacing 11 1 1 "X") Origin.user
+        discard <| one.applyInverse 1 1 Origin.user
+        return (← one.read) == "one\ntwo\nthree\n" && (← text.read) == "two\n\nalpha\n" },
+    { name :=
+        "a transaction with an edit in each of two excerpts of two sources is one revision of each source and of the excerpt text, and one that changes nothing is one revision of the excerpt text and of no source"
+      holds := do
+        let (one, two, text) ← excerpted
+        let revision ← text.apply acrossBoth Origin.user
+        let both :=
+          revision == 2 && (← one.read) == "one\ntXwo\nthree\n" &&
+            (← two.read) == "Alpha\nbeta\n" &&
+            (← one.revision) == 1 &&
+            (← two.revision) == 1 &&
+            (← text.read) == "tXwo\n\nAlpha\n" &&
+            (← text.revision) == 2
+        let (one, two, text) ← excerpted
+        let identity ← text.apply { changes := #[.retain 11] } Origin.user
+        return both && identity == 2 && (← text.revision) == 2 && (← one.revision) == 0 &&
+            (← two.revision) == 0 },
+    { name :=
+        "a transaction that also deletes a separator is refused with outsideExcerpt, one that reaches an excerpt of a released source with noSuchText, a bad selection and a bad range before either, and none changes a source"
+      holds := do
+        let (one, two, text) ← excerpted
+        let separator ←
+          refusedWith .outsideExcerpt (discard <| text.apply acrossSeparator Origin.user)
+        let selection ←
+          refusedWith .badSelection
+              (discard <|
+                text.apply { acrossSeparator with after := some { ranges := #[⟨99, 99⟩] } })
+        let range ← refusedWith .badRange (text.delete 3 99)
+        let deleted ← refusedWith .outsideExcerpt (text.delete 4 5)
+        let third ← createText "gamma\n"
+        let other ← createExcerpts #[⟨one, 4, 8⟩, ⟨third, 0, 6⟩]
+        third.release
+        let released ← refusedWith .noSuchText (discard <| other.apply acrossBoth Origin.user)
+        return separator && selection && range && deleted && released &&
+            (← one.read) == "one\ntwo\nthree\n" &&
+            (← one.revision) == 0 &&
+            (← two.read) == "alpha\nbeta\n" &&
+            (← two.revision) == 0 &&
+            (← other.read) == "two\n\ngamma\n" },
+    { name := "a refused edit of an excerpt text catches it up first"
+      holds := do
+        let outside ← refusedCaughtUp fun _ text => refusedWith .outsideExcerpt (text.delete 5 6)
+        let range ← refusedCaughtUp fun _ text => refusedWith .badRange (text.insert 99 "x")
+        let huge ← refusedCaughtUp fun _ text => refusedWith .badRange (text.insert (2 ^ 64) "x")
+        let selection ←
+          refusedCaughtUp fun _ text =>
+              refusedWith .badSelection
+                (discard <| text.apply { changes := #[], before := some { ranges := #[] } })
+        return outside && range && huge && selection },
+    { name := "an insert at an excerpt's start lands at its source range's start, inside it"
+      holds := do
+        let (one, _, text) ← excerpted
+        text.insert 0 "A"
+        let first := (← one.read) == "one\nAtwo\nthree\n" && (← text.read) == "Atwo\n\nalpha\n"
+        let (_, two, text) ← excerpted
+        text.insert 5 "A"
+        return first && (← two.read) == "Aalpha\nbeta\n" && (← text.read) == "two\n\nAalpha\n" },
+    { name :=
+        "an insert at an excerpt's end lands at its source range's end, inside it, and on the separator row of an excerpt that ends in a line feed it starts the source's next row"
+      holds := do
+        let (_, two, text) ← excerpted
+        text.insert 11 "Z"
+        let last := (← two.read) == "alpha\nZbeta\n" && (← text.read) == "two\n\nalpha\nZ"
+        let (one, _, text) ← excerpted
+        text.insert 4 "B"
+        return last && (← one.read) == "one\ntwo\nBthree\n" && (← text.read) == "two\nB\nalpha\n" },
+    { name :=
+        "deleting all of an excerpt through the excerpt text leaves it empty with its separator, and an insert at it lands in its source"
+      holds := do
+        let (one, _, text) ← excerpted
+        text.delete 0 4
+        let emptied := (← text.read) == "\nalpha\n" && (← one.read) == "one\nthree\n"
+        text.insert 0 "q"
+        return emptied && (← one.read) == "one\nqthree\n" && (← text.read) == "q\nalpha\n" },
+    { name := "an edit meeting two excerpts of one source is refused with outsideExcerpt"
+      holds := do
+        let one ← createText "one\ntwo\nthree\n"
+        let touching ← createExcerpts #[⟨one, 4, 8⟩, ⟨one, 8, 14⟩]
+        let atEnd ← refusedWith .outsideExcerpt (touching.insert 4 "!")
+        let overlapping ← createExcerpts #[⟨one, 4, 10⟩, ⟨one, 8, 14⟩]
+        let inside ← refusedWith .outsideExcerpt (overlapping.insert 5 "!")
+        return atEnd && inside && (← one.revision) == 0 },
+    { name :=
+        "a selection marker on an excerpt text moves through an edit made through it as through the same edit of a plain text"
+      holds := do
+        let (_, _, text) ← excerpted
+        let plain ← createText "two\n\nalpha\n"
+        let held ← text.mark (selected .exclusive #[(1, 3), (6, 8)])
+        let plainHeld ← plain.mark (selected .exclusive #[(1, 3), (6, 8)])
+        discard <| text.apply acrossBoth Origin.user
+        discard <| plain.apply acrossBoth Origin.user
+        return (← text.marker held) == (← plain.marker plainHeld) },
+    { name :=
+        "locate answers, for every position of an excerpt text, its excerpt, source and source offset; none for an empty list; badPosition past the end; notExcerpted for a plain text and a snapshot"
+      holds := do
+        let (one, two, text) ← excerpted
+        let located ← (List.range 12).mapM fun offset => text.locate offset
+        let expected :=
+          (List.range 12).map fun offset =>
+            if offset ≤ 4 then some ⟨0, one, 4 + offset⟩ else some ⟨1, two, offset - 5⟩
+        let empty ← createExcerpts #[]
+        let snapshot ← text.snapshot
+        let past ← refusedWith .badPosition (discard <| text.locate 12)
+        let plain ← refusedWith .notExcerpted (discard <| one.locate 0)
+        let ofSnapshot ←
+          refusedWith .notExcerpted (discard <| (TextSource.snapshot snapshot).ask (.locate 0))
+        let noText ← refusedWith .noSuchText (discard <| (TextId.mk 99).locate 0)
+        return located == expected && (← empty.locate 0) == none && past && plain && ofSnapshot &&
+            noText }]
+
 /-- The properties every implementation of the text port has: the read-only
 ones once over plain texts and once over excerpt texts of the same contents
 (`excerptOf`). -/
@@ -2886,7 +3028,8 @@ def properties : List Property :=
         motionPropertiesOver excerptOf ++
         searchPropertiesOver excerptOf ++
         pairPropertiesOver excerptOf) ++
-    excerptProperties
+    excerptProperties ++
+    excerptEditProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property

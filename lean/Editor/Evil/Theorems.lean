@@ -93,7 +93,7 @@ theorem Evil.deleteChar_undo (model : TextModel) (id : TextId) (content : TextCo
     TextM.runModel_apply, TextM.runModel_pure, TextModel.handle, TextModel.onSource,
     TextModel.onText, TextModel.lookup, live, TextModel.answer]
   generalize
-    model.apply id
+    model.applyText id
       { Transaction.replacing content.contents.utf8ByteSize extent.start extent.stop "" with
         before := some before, after := some after }
       Origin.user =

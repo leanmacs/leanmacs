@@ -108,8 +108,9 @@ theorem UndoTree.apply_undo (model : TextModel) (id : TextId) (content : TextCon
     UndoTree.undo_pending synced node Origin.user _ undone _ _ pending hereSynced inverse liveAfter
       (by simp [synced])
   refine ⟨moved, final, ?_, ?_, ?_⟩
-  · simp [applied, UndoTree.sync, UndoTree.record, TextModel.handle, TextModel.onSource,
-      TextModel.onText, TextModel.lookup, TextModel.changed, TextModel.answer, inTexts, over, told]
+  · simp [TextModel.applyText_plain _ _ _ _ _ live, applied, UndoTree.sync, UndoTree.record,
+      TextModel.handle, TextModel.onSource, TextModel.onText, TextModel.lookup, TextModel.changed,
+      TextModel.answer, inTexts, over, told]
     simpa [synced, TextModel.changed, over] using ran
   · rw [texts]
     exact restored

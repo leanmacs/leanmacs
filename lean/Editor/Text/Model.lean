@@ -91,15 +91,21 @@ the source's table of markers, the source's revision it last read and its
 range then (`ExcerptPiece`). **Between requests its slot in `TextModel.texts`
 is empty**; a request that names it lends it its content there
 (`TextModel.onText`), catches it up first (`TextModel.caughtUp`), answers as
-for any text and takes the content back. So the requests of a text's own
-(an edit, an inverse, an edit script, a trace) find no text there and are
-refused with `excerpted` by `TextModel.lookup` alone, and a hypothesis that
-a text's slot holds content says it is a plain text: every theorem about
-plain texts stands as it was. A catch-up cuts the source's patch to each
-excerpt by the rule the library uses (`TextModel.clipped`) and goes through
+for any text and takes the content back. So an inverse, an edit script and a
+trace of it find no text there and are refused with `excerpted` by
+`TextModel.lookup` alone, and a hypothesis that a text's slot holds content
+says it is a plain text: every theorem about plain texts stands as it was.
+An insert, a delete and a transaction go through `TextModel.editAny`, which
+takes today's path for a text whose slot holds content and lends an excerpt
+text for `TextModel.excerptApply`: the plain checks on what it holds, the
+runs mapped to its sources by the library's rule (`TextModel.excerptEdits`),
+each source given its runs through `TextModel.changed` like any edit, and
+then one catch-up. A catch-up cuts the source's patch to each excerpt by the
+rule the library uses (`TextModel.clipped`) and goes through
 `TextModel.changed` like any edit. A source that is released while an
 excerpt text reads it is kept as it was (`TextModel.retired`), its log
-staying where it is.
+staying where it is, and an edit through the excerpt text no longer reaches
+it.
 
 The contract (`Editor/Text/Contract.lean`) is what says the model and the real
 binding agree. A clause added to `TextModel.handle`, to `TextModel.answer` or
@@ -1135,6 +1141,9 @@ def answer (content : TextContent) : (query : TextQuery) → Except TextError qu
   | .unmatched bracket opening forward escaped skipQuoted offset =>
     unmatched? content.contents bracket opening forward escaped skipQuoted offset
   | .quoted quote offset => quoted? content.contents quote offset
+  -- Only a text answers it, and an excerpt text is answered before its
+  -- content is reached (`TextModel.locate`).
+  | .locate _ => .error .notExcerpted
 
 end TextModel
 
@@ -1936,11 +1945,174 @@ def releasing (model : TextModel) (id : TextId) : TextModel :=
       | _, _ => model
     model.released (.text id)
 
+/-- Where each of `pieces` starts in its excerpt text: one byte after the
+last ends. -/
+def startsOf (pieces : Array ExcerptPiece) : Array Nat :=
+  (pieces.foldl (init := (#[], 0)) fun (starts, here) piece =>
+      (starts.push here, here + (piece.range.2 - piece.range.1) + 1)).1
+
+/-- The piece of `pieces` that holds the position `offset` of its excerpt
+text, both its ends included, and where it starts there: the last that starts
+at or before `offset`, if it reaches it. `none` for an empty list, and past
+the end. -/
+def pieceAt? (pieces : Array ExcerptPiece) (offset : Nat) : Option (Nat × Nat) := do
+  let (start, index) ← ((startsOf pieces).zipIdx.toList.filter (·.1 ≤ offset)).getLast?
+  let piece ← pieces[index]?
+  guard (offset ≤ start + (piece.range.2 - piece.range.1))
+  return (index, start)
+
+/-- The runs `runs` of an edit of an excerpt text of `pieces`, mapped to its
+sources: each source the edit changes, by ascending id, with its runs, by
+ascending start. Refused with `outsideExcerpt` when a run is not inside one
+piece, both ends included, or its range in the source meets another piece of
+that source, both ends included; then with `noSuchText` when a source is no
+longer held (`retired`). This is the library's rule
+(`editor_text::excerpt`). -/
+def excerptEdits (model : TextModel) (pieces : Array ExcerptPiece) (runs : Array Run) :
+    Except TextError (Array (TextId × Array Run)) := do
+  let mut mapped : Array (TextId × Run) := #[]
+  for run in runs do
+    let some (index, here) := pieceAt? pieces run.start | throw .outsideExcerpt
+    let some piece := pieces[index]? | throw .outsideExcerpt
+    unless run.stop ≤ here + (piece.range.2 - piece.range.1) do
+      throw .outsideExcerpt
+    let start := piece.range.1 + (run.start - here)
+    let stop := piece.range.1 + (run.stop - here)
+    let twice :=
+      pieces.zipIdx.any fun (other, at') =>
+        at' != index && other.source == piece.source && (meet (start, stop) other.range).isSome
+    if twice then
+      throw .outsideExcerpt
+    mapped := mapped.push (piece.source, ⟨start, stop, run.inserted⟩)
+  let held (source : TextId) : Bool :=
+    match model.texts[source.index]? with
+    | some (some _) => true
+    | _ => false
+  if mapped.any (fun (source, _) => !held source) then
+    throw .noSuchText
+  let sources := (mapped.map (·.1.index)).toList.mergeSort (· ≤ ·) |>.eraseDups
+  return sources.toArray.map fun index =>
+      (⟨index⟩,
+        ((mapped.filter (·.1.index == index)).map (·.2)).toList.mergeSort
+            (fun one other => one.start ≤ other.start) |>.toArray)
+
+/-- The model after the source `id` is given the edit of the runs `runs`, in
+order, with `origin`, as an edit of it would be: one revision, recorded in
+its log, its markers moved. -/
+def sourceEdited (model : TextModel) (id : TextId) (runs : Array Run) (origin : Origin) :
+    TextModel :=
+  match model.texts[id.index]? with
+  | some (some content) =>
+    let text :=
+      (runs.foldrM (fun run made => splice made run.start run.stop run.inserted)
+            content.contents).getD
+        content.contents
+    model.changed id content text runs origin
+  | _ => model
+
+/-- The model's answer to an edit of the excerpt text `id`, and the model
+after it. `check`, given what the text holds once caught up, refuses the edit
+as a plain text would, or gives the runs it changes. They are mapped to the
+sources (`excerptEdits`), each source is given its edit with `origin`, by
+ascending id, and the excerpt text then catches up once: its revision is the
+reply. An edit that changes nothing is one revision of the excerpt text, as
+an edit of the list that changes nothing is. A refused edit changes no
+source. -/
+def excerptApply (model : TextModel) (id : TextId) (check : String → Except TextError (Array Run))
+    (origin : Origin) : Except TextError Nat × TextModel :=
+  model.onText id fun model =>
+    match model.excerptOf? id, model.texts[id.index]? with
+    | some excerpt, some (some content) =>
+      let checked :=
+        check content.contents |>.bind fun runs =>
+          model.excerptEdits excerpt.pieces
+            (runs.filter fun run => run.start != run.stop || !run.inserted.isEmpty)
+      match checked with
+      | .error refusal => (.error refusal, model)
+      | .ok edits =>
+        let model :=
+          edits.foldl (fun model (source, runs) => model.sourceEdited source runs origin) model
+        let model := model.caughtUp id
+        match model.texts[id.index]? with
+        | some (some after) =>
+          if after.revision == content.revision then
+            let pieces := ((model.excerptOf? id).map (·.pieces)).getD excerpt.pieces
+            (.ok (content.revision + 1),
+              (model.changed id content content.contents #[] .unattributed).listWrote id pieces
+                (content.revision + 1))
+          else (.ok after.revision, model)
+        | _ => (.ok content.revision, model)
+    | _, _ => (.error .noSuchText, model)
+
+/-- The runs a transaction changes of `text`, or its refusal, in the port's
+order: as `apply` refuses it. -/
+def transactionRuns (transaction : Transaction) (text : String) : Except TextError (Array Run) :=
+  if !(isSelection transaction.before && isSelection transaction.after) then .error .badSelection
+  else
+    match applyChanges text transaction.changes with
+    | none => .error .badChange
+    | some after =>
+      if selectionFits text transaction.before && selectionFits after transaction.after then
+        .ok (runsOf transaction.changes).1
+      else .error .badSelection
+
+/-- The run of a replace of `text`'s bytes from `start` up to `stop` by `s`,
+or `badRange`, as `edit` refuses it. -/
+def replaceRuns (start stop : Nat) (s : String) (text : String) : Except TextError (Array Run) :=
+  match splice text start stop s with
+  | none => .error .badRange
+  | some _ => .ok #[⟨start, stop, s⟩]
+
+/-- `plain` of the model when the text `id` is a plain text, or names
+nothing, and `excerpt` of it when it is an excerpt text. A text whose slot of
+`texts` holds content is plain, so every theorem about plain texts is about
+`plain`. -/
+def editAny {α : Type} (model : TextModel) (id : TextId)
+    (plain excerpt : TextModel → α × TextModel) : α × TextModel :=
+  match model.texts[id.index]? with
+  | some (some _) => plain model
+  | _ => if model.isExcerpt id then excerpt model else plain model
+
+/-- The model's answer to an insert or a delete of the text `id` that
+replaces its bytes from `start` up to `stop` by `s`: `edit` for a plain text,
+and for an excerpt text its sources' edit, made by nobody. -/
+def editText (model : TextModel) (id : TextId) (start stop : Nat) (s : String) :
+    Except TextError Unit × TextModel :=
+  model.editAny id (·.edit id start stop s) fun model =>
+    let (reply, model) := model.excerptApply id (replaceRuns start stop s) .unattributed
+    (reply.map fun _ => (), model)
+
+/-- The model's answer to applying `transaction` to the text `id`, with
+`origin`: `apply` for a plain text, and for an excerpt text its sources'
+edit. -/
+def applyText (model : TextModel) (id : TextId) (transaction : Transaction) (origin : Origin) :
+    Except TextError Nat × TextModel :=
+  model.editAny id (·.apply id transaction origin)
+    (·.excerptApply id (transactionRuns transaction) origin)
+
+/-- The model's answer to where the position `offset` of the excerpt text
+`id` is, caught up first: its piece, the piece's source, and the offset that
+far into the piece's range there. -/
+def locate (model : TextModel) (id : TextId) (offset : Nat) :
+    Except TextError (Option Located) × TextModel :=
+  model.onText id fun model =>
+    match model.excerptOf? id, model.texts[id.index]? with
+    | some excerpt, some (some content) =>
+      if isPosition content.contents offset then
+        (.ok do
+            let (index, here) ← pieceAt? excerpt.pieces offset
+            let piece ← excerpt.pieces[index]?
+            return ⟨index, piece.source, piece.range.1 + (offset - here)⟩,
+          model)
+      else (.error .badPosition, model)
+    | none, some (some _) => (.error .notExcerpted, model)
+    | _, _ => (.error .noSuchText, model)
+
 /-- The model's answer to each request, and the model after it. -/
 def handle : (request : TextRequest) → TextModel → request.Reply × TextModel
   | .create initial, model => model.made initial
-  | .insert id offset s, model => model.edit id offset offset s
-  | .delete id start stop, model => model.edit id start stop ""
+  | .insert id offset s, model => model.editText id offset offset s
+  | .delete id start stop, model => model.editText id start stop ""
   | .read id, model =>
     model.onText id fun model =>
       match model.lookup (.text id) with
@@ -1955,6 +2127,7 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
           { model with
             snapshots := model.snapshots.push (some content)
             snapshotOf := (padded model.snapshotOf model.snapshots.size).push (some id) })
+  | .ask (.text id) (.locate offset), model => model.locate id offset
   | .ask source query, model =>
     model.onSource source fun model =>
       match model.lookup source with
@@ -1968,7 +2141,7 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
       match model.lookup source with
       | .error refusal => (.error refusal, model)
       | .ok _ => (.ok (), model.released source)
-  | .apply id transaction origin, model => model.apply id transaction origin
+  | .apply id transaction origin, model => model.applyText id transaction origin
   | .log id query, model =>
     let answered (model : TextModel) : Except TextError query.Answer × TextModel :=
       match model.lookup (.text id) with
@@ -1994,6 +2167,28 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
       else model.onSource source (·.applyScript id base source script origin)
   | .excerpts list, model => model.createExcerpts list
   | .setExcerpts id list, model => model.setExcerpts id list
+
+/-- An edit of a plain text is `plain`, whatever `excerpt` is: the excerpt
+path is taken only by a text whose slot holds no content. -/
+theorem editAny_plain {α : Type} (model : TextModel) (id : TextId) (content : TextContent)
+    (plain excerpt : TextModel → α × TextModel)
+    (live : model.texts[id.index]? = some (some content)) :
+    model.editAny id plain excerpt = plain model := by simp [editAny, live]
+
+/-- An insert or a delete of a plain text is `edit`. -/
+@[simp]
+theorem editText_plain (model : TextModel) (id : TextId) (content : TextContent) (start stop : Nat)
+    (s : String) (live : model.texts[id.index]? = some (some content)) :
+    model.editText id start stop s = model.edit id start stop s :=
+  editAny_plain model id content _ _ live
+
+/-- A transaction of a plain text is `apply`. -/
+@[simp]
+theorem applyText_plain (model : TextModel) (id : TextId) (content : TextContent)
+    (transaction : Transaction) (origin : Origin)
+    (live : model.texts[id.index]? = some (some content)) :
+    model.applyText id transaction origin = model.apply id transaction origin :=
+  editAny_plain model id content _ _ live
 
 end TextModel
 
@@ -2048,12 +2243,12 @@ theorem runModel_read (id : TextId) (model : TextModel) :
 
 @[simp]
 theorem runModel_insert (id : TextId) (offset : Nat) (s : String) (model : TextModel) :
-    (id.insert offset s).runModel model = model.edit id offset offset s :=
+    (id.insert offset s).runModel model = model.editText id offset offset s :=
   rfl
 
 @[simp]
 theorem runModel_delete (id : TextId) (start stop : Nat) (model : TextModel) :
-    (id.delete start stop).runModel model = model.edit id start stop "" :=
+    (id.delete start stop).runModel model = model.editText id start stop "" :=
   rfl
 
 @[simp]
@@ -2089,7 +2284,7 @@ theorem runModel_release (source : TextSource) (model : TextModel) :
 @[simp]
 theorem runModel_apply (id : TextId) (transaction : Transaction) (origin : Origin)
     (model : TextModel) :
-    (id.apply transaction origin).runModel model = model.apply id transaction origin :=
+    (id.apply transaction origin).runModel model = model.applyText id transaction origin :=
   rfl
 
 @[simp]
