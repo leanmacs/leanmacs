@@ -1,4 +1,5 @@
 import Editor.Api
+import Editor.Compile.Listing
 import Editor.Workspace.Finder
 
 /-!
@@ -34,9 +35,12 @@ job's command call `markModes`. So this module imports neither
   directory, keeps the on-modes (`Workspace.onModes`) as the buffer-local
   value `marker-modes` (`Workspace.modesLocal`), nearest first, and adds
   each as a minor mode, the farthest first, so the buffer's minor modes
-  list the nearest first and its keymap wins. A buffer whose markers turn
-  no mode on is left as it was. A reload's contributions apply to files
-  opened after it.
+  list the nearest first and its keymap wins. Then it checks the on-modes'
+  listings in the buffer's place (`Compile.refreshListings`,
+  `Editor/Compile/Listing.lean`, which this module imports for it), so a
+  mode that computes its commands lists them as it turns on. A buffer
+  whose markers turn no mode on is left as it was. A reload's
+  contributions apply to files opened after it.
 - **Reading them back** (`onModesOf`): the on-modes a buffer keeps, none
   when it keeps none.
 
@@ -109,6 +113,8 @@ def modesFound (order : MarkerOrder) (present : Array (System.FilePath × String
   discard <| order.buffer.setValue modesLocal (.list (on.toList.map OnMode.encode))
   for mode in on.reverse do
     discard <| order.buffer.addMinorMode mode.mode
+  if let some place := Compile.placeOfBuffer (← editorState) order.buffer then
+    Compile.refreshListings place on
 
 /-- The marker job: stamps its order's markers (`presentMarkers`), and
 finishes with what they become (`modesFound`). It fails only for arguments

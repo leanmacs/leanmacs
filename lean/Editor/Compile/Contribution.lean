@@ -21,8 +21,18 @@ formats (`formats`, `Editor/Compile/Errors.lean`); and whether its root is
 its outermost marker in the workspace rather than its nearest
 (`outermost`). Registering a `Mode`
 record of the same name is optional: a buffer's minor modes are by name.
-A field a later phase needs, such as a command computed from the project,
-is added with a default, so every contribution written now stays valid.
+A contribution's commands may also be computed (`listing`, "Computed
+commands"). A field a later phase needs is added with a default, so every
+contribution written before stays valid.
+
+## Computed commands
+
+A contribution's `listing` is a program, run in the mode's root, whose
+standard output its `read` turns into named commands, as `mise-mode` reads
+`mise tasks ls --json`. When it runs, where what it gave is kept and how a
+failure is said are `Editor/Compile/Listing.lean`'s. A named command may
+carry the directory it runs in (`NamedCommand.directory`), resolved
+against its mode's root, as a mise task runs in its own `dir`.
 
 ## Project commands
 
@@ -36,10 +46,13 @@ project does, and a reload's change is read at once.
 ## The rules
 
 - **Offers** (`offers`): each on-mode's commands, in on-mode order (nearest
-  root first, then registration order), each mode's in its order, with the
-  mode's root. A project's command of a name the contribution already
-  gives replaces it in place; one of a new name comes after the
-  contribution's. A mode whose contribution is not registered offers
+  root first, then registration order), each mode's in its order. A
+  command its listing gave at the mode's root of a name the contribution
+  already gives replaces it in place; one of a new name comes after the
+  contribution's. A project's command of a name already there replaces it
+  in place; one of a new name comes after them. An offer runs in its
+  command's directory resolved against the mode's root (`resolve`, so an
+  absolute one is kept), else in the mode's root. A mode whose contribution is not registered offers
   nothing. An offer is shown as `<name> (<mode>)` (`Offer.candidate`).
 - **Choosing** (`chooseOffer`): an answer, trimmed, matches an offer's
   candidate whole first, then a bare command name, the first offer of that
@@ -67,6 +80,18 @@ structure NamedCommand where
   directory : Option System.FilePath := none
   deriving BEq, Repr
 
+/-- How a contribution's commands are also computed ("Computed commands",
+in the module docs): `program arguments…`, run in the mode's root, whose
+standard output `read` turns into named commands. -/
+structure Listing where
+  /-- The program, a bare name looked up on the child's `PATH`, or an
+  absolute path. -/
+  program : String
+  /-- Its arguments. -/
+  arguments : Array String := #[]
+  /-- What its standard output gives, or why it gives nothing. -/
+  read : ByteArray → Except String (Array NamedCommand)
+
 /-- What a minor mode gives the compile mode ("A contribution", in the
 module docs). -/
 structure Contribution where
@@ -81,6 +106,9 @@ structure Contribution where
   /-- Whether its root is its outermost marker in the workspace, not its
   nearest (`Editor/Workspace.lean`, "Modes on markers"). -/
   outermost : Bool := false
+  /-- How its commands are also computed, if they are ("Computed commands",
+  in the module docs). -/
+  listing : Option Listing := none
 
 /-- The contribution's mode, markers and root rule, as the marker search is
 handed them. -/
@@ -157,17 +185,23 @@ def withProject (commands project : Array NamedCommand) : Array NamedCommand :=
     commands
 
 /-- The named commands offered for the on-modes `modes`, given the
-registered `contributions` and the project's commands `projects`
-("Offers", in the module docs). -/
+registered `contributions`, the project's commands `projects` and the
+commands each mode's listing gave at a root, `listed` ("Offers", in the
+module docs). -/
 def offers (contributions : Array Contribution) (projects : Array ProjectCommands)
-    (modes : Array Workspace.OnMode) : Array Offer :=
+    (modes : Array Workspace.OnMode)
+    (listed : String → System.FilePath → Array NamedCommand := fun _ _ => #[]) : Array Offer :=
   modes.flatMap fun on =>
     match contributions.find? (·.mode == on.mode) with
     | none => #[]
     | some contribution =>
       let project := (projects.filter (·.mode == on.mode)).flatMap (·.commands)
-      (withProject contribution.commands project).map fun command =>
-        { mode := on.mode, name := command.name, line := command.line, root := on.root }
+      (withProject (withProject contribution.commands (listed on.mode on.root)) project).map
+        fun command =>
+        { mode := on.mode, name := command.name, line := command.line
+          root :=
+            (command.directory.map fun directory => resolve on.root directory.toString).getD
+              on.root }
 
 /-- The error formats in use for the on-modes `modes` ("Formats in use", in
 the module docs). -/

@@ -25,7 +25,10 @@ line's (`Editor/Ex/Compiled.lean`), which binds the ex names `compile`,
   location on the cursor's line of a compilation buffer, the mode's
   `activate` (`Compile.gotoCommand`).
 - **`Compile.jobs`**: `compile-run`, which runs the child, posts its output
-  as it comes and finishes with how it ended (`Compile.runWork`). A host
+  as it comes and finishes with how it ended (`Compile.runWork`); and
+  `compile-list`, which runs a contribution's listing in its mode's root
+  when its markers' stamps have changed (`Compile.listWork`,
+  `Editor/Compile/Listing.lean`). A host
   that is not handed it runs no compile, and says so when one is asked for.
 - **`Compile.modes`**: `compilation`, the compilation buffer's major mode
   (`Compile.mode`).
@@ -55,7 +58,7 @@ def commands : Array Config.Registration :=
 /-- The compile mode's job, as a host registers it for the owner
 `compiled`. -/
 def jobs : Array Config.JobRegistration :=
-  #[{ name := runJob, work := runWork }]
+  #[{ name := runJob, work := runWork }, { name := listJob, work := listWork }]
 
 /-- The compile mode's modes, as a host registers them for the owner
 `compiled`. -/

@@ -28771,10 +28771,11 @@ def compileWorld : Workspace.World :=
         { toplevel := "/clone/r", commonDir := "/clone/r/.git", origin := some workspaceOrigin }
     markerDirectories := workspaceWorld.markerDirectories.push "/clone/r/.git" }
 
-/-- The jobs of the compile checks: the shell checks', and the compile's run
-job. -/
+/-- The jobs of the compile checks: the shell checks', the compile's run job
+and its listing job. -/
 def compileJobs (name : String) : Option (List Argument → Work) :=
-  if name == Compile.runJob then some Compile.runWork else shellJobs name
+  if name == Compile.runJob then some Compile.runWork
+  else if name == Compile.listJob then some Compile.listWork else shellJobs name
 
 /-- What `make` in `/r` does: writes `one`, pauses 100 ms, writes `two`,
 pauses 100 ms and writes `three` on its standard error. -/
@@ -30772,6 +30773,204 @@ def jsonChecks : List Check :=
             refused "[{\"name\": 1}]" == some "task 1 has no name" &&
             refused "[" == some "a value is missing") }]
 
+/-- What `t-mode`'s listing prints, read: one command a line, `name=line`
+or `name=line=directory`. -/
+def tRead (bytes : ByteArray) : Except String (Array Compile.NamedCommand) := do
+  let some text := String.fromUTF8? bytes | throw "it is not UTF-8"
+  ((text.splitOn "\n").filter (!·.isEmpty)).toArray.mapM fun line =>
+      match line.splitOn "=" with
+      | [name, line] => pure { name, line }
+      | [name, line, directory] => pure { name, line, directory := some directory }
+      | _ => throw s!"{line} is no command"
+
+/-- The contribution of the listing checks: `t-mode` on `t.toml`, with the
+commands `build` (`t-fixed-build`) and `check` (`t-check`), and its listing
+`t-list`, read by `tRead`. -/
+def tContribution : Compile.Contribution :=
+  { mode := "t-mode", markers := #["t.toml"]
+    commands :=
+      #[{ name := "build", line := "t-fixed-build" }, { name := "check", line := "t-check" }]
+    listing := some { program := "t-list", read := tRead } }
+
+/-- The listing `t-list` in `directory`. -/
+def tList (directory : System.FilePath) : Process.Command :=
+  { program := "t-list", directory }
+
+/-- The world of the listing checks: the repositories `/t` and `/t2`, each
+holding `t.toml`. -/
+def listingWorld : Workspace.World :=
+  { repositories :=
+      #[{ toplevel := "/t", commonDir := "/t/.git" },
+        { toplevel := "/t2", commonDir := "/t2/.git" }]
+    markerDirectories := #["/t/.git", "/t2/.git"], markers := #["/t/t.toml", "/t2/t.toml"] }
+
+/-- The bindings of the listing checks: the hook checks', and `C-p 1`,
+`C-p 2` and `C-p 3`, which open `/t/a.txt`, `/t/b.txt` and `/t2/a.txt`. -/
+def listingBindings : List (String × Invocation) :=
+  hookBindings ++
+    [("C-p 1", opens "/t/a.txt"), ("C-p 2", opens "/t/b.txt"), ("C-p 3", opens "/t2/a.txt")]
+
+/-- What each run of the listing checks does: `t-list` in `/t` lists
+`build`, `fmt` and `sub`, in `sub`; in `/t2` it fails. -/
+def listingScripts : Array Process.Script :=
+  #[{ command := tList "/t", reply := shellReply "build=t-build\nfmt=t-fmt\nsub=t-sub=sub\n" },
+    { command := tList "/t2", reply := shellReply "" "t-list: broken\nmore\n" (.code 3) }]
+
+/-- The streaming children of the listing checks. -/
+def listingStreams : Array Process.StreamScript :=
+  #[{ command := shellCommand "/t" "t-build", steps := linesSteps ["ok"] },
+    { command := shellCommand "/t/sub" "t-sub", steps := linesSteps ["ok"] }]
+
+/-- A driver of the listing checks over `registry`, by default `t-mode`
+registered in config: the world of `listingWorld`, with its bindings, the
+compile checks' jobs, its files, runs and children; `none` if making the
+state was refused. -/
+def listingDriver (registry : Config.Registry := hookRegistry (compileContribution tContribution)) :
+    Option TestDriver :=
+  let model := listingWorld.jobModel "git" #["/t", "/t2"]
+  let files :=
+    [("/t/a.txt", "a"), ("/t/b.txt", "b"), ("/t2/a.txt", "a")].foldl
+      (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
+  let keys := compileKeysOf listingBindings
+  let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
+  (Loop.Driver.over keys compileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver =>
+    { driver with
+      jobs :=
+        { model with
+          files
+          processes :=
+            { model.processes with
+              scripts := model.processes.scripts ++ listingScripts, streams := listingStreams } } }
+
+/-- How many times `driver` has started `command`. -/
+def startedCount (driver : TestDriver) (command : Process.Command) : Nat :=
+  (driver.jobs.processes.started.filter (· == command)).size
+
+/-- `driver` once every pending job not called `name` is finished, oldest
+first, with those they start; bounded. -/
+def settledBut (driver : TestDriver) (name : String) : TestDriver :=
+  (List.range 8).foldl
+    (fun driver _ =>
+      match driver.pending.find? (·.name != name) with
+      | some job => (driver.finish job.id).1
+      | none => driver)
+    driver
+
+/-- The checks of a contribution's computed commands
+(`Editor/Compile/Listing.lean`), on the loop's driver over the editor's
+models, the job model and the process model, with `t-mode`. -/
+def listingChecks : List Check :=
+  [{  name :=
+        "turning t-mode on runs its listing t-list in its root once, after find-mode-markers; a second file under the root starts compile-list again and runs nothing"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let (first, names) := settledNames driver "C-p 1"
+            let (second, again) := settledNames first "C-p 2"
+            shownOnModes first == some #[{ mode := "t-mode", root := "/t" }] &&
+              names.filter (fun name => name == Workspace.markerJob || name == Compile.listJob) ==
+                #[Workspace.markerJob, Compile.listJob] &&
+              startedCount first (tList "/t") == 1 &&
+              again.contains Compile.listJob &&
+              startedCount second (tList "/t") == 1 &&
+              (Compile.entriesOf second.loop.state (some "/t")).size == 1 },
+    { name :=
+        "compile-command offers the listed commands after the contribution's own, a listed name in place of its own: build runs t-build in /t, and sub, listed in sub, runs t-sub in /t/sub"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p 1"
+            let asked := pressedOn opened "C-k i"
+            let built := drained (fedTo opened (exLine "compile-command build")).1
+            let subbed := drained (fedTo opened (exLine "compile-command sub")).1
+            (candidatesOf asked).map (·.all) ==
+                some #["build (t-mode)", "check (t-mode)", "fmt (t-mode)", "sub (t-mode)"] &&
+              built.jobs.processes.started.back? == some (shellCommand "/t" "t-build") &&
+              subbed.jobs.processes.started.back? == some (shellCommand "/t/sub" "t-sub") &&
+              startedCount subbed (tList "/t") == 1 },
+    { name :=
+        "offers puts a mode's listed commands after its own, a listed name in place of its own, and a project's command in place of a listed one; a listed directory resolves against the root and an absolute one is kept"
+      run :=
+        let listed (mode : String) (root : System.FilePath) : Array Compile.NamedCommand :=
+          if mode == "t-mode" && root == "/t" then
+            #[{ name := "build", line := "t-build" }, { name := "fmt", line := "t-fmt" },
+              { name := "sub", line := "t-sub", directory := some "sub" },
+              { name := "abs", line := "t-abs", directory := some "/elsewhere" }]
+          else #[]
+        let project : Array Compile.ProjectCommands :=
+          #[{ project := .remote "github.com/o/r", mode := "t-mode"
+              commands := #[{ name := "fmt", line := "p-fmt" }] }]
+        let offer (name line : String) (root : System.FilePath := "/t") : Compile.Offer :=
+          { mode := "t-mode", name, line, root }
+        pure
+          (Compile.offers #[tContribution] project #[{ mode := "t-mode", root := "/t" }] listed ==
+              #[offer "build" "t-build", offer "check" "t-check", offer "fmt" "p-fmt",
+                offer "sub" "t-sub" "/t/sub", offer "abs" "t-abs" "/elsewhere"] &&
+            Compile.offers #[tContribution] #[] #[{ mode := "t-mode", root := "/t2" }] listed ==
+              #[offer "build" "t-fixed-build" "/t2", offer "check" "t-check" "/t2"]) },
+    { name :=
+        "a listing that fails offers none of its commands and says why once, with its first line of standard error"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p 3"
+            let asked := settledAfter opened "C-k i"
+            echoOf opened == some "t-mode in /t2: t-list exited with status 3: t-list: broken" &&
+              (candidatesOf asked).map (·.all) == some #["build (t-mode)", "check (t-mode)"] &&
+              startedCount asked (tList "/t2") == 1 },
+    { name :=
+        "with t-mode dropped from the hook before its listing job's command runs, the command keeps no entry"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let waiting := settledBut (fedTo driver (presses "C-p 1")).1 Compile.listJob
+            let dropped :=
+              { waiting with
+                keys :=
+                  { waiting.keys with
+                    registered := { waiting.keys.registered with compile := {} } } }
+            let listed :=
+              match dropped.pending.find? (·.name == Compile.listJob) with
+              | some job => (dropped.finish job.id).1
+              | none => dropped
+            startedCount listed (tList "/t") == 1 &&
+              (Compile.entriesOf listed.loop.state (some "/t")).isEmpty },
+    { name :=
+        "a listing order and an entry cross as arguments and as a tree and back, and arguments that are no order read as none; the listing job started with them fails"
+      run :=
+        let stamp : File.Stamp := { seconds := -3, nanoseconds := 4, size := 5 }
+        let orders : List Compile.ListOrder :=
+          [{ place := some "/t", mode := "t-mode", root := "/t/a", generation := 2,
+             markers := #["t.toml", "u.toml"], held := some #[some stamp, none],
+             program := "t-list", programArguments := #["a", "b c"] },
+            { place := none, mode := "m", root := "/x", generation := 0, markers := #[],
+              held := none
+              program := "p", programArguments := #[] }]
+        let entries : Array Compile.Listing.Entry :=
+          #[{ mode := "t-mode", root := "/t", generation := 1, stamps := #[some stamp, none],
+              outcome :=
+                .listed
+                  #[{ name := "a", line := "x" },
+                    { name := "b", line := "y", directory := some "s" }] },
+            { mode := "u", root := "/u", generation := 0, stamps := #[], outcome := .failed "why" }]
+        pure
+          (orders.all (fun order => Compile.ListOrder.ofArguments? order.arguments == some order) &&
+            [[], [.str "unscoped", .str "m"],
+                  [.str "unscoped", .str "m", .str "/x", .nat 0, .nat 1]].all
+              (Compile.ListOrder.ofArguments? · == none) &&
+            Compile.listingStore.decode (Compile.listingStore.encode entries) == some entries &&
+            Compile.listingStore.name == "compile-listings" &&
+            ((Compile.listWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
+
 /-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
 `abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts
 `x` at the window's cursors; `C-r d` (`delete-first`) deletes the first byte
@@ -31030,7 +31229,8 @@ def checks : List Check :=
     compileLocationChecks ++
     compileHookChecks ++
     projectFormatChecks ++
-    jsonChecks
+    jsonChecks ++
+    listingChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

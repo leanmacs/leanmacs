@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Compile.Contribution
 import Editor.Compile.Errors
+import Editor.Compile.Listing
 import Editor.File
 import Editor.Files
 import Editor.Mode
@@ -225,7 +226,15 @@ next command.
   In the scope's own compilation buffer, which has no file and so no
   on-modes of its own, `compile` uses the record's (`modesOf`).
 - **Named commands.** `compile-command` offers every on-mode's commands
-  (`offers`) and runs the chosen one's line in its mode's root.
+  (`offers`) and runs the chosen one's line in its mode's root, or in the
+  directory the command names.
+- **Computed commands.** A use, `compile`'s prompt and every path of
+  `compile-command`, first checks the on-modes' listings in the scope's
+  place (`refreshScope`, `Editor/Compile/Listing.lean`), which reruns a
+  listing whose markers' stamps changed, or after a reload; that use
+  offers what was last listed, and a new list is offered from the use after
+  the check's job's command arrives. The commands listed are offered with
+  the contribution's own (`listedCommands`, `offers`).
 - **Formats.** A run's output is read with its modes' formats, then the
   general one ("Locations").
 - **Project commands.** Config's project commands (`projectCommands`,
@@ -357,6 +366,13 @@ def Scope.of (state : EditorState) (buffer : BufferId) : Scope :=
 def Scope.place : Scope → Place
   | .workspace found _ => .workspace found.location
   | .directory path => .directory path
+
+/-- The scope's listing place (`Editor/Compile/Listing.lean`): its local
+workspace's root, `some none` for a directory scope, and none for a
+workspace where commands cannot run. -/
+def Scope.listingPlace : Scope → Option (Option System.FilePath)
+  | .workspace found _ => placeOfLocation found.location
+  | .directory _ => some none
 
 /-- The scope's label: its workspace's, or its directory's last
 component. -/
@@ -540,15 +556,26 @@ def projectSettings (identity : Project.Identity) (mode : String) :
   return (← EditorState.ask .compileHook).settingsOf identity mode
 
 /-- The commands the on-modes `modes` offer in `scope` ("The hook", in the
-module docs): the hook asked of the loop, with, for a workspace scope, its
-project's commands. -/
+module docs): the hook asked of the loop, with the commands the scope's
+listings last gave and, for a workspace scope, its project's commands. -/
 def hookOffers (scope : Scope) (modes : Array Workspace.OnMode) : EditorM (Array Offer) := do
   let hook ← EditorState.ask .compileHook
   let projects :=
     match scope with
     | .workspace _ project => hook.projectsOf project.identity
     | .directory _ => #[]
-  return offers hook.contributions projects modes
+  let state ← editorState
+  let listed :=
+    match scope.listingPlace with
+    | some place => listedCommands state place
+    | none => fun _ _ => #[]
+  return offers hook.contributions projects modes listed
+
+/-- Checks the listings of the on-modes `modes` in `scope`'s place, at a use
+of the hook ("The hook", in the module docs). -/
+def refreshScope (scope : Scope) (modes : Array Workspace.OnMode) : EditorM Unit := do
+  if let some place := scope.listingPlace then
+    refreshListings place modes
 
 /-- The on-modes `modes` as arguments: each one's name, then its root. -/
 def modeArguments (modes : Array Workspace.OnMode) : List Argument :=
@@ -899,6 +926,7 @@ def compileCommand (call : Call) : EditorM Unit := do
 where
   /-- Opens the prompt for a line, whose answer comes back to `compile`. -/
   ask (scope : Scope) (record : Record) (modes : Array Workspace.OnMode) : EditorM Unit := do
+    refreshScope scope modes
     let offered ← hookOffers scope modes
     let initial :=
       match record.last, offered[0]? with
@@ -921,6 +949,7 @@ def commandCommand (call : Call) : EditorM Unit := do
     return
   let record := recordOf (← editorState) scope.place
   let modes := modesOf (← editorState) record call.target.window.buffer
+  refreshScope scope modes
   let offered ← hookOffers scope modes
   if offered.isEmpty then
     message (noModeCommands scope.label)
