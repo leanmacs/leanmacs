@@ -3918,6 +3918,27 @@ def languageChecks (context : Context) : List Check :=
                   (← noHighlightsRefusal session)
           return drawn && (← opened "open-toml" toml) && (← opened "open-lock" lock) },
     { name :=
+        "opening a .lean file and a file named lakefile.lean gives each buffer the language lean and the major mode code, and highlights its text with Lean's shipped query, keywords in the keyword face, strings in the string face, comments in the comment face, booleans in the constant face and namespaces in the module face, with no refusal said"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let main := files / "Main.lean"
+          let lakefile := files / "lakefile.lean"
+          IO.FS.writeFile main
+              "/-- Says hello. -/\ndef main : IO Unit := IO.println \"hi\" -- greet\n"
+          IO.FS.writeFile lakefile "import Lake\nopen Lake DSL\n\npackage demo\n"
+          let expected ← shippedHighlightRequests "lean" Language.lean.syntaxTree.captures
+          let faces := ((expected[5]?.getD "").replace "highlight " "").splitOn ", "
+          let drawn :=
+            ["syntax.keyword", "syntax.string", "syntax.comment", "syntax.constant",
+                  "syntax.module"].all
+              faces.contains
+          let opened (name : String) (path : System.FilePath) : IO Bool :=
+            withLanguageHost context "" [(name, path)] fun session asked => do
+              let report ← reportedAfter session name
+              return report == some "lean code".quote && (← asked.get).extract 0 7 == expected &&
+                  (← noHighlightsRefusal session)
+          return drawn && (← opened "open-lean" main) && (← opened "open-lake" lakefile) },
+    { name :=
         "opening a file whose name matches no language gives its buffer no language and no major mode, and asks the syntax tree port nothing"
       run :=
         IO.FS.withTempDir fun files => do
@@ -4872,7 +4893,7 @@ keymap of its bindings. Its services are a fake clock's over a table of
 waits of its own, which no pump reads: nothing here starts a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
-        "the executable's hosts start with the code mode and the languages rust, json, markdown and toml, in that order, registered for the owner compiled"
+        "the executable's hosts start with the code mode and the languages rust, json, markdown, toml and lean, in that order, registered for the owner compiled"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -4884,7 +4905,8 @@ def shippedChecks (_ : Unit) : List Check :=
               (fun entry => entry.mode.name == Language.codeName && entry.owner == .compiled) &&
             (registry.mode? Language.codeName).any (·.syntaxTreeOfLanguage) &&
             registry.languages.map (fun entry => (entry.language.name, entry.owner == .compiled)) ==
-              #[("rust", true), ("json", true), ("markdown", true), ("toml", true)] },
+              #[("rust", true), ("json", true), ("markdown", true), ("toml", true),
+                ("lean", true)] },
     { name :=
         "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, each registered for the owner compiled; with switch-buffer, list-buffers and close-buffer registered for it, and the ex names b, ls and bd bound to them"
       run := do

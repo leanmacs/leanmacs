@@ -35,9 +35,10 @@ entries (`Language.forPath`); config only supplies entries.
 ## The shipped table
 
 `Language.shipped` is `rust` (`*.rs`, four spaces), `json` (`*.json`, two
-spaces), `markdown` (`*.md`, two spaces) and `toml` (`*.toml` and
-`Cargo.lock`, two spaces), each parsed with the grammar of its name and that
-grammar's shipped queries. Each is a named definition, so config can write
+spaces), `markdown` (`*.md`, two spaces), `toml` (`*.toml` and
+`Cargo.lock`, two spaces) and `lean` (`*.lean`, `lakefile.lean` included, two
+spaces), each parsed with the grammar of its name and that grammar's shipped
+queries. Each is a named definition, so config can write
 `{ Language.rust with … }`.
 
 `toml` maps one capture: its grammar's highlights capture booleans as
@@ -46,6 +47,14 @@ in `syntax.constant`, as Rust's `true` and `false` are drawn. Other TOML
 files with no `.toml` extension (`uv.lock`, `poetry.lock`, `Pipfile`) are
 not in the shipped table; config adds one in a line:
 `defineLanguage { Language.toml with patterns := Language.toml.patterns ++ [.name "uv.lock"] }`.
+
+`lean` maps three captures its grammar's highlights query draws and the face
+vocabulary has no face for: `boolean` (`true`, `false`, `True`, `False`) in
+`syntax.constant`, as TOML's and Rust's are drawn; `character` (`'c'`) in
+`syntax.string`, the face of a string or character literal; and `namespace`
+(the names after `namespace`, `section` and `end`) in `syntax.module`, the
+face of a module or namespace's name. `lean-toolchain`, `*.olean` and
+`*.ilean` are not `*.lean`, so they have no language.
 
 ## The matching rule (`forPath`)
 
@@ -138,9 +147,21 @@ def toml : Language :=
     syntaxTree := { grammar := "toml", captures := [("boolean", some ⟨"syntax.constant"⟩)] }
     indentUnit := .spaces 2 }
 
+/-- Lean: `*.lean` (`lakefile.lean` included), the grammar `lean`, two
+spaces; its booleans drawn as constants, its characters as strings and its
+namespaces as modules. -/
+def lean : Language :=
+  { name := "lean", patterns := [.extension "lean"]
+    syntaxTree :=
+      { grammar := "lean"
+        captures :=
+          [("boolean", some ⟨"syntax.constant"⟩), ("character", some ⟨"syntax.string"⟩),
+            ("namespace", some ⟨"syntax.module"⟩)] }
+    indentUnit := .spaces 2 }
+
 /-- The languages that ship, in their order. -/
 def shipped : Array Language :=
-  #[rust, json, markdown, toml]
+  #[rust, json, markdown, toml, lean]
 
 /-- The name of the one major mode a buffer with a language is put in. -/
 def codeName : String :=

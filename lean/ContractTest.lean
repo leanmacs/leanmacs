@@ -2095,6 +2095,48 @@ def syntaxTreeChecks : List Check :=
         return published.isOk && (frame.splitOn header).length == 2 &&
             (frame.splitOn pair).length == 2 },
     { name :=
+        "a Lean text entered with the lean language's tree is drawn by the real display with its keyword in the keyword face's colour, its string in the string face's colour and its comment in the comment face's colour"
+      run := do
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let syntaxTree := settlingAttach table real.handle
+        let red := Color.rgb 0xcc 0 0
+        let green := Color.rgb 0 0xcc 0
+        let blue := Color.rgb 0 0 0xcc
+        let display ← Ffi.Display.newCells 8 16
+        let shown ←
+          RealDisplay.over display table.reader
+              #[{ name := ⟨"syntax.keyword"⟩, face := { foreground := some red } },
+                { name := ⟨"syntax.string"⟩, face := { foreground := some green } },
+                { name := ⟨"syntax.comment"⟩, face := { foreground := some blue } }]
+        let entered : EditorM (SnapshotId × MarkerId) := do
+          let text ← createText "def x := \"a\"\n-- c\n"
+          Highlight.enter "lean" text Language.lean.syntaxTree
+          return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
+        let (.ok (snapshot, scroll), texts) ←
+          entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
+        let some found ← table.find? snapshot | return false
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        discard drainedParsed
+        let scene : Scene :=
+          { size := { width := 160, height := 64 }
+            views :=
+              #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 160, height := 64 }, snapshot
+                  scroll, selections := #[], cursor := { shape := .block, face := ⟨"cursor"⟩ }
+                  decorations := #[], status := #[] }]
+            focused := none, echo := "", pending := "", preedit := none }
+        let publish : EditorM Unit := Display.publish scene
+        let (published, _) ← publish.runReal texts shown.handle
+        let frame ← display.frameText
+        -- `def x := "a"`: `def` red, ` x := ` in no face of these, the
+        -- string green; `-- c`: the comment blue.
+        let definition :=
+          "runs 0..3:cc0000ff/ffffffff 3..9:000000ff/ffffffff 9..12:00cc00ff/ffffffff\n"
+        let comment := "runs 0..4:0000ccff/ffffffff\n"
+        return published.isOk && (frame.splitOn definition).length == 2 &&
+            (frame.splitOn comment).length == 2 },
+    { name :=
         "a Markdown text with a fenced Rust block, entered with the shipped default, is drawn by the real display with the fence's `fn` in the keyword face's colour"
       run := do
         let table ← Snapshots.new
