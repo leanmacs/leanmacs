@@ -4219,7 +4219,62 @@ def reloadChecks (context : Context) : List Check :=
                   output.contains s!"job 2 {Files.reloadJob}: ok" &&
                   output.contains s!"text 1: {new.quote}" &&
                   echo == "".quote &&
-                  lines == #[viewLine new 16, status] }]
+                  lines == #[viewLine new 16, status] },
+    { name :=
+        "a real config overrides one field of a shipped contribution: { Compile.cargoMode with commands := … } elaborates, and over the shipped contributions the hook's cargo-mode has config's one command with the shipped marker, root rule and rustc format, and lake-mode and mise-mode follow"
+      run := do
+        let text :=
+          "def setup : SetupM Unit := do
+  compileContribution
+      { Compile.cargoMode with commands := #[{ name := \"build\", line := \"cargo build --release\" }] }
+"
+        let some state := (← onBase context "config.lean" text).state | return false
+        let .ok program ← context.elaborator.setup state | return false
+        let .ok registrations := Config.Registrations.ofSetup program | return false
+        let registry :=
+          (({} : Config.Registry).replaceContributions .compiled
+                Compile.shipped).replaceContributions
+            .config registrations.contributions
+        let hook := registry.compileHook
+        return hook.contributions.map (·.mode) == #["cargo-mode", "lake-mode", "mise-mode"] &&
+            (hook.contributions[0]?.map fun cargo =>
+                (cargo.commands.map (·.line), cargo.markers, cargo.outermost,
+                  cargo.formats.map (·.name))) ==
+              some (#["cargo build --release"], #["Cargo.toml"], true, #["rustc"]) },
+    { name :=
+        "a real config whose setup registers a compile contribution with a format of its own, and project commands, elaborates, and installs them: the format reads its line and the project's commands are kept"
+      run := do
+        let text :=
+          "def atFormat : Compile.Format :=
+  { name := \"at\"
+    pattern :=
+      [Compile.step
+          [{ atom := .literal \"at \" }, { atom := .noneOf [' '], into := some .file },
+            { atom := .literal \" line \" }, { atom := .digits, into := some .line }]] }
+
+def setup : SetupM Unit := do
+  compileContribution
+      { mode := \"a-mode\", markers := #[\"a.toml\"], commands := #[{ name := \"build\", line := \"make\" }]
+        formats := #[atFormat] }
+  projectCommands (.remote \"github.com/o/r\") \"a-mode\" [(\"lint\", \"make lint\")]
+      [(\"profile\", .str \"dev\")]
+"
+        let some state := (← onBase context "config.lean" text).state | return false
+        let .ok program ← context.elaborator.setup state | return false
+        let .ok registrations := Config.Registrations.ofSetup program | return false
+        let registry :=
+          { ({} : Config.Registry).replaceContributions .config registrations.contributions with
+            projectCommands := registrations.projectCommands }
+        let hook := registry.compileHook
+        return hook.contributions.map (·.mode) == #["a-mode"] &&
+            (hook.contributions.map fun contribution =>
+                contribution.formats.map fun format =>
+                  (format.read? "at src/x.rs line 4").map fun reading =>
+                    (reading.file, reading.line)) ==
+              #[#[some ("src/x.rs", 4)]] &&
+            hook.projects.map
+                (fun entry => (entry.mode, entry.commands.map (·.line), entry.settings)) ==
+              #[("a-mode", #["make lint"], [("profile", Value.str "dev")])] }]
 
 /-- Rewrites the file at `path` with `text` from another process, as agents
 and editors write: a temporary file beside it, renamed over it. Waits for
@@ -4931,7 +4986,7 @@ def shippedChecks (_ : Unit) : List Check :=
             ex "ls" == some Buffers.listName &&
             ex "bd" == some Buffers.closeName },
     { name :=
-        "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation and compilation-output, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile and kill-compilation bound to them"
+        "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation, compilation-output, next-error, previous-error and compile-goto-error, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile, kill-compilation, next-error and previous-error bound to them"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -4941,7 +4996,7 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := Headless.compiled shipped
         let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
         return [Compile.compileName, Compile.recompileName, Compile.confirmName, Compile.killName,
-                  Compile.outputName].all
+                  Compile.outputName, Compile.nextName, Compile.previousName, Compile.gotoName].all
               compiled &&
             (registry.findJob? Compile.runJob).any (·.owner == .compiled) &&
             (registry.mode? Compile.modeName).isSome &&
@@ -4949,7 +5004,36 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.ex? "compile" ==
               some { name := "compile", command := Compile.compileName, takes := .text } &&
             (registry.ex? "recompile").map (·.command) == some Compile.recompileName &&
-            (registry.ex? "kill-compilation").map (·.command) == some Compile.killName },
+            (registry.ex? "kill-compilation").map (·.command) == some Compile.killName &&
+            (registry.ex? "next-error").map (·.command) == some Compile.nextName &&
+            (registry.ex? "previous-error").map (·.command) == some Compile.previousName },
+    { name :=
+        "the executable's hosts start with compile-command registered for the owner compiled, and the ex name compile-command, which takes text, bound to it; no default key binds it"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return (registry.find? Compile.commandName).any (·.owner == .compiled) &&
+            registry.ex? "compile-command" ==
+              some { name := "compile-command", command := Compile.commandName, takes := .text } &&
+            !(registry.bindings.any (·.binding.command == Compile.commandName)) },
+    { name :=
+        "the executable's hosts start with the jobs find-mode-markers and compile-list registered for the owner compiled, beside find-workspace, and with cargo-mode, lake-mode and mise-mode as the compiled contributions, in that order"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return (registry.findJob? Workspace.markerJob).any (·.owner == .compiled) &&
+            (registry.findJob? Workspace.findJob).any (·.owner == .compiled) &&
+            (registry.findJob? Compile.listJob).any (·.owner == .compiled) &&
+            (registry.contributions.filter (·.owner == .compiled)).map (·.contribution.mode) ==
+              #["cargo-mode", "lake-mode", "mise-mode"] },
     { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
       run := do

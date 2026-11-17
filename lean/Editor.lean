@@ -2,6 +2,7 @@ import Editor.Api.Theorems
 import Editor.Buffers
 import Editor.Command.Append
 import Editor.Compile
+import Editor.Compile.Shipped
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
@@ -164,7 +165,9 @@ like any other. A buffer's workspace is attached when its file opens
 brings the data and the finder with it), and
 `workspace-current` says it; their registrations
 (`Editor/Workspace/Compiled.lean`) name the registry and are not
-imported. Its model and its contract
+imported. A buffer is given the minor modes its markers turn on when its
+file opens (`Editor/Workspace/Modes.lean`, which comes with the attach).
+Its model and its contract
 (`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
 tests, and are not imported.
 
@@ -175,7 +178,12 @@ registrations (`Editor/Shell/Compiled.lean`) name the registry and are not
 imported. So is `compile` (`Editor/Compile.lean`): a build or test command
 run per workspace, its output streamed into the workspace's compilation
 buffer; its registrations (`Editor/Compile/Compiled.lean`) are not
-imported either.
+imported either. What a minor mode gives it, its markers, named commands
+and error formats (`Editor/Compile/Contribution.lean`, with the formats of
+`Editor/Compile/Errors.lean`), comes with `Editor/Setup.lean`, which
+registers it (`compileContribution`, `projectCommands`). The formats that
+ship (`Editor/Compile/Shipped.lean`) are imported, so config can build on
+them.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

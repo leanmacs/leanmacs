@@ -68,7 +68,9 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
 vocabulary (`Face.vocabulary`, `Editor/Face/Vocabulary.lean`), `default`
 first, which sets every attribute. Among them is `search-match`, which the
 matches of the last search are drawn in (`Editor/Loop.lean`,
-"Decorations"). Layout reads four names by itself:
+"Decorations"), and `compilation.error`, `compilation.warning` and
+`compilation.note`, which the compile mode's locations are drawn in
+(`Editor/Compile.lean`, "Locations"). Layout reads four names by itself:
 `default`, under every other face; `selection`, which the selections are
 drawn in; `mode-line`, under each field of a view's status line; and
 `echo-area`, the echo in the frame's bottom row. Any other name is whatever
@@ -301,13 +303,18 @@ mode line and the echo area are padded 3 points above and below, the owner's
 picked look, so the bottom row is the same height whether it holds a
 window's mode line, a prompt or the echo. Each Vim state's badge
 (`mode-line.state.<state>`) is the paper on an accent, bold: normal blue,
-insert green, visual and visual-line magenta, the minibuffer's cyan. -/
+insert green, visual and visual-line magenta, the minibuffer's cyan. The
+compile mode's locations are bold, an error red, a warning orange and a
+note green, as Emacs's `compilation-error`, `-warning` and `-info` inherit
+`error`, `warning` and `success`. -/
 def Palette.theme (palette : Palette) : Theme :=
   let on (name : String) (foreground background : Color) : FaceDefinition :=
     { name := ⟨name⟩, face := { foreground := some foreground, background := some background } }
   let ink (name : String) (foreground : Color) : FaceDefinition :=
     { name := ⟨name⟩, face := { foreground := some foreground } }
   let defined (name : String) (face : Face) : FaceDefinition := { name := ⟨name⟩, face }
+  let bold (name : String) (foreground : Color) : FaceDefinition :=
+    { name := ⟨name⟩, face := { foreground := some foreground, weight := some 700 } }
   let cursors := #["cursor"] ++ Theme.cursorStates.map (s!"cursor.{·}")
   let badge (state : String) (accent : Color) : FaceDefinition :=
     { name := ⟨s!"mode-line.state.{state}"⟩
@@ -332,7 +339,8 @@ def Palette.theme (palette : Palette) : Theme :=
       ink "mode-line.secondary" palette.faint, on "mode-line.inactive" palette.faint palette.raised,
       defined "minibuffer.prompt" { foreground := some palette.cyan, weight := some 700 },
       ink "minibuffer.candidate" palette.faint, on "minibuffer.chosen" palette.paper palette.cyan,
-      ink "syntax.attribute" palette.yellow,
+      bold "compilation.error" palette.red, bold "compilation.warning" palette.orange,
+      bold "compilation.note" palette.green, ink "syntax.attribute" palette.yellow,
       defined "syntax.comment" { foreground := some palette.faint, slant := some .italic },
       ink "syntax.constant" palette.violet, ink "syntax.constructor" palette.yellow,
       ink "syntax.embedded" palette.ink, ink "syntax.function" palette.cyan,

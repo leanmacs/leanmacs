@@ -52,7 +52,12 @@ are in `Editor/Files/Compiled.lean`.
   the language says (`Editor/Command/Dispatch.lean`). For none, nothing is
   recorded and no mode is set: the buffer opens with no major mode and the
   syntax tree port is asked nothing. A path a buffer already holds is shown,
-  and nothing is chosen again.
+  and nothing is chosen again. The minor modes a file's markers turn on
+  (`Editor/Workspace/Modes.lean`) come later, from the marker job that
+  `Workspace.attach` starts, in that job's own command: setting the major
+  mode leaves a buffer's minor modes alone and adding a minor mode leaves
+  its major mode alone, so a file under a marker ends with its language,
+  `code` and the marker's minor modes (`ModelTest.compileHookChecks`).
 - **The path is matched twice**: when the command runs, and again when the
   result is delivered. Two opens of one path can be in flight, and the
   first delivery makes the buffer: the second then shows that buffer and
@@ -95,6 +100,17 @@ are in `Editor/Files/Compiled.lean`.
   it. Its buffer and its window are rolled back, and the text it made is
   not released, as for every command (`Editor/Loop.lean`, "What is not
   undone"). The file is opened again.
+- **A visit** (`Files.visit view path point focus`) is an open that, once
+  the buffer is shown, puts one cursor of the view at a point and, with
+  `focus`, focuses the view: at once when a buffer holds the path, and
+  otherwise when the load is delivered (`takeIn`), the order carrying the
+  point and the focus (`LoadOrder.point`, `LoadOrder.focus`). The point
+  (`At`) is a row from 0 and a column in characters (Unicode scalar
+  values); its offset (`offsetAt`) clamps the row to the text's last line,
+  never the empty row after a final line feed, and the column to the row's
+  content. A visit whose load is refused says `notOpened` and changes
+  nothing else: no buffer, no cursor, no focus. The compile mode visits a
+  location's file so (`Editor/Compile.lean`, "Stepping").
 - **Several paths open one after another** (`Files.open view path next`,
   `openAll`). Jobs run in parallel (`docs/design/concurrency.md`), so
   starting one load per path would show whichever load finished last.
@@ -283,6 +299,16 @@ def openName : String :=
 def loadJob : String :=
   "load-file"
 
+/-- A point of a text a visit puts the cursor at ("Open", in the module
+docs). -/
+structure At where
+  /-- The row, from 0. -/
+  row : Nat
+  /-- The column, in characters (Unicode scalar values) from the row's
+  start. -/
+  column : Nat
+  deriving DecidableEq, Repr
+
 /-- What the load job is started with: the file to load, and the view to
 show it in. -/
 structure LoadOrder where
@@ -292,13 +318,23 @@ structure LoadOrder where
   view : ViewId
   /-- The paths to open after this one, in order. -/
   next : List System.FilePath := []
+  /-- For a visit, the point of the file the view's cursor is put at once
+  the file is shown. -/
+  point : Option At := none
+  /-- For a visit, whether the view is focused once the file is shown. -/
+  focus : Bool := false
   deriving DecidableEq, Repr
 
 /-- The order as the arguments a job is started with: the path, then the
-view's number, then each path to open next. An order with none crosses as
-the path and the view alone. -/
+view's number, then, for a visit, the point's row and column and the focus,
+then each path to open next. An order with no point and no path next
+crosses as the path and the view alone. -/
 def LoadOrder.arguments (order : LoadOrder) : List Argument :=
-  [.str order.path.toString, .nat order.view.index] ++ order.next.map (.str ·.toString)
+  [.str order.path.toString, .nat order.view.index] ++
+    (match order.point with
+    | some point => [.nat point.row, .nat point.column, .bool order.focus]
+    | none => []) ++
+    order.next.map (.str ·.toString)
 
 /-- The paths `arguments` are, if each is a string. -/
 def pathsOf? : List Argument → Option (List System.FilePath)
@@ -308,6 +344,9 @@ def pathsOf? : List Argument → Option (List System.FilePath)
 
 /-- The order `arguments` are, if they are one (`LoadOrder.arguments`). -/
 def LoadOrder.ofArguments? : List Argument → Option LoadOrder
+  | .str path :: .nat view :: .nat row :: .nat column :: .bool focus :: rest =>
+    (pathsOf? rest).map fun next =>
+      { path, view := ⟨view⟩, next, point := some ⟨row, column⟩, focus }
   | .str path :: .nat view :: rest => (pathsOf? rest).map fun next => { path, view := ⟨view⟩, next }
   | _ => none
 
@@ -364,9 +403,42 @@ def openAll (view : ViewId) : List System.FilePath → EditorM Unit
     else if let .error refusal← startJob loadJob (LoadOrder.arguments { path, view, next }) then
       message (notOpening path refusal)
 
+/-- Puts the cursor of `view` at `offset`, one bar with its shape kept. -/
+def placeCursor (view : ViewId) (offset : Nat) : EditorM Unit := do
+  if let .ok selection← view.selection then
+    discard <|
+        view.select
+          { selection with
+            ranges := #[⟨offset, offset⟩], primary := 0 }
+
+/-- The byte offset of `point` in `text` ("Open", in the module docs): the
+start of its row, clamped to the last line, and the bytes of the row's first
+`point.column` characters, clamped to its content. -/
+def offsetAt (text : TextId) (point : At) : TextM Nat := do
+  let row := min point.row ((← text.lineCount) - 1)
+  let content ← text.rowContent row
+  let start ← text.offsetOf ⟨row, 0⟩
+  return start + (String.ofList (content.toList.take point.column)).utf8ByteSize
+
+/-- Puts the cursor of `view`, which shows `buffer`, at `point`, and focuses
+the view with `focus` ("Open", in the module docs). -/
+def placeAt (view : ViewId) (buffer : BufferId) (point : At) (focus : Bool) : EditorM Unit := do
+  let some shown := (← editorState).buffer? buffer | return
+  placeCursor view (← offsetAt shown.text point)
+  if focus then
+    discard <| view.focus
+
+/-- What a visit's order asks once `view` shows `buffer`: its cursor at the
+order's point, and the focus with the order's focus. Nothing for an order
+with no point. -/
+def arrived (order : LoadOrder) (view : ViewId) (buffer : BufferId) : EditorM Unit := do
+  if let some point := order.point then
+    placeAt view buffer point order.focus
+
 /-- What the reply to the load of `order.path` makes of that one file
 ("Open", in the module docs): a message on a refusal; on success the
-buffer, shown in `view`, unless a buffer already holds the path. -/
+buffer, shown in `view`, unless a buffer already holds the path; for a
+visit, the view's cursor at the point and the focus (`arrived`). -/
 def takeIn (order : LoadOrder) (view : ViewId) (reply : Except FileError File.Loaded) :
     EditorM Unit := do
   match reply with
@@ -380,6 +452,7 @@ def takeIn (order : LoadOrder) (view : ViewId) (reply : Except FileError File.Lo
     -- file loaded: the path is matched again, and nothing is taken in.
     if let some buffer := state.findFile path then
       let .ok () ← view.show buffer | message (notShown path)
+      arrived order view buffer
       return
     let text ← loaded.snapshot.toText
     let name := state.freeName (path.fileName.getD path.toString)
@@ -396,6 +469,7 @@ def takeIn (order : LoadOrder) (view : ViewId) (reply : Except FileError File.Lo
       -- The view was just shown, so it has a window, and `code` is
       -- compiled: neither refusal of `setMajorMode` can happen here.
       discard <| view.setMajorMode Language.codeName
+    arrived order view buffer
 
 /-- The command a finished load job hands the loop: what the reply to the
 load of `order.path` becomes (`takeIn`), and then, whatever became of the
@@ -428,6 +502,21 @@ area. -/
 def «open» (view : ViewId) (path : System.FilePath) (next : List System.FilePath := []) :
     EditorM Unit :=
   openAll view (path :: next)
+
+/-- Visits the file at `path` in `view` at `point` ("Open", in the module
+docs): opens it as `Files.open` does, and once the buffer is shown puts the
+view's cursor at the point (`offsetAt`) and, with `focus`, focuses the
+view. At once when a buffer holds the path; otherwise when the load is
+delivered. A refused load says so and changes nothing else. -/
+def visit (view : ViewId) (path : System.FilePath) (point : At) (focus : Bool) : EditorM Unit := do
+  let state ← editorState
+  let order : LoadOrder := { path, view, point := some point, focus }
+  if let some buffer := state.findFile path then
+    let shown := shownIn state view
+    let .ok () ← shown.show buffer | message (notShown path)
+    arrived order shown buffer
+  else if let .error refusal← startJob loadJob order.arguments then
+    message (notOpening path refusal)
 
 /-- The strings at the front of `arguments`, as paths, up to the first
 argument that is not one. -/

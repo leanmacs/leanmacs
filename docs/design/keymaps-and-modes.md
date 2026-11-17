@@ -2805,6 +2805,25 @@ contributes nothing.
   language's gives. Opening a file chooses its language and sets `code`
   ("Languages and the code mode").
 - **Adding a minor mode runs no action** yet (left open).
+- **Minor modes turned on by markers.** A compile contribution
+  (`lean/Editor/Compile/Contribution.lean`; "The compile mode, as built")
+  names marker files. When a buffer's file opens and its workspace is
+  known, the job `find-mode-markers` looks for every registered
+  contribution's markers from the file's directory up to and including the
+  workspace's root, never above it, or in the directory alone for a file
+  with no workspace ([projects.md](projects.md), "A buffer's workspace").
+  Each mode with a marker there is added as a minor mode, its root the
+  directory of its nearest marker, or of its farthest for an outermost
+  mode (`cargo-mode`). The buffer keeps its on-modes as the
+  local `marker-modes`, nearest root first and, at one root, in
+  registration order; they are added so that `Buffer.minors` lists the
+  nearest first, so its keymap wins as its command is `compile`'s default.
+  It happens once, when the file opens; a reload's contributions apply to
+  files opened after it. With no contribution registered no job starts;
+  every host ships three, so every file's open starts it. A mode that
+  computes its commands checks its listing as it turns on.
+  A mode turned on so needs no `Mode` record: one registered under its
+  name contributes its keys as any minor mode's do.
 
 Pinned by `ModelTest.modeEnterChecks`, through the loop,
 `ModelTest.apiStateChecks`, and, for a syntax tree,
@@ -2871,7 +2890,13 @@ otherwise be a cycle).
   For one, the buffer records it and is set to `code`, so the mode's entry
   attaches and highlights the text inside the open's command. For none,
   nothing is recorded and no mode is set, as before languages. A path a
-  buffer already holds is shown and nothing is chosen again.
+  buffer already holds is shown and nothing is chosen again. The minor
+  modes the file's markers turn on ("A buffer's modes") come after, in the
+  command of the `find-mode-markers` job the open starts. Setting a major
+  mode leaves the minor modes alone and adding a minor mode leaves the
+  major mode alone, so a `.rs` file under a `Cargo.toml` ends in `code`,
+  with its language, and with `cargo-mode` on (pinned by
+  `ModelTest.compileHookChecks`).
 - **A config mode with its own tree wins when the user sets it**: it never
   looks at the language. One derived from `code` with no tree takes the
   language's.
@@ -3156,8 +3181,12 @@ library's matcher.
 
 ### The compile mode, as built
 
-Status: built by `shell-and-compile` phase 3 (`lean/Editor/Compile.lean`,
-`lean/Editor/Compile/Compiled.lean`; the module docs have the detail).
+Status: built by `shell-and-compile` phases 3 to 6
+(`lean/Editor/Compile.lean`, `lean/Editor/Compile/Errors.lean`,
+`lean/Editor/Compile/Contribution.lean`, `lean/Editor/Compile/Listing.lean`,
+`lean/Editor/Compile/Shipped.lean`, `lean/Editor/Compile/Compiled.lean`,
+`lean/Editor/Json.lean`, `lean/Editor/Workspace/Modes.lean`; the module
+docs have the detail).
 Emacs's `M-x compile`, one per workspace: a build or test command runs as
 `/bin/sh -c <line>` and its output arrives in the workspace's compilation
 buffer while editing goes on.
@@ -3169,15 +3198,17 @@ buffer while editing goes on.
   location that cannot run commands refuses `compile` and `recompile`
   before anything is asked or started, and says why.
 - **The commands.** `compile` takes the line, or asks for it, `Compile
-  command: `, with the scope's last line as the prompt's text and the
-  project's compile history as its candidates. `recompile` reruns the
+  command: `, with the scope's last line as the prompt's text (with none,
+  the first command the buffer's on-modes offer) and the project's compile
+  history as its candidates. `recompile` reruns the
   scope's last line in the directory it ran in, with no prompt.
   `kill-compilation` cancels the scope's run, which kills the child with
   its process group. Starting a run while the scope's own runs asks,
   `Kill the compilation running in <label>? (y or n) `: `y` or `yes`
   kills the old one and empties the buffer, anything else leaves both. The
-  ex line ships `compile` (taking the line), `recompile` and
-  `kill-compilation`; no key binds them yet.
+  ex line ships `compile` (taking the line), `compile-command` (taking
+  the command), `recompile`, `kill-compilation`, `next-error` and
+  `previous-error`; no global key binds them yet.
 - **The buffer** is `*compilation: <label>*`, with the root's parent
   directory in parentheses when that name is taken by another workspace
   of the same label, then the first free name of that. It is found by the
@@ -3205,14 +3236,154 @@ buffer while editing goes on.
   read-only`, undo included, and a committed text is dropped and said. The
   compile mode writes it inside `BufferId.writing`, Emacs's
   `inhibit-read-only`. The mode line has no read-only mark yet.
-- **The mode** `compilation` fills the role `refresh` with `recompile`.
-- **Not built here**: errors and `next-error` (phase 4), the hook a minor
-  mode gives a project (phase 5), a time limit (a build may run for many
-  minutes; `kill-compilation` ends it, and `C-g` does not, as in Emacs).
+- **Error formats** are data (`Compile.Format`): a name, a pattern over
+  one output line whose pieces capture the file, the line, the column, the
+  severity (error, warning or note) and the message; optionally the
+  pattern of a following line that continues a location; and optionally a
+  lead, the pattern of the line before a location that gives its severity
+  and message, for a tool that prints the location after its message.
+  A location found after a lead starts at the lead's row, so it is visited
+  from either line, and a lead and its location that arrive in two posts
+  give the one location. The message is kept with the location and not
+  yet said. Patterns are matched by a small anchored matcher the editor
+  owns, not a regex: the search port's regex answers no submatches and its
+  model answers literal patterns alone. Three formats ship: `general`,
+  `file:line:col: message` and `file:line: message`, with an optional
+  severity word, read with every run; `rustc`, cargo's arrow line ` -->
+  src/main.rs:4:18` with the `error[E0308]: …` line before it as its lead
+  and the snippet under it (`|`, `=` and `:::` lines) continuing it; and
+  `lean`, Lake's `error: ./Foo/Bar.lean:12:4: …`, with `warning` and
+  `info` (a note), whose columns count from 0. `general` reads none of
+  rustc's or Lake's lines.
+- **Locations** are found as lines arrive, in each post and at the run's
+  end, never in the header or the last line, and kept per workspace in its
+  compile record, with the run's directory resolving a relative file
+  lexically (`./` dropped, `..` taken). Each location's text, from the
+  file through the line or column, is a span of the compilation buffer in
+  a face by severity: `compilation.error`, `compilation.warning`,
+  `compilation.note`, drawn under the last search's matches
+  ([text-and-display.md](text-and-display.md), "Decorations"). A rerun in
+  a workspace resets that workspace's list only.
+- **Stepping.** Each workspace's list has a current location, none at
+  first. `next-error` and `previous-error` step through the focused
+  buffer's workspace's list, so a buffer of another worktree or project
+  steps through its own, and stop with a message at either end; in a
+  compilation buffer, `activate` (`compile-goto-error`, `RET`) visits the
+  location on the cursor's line. Each sets the current location and puts
+  the compilation buffer's cursor on its first line; moving that cursor by
+  hand changes nothing.
+- **Visiting** opens the location's file (`Files.visit`) and puts the
+  cursor on its line and column, the column in characters less the
+  format's column base (1 for `general`). From a compilation buffer the
+  file is shown in the first other view, or a new one below; `RET` moves
+  the focus there, as Emacs's does, and `next-error` asked from the
+  compilation buffer keeps it, as `next-error-no-select`. A file that is
+  not there is said by Files, and no other cursor moves.
+- **Contributions.** A minor mode gives the compile mode what fits a kind
+  of project as data (`Compile.Contribution`), registered under the mode's
+  name in config (`compileContribution`) or by compiled code (a host's
+  `contributions`): marker files, named commands (`build`, `test`, each a
+  name and a command line, and maybe a directory of its own), error
+  formats, whether its root is its outermost marker, and a listing that
+  computes more commands.
+  The registration order is config's contributions in its order, then the
+  compiled ones config does not register; config's contribution of a
+  compiled one's name replaces it whole. A contribution with no marker,
+  one registered twice and one naming a command twice refuse the `setup`.
+- **On-modes.** A buffer's markers turn their modes on inside its
+  workspace, each with its root ("A buffer's modes"): its nearest marker's
+  directory, or, for an outermost mode, the farthest directory within the
+  workspace that holds one of its markers. More than one may be on,
+  ordered, once their roots are chosen, nearest root first, then by
+  registration order. That one order picks the default command and the
+  order formats are tried.
+- **The shipped modes.** Every host registers three contributions for the
+  owner `compiled` (`Compile.shipped`), which config's of the same name
+  replaces whole, and which config can build on (`{ Compile.cargoMode with
+  … }`):
+  - `cargo-mode`: marker `Cargo.toml`, outermost, because cargo prints
+    paths relative to the Cargo workspace's root, so in a member crate it
+    runs and resolves there; `build`, `test` and `clippy`, as `cargo
+    build`, `cargo test` and `cargo clippy`; the `rustc` format.
+  - `lake-mode`: marker `lakefile.lean` or `lakefile.toml`; `build` and
+    `test`, as `lake build` and `lake test`; the `lean` format.
+  - `mise-mode`: marker `mise.toml` or `.mise.toml`; one command a task,
+    computed from `mise tasks ls --json` (`mise` by bare name on the
+    child's `PATH`): `mise run <task>`, the name quoted for the shell when
+    it must be, run in the task's `dir`. No format of its own: a task's
+    output is read by the other on-modes' formats and `general`, so `mise
+    run test` in a Cargo crate inside a mise project reads rustc's errors
+    through `cargo-mode`.
+- **Computed commands.** A contribution's listing is a program run in its
+  mode's root, whose output it reads into named commands. It runs as a job
+  (`compile-list`) when the mode turns on in a buffer, and at each use,
+  `compile`'s prompt and `compile-command`, but only when its markers'
+  stamps in the root differ from those read before it last ran, or after a
+  reload. A use offers what was last listed: the list a changed marker
+  gives is offered from the use after the job ends. What it gave is kept
+  per workspace, by mode and root (`compile-listings`), so two worktrees
+  list their own. A listing that fails offers none of its commands and
+  says why once, `<mode> in <root>: <why>`, until the stamps change or a
+  reload. Listed commands come after the contribution's own, a listed name
+  replacing its own in place.
+- **Where and what `compile` runs.** With on-modes, `compile` runs its
+  line, typed or default, in the first on-mode's root, which may be below
+  the workspace's root (a crate inside a Cargo workspace); its prompt's
+  text is the scope's last line, as projectile keeps the last command per
+  project, else the first on-mode's first command. The compilation is
+  still the workspace's: its buffer and its error list. A run keeps its
+  on-modes in its scope's record, so `recompile`, the restart prompt and
+  the scan of its output use the modes it started with, and `compile` in
+  the compilation buffer uses them too.
+- **`compile-command`** prompts `Mode command: ` with every on-mode's named
+  commands as candidates, `<name> (<mode>)`, in on-mode order; the answer
+  chooses a whole candidate, else the first command of that bare name,
+  and its line runs in its mode's root, or the directory the command
+  names, with no second prompt. With no
+  mode offering a command it says so and asks nothing. It is a command and
+  an ex name, bound to no key.
+- **Formats in use** are the on-modes' contributions' formats, in on-mode
+  order, then `general`, so a line two modes read is the nearest mode's
+  location, and a mode's format finds nothing while the mode is off.
+- **Project commands.** Config gives one project, by its identity, its own
+  named commands and settings for a mode (`projectCommands`). They have
+  one source, config's latest as the loop is told it
+  (`StateRequest.compileHook`), keyed by identity, and are copied into no
+  store: `compile`, `compile-command` and `Compile.projectSettings` read
+  them from there, so every worktree of the codebase has them, no other
+  project does, and a reload's change is read at once, before any compile.
+  A project's command of a name the contribution gives, or its listing
+  gave, replaces it in place, and a new name comes after them; they are
+  offered only while their mode is on. Settings are read by
+  `Compile.projectSettings`; no shipped mode acts on them yet.
+- **The mode** `compilation` fills the role `refresh` with `recompile` and
+  `activate` with `compile-goto-error`. It leaves `next-item` and
+  `previous-item` unfilled, so under the Vim scheme `j` and `k` stay
+  motions in a compilation buffer.
+- **Not built here**: turning a buffer's on-modes on again after a
+  reload, make's directory tracking (`Entering directory`), and resolving a
+  mise task's output against a directory its commands `cd` to; cargo's
+  root by `cargo locate-project --workspace`, for a crate nested in but not
+  a member of an outer Cargo workspace; a format of its own for bare
+  `lean`'s `file:line:col: error(code):` form, which `general` reads one
+  column off; global keys for `next-error` and `previous-error` (such as
+  Vim's `]q` and `[q`); a location's message in the echo area;
+  replacing an open prompt's candidates when a listing ends;
+  `next-error-follow`; and a time limit (a build may run for many minutes;
+  `kill-compilation` ends it, and `C-g` does not, as in Emacs).
 
-Pinned by `ModelTest.compileChecks` and `readOnlyChecks` on the models, and
-by `ContractTest.compileChecks` over the real process service, with the
-fixture `tests/compile/three-lines`.
+Pinned by `ModelTest.compileChecks`, `compileErrorChecks`,
+`compileLocationChecks`, `compileHookChecks`, `projectFormatChecks`,
+`jsonChecks`, `listingChecks`, `projectModeChecks`, `modeMarkerChecks` and
+`readOnlyChecks` on the models; by `ConfigTest`'s checks that the hosts
+start with the shipped contributions and that config can override a field
+of one; by the mode marker search's contract (`Workspace.MarkerContract`),
+on its model and on the job model by `model-test` and over the real file
+service by `contract-test`; and over the real process service by
+`ContractTest.compileChecks`, with the fixture `tests/compile/three-lines`,
+and `ContractTest.projectModeChecks`, with the programs in
+`tests/compile/bin` standing in for cargo, lake and mise, the git fixture
+`tests/workspaces/git`, and the trees in `tests/compile`.
 
 ## The ex command line
 
@@ -3433,6 +3604,8 @@ command an ex name runs is a step of its own.**
 | `compile` | `compile` | Text | Runs the rest of the line as `/bin/sh -c` in the buffer's workspace, into its compilation buffer ("The compile mode, as built"); with no argument, asks for the line |
 | `recompile` | `recompile` | Nothing | Reruns the workspace's last compiled line |
 | `kill-compilation` | `kill-compilation` | Nothing | Kills the workspace's compilation in flight |
+| `next-error` | `next-error` | Nothing | Visits the next location of the workspace's compilation |
+| `previous-error` | `previous-error` | Nothing | Visits the previous location of the workspace's compilation |
 
 Where they differ from Vim:
 
@@ -3450,8 +3623,9 @@ Where they differ from Vim:
 - **`e!` and `w!` are names of their own**, bound with a fixed argument;
   only a leading `!` is parsed, as the shell's.
 - **`w` takes no file name.** Saving under another name is not built.
-- **`reload` is no Vim command**, nor are `compile`, `recompile` and
-  `kill-compilation`, which are Emacs's.
+- **`reload` is no Vim command**, nor are `compile`, `recompile`,
+  `kill-compilation`, `next-error` and `previous-error`, which are
+  Emacs's; Vim's `:cnext` and `:cprevious` are not bound.
 - **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
   matches more than one buffer.
 - **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it

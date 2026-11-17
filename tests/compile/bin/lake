@@ -1,0 +1,20 @@
+#!/bin/sh
+# Stands for `lake` in contract-test's checks of the shipped modes
+# (lean/ContractTest.lean, projectModeChecks), found first on the child's
+# PATH. `lake build` writes the lines of `lake-build.txt`, beside this
+# script, to standard output and exits 1; anything else says what it
+# expected and exits 2. Real Lake writes its last line, `error: build
+# failed`, on standard error; one stream keeps the buffer's lines in the
+# order written. Shell builtins only, so it runs whatever PATH it is given.
+
+here=${0%/*}
+
+if [ "$#" -eq 1 ] && [ "$1" = build ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '%s\n' "$line"
+  done <"$here/lake-build.txt"
+  exit 1
+fi
+
+printf 'lake fixture: expected build, got: %s\n' "$*" >&2
+exit 2

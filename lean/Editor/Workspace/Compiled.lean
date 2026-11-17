@@ -16,12 +16,15 @@ commands and their jobs (`Editor/Files/Compiled.lean`).
 - **`Workspace.jobs`**: `find-workspace`, which a file's open starts for its
   directory when no answer is cached under the config generation
   (`Workspace.findWork`). A host that is not handed it finds no workspace,
-  and says nothing about it.
+  and says nothing about it. And `find-mode-markers`, which gives a buffer
+  whose file opened the minor modes its markers turn on
+  (`Workspace.markerWork`, `Editor/Workspace/Modes.lean`).
 
 This module is apart from `Editor/Workspace/Attach.lean` because it names
 the registry, which is the config session's.
 
-Pinned by `ModelTest.workspaceChecks`, on the models.
+Pinned by `ModelTest.workspaceChecks` and `ModelTest.compileHookChecks`,
+on the models.
 -/
 
 namespace Editor.Workspace
@@ -31,9 +34,10 @@ namespace Editor.Workspace
 def commands : Array Config.Registration :=
   #[{ name := currentName, action := .call currentCommand }]
 
-/-- The job a file's open starts to find its directory's workspace, as a
-host registers it for the owner `compiled`. -/
+/-- The jobs a file's open starts to find its directory's workspace and its
+buffer's modes on markers, as a host registers them for the owner
+`compiled`. -/
 def jobs : Array Config.JobRegistration :=
-  #[{ name := findJob, work := findWork }]
+  #[{ name := findJob, work := findWork }, { name := markerJob, work := markerWork }]
 
 end Editor.Workspace

@@ -24,6 +24,9 @@ The adapters are tried in order, the first that answers wins:
 - **markers**: the nearest ancestor, or the directory itself, holding one of
   the settings' markers, in marker order (`Workspace.markerPaths`).
 
+A minor mode's markers within a workspace (`World.presentMarkers`) are the
+paths of `Workspace.markerSearchPaths` that `present` holds, in order.
+
 ## What the job model holds
 
 - **A rev-parse** in a directory a repository covers prints its top level,
@@ -119,6 +122,15 @@ def find (world : World) (settings : Settings) (directory : System.FilePath) : O
     | none =>
       (markerPaths settings directory).findSome? fun (root, path) =>
         if world.present path then some (Found.ofMarker root) else none
+
+/-- The markers of `markers` there are in `world` in the directories
+searched from `directory` within `bound`, each with its directory: the
+model of `Workspace.presentMarkers`, over the same paths
+(`Workspace.markerSearchPaths`). -/
+def presentMarkers (world : World) (markers : Array String) (directory bound : System.FilePath) :
+    Array (System.FilePath × String) :=
+  (markerSearchPaths markers directory bound).filterMap fun (at_, path, marker) =>
+    if world.present path then some (at_, marker) else none
 
 /-- A run that exits with `status` and writes `stderr`, nothing on its
 standard output. -/

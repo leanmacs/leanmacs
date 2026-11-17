@@ -1047,15 +1047,22 @@ the host's shows through where the injected language has no face
 (`docs/design/rust-library.md`, "Injections, indentation and text objects,
 as built").
 
-**The decorations a scene carries** have one source built: the matches of
-the last search, in the face `search-match` (`lean/Editor/Loop.lean`,
-"Decorations"). Each view but the minibuffer's asks its snapshot the
-matches of the pattern from the start of its scroll anchor's row through
-as many text rows as it has display rows, and one more, which covers every
-visible row however the rows wrap; the loop reads them after the follow
-has placed the anchor. An empty match is not drawn, and a pattern the
-syntax refuses draws nothing. They are always drawn, where Vim's default is
-`nohlsearch`, and `:nohlsearch` is not built.
+**The decorations a scene carries** have two sources built, in this order
+(`lean/Editor/Loop.lean`, "Decorations"): a buffer's own spans, byte ranges
+each with a face that the buffer's owner sets (`Buffer.spans`,
+`lean/Editor/State.lean`, "Buffers"), such as the compile mode's locations
+in a compilation buffer; then the matches of the last search, in the face
+`search-match`. A later decoration is drawn over an earlier one, so a match
+is over a span. Each view but the minibuffer's covers the range from the
+start of its scroll anchor's row through as many text rows as it has
+display rows, and one more, which covers every visible row however the rows
+wrap; the loop reads it after the follow has placed the anchor. The spans
+that meet the range are kept, clipped to it; nothing moves a span on an
+edit, so spans are for a buffer its owner alone writes. Its snapshot is
+asked the matches of the pattern in the range. An empty match is not
+drawn, and a pattern the syntax refuses draws nothing. They are always
+drawn, where Vim's default is `nohlsearch`, and `:nohlsearch` is not
+built.
 
 **A face** sets any of nine attributes and leaves the rest unset: a family,
 a size, a weight, a slant, a foreground, a background, an underline (a
@@ -1172,8 +1179,10 @@ scheme, `mode-line.buffer`, `mode-line.modified`, `mode-line.changed` for
 a file changed on disk, `mode-line.secondary` for the directory, the major
 mode, line:col and the position, and `mode-line.inactive` for every field
 and the row of a window that is not selected; the minibuffer's
-(`minibuffer.prompt`, `minibuffer.candidate`, `minibuffer.chosen`); and
-`search-match`, the matches of the last search. The status fields' faces
+(`minibuffer.prompt`, `minibuffer.candidate`, `minibuffer.chosen`); the
+compile mode's locations by severity (`compilation.error`,
+`compilation.warning`, `compilation.note`, `lean/Editor/Compile.lean`,
+"Locations"); and `search-match`, the matches of the last search. The status fields' faces
 of before (`status.state`, `status.name`, `status.modified`, and
 `status.changed` of the daily-driver roadmap) were replaced by these, not
 kept as aliases: a config that defined them defines faces nothing draws.

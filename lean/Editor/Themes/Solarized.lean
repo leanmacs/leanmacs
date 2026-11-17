@@ -70,6 +70,7 @@ dark names, and `+` marks a definition appended after the shared ones
 | `minibuffer.prompt` | cyan, bold | + fg blue (bold kept) | Emacs `minibuffer-prompt` blue |
 | `minibuffer.candidate` | fg base01 | + fg base1 | Vim's wildmenu draws the other candidates in `StatusLine`, the status-line text (base1) |
 | `minibuffer.chosen` | base03 on cyan | + base02 on base2 | Vim `WildMenu` (fg base2 bg base02 reversed) |
+| `compilation.error`, `compilation.warning`, `compilation.note` | fg red, orange, green, bold | fg red, orange, green, bold | Emacs `compilation-error`, `-warning`, `-info` inherit `error`, `warning`, `success`: the shared mapping's red, orange and green are kept |
 | `syntax.attribute` | yellow | + orange | Vim `PreProc` |
 | `syntax.comment` | base01, italic | base01, italic | Vim `Comment`; Emacs `font-lock-comment-face` |
 | `syntax.constant` | violet | + cyan | Vim `Constant`; Emacs `font-lock-constant-face` |

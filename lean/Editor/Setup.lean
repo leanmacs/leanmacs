@@ -1,4 +1,5 @@
 import Editor.Command.Call
+import Editor.Compile.Contribution
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Job
@@ -256,6 +257,26 @@ A root that is not absolute is refused, and so is one root declared twice.
 A reload that installs takes the roots, and bumps the config generation, so
 the next file opened asks its directory's workspace again.
 
+Config gives the compile mode what fits a kind of project with
+`compileContribution` (`Editor/Compile/Contribution.lean`): a minor mode's
+marker files, which turn the mode on in a buffer whose file is under one of
+them inside its workspace, its named commands, and its error formats. And
+it gives one project, by its identity, its own commands and settings for a
+mode with `projectCommands`, so every worktree of that codebase has them:
+
+```lean
+def setup : SetupM Unit := do
+  compileContribution
+    { mode := "make-mode", markers := #["Makefile"]
+      commands := #[{ name := "build", line := "make" }, { name := "test", line := "make check" }] }
+  projectCommands (.remote "github.com/me/tool") "make-mode" [("lint", "make lint")]
+```
+
+Config's contribution of a mode's name replaces a compiled one of that name
+whole. A contribution with no marker is refused, and so is one registered
+twice or naming a command twice, and project commands given twice for one
+project and mode, or naming a command twice.
+
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
 over, so the type does not refer to itself. A job's handler is carried the
@@ -339,6 +360,12 @@ inductive SetupRequest where
   for, how its text is parsed and drawn, and its indent unit
   (`Editor/Language.lean`). -/
   | language (language : Language)
+  /-- Register `contribution`, what its minor mode gives the compile mode
+  (`Editor/Compile/Contribution.lean`). -/
+  | compileContribution (contribution : Compile.Contribution)
+  /-- Give one project its own commands and settings for a mode
+  (`Compile.ProjectCommands`). -/
+  | projectCommands (entry : Compile.ProjectCommands)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -363,6 +390,8 @@ def SetupRequest.Reply : SetupRequest → Type
   | .shellTimeLimit _ => Unit
   | .syntaxRefreshDelay _ => Unit
   | .language _ => Unit
+  | .compileContribution _ => Unit
+  | .projectCommands _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -599,5 +628,38 @@ def workspace (root : System.FilePath) (project : Option String := none) : Setup
   unless root.isAbsolute do
     throw (relativeWorkspace root)
   ExceptT.lift (Program.request (port := setupPort) (.workspace root project))
+
+/-- The message a compile contribution with no marker is refused with. -/
+def compileWithoutMarkers (mode : String) : String :=
+  s!"the compile contribution `{mode}` has no marker"
+
+/-- Registers `contribution`, what the minor mode `contribution.mode` gives
+the compile mode: its markers, which turn the mode on in a buffer whose
+file is under one of them inside its workspace, its named commands and its
+error formats (`Editor/Compile/Contribution.lean`). Config's contribution of
+a mode's name replaces a compiled one of that name whole. Refuses the
+`setup` for a contribution with no marker; the editor refuses one registered
+twice, or naming a command twice. -/
+def compileContribution (contribution : Compile.Contribution) : SetupM Unit := do
+  if contribution.markers.isEmpty then
+    throw (compileWithoutMarkers contribution.mode)
+  ExceptT.lift (Program.request (port := setupPort) (.compileContribution contribution))
+
+/-- Gives the project identified by `project` its own `commands`, each a name
+and a command line, and `settings` for the minor mode `mode`: the compile
+mode reads them by that project's identity from what the loop is told of
+config, so every worktree of the codebase has them while the mode is on
+there, and no other project does. A command
+of a name the mode's contribution gives replaces it; one of a new name comes
+after the contribution's. The editor refuses the `setup` for project
+commands given twice for one project and mode, or naming a command
+twice. -/
+def projectCommands (project : Project.Identity) (mode : String) (commands : List (String × String))
+    (settings : List (String × Value) := []) : SetupM Unit :=
+  ExceptT.lift
+    (Program.request (port := setupPort)
+      (.projectCommands
+        { project, mode, settings
+          commands := commands.toArray.map fun (name, line) => { name, line } }))
 
 end Editor

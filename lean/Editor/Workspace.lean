@@ -1,3 +1,4 @@
+import Editor.Invocation
 import Editor.Process.Environment
 import Editor.Value
 
@@ -46,6 +47,22 @@ It imports only the plain trees and the pure part of a child's environment
   config root that holds the directory), the git command lines and the
   reading of what they print (`Git`), and the order the marker adapter looks
   in (`markerPaths`, nearest directory first, then the markers in order).
+- **Modes on markers** (`searchedFrom`, `markerSearchPaths`, `onModes`): a
+  minor mode's markers (`MarkerMode`, a compile contribution's,
+  `Editor/Compile/Contribution.lean`) are looked for from a file's
+  directory up to and including its workspace root, and never above it,
+  so one worktree's modes are found within that worktree; a file with no
+  workspace looks in its own directory alone. A mode is on at the nearest
+  directory that holds one of its markers, which is its root
+  (`OnMode`); an outermost mode (`MarkerMode.outermost`), such as
+  `cargo-mode`, whose tool prints paths relative to its outermost marker's
+  directory, at the farthest directory searched that holds one. The
+  on-modes are ordered, once their roots are chosen, nearest root first
+  and, at one root, in registration order. A marker is there by the
+  finder's rule.
+  The search is `Workspace.presentMarkers` (`Editor/Workspace/Finder.lean`),
+  its model `World.presentMarkers`, and both are held to
+  `Workspace.MarkerContract` (`Editor/Workspace/Contract.lean`).
 - **The table** (`Workspace.Table`) is the editor state's
   (`EditorState.workspaces`): the workspaces, each with its store of values
   by name, keyed by its location; the projects, each with its store, keyed
@@ -181,6 +198,22 @@ def decode? : Value → Option Location
   | .record [("reachable", .list [.str kind, .str target, .str root])] =>
     some (.reachable kind target root)
   | .record [("branchOnly", .list [.str remote, .str branch])] => some (.branchOnly remote branch)
+  | _ => none
+
+/-- A location as the arguments a job is started with: its kind, then its
+parts. -/
+def arguments : Location → List Argument
+  | .local root => [.str "local", .str root.toString]
+  | .reachable kind target root => [.str "reachable", .str kind, .str target, .str root.toString]
+  | .branchOnly remote branch => [.str "branchOnly", .str remote, .str branch]
+
+/-- The location `arguments` start with (`arguments`), and the rest. -/
+def of? : List Argument → Option (Location × List Argument)
+  | .str "local" :: .str root :: rest => some (.local root, rest)
+  | .str "reachable" :: .str kind :: .str target :: .str root :: rest =>
+    some (.reachable kind target root, rest)
+  | .str "branchOnly" :: .str remote :: .str branch :: rest =>
+    some (.branchOnly remote branch, rest)
   | _ => none
 
 /-- A location for a person. -/
@@ -330,8 +363,45 @@ they are looked for. -/
 def defaultMarkers : Array String :=
   #[".git", "mise.toml", "Cargo.toml", "lakefile.lean", ".project"]
 
+/-- A minor mode that markers turn on ("Modes on markers", in the module
+docs): its name, the names of its marker files, in order, and whether its
+root is its outermost marker. -/
+structure MarkerMode where
+  /-- The minor mode's name. -/
+  mode : String
+  /-- The names of its marker files. -/
+  markers : Array String
+  /-- Whether its root is the farthest directory searched that holds one of
+  its markers, not the nearest. -/
+  outermost : Bool := false
+  deriving DecidableEq, Repr
+
+/-- A minor mode a buffer's markers turned on, with its root: the
+directory of the nearest of its markers. -/
+structure OnMode where
+  /-- The minor mode's name. -/
+  mode : String
+  /-- The directory its nearest marker is in. -/
+  root : System.FilePath
+  deriving DecidableEq, Repr
+
+/-- An on-mode as a plain tree: its name, then its root. -/
+def OnMode.encode (on : OnMode) : Value :=
+  .list [.str on.mode, .str on.root.toString]
+
+/-- The on-mode a tree stands for (`OnMode.encode`), if it is one. -/
+def OnMode.decode? : Value → Option OnMode
+  | .list [.str mode, .str root] => some { mode, root }
+  | _ => none
+
+/-- The name a buffer keeps its on-modes under, nearest first, as a
+buffer-local value: a list of `OnMode.encode` trees. -/
+def modesLocal : String :=
+  "marker-modes"
+
 /-- What the finder is handed: config's roots, the git it runs, and the
-marker files it looks for. -/
+marker files it looks for; and, for what opens a file, the minor modes that
+markers turn on, which the finder does not read. -/
 structure Settings where
   /-- The roots config declares. -/
   roots : Array ConfigRoot := #[]
@@ -340,6 +410,9 @@ structure Settings where
   git : String := "git"
   /-- The marker files, in order. -/
   markers : Array String := defaultMarkers
+  /-- The minor modes markers turn on, in registration order: what the loop
+  says of the registered compile contributions. -/
+  markerModes : Array MarkerMode := #[]
   deriving DecidableEq, Repr
 
 /-- What the finder answers for a directory: the workspace's root, its
@@ -389,6 +462,63 @@ def markerPaths (settings : Settings) (directory : System.FilePath) :
 own project. -/
 def Found.ofMarker (root : System.FilePath) : Found :=
   { root, project := Project.of root none none none }
+
+/-! ## Modes on markers -/
+
+/-- The directories a minor mode's markers are looked for in, nearest first
+("Modes on markers", in the module docs): `directory` and its ancestors up
+to and including `bound`, when `bound` holds `directory`; otherwise
+`directory` alone. -/
+def searchedFrom (directory bound : System.FilePath) : Array System.FilePath :=
+  let directory := Process.trimmed directory
+  let bound := Process.trimmed bound
+  if holds bound directory then
+    let ancestry := Process.ancestry directory
+    match ancestry.findIdx? (· == bound) with
+    | some index => ancestry.extract 0 (index + 1)
+    | none => #[directory]
+  else #[directory]
+
+/-- Where the markers `markers` are looked for, in order: for each directory
+of `searchedFrom`, nearest first, each marker in order, as the directory,
+the marker's path and the marker's name. -/
+def markerSearchPaths (markers : Array String) (directory bound : System.FilePath) :
+    Array (System.FilePath × System.FilePath × String) :=
+  (searchedFrom directory bound).flatMap fun at_ =>
+    markers.map fun marker => (at_, Process.inDirectory at_ marker, marker)
+
+/-- The minor modes of `modes` that the markers `present` turn on, each with
+its root, nearest root first and, at one root, in the order of `modes`
+("Modes on markers", in the module docs). `present` holds each marker found,
+with the directory it is in; a mode is on at the nearest directory of
+`searchedFrom` that holds one of its markers, or, an outermost one, at the
+farthest. A mode named twice is on by the first of its entries whose markers
+are found. -/
+def onModes (modes : Array MarkerMode) (directory bound : System.FilePath)
+    (present : Array (System.FilePath × String)) : Array OnMode :=
+  let searched := searchedFrom directory bound
+  let roots :=
+    modes.foldl
+      (fun (roots : Array OnMode) mode =>
+        if roots.any (·.mode == mode.mode) then roots
+        else
+          let holding :=
+            searched.filter fun at_ => mode.markers.any fun marker => present.contains (at_, marker)
+          match if mode.outermost then holding.back? else holding[0]? with
+          | some root => roots.push { mode := mode.mode, root }
+          | none => roots)
+      #[]
+  searched.flatMap fun at_ => roots.filter (·.root == at_)
+
+/-- Every marker of `modes`, once, in the order it was first named. -/
+def markersOf (modes : Array MarkerMode) : Array String :=
+  modes.foldl
+    (fun (markers : Array String) mode =>
+      mode.markers.foldl
+        (fun (markers : Array String) marker =>
+          if markers.contains marker then markers else markers.push marker)
+        markers)
+    #[]
 
 /-! ## The git adapter's command lines -/
 
