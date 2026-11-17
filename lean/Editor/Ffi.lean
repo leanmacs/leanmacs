@@ -962,7 +962,7 @@ inductive ScriptRefusal where
   /-- The steps do not walk the whole of the text and of the source, or one
   starts or stops inside a character of either. -/
   | badChange
-  /-- The document is an excerpt document, whose edits are refused. -/
+  /-- The document is an excerpt document, whose edit scripts are refused. -/
   | excerpted
   deriving DecidableEq, Repr
 
@@ -1436,7 +1436,8 @@ inductive InverseRefusal where
   | noInverse
   /-- The document's text is not in the state the run ended in. -/
   | notInState
-  /-- The document is an excerpt document, whose edits are refused. -/
+  /-- The document is an excerpt document, whose inverses are refused: the
+  undo of an edit through it is its sources'. -/
   | excerpted
   deriving DecidableEq, Repr
 

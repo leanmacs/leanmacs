@@ -42,8 +42,9 @@ pub enum InverseStatus {
     NotKept = 2,
     /// Refused: the text is not in the state the run ended in.
     NotInState = 3,
-    /// Refused: the document is an excerpt document, whose edits are
-    /// refused ([`crate::excerpts`]). Looked for before anything else.
+    /// Refused: the document is an excerpt document, whose inverses are
+    /// refused: the undo of an edit through it is its sources'
+    /// ([`crate::excerpts`]). Looked for before anything else.
     Excerpted = 4,
 }
 

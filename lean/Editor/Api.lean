@@ -32,6 +32,11 @@ nothing in it.
   already has is refused (`nameTaken`) with no text made.
 - `addBuffer name text` makes a buffer over a text the command already
   has: one it copied, or took in from a job's snapshot.
+- `createExcerptBuffer name list` makes an excerpt text of `list`
+  (`createExcerpts`) and an excerpt buffer of that name over it
+  (`Editor/State.lean`, "Excerpt buffers"), refused as `createBuffer` is.
+  `BufferId.setExcerpts id list` replaces its list, which is how an
+  emptied excerpt goes.
 - `findBuffer name` is the buffer of that name, if there is one. Names are
   unique, so there is at most one.
 - `BufferId.remove` removes a buffer no window shows. Its text is released
@@ -164,6 +169,21 @@ at, does its part, and records the tree that comes back as the buffer's
 - **A command that moves and then fails** is rolled back from the tree it
   recorded: the edits it made after the move are taken back, and the move
   is not (`Editor/Loop.lean`, "Rollback").
+- **An excerpt buffer's undo is its sources'** (`Editor/State.lean`,
+  "Excerpt buffers"). `closeGroup`, `undo` and `redo` of an excerpt buffer
+  go to `excerptCloseGroup`, `excerptUndo` and `excerptRedo`.
+  `excerptCloseGroup` closes the group of each source buffer it touched and
+  then makes them one step of its own (`EditorState.closeExcerptGroup`).
+  `excerptUndo` closes the group first, then takes the last step: with none
+  it answers `none`; it tells every source buffer of the step the revision
+  its text is at and is refused with `sourceMoved`, changing nothing,
+  unless each is still in the state the step recorded (a removed buffer
+  counts as moved); then it undoes one step in each, with the user's origin,
+  and keeps the states each is left in as the step to redo. `excerptRedo`
+  is the same over the steps to redo, with nothing pending. Neither hands a
+  selection back: the sources' transactions carried none, and a source's
+  selection is in its own offsets, so the caller rests the cursor where
+  the window's marker moved (`Editor/Evil/Undo.lean`).
 - `BufferId.isModified` says whether the buffer's text is in another state
   than the one last saved. It tells the tree the text's revision first, so
   an edit made earlier in the same command counts. A question of the state
@@ -1005,6 +1025,18 @@ has, with a new undo tree over it, and returns its id. Refused with
 def addBuffer (name : String) (text : TextId) : EditorM (Except BufferRefusal BufferId) := do
   EditorState.ask (.addBuffer name text (← UndoTree.over text))
 
+/-- Makes an excerpt buffer called `name` over a new excerpt text of `list`
+(`createExcerpts`), and returns its id: what an edit typed in it reaches is
+its sources' buffers (`Editor/State.lean`, "Excerpt buffers"). Refused with
+`nameTaken` for a name a buffer already has, with no text made; what the
+store refuses of the list is thrown, as `createText` would. -/
+def createExcerptBuffer (name : String) (list : Array Excerpt) :
+    EditorM (Except BufferRefusal BufferId) := do
+  if (← findBuffer name).isSome then
+    return .error (.nameTaken name)
+  let text ← createExcerpts list
+  EditorState.ask (.addExcerptBuffer name text (← UndoTree.over text))
+
 /-- Makes a buffer called `name` over a new text holding `contents`, and
 returns its id. Refused with `nameTaken` for a name a buffer already has,
 with no text made. -/
@@ -1105,6 +1137,18 @@ boundaries within the text and a range that ends before it starts. -/
 def deleteRange (id : BufferId) (start stop : Nat) : EditorM (Except BufferRefusal Unit) :=
   id.replaceRange start stop ""
 
+/-- Replaces the list of the excerpt buffer `id`'s text with `list`
+(`TextId.setExcerpts`): how an emptied excerpt goes. Refused with
+`noSuchBuffer` for a buffer there is none of; what the store refuses is
+thrown. -/
+def setExcerpts (id : BufferId) (list : Array Excerpt) : EditorM (Except BufferRefusal Unit) := do
+  match ← id.text with
+  | .ok text =>
+    text.setExcerpts list
+    return .ok ()
+  | .error refusal =>
+    return .error refusal
+
 end BufferId
 
 /-- What an undo or a redo hands back. -/
@@ -1133,17 +1177,47 @@ with `noSuchBuffer` for a buffer there is none of. -/
 def isModified (id : BufferId) : EditorM (Except BufferRefusal Bool) :=
   return (← id.synced).map (·.isModified)
 
-/-- Sets the boundary in the buffer `id`'s history: the edits since the last
-one become one step. With nothing pending it makes no node. A boundary set
-by a command that then does not run to its end is taken back with the
-command's edits (`Editor/Loop.lean`, "Rollback"). Refused with
-`noSuchBuffer` for a buffer there is none of. -/
-def closeGroup (id : BufferId) : EditorM (Except BufferRefusal Unit) := do
+/-- The boundary of a buffer's own undo tree: `closeGroup` of a buffer that
+is not an excerpt buffer. -/
+def closeOwnGroup (id : BufferId) : EditorM (Except BufferRefusal Unit) := do
   match ← id.synced with
   | .ok buffer =>
     EditorState.ask (.setHistory id buffer.history.close)
   | .error refusal =>
     return .error refusal
+
+/-- Whether the buffer `id` is an excerpt buffer. -/
+def isExcerpts (id : BufferId) : EditorM Bool :=
+  return ((← editorState).buffer? id).any (·.excerpts.isSome)
+
+/-- The boundary of the excerpt buffer `id` (the module docs, "Undo"): each
+source buffer it touched since its last step has its group closed, and they
+become one step of the excerpt buffer's, with the state each tree was left
+in. Its own tree's group is closed too. Refused with `noSuchBuffer` for a
+buffer there is none of. -/
+def excerptCloseGroup (id : BufferId) : EditorM (Except BufferRefusal Unit) := do
+  let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+  for source in (buffer.excerpts.map (·.touched)).getD #[] do
+    discard <| source.closeOwnGroup
+  match ← id.closeOwnGroup with
+  | .error refusal =>
+    return .error refusal
+  | .ok () =>
+    let closed := (← editorState).closeExcerptGroup id
+    let some excerpts := (closed.buffer? id).bind (·.excerpts) | return .ok ()
+    EditorState.ask (.setExcerptHistory id excerpts)
+
+/-- Sets the boundary in the buffer `id`'s history: the edits since the last
+one become one step. With nothing pending it makes no node. A boundary set
+by a command that then does not run to its end is taken back with the
+command's edits (`Editor/Loop.lean`, "Rollback"). For an excerpt buffer it
+is `excerptCloseGroup`. Refused with `noSuchBuffer` for a buffer there is
+none of. -/
+def closeGroup (id : BufferId) : EditorM (Except BufferRefusal Unit) := do
+  if ← id.isExcerpts then
+    id.excerptCloseGroup
+  else
+    id.closeOwnGroup
 
 /-- Makes `move` in the buffer `id`'s history, on its tree once told the
 revision its text is at, and records the tree the move returns as the
@@ -1162,20 +1236,97 @@ def moved (id : BufferId) (move : UndoTree → TextM (Option UndoTree.Moved)) :
     | .error refusal =>
       return .error refusal
 
+/-- The source buffers of `step` each in the state the step recorded, told
+the revisions their texts are at: the first that is not, or was removed, as
+`sourceMoved`. -/
+def stepHolds (step : Buffer.ExcerptStep) : EditorM (Except BufferRefusal Unit) := do
+  for (source, state) in step.sources do
+    match ← source.synced with
+    | .ok buffer =>
+      unless buffer.history.state == state do
+        return .error (.sourceMoved source)
+    | .error _ =>
+      return .error (.sourceMoved source)
+  return .ok ()
+
+/-- Takes the excerpt buffer `id`'s step `step`, of which `rest` is what is
+left of its steps, by `move` in each of its source buffers, and keeps the
+states each is left in as a step of the other kind (`keep`). `none`, with
+nothing done, when `step` is none; `sourceMoved`, with nothing done, when a
+source buffer moved since the step (`stepHolds`). -/
+def excerptMoved (id : BufferId) (step : Option Buffer.ExcerptStep)
+    (move : BufferId → EditorM (Except BufferRefusal (Option Undone)))
+    (kept : Buffer.Excerpts → Buffer.ExcerptStep → Buffer.Excerpts) :
+    EditorM (Except BufferRefusal (Option Undone)) := do
+  let some step := step | return .ok none
+  if let .error refusal← stepHolds step then
+    return .error refusal
+  let mut states := #[]
+  for (source, _) in step.sources do
+    match ← move source with
+    | .ok _ =>
+      let state := ((← editorState).buffer? source).map (·.history.state)
+      states := states.push (source, state.getD ⟨0⟩)
+    | .error refusal =>
+      return .error refusal
+  let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+  let some excerpts := buffer.excerpts | return .error .notExcerpts
+  match ← EditorState.ask (.setExcerptHistory id (kept excerpts ⟨states⟩)) with
+  | .ok () =>
+    return .ok (some ⟨none⟩)
+  | .error refusal =>
+    return .error refusal
+
+/-- Undoes the excerpt buffer `id`'s last step in each of its source
+buffers, with the user's origin (the module docs, "Undo"): the group is
+closed first, and a step whose source moved since is refused with
+`sourceMoved`, changing nothing. `none`, with nothing done, when there is no
+step to undo. Nothing is handed back to place. -/
+def excerptUndo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) := do
+  if let .error refusal← id.excerptCloseGroup then
+    return .error refusal
+  let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+  let some excerpts := buffer.excerpts | return .error .notExcerpts
+  id.excerptMoved excerpts.undos.back? (fun source => source.moved (·.undo Origin.user))
+      fun excerpts step =>
+      { excerpts with
+        undos := excerpts.undos.pop, redos := excerpts.redos.push step }
+
+/-- Redoes the excerpt buffer `id`'s next step in each of its source
+buffers, with the user's origin, as `excerptUndo` undoes one. `none`, with
+nothing done, when there is no step to redo, and whenever an edit through
+it is pending. -/
+def excerptRedo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) := do
+  let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+  let some excerpts := buffer.excerpts | return .error .notExcerpts
+  if !excerpts.touched.isEmpty then
+    return .ok none
+  id.excerptMoved excerpts.redos.back? (fun source => source.moved (·.redo Origin.user))
+      fun excerpts step =>
+      { excerpts with
+        redos := excerpts.redos.pop, undos := excerpts.undos.push step }
+
 /-- Undoes one step of the buffer `id`'s history, with the user's origin,
 and hands back the selection from before the step's first edit. The open
 group is a step: it is closed first. `none`, with nothing done, when there
-is no step to undo. Refused with `noSuchBuffer` for a buffer there is none
-of. -/
-def undo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) :=
-  id.moved (·.undo Origin.user)
+is no step to undo. An excerpt buffer's is `excerptUndo`. Refused with
+`noSuchBuffer` for a buffer there is none of. -/
+def undo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) := do
+  if ← id.isExcerpts then
+    id.excerptUndo
+  else
+    id.moved (·.undo Origin.user)
 
 /-- Redoes one step of the buffer `id`'s history, with the user's origin,
 and hands back the selection from after the step's last edit. `none`, with
 nothing done, when there is no step to redo, and whenever an edit is
-pending. Refused with `noSuchBuffer` for a buffer there is none of. -/
-def redo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) :=
-  id.moved (·.redo Origin.user)
+pending. An excerpt buffer's is `excerptRedo`. Refused with `noSuchBuffer`
+for a buffer there is none of. -/
+def redo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) := do
+  if ← id.isExcerpts then
+    id.excerptRedo
+  else
+    id.moved (·.redo Origin.user)
 
 /-- Has the buffer `id` keep `value` under `name`, in place of the value the
 name had. Refused with `noSuchBuffer` for a buffer there is none of. -/

@@ -641,6 +641,36 @@ A prompt is a request for one string, with a text to show beside the input
   which is read-only and whose spans the compile mode resets with its text
   (`Editor/Compile.lean`, "Locations").
 
+### Excerpt buffers
+
+An *excerpt buffer* is a buffer over an excerpt text (`createExcerpts`,
+`Editor/Text.lean`), whose edits are its sources' edits. It is added by
+`addExcerptBuffer`, which refuses as `addBuffer` does, and it keeps
+`Buffer.excerpts`, the history of what it edited, which `setExcerptHistory`
+replaces (refused with `noSuchBuffer`, and with `notExcerpts` for a buffer
+that is not one).
+
+- **Its own `history`** is an undo tree over its text like any buffer's,
+  told and closed by the loop and never moved: its text keeps no inverse, so
+  an undo in it is not its tree's. Its "modified" mark is left to a later
+  phase.
+- **What it edited is a list of steps** (`Buffer.Excerpts`): each step
+  (`Buffer.ExcerptStep`) names the source buffers an edit through the
+  excerpt buffer reached, each with the state its undo tree was left in
+  once the step was closed. The source buffers an edit reaches since the
+  last step are `touched` (`touch`), and `closeExcerptGroup` makes them a
+  step: pure, over trees already told and closed, it pushes one with each
+  touched buffer's `history.state`, clears `touched` and empties `redos`.
+- **An undo in it undoes one step in each source buffer**, and only when
+  each is still in the state the step recorded: otherwise it is refused
+  with `sourceMoved` and the first source that moved (`Editor/Api.lean`,
+  "Undo").
+- `excerptBufferOver?` finds the excerpt buffer over a text, and
+  `bufferOver?` the plain buffer over a source text, which the command
+  dispatcher asks before an edit through an excerpt buffer
+  (`Editor/Command/Dispatch.lean`, "Read-only buffers and excerpt
+  sources").
+
 ### Most recently used
 
 The state keeps the open buffers in the order they were last used
@@ -921,6 +951,25 @@ structure Buffer.File where
   changed : Option Buffer.Changed := none
   deriving DecidableEq, Repr
 
+/-- One step of an excerpt buffer's history: the source buffers an edit
+through it reached, each with the state its undo tree was in when the step
+was closed. -/
+structure Buffer.ExcerptStep where
+  /-- The source buffers and their trees' states. -/
+  sources : Array (BufferId × UndoTree.State) := #[]
+  deriving DecidableEq, Repr
+
+/-- What an excerpt buffer keeps of what its edits reached ("Excerpt
+buffers", in the module docs). -/
+structure Buffer.Excerpts where
+  /-- The source buffers an edit reached since the last step was closed. -/
+  touched : Array BufferId := #[]
+  /-- The steps to undo, the last one last. -/
+  undos : Array Buffer.ExcerptStep := #[]
+  /-- The steps to redo, the next one last. -/
+  redos : Array Buffer.ExcerptStep := #[]
+  deriving DecidableEq, Repr
+
 /-- A buffer: a text and what the editor keeps about it. -/
 structure Buffer where
   /-- Its name, as the user sees it. -/
@@ -951,6 +1000,9 @@ structure Buffer where
   /-- Byte ranges of its text, each with a face, set by its owner and drawn
   under the last search's matches ("Buffers", in the module docs). -/
   spans : Array Decoration := #[]
+  /-- For an excerpt buffer, what its edits reached ("Excerpt buffers", in
+  the module docs); `none` for any other buffer. -/
+  excerpts : Option Buffer.Excerpts := none
   deriving BEq, Repr
 
 /-- Whether the buffer's text is in another state than the one last saved,
@@ -1658,6 +1710,12 @@ inductive BufferRefusal where
   /-- No save of the buffer is in flight, or the one that is writes another
   snapshot. -/
   | notBeingSaved
+  /-- The buffer is not an excerpt buffer. -/
+  | notExcerpts
+  /-- The source buffer `source` of an excerpt buffer's step is no longer in
+  the state the step left it in: it was edited, or moved in its history,
+  since, or it was removed. -/
+  | sourceMoved (source : BufferId)
   deriving DecidableEq, Repr
 
 /-- Why a job was not started. -/
@@ -2533,6 +2591,75 @@ read-only. -/
 def readOnlyReason (name : String) : String :=
   s!"{name} is read-only"
 
+/-- What is said of an edit through the excerpt buffer called `name` refused
+because it reaches a text no buffer holds. -/
+def unheldReason (name : String) : String :=
+  s!"{name} reads a text no buffer holds"
+
+/-- The excerpt buffer over the text `text`, if there is one ("Excerpt
+buffers", in the module docs). -/
+def excerptBufferOver? (state : EditorState) (text : TextId) : Option BufferId :=
+  (List.range state.buffers.size).findSome? fun index =>
+    match state.buffer? ⟨index⟩ with
+    | some buffer => if buffer.text == text && buffer.excerpts.isSome then some ⟨index⟩ else none
+    | none => none
+
+/-- The buffer over the text `text` that is not an excerpt buffer, if there
+is one: the buffer of a source of an excerpt text. -/
+def bufferOver? (state : EditorState) (text : TextId) : Option BufferId :=
+  (List.range state.buffers.size).findSome? fun index =>
+    match state.buffer? ⟨index⟩ with
+    | some buffer => if buffer.text == text && buffer.excerpts.isNone then some ⟨index⟩ else none
+    | none => none
+
+/-- `state` with each of `sources` among the source buffers the excerpt
+buffer `id` has touched since its last step, each once. Nothing changes for
+a buffer that is not an excerpt buffer. -/
+def touch (id : BufferId) (sources : Array BufferId) (state : EditorState) : EditorState :=
+  match state.buffer? id with
+  | some buffer@{ excerpts := some excerpts, .. } =>
+    let touched :=
+      sources.foldl
+        (fun touched source => if touched.contains source then touched else touched.push source)
+        excerpts.touched
+    { state with
+      buffers :=
+        state.buffers.set! id.index
+          (some { buffer with excerpts := some { excerpts with touched } }) }
+  | _ => state
+
+/-- `state` with the excerpt buffer `id`'s touched sources made one step:
+when it touched any, a step of each touched buffer's undo tree's state is
+pushed, `touched` is cleared and the steps to redo are emptied. It is pure:
+the source buffers' trees were told and closed already. Nothing changes
+for a buffer that is not an excerpt buffer, nor for one that touched
+nothing. -/
+def closeExcerptGroup (id : BufferId) (state : EditorState) : EditorState :=
+  match state.buffer? id with
+  | some buffer@{ excerpts := some excerpts, .. } =>
+    if excerpts.touched.isEmpty then state
+    else
+      let sources :=
+        excerpts.touched.filterMap fun source =>
+          (state.buffer? source).map fun touched => (source, touched.history.state)
+      let excerpts :=
+        { excerpts with
+          touched := #[], undos := excerpts.undos.push ⟨sources⟩, redos := #[] }
+      { state with
+        buffers := state.buffers.set! id.index (some { buffer with excerpts := some excerpts }) }
+  | _ => state
+
+/-- Makes `excerpts` what the excerpt buffer `id` keeps of its edits.
+Refused, with the state unchanged, with `noSuchBuffer` for a buffer there
+is none of, and with `notExcerpts` for one that is not an excerpt buffer. -/
+def setExcerptHistory (id : BufferId) (excerpts : Buffer.Excerpts) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id with
+  | none => (.error (.noSuchBuffer id), state)
+  | some buffer =>
+    if buffer.excerpts.isNone then (.error .notExcerpts, state)
+    else changeBuffer id (fun buffer => ((), { buffer with excerpts := some excerpts })) state
+
 /-- The register kept under `name`, if one was set under it. -/
 def register? (state : EditorState) (name : String) : Option Register :=
   (state.registers.find? (·.1 == name)).map (·.2)
@@ -2627,6 +2754,18 @@ def addBuffer (name : String) (text : TextId) (history : UndoTree) (state : Edit
         { state with
           buffers := state.buffers.push (some { name, text, history })
           recent := state.recent.push ⟨state.buffers.size⟩ })
+
+/-- Adds an excerpt buffer called `name` over the excerpt text `text`, whose
+history is `history`, with nothing edited through it yet ("Excerpt
+buffers", in the module docs). Refused as `addBuffer` refuses. -/
+def addExcerptBuffer (name : String) (text : TextId) (history : UndoTree) (state : EditorState) :
+    Except BufferRefusal BufferId × EditorState :=
+  match state.addBuffer name text history with
+  | (.ok id, added) =>
+    (.ok id,
+      { added with
+        buffers := added.buffers.modify id.index (·.map ({ · with excerpts := some {} })) })
+  | refused => refused
 
 /-- Removes the buffer `id`: its slot is empty from then on, its id is never
 used again, and it leaves the order buffers were used in (`recent`). Its

@@ -36885,6 +36885,214 @@ def readOnlyChecks : List Check :=
               echoOf committed == some "ro is read-only" &&
               (showing elsewhere).bind (·.text) == some "z" }]
 
+/-- The buffer called `name` in `driver`'s state, if there is one. -/
+def excerptBufferNamed (driver : EvilDriver) (name : String) : Option Buffer := do
+  driver.loop.state.buffer? (← driver.loop.state.findBuffer name)
+
+/-- What the text of the buffer called `name` holds in `driver`'s text model,
+read as a command reads it, so an excerpt text is caught up. -/
+def excerptRead (driver : EvilDriver) (name : String) : Option String := do
+  let buffer ← excerptBufferNamed driver name
+  (buffer.text.read.runModel driver.model.texts).1.toOption
+
+/-- The commands of the excerpt buffer checks, each a `Config.Registration`
+evil's commands are handed beside: `make-ex` makes source buffers `one`
+(`one\ntwo\nthree\n`) and `two` (`alpha\nbeta\n`) and an excerpt buffer `ex`
+of the second row of the first and the first row of the second
+(`two\n\nalpha\n`), and shows `ex` in the window; `edit-both` applies one
+transaction to the window's text that inserts `X` in the first excerpt and
+replaces the first byte of the second with `A`; `edit-both-fails` does that
+and is then refused; `edit-one` inserts `Z` at the start of `one`'s text;
+`show-one` shows `one` in the window; `two-ro` makes `two` read-only;
+`make-unheld` makes an excerpt buffer `ex2` of a text no buffer holds and
+shows it; and `insert-x` inserts `x` at the window's cursors. -/
+def excerptRegistrations : Array Config.Registration :=
+  #[{ name := "make-ex"
+      action :=
+        .call fun call => do
+          let .ok one ← createBuffer "one" "one\ntwo\nthree\n" | return
+          let .ok two ← createBuffer "two" "alpha\nbeta\n" | return
+          let .ok oneText ← one.text | return
+          let .ok twoText ← two.text | return
+          let .ok ex ← createExcerptBuffer "ex" #[⟨oneText, 4, 8⟩, ⟨twoText, 0, 6⟩] | return
+          discard <| call.target.window.id.show ex },
+    { name := "edit-both"
+      action :=
+        .call fun call =>
+          discard <| call.target.buffer.text.apply TextContract.acrossBoth Origin.user },
+    { name := "edit-both-fails"
+      action :=
+        .call fun call => do
+          discard <| call.target.buffer.text.apply TextContract.acrossBoth Origin.user
+          call.target.buffer.text.delete 9 99 },
+    { name := "edit-one"
+      action :=
+        .call fun _ => do
+          let some one ← findBuffer "one" | return
+          discard <| one.insertAt 0 "Z" },
+    { name := "show-one"
+      action :=
+        .call fun call => do
+          let some one ← findBuffer "one" | return
+          discard <| call.target.window.id.show one },
+    { name := "two-ro"
+      action :=
+        .call fun _ => do
+          let some two ← findBuffer "two" | return
+          discard <| two.setReadOnly true },
+    { name := "make-unheld"
+      action :=
+        .call fun call => do
+          let free ← createText "free\n"
+          let .ok ex ← createExcerptBuffer "ex2" #[⟨free, 0, 5⟩] | return
+          discard <| call.target.window.id.show ex },
+    { name := "insert-x", action := .call fun call => call.target.insertAtSelections "x" }]
+
+/-- `driver` once the command `name` has run, as an invocation no key
+yielded. -/
+def excerptInvoked (driver : EvilDriver) (name : String) : EvilDriver :=
+  (driver.stepped (driver.loop.invoke driver.handed { command := name })).1
+
+/-- `driver` once each of `events` is taken off the queue, in order. -/
+def excerptFed (driver : EvilDriver) (events : List Event) : EvilDriver :=
+  events.foldl (fun driver event => (driver.feed { event, stamp := 0 }).1) driver
+
+/-- A driver of the excerpt buffer checks: evil's keys and the commands of
+`excerptRegistrations`, over an empty buffer, once `make-ex` has run, so
+the window shows `ex` with its cursor at its start; `none` if making the
+state was refused. -/
+def excerptDriver : Option EvilDriver :=
+  (evilDriver "|" (evilHanded excerptRegistrations)).map (excerptInvoked · "make-ex")
+
+/-- The checks of excerpt buffers (`Editor/State.lean`, "Excerpt buffers";
+`Editor/Command/Dispatch.lean`, "Read-only buffers and excerpt sources";
+`Editor/Api.lean`, "Undo"), on the loop's driver over the editor's
+models, with evil's keys. -/
+def excerptBufferChecks : List Check :=
+  [{  name :=
+        "an edit typed in an excerpt buffer changes the source buffer's text at the mapped position, as one revision of the source traced to the user, and the excerpt buffer shows it"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let traced := do
+              let one ← excerptBufferNamed typed "one"
+              (one.text.trace 5 6 |>.runModel typed.model.texts).1.toOption
+            excerptRead driver "ex" == some "two\n\nalpha\n" &&
+              excerptRead typed "one" == some "one\ntXwo\nthree\n" &&
+              excerptRead typed "ex" == some "tXwo\n\nalpha\n" &&
+              excerptRead typed "two" == some "alpha\nbeta\n" &&
+              traced == some #[⟨5, 6, .entry 1 Origin.user⟩] },
+    { name :=
+        "u in the excerpt buffer after a typed session restores the source buffer and the excerpt buffer, one step for the whole session, and C-r redoes it"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let typed :=
+              evilFed (excerptFed (evilFed driver "l i") [.commit "X", .commit "Y"]) "<Escape>"
+            let undone := evilFed typed "u"
+            let redone := evilFed undone "C-r"
+            excerptRead typed "one" == some "one\ntXYwo\nthree\n" &&
+              excerptRead undone "one" == some "one\ntwo\nthree\n" &&
+              excerptRead undone "ex" == some "two\n\nalpha\n" &&
+              undone.loop.state.echo.isEmpty &&
+              excerptRead redone "one" == some "one\ntXYwo\nthree\n" &&
+              excerptRead redone "ex" == some "tXYwo\n\nalpha\n" &&
+              redone.loop.state.echo.isEmpty },
+    { name :=
+        "u in the excerpt buffer after the source was edited in its own buffer since is refused, saying so, and changes nothing"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let moved := excerptInvoked typed "edit-one"
+            let undone := evilFed moved "u"
+            excerptRead moved "one" == some "Zone\ntXwo\nthree\n" &&
+              undone.loop.state.echo == Evil.sourceMovedSays "one" &&
+              excerptRead undone "one" == some "Zone\ntXwo\nthree\n" &&
+              excerptRead undone "ex" == some "tXwo\n\nalpha\n" },
+    { name := "u in the source buffer takes back an edit made through the excerpt buffer"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let undone := evilFed (excerptInvoked typed "show-one") "u"
+            excerptRead undone "one" == some "one\ntwo\nthree\n" &&
+              excerptRead undone "ex" == some "two\n\nalpha\n" },
+    { name :=
+        "a command applying one transaction with an edit in each excerpt changes both source buffers, and one u restores both"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let edited := excerptInvoked driver "edit-both"
+            let undone := evilFed edited "u"
+            excerptRead edited "one" == some "one\ntXwo\nthree\n" &&
+              excerptRead edited "two" == some "Alpha\nbeta\n" &&
+              excerptRead undone "one" == some "one\ntwo\nthree\n" &&
+              excerptRead undone "two" == some "alpha\nbeta\n" &&
+              excerptRead undone "ex" == some "two\n\nalpha\n" &&
+              undone.loop.state.echo.isEmpty },
+    { name :=
+        "a command that edits both sources through the excerpt buffer and then fails is rolled back in both, the echo area says the refusal and nothing more, and u then has nothing to undo"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let failed := excerptInvoked driver "edit-both-fails"
+            let undone := evilFed failed "u"
+            excerptRead failed "one" == some "one\ntwo\nthree\n" &&
+              excerptRead failed "two" == some "alpha\nbeta\n" &&
+              excerptRead failed "ex" == some "two\n\nalpha\n" &&
+              failed.loop.state.echo == "edit-both-fails: refused: bad range" &&
+              undone.loop.state.echo == Evil.nothingToUndo },
+    { name :=
+        "with source two read-only, a command editing both gives up saying so and neither source changes; a commit into the second excerpt is dropped saying so, and one into the first is inserted"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let readOnly := excerptInvoked driver "two-ro"
+            let edited := excerptInvoked readOnly "edit-both"
+            let second := excerptFed (evilFed readOnly "j j i") [.commit "Q"]
+            let first := excerptFed (evilFed readOnly "i") [.commit "Q"]
+            edited.loop.state.echo == "edit-both: two is read-only" &&
+              excerptRead edited "one" == some "one\ntwo\nthree\n" &&
+              excerptRead edited "two" == some "alpha\nbeta\n" &&
+              second.loop.state.echo == "two is read-only" &&
+              excerptRead second "two" == some "alpha\nbeta\n" &&
+              excerptRead first "one" == some "one\nQtwo\nthree\n" },
+    { name := "an excerpt over a text no buffer holds refuses an edit there, saying so"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let made := excerptInvoked driver "make-unheld"
+            let edited := excerptInvoked made "insert-x"
+            excerptRead made "ex2" == some "free\n" &&
+              edited.loop.state.echo == "insert-x: ex2 reads a text no buffer holds" &&
+              excerptRead edited "ex2" == some "free\n" },
+    { name :=
+        "the ranges a transaction changes are its runs of deletes and inserts in the text before, an insert's empty and changes that do nothing passed over"
+      run :=
+        pure <|
+          Change.ranges TextContract.acrossBoth.changes == #[(1, 1), (5, 6)] &&
+            Change.ranges #[.retain 2, .delete 0, .insert "", .retain 1] == #[] &&
+            Change.ranges #[.delete 2, .insert "ab", .retain 3, .delete 1] == #[(0, 2), (5, 6)] &&
+            Change.ranges #[.insert "a", .retain 0, .insert "b"] == #[(0, 0)] }]
+
 /-- The names of the workspace finder's contract properties
 (`Editor/Workspace/Contract.lean`) that do not hold of the pure model
 (`World.find`), or of the real finder run on the job model of the
@@ -37055,6 +37263,7 @@ def checks : List Check :=
     modeMarkerChecks ++
     shellChecks ++
     readOnlyChecks ++
+    excerptBufferChecks ++
     compileChecks ++
     compileErrorChecks ++
     compileLocationChecks ++
