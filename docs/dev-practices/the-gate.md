@@ -615,9 +615,11 @@ mise in the checks of a child's environment), `tests/workspaces` (the
 fixture that stands in for git in the workspace finder's checks, which run
 the finder's contract over the real process and file services),
 `tests/shell` (the fixture `:!` runs over the real process service, and the
-editor's working directory in those checks) and `tests/syntax` (the syntax
-fixtures, whose Rust fixtures the indent and text-object checks read); each
-executable fixture must stay executable. Then `config-test`, and
+editor's working directory in those checks), `tests/compile` (the
+fixture `compile` runs over the real process service, which waits for files
+the check makes, so its pauses are the check's to end) and `tests/syntax`
+(the syntax fixtures, whose Rust fixtures the indent and text-object checks
+read); each fixture must stay executable. Then `config-test`, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must

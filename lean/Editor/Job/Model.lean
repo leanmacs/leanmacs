@@ -50,6 +50,10 @@ here.
   share (`JobModel.environments`, `Editor/Process/Environment.lean`), at
   once, without moving the clock; a message one says for the echo area is
   appended to `JobModel.reported`, as the host would say it.
+- A post is answered at once, without moving the clock, and recorded in
+  `JobModel.posted`, oldest first: what a host would run on the editor
+  thread. `runParking` parks a job at each post, so a driver runs it before
+  the job goes on.
 
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities
@@ -77,6 +81,8 @@ structure JobModel where
   environments : Process.Environments := {}
   /-- What the environments said for the echo area, oldest first. -/
   reported : Array String := #[]
+  /-- What the job posted to the editor (`post`), oldest first. -/
+  posted : Array Invocation := #[]
   deriving DecidableEq
 
 namespace JobModel
@@ -110,6 +116,7 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     (reply,
       { model with
         environments, reported := model.reported ++ said.toArray })
+  | .post invocation, model => ((), { model with posted := model.posted.push invocation })
 
 /-- The model once the job has ended: every streaming child it started is
 ended (`ProcessModel.endAll`), as the runner cancels them, and every watch
@@ -152,11 +159,16 @@ inductive Ran (α : Type) where
   |
   parked (watch : Nat) (model : JobModel)
     (resume : Except FileWatchError (Array FileWatch.Change) → Program jobPort α)
+  /-- It is parked at a post of `invocation`, which the model has recorded
+  (`posted`): the editor has not run it yet. -/
+  | posted (invocation : Invocation) (model : JobModel) (resume : Unit → Program jobPort α)
 
 /-- Runs `program` as `run` does, but parks it at a `next` of a watch that has
 nothing recorded, when no cancel is due: what a driver that holds a waiting
-job needs (`Loop.Driver.touch`, `Editor/Loop/Driver.lean`). Parked, no
-watch is ended: the job has not ended. -/
+job needs (`Loop.Driver.touch`, `Editor/Loop/Driver.lean`). It parks it at
+every post too, when no cancel is due, the post recorded: so a driver hands
+the editor each post before the job goes on (`Loop.Driver.posted`). Parked,
+no watch and no child is ended: the job has not ended. -/
 def runParking {α : Type} : Program jobPort α → JobModel → Ran α
   | .done value, model => .ended (if model.cancelled then none else some value) model.ended
   | .step request next, model =>
@@ -172,6 +184,11 @@ def runParking {α : Type} : Program jobPort α → JobModel → Ran α
         | _ => none
       match request, next, waiting with
       | .fileWatch (.next _), next, some watch => .parked watch model next
+      | .post invocation, next, _ =>
+        if model.cancelAt.isNone then .posted invocation (handle (.post invocation) model).2 next
+        else
+          let (reply, after) := handle (.post invocation) model
+          runParking (next reply) after
       | request, next, _ =>
         let (reply, after) := handle request model
         match model.cancelAt with

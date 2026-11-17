@@ -478,6 +478,14 @@ arrived before it (`Editor/Loop.lean`, "Jobs from commands").
   command, even one that has finished and not been delivered. A command
   that is refused or interrupted after asking cancels nothing. It is how
   `:!` keeps one run a workspace and `C-g` ends it (`Editor/Shell.lean`).
+- **A job may hand the editor a command while it runs** (`post`,
+  `Editor/Job.lean`): an invocation, which its host runs on the editor
+  thread with `runPosted`, as a delivery labelled `job <id> <name>`, before
+  the job's own command. `runPosted` runs the command registered under the
+  invocation's name inside itself, with the focused window and the
+  invocation's arguments (`runCommand`), and says `<name>: no such command`
+  for a name no command is registered under. It is how a compile streams
+  its output into its buffer (`Editor/Compile.lean`).
 
 Pinned by `ModelTest.driverChecks`.
 
@@ -722,6 +730,36 @@ name no command is registered under, and where no loop runs the
 command. -/
 def runCommand (name : String) (call : Call) : EditorM Bool :=
   EditorState.ask (.runCommand name call)
+
+/-- Makes the buffer `id` read-only to editing commands, or not, as `on`
+says (`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a
+buffer there is none of. -/
+def BufferId.setReadOnly (id : BufferId) (on : Bool) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setReadOnly id on)
+
+/-- Runs `action` with the buffer `id` writable, as Emacs's
+`inhibit-read-only` does, for the command that owns a read-only buffer: a
+buffer that is read-only is made writable, `action` runs, and the buffer is
+made read-only again. A command that does not run to its end is rolled
+back to the state from before it, the flag included. -/
+def BufferId.writing {α : Type} (id : BufferId) (action : EditorM α) : EditorM α := do
+  let was := ((← editorState).buffer? id).any (·.readOnly)
+  if was then
+    discard <| id.setReadOnly false
+  let value ← action
+  if was then
+    discard <| id.setReadOnly true
+  return value
+
+/-- Runs `invocation`, which a job posted ("Jobs", in the module docs): the
+command registered under its name, with the focused window and the
+invocation's arguments, as part of this command (`runCommand`). A name no
+command is registered under says `<name>: no such command`; with no window
+focused nothing runs. -/
+def runPosted (invocation : Invocation) : EditorM Unit := do
+  let some target := (← editorState).focusedTarget? | return
+  unless ← runCommand invocation.command { target, arguments := invocation.arguments } do
+    message s!"{invocation.command}: no such command"
 
 /-- Asks for `invocation` to be run once this command has run to its end, as
 a step of its own, before the next event: the command is looked up then,

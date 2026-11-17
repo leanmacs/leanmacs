@@ -1,5 +1,6 @@
 import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
+import Editor.Compile.Compiled
 import Editor.Config.Directory
 import Editor.Config.Display
 import Editor.Config.Elaborate
@@ -295,6 +296,18 @@ the arguments the command gave. `setup` starts none.
   runs any command (`Loop.deliver`). So a handler runs on the editor
   thread, between two events, after every event that was queued before the
   wake-up.
+- **A job's posts run as commands while it runs** (`post`,
+  `Editor/Job.lean`). The runner hands each, on the job's thread, to what
+  `startJob` gave it, which keeps it in the host's mailbox (`Job.Mailbox`)
+  with the job's id and posts an event under the Lean source id
+  `Collaborators.posts`, its code the job's id. The editor thread meets the
+  event in its turn, takes that job's oldest post, and, while the job is
+  still in the table, has the loop run it as a finished job's command is
+  run (`Running.posted`, `runPosted`), labelled `job <id> <name>`, and
+  prints how it went. So a job's posts run in the order it made them, each
+  between two events, and all before its own command, whose wake-up is
+  posted after its last post's event. The post of a job a cancel or a
+  reload removed is dropped, unprinted.
 - **A finished job's command is handed what the job held.** A job that
   loaded a file holds the snapshot the load made. The host runs the
   delivery with `Job.finishWith` (`Editor/Job/Real.lean`): the run is handed
@@ -771,6 +784,10 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The Lean source id what the jobs' environments report is posted under,
   with the text to say in the echo area (`reportedEnvironments`). -/
   environment : UInt64
+  /-- The Lean source id a job's post is announced under, with the job's id
+  as its code: the post itself waits in the host's mailbox
+  (`Running.mailbox`). -/
+  posts : UInt64
   /-- The compiled commands: registered for the owner `compiled` when the
   loop starts, before any config. -/
   commands : Array Config.Registration := #[]
@@ -982,6 +999,9 @@ structure Running (σ : Type) (scheme : InputScheme) where
   /-- The jobs started with a key, by their key: the id each runs as
   (`JobStart.key`). -/
   keyed : Array (String × Nat) := #[]
+  /-- The posts the jobs made that the editor thread has not run, each with
+  its job's id. -/
+  mailbox : Job.Mailbox
 
 namespace Running
 
@@ -1070,7 +1090,13 @@ def startJob (collaborators : Collaborators σ scheme) (running : Running σ sch
   let wake (id : Nat) : BaseIO Unit :=
     (discard <| Ffi.postEvent .editor collaborators.jobs id.toUInt64 "" : IO Unit).catchExceptions
       fun _ => pure ()
-  let (id, jobs) ← running.jobs.start owner name work wake
+  -- A post waits in the mailbox, and the event says whose it is: the job's
+  -- wake-up is posted after its last post's event.
+  let posted (id : Nat) (invocation : Invocation) : BaseIO Unit := do
+    running.mailbox.push id invocation
+    (discard <| Ffi.postEvent .editor collaborators.posts id.toUInt64 "" : IO Unit).catchExceptions
+        fun _ => pure ()
+  let (id, jobs) ← running.jobs.start owner name work wake posted
   return (some id, { running with jobs })
 
 /-- Cancels the job started with `key`, if one is running or has finished and
@@ -1361,6 +1387,30 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
     collaborators.emit s!"{label}: cancelled"
     return running
 
+/-- Deals with a post of the job `id`, on the editor thread: takes the job's
+oldest post out of the mailbox and, while the job is in the table, has the
+loop run it (`runPosted`, `Loop.deliver`), labelled `job <id> <name>`, as
+a finished job's command is run, and prints how it went. A post of a job
+that was cancelled or removed is dropped: nothing runs and nothing is
+printed. The frame is made if there is none. -/
+def posted (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
+    IO (Running σ scheme) := do
+  let some invocation ← running.mailbox.take id | return running
+  unless running.jobs.has id do
+    return running
+  let some entry := running.jobs.table.entries.find? (·.id == id) | return running
+  let label := s!"job {entry.id} {entry.name}"
+  let (made, running) ← running.framed collaborators
+  let some frame := made |
+    collaborators.emit s!"{label}: no frame"
+    return running
+  let (stepped, running) ←
+    running.attempt collaborators
+        (frame.deliver (running.keys collaborators) label (runPosted invocation))
+  let some stepped := stepped | return running
+  collaborators.emit s!"{label}: {describeEnding ((stepped.ended).getD .finished)}"
+  running.took collaborators stepped
+
 /-- A scene as `scene` prints it, read from the text store as it is now: its
 frame, then each view, its snapshot's text and its markers' offsets, then,
 for a view that has any, its decorations, each its face and its range
@@ -1507,6 +1557,8 @@ def other (collaborators : Collaborators σ scheme) (running : Running σ scheme
       return ← running.finish collaborators
     if event.source.id == collaborators.jobs then
       return ← running.ended collaborators event.code.toNat
+    if event.source.id == collaborators.posts then
+      return ← running.posted collaborators event.code.toNat
     if event.source.id == collaborators.environment then
       return running.said event.text
     unless event.source.id == collaborators.requests do
@@ -1596,7 +1648,7 @@ def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators �
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of
 snapshots the text binding publishes, the clipboard they make, the syntax
-tree they make over the same table, no jobs and no frame. -/
+tree they make over the same table, no jobs, an empty mailbox and no frame. -/
 def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     IO (Running σ scheme) :=
   return {
@@ -1605,7 +1657,8 @@ def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborator
       display := ← collaborators.display collaborators.published.reader
       clipboard := ← collaborators.clipboard
       syntaxTree := ← collaborators.syntaxTree collaborators.published.reader
-      jobs := { services := collaborators.services } }
+      jobs := { services := collaborators.services }
+      mailbox := ← Job.Mailbox.new }
 
 /-- The editor thread: pulls the editor queue and handles each event to its
 end, until the driver ends the loop or the queues are quit. After each event
@@ -2149,7 +2202,8 @@ ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
 the buffer commands, the frame's commands with their bindings, the command that loads a theme
 with the themes that ship, the workspace command with the job that finds a
-file's workspace, the shell's command with the job that runs `:!`, and the menu bar (`Menu.standard`) with its
+file's workspace, the shell's command with the job that runs `:!`, the
+compile mode's commands, its job and its mode (`Editor/Compile.lean`), and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
 
@@ -2161,16 +2215,17 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     Collaborators Config.Elaborate.State Vim.Default.scheme :=
   { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
     source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
-    wakeups := 2, jobs := 3, environment := 4
+    wakeups := 2, jobs := 3, environment := 4, posts := 5
     commands :=
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
         FrameCommands.commands ++
         Themes.commands ++
         Workspace.commands ++
-        Shell.commands
+        Shell.commands ++
+        Compile.commands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
-    compiledJobs := Files.jobs ++ Workspace.jobs ++ Shell.jobs
-    modes := Minibuffer.modes, ex := Ex.bindings, themes := Themes.shipped
+    compiledJobs := Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs
+    modes := Minibuffer.modes ++ Compile.modes, ex := Ex.bindings, themes := Themes.shipped
     segments := ModeLine.shipped, log := IO.eprintln }
 
 /-- The environments every job of a host shares, over `state`

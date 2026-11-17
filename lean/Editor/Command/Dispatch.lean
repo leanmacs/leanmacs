@@ -222,10 +222,24 @@ changed on disk"), so the next edit lands. An edit script
 (`TextId.applyScript`) is not looked at: a reload is never refused by it.
 Undo is an edit here too; the loop's own rollback is not dispatched.
 
+## Read-only buffers
+
+Before the first-edit check, the same requests (`TextRequest.edited?`) are
+looked at for a read-only buffer over the text (`EditorState.readOnly?`,
+`Editor/State.lean`, "Buffers"): the program ends there, the edit not made,
+as a command that gives up, with `<name> is read-only`
+(`EditorState.readOnlyReason`). So the loop rolls the command back and says
+`<command>: <name> is read-only` ("A command that gives up"). Undo is an
+edit here too, so `u` in a read-only buffer is refused. The command that
+owns the buffer writes it inside `BufferId.writing` (`Editor/Api.lean`),
+which clears the flag for the edit, as a state request this transformation
+answers in place.
+
 Pinned by `ModelTest.guardChecks` (the guard, on commands that make no
 state request), `ModelTest.dispatchStateChecks`,
-`ModelTest.modeEnterChecks` and, for the first edit after a change on disk,
-`ModelTest.stalenessChecks`.
+`ModelTest.modeEnterChecks`, for the first edit after a change on disk,
+`ModelTest.stalenessChecks`, and, for read-only buffers,
+`ModelTest.readOnlyChecks`.
 -/
 
 namespace Editor
@@ -388,6 +402,12 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     .step (.watch .interrupted) fun (raised : Bool) =>
       if raised then .done (.interrupted, state)
       else
+        -- An edit of a read-only buffer is not made ("Read-only buffers",
+        -- in the module docs), and is looked at first.
+        let readOnly :=
+          match request with
+          | .text text => text.edited?.bind state.readOnly?
+          | _ => none
         -- The first edit of a buffer whose file changed on disk, which the
         -- user was not told of, is not made ("The first edit after a change
         -- on disk", in the module docs).
@@ -395,9 +415,10 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           match request with
           | .text text => text.edited?.bind state.untold?
           | _ => none
-        match untold with
-        | some (buffer, path, found) => .done (.superseded buffer path found, state)
-        | none => .step request fun reply => dispatched registered state (next reply)
+        match readOnly, untold with
+        | some (_, name), _ => .done (.gaveUp (EditorState.readOnlyReason name), state)
+        | none, some (buffer, path, found) => .done (.superseded buffer path found, state)
+        | none, none => .step request fun reply => dispatched registered state (next reply)
 
 /-- `command` as the loop runs it from the editor state `state`: its state
 requests answered in place, and stopped at its next other request once the

@@ -1,4 +1,5 @@
 import Editor.Buffers
+import Editor.Compile
 import Editor.Config.Registry
 import Editor.Ex
 import Editor.Files
@@ -63,6 +64,13 @@ drops it.
   - `bd` runs `close-buffer` and takes text: the rest of the line is the
     name of the buffer to close, and with none it closes the buffer of the
     window the line was asked from.
+  - `compile` runs `compile` (`Editor/Compile.lean`) and takes text: the
+    rest of the line is the command line, run in the buffer's workspace;
+    with none it asks for one. A host must be handed the compile mode's
+    commands and job (`Editor/Compile/Compiled.lean`).
+  - `recompile` runs `recompile` and takes nothing: it reruns the
+    workspace's last line.
+  - `kill-compilation` runs `kill-compilation` and takes nothing.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -96,6 +104,9 @@ def bindings : Array Binding :=
     { name := "reload", command := reloadName },
     { name := "b", command := Buffers.switchName, takes := .text },
     { name := "ls", command := Buffers.listName },
-    { name := "bd", command := Buffers.closeName, takes := .text }]
+    { name := "bd", command := Buffers.closeName, takes := .text },
+    { name := "compile", command := Compile.compileName, takes := .text },
+    { name := "recompile", command := Compile.recompileName },
+    { name := "kill-compilation", command := Compile.killName }]
 
 end Editor.Ex

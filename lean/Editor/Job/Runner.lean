@@ -84,6 +84,18 @@ cancellation is built here.
   cancelled while its start is in flight has the start withdrawn, and the
   library kills the child as it registers it.
 
+## Posting a command
+
+A job's post (`JobRequest.post`) is answered at once, as an environment
+request is, and registers no wait: the runner hands the invocation to the
+job's `posted` (`spawn`), on the job's thread, and goes on. A job's posts
+are handed over in the order it made them, all before its outcome is in its
+handle and `finished` is called. A cancelled job posts nothing: the token is
+looked at before the post is handed over, as it is before every request.
+Whoever spawned the job runs each post as a command on the editor thread,
+and drops a post of a job it has removed (`Editor/Job/Jobs.lean`,
+`Editor/Headless.lean`).
+
 ## A watch does not outlive its job
 
 A watch a start names is the job's (`Handle.watches`), as a streaming child
@@ -420,6 +432,10 @@ structure Handle where
   /-- The watches the job started and still holds, oldest first. Every
   change to it is one atomic step. -/
   watches : IO.Ref (Array FileWatch.Id)
+  /-- What the job's posts are handed to, on the job's thread: whoever
+  spawned it runs each on the editor thread ("Posting a command", in the
+  module docs). -/
+  posted : Invocation → BaseIO Unit := fun _ => pure ()
 
 namespace Handle
 
@@ -608,6 +624,12 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
           handle.watches.modify (·.push watch)
         return reply
   | .environment request => return .now (← handle.services.environments.ask request)
+  | .post invocation => do
+    -- A cancelled job posts nothing: the token is looked at here, and the
+    -- post is answered at once, as `environment` is.
+    unless ← handle.cancelled do
+      handle.posted invocation
+    return .now ()
   | .fileWatch (.next watch) => do
     -- A watch is named for the job that started it, and for no other.
     unless (← handle.watches.get).contains watch do
@@ -687,11 +709,14 @@ def start (handle : Handle) (finished : BaseIO Unit) (work : Work) : BaseIO Unit
 
 /-- Starts `work` on the pool and returns at once: none of the job runs on
 the calling thread, its leading pure work included. `finished` is called once
-the job has ended and its outcome is in the handle. -/
-def spawn (services : Services) (work : Work) (finished : BaseIO Unit) : BaseIO Handle := do
+the job has ended and its outcome is in the handle, and `posted` with each
+post the job makes while it is not cancelled, on the job's thread, in the
+order they were made. -/
+def spawn (services : Services) (work : Work) (finished : BaseIO Unit)
+    (posted : Invocation → BaseIO Unit := fun _ => pure ()) : BaseIO Handle := do
   let handle : Handle :=
     { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new, held := ← IO.mkRef #[]
-      children := ← IO.mkRef #[], watches := ← IO.mkRef #[] }
+      children := ← IO.mkRef #[], watches := ← IO.mkRef #[], posted }
   discard <| BaseIO.asTask (start handle finished work)
   return handle
 

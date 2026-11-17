@@ -2475,8 +2475,9 @@ and Testing).
 
 Status: built (`lean/Editor/Role.lean`, `lean/Editor/Mode.lean`, the
 registry's modes in `lean/Editor/Config/Registry.lean`, a buffer's modes in
-`lean/Editor/State.lean`; the module docs have the detail). One mode
-ships: the minibuffer's ("The minibuffer").
+`lean/Editor/State.lean`; the module docs have the detail). Two modes
+ship: the minibuffer's ("The minibuffer") and `compilation` ("The compile
+mode, as built").
 
 A mode is a value in a registry keyed by name. It is not a type class,
 because instances resolve at elaboration time and the active mode is chosen
@@ -2965,6 +2966,66 @@ and the fixture `tests/headless/candidates`, which is where `<Tab>` and
 `<Enter>` are pressed under the Vim scheme the executable runs, with the
 library's matcher.
 
+### The compile mode, as built
+
+Status: built by `shell-and-compile` phase 3 (`lean/Editor/Compile.lean`,
+`lean/Editor/Compile/Compiled.lean`; the module docs have the detail).
+Emacs's `M-x compile`, one per workspace: a build or test command runs as
+`/bin/sh -c <line>` and its output arrives in the workspace's compilation
+buffer while editing goes on.
+
+- **The scope.** Each command acts on the focused buffer's workspace; a
+  buffer with no workspace uses its file's directory, or the editor's
+  working directory, as a workspace of its own; a compilation buffer, its
+  own scope ([projects.md](projects.md), "A buffer's workspace"). A
+  location that cannot run commands refuses `compile` and `recompile`
+  before anything is asked or started, and says why.
+- **The commands.** `compile` takes the line, or asks for it, `Compile
+  command: `, with the scope's last line as the prompt's text and the
+  project's compile history as its candidates. `recompile` reruns the
+  scope's last line in the directory it ran in, with no prompt.
+  `kill-compilation` cancels the scope's run, which kills the child with
+  its process group. Starting a run while the scope's own runs asks,
+  `Kill the compilation running in <label>? (y or n) `: `y` or `yes`
+  kills the old one and empties the buffer, anything else leaves both. The
+  ex line ships `compile` (taking the line), `recompile` and
+  `kill-compilation`; no key binds them yet.
+- **The buffer** is `*compilation: <label>*`, with the root's parent
+  directory in parentheses when that name is taken by another workspace
+  of the same label, then the first free name of that. It is found by the
+  number its scope keeps, never by its name. Its first line is the header,
+  `<label> in <directory>: <line>`; its last, once the run ends,
+  `Compilation <how> after <s>.<tenths> s`, with Emacs's words for how:
+  `finished`, `exited abnormally with code <n>`, `killed by signal <n>`,
+  `killed`, or `stopped: <why>` and `could not start: <why>`. The echo area
+  says the same with the label. When no view shows the buffer, the asking
+  view is split and the new view below shows it, the focus staying.
+- **Streaming.** The run is a job keyed by its scope. It reads the child a
+  delivery at a time and posts each batch of lines to the editor as it
+  comes (`post`, [concurrency.md](concurrency.md), "Getting results
+  back"), pausing 50 ms after each, so a fast child is drawn at most twenty
+  times a second. Within a delivery, standard output's lines come before
+  standard error's: the true interleaving of the two needs them merged in
+  the process service, which is not built. A killed or replaced run's late
+  output is dropped.
+- **Following.** A view whose cursor is on the buffer's last line, or the
+  empty row after it, follows: its cursor goes to the start of the new
+  last line, and the view scrolls with it. A view whose cursor was moved
+  up stays where it is. A restart puts every view's cursor on the header.
+- **Read-only.** The buffer is read-only to editing commands
+  (`Buffer.readOnly`): an edit gives the command up, `<command>: <name> is
+  read-only`, undo included, and a committed text is dropped and said. The
+  compile mode writes it inside `BufferId.writing`, Emacs's
+  `inhibit-read-only`. The mode line has no read-only mark yet.
+- **The mode** `compilation` fills the role `refresh` with `recompile`.
+- **Not built here**: errors and `next-error` (phase 4), the hook a minor
+  mode gives a project (phase 5), a time limit (a build may run for many
+  minutes; `kill-compilation` ends it, and `C-g` does not, as in Emacs).
+
+Pinned by `ModelTest.compileChecks` and `readOnlyChecks` on the models, and
+by `ContractTest.compileChecks` over the real process service, with the
+fixture `tests/compile/three-lines`.
+
 ## The ex command line
 
 Status: decided 2026-11-14 and built, by the command loop's phase 12
@@ -3181,6 +3242,9 @@ command an ex name runs is a step of its own.**
 | `b` | `switch-buffer` | Text | Shows the buffer the rest of the line names, exactly or by fuzzy match. With no argument, asks with the open buffers as candidates, by `switch-buffer`'s own rule |
 | `ls` | `list-buffers` | Nothing | Shows the buffer list, a text view of the open buffers, most recently used first, with `+` for unsaved changes |
 | `bd` | `close-buffer` | Text | Closes the buffer the rest of the line names, or the window's own: refused for a buffer of a file with unsaved changes and for a buffer with a save in flight, and every window that showed it shows the most recently used buffer left |
+| `compile` | `compile` | Text | Runs the rest of the line as `/bin/sh -c` in the buffer's workspace, into its compilation buffer ("The compile mode, as built"); with no argument, asks for the line |
+| `recompile` | `recompile` | Nothing | Reruns the workspace's last compiled line |
+| `kill-compilation` | `kill-compilation` | Nothing | Kills the workspace's compilation in flight |
 
 Where they differ from Vim:
 
@@ -3198,7 +3262,8 @@ Where they differ from Vim:
 - **`e!` and `w!` are names of their own**, bound with a fixed argument;
   only a leading `!` is parsed, as the shell's.
 - **`w` takes no file name.** Saving under another name is not built.
-- **`reload` is no Vim command.**
+- **`reload` is no Vim command**, nor are `compile`, `recompile` and
+  `kill-compilation`, which are Emacs's.
 - **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
   matches more than one buffer.
 - **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it
@@ -3215,7 +3280,9 @@ Where they differ from Vim:
 Pinned by `ModelTest.exLineChecks` (the parser, ranges and the binding),
 `shellChecks` (`:!` on the models, in the workspaces of a main checkout,
 a linked worktree and a directory in none), `ContractTest.shellChecks`
-(over the real process service),
+(over the real process service), `compileChecks` (`:compile` and the
+compile mode on the models) and `ConfigTest.shippedChecks` (the names
+bound),
 `registryChecks`, `setupChecks` and `reloadChecks` (ex bindings by owner,
 from `setup`, and across an install), `exChecks` (the ex line and the
 first five names, and `bufferCommandChecks` the last three, on the loop's driver over the editor's models and the model of

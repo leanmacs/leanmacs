@@ -928,6 +928,24 @@ transaction through. Where those come from is open.
     and a cancel ends the job, finished and not delivered or not, by
     `Jobs.cancel`, which takes it out of the table, so its command never
     runs. Before this only removing an owner or shutdown cancelled a job.
+- **A job posts a command while it runs** (`post`, `lean/Editor/Job.lean`;
+  2026-11-16): a request of the job port that holds an invocation, a
+  registered command's name and plain arguments, as a command starts a job
+  by name. It is answered at once, as a request for the shared
+  environments is, waits for nothing and moves no clock: there is no
+  back-pressure through it, so a job that posts often batches by itself.
+  The runner hands the invocation, on the job's thread, to what its host
+  gave it, unless the job was cancelled. The headless host keeps it in a
+  mailbox, with the job's id, and posts an event to the editor queue under
+  a source of its own (`Collaborators.posts`); the editor thread takes the
+  job's oldest post for each such event and, while the job is still in the
+  table, runs it as a delivery labelled `job <id> <name>` (`runPosted`,
+  `lean/Editor/Api.lean`). So a job's posts run in the order it made them,
+  each between two events, and all before its own command, whose wake-up
+  is posted after its last post. A cancelled or removed job's posts are
+  dropped, as its result is. The loop's driver on the models holds a job
+  at each post until the test says it arrives (`Loop.Driver.posted`,
+  `lean/Editor/Loop/Driver.lean`).
   - **a command may key a job and cancel one** too: `startJob name
     arguments (key := some key)` starts the job under a key, so it ends the
     running job of that key first, and `cancelJob key` asks for the job of
@@ -1664,7 +1682,11 @@ same editor queue.
   goes to the grid inside Rust, and process output is framed and batched in
   Rust and reaches the job that reads it by pull, one completion a read on
   the completion queue, never the editor queue. The editor thread sees
-  only the job's result when the job ends.
+  the job's result when the job ends, and what the job posts while it
+  runs: a job that must show its progress, a compile streaming its output
+  into its buffer, posts a command by name with plain arguments
+  (`post`, below), batched by the job itself, at most one a pause between
+  reads.
 
 Subscriptions are registered by name and owner, and replaced by owner on
 reload. See [lean-runtime.md](lean-runtime.md).

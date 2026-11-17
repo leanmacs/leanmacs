@@ -1,6 +1,7 @@
 import Editor.Api.Theorems
 import Editor.Buffers
 import Editor.Command.Append
+import Editor.Compile
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
@@ -161,7 +162,10 @@ tests, and are not imported.
 shell command run in the buffer's workspace as a job, and what comes of it
 said in the echo area or shown in the workspace's output buffer. Its
 registrations (`Editor/Shell/Compiled.lean`) name the registry and are not
-imported.
+imported. So is `compile` (`Editor/Compile.lean`): a build or test command
+run per workspace, its output streamed into the workspace's compilation
+buffer; its registrations (`Editor/Compile/Compiled.lean`) are not
+imported either.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

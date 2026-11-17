@@ -148,10 +148,11 @@ run = [
   # whose properties `lean-test` runs against the finder's model
   # (tests/workspaces). Its third is the directory of the fixture `:!` runs
   # over the real process service, which is also the editor's working
-  # directory in those checks (tests/shell), and its fourth the directory of
-  # the syntax fixtures, whose Rust fixtures the indent and text-object
-  # checks read (tests/syntax).
-  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces ../tests/shell ../tests/syntax",
+  # directory in those checks (tests/shell). Its fourth is the directory of
+  # the fixture `compile` runs over the real process service (tests/compile),
+  # and its fifth the directory of the syntax fixtures, whose Rust fixtures the
+  # indent and text-object checks read (tests/syntax).
+  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces ../tests/shell ../tests/compile ../tests/syntax",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment.
