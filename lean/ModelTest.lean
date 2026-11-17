@@ -63,6 +63,7 @@ import Editor.Themes.Compiled
 import Editor.Themes.FairyFloss
 import Editor.Themes.Solarized
 import Editor.UndoTree.Cases
+import Editor.VersionControl.Porcelain
 import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
@@ -37599,6 +37600,142 @@ def modeMarkerFailures : IO (List String) :=
         if after.processes.started.isEmpty then []
         else [s!"the mode marker search on the job model starts no process: {property.name}"]
 
+/-! ## Version control (`Editor/VersionControl.lean`)
+
+### The fixtures
+
+What `git status --porcelain=v2 -z --branch --untracked-files=all
+--find-renames` printed, byte for byte, with each NUL written `\x00`. Each
+was captured with git 2.56.1, with `GIT_CONFIG_NOSYSTEM=1`,
+`GIT_CONFIG_GLOBAL=/dev/null`, a fresh `HOME`, author and committer `a
+<a@example.com>` at `2026-01-01T00:00:00Z`, in a repository made by `git -c
+init.defaultBranch=main init` and the commands each fixture's comment
+gives (`g` is `git -c commit.gpgsign=false`). -/
+
+/-- On `main`, nothing changed: `echo a > a.txt; git add -A; g commit -m
+head`. -/
+def porcelainClean : String :=
+  "# branch.oid a655a818d91215d2e13ebd735265b112d61e150d\x00" ++ "# branch.head main\x00"
+
+/-- A detached checkout: `porcelainClean`'s commands, then `git checkout
+--detach`. -/
+def porcelainDetached : String :=
+  "# branch.oid a655a818d91215d2e13ebd735265b112d61e150d\x00" ++ "# branch.head (detached)\x00"
+
+/-- An unborn `main` with a staged new file: `echo a > a.txt; git add
+a.txt`. -/
+def porcelainUnborn : String :=
+  "# branch.oid (initial)\x00" ++ "# branch.head main\x00" ++
+    "1 A. N... 000000 100644 100644 0000000000000000000000000000000000000000 78981922613b2afb6025042ff6bd878ac1994e85 a.txt\x00"
+
+/-- Every state at once. Each of `sm um mm uu ud du gone deleted` written
+as `<name>.txt` holding its name, `old.txt` holding `old` and `with
+space.txt` holding `space`, committed as `base`; on a branch `other`,
+`uu.txt`, `aa.txt` and `du.txt` written `theirs` and `ud.txt` removed,
+committed; on `main`, `uu.txt`, `aa.txt` and `ud.txt` written `ours` and
+`du.txt` removed, committed; then `g merge other`, which stops in conflict;
+then `sm.txt` written and staged, `um.txt` written, `mm.txt` written,
+staged and written again, `added.txt` written and staged, `git rm
+deleted.txt`, `rm gone.txt`, `dir/new.txt` written, `with space.txt`
+written, `héllo.txt` written, and `git mv old.txt new.txt`. -/
+def porcelainMixed : String :=
+  "# branch.oid 78576d68d8f3fbaca58094a963d069afbd1f86f2\x00" ++ "# branch.head main\x00" ++
+    "1 A. N... 000000 100644 100644 0000000000000000000000000000000000000000 d5f7fc3f74f7dec08280f370a975b112e8f60818 added.txt\x00" ++
+    "1 D. N... 100644 000000 000000 71779d2cab258b810b2f567c9a619f6e0105f44e 0000000000000000000000000000000000000000 deleted.txt\x00" ++
+    "1 .D N... 100644 100644 000000 286c5f5776916d7d7d5849988ca9d83e722cf9c2 286c5f5776916d7d7d5849988ca9d83e722cf9c2 gone.txt\x00" ++
+    "1 MM N... 100644 100644 100644 dba863d1633701b13bbd23ec0e2b9104cf90e850 19d9cc8584ac2c7dcf57d2680375e80f099dc481 mm.txt\x00" ++
+    "2 R. N... 100644 100644 100644 3367afdbbf91e638efe983616377c60477cc6612 3367afdbbf91e638efe983616377c60477cc6612 R100 new.txt\x00" ++
+    "old.txt\x00" ++
+    "1 M. N... 100644 100644 100644 ffcdb2a6c8d3d589b0edffd494c1cf2fe327e1ed 19d9cc8584ac2c7dcf57d2680375e80f099dc481 sm.txt\x00" ++
+    "1 .M N... 100644 100644 100644 8a6e397be49d2632f2e4e5c624eb781ae852b787 8a6e397be49d2632f2e4e5c624eb781ae852b787 um.txt\x00" ++
+    "1 .M N... 100644 100644 100644 9495c3c5a31810439c36d49aad161b7f3db75d09 9495c3c5a31810439c36d49aad161b7f3db75d09 with space.txt\x00" ++
+    "u AA N... 000000 100644 100644 100644 0000000000000000000000000000000000000000 b19a1e93bec1317dc6097229e12afaffbfa74dc2 950b81b7eee953d050aa05a641f8e056c85dd1bd aa.txt\x00" ++
+    "u DU N... 100644 000000 100644 100644 37dc93f7c0cb2a9a454ded553b3cda499f949d17 0000000000000000000000000000000000000000 950b81b7eee953d050aa05a641f8e056c85dd1bd du.txt\x00" ++
+    "u UD N... 100644 100644 000000 100644 11e6c5065a0a24b8cd9fc5b2fbae5db3e94c61a1 b19a1e93bec1317dc6097229e12afaffbfa74dc2 0000000000000000000000000000000000000000 ud.txt\x00" ++
+    "u UU N... 100644 100644 100644 100644 1725e6630303461c56479543dedc4bc177dc5b57 b19a1e93bec1317dc6097229e12afaffbfa74dc2 950b81b7eee953d050aa05a641f8e056c85dd1bd uu.txt\x00" ++
+    "? dir/new.txt\x00" ++ "? héllo.txt\x00"
+
+/-- The status `porcelainMixed` stands for, sorted by path. -/
+def mixedStatus : VersionControl.Status :=
+  { head := .branch "main"
+    files :=
+      #[{ path := "aa.txt", state := .conflicted .bothAdded },
+        { path := "added.txt", state := .changed (some .added) none },
+        { path := "deleted.txt", state := .changed (some .deleted) none },
+        { path := "dir/new.txt", state := .untracked },
+        { path := "du.txt", state := .conflicted .deletedByUs },
+        { path := "gone.txt", state := .changed none (some .deleted) },
+        { path := "héllo.txt", state := .untracked },
+        { path := "mm.txt", state := .changed (some .modified) (some .modified) },
+        { path := "new.txt", state := .renamed "old.txt" none },
+        { path := "sm.txt", state := .changed (some .modified) none },
+        { path := "ud.txt", state := .conflicted .deletedByThem },
+        { path := "um.txt", state := .changed none (some .modified) },
+        { path := "uu.txt", state := .conflicted .bothModified },
+        { path := "with space.txt", state := .changed none (some .modified) }] }
+
+/-- Whether `text` holds `piece`. -/
+def holdsText (text piece : String) : Bool :=
+  (text.splitOn piece).length > 1
+
+/-- Whether reading `printed` is refused with a reason that quotes
+`quoted`. -/
+def refusedQuoting (printed quoted : String) : Bool :=
+  match VersionControl.Porcelain.parseStatus printed.toUTF8 with
+  | .error why => holdsText why quoted
+  | .ok _ => false
+
+/-- The checks of the reader of git's porcelain status
+(`Editor/VersionControl/Porcelain.lean`), on the fixtures. -/
+def versionControlParserChecks : List Check :=
+  let parse (printed : String) := (VersionControl.Porcelain.parseStatus printed.toUTF8).toOption
+  let renameRecord :=
+    "2 R. N... 100644 100644 100644 3367afdbbf91e638efe983616377c60477cc6612 3367afdbbf91e638efe983616377c60477cc6612 R100 new.txt"
+  [{ name := "a clean checkout on main reads as main with no files"
+     run := pure (parse porcelainClean == some { head := .branch "main" }) },
+    { name := "a detached checkout reads as detached"
+      run := pure (parse porcelainDetached == some { head := .detached }) },
+    { name := "an unborn main with a staged new file reads as main with that file staged added"
+      run :=
+        pure <|
+          parse porcelainUnborn ==
+            some
+              { head := .branch "main"
+                files := #[{ path := "a.txt", state := .changed (some .added) none }] } },
+    { name :=
+        "every state at once reads as each file with its state, sorted by path: changes staged, unstaged and both, a rename with its origin, four kinds of conflict, untracked files in a subdirectory and with a non-ASCII name, and a path with a space"
+      run := pure (parse porcelainMixed == some mixedStatus) },
+    { name := "a rename record with no origin after it is refused, quoting the record"
+      run := pure (refusedQuoting (porcelainClean ++ renameRecord ++ "\x00") renameRecord) },
+    { name := "a record of an unknown kind is refused, quoting the record"
+      run := pure (refusedQuoting (porcelainClean ++ "x what.txt\x00") "x what.txt") },
+    { name := "a changed record with too few fields is refused, quoting the record"
+      run :=
+        pure <|
+          refusedQuoting (porcelainClean ++ "1 M. N... 100644 a.txt\x00") "1 M. N... 100644 a.txt" },
+    { name := "a changed record with an unknown XY is refused, quoting the record"
+      run :=
+        pure <|
+          refusedQuoting
+            (porcelainClean ++
+              "1 Q. N... 100644 100644 100644 3367afdbbf91e638efe983616377c60477cc6612 3367afdbbf91e638efe983616377c60477cc6612 q.txt\x00")
+            "q.txt" },
+    { name := "a copy record is refused, since copies are never asked for"
+      run :=
+        pure <|
+          refusedQuoting
+            (porcelainClean ++
+              "2 C. N... 100644 100644 100644 3367afdbbf91e638efe983616377c60477cc6612 3367afdbbf91e638efe983616377c60477cc6612 C100 copy.txt\x00old.txt\x00")
+            "copy.txt" },
+    { name := "output with no branch.head header is refused"
+      run := pure (parse "? a.txt\x00" == none) },
+    { name := "output that is not UTF-8 is refused"
+      run :=
+        pure <|
+          VersionControl.Porcelain.parseStatus
+              (porcelainClean.toUTF8 ++ ByteArray.mk #[63, 32, 0xff, 0]) matches
+            .error _ }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -37740,7 +37877,8 @@ def checks : List Check :=
     projectFormatChecks ++
     jsonChecks ++
     listingChecks ++
-    projectModeChecks
+    projectModeChecks ++
+    versionControlParserChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
