@@ -244,7 +244,9 @@ from the next command.
   registered under (`Loop.Registered.sources`), with nothing run.
   Otherwise the source's program, for the query the request hands it, is
   put before the rest of the asking command's, as a command's is for
-  `runCommand`, and the reply is the candidates it answered. It is part of
+  `runCommand`, and the reply is the candidates it answered, with the
+  source's category and whether it filtered already
+  (`Completion.Answer`). It is part of
   the asking command the same way: its state requests are answered from
   the state reached, its other requests are guarded, what it did is rolled
   back with the asking command, and a refusal refuses the asking command
@@ -523,7 +525,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       dispatched registered state do
         match ← (source.candidates query).run with
         | .ok candidates =>
-          next (some candidates)
+          next (some { category := source.category, filtered := source.filtered, candidates })
         | .error error =>
           pure (.error error)
   | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)

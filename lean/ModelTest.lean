@@ -141,6 +141,17 @@ the pattern its order is the candidates'. They also show the contract
 biting on each of the two things it asks: a matcher written here that
 ignores case, and one that does not put an exact match first.
 
+The completion style interface (`Editor/Completion/Style.lean`) is checked
+over the fuzzy model (`styleChecks`): the fuzzy style answers the model's
+order with its in-order spans, the orderless style matches exactly the
+candidates that hold every component of the text, as a property over every
+short text and candidate of a small alphabet, the model keeps what its
+predicate says, and a category picks its style. Its contract
+(`Editor/Completion/StyleContract.lean`) is run against the shipped styles
+and the model (`styleContractChecks`), and seen to bite on a style that
+answers an index twice and on one with a range past its candidate's end;
+`contract-test` runs it against the fuzzy style over the real binding.
+
 The layouts (`Editor/Layout.lean`) are pure functions, checked by
 enumeration (`layoutChecks`): master-and-stack's rectangles tile the area
 for one to eight windows at every sample size, share, side and count of
@@ -14346,7 +14357,7 @@ def dispatchStateChecks : List Check :=
             runCommand "inner" { target }
           (command.runModel editorModel).1.toOption == some false },
     { name :=
-        "a command that asks a source by a name the loop was told no source of is answered none, with the state as it was; by a name it was told of, the source runs inside the command with the query handed, its state requests answered from the state the command had reached"
+        "a command that asks a source by a name the loop was told no source of is answered none, with the state as it was; by a name it was told of, the source runs inside the command with the query handed, its state requests answered from the state the command had reached, and the answer carries the source's category and whether it filtered already"
       run :=
         pure <|
           let said : Completion.Source :=
@@ -14358,12 +14369,14 @@ def dispatchStateChecks : List Check :=
               sources := fun name =>
                 match name with
                 | "echo" => some (Completion.Fake.echo "echo" "test")
+                | "filtering" => some { Completion.Fake.echo "filtering" "test" with filtered := true }
                 | "said" => some said
                 | _ => none }
           let command :
             EditorM
-              (Option (Array Completion.Candidate) ×
-                Bool × Option (Array Completion.Candidate) × Option (Array Completion.Candidate)) :=
+              (Option Completion.Answer ×
+                Bool × Option Completion.Answer × Option (Array Completion.Candidate) ×
+                  Option Completion.Answer) :=
             do
             let start ← editorState
             let missing ← EditorState.ask (.askSource "nope" { text := "w", view := ⟨0⟩ })
@@ -14371,15 +14384,22 @@ def dispatchStateChecks : List Check :=
             let echoed ← EditorState.ask (.askSource "echo" { text := "wq", view := ⟨1⟩ })
             message "hello"
             let read ← EditorState.ask (.askSource "said" { text := "", view := ⟨0⟩ })
-            return (missing, unchanged, echoed, read)
+            let filtering ← EditorState.ask (.askSource "filtering" { text := "w", view := ⟨0⟩ })
+            return (missing, unchanged, echoed, read.map (·.candidates), filtering)
           let program : EditorM (Guarded _ × EditorState) := do
             command.dispatched registered (← EditorState.initial ⟨640, 480⟩)
           match (program.runModel editorModel).1 with
           | .ok (outcome, _) =>
             outcome ==
               .finished
-                (none, true, some #[{ text := "wq", annotation := some "1" }],
-                  some #[.ofText "hello"])
+                (none, true,
+                  some
+                    { category := "test", filtered := false
+                      candidates := #[{ text := "wq", annotation := some "1" }] },
+                  some #[.ofText "hello"],
+                  some
+                    { category := "test", filtered := true
+                      candidates := #[{ text := "w", annotation := some "0" }] })
           | .error _ => false },
     { name :=
         "a source asked by name that is refused refuses the asking command at the request, with nothing of the asking command run after it"
@@ -14404,7 +14424,7 @@ def dispatchStateChecks : List Check :=
         "a command that asks a source by name where no loop dispatches it is answered none: the handler of the runners knows no registry"
       run :=
         pure <|
-          let command : EditorM (Option (Array Completion.Candidate)) :=
+          let command : EditorM (Option Completion.Answer) :=
             EditorState.ask (.askSource "echo" { text := "w", view := ⟨0⟩ })
           (command.runModel editorModel).1.toOption == some none }]
 
@@ -19305,7 +19325,9 @@ def apiStateChecks : List Check :=
           match dispatchedOn (prompt "Pick: " asked "w" [.given source]) with
           | some (.finished (.ok view), state, texts) =>
             state.prompt.map (·.candidates) ==
-                some { all := (offered #["wq", "edit", "w"]).map (·.inGroup "made") } &&
+                some
+                  { all := (offered #["wq", "edit", "w"]).map (·.inGroup "made")
+                    category := some "test" } &&
               state.prompt.map (·.view) == some view &&
               (texts.filter (· == made)).size == 1 &&
               texts.contains "w" &&
@@ -20561,6 +20583,12 @@ def pickOffered : Array Completion.Candidate :=
 def pickHalves : List Completion.SourceRef :=
   [.given (.ofTexts "a" "pick" #["wq", "edit"]), .given (.ofTexts "b" "pick" #["rewrite", "w"])]
 
+/-- A source of the candidate checks that declares it has filtered already:
+`fixed`, of the category `other`, answering `zz` and `w` whatever it is
+asked. -/
+def filteredSource : Completion.Source :=
+  { Completion.Source.ofTexts "fixed" "other" #["zz", "w"] with filtered := true }
+
 /-- The commands of the candidate checks, by name.
 
 - `ask-pick` asks `Pick: ` with `pickSource`, given as a value, and the
@@ -20573,6 +20601,8 @@ def pickHalves : List Completion.SourceRef :=
   (`Completion.Fake.echo`).
 - `ask-named` asks with the source registered under `pick`, by name, and
   says the refusal in the echo area when the prompt is refused.
+- `ask-filtered` asks with `pickSource` and `filteredSource`, a source
+  that has filtered already.
 - `picked` says what it was called with (`picked`).
 - `accept` and `cancel` are the API's operations.
 - The test scheme's self-insert inserts its argument at its target's
@@ -20589,6 +20619,7 @@ def candidateCommands : List (String × Dispatched) :=
       asks "" [.given (.fixed "c" "pick" #[{ text := "x", group := some "own" }, .ofText "y"])]),
     ("ask-refusing", asks "" [.given (Completion.Fake.refusing "no" "pick")]),
     ("ask-echo", asks "w" [.given (Completion.Fake.echo "echo" "pick")]),
+    ("ask-filtered", asks "" [.given pickSource, .given filteredSource]),
     ("ask-named", fun _ => do
       if let .error refusal← prompt pickLabel pickContinuation "" [.named pickSource.name] then
         message refusal.describe
@@ -20620,7 +20651,8 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
       ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c s", invoke "still"),
       ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
       ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
-      ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named")]
+      ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"),
+      ("C-c 5", invoke "ask-filtered")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -20677,13 +20709,15 @@ def candidatesOf (driver : TestDriver) : Option Candidates :=
   driver.loop.state.prompt.map (·.candidates)
 
 /-- What a prompt asked with `pickCandidates` holds once they are listed
-for `pattern`, with `chosen` as its choice: the listing is what the fuzzy
-model answers for the pattern, so no order is written out here. -/
+for `pattern`, with `chosen` as its choice: its category is `pick`, and the
+listing is what the fuzzy model answers for the pattern, each with its
+in-order spans, so no order is written out here. -/
 def pickListed (pattern : String) (chosen : Option Nat := none) : Candidates :=
-  { all := pickOffered, listedFor := some pattern
+  { all := pickOffered, category := some pickSource.category, listedFor := some pattern
     listed :=
       (FuzzyModel.rank pattern pickCandidates).filterMap fun index =>
-        (pickOffered[index]?).map Completion.Listed.of
+        (pickOffered[index]?).map fun candidate =>
+          .of candidate (Completion.Styles.inOrderSpans pattern candidate.text)
     chosen }
 
 /-- `driver` with the choice of its open prompt moved by `steps`, through
@@ -20732,6 +20766,25 @@ loop does when the listing's read is refused. What is listed is compared
 with what the fuzzy model answers for the same pattern and candidates. -/
 def candidateChecks : List Check :=
   [{  name :=
+        "a prompt asked with a source and one that has filtered already keeps the first's candidates to match and the filtered one's apart, in its group, and the first source's category; after a text is typed it lists the matches in the fuzzy model's order, each with its in-order spans, then the filtered source's candidates in the order it gave them, though one does not match"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c 5")
+            let (typed, _) := fedTo asking (presses "w")
+            let passed := (offered #["zz", "w"]).map (·.inGroup filteredSource.name)
+            let passedListed := passed.map Completion.Listed.of
+            let withPassed (listed : Candidates) : Candidates :=
+              { listed with passed, listed := listed.listed ++ passedListed }
+            candidatesOf asking == some (withPassed (pickListed "")) &&
+              (candidatesOf asking).map (·.all) == some pickOffered &&
+              (candidatesOf asking).map (·.category) == some (some "pick") &&
+              candidatesOf typed == some (withPassed (pickListed "w")) &&
+              (candidatesOf typed).map (fun listed => (listed.listed.map (·.text)).toList.drop 3) ==
+                some ["zz", "w"] },
+    { name :=
         "after the step that asked for a prompt with candidates the listing is for the initial text, the empty one or one given, and nothing is chosen"
       run :=
         pure <|
@@ -23067,14 +23120,18 @@ def exNamesOf (bindings : Array Ex.Binding) : Array String :=
 
 /-- What the ex prompt of a driver told of `bindings` holds once its
 candidates are listed for `pattern`, with `chosen` as its choice: the
-bound names, in the group of the source of the ex names, and of them what
-the fuzzy model answers for the pattern. -/
+bound names, in the group of the source of the ex names, its category
+`ex-line`, and of them what the fuzzy model answers for the pattern, each
+with its in-order spans. -/
 def exListed (pattern : String) (chosen : Option Nat := none)
     (bindings : Array Ex.Binding := exTestBindings) : Candidates :=
   let names := exNamesOf bindings
   let all := (offered names).map (·.inGroup Ex.namesSource.name)
-  { all, listedFor := some pattern
-    listed := (FuzzyModel.rank pattern names).filterMap fun index => (all[index]?).map .of
+  { all, category := some Ex.namesSource.category, listedFor := some pattern
+    listed :=
+      (FuzzyModel.rank pattern names).filterMap fun index =>
+        (all[index]?).map fun candidate =>
+          .of candidate (Completion.Styles.inOrderSpans pattern candidate.text)
     chosen }
 
 /-- What a step of the ex checks is handed. The commands are the ones

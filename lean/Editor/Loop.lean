@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
+import Editor.Completion.Styles
 import Editor.Config.Stores
 import Editor.Event
 import Editor.Ex
@@ -1458,23 +1459,29 @@ def nextOf (loop : Loop scheme) : Next :=
 /-- `state` with the open prompt's listing brought up to date ("Prompts", in
 the module docs): while a prompt is open and has candidates, the
 minibuffer's text is read, and when it is not the text the listing is for,
-the fuzzy matcher is asked and the state keeps the candidates it answers,
-in its order, with nothing chosen. A state with no prompt, or a prompt with
-no candidates, is as it was, and nothing is asked. It is not refused: a
+the style `matching` chooses for the prompt's category is asked and the
+state keeps the candidates it answers, in its order, with their ranges,
+then the passed ones, with nothing chosen. No style is asked when every
+candidate was passed. A state with no prompt, or a prompt with no
+candidates, is as it was, and nothing is asked. It is not refused: a
 refusal of the read is handed back, with the state as it was. -/
-def listed (state : EditorState) : EditorM (EditorState × Option TextError) := do
+def listed (state : EditorState) (matching : Completion.Matching := .standard) :
+    EditorM (EditorState × Option TextError) := do
   let some asked := state.prompt | return (state, none)
-  if asked.candidates.all.isEmpty then
+  let candidates := asked.candidates
+  if candidates.all.isEmpty && candidates.passed.isEmpty then
     return (state, none)
   let some minibuffer := state.target? asked.view | return (state, none)
   match ← (observing minibuffer.buffer.text.read : TextM (Except TextError String)) with
   | .error error =>
     return (state, some error)
   | .ok pattern =>
-    if asked.candidates.listedFor == some pattern then
+    if candidates.listedFor == some pattern then
       return (state, none)
-    let ranked ← Fuzzy.rank pattern (asked.candidates.all.map (·.text))
-    return ((state.listCandidates pattern (ranked.map Completion.Hit.ofIndex)).2, none)
+    let hits ←
+      if candidates.all.isEmpty then pure #[]
+      else (matching.styleFor candidates.category).hits pattern (candidates.all.map (·.text))
+    return ((state.listCandidates pattern hits).2, none)
 
 /-- Has `view`, a view of the scene about to be published, follow its cursor
 ("Following the cursor", in the module docs): where the row of the cursor,

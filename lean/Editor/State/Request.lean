@@ -116,10 +116,11 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   request**, `askSource`, with the name it is registered under and the
   query (`Editor/Completion.lean`). It is the loop's to act on, as
   `runCommand` is: the source's program is put before the rest of the
-  asking command's. The reply is the candidates it answered, or `none`
-  when no source is registered under the name. A source is a program over
-  this port, so the request names it and the reply holds its candidates,
-  which are plain data.
+  asking command's. The reply is what it answered, its candidates with its
+  category and whether it filtered already (`Completion.Answer`), or
+  `none` when no source is registered under the name. A source is a
+  program over this port, so the request names it and the reply holds its
+  candidates, which are plain data.
 - **The editor is asked to quit by one request**, `quit`, which sets the
   state's flag and nothing else (`Editor/State.lean`, "Quit"). The handler
   does not judge whether the editor may quit: the command that asks
@@ -443,7 +444,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
   | .runCommand .. => Bool
-  | .askSource .. => Option (Array Completion.Candidate)
+  | .askSource .. => Option Completion.Answer
   | .quit => Unit
   | .reload => Unit
   | .giveUp _ => Unit

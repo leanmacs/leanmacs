@@ -15,8 +15,12 @@ pure model (`Source.fixed`), a fake for tests
 - **A name**, which it is registered under and which a prompt may ask it
   by, and which is the group its candidates are listed under unless a
   candidate names its own (`Candidate.inGroup`).
-- **A category**, a word for what it lists (`buffer`, `ex-line`). Nothing
-  reads it yet: a prompt that asks by category is a later phase's.
+- **A category**, a word for what it lists (`buffer`, `ex-line`). A
+  prompt's category is its first source's, and chooses the style its
+  candidates are matched with (`Editor/Completion/Style.lean`).
+- **Whether it has filtered already** (`filtered`): a source that matched
+  the query itself. Its candidates are not matched again: they are listed
+  after the style's matches, in the order it gave.
 - **A function from a query to candidates** (`Query`, `Candidate`,
   `Editor/Completion/Candidate.lean`): a program over the editor's port,
   so it may ask what a command may, the state and a text, and has no `IO`
@@ -68,6 +72,10 @@ structure Source where
   category : String
   /-- The candidates it answers `query` with. -/
   candidates : (query : Query) → EditorM (Array Candidate)
+  /-- Whether it has filtered for the query already: its candidates are
+  then listed in the order it gave, after the matches, and not matched
+  (`Candidates.list`, `Editor/State.lean`). -/
+  filtered : Bool := false
 
 /-- The model of a source: one called `name`, of `category`, that answers
 `all` whatever it is asked, and asks the port nothing. -/

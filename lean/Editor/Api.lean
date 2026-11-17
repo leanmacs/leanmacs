@@ -593,14 +593,21 @@ A command asks for a string without waiting for it
     its own (`Completion.Candidate.inGroup`; `Editor/State.lean`,
     "Prompts"). If a source is refused, the asking command is refused, like
     any command, and no prompt opens.
+  - **A source that has filtered already** (`Completion.Source.filtered`)
+    has its candidates kept apart (`passed`): they are listed after the
+    matches, in the order it gave, whatever is typed.
+  - **The prompt's category is its first source's**, as an Emacs
+    completion table has one category: it chooses the style its candidates
+    are matched with. A prompt with no source has none.
   - **The list is then fixed**, but for `setCandidates`, which replaces an
     open prompt's candidates and forgets what it has listed and chosen. It
     is refused, as a value, with `notOpen` when no prompt is open.
   - A prompt asked with no source, the default, or with sources that
     answer none, makes the requests it made before there were candidates.
   - **The loop lists them**, before each scene: the candidates the
-    minibuffer's text matches, in the fuzzy matcher's order
-    (`Editor/Loop.lean`, "Prompts"). `chooseCandidate step` moves a choice
+    minibuffer's text matches, in the order of the style the prompt's
+    category chooses (`Editor/Loop.lean`, "Prompts"), then the passed
+    ones. `chooseCandidate step` moves a choice
     through that listing, one step forward or back, with "nothing chosen"
     as one stop of the round, and leaves the minibuffer's text as it is.
     With nothing listed it changes nothing; with no prompt open it is
@@ -927,7 +934,9 @@ is focused to ask from.
 default. Each is asked once, in order, after those two refusals and before
 the minibuffer's text is made, with `initial` and the asking view; the
 prompt keeps what they answered, each source's candidates in its group
-(`Completion.Candidate.inGroup`), in the sources' order. A source given as
+(`Completion.Candidate.inGroup`), in the sources' order: a filtered
+source's apart, to be listed as given, and every other's to be matched.
+The prompt's category is its first source's. A source given as
 a value is run here; one named is run by the loop (`StateRequest.askSource`),
 and refused, with no text made, with `noSuchSource` when no source is
 registered under its name. If a source is refused, so is this command, with
@@ -939,15 +948,24 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
     return .error (.alreadyOpen asked.view)
   let some asker := state.focusedTarget? | return .error .noWindow
   let query : Completion.Query := { text := initial, view := asker.window.id }
-  let mut all : Array Completion.Candidate := #[]
+  let mut collected : Completion.Collected := {}
   for source in sources do
-    match source with
-    | .given source =>
-      all := all ++ (← source.candidates query).map (·.inGroup source.name)
-    | .named name =>
-      let some answered ←
-        EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
-      all := all ++ answered.map (·.inGroup name)
+    let answer : Completion.Answer ←
+      match source with
+      | .given source =>
+        pure
+          { category := source.category, filtered := source.filtered
+            candidates := (← source.candidates query).map (·.inGroup source.name) }
+      | .named name =>
+        let some answered ←
+          EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
+        pure { answered with candidates := answered.candidates.map (·.inGroup name) }
+    -- The prompt's category is its first source's.
+    let category := collected.category <|> some answer.category
+    collected :=
+      if answer.filtered then
+        { collected with passed := collected.passed ++ answer.candidates, category }
+      else { collected with all := collected.all ++ answer.candidates, category }
   let text ← createText initial
   let scroll ← text.mark (.anchor { offset := 0, bias := .before })
   let cursor := initial.utf8ByteSize
@@ -955,8 +973,8 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
   let opened ←
     EditorState.ask (.openPrompt label continuation text (← UndoTree.over text) scroll selection)
   -- A prompt with no candidates makes no request for them.
-  if opened.isOk && !all.isEmpty then
-    discard <| EditorState.ask (.setCandidates { all })
+  if opened.isOk && !(collected.all.isEmpty && collected.passed.isEmpty) then
+    discard <| EditorState.ask (.setCandidates collected)
   return opened
 
 /-- Replaces the open prompt's candidates, the passed ones and its category
