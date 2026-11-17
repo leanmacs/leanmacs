@@ -30926,6 +30926,53 @@ def listingChecks : List Check :=
               (candidatesOf asked).map (·.all) == some #["build (t-mode)", "check (t-mode)"] &&
               startedCount asked (tList "/t2") == 1 },
     { name :=
+        "a listing that could not be run, as mise is not found by an editor started from the Finder, offers none of its commands and says why once"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let refused : Process.Script :=
+              { command := tList "/t2", reply := .error (.notFound "t-list") }
+            let driver :=
+              { driver with
+                jobs :=
+                  { driver.jobs with
+                    processes :=
+                      { driver.jobs.processes with
+                        scripts := #[refused] ++ driver.jobs.processes.scripts } } }
+            let opened := settledAfter driver "C-p 3"
+            let asked := settledAfter opened "C-k i"
+            echoOf opened ==
+                some
+                  "t-mode in /t2: t-list could not be run: the program or the directory is not there: t-list" &&
+              (candidatesOf asked).map (·.all) == some #["build (t-mode)", "check (t-mode)"] &&
+              startedCount asked (tList "/t2") == 1 },
+    { name :=
+        "each end of a listing's run has its own words: a status with its first line of standard error, a status whose first line is empty, a signal, output its read refuses, a run that ran out of time, and one that could not be run"
+      run :=
+        let order : Compile.ListOrder :=
+          { place := none, mode := "mise-mode", root := "/m", generation := 0, markers := #[]
+            held := none, program := "mise", programArguments := #["tasks", "ls", "--json"] }
+        let say := Compile.outcomeOf order tRead
+        pure
+          (say (shellReply "" "not trusted\nmore\n" (.code 1)) ==
+              .failed "mise tasks ls --json exited with status 1: not trusted" &&
+            say (shellReply "" "" (.code 2)) ==
+              .failed "mise tasks ls --json exited with status 2" &&
+            say (shellReply "" "\nsecond\n" (.code 2)) ==
+              .failed "mise tasks ls --json exited with status 2" &&
+            say (shellReply "" "" (.signal 9)) ==
+              .failed "mise tasks ls --json was ended by signal 9" &&
+            say (shellReply "nope\n") ==
+              .failed "mise tasks ls --json printed no list of commands: nope is no command" &&
+            say (.error (.timedOut 10000)) ==
+              .failed "mise tasks ls --json did not finish within 10000 ms and was killed" &&
+            say (.error (.denied "Permission denied")) ==
+              .failed
+                "mise tasks ls --json could not be run: the system does not allow it: Permission denied" &&
+            say (shellReply "a=b\n") == .listed #[{ name := "a", line := "b" }]) },
+    { name :=
         "with t-mode dropped from the hook before its listing job's command runs, the command keeps no entry"
       run :=
         pure <|
