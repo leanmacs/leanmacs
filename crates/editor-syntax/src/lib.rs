@@ -57,6 +57,7 @@
 //! | A rule of what runs next | [`worker`] | Its unit tests, stepped by hand, and `tests/worker.rs` on a real thread |
 //! | A grammar | The real adapter's table, with a corpus its contract test runs | That crate's `tests/contract.rs` |
 
+pub mod clock;
 pub mod contract;
 pub mod fake;
 pub mod highlight;
