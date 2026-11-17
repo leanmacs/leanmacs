@@ -28490,6 +28490,19 @@ def sceneViews (driver : EvilDriver) : Option (Array (ViewId × Rect) × Option 
 def holdsMarker (driver : EvilDriver) (id : MarkerId) : Bool :=
   ((id.text.marker id : TextM Marker).runModel driver.model.texts).1.toOption.isSome
 
+/-- Whether asking the text model of `driver` for the snapshot `id` is
+refused with `noSuchSnapshot`: it was released. -/
+def releasedSnapshot (driver : EvilDriver) (id : SnapshotId) : Bool :=
+  match ((id.lineCount : TextM Nat).runModel driver.model.texts).1 with
+  | .error .noSuchSnapshot => true
+  | _ => false
+
+/-- The snapshot the last scene `driver`'s display recorded names for the
+view `view`. -/
+def sceneSnapshot (driver : EvilDriver) (view : ViewId) : Option SnapshotId :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map (·.snapshot)
+
 /-- The checks of the floats a publish places against a position of a
 window (`Editor/Loop.lean`, "After each event"), on the loop's driver over
 the editor's models. -/
@@ -28530,6 +28543,38 @@ def floatViewChecks : List Check :=
               moved.loop.state.wellFormed &&
               sceneViews kept ==
                 some (#[(⟨0⟩, rect 0 0 640 464), (⟨1⟩, rect 40 56 320 116)], some ⟨0⟩)
+          | _, _ => false },
+    { name :=
+        "the snapshot of a float the publish closes is released: the one the last scene named for it once its anchor scrolled away, and the one a publish took for it when the float closed in that same publish; and the loop no longer lists either"
+      run :=
+        pure <|
+          -- The anchor of `away`, on row 35, is below the 27 rows view 0
+          -- shows, so the first publish takes a snapshot for view 1 and
+          -- closes it.
+          match floatDriver 18 18, floatDriver 0 (7 * 35) with
+          | some driver, some away =>
+            let shown := published driver
+            let moved := evilFed shown "3 0 j"
+            let unlisted (driver : EvilDriver) (id : SnapshotId) : Bool :=
+              !driver.loop.shown.any (·.snapshot == id)
+            let before := away.model.texts.snapshots.size
+            let closed := published away
+            let taken :=
+              (List.range' before (closed.model.texts.snapshots.size - before)).map SnapshotId.mk
+            let unnamed :=
+              taken.filter fun id =>
+                (closed.model.display.scenes.back?.map fun scene =>
+                      !scene.views.any (·.snapshot == id)).getD
+                  false
+            match sceneSnapshot shown ⟨1⟩ with
+            | some float =>
+              releasedSnapshot moved float && unlisted moved float &&
+                (sceneViews closed).map (·.1.map (·.1)) == some #[⟨0⟩] &&
+                taken.length == 2 &&
+                unnamed.length == 1 &&
+                unnamed.all (releasedSnapshot closed) &&
+                unnamed.all (unlisted closed)
+            | none => false
           | _, _ => false },
     { name :=
         "a float the publish closes is told to the scheme as closed: neither state of the scheme the loop keeps holds anything for it"
