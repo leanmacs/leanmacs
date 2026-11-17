@@ -17708,6 +17708,152 @@ finished. The load is job 1. -/
 def noteOpen (files : FileModel := commandFiles) : Option TestDriver :=
   (filesDriver (files := files)).map fun driver => ((fedTo driver (presses "C-o n")).1.finish 1).1
 
+/-- A test language for the language open checks: `*.rs`, parsed with the
+syntax tree model's one grammar, `json`, so a path's extension is seen to
+choose it on the models. -/
+def modelRs : Language :=
+  { name := "model-rs", patterns := [.extension "rs"], syntaxTree := { grammar := "json" } }
+
+/-- The registry of the language open checks: the `code` mode, and the
+languages `json` and `modelRs`, as compiled code registers them. -/
+def languageRegistry : Config.Registry :=
+  (({} : Config.Registry).replaceModes .compiled Language.modes).replaceLanguages .compiled
+    #[Language.json, modelRs]
+
+/-- The files of the language open checks: the file command checks', and,
+beside `note.txt`, `data.json` and `main.rs`, each holding a JSON text. -/
+def languageFiles : FileModel :=
+  (commandFiles.withFile (inFiles "data.json") "[1, null]".toUTF8).withFile (inFiles "main.rs")
+    "[2]".toUTF8
+
+/-- What a step of the language open checks is handed: `C-o j`, `C-o r` and
+`C-o n` bound to the open command with the paths of `data.json`, `main.rs`
+and `note.txt`, `C-o 1` and `C-o 2` to the on-enter checks' `enter` of the
+modes `own-json` and `derived` through view 0, and what `registry` says of
+its modes and languages. -/
+def languageKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
+  {
+    dispatchKeys
+      [("C-o j", opens (inFiles "data.json")), ("C-o r", opens (inFiles "main.rs")),
+        ("C-o n", opens (inFiles "note.txt")), ("C-o 1", entersMode ⟨0⟩ "own-json"),
+        ("C-o 2", entersMode ⟨0⟩ "derived")]
+      [(Files.openName, fun call => do
+          Files.openCommand call
+          return none),
+        ("enter", enter)] with
+    registered := registry.registered }
+
+/-- A driver of the language open checks over `languageRegistry` with
+`modes` and `languages` registered for config, over `languageFiles`; `none`
+if making the state was refused. -/
+def languageDriver (modes : Array Mode := #[]) (languages : Array Language := #[]) :
+    Option TestDriver :=
+  let registry := (languageRegistry.replaceModes .config modes).replaceLanguages .config languages
+  (Loop.Driver.over (languageKeys registry) fileJobs (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver => { driver with jobs := { files := languageFiles } }
+
+/-- `driver` once the keys `keys` were pressed and the job `job` their open
+started is finished. -/
+def openedBy (driver : TestDriver) (keys : String) (job : Nat := 1) : TestDriver :=
+  ((fedTo driver (presses keys)).1.finish job).1
+
+/-- The language and the major mode of the buffer view 0 of `driver`
+shows. -/
+def languageAndMajor (driver : TestDriver) : Option (Option String × Option String) :=
+  (showing driver).map fun shown => (shown.buffer.language, shown.buffer.major)
+
+/-- The faces the syntax tree model's shipped `json` highlights query is
+drawn in by the shipped default: each of its capture names'. -/
+def modelJsonFaces : Array String :=
+  #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
+
+/-- The checks of what opening a file does with its language
+(`Editor/Files.lean`, "Open"; `Editor/Language.lean`), on the loop's driver
+over the editor's models and the model of files. The syntax tree model
+knows one grammar, `json`, so every language here is parsed with it; Rust
+and Markdown are `ConfigTest.languageChecks`'s, over the real binding. -/
+def languageOpenChecks : List Check :=
+  [{  name :=
+        "opening a .json file gives its buffer the language json and the major mode code, and its text is attached with json and highlighted in the faces of the grammar's shipped query"
+      run :=
+        pure <|
+          match languageDriver with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o j"
+            languageAndMajor opened == some (some "json", some "code") &&
+              opened.model.syntaxTree.attached.map (·.2) == #["json"] &&
+              highlightedFaces opened.model.syntaxTree == some modelJsonFaces },
+    { name :=
+        "opening a .rs file chooses the language whose extension pattern is rs, and puts its buffer in code, attached with that language's grammar"
+      run :=
+        pure <|
+          match languageDriver with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o r"
+            languageAndMajor opened == some (some "model-rs", some "code") &&
+              opened.model.syntaxTree.attached.map (·.2) == #["json"] &&
+              highlightedFaces opened.model.syntaxTree == some modelJsonFaces },
+    { name :=
+        "opening a file whose name matches no language gives its buffer no language and no major mode, and asks the syntax tree port nothing"
+      run :=
+        pure <|
+          match languageDriver with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o n"
+            (showing opened).map (·.buffer.name) == some "note.txt" &&
+              languageAndMajor opened == some (none, none) &&
+              opened.model.syntaxTree.attached.isEmpty &&
+              opened.model.syntaxTree.highlighted.isEmpty &&
+              opened.model.syntaxTree.refreshAfter == none },
+    { name :=
+        "opening a file a buffer already holds shows it and asks the syntax tree port nothing more"
+      run :=
+        pure <|
+          match languageDriver with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o j"
+            let (again, _) := fedTo opened (presses "C-o j")
+            again.pending.isEmpty && languageAndMajor again == some (some "json", some "code") &&
+              again.model.syntaxTree.attached == opened.model.syntaxTree.attached &&
+              again.model.syntaxTree.highlighted == opened.model.syntaxTree.highlighted &&
+              again.model.syntaxTree.queries.size == opened.model.syntaxTree.queries.size },
+    { name :=
+        "a config mode with its own syntax tree, set over an opened json buffer, is highlighted with its own query and not the language's; a config mode derived from code with none is highlighted with the language's"
+      run :=
+        pure <|
+          let own : Mode :=
+            { name := "own-json",
+              syntaxTree := some { grammar := "json", highlights := some "(number) @number" } }
+          let derived : Mode := { name := "derived", parent := some "code" }
+          match languageDriver #[own, derived] with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o j"
+            let (owned, _) := fedTo opened (presses "C-o 1")
+            let (back, _) := fedTo owned (presses "C-o 2")
+            (showing owned).bind (·.buffer.major) == some "own-json" &&
+              highlightedFaces owned.model.syntaxTree == some #["syntax.number"] &&
+              (showing back).bind (·.buffer.major) == some "derived" &&
+              highlightedFaces back.model.syntaxTree == some modelJsonFaces },
+    { name :=
+        "config's entry of the json language, with its own highlights query, is the one an opened .json buffer is highlighted with"
+      run :=
+        pure <|
+          let numbers :=
+            { Language.json with
+              syntaxTree := { grammar := "json", highlights := some "(number) @number" } }
+          match languageDriver (languages := #[numbers]) with
+          | none => false
+          | some driver =>
+            let opened := openedBy driver "C-o j"
+            languageAndMajor opened == some (some "json", some "code") &&
+              highlightedFaces opened.model.syntaxTree == some #["syntax.number"] }]
+
 /-- The checks of what the window mode posts to the editor loop before the
 first event (`Window.Options.starts`), and of the loop it starts, on the
 driver whose commands and jobs are the compiled ones (`compiledDriver`):
@@ -29479,6 +29625,7 @@ def checks : List Check :=
     candidateChecks ++
     fileCommandChecks ++
     openFilesChecks ++
+    languageOpenChecks ++
     dispatchQuitChecks ++
     systemQuitChecks ++
     exChecks ++

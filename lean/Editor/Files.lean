@@ -1,3 +1,4 @@
+import Editor.Language
 import Editor.Workspace.Attach
 
 /-!
@@ -43,6 +44,15 @@ are in `Editor/Files/Compiled.lean`.
   workspace of the file's directory is the buffer's at once, and otherwise
   the job `find-workspace` is started to find it, a start that is refused
   being silent. A path a buffer already holds is shown and asks nothing.
+- **Language.** Once the buffer is shown, `opened` asks which language the
+  registry's table chooses for the path (`languageOf`, `Language.forPath`,
+  `Editor/Language.lean`). For one, the buffer records its name and its
+  major mode is set to `code` (`Language.codeMode`), in that order, so the
+  mode's entry, inside this command, attaches and highlights the text as
+  the language says (`Editor/Command/Dispatch.lean`). For none, nothing is
+  recorded and no mode is set: the buffer opens with no major mode and the
+  syntax tree port is asked nothing. A path a buffer already holds is shown,
+  and nothing is chosen again.
 - **The path is matched twice**: when the command runs, and again when the
   result is delivered. Two opens of one path can be in flight, and the
   first delivery makes the buffer: the second then shows that buffer and
@@ -251,10 +261,12 @@ request holds plain data. So what a file job is started with is a
 structure, an order, with its encoding as a `List Argument` (`arguments`)
 and the way back (`ofArguments?`), which undoes it.
 
-Pinned by `ModelTest.fileCommandChecks` and, for a reload,
+Pinned by `ModelTest.fileCommandChecks`, for a file's language
+`ModelTest.languageOpenChecks`, and, for a reload,
 `ModelTest.fileReloadChecks`, on the loop's driver over the editor's models
-and the model of files; and by `ConfigTest.reloadChecks`, through the
-headless host on real files.
+and the model of files; and by `ConfigTest.reloadChecks`, and for a file's
+language `ConfigTest.languageChecks`, through the headless host on real
+files.
 -/
 
 namespace Editor.Files
@@ -377,6 +389,13 @@ def takeIn (order : LoadOrder) (view : ViewId) (reply : Except FileError File.Lo
           (loaded.endings.dominant.getD .lf) | message (notShown path)
     Workspace.attach buffer path
     let .ok () ← view.show buffer | message (notShown path)
+    -- The language is recorded before the mode is set, so the mode's entry
+    -- reads it ("Open", in the module docs, "Language").
+    if let some language← languageOf path then
+      discard <| buffer.setLanguage (some language)
+      -- The view was just shown, so it has a window, and `code` is
+      -- compiled: neither refusal of `setMajorMode` can happen here.
+      discard <| view.setMajorMode Language.codeName
 
 /-- The command a finished load job hands the loop: what the reply to the
 load of `order.path` becomes (`takeIn`), and then, whatever became of the
