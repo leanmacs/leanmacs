@@ -1,6 +1,7 @@
 import Editor.Api.Theorems
 import Editor.Buffers
 import Editor.Command.Append
+import Editor.DisplayRules
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
 import Editor.Evil.Repeat

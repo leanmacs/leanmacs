@@ -159,6 +159,11 @@ from the next command.
   was told of (`Loop.Registered.workspaceRoots`, `generation`), the state
   not read and not changed. A file's open asks, for its directory's
   workspace (`Editor/Workspace/Attach.lean`).
+- **Asking for the display rules** (`StateRequest.displayRules`) is
+  answered config's display rules the loop was told of
+  (`Loop.Registered.displayRules`), in order, the state not read and not
+  changed. `BufferId.display` asks, to decide where a buffer a command
+  made goes (`Editor/DisplayRules.lean`, `EditorState.displaying`).
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -278,6 +283,10 @@ structure Loop.Registered where
   directory's cached workspace is an answer only under the generation it
   was found under (`Editor/Workspace.lean`). -/
   generation : Nat := 0
+  /-- Config's display rules (`displayRule`, `Editor/Setup.lean`), in
+  order, as the install left them: each rule's target exists under the
+  layout config chose. -/
+  displayRules : Array DisplayRule := #[]
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -339,6 +348,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
   | state, .step (.state .workspaceSettings) next =>
     dispatched registered state
       (next ({ roots := registered.workspaceRoots }, registered.generation))
+  | state, .step (.state .displayRules) next =>
+    dispatched registered state (next registered.displayRules)
   | state, .step (.state (.runCommand name call)) next =>
     match registered.command name with
     | none => dispatched registered state (next false)

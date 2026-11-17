@@ -31,7 +31,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So seven requests are answered with more than this handler by the loop,
+  So eight requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode`, which there refuses a name no
   mode is registered under and runs the mode's on-enter actions,
   `startJob`, which there refuses a name no job is registered under,
@@ -39,24 +39,34 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   name (`Editor/Ex/Line.lean`), `exNames`, which there is answered the ex
   names that are bound, `themeNames`, which there is answered the names
   themes are registered under, `loadTheme`, which there refuses a name no
-  theme is registered under, and `runCommand`, which there runs the
-  command registered under a name inside the asking command. Here
+  theme is registered under, `runCommand`, which there runs the
+  command registered under a name inside the asking command, and
+  `displayRules`, which there is answered config's display rules
+  (`Editor/DisplayRules.lean`). Here
   `setMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
-  answered `none`, `exNames` and `themeNames` are answered no name, and
-  `runCommand` is answered `false` and runs nothing: this handler knows no
-  registry.
+  answered `none`, `exNames` and `themeNames` are answered no name,
+  `runCommand` is answered `false` and runs nothing, and `displayRules` is
+  answered no rule: this handler knows no registry.
 - **A reply holds plain data too**, so no request is answered a command:
   a command is a program over the port these requests are part of, and a
   reply that held one would be a type that refers to itself. A command
   that needs what the registry holds for a command's name has the loop
   run it (`runCommand`), with the call it hands it, which is plain data
   (`Editor/Command/Call.lean`).
-- **A marker is made by the caller.** `split` and `show` are handed the
-  markers of the window they make or change, which the command marked on
-  the buffer's text first: the handler asks the text store nothing.
+- **A marker is made by the caller.** `split`, `show` and `openWindow` are
+  handed the markers of the window they make or change, which the command
+  marked on the buffer's text first: the handler asks the text store
+  nothing.
+- **A new window on a buffer is opened by one request**, `openWindow`,
+  with its spot (`WindowSpot`): after the last window of the tiled list,
+  or docked at an edge. It is refused with a `LayoutRefusal`, the state as
+  it was, `noSuchEdge` among them for an edge the layout has none at.
+  Where a buffer goes is the asking command's to decide, with the display
+  rules (`displayRules`, `EditorState.displaying`).
 - **A window's place and its layout's parameters are changed by one
   request**, `arrange`, with the change as data (`Arrange`: promote,
-  demote, rotate, exchange, zoom, balance, resize and main's count), so a
+  demote, rotate, exchange, zoom, balance, resize, main's count and the
+  move between an edge and the tiles), so a
   new change is a variant there and no request of its own. It is refused
   with a `LayoutRefusal`, the state as it was. `split` takes a placement
   (`Placement`), which only manual splits read.
@@ -304,6 +314,9 @@ inductive StateRequest where
   /-- What the finder is to be handed, config's roots among it, and the
   config generation, which the loop that runs the command answers with. -/
   | workspaceSettings
+  /-- Config's display rules, in order, which the loop that runs the
+  command answers with. -/
+  | displayRules
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -357,6 +370,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setWorkspaceValue .. => Except WorkspaceRefusal Unit
   | .setProjectValue .. => Except WorkspaceRefusal Unit
   | .workspaceSettings => Workspace.Settings × Nat
+  | .displayRules => Array DisplayRule
 
 namespace EditorState
 
@@ -441,6 +455,9 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   -- Config's roots and its generation are the loop's to answer with
   -- (`Program.dispatched`): here, with no loop, config has none.
   | .workspaceSettings, state => (({}, 0), state)
+  -- Config's rules are the loop's to answer with (`Program.dispatched`):
+  -- here, with no loop, config has none.
+  | .displayRules, state => (#[], state)
 
 end EditorState
 

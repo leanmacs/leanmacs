@@ -406,8 +406,8 @@ def nextMarker (text : TextId) : TextM Nat := do
   text.unmark marker
   return marker.index
 
-/-- The cases of windows: splitting one, closing one, focusing one and
-showing another buffer in one. -/
+/-- The cases of windows: splitting one, closing one, focusing one,
+showing another buffer in one and displaying a buffer. -/
 def windowCases : List Case :=
   [{  name :=
         "split then close: a split puts a new view, with an id no view had, right after the view it was made from in the frame's list, on the same buffer, with markers of its own that read as the source's, and leaves the focus; closing the new view gives back the frame, the windows and the focus from before the split, and the source window's markers are the ones it had, where they were"
@@ -489,7 +489,45 @@ def windowCases : List Case :=
             state.wellFormed &&
             refusedAs (← view.show absent) (.noSuchBuffer absent) &&
             refusedAs (← (⟨9⟩ : ViewId).show other) (.noSuchWindow ⟨9⟩) &&
-            (← editorState) == state }]
+            (← editorState) == state },
+    { name :=
+        "displaying a buffer no window shows, with no display rules, opens a new window on it after the last of the list, with a scroll anchor at its start and one cursor at its start of the shape the asking view's selection has, both marked on the buffer's text, focuses it and returns its view; displaying it again makes no marker and focuses the window that shows it; the minibuffer's buffer is refused with ofMinibuffer, and a buffer there is none of with noSuchBuffer, each with no marker made"
+      start := holding "first" (selection #[(2, 4)] .inclusive)
+      run := do
+        let view : ViewId := ⟨0⟩
+        let .ok other ← createBuffer "other" "sécond" | return false
+        let .ok text ← other.text | return false
+        let marked ← nextMarker text
+        let .ok made ← other.display view "make" | return false
+        let opened ← editorState
+        let some window := opened.window? made | return false
+        let scroll ← text.marker window.scroll
+        let .ok selected ← made.selection | return false
+        let probe ← nextMarker text
+        let .ok () ← view.focus | return false
+        let .ok again ← other.display view "make" | return false
+        let shown ← editorState
+        let unmarked := (← nextMarker text) == probe + 1
+        let absent : BufferId := ⟨9⟩
+        let refusedAbsent := refusedAs (← absent.display view "make") (.noSuchBuffer absent)
+        let .ok minibuffer ← prompt "Name: " { command := "greet" } | return false
+        let some asked := (← editorState).minibufferBuffer? | return false
+        let some minibufferText := ((← editorState).buffer? asked).map (·.text) | return false
+        let before ← nextMarker minibufferText
+        let refusedMinibuffer := refusedAs (← asked.display view "make") (.ofMinibuffer minibuffer)
+        return made == ⟨1⟩ && probe == marked + 3 && window.buffer == other &&
+            opened.frame.windows == #[view, made] &&
+            opened.frame.focused == made &&
+            opened.wellFormed &&
+            scroll == .anchor { offset := 0, bias := .before } &&
+            selected == selection #[(0, 0)] .inclusive &&
+            again == made &&
+            unmarked &&
+            shown.frame.focused == made &&
+            shown.frame.windows == opened.frame.windows &&
+            refusedAbsent &&
+            refusedMinibuffer &&
+            (← nextMarker minibufferText) == before + 1 }]
 
 /-- The cases of breaking a line: the break a command inserts is its
 buffer's line ending. -/

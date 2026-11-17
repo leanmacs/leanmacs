@@ -324,14 +324,11 @@ name. -/
 def notAsking (refusal : PromptRefusal) : String :=
   s!"{openName}: {refusal.describe}"
 
-/-- The view a buffer is shown in when it is to be shown in `view`: `view`,
-or, when `view` is the minibuffer's, which shows no other buffer, the
-window of the list the open prompt was asked from
-(`EditorState.askedFrom`). -/
+/-- The view a buffer is shown in when it is to be shown in `view`
+(`EditorState.shownIn`): `view`, or, when `view` is the minibuffer's, which
+shows no other buffer, the window the open prompt was asked from. -/
 def shownIn (state : EditorState) (view : ViewId) : ViewId :=
-  match state.prompt with
-  | some asked => if asked.view == view then state.askedFrom asked else view
-  | none => view
+  state.shownIn view
 
 /-- Opens each of `paths` in `view`, one after another ("Open", in the
 module docs). A path a buffer holds (`EditorState.findFile`) is shown at

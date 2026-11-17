@@ -196,6 +196,16 @@ a value, with their `LayoutRefusal`.
   shape the window's selection had. Showing the buffer the window already
   shows changes nothing and marks nothing. The markers the window had are
   given up by the loop, as a closed window's are.
+- `BufferId.display buffer asking opener` shows a buffer a command made
+  where config's display rules say (`Editor/DisplayRules.lean`), and
+  returns its view: a window that shows it already, else the target of
+  the first rule that matches its modes, its name and `opener`, the
+  command's name, else a new window at the end of the tiled list, the
+  stack. A new window's markers are made as `show` makes them, and only for
+  a new window. The window is focused when the rule says so. It reads the
+  rules with a state request the loop answers (`.displayRules`). A docked
+  window, at an edge (`Frame.docked`), is a window like any other to every
+  operation here.
 
 A view's id is never used again (`Editor/State.lean`).
 
@@ -1296,6 +1306,52 @@ def setMajorMode (view : ViewId) (name : String) : EditorM (Except ModeRefusal B
   EditorState.ask (.setMajorMode view name)
 
 end ViewId
+
+/-- Displays the buffer `buffer` where config's display rules say, for the
+command `opener` acting on the view `asking`, and returns the view it is
+shown in (`EditorState.displaying`, `Editor/DisplayRules.lean`). A window
+that shows it already is used, and makes no marker; otherwise the first
+rule that matches decides, or a new window in the stack: an existing
+window shows it as `ViewId.show` does, and a new window gets a scroll
+anchor at the buffer's start and one cursor at its start, of the shape the
+asking view's selection has, marked on its text, and is opened
+(`EditorState.openWindow`). The window is focused when the rule says so,
+as the fallback does. Refused with `ofMinibuffer`, and the minibuffer's
+view, for the minibuffer's buffer, and with `noSuchBuffer` for a buffer
+there is none of, each with no marker made. -/
+def BufferId.display (buffer : BufferId) (asking : ViewId) (opener : String) :
+    EditorM (Except LayoutRefusal ViewId) := do
+  let state ← editorState
+  if let some minibuffer := state.minibufferView? then
+    if state.minibufferBuffer? == some buffer then
+      return .error (.ofMinibuffer minibuffer)
+  let some shown := state.buffer? buffer | return .error (.noSuchBuffer buffer)
+  let rules ← EditorState.ask .displayRules
+  let (decided, focus) := state.displaying rules buffer asking opener
+  let placed : Except LayoutRefusal ViewId ←
+    match decided with
+    | .shown view =>
+      pure (.ok view)
+    | .showIn view =>
+      return (← view.show buffer).map fun () => view
+    | .opened spot =>
+      let shape ←
+        match state.target? (state.shownIn asking) with
+        | some target =>
+          pure (← target.selection).shape
+        | none =>
+          pure Shape.exclusive
+      let scroll ← shown.text.mark (.anchor { offset := 0, bias := .before })
+      let selection ← shown.text.mark (.selection { ranges := #[⟨0, 0⟩], shape })
+      EditorState.ask (.openWindow buffer scroll selection spot)
+  match placed with
+  | .ok view =>
+    if focus then
+      if let .error refusal← view.focus then
+        return .error refusal
+    return .ok view
+  | .error refusal =>
+    return .error refusal
 
 /-! ## Workspaces -/
 

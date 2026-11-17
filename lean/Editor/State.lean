@@ -1,4 +1,5 @@
 import Editor.Display
+import Editor.DisplayRules
 import Editor.Face
 import Editor.File
 import Editor.Invocation
@@ -1180,6 +1181,16 @@ inductive WindowSpot where
   | stack
   /-- Docked at `side`, after the windows docked there. -/
   | edge (side : Side)
+  deriving DecidableEq, Repr
+
+/-- Where a buffer is to be displayed (`EditorState.displaying`). -/
+inductive Displaying where
+  /-- A window of the frame already shows it: `view`. -/
+  | shown (view : ViewId)
+  /-- The existing window `view` is to show it. -/
+  | showIn (view : ViewId)
+  /-- A new window, at `spot`. -/
+  | opened (spot : WindowSpot)
   deriving DecidableEq, Repr
 
 /-- Why an operation on the layout was refused. -/
@@ -2395,6 +2406,46 @@ handed the minibuffer's view to show a buffer in shows it there
 (`shownIn`). -/
 def askedFrom (state : EditorState) (asked : Prompt) : ViewId :=
   if state.frame.contains asked.asker then asked.asker else state.frame.windows[0]?.getD asked.asker
+
+/-- The view a buffer is shown in when it is to be shown in `view`: `view`,
+or, when `view` is the minibuffer's, which shows no other buffer, the
+window of the frame the open prompt was asked from (`askedFrom`). -/
+def shownIn (state : EditorState) (view : ViewId) : ViewId :=
+  match state.prompt with
+  | some asked => if asked.view == view then state.askedFrom asked else view
+  | none => view
+
+/-- Where the buffer `buffer` is displayed when the command `opener`, acting
+on the view `asking`, asks, under `rules`, and whether that window is to be
+focused (`DisplayRule.focus`). A window of the frame that shows the buffer
+already is used, whatever the rules say (`shown`), so the buffer being
+edited never moves. Otherwise the first rule that matches the buffer's
+name, its modes (major first) and `opener` decides, or the fallback
+(`DisplayRule.choose`): `focused` shows it in `shownIn asking`, `main` in
+the first window of the tiled list, `stack` opens a window after the last
+of the list, and `edge side` one docked at `side` when the layout out of
+a zoom has that edge and in the stack otherwise; `float` and `newTab`,
+which config cannot reach, open one in the stack. -/
+def displaying (state : EditorState) (rules : Array DisplayRule) (buffer : BufferId)
+    (asking : ViewId) (opener : String) : Displaying × Bool :=
+  let held := state.buffer? buffer
+  let facts : DisplayRule.Facts :=
+    { name := (held.map (·.name)).getD ""
+      modes := (held.map fun buffer => buffer.major.toList ++ buffer.minors.toList).getD []
+      opener }
+  let rule := DisplayRule.choose rules facts
+  match state.frame.all.find? fun view => (state.window? view).any (·.buffer == buffer) with
+  | some view => (.shown view, rule.focus)
+  | none =>
+    let decided : Displaying :=
+      match rule.target with
+      | .focused => .showIn (state.shownIn asking)
+      | .main => .showIn (state.frame.windows[0]?.getD asking)
+      | .edge side =>
+        if state.frame.underlying.edgeSides.contains side then .opened (.edge side)
+        else .opened .stack
+      | .stack | .float | .newTab => .opened .stack
+    (decided, rule.focus)
 
 /-- Closes the open prompt: the minibuffer's window is removed, its buffer's
 slot is emptied, and the focus goes to the asking view, or, when that view

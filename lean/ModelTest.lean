@@ -7513,6 +7513,107 @@ def directionStates : List EditorState :=
     edged.flatMap fun (tiles, docked, layout) =>
       withPrompt (onTextModel (dockedUnder tiles docked layout))
 
+/-- The checks of display rules (`Editor/DisplayRules.lean`): which rule a
+buffer's facts choose, and which targets a layout lacks; and where a
+buffer is displayed (`EditorState.displaying`). -/
+def displayRuleChecks : List Check :=
+  let facts : DisplayRule.Facts := { name := "notes", modes := ["text", "notes"], opener := "make" }
+  [{  name :=
+        "a rule matches when every field it sets holds: a mode is the buffer's major mode or any of its minor modes, a name is the buffer's exactly, and an opener is the command's that asked; a rule that sets none matches every buffer"
+      run :=
+        pure <|
+          let rule (mode name opener : Option String) : DisplayRule :=
+            { mode, name, opener, target := .stack }
+          (rule (some "text") none none).matches facts &&
+            (rule (some "notes") none none).matches facts &&
+            !(rule (some "lisp") none none).matches facts &&
+            (rule none (some "notes") none).matches facts &&
+            !(rule none (some "note") none).matches facts &&
+            (rule none none (some "make")).matches facts &&
+            !(rule none none (some "list-buffers")).matches facts &&
+            (rule (some "notes") (some "notes") (some "make")).matches facts &&
+            !(rule (some "notes") (some "notes") (some "other")).matches facts &&
+            (rule none none none).matches facts },
+    { name :=
+        "the first rule that matches is chosen, in order; with none matching the fallback is, which sends the buffer to the stack and focuses it"
+      run :=
+        pure <|
+          let toLeft : DisplayRule := { mode := some "notes", target := .edge .left }
+          let toMain : DisplayRule := { opener := some "make", target := .main, focus := false }
+          let never : DisplayRule := { name := some "other", target := .focused }
+          DisplayRule.choose #[never, toLeft, toMain] facts == toLeft &&
+            DisplayRule.choose #[never, toMain, toLeft] facts == toMain &&
+            DisplayRule.choose #[never] facts == DisplayRule.fallback &&
+            DisplayRule.choose #[] facts == DisplayRule.fallback &&
+            DisplayRule.fallback.target == .stack &&
+            DisplayRule.fallback.focus },
+    { name :=
+        "a target is missing when the layout lacks it: floats and tabs always, for now, and an edge the layout has no edge at; the focused window, main and the stack never are"
+      run :=
+        pure <|
+          let edged := Layout.edge .left 25 Layout.default
+          [Layout.default, edged].all
+              (fun layout =>
+                [DisplayTarget.focused, .main, .stack].all (·.missing? layout == none) &&
+                  DisplayTarget.float.missing? layout == some DisplayTarget.noFloats &&
+                  DisplayTarget.newTab.missing? layout == some DisplayTarget.noTabs) &&
+            (DisplayTarget.edge .left).missing? Layout.default == some (Layout.noEdge .left) &&
+            (DisplayTarget.edge .left).missing? edged == none &&
+            (DisplayTarget.edge .right).missing? edged == some (Layout.noEdge .right) },
+    { name :=
+        "a window of the frame that shows the buffer is used, a tile or a docked one, whatever the rules say; otherwise the rule's target decides: the focused window, main, a new window in the stack, or at an edge the layout has, else the stack; floats and tabs go to the stack; the focus is the rule's"
+      run :=
+        pure <|
+          match onTextModel twoBuffers,
+            onTextModel (dockedUnder 1 [.left] (.edge .left 25 Layout.default)) with
+          | some two, some docked =>
+            let docked : EditorState :=
+              { docked with
+                buffers := two.buffers
+                windows :=
+                  docked.windows.map fun window =>
+                    if window.id == ⟨1⟩ then { window with buffer := ⟨1⟩ } else window }
+            let rule (target : DisplayTarget) (focus : Bool := true) : Array DisplayRule :=
+              #[{ target, focus }]
+            let fresh : EditorState :=
+              { two with
+                frame := { two.frame with windows := #[⟨0⟩] }
+                windows := two.windows.filter (·.id == ⟨0⟩) }
+            two.displaying (rule .main) ⟨1⟩ ⟨0⟩ "make" == (.shown ⟨1⟩, true) &&
+              docked.displaying (rule .main false) ⟨1⟩ ⟨0⟩ "make" == (.shown ⟨1⟩, false) &&
+              fresh.wellFormed &&
+              fresh.displaying #[] ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying (rule .focused) ⟨1⟩ ⟨0⟩ "make" == (.showIn ⟨0⟩, true) &&
+              fresh.displaying (rule .main false) ⟨1⟩ ⟨0⟩ "make" == (.showIn ⟨0⟩, false) &&
+              fresh.displaying (rule .stack) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying (rule (.edge .left)) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying (rule .float) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying (rule .newTab) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              ({ fresh with
+                        frame := { fresh.frame with layout := .edge .left 25 Layout.default } } :
+                      EditorState).displaying
+                  (rule (.edge .left)) ⟨1⟩ ⟨0⟩ "make" ==
+                (.opened (.edge .left), true)
+          | _, _ => false },
+    { name :=
+        "the focused target, asked from the minibuffer's view, is the window the prompt was asked from, a tiled one or a docked one; asked from another window, that window"
+      run :=
+        pure <|
+          match onTextModel sidebar with
+          | none => false
+          | some state =>
+            let fromMain := (prompted state).2
+            let fromSidebar := (prompted (state.focusWindow ⟨2⟩).2).2
+            let minibuffer (asking : EditorState) : ViewId := asking.minibufferView?.getD ⟨9⟩
+            let focused : Array DisplayRule := #[{ target := .focused }]
+            -- No window shows buffer 9, so the rule decides.
+            fromMain.shownIn (minibuffer fromMain) == ⟨0⟩ &&
+              fromSidebar.shownIn (minibuffer fromSidebar) == ⟨2⟩ &&
+              fromSidebar.shownIn ⟨1⟩ == ⟨1⟩ &&
+              Files.shownIn fromSidebar (minibuffer fromSidebar) == ⟨2⟩ &&
+              fromSidebar.displaying focused ⟨9⟩ (minibuffer fromSidebar) "e" ==
+                (.showIn ⟨2⟩, true) }]
+
 /-- The checks of the operations on the frame's windows that the window
 commands are made of (`Editor/State.lean`): a split's placement, a
 removal's inheritor under manual splits, zoom, the last window focused,
@@ -9098,7 +9199,7 @@ def stateRequests : List StateRequest :=
     .openWindow ⟨2⟩ (marker 2 8) (marker 2 9) .stack,
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.edge .left),
     .openWindow ⟨9⟩ (marker 0 8) (marker 0 9) .stack,
-    .openWindow ⟨0⟩ (marker 1 8) (marker 0 9) .stack]
+    .openWindow ⟨0⟩ (marker 1 8) (marker 0 9) .stack, .displayRules]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -9755,7 +9856,16 @@ def stateRequestChecks : List Check :=
               replied docked == .inr ⟨3⟩ &&
               edged.frame.docked == #[(⟨2⟩, .left), (⟨3⟩, .left)] &&
               replied absent == .inl (.noSuchEdge .top) &&
-              same == state }]
+              same == state },
+    { name :=
+        "with no loop to answer, the display rules are none, and asking for them leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel sidebar with
+          | none => false
+          | some state =>
+            let (rules, after) := state.handle .displayRules
+            rules == #[] && after == state }]
 
 /-- The loop the model tests run: one over the test scheme. -/
 abbrev TestLoop :=
@@ -11897,6 +12007,20 @@ def dispatchStateChecks : List Check :=
       [("split", split), ("fail", failingAfter fun call => discard <| splitting call),
         ("moving", moving)]
   [{  name :=
+        "a dispatched command that asks for the display rules is answered the rules the loop was told of, and the state is as it was"
+      run :=
+        let rules : Array DisplayRule :=
+          #[{ mode := some "notes", target := .edge .left }, { target := .main, focus := false }]
+        let program : EditorM (Guarded (Array DisplayRule) × EditorState × EditorState) := do
+          let state ← twoBuffers
+          let (ended, after) ←
+            (EditorState.ask .displayRules).dispatched { displayRules := rules } state
+          return (ended, after, state)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, after, state) => answer == rules && after == state
+          | _ => false },
+    { name :=
         "criterion 3, on the models: a step handed monocle as its layout shows only the focused window, in the whole tiled area, and focusing the other window shows it in its place; a step handed no layout keeps the frame's; a step handed the default shows both again; no window is lost on the way"
       run :=
         pure <|
@@ -28609,6 +28733,7 @@ def checks : List Check :=
     heightChecks ++
     layoutChecks ++
     stateChecks ++
+    displayRuleChecks ++
     stateRequestChecks ++
     loopChecks ++
     commitChecks ++
