@@ -1549,7 +1549,11 @@ echo area, the preedit, and the prompt that is open, if one is.
     the scene, as xmonad's `Full`; a hidden window is still one of the
     state's views, so it can be focused, which shows it. Its cursor is not
     followed while it is hidden. While a prompt is open the selected view
-    is the asker, so monocle keeps showing it and not the minibuffer.
+    is the asker, so monocle keeps showing it and not the minibuffer. When
+    the selected view is a float, monocle is handed the window the float
+    is anchored to, or for a float anchored to the frame the window
+    focused before it (`EditorState.monocleView`), so the window a float
+    floats over stays drawn under it.
   - **Manual splits** (`Layout.splits`, `Layout.manual`; window
     management's phase 2, decided 2026-11-16) is a binary tree of
     anonymous tiles (`Splits`), each split an axis and two weights. `place`
@@ -1762,7 +1766,9 @@ echo area, the preedit, and the prompt that is open, if one is.
     rotate and exchange refuse it (`floating`, "a floating window is not in
     the layout"), since the stacking order is not changed by any operation
     yet; promote makes it main, the edge commands dock it, resize steps its
-    share, and zoom from it shows the first tile under it; focus by
+    share, and zoom from it shows its anchor window under it, or for a
+    float anchored to the frame the window focused before it, so a focused
+    transient float stays open under monocle; focus by
     direction never lands on a float, which overlaps the tiles, and from a
     float starts from its rectangle. `Arrange.float` moves a window between
     the tiles and the floats: a tile or a docked window floats, pinned,

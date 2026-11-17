@@ -8950,7 +8950,7 @@ def floatingWindowChecks : List Check :=
               | _ => false
           | _, _, _, _, _ => false },
     { name :=
-        "a float is refused a split, a demote, a rotate and an exchange with floating, the state as it was; promote makes it main, the edge command docks it, refused with noSuchEdge where the layout has no edge, and resize steps its share by 5 percent on the axis; zoom from it shows the first tile under it"
+        "a float is refused a split, a demote, a rotate and an exchange with floating, the state as it was; promote makes it main, the edge command docks it, refused with noSuchEdge where the layout has no edge, and resize steps its share by 5 percent on the axis; zoom from a float anchored to the frame shows the window focused before it under it"
       run :=
         pure <|
           match floating 2 [(.frame, true)],
@@ -9155,7 +9155,38 @@ def floatingWindowChecks : List Check :=
               closedFocused.frame.focused == ⟨0⟩ &&
               floatsOf closedFocused == [3] &&
               [first, second, monocle.located #[], closedFocused].all (·.wellFormed)
-          | _, _ => false }]
+          | _, _ => false },
+    { name :=
+        "zoomed on a tile that is not the first, a focused transient float anchored to it keeps that tile under it: monocle shows the float's anchor window, at a position or the window itself, so the publish keeps the float open; a float anchored to the frame shows the window focused before it, and a prompt asked from the float shows its anchor too"
+      run :=
+        pure <|
+          -- Three tiles zoomed on view 1, then a transient float, view 3,
+          -- anchored to it and focused.
+          let zoomedFloat (anchor : Floating.Anchor) : Option EditorState :=
+            onTextModel do
+              let state ← windowsUnder 3 Layout.default
+              let state := ((state.focusWindow ⟨1⟩).2.arrange ⟨1⟩ .zoom).2
+              let state ← withFloats state [(anchor, false)]
+              return (state.focusWindow ⟨3⟩).2
+          let spot : Display.Spot := { x := 8, y := 24, height := 16 }
+          match zoomedFloat (.position ⟨1⟩ (marker 0 3)), zoomedFloat (.window ⟨1⟩),
+            zoomedFloat .frame with
+          | some atPosition, some onWindow, some onFrame =>
+            let kept (state : EditorState) : Bool :=
+              state.frame.layout == .monocle && state.frame.focused == ⟨3⟩ &&
+                state.rects.map (·.1) == #[⟨1⟩, ⟨3⟩] &&
+                state.rect? ⟨1⟩ == some (rect 0 0 640 464) &&
+                floatsOf state == [3] &&
+                state.wellFormed
+            let located := atPosition.located #[(⟨3⟩, some spot)]
+            kept atPosition && kept located &&
+              (located.frame.floating? ⟨3⟩).bind (·.spot) == some spot &&
+              kept onWindow &&
+              kept (onWindow.located #[]) &&
+              kept onFrame &&
+              (prompted atPosition).2.rect? ⟨1⟩ == some (rect 0 0 640 448) &&
+              ((prompted atPosition).2.located #[(⟨3⟩, some spot)]).frame.floats.size == 1
+          | _, _, _ => false }]
 
 /-- The checks of the editor state and its layout invariants
 (`Editor/State.lean`), on the text model. -/

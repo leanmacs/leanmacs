@@ -109,7 +109,9 @@ prompt is open. So the scene lists the floats after every tile and docked
 window, and the display, which draws views in scene order each over its
 own background, draws them above. Monocle is handed the selected
 view (`EditorState.selectedView`), so while a prompt is open it shows the
-asker, not the minibuffer. A window monocle hides has no rectangle, and so
+asker, not the minibuffer; when that is a float, it is handed the float's
+anchor window, or for a float anchored to the frame the window focused
+before it (`EditorState.monocleView`). A window monocle hides has no rectangle, and so
 is not in the scene, but it is still one of the views and can be focused,
 which shows it. It is the one definition the scene's views and a command's
 question about its view (`EditorState.rect?`) are both read from, so a
@@ -319,8 +321,12 @@ view or a tab bar cut off the frame. These rules are its own:
   `openWindow`'s `stack` places a window, and `resize` steps its share;
   `demote`, `rotate` and `exchange` refuse it with `floating`, since no
   operation changes the stacking order yet. `zoom`, `balance` and
-  `mainCount` act as from any window; zoom from a float shows the first
-  tile under it, since monocle's selected view is then no tile.
+  `mainCount` act as from any window. While a float is the selected view,
+  focused or asked from, monocle shows the window it is anchored to, and
+  for a float anchored to the frame the window focused before it
+  (`monocleView`): so zoom from a float shows that window under it, and a
+  focused transient float anchored to a window monocle would otherwise
+  hide is not closed for want of its anchor.
 - `arrange`'s `float` on a tile or a docked window floats it, pinned,
   anchored to the frame, of the default share, on top; the last tile is
   refused with `lastTile`.
@@ -1575,9 +1581,23 @@ strip (`cutFrame`). -/
 def tiled (state : EditorState) : Rect :=
   state.cutFrame.1
 
+/-- The view monocle shows: the selected view (`selectedView`), and when
+that is a float, the window it is anchored to, by `window` or `position`,
+or for a float anchored to the frame the window focused before it
+(`Frame.lastFocused`). So a float focused, or asked from, under monocle
+keeps the window it floats over drawn, and a transient one anchored to it
+is not closed for want of its anchor (`located`). -/
+def monocleView (state : EditorState) : ViewId :=
+  let frame := state.frame
+  let selected := state.selectedView
+  match frame.floating? selected with
+  | some float => (float.anchor.view? <|> frame.lastFocused).getD selected
+  | none => selected
+
 /-- The rectangle of each view of the state in its frame, in drawing order:
-the frame's windows laid out by its layout in the tiled area (`tiled`), the
-selected view (`selectedView`) being the one monocle shows; then each float
+the frame's windows laid out by its layout in the tiled area (`tiled`),
+monocle showing the selected view, or a float's anchor window
+(`monocleView`); then each float
 in stacking order, placed in the tiled area against its anchor
 (`Floating.placed`); and then, while a prompt is open, the minibuffer's view
 in the strip below it. A window the
@@ -1585,7 +1605,7 @@ layout does not show has none. It is what a scene's views are laid out in
 (`Loop.views`, `Editor/Loop.lean`). -/
 def rects (state : EditorState) : Array (ViewId × Rect) :=
   let frame := state.frame
-  let laid := frame.layout.place frame.windows state.selectedView state.tiled frame.docked
+  let laid := frame.layout.place frame.windows state.monocleView state.tiled frame.docked
   laid ++ frame.floats.map (fun float => (float.view, float.placed state.tiled laid)) ++
     (state.minibufferView?.map (·, state.cutFrame.2)).toArray
 
