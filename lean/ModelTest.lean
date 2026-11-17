@@ -30797,29 +30797,36 @@ def tList (directory : System.FilePath) : Process.Command :=
   { program := "t-list", directory }
 
 /-- The world of the listing checks: the repositories `/t` and `/t2`, each
-holding `t.toml`. -/
+holding `t.toml`, and `/u`, a directory holding `t.toml` in no
+repository. -/
 def listingWorld : Workspace.World :=
   { repositories :=
       #[{ toplevel := "/t", commonDir := "/t/.git" },
         { toplevel := "/t2", commonDir := "/t2/.git" }]
-    markerDirectories := #["/t/.git", "/t2/.git"], markers := #["/t/t.toml", "/t2/t.toml"] }
+    markerDirectories := #["/t/.git", "/t2/.git"]
+    markers := #["/t/t.toml", "/t2/t.toml", "/u/t.toml"] }
 
 /-- The bindings of the listing checks: the hook checks', and `C-p 1`,
-`C-p 2` and `C-p 3`, which open `/t/a.txt`, `/t/b.txt` and `/t2/a.txt`. -/
+`C-p 2`, `C-p 3` and `C-p 4`, which open `/t/a.txt`, `/t/b.txt`,
+`/t2/a.txt` and `/u/a.txt`. -/
 def listingBindings : List (String × Invocation) :=
   hookBindings ++
-    [("C-p 1", opens "/t/a.txt"), ("C-p 2", opens "/t/b.txt"), ("C-p 3", opens "/t2/a.txt")]
+    [("C-p 1", opens "/t/a.txt"), ("C-p 2", opens "/t/b.txt"), ("C-p 3", opens "/t2/a.txt"),
+      ("C-p 4", opens "/u/a.txt")]
 
 /-- What each run of the listing checks does: `t-list` in `/t` lists
-`build`, `fmt` and `sub`, in `sub`; in `/t2` it fails. -/
+`build`, `fmt` and `sub`, in `sub`; in `/t2` it fails; in `/u` it lists
+`u-only`. -/
 def listingScripts : Array Process.Script :=
   #[{ command := tList "/t", reply := shellReply "build=t-build\nfmt=t-fmt\nsub=t-sub=sub\n" },
-    { command := tList "/t2", reply := shellReply "" "t-list: broken\nmore\n" (.code 3) }]
+    { command := tList "/t2", reply := shellReply "" "t-list: broken\nmore\n" (.code 3) },
+    { command := tList "/u", reply := shellReply "u-only=u-only\n" }]
 
 /-- The streaming children of the listing checks. -/
 def listingStreams : Array Process.StreamScript :=
   #[{ command := shellCommand "/t" "t-build", steps := linesSteps ["ok"] },
-    { command := shellCommand "/t/sub" "t-sub", steps := linesSteps ["ok"] }]
+    { command := shellCommand "/t/sub" "t-sub", steps := linesSteps ["ok"] },
+    { command := shellCommand "/u" "u-only", steps := linesSteps ["ok"] }]
 
 /-- A driver of the listing checks over `registry`, by default `t-mode`
 registered in config: the world of `listingWorld`, with its bindings, the
@@ -30827,9 +30834,9 @@ compile checks' jobs, its files, runs and children; `none` if making the
 state was refused. -/
 def listingDriver (registry : Config.Registry := hookRegistry (compileContribution tContribution)) :
     Option TestDriver :=
-  let model := listingWorld.jobModel "git" #["/t", "/t2"]
+  let model := listingWorld.jobModel "git" #["/t", "/t2", "/u"]
   let files :=
-    [("/t/a.txt", "a"), ("/t/b.txt", "b"), ("/t2/a.txt", "a")].foldl
+    [("/t/a.txt", "a"), ("/t/b.txt", "b"), ("/t2/a.txt", "a"), ("/u/a.txt", "a")].foldl
       (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
   let keys := compileKeysOf listingBindings
   let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
@@ -30991,6 +30998,43 @@ def listingChecks : List Check :=
               | none => dropped
             startedCount listed (tList "/t") == 1 &&
               (Compile.entriesOf listed.loop.state (some "/t")).isEmpty },
+    { name :=
+        "a file in a directory holding t.toml and no repository has t-mode on there: its listing runs there once, is kept in the unscoped store, and compile-command offers and runs what it lists"
+      run :=
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p 4"
+            let asked := settledAfter opened "C-k i"
+            let ran := drained (fedTo opened (exLine "compile-command u-only")).1
+            (shownWorkspace opened).isNone &&
+              shownOnModes opened == some #[{ mode := "t-mode", root := "/u" }] &&
+              startedCount asked (tList "/u") == 1 &&
+              (Compile.entriesOf opened.loop.state none).map
+                  (fun entry => (entry.mode, entry.root.toString)) ==
+                #[("t-mode", "/u")] &&
+              (candidatesOf asked).map (·.all) ==
+                some #["build (t-mode)", "check (t-mode)", "u-only (t-mode)"] &&
+              ran.jobs.processes.started.back? == some (shellCommand "/u" "u-only") },
+    { name :=
+        "in a workspace whose location cannot run commands no listing is started when t-mode turns on, and compile-command offers nothing"
+      run :=
+        let reachable := Location.reachable "kube" "pod" "/app"
+        pure <|
+          match listingDriver with
+          | none => false
+          | some driver =>
+            let waiting := settledBut (fedTo driver (presses "C-p 1")).1 Workspace.markerJob
+            let moved := settledOn (pressedOn waiting "C-e k") []
+            let asked := pressedOn moved "C-k i"
+            !reachable.can.runCommands &&
+              (shownWorkspace moved).map (·.1.location) == some reachable &&
+              shownOnModes moved == some #[{ mode := "t-mode", root := "/t" }] &&
+              startedCount asked (tList "/t") == 0 &&
+              !(asked.pending.any (·.name == Compile.listJob)) &&
+              asked.loop.state.prompt.isNone &&
+              (echoOf asked).map (·.endsWith "where commands cannot run") == some true },
     { name :=
         "a listing order and an entry cross as arguments and as a tree and back, and arguments that are no order read as none; the listing job started with them fails"
       run :=
