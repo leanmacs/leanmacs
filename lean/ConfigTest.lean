@@ -6152,12 +6152,183 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   (← IO.getStdout).flush
   return 0
 
+/-! ### The prompt benchmark
+
+`bench-prompt` measures what a key costs in a prompt over many candidates
+(`mise run prompt-bench`), and what the listing costs once the match is
+made off the editor thread. Like the others it is a measuring tool: the gate
+builds it and never runs it, and no number it prints is an expected value.
+
+Each row runs a headless host on the real queue and the real library, the
+matcher among it (`Fuzzy.real`), with the recorder as its display. The
+prompt is asked by a compiled command with a source given as a value over
+`manyPaths`, paths of about 40 bytes. A sample is one key of the six of
+`src/f1`, committed into the open prompt as typed text, and a `run noop`
+sent right after it: timed from sending the key to the editor thread
+printing that it ran `noop`, read on the editor thread as `bench-jobs`
+reads it. So a sample is the key's step, its scene published, and one
+empty step after it, which the row with no candidates measures alone. In
+the worker row the listing's latency is timed too, from sending the key to
+the editor thread printing that the match job's command ran; then the row
+joins, so the next key finds no match in flight. After the sixth key the
+prompt is cancelled and asked again, untimed.
+
+The row at typing cadence joins nothing: the keys are sent `cadence` ms
+apart whatever the match is doing, so a key arrives while a match runs or
+while its delivery is handled, which a key typed fast meets. The bound is
+judged on it and on the joined worker row. -/
+
+/-- The command of a host of the prompt benchmark: asks `Pick: ` with a
+source given as a value over `manyPaths count`. -/
+def askingMany (count : Nat) : Config.Registration :=
+  { name := "ask-many"
+    action :=
+      .plain
+        (discard <|
+          prompt "Pick: " { command := "picked" } ""
+            [.given (.ofTexts "many" "pick" (manyPaths count))]) }
+
+/-- What the 99th percentile of a key's latency must stay under, in
+nanoseconds: 1 ms. -/
+def keyBound : Nat :=
+  1000000
+
+/-- How far apart the keys of the row typed at typing cadence are sent, in
+milliseconds: faster than anyone types, and shorter than a match of
+100,000 takes, so keys arrive while a match runs and while its delivery is
+handled. -/
+def cadence : Nat :=
+  20
+
+/-- Whether a row of keys is within the bound the plan set for matching off
+the editor thread: its median at most twice the idle row's, and its 99th
+percentile under 1 ms. -/
+def Row.keyWithinBound (row idle : Row) : Bool :=
+  row.median ≤ 2 * idle.median && row.high < keyBound
+
+/-- `bench-prompt`: what a key costs in a prompt with no candidates, over
+1,000, 10,000 and 100,000 candidates listed inline (the limit lifted), and
+over 100,000 matched off the editor thread, keys joined and back to back;
+`samples` keys a row. -/
+def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
+  let pool := (← Job.Pool.warm Job.Pool.size 200).size
+  let completions ← Job.Completions.new
+  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
+  let timers := Job.realTimers completions
+  let elaborator := Config.Elaborate.elaborator { sysroot, oleanDir }
+  let ids ← IO.mkRef (1 : UInt64)
+  let refused ← IO.mkRef 0
+  -- The editor thread reads the clock when it prints that it ran `noop`, and
+  -- when it prints that a match job's listing was delivered.
+  let ranSlot ← IO.mkRef (none : Option (IO.Promise Nat))
+  let listedSlot ← IO.mkRef (none : Option (IO.Promise Nat))
+  let emit (line : String) : IO Unit := do
+    if line == "run noop: ok" then
+      if let some sample ← ranSlot.modifyGet fun slot => (slot, none) then
+        sample.resolve (← IO.monoNanosNow)
+    else if line.endsWith s!" {Loop.matchLabel}: ok" then
+      if let some sample ← listedSlot.modifyGet fun slot => (slot, none) then
+        sample.resolve (← IO.monoNanosNow)
+    else if line.startsWith "loop: refused" then
+      refused.modify (· + 1)
+  let keys := ["s", "r", "c", "/", "f", "1"]
+  -- One row: a host of its own asks the prompt over `count` candidates,
+  -- with `inline` as its inline limit; then the samples. Returns each key's
+  -- latency and, when `listing`, each listing's.
+  let row (count inline : Nat) (listing : Bool) (joined : Bool := true) :
+      IO (Array Nat × Array Nat) := do
+    let requests ← ids.modifyGet fun next => (next, next + 5)
+    let host ←
+      Headless.start (scheme := TestScheme.scheme)
+          { elaborator, source := { chunks := pure #[] }, emit,
+            services := { completions, timers, fuzzy := Fuzzy.real }, published := ← Snapshots.new,
+            held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
+            jobs := requests + 2, environment := requests + 3, posts := requests + 4,
+            commands :=
+              (Minibuffer.commands.push (askingMany count)).push
+                { name := "noop", action := .plain (pure ()) }
+            modes := Minibuffer.modes, inlineMatches := inline }
+    try
+      let ask : IO Unit := do
+        host.send (.run "ask-many")
+        unless (← host.join patience) == .settled do
+          throw (IO.userError "the prompt did not open")
+      ask
+      let mut keyTimes := #[]
+      let mut listingTimes := #[]
+      for sample in [0:samples] do
+        let index := sample % keys.length
+        if index == 0 && sample > 0 then
+          host.send (.run Minibuffer.cancelName)
+          ask
+        let ran ← IO.Promise.new
+        let listed ← IO.Promise.new
+        ranSlot.set (some ran)
+        listedSlot.set (if listing then some listed else none)
+        let asked ← IO.monoNanosNow
+        host.commit (keys[index]?.getD "x")
+        host.send (.run "noop")
+        let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
+        keyTimes := keyTimes.push (handled - asked)
+        if listing then
+          let some delivered ← IO.wait listed.result? |
+            throw (IO.userError "a listing was lost")
+          listingTimes := listingTimes.push (delivered - asked)
+        if joined then
+          unless (← host.join patience) == .settled do
+            throw (IO.userError "a listing was not delivered")
+        else
+          -- Typing cadence: the next key comes a moment later, whatever
+          -- the match is doing.
+          IO.sleep cadence.toUInt32
+      return (keyTimes, listingTimes)
+    finally
+      discard <| host.halt patience
+      discard <| Job.Pool.warm pool 5000
+  let lifted := 1000000000
+  let idle := Row.of "no candidates" (← row 0 lifted false).1
+  let hundred := Row.of "100 inline" (← row 100 lifted false).1
+  let quarter := Row.of "250 inline" (← row 250 lifted false).1
+  let half := Row.of "500 inline" (← row 500 lifted false).1
+  let thousand := Row.of "1,000 inline" (← row 1000 lifted false).1
+  let tenThousand := Row.of "10,000 inline" (← row 10000 lifted false).1
+  let inline := Row.of "100,000 inline (limit lifted)" (← row 100000 lifted false).1
+  let (workerKeys, workerListings) ← row 100000 Loop.inlineMatches true
+  let worker := Row.of "100,000 on the worker" workerKeys
+  let listed := Row.of "  its listing, key to delivery" workerListings
+  let backToBack :=
+    Row.of s!"100,000 on the worker, keys {cadence} ms apart"
+      (← row 100000 Loop.inlineMatches false false).1
+  let rows := [idle, hundred, quarter, half, thousand, tenThousand, inline, worker, listed, backToBack]
+  let inlineRows := [(100, hundred), (250, quarter), (500, half), (1000, thousand)]
+  IO.println
+      s!"pool: {pool} threads; {samples} keys a row, each of `src/f1` committed into the prompt; inline limit {Loop.inlineMatches}"
+  IO.println
+      "latency of a key, from sending it to the editor thread having handled it and published its scene, in µs: median / 99th percentile / maximum"
+  for row in rows do
+    IO.println row.line
+  IO.println
+      ("within bound (median within twice the no-candidates median, 99th percentile under 1 ms): " ++
+        "; ".intercalate
+          ([worker, backToBack].map fun row =>
+            s!"{row.name}: {if row.keyWithinBound idle then "yes" else "no"}"))
+  let under := inlineRows.filter (·.2.high < keyBound)
+  IO.println
+      s!"inline rows with the 99th percentile under 1 ms: {", ".intercalate (under.map (·.2.name))}; the largest such size is {(under.map (·.1)).foldl max 0} (the inline limit is {Loop.inlineMatches})"
+  let late := rows.filter (·.maximum > keyBound)
+  unless late.isEmpty do
+    IO.println ("maximum over 1 ms: " ++ ", ".intercalate (late.map (·.name)))
+  if (← refused.get) > 0 then
+    IO.println s!"refused steps: {← refused.get}"
+  (← IO.getStdout).flush
+  return 0
+
 end Bench
 
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> <syntax fixtures> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples>"
+      "usage: config-test <sysroot> <olean dir> <syntax fixtures> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
   return 2
 
 end ConfigTest
@@ -6172,7 +6343,9 @@ indent checks read.
 `bench-modules` lists the modules an import set reads, for
 `mise run module-bench` and the gate's `bundle-test`.
 `bench-jobs` is the job benchmark (`ConfigTest.Bench.jobs`;
-`mise run job-bench`), which the gate never runs either.
+`mise run job-bench`), which the gate never runs either, and so is
+`bench-prompt`, the prompt benchmark (`ConfigTest.Bench.prompt`;
+`mise run prompt-bench`).
 
 Any other command line is reported, with the exit status 2.
 
@@ -6203,6 +6376,18 @@ def main (args : List String) : IO UInt32 := do
           ConfigTest.Bench.jobs sysroot oleanDir samples
         catch error =>
           IO.eprintln s!"config-test: bench-jobs: {error}"
+          pure 1
+      IO.Process.exit status
+    | none =>
+      ConfigTest.usage
+  | ["bench-prompt", sysroot, oleanDir, samples] =>
+    match samples.toNat? with
+    | some samples =>
+      let status ←
+        try
+          ConfigTest.Bench.prompt sysroot oleanDir samples
+        catch error =>
+          IO.eprintln s!"config-test: bench-prompt: {error}"
           pure 1
       IO.Process.exit status
     | none =>

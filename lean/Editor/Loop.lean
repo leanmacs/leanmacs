@@ -295,7 +295,7 @@ loop has little of its own to do.
     as config's mode-line segments do: a style is a program over the fuzzy
     port alone, so it cannot be refused, read the state or be interrupted.
     A short list is one with at most `Loop.Keys.inlineMatches` candidates
-    to match (`Loop.inlineMatches`, 1,000, set by the prompt benchmark).
+    to match (`Loop.inlineMatches`, 250, set by the prompt benchmark).
   - So the first listing of a short list is made by the scene of the asking
     step, for the initial text, and every event ends in a scene: a command
     always finds the listing of the text the last scene showed.
@@ -1181,9 +1181,10 @@ def Loop.padding : Nat :=
 on the editor thread, in the scene of the step ("Prompts", in the module
 docs): more are matched by a job, off the thread. Set by the prompt
 benchmark (`mise run prompt-bench`, `docs/design/concurrency.md`,
-"Matching off the editor thread, measured"). -/
+"Matching off the editor thread, measured"): 250 is the largest size it
+measured whose key's 99th percentile, listed inline, was under 1 ms. -/
 def Loop.inlineMatches : Nat :=
-  1000
+  250
 
 /-- How many of a prompt's listed candidates the minibuffer's status line
 shows, the first of the listing: ten, what Emacs's vertico

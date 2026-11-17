@@ -863,6 +863,10 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- How long a command a key runs may take before it is logged as slow, in
   milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
+  /-- How many candidates a prompt may have to match for its listing to be
+  made on the editor thread (`Loop.Keys.inlineMatches`): the editor's
+  `Loop.inlineMatches`, unless a benchmark lifts it. -/
+  inlineMatches : Nat := Loop.inlineMatches
   /-- The interrupt key, which the host tells the library when its loop
   starts. -/
   interruptKey : Key := Watch.interruptKey
@@ -1267,7 +1271,7 @@ def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     layout := some (running.config.layout.getD Layout.default)
     tabBar := some (running.config.tabBar.getD .several)
     menu := collaborators.menu.map running.config.registry.menuOf
-    matching := running.config.registry.matching }
+    matching := running.config.registry.matching, inlineMatches := collaborators.inlineMatches }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what

@@ -686,6 +686,32 @@ depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-jobs \"$(lean --print-prefix)\" .lake/build/lib/lean 10000"
 
+# Opt-in: run it by hand on a quiet machine, and do not add it to `ci` or to
+# hk.pkl. It asserts nothing: its numbers depend on the machine and on what
+# else the machine is doing. The gate still builds the subcommand, under
+# every linter (`lean`).
+#
+# `bench-prompt` measures what a key costs in a prompt, over 600 keys a row,
+# each of `src/f1` committed into the open prompt: from sending the key to
+# the editor thread having handled it and published its scene. Rows: a
+# prompt with no candidates; 1,000, 10,000 and 100,000 paths of about 40
+# bytes listed on the editor thread (the inline limit lifted); 100,000
+# matched off the editor thread, each key joined (and the listing's
+# latency, key to delivery, printed); and 100,000 off the thread with the
+# keys back to back, joining nothing, so each meets a match in flight or a
+# delivery. It says whether the two off-thread rows are within bound:
+# median at most twice the no-candidates median, 99th percentile under 1 ms
+# (`docs/design/concurrency.md`, "Matching off the editor thread, measured").
+#
+# Each row is a headless host on the real queue and the library, its
+# matcher among it; LEAN_NUM_THREADS and LEAN_STACK_SIZE_KB are removed from
+# the environment, as for `job-bench`.
+[tasks.prompt-bench]
+description = "Opt-in, never part of ci: measure what a key costs in a prompt over many candidates, listed on the editor thread and matched off it (lean/ConfigTest.lean). It asserts nothing"
+depends = ["lean"]
+dir = "lean"
+run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-prompt \"$(lean --print-prefix)\" .lake/build/lib/lean 600"
+
 # Opt-in: do not add it to `ci` or to hk.pkl. It opens a window on this
 # desktop.
 #
