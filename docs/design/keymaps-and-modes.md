@@ -3580,10 +3580,11 @@ editor thread (phase 3) are pinned by `ModelTest.laterChecks` (an order
 and a batch as arguments, a source's job on the job model,
 `minibuffer-candidates`), `completionJobChecks` (the reconciler: a
 source asked once, asked again after its pause, closing cancels, a match
-spawned under its style's owner, one in flight, none for a failed text,
-one again after an install), `laterLoopChecks` (the phase's four
-criteria through the loop on the models, a key undone while its match
-runs, a match that fails),
+spawned under its style's owner, one in flight, one for a batch with the
+text unchanged, none for a failed text, one again after an install), `laterLoopChecks` (the phase's four
+criteria through the loop on the models, a batch over the limit with the
+text unchanged and one that lands while a match runs, a key undone while
+its match runs, a match that fails),
 `stateRequestChecks` (batches, a source's end, a match's listing and its
 failure), `apiStateChecks` and `dispatchStateChecks` (a later source
 recorded, never run, `noSuchJob`), `setupChecks` (`sourceJob`),

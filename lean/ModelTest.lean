@@ -21266,10 +21266,12 @@ making the state was refused. -/
 def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
   (Loop.Driver.over candidateKeys driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
 
-/-- `candidateDriver` whose prompts are matched by a job over more than two
-candidates (`Loop.Keys.inlineMatches`), so the four pick candidates are. -/
-def smallLimitDriver (model : EditorModel := editorModel) : Option TestDriver :=
-  (Loop.Driver.over { candidateKeys with inlineMatches := 2 } driverJobs
+/-- `candidateDriver` whose prompts are matched by a job over more than
+`inline` candidates (`Loop.Keys.inlineMatches`), two unless given, so the
+four pick candidates are. -/
+def smallLimitDriver (model : EditorModel := editorModel) (inline : Nat := 2) :
+    Option TestDriver :=
+  (Loop.Driver.over { candidateKeys with inlineMatches := inline } driverJobs
       (EditorState.initial ⟨640, 480⟩) model).toOption
 
 /-- The status line of the minibuffer's view of a prompt of the candidate
@@ -22097,6 +22099,23 @@ def completionJobChecks : List Check :=
                   ((FuzzyModel.rank "w" #["wq", "edit", "rewrite", "w"]).map fun index =>
                     #["wq", "edit", "rewrite", "w"][index]!) },
     { name :=
+        "a prompt over the inline limit whose listing is for the typed text at an older revision than its candidates', a batch having come, has one match spawned for the text at the candidates' revision; at their revision, none"
+      run :=
+        pure <|
+          let candidates : Candidates :=
+            { all := offered #["wq", "edit", "rewrite", "w"], listedFor := some "w", revision := 1 }
+          match promptLoop candidates (some "w") with
+          | none => false
+          | some (loop, view) =>
+            let (spawned, _, _, spawns) := loop.completionJobs (jobKeys)
+            let current :=
+              { loop with state := withCandidates loop.state { candidates with listedAt := 1 } }
+            let (_, _, _, atRevision) := current.completionJobs (jobKeys)
+            spawns.map (·.key) == #[Loop.matchKey view] &&
+              spawned.state.prompt.map (·.candidates.matching) ==
+                some (some { pattern := "w", revision := 1, generation := 0 }) &&
+              atRevision.isEmpty },
+    { name :=
         "a match in flight stamped with an older config generation is not in flight: its key is cancelled, and a match is spawned for the typed text, stamped with the keys' generation, running the keys' style"
       run :=
         pure <|
@@ -22260,6 +22279,51 @@ def laterLoopChecks : List Check :=
                   deliveredStep.map (·.spawns.size) == some 1 &&
                   cost counting "C-c a w" == cost plain "C-c p w" + 1
           | _, _, _ => false },
+    { name :=
+        "over the inline limit, a source's batch with the text unchanged spawns a match, whose delivery lists the batch; a batch that lands while a match runs spawns none, and the delivery of the match for the older revision spawns one more, whose delivery lists every batch at the candidates' revision"
+      run :=
+        pure <|
+          match smallLimitDriver (inline := 1) with
+          | none => false
+          | some driver =>
+            let matchOf (driver : TestDriver) : Option Nat :=
+              (driver.pending.find? (·.name == Loop.matchLabel)).map (·.id)
+            let texts (driver : TestDriver) : Option (Array String) :=
+              (candidatesOf driver).map (·.listed.map (·.text))
+            let current (driver : TestDriver) : Bool :=
+              (candidatesOf driver).any fun candidates => candidates.listedAt == candidates.revision
+            let first := ((laterFields "" #["wq", "edit"]).extract 1).map (·.text)
+            let every := ((laterFields "" pickCandidates).extract 1).map (·.text)
+            let (asked, _) := fedTo driver (presses "C-c l")
+            match asked.posting[0]? with
+            | none => false
+            | some job =>
+              let (one, oneStep) := asked.posted job.id
+              match matchOf one with
+              | none => false
+              | some firstMatch =>
+                -- The match delivers before the second batch.
+                let (listed, _) := one.finish firstMatch
+                let (two, twoStep) := listed.posted job.id
+                let (all, _) := match matchOf two with
+                  | some id => two.finish id
+                  | none => (two, none)
+                -- The second batch lands while the match runs.
+                let (both, bothStep) := one.posted job.id
+                let (stale, staleStep) := both.finish firstMatch
+                let (caught, caughtStep) := match matchOf stale with
+                  | some id => stale.finish id
+                  | none => (stale, none)
+                minibufferText one == some "" &&
+                  oneStep.map (·.spawns.size) == some 1 &&
+                  texts listed == some first && current listed &&
+                  twoStep.map (·.spawns.size) == some 1 &&
+                  texts all == some every && current all &&
+                  bothStep.map (·.spawns.size) == some 0 &&
+                  texts stale == some first && !current stale &&
+                  staleStep.map (·.spawns.size) == some 1 &&
+                  texts caught == some every && current caught &&
+                  caughtStep.map (·.spawns.size) == some 0 },
     { name :=
         "over the inline limit, a key undone while the match for it runs leaves the listing it had, current again: the undoing step cancels that match and spawns none, the driver holds no job, a choice made then stays through the match's delivery, even one that raced the cancel, and that delivery spawns nothing"
       run :=
