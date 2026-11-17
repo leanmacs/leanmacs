@@ -21,7 +21,8 @@ use editor_ffi::display::{
     editor_ffi_display_heights, editor_ffi_display_live, editor_ffi_display_move,
     editor_ffi_display_new_cells, editor_ffi_display_new_font, editor_ffi_display_picture,
     editor_ffi_display_publish, editor_ffi_display_rows, editor_ffi_display_scene,
-    editor_ffi_picture_from_png, editor_ffi_picture_to_png, encode_definitions,
+    editor_ffi_display_spot, editor_ffi_picture_from_png, editor_ffi_picture_to_png,
+    encode_definitions,
 };
 use editor_ffi::document::{
     Document, RawText, editor_ffi_document_free, editor_ffi_document_new,
@@ -173,6 +174,42 @@ fn moved_padded(
     Ok((words[0] as usize, words[1]))
 }
 
+/// Where a position is drawn through C: whether it is shown, and its x,
+/// its y and its row's height; or the status of its refusal.
+#[allow(clippy::too_many_arguments)]
+fn spot(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    padding: (u64, u64, u64),
+    anchor: usize,
+    position: usize,
+) -> Result<Option<(u64, u64, u64)>, u64> {
+    let mut raw = MaybeUninit::<RawWords>::uninit();
+    // SAFETY: both handles are live, and `raw` is writable.
+    let (status, words) = unsafe {
+        editor_ffi_display_spot(
+            display,
+            snapshot,
+            width,
+            height,
+            padding.0,
+            padding.1,
+            padding.2,
+            anchor,
+            position,
+            raw.as_mut_ptr(),
+        );
+        take(raw.assume_init())
+    };
+    if status != DisplayStatus::Done as u64 {
+        return Err(status);
+    }
+    assert_eq!(words.len(), 4);
+    Ok((words[0] != 0).then_some((words[1], words[2], words[3])))
+}
+
 /// The rows `Layout` itself shows of `text`, as pairs.
 fn rows_directly(text: &str, width: f32, height: f32, anchor: usize) -> Vec<(usize, usize)> {
     let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
@@ -232,6 +269,53 @@ fn a_display_is_live_from_new_until_free_and_answers_the_queries_as_layout_does(
         editor_ffi_display_free(display);
     }
     assert_eq!(editor_ffi_display_live(), before);
+}
+
+#[test]
+fn a_spot_crosses_as_whole_pixels_x_and_y_rounded_down_and_its_height_up() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let text = "ab\ncd\nefgh\nij";
+    let document = document_new(text);
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
+    let padding = Padding {
+        across: 3,
+        down: 1,
+        top: 2,
+    };
+    // At scale 1.1 every length is a fraction of a pixel.
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    layout.set_scale(1.1);
+    // SAFETY: `display` is live.
+    unsafe { &*display }.set_scale(1.1);
+    let expected = layout
+        .spot(&direct, 200.0, 160.0, padding, 0, 9)
+        .unwrap()
+        .unwrap();
+    assert!(expected.x.fract() != 0.0 && expected.y.fract() != 0.0);
+    assert!(expected.height.fract() != 0.0);
+    assert_eq!(
+        spot(display, snapshot, 200, 160, (3, 1, 2), 0, 9),
+        Ok(Some((
+            expected.x.floor() as u64,
+            expected.y.floor() as u64,
+            expected.height.ceil() as u64
+        )))
+    );
+    // A position the view does not show, and one that is no position.
+    assert_eq!(spot(display, snapshot, 200, 160, (3, 1, 2), 3, 0), Ok(None));
+    assert_eq!(
+        spot(display, snapshot, 200, 160, (0, 0, 0), 0, 99),
+        Err(DisplayStatus::BadPosition as u64)
+    );
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
 }
 
 #[test]

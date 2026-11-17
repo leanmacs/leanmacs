@@ -57,10 +57,13 @@
 //! - the rows a view shows ([`editor_ffi_display_rows`]): their count, and
 //!   a start and a stop for each;
 //! - where a move goes ([`editor_ffi_display_move`]): the position, and the
-//!   goal to pass to the next move, in whole pixels.
+//!   goal to pass to the next move, in whole pixels;
+//! - where a position is drawn in a view ([`editor_ffi_display_spot`]):
+//!   whether the view shows it, then its x, its y and its row's height,
+//!   in whole pixels.
 //!
 //! Each question carries the view's padding in whole points (across, down
-//! and top for the rows, across for a move), because it is the view's and
+//! and top for the rows and a spot, across for a move), because it is the view's and
 //! not the display's: the scale is one for the display and set by the
 //! presenter, while a window and the minibuffer's view are padded
 //! differently. Layout takes the points off at the scale the display lays
@@ -85,7 +88,8 @@
 //! ([`editor_ffi_display_frame_rows`]), for tests.
 //!
 //! Pixels cross as whole numbers, as Lean's are; a goal x is passed back
-//! rounded down. What the answers are is layout's rule, pinned by
+//! rounded down, and so are a spot's x and y, while its row's height is
+//! rounded up, so a float placed below the row never covers any of it. What the answers are is layout's rule, pinned by
 //! `editor-layout`'s tests; this module converts and forwards.
 //!
 //! One lock is held for a call. Lean calls the display from the editor
@@ -98,7 +102,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use editor_layout::Layout;
 use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
-use editor_layout::query::{Moved, QueryError, RowRange};
+use editor_layout::query::{Moved, QueryError, RowRange, Spot};
 use editor_layout::scene::{Changes, Padding, Scene, TextKey, TextRef};
 use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
@@ -176,6 +180,16 @@ trait Lays: Send {
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError>;
+    /// [`Layout::spot`].
+    fn spot(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        height: f32,
+        padding: Padding,
+        anchor: usize,
+        position: usize,
+    ) -> Result<Option<Spot>, QueryError>;
     /// [`Layout::heights`].
     fn heights(&mut self) -> Heights;
     /// [`Layout::define`].
@@ -215,6 +229,18 @@ where
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
         Layout::lines_from(self, text, width, across, position, lines, goal)
+    }
+
+    fn spot(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        height: f32,
+        padding: Padding,
+        anchor: usize,
+        position: usize,
+    ) -> Result<Option<Spot>, QueryError> {
+        Layout::spot(self, text, width, height, padding, anchor, position)
     }
 
     fn heights(&mut self) -> Heights {
@@ -454,6 +480,28 @@ impl Display {
             position,
             lines,
             goal.map(|goal| goal as f32),
+        )
+    }
+
+    /// Where `position` of `snapshot` is drawn in a view `width` pixels
+    /// wide and `height` tall, padded `padding` points, that shows from
+    /// `anchor` ([`Layout::spot`]): none when it does not show it.
+    pub fn spot(
+        &self,
+        snapshot: &Snapshot,
+        width: u64,
+        height: u64,
+        padding: Padding,
+        anchor: usize,
+        position: usize,
+    ) -> Result<Option<Spot>, QueryError> {
+        self.layout().spot(
+            &text_ref(snapshot),
+            width as f32,
+            height as f32,
+            padding,
+            anchor,
+            position,
         )
     }
 }
@@ -823,6 +871,57 @@ pub unsafe extern "C" fn editor_ffi_display_move(
         |moved, writer| {
             writer.size(moved.position);
             writer.word(moved.goal.max(0.0) as u64);
+        },
+    );
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+}
+
+/// Fills `out` with where `position` of `snapshot` is drawn in a view
+/// `width` pixels wide and `height` tall, padded as for
+/// [`editor_ffi_display_rows`], that shows from `anchor`
+/// ([`Display::spot`]): four words, whether the view shows it (1 or 0),
+/// then the x and the y of it from the view's top left, rounded down, and
+/// its row's height, rounded up (all 0 when it is not shown); or with
+/// [`DisplayStatus::BadPosition`].
+///
+/// # Safety
+///
+/// As [`editor_ffi_display_rows`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_spot(
+    display: *const Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    across: u64,
+    down: u64,
+    top: u64,
+    anchor: usize,
+    position: usize,
+    out: *mut RawWords,
+) {
+    // SAFETY: the caller guarantees both handles are live.
+    let (display, snapshot) = unsafe { (&*display, &*snapshot) };
+    let padding = Padding {
+        across: points(across),
+        down: points(down),
+        top: points(top),
+    };
+    let raw = answered(
+        display.spot(snapshot, width, height, padding, anchor, position),
+        |spot, writer| match spot {
+            Some(spot) => {
+                writer.word(1);
+                writer.word(spot.x.max(0.0).floor() as u64);
+                writer.word(spot.y.max(0.0).floor() as u64);
+                writer.word(spot.height.max(0.0).ceil() as u64);
+            }
+            None => {
+                for _ in 0..4 {
+                    writer.word(0);
+                }
+            }
         },
     );
     // SAFETY: the caller guarantees `out` is writable.

@@ -1684,6 +1684,11 @@ void editor_ffi_display_move(const editor_ffi_display *display,
                              uint64_t width, uint64_t across, size_t position,
                              int64_t lines, bool goal_present, uint64_t goal,
                              editor_ffi_raw_words *out);
+void editor_ffi_display_spot(const editor_ffi_display *display,
+                             const editor_ffi_snapshot *snapshot,
+                             uint64_t width, uint64_t height, uint64_t across,
+                             uint64_t down, uint64_t top, size_t anchor,
+                             size_t position, editor_ffi_raw_words *out);
 bool editor_ffi_display_publish(const editor_ffi_display *display,
                                 const uint8_t *words, size_t words_len,
                                 const uint8_t *strings, size_t strings_len,
@@ -1761,6 +1766,20 @@ lean_obj_res editor_glue_display_move(b_lean_obj_arg display,
   editor_ffi_display_move(lean_get_external_data(display),
                           lean_get_external_data(snapshot), width, across,
                           position, (int64_t)lines, goal_present, goal, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.Display.spotRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
+// UInt64 → UInt64 → UInt64 → USize → USize → IO RawWords`
+lean_obj_res editor_glue_display_spot(b_lean_obj_arg display,
+                                      b_lean_obj_arg snapshot, uint64_t width,
+                                      uint64_t height, uint64_t across,
+                                      uint64_t down, uint64_t top,
+                                      size_t anchor, size_t position) {
+  editor_ffi_raw_words raw;
+  editor_ffi_display_spot(lean_get_external_data(display),
+                          lean_get_external_data(snapshot), width, height,
+                          across, down, top, anchor, position, &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
