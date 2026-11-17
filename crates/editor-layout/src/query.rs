@@ -1,6 +1,7 @@
-//! The two layout queries the editor asks in the same call: the rows a view
-//! shows from its scroll anchor, and the position some visual lines away
-//! from a position. Both lay out on demand whatever they reach.
+//! The three layout queries the editor asks in the same call: the rows a
+//! view shows from its scroll anchor, the position some visual lines away
+//! from a position, and where a position is drawn in a view (its spot).
+//! Each lays out on demand whatever it reaches.
 //!
 //! They answer by layout's rules ([`line`](mod@crate::line)): a position at
 //! a wrap is the start of the later visual line, only a row's last visual
@@ -74,6 +75,18 @@ pub struct Moved {
     pub position: usize,
     /// The x it aimed for, to pass to the next move.
     pub goal: f32,
+}
+
+/// Where a position is drawn in a view, in pixels from the view's own top
+/// left, its padding included ([`Layout::spot`](crate::Layout::spot)).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spot {
+    /// From the view's left edge to the position's left.
+    pub x: f32,
+    /// From the view's top edge to the top of the row that holds it.
+    pub y: f32,
+    /// How tall that row is.
+    pub height: f32,
 }
 
 /// Why a query was refused.
@@ -254,6 +267,29 @@ impl<S: Shaper> Walker<'_, S> {
             }
         }
         Ok(rows)
+    }
+
+    /// Where `position` is among the visual lines from the one that holds
+    /// `anchor` that fit `height` pixels whole: the x of it in its line,
+    /// the y of its line's top below the anchor's, each line counted at
+    /// the height it is drawn at, and its line's height. None when the
+    /// rows shown do not hold it.
+    pub fn spot(
+        &mut self,
+        height: f32,
+        anchor: usize,
+        position: usize,
+    ) -> Result<Option<Spot>, QueryError> {
+        let (target, x) = self.locate(position)?;
+        let mut y = 0.0;
+        for visual in self.rows_shown(height, anchor)? {
+            let tall = self.height(visual);
+            if visual == target {
+                return Ok(Some(Spot { x, y, height: tall }));
+            }
+            y += tall;
+        }
+        Ok(None)
     }
 
     /// The position `lines` visual lines from `position`, aiming for

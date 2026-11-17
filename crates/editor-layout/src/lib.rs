@@ -48,8 +48,9 @@
 //!   with its background across the view, and the rows query taking it off
 //!   by the same rule (`tests/padding.rs`, `tests/heights.rs`);
 //! - the rows a view shows, at most one for each pixel of its height
-//!   whatever height a font gives its lines, and where a move goes, with
-//!   its goal x ([`query`]);
+//!   whatever height a font gives its lines, where a move goes, with
+//!   its goal x, and where a position is drawn, padding and row heights
+//!   included ([`query`], `tests/spot.rs`);
 //! - the frame: rows from a view's anchor stacked by height, cursor and
 //!   selection geometry read from cells (a cursor a share of its glyph, a
 //!   selection an area for each stretch of a row it covers), the paint
@@ -93,7 +94,7 @@ use std::collections::HashMap;
 use crate::cache::{Counters, StatusKept, Texts, state};
 use crate::decoration::{DecorationSource, Styles, TextSpansSource, fonts_of};
 use crate::face::{FaceDef, SELECTION_FACE};
-use crate::query::{Moved, QueryError, RowRange, Walker};
+use crate::query::{Moved, QueryError, RowRange, Spot, Walker};
 use crate::scene::{Padding, TextKey, TextRef, ViewId};
 use crate::shaper::{FontId, Shaper};
 use crate::tabs::{DEFAULT_TAB_WIDTH, row_content, segment_count};
@@ -277,6 +278,39 @@ impl<S: Shaper> Layout<S> {
         let width = self.inset(width, across);
         self.query(text, width, |walker| {
             walker.lines_from(position, lines, goal)
+        })
+    }
+
+    /// Where `position` of `text` is drawn in a view `width` pixels wide
+    /// and `height` tall, its content inset by `padding` (in points), that
+    /// shows from the visual line that holds `anchor`: from the view's own
+    /// top left, the x of the position's left edge and the y of the top of
+    /// the row that holds it, the padding included, and that row's height.
+    /// None when the position is not among the rows
+    /// [`rows_shown`](Layout::rows_shown) answers for the same view, which
+    /// includes a position before the anchor. It is the same walk, and
+    /// each row before the position counts at the height the frame draws
+    /// it at, so a taller row pushes the rows after it down by its own
+    /// height.
+    pub fn spot(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        height: f32,
+        padding: Padding,
+        anchor: usize,
+        position: usize,
+    ) -> Result<Option<Spot>, QueryError> {
+        let across = self.padding_pixels(padding.across);
+        let down = self.first_row(padding);
+        let width = self.inset(width, padding.across);
+        let height = self.text_height(height, padding);
+        self.query(text, width, |walker| {
+            Ok(walker.spot(height, anchor, position)?.map(|spot| Spot {
+                x: across + spot.x,
+                y: down + spot.y,
+                height: spot.height,
+            }))
         })
     }
 
