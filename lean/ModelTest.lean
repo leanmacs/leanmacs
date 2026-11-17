@@ -14903,7 +14903,7 @@ def languageMatchChecks : List Check :=
             registry.registered.languages == registry.languageTable &&
             (registry.replaceLanguages .config #[]).languageTable == compiled.languageTable) },
     { name :=
-        "the shipped table is rust, json, markdown, toml and lean, each parsed with the grammar of its name and the grammar's own queries, toml's booleans drawn in the constant face, lean's booleans in the constant face, its characters in the string face and its namespaces in the module face, and no other capture of any mapped; rust indented by four spaces and json, markdown, toml and lean by two; toml for *.toml and Cargo.lock, lean for *.lean"
+        "the shipped table is rust, json, markdown, toml and lean, each parsed with the grammar of its name and the grammar's own queries, toml's booleans drawn in the constant face, lean's booleans in the constant face, its characters in the string face, its namespaces in the module face and its plain identifiers (`variable`) in no face, and no other capture of any mapped; rust indented by four spaces and json, markdown, toml and lean by two; toml for *.toml and Cargo.lock, lean for *.lean"
       run :=
         pure
           (Language.shipped.map (·.name) == #["rust", "json", "markdown", "toml", "lean"] &&
@@ -14916,7 +14916,7 @@ def languageMatchChecks : List Check :=
             Language.toml.patterns == [.extension "toml", .name "Cargo.lock"] &&
             Language.lean.syntaxTree.captures ==
               [("boolean", some ⟨"syntax.constant"⟩), ("character", some ⟨"syntax.string"⟩),
-                ("namespace", some ⟨"syntax.module"⟩)] &&
+                ("namespace", some ⟨"syntax.module"⟩), ("variable", none)] &&
             Language.lean.patterns == [.extension "lean"] &&
             Language.rust.indentUnit == .spaces 4 &&
             Language.json.indentUnit == .spaces 2 &&

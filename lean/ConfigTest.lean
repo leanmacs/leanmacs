@@ -3918,7 +3918,7 @@ def languageChecks (context : Context) : List Check :=
                   (← noHighlightsRefusal session)
           return drawn && (← opened "open-toml" toml) && (← opened "open-lock" lock) },
     { name :=
-        "opening a .lean file and a file named lakefile.lean gives each buffer the language lean and the major mode code, and highlights its text with Lean's shipped query, keywords in the keyword face, strings in the string face, comments in the comment face, booleans in the constant face and namespaces in the module face, with no refusal said"
+        "opening a .lean file and a file named lakefile.lean gives each buffer the language lean and the major mode code, and asks the syntax tree port to highlight its text with Lean's shipped query and the lean entry's captures, the faces asked for including the keyword, string, comment, constant and module faces, with no refusal said"
       run :=
         IO.FS.withTempDir fun files => do
           let main := files / "Main.lean"

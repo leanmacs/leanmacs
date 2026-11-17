@@ -2137,6 +2137,43 @@ def syntaxTreeChecks : List Check :=
         return published.isOk && (frame.splitOn definition).length == 2 &&
             (frame.splitOn comment).length == 2 },
     { name :=
+        "a Lean text entered with the lean language's tree is drawn by the real display with a namespace's name in the module face's colour, not hidden by the identifier's variable capture"
+      run := do
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let syntaxTree := settlingAttach table real.handle
+        let red := Color.rgb 0xcc 0 0
+        let yellow := Color.rgb 0xcc 0xcc 0
+        let display ← Ffi.Display.newCells 8 16
+        let shown ←
+          RealDisplay.over display table.reader
+              #[{ name := ⟨"syntax.keyword"⟩, face := { foreground := some red } },
+                { name := ⟨"syntax.module"⟩, face := { foreground := some yellow } }]
+        let entered : EditorM (SnapshotId × MarkerId) := do
+          let text ← createText "namespace A.B\n"
+          Highlight.enter "lean" text Language.lean.syntaxTree
+          return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
+        let (.ok (snapshot, scroll), texts) ←
+          entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
+        let some found ← table.find? snapshot | return false
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        discard drainedParsed
+        let scene : Scene :=
+          { size := { width := 160, height := 64 }
+            views :=
+              #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 160, height := 64 }, snapshot
+                  scroll, selections := #[], cursor := { shape := .block, face := ⟨"cursor"⟩ }
+                  decorations := #[], status := #[] }]
+            focused := none, echo := "", pending := "", preedit := none }
+        let publish : EditorM Unit := Display.publish scene
+        let (published, _) ← publish.runReal texts shown.handle
+        let frame ← display.frameText
+        -- `namespace A.B`: `namespace` red, the space in no face of these,
+        -- the name `A.B` yellow.
+        let line := "runs 0..9:cc0000ff/ffffffff 9..10:000000ff/ffffffff 10..13:cccc00ff/ffffffff\n"
+        return published.isOk && (frame.splitOn line).length == 2 },
+    { name :=
         "a Markdown text with a fenced Rust block, entered with the shipped default, is drawn by the real display with the fence's `fn` in the keyword face's colour"
       run := do
         let table ← Snapshots.new

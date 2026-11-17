@@ -1641,10 +1641,17 @@ it per language.
 
 `lean` maps three captures the vocabulary lacks: `boolean` to
 `syntax.constant`, `character` to `syntax.string` and `namespace` to
-`syntax.module`. Under the first-pattern rule, upstream's
-`(identifier) @variable`, which comes before its declaration-name patterns,
-draws every identifier in `syntax.variable`, declaration names included;
-keywords, literals and comments are unaffected. Lean's query is vendored
+`syntax.module`, and maps `variable` to nothing. Upstream's
+`(identifier) @variable` comes before its namespace, declaration-name,
+import and field patterns, so under the first-pattern rule it would draw
+every identifier in `syntax.variable` and hide them all. A capture that
+draws nothing is dropped before the rule picks a node's first capture, so
+with `variable` drawing nothing the later patterns win: namespace,
+section and `end` names draw in `syntax.module`, declaration names in
+`syntax.function`, `syntax.type` or `syntax.constructor`, and so on (the
+list is in `lean/Editor/Language.lean`'s module docs); every other
+identifier draws in no face, in the default ink: as the built-in theme
+draws `syntax.variable`, though not the blue the Solarized themes give it. Keywords, literals and comments are unaffected. Lean's query is vendored
 with its grammar, from the same upstream commit, so it cannot drift from the
 grammar's node types.
 

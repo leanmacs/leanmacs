@@ -53,8 +53,24 @@ vocabulary has no face for: `boolean` (`true`, `false`, `True`, `False`) in
 `syntax.constant`, as TOML's and Rust's are drawn; `character` (`'c'`) in
 `syntax.string`, the face of a string or character literal; and `namespace`
 (the names after `namespace`, `section` and `end`) in `syntax.module`, the
-face of a module or namespace's name. `lean-toolchain`, `*.olean` and
-`*.ilean` are not `*.lean`, so they have no language.
+face of a module or namespace's name. It maps a fourth, `variable`, to
+nothing. The query's `(identifier) @variable` comes before every pattern
+that names an identifier more closely, and of one node's captures the first
+that draws is kept (`editor_syntax::highlight::spans`), so with `variable`
+drawn no identifier would show any later capture. Drawn as nothing, it
+gives way: namespace, section and `end` names draw in `syntax.module`;
+`import`, `open` and `export` names in `syntax.module` (their `only` names
+in `syntax.function`); the names `def`, `theorem`, `abbrev`, `opaque`,
+`constant`, `axiom` and `instance` define, and a called bare name, in
+`syntax.function`; `structure` and `inductive` names and universe names in
+`syntax.type`; constructor names in `syntax.constructor`; field names and
+projected fields in `syntax.property`; attribute names in
+`syntax.attribute`. Every other identifier, and the holes and named
+argument labels (`variable.builtin`, `variable.parameter`, which fall back
+to `variable`), draws in no face, in the default face's ink: the same as
+`syntax.variable` in the built-in theme, but no longer the blue the
+Solarized themes give it. `lean-toolchain`, `*.olean`
+and `*.ilean` are not `*.lean`, so they have no language.
 
 ## The matching rule (`forPath`)
 
@@ -148,15 +164,16 @@ def toml : Language :=
     indentUnit := .spaces 2 }
 
 /-- Lean: `*.lean` (`lakefile.lean` included), the grammar `lean`, two
-spaces; its booleans drawn as constants, its characters as strings and its
-namespaces as modules. -/
+spaces; its booleans drawn as constants, its characters as strings, its
+namespaces as modules and its plain identifiers in no face, so the
+query's closer captures of an identifier draw (the module docs). -/
 def lean : Language :=
   { name := "lean", patterns := [.extension "lean"]
     syntaxTree :=
       { grammar := "lean"
         captures :=
           [("boolean", some ⟨"syntax.constant"⟩), ("character", some ⟨"syntax.string"⟩),
-            ("namespace", some ⟨"syntax.module"⟩)] }
+            ("namespace", some ⟨"syntax.module"⟩), ("variable", none)] }
     indentUnit := .spaces 2 }
 
 /-- The languages that ship, in their order. -/
