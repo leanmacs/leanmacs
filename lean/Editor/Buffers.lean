@@ -35,8 +35,12 @@ checks compare the echo area with that function, never with a sentence.
   last: the empty pattern lists the buffer used before this one first, so
   choosing the first candidate and accepting is "the other buffer". They
   come from the completion source `buffers`, of the category `buffer`
-  (`source`, `Editor/Completion.lean`), given to the prompt as a value and
-  registered by compiled code under its name.
+  (`source`, `Editor/Completion.lean`), registered by compiled code under
+  its name: the prompt asks for the sources of the category `buffer`, with
+  `source` as its default. So config adds candidates after the buffers' by
+  registering a source in `buffer`, and replaces them by registering one
+  under the name `buffers`; a host that registered none lists the
+  buffers.
 - **So a buffer is chosen by fuzzy match both ways.** A pattern typed and
   accepted with nothing chosen answers the text, and the command takes the
   best match; a key of the minibuffer that chooses a listed candidate
@@ -236,7 +240,8 @@ def switchCommand (call : Call) : EditorM Unit := do
     switchTo call.target.window.id text
   | _ =>
     if let .error refusal←
-        prompt switchPrompt { command := switchName } (sources := [.given source]) then
+        prompt switchPrompt { command := switchName } (sources := [.category "buffer" [source]])
+        then
       message (notAsking refusal)
 
 /-- The buffer list of `state`, if there is one: the open buffer with no file

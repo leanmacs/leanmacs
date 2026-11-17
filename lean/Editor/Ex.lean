@@ -38,11 +38,14 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   when the line is asked for. So while a line is being typed the scene
   lists the lines and names it matches, a key of the minibuffer chooses
   one, and accepting runs the chosen one (`Editor/Minibuffer.lean`).
-  Typing `!` lists the history. They come from two completion sources,
-  given to the prompt as values in that order (`Editor/Completion.lean`):
-  `historySource` (`ex-history`) and `namesSource` (`ex-names`), each of
-  the category `ex-line`, which compiled code registers under their
-  names too.
+  Typing `!` lists the history. The prompt asks for the sources of the
+  category `ex-line` (`Editor/Completion.lean`), with two as its
+  defaults, in that order: `historySource` (`ex-history`) and
+  `namesSource` (`ex-names`), which compiled code registers under their
+  names in that category too. So config adds to what the ex line lists by
+  registering a source in `ex-line`, after the two, and replaces one by
+  registering a source under its name; a host that registered none lists
+  the two.
   - **The typed line is the pattern, whole.** A line with an argument
     matches no name, so nothing is listed, and accepting runs the line as
     typed. A name is completed, an argument is not.
@@ -293,7 +296,7 @@ def exCommand (call : Call) : EditorM Unit := do
   | _ =>
     if let .error refusal←
         prompt label { command := name } (sources :=
-          [.given historySource, .given namesSource]) then
+          [.category "ex-line" [historySource, namesSource]]) then
       message (notAsking refusal)
 
 /-- The name the quit command is registered under. -/

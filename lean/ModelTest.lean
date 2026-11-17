@@ -3445,6 +3445,34 @@ def registryChecks : List Check :=
             replaced.definitions.isEmpty &&
             ({} : Config.Registry).registered.themeNames == #[]) },
     { name :=
+        "the sources of a category are the names registered in it, each once, in the order first registered, compiled before config: config's source of a compiled name keeps its place and is the one found, and one of another category drops the name from it; the loop is told the same"
+      run :=
+        let compiled : Config.Registry :=
+          ({} : Config.Registry).replaceSources .compiled #[.ofTexts "buffers" "buffer" #["a"]]
+        let registry :=
+          compiled.replaceSources .config
+            #[.ofTexts "mine" "buffer" #[], .ofTexts "other-cat" "other" #[]]
+        let replacing :=
+          compiled.replaceSources .config
+            #[.ofTexts "mine" "buffer" #[], .ofTexts "other-cat" "other" #[],
+              .ofTexts "buffers" "buffer" #["b"]]
+        let moved :=
+          compiled.replaceSources .config
+            #[.ofTexts "mine" "buffer" #[], .ofTexts "buffers" "elsewhere" #[]]
+        let ownerOf (registry : Config.Registry) (name : String) : Option Config.Owner :=
+          (registry.sources.findRev? (·.source.name == name)).map (·.owner)
+        pure
+          (registry.sourcesIn "buffer" == #["buffers", "mine"] &&
+            registry.sourcesIn "other" == #["other-cat"] &&
+            replacing.sourcesIn "buffer" == #["buffers", "mine"] &&
+            ownerOf replacing "buffers" == some .config &&
+            moved.sourcesIn "buffer" == #["mine"] &&
+            moved.sourcesIn "elsewhere" == #["buffers"] &&
+            registry.sourcesIn "none" == #[] &&
+            ["buffer", "other", "none"].all fun category =>
+              registry.registered.categorySources category == registry.sourcesIn category &&
+                moved.registered.categorySources category == moved.sourcesIn category) },
+    { name :=
         "completion sources are held by owner and replaced as a set: the latest entry of a name is the one found, config's source of a compiled source's name while config registers it and the compiled one again once it does not; the loop is told what the lookup answers"
       run :=
         let registry : Config.Registry :=
@@ -10958,7 +10986,7 @@ def stateRequests : List StateRequest :=
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
-    .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
+    .categorySources "buffer", .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
     .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
     .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
     .arrange ⟨0⟩ .promote, .arrange ⟨1⟩ (.exchange none), .arrange ⟨0⟩ .zoom, .arrange ⟨9⟩ .zoom,
@@ -11583,6 +11611,15 @@ def stateRequestChecks : List Check :=
           | none => false
           | some state =>
             let (names, after) := state.handle .exNames
+            names == #[] && after == state },
+    { name :=
+        "the handler knows no registry: asked which sources are registered in a category, it answers none, and leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (names, after) := state.handle (.categorySources "x")
             names == #[] && after == state },
     { name :=
         "the handler knows no registry: asked which themes are registered, it answers none and leaves the state as it was; asked to load a theme, it takes any name and keeps the latest until the loop takes it out"
@@ -14401,6 +14438,23 @@ def dispatchStateChecks : List Check :=
                     { category := "test", filtered := true
                       candidates := #[{ text := "w", annotation := some "0" }] })
           | .error _ => false },
+    { name :=
+        "a command that asks which sources are registered in a category is answered the names the loop was told, in their order, and none for a category it was told none of; the state is as it was"
+      run :=
+        pure <|
+          let registered : Loop.Registered :=
+            { categorySources := fun category =>
+                if category == "buffer" then #["buffers", "mine"] else #[] }
+          let asks (category : String) : Option (Guarded (Array String) × Bool) :=
+            let program : EditorM (Guarded (Array String) × Bool) := do
+              let start ← EditorState.initial ⟨640, 480⟩
+              let (outcome, state) ←
+                (EditorState.ask (.categorySources category) : EditorM (Array String)).dispatched
+                  registered start
+              return (outcome, state == start)
+            (program.runModel editorModel).1.toOption
+          asks "buffer" == some (.finished #["buffers", "mine"], true) &&
+            asks "other" == some (.finished #[], true) },
     { name :=
         "a source asked by name that is refused refuses the asking command at the request, with nothing of the asking command run after it"
       run :=
@@ -19334,6 +19388,15 @@ def apiStateChecks : List Check :=
               state.wellFormed
           | _ => false },
     { name :=
+        "a prompt that asks for a category no source is registered in, with no defaults, is not refused: it opens with no candidates, having asked for none, and the state is well formed"
+      run :=
+        pure <|
+          match dispatchedOn (prompt "Pick: " asked "" [.ofCategory "none"]) with
+          | some (.finished (.ok view), state, _) =>
+            state.prompt.map (·.candidates) == some {} && state.prompt.map (·.view) == some view &&
+              state.wellFormed
+          | _ => false },
+    { name :=
         "a prompt whose source is refused refuses the asking command: no prompt is open and no text was made for a minibuffer"
       run :=
         pure <|
@@ -20603,6 +20666,8 @@ def filteredSource : Completion.Source :=
   says the refusal in the echo area when the prompt is refused.
 - `ask-filtered` asks with `pickSource` and `filteredSource`, a source
   that has filtered already.
+- `ask-category` asks for the sources of the category `pick`, with
+  `pickSource` as its default.
 - `picked` says what it was called with (`picked`).
 - `accept` and `cancel` are the API's operations.
 - The test scheme's self-insert inserts its argument at its target's
@@ -20620,6 +20685,7 @@ def candidateCommands : List (String × Dispatched) :=
     ("ask-refusing", asks "" [.given (Completion.Fake.refusing "no" "pick")]),
     ("ask-echo", asks "w" [.given (Completion.Fake.echo "echo" "pick")]),
     ("ask-filtered", asks "" [.given pickSource, .given filteredSource]),
+    ("ask-category", asks "" [.category "pick" [pickSource]]),
     ("ask-named", fun _ => do
       if let .error refusal← prompt pickLabel pickContinuation "" [.named pickSource.name] then
         message refusal.describe
@@ -20652,7 +20718,7 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
       ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
       ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
       ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"),
-      ("C-c 5", invoke "ask-filtered")]
+      ("C-c 5", invoke "ask-filtered"), ("C-c 7", invoke "ask-category")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -20668,6 +20734,16 @@ def namedPickDriver : Option TestDriver :=
     { candidateKeys with
       registered :=
         { sources := fun name => if name == pickSource.name then some pickSource else none } }
+  (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption
+
+/-- A driver of the candidate checks whose loop is told that the category
+`pick` has the sources `names`, each answered by `sources`. -/
+def categoryDriver (names : Array String) (sources : String → Option Completion.Source) :
+    Option TestDriver :=
+  let keys : Loop.Keys TestScheme.scheme :=
+    { candidateKeys with
+      registered :=
+        { sources, categorySources := fun category => if category == "pick" then names else #[] } }
   (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption
 
 /-- The registry of the candidate checks that press the minibuffer's keys:
@@ -20766,6 +20842,28 @@ loop does when the listing's read is refused. What is listed is compared
 with what the fuzzy model answers for the same pattern and candidates. -/
 def candidateChecks : List Check :=
   [{  name :=
+        "a prompt that asks for a category lists its defaults where the loop knows no source of it; the sources registered in it after a default it does not name; and a source registered under a default's name in that default's place"
+      run :=
+        pure <|
+          let extra : Completion.Source := .ofTexts "extra" "pick" #["xw"]
+          let only : Completion.Source := .ofTexts "pick" "pick" #["only"]
+          let lookup (sources : List Completion.Source) (name : String) : Option Completion.Source :=
+            sources.find? (·.name == name)
+          match candidateDriver, categoryDriver #["extra"] (lookup [extra]),
+              categoryDriver #["pick", "extra"] (lookup [only, extra]) with
+          | some bare, some added, some replaced =>
+            let (asked, _) := fedTo bare (presses "C-c 7")
+            let (picked, _) := fedTo bare (presses "C-c a")
+            let (more, _) := fedTo added (presses "C-c 7")
+            let (instead, _) := fedTo replaced (presses "C-c 7")
+            let xw := (Completion.Candidate.ofText "xw").inGroup "extra"
+            candidatesOf asked == candidatesOf picked && candidatesOf asked == some (pickListed "") &&
+              (candidatesOf more).map (·.all) == some (pickOffered.push xw) &&
+              (candidatesOf more).map (·.category) == some (some "pick") &&
+              (candidatesOf instead).map (·.all) ==
+                some #[(Completion.Candidate.ofText "only").inGroup "pick", xw]
+          | _, _, _ => false },
+    { name :=
         "a prompt asked with a source and one that has filtered already keeps the first's candidates to match and the filtered one's apart, in its group, and the first source's category; after a text is typed it lists the matches in the fuzzy model's order, each with its in-order spans, then the filtered source's candidates in the order it gave them, though one does not match"
       run :=
         pure <|

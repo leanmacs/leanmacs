@@ -254,6 +254,11 @@ from the next command.
   port the reply is part of. `prompt` asks it for a source named
   (`Editor/Api.lean`, "Prompts"), and the registry fills the lookup
   (`Config.Registry.registered`).
+- **Which sources a category has** (`StateRequest.categorySources`) is
+  answered the names the loop was told (`Loop.Registered.categorySources`,
+  filled from `Config.Registry.sourcesIn`), none for a category with none.
+  The reply is names, so no program crosses it: `prompt` asks each by name
+  with `askSource`.
 
 Putting an action's program, or a command's, before the rest of the command
 makes the transformation recurse into a program that is no part of the one
@@ -387,6 +392,11 @@ structure Loop.Registered where
   for it by name (`StateRequest.askSource`). `none` for a name no source is
   registered under. -/
   sources : String → Option Completion.Source := fun _ => none
+  /-- The names of the completion sources registered in a category, in
+  registration order, for a prompt that asks for a category
+  (`StateRequest.categorySources`). None for a category no source is
+  registered in. -/
+  categorySources : String → Array String := fun _ => #[]
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -528,6 +538,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           next (some { category := source.category, filtered := source.filtered, candidates })
         | .error error =>
           pure (.error error)
+  | state, .step (.state (.categorySources category)) next =>
+    dispatched registered state (next (registered.categorySources category))
   | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)
   | state, .step (.state (.breakOff reason)) _ => .done (.brokeOff reason, state)
   | state, .step (.state request) next =>

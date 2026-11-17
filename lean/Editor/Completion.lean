@@ -39,6 +39,19 @@ request is part of, so a request cannot hold one, nor a reply: the name
 crosses, and the loop runs the source it stands for inside the asking
 command, as it runs a command named by `runCommand`.
 
+A prompt may also ask for a category (`.category category defaults`): it
+is answered by every source registered in the category, compiled and
+config alike, in registration order (`StateRequest.categorySources`,
+`Config.Registry.sourcesIn`). The defaults are what the prompt lists on a
+host that registered nothing; each is asked by name where a source of its
+name is registered in the category, so config's source of a shipped name
+replaces it in place, and the category's other sources follow the
+defaults. A category with no source and no defaults asks nothing, and the
+prompt opens with no candidates. The defaults never cross a request: the
+names cross, as for `.named`. The shipped prompts ask by category, with
+their own sources as defaults, so config adds to what they list and
+replaces it.
+
 Sources are registered by name in the registry config and compiled code
 share (`defineSource`, `Editor/Setup.lean`; `Editor/Config/Registry.lean`,
 "Sources").
@@ -94,6 +107,16 @@ inductive SourceRef where
   | named (name : String)
   /-- `source` itself. -/
   | given (source : Source)
+  /-- Every source registered in `category`, `defaults` first: each default
+  is asked by name where a source of its name is registered in the
+  category, and as itself otherwise, and the other registered sources come
+  after them, in registration order. -/
+  | category (category : String) (defaults : List Source)
+
+/-- The reference to every source registered in `category`, with no
+defaults. -/
+def SourceRef.ofCategory (category : String) : SourceRef :=
+  .category category []
 
 /-- `candidate` as a prompt holds it when the source `source` answered it:
 in its own group, or, with none, in the source's. -/

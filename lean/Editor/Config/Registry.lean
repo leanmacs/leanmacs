@@ -203,6 +203,14 @@ reload drops it. Compiled code registers the shipped sources (through
 names inside the asking command (`StateRequest.askSource`,
 `Editor/Command/Dispatch.lean`).
 
+The sources of a category (`sourcesIn`) are the names whose latest entry
+is of it, each once, in the order the name was first registered: compiled
+entries come first, so config's source of a shipped name keeps the
+shipped one's place and answers in its stead, and config's of a new name
+come after the compiled ones, in config's order. The loop is told them
+(`Loop.Registered.categorySources`) for a prompt that asks for a category
+(`StateRequest.categorySources`).
+
 A `setup` that defines a source name twice is refused
 (`Registrations.sourceTwice`).
 
@@ -420,6 +428,15 @@ def replaceSources (registry : Registry) (owner : Owner) (sources : Array Comple
 name. -/
 def source? (registry : Registry) (name : String) : Option Completion.Source :=
   (registry.sources.findRev? (·.source.name == name)).map (·.source)
+
+/-- The names of the completion sources registered in `category`: each name
+once, in the order it was first registered, kept only when its latest
+entry (`source?`) is of that category. Compiled entries come before
+config's, so a config source of a compiled name keeps the compiled one's
+place, and one of a new name comes after them. -/
+def sourcesIn (registry : Registry) (category : String) : Array String :=
+  let names := (registry.sources.map (·.source.name)).toList.eraseDups.toArray
+  names.filter fun name => (registry.source? name).any (·.category == category)
 
 /-- `registry` with every contribution entry of `owner` removed and
 `contributions` added as its entries, in their order. -/
@@ -676,8 +693,9 @@ config's display rules, for a command that displays a buffer; config's
 shell time limit, for `:!`; the language table (`languageTable`), for a
 file's open and a mode's entry; and the compile contributions and config's
 project commands (`compileHook`), for the compile mode; and the
-completion source registered under a name (`source?`), for a prompt that
-asks for it. Which command a
+completion source registered under a name (`source?`) and the names of
+those registered in a category (`sourcesIn`), for a prompt that asks for
+them. Which command a
 name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
@@ -690,7 +708,7 @@ def registered (registry : Registry) : Loop.Registered :=
     generation := registry.generation, displayRules := registry.displayRules
     shellTimeLimit := registry.shellTimeLimit, syntaxRefreshDelay := registry.syntaxRefreshDelay
     languages := registry.languageTable, compile := registry.compileHook
-    sources := registry.source? }
+    sources := registry.source?, categorySources := registry.sourcesIn }
 
 end Registry
 

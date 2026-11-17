@@ -596,8 +596,15 @@ A command asks for a string without waiting for it
   - **A source that has filtered already** (`Completion.Source.filtered`)
     has its candidates kept apart (`passed`): they are listed after the
     matches, in the order it gave, whatever is typed.
-  - **The prompt's category is its first source's**, as an Emacs
-    completion table has one category: it chooses the style its candidates
+  - **A category may be asked for** (`.category category defaults`): the
+    sources registered in it, by name (`StateRequest.categorySources`),
+    with `defaults` first, each asked by name where one of its name is
+    registered in the category and as itself otherwise, then the
+    category's other sources, in registration order. A category with no
+    source and no defaults lists nothing, and the prompt is not refused.
+  - **The prompt's category is its first reference's**: the one a
+    category reference names, or the first source's, as an Emacs
+    completion table has one category. It chooses the style its candidates
     are matched with. A prompt with no source has none.
   - **The list is then fixed**, but for `setCandidates`, which replaces an
     open prompt's candidates and forgets what it has listed and chosen. It
@@ -936,11 +943,16 @@ the minibuffer's text is made, with `initial` and the asking view; the
 prompt keeps what they answered, each source's candidates in its group
 (`Completion.Candidate.inGroup`), in the sources' order: a filtered
 source's apart, to be listed as given, and every other's to be matched.
-The prompt's category is its first source's. A source given as
+The prompt's category is its first reference's. A source given as
 a value is run here; one named is run by the loop (`StateRequest.askSource`),
 and refused, with no text made, with `noSuchSource` when no source is
-registered under its name. If a source is refused, so is this command, with
-no prompt open. -/
+registered under its name. A category (`.category category defaults`) is
+asked for the names of its registered sources once
+(`StateRequest.categorySources`): each default is asked by name where one
+of its name is registered in the category and as itself otherwise, then
+each other name in the category, in registration order. A category with
+no source and no defaults asks nothing. If a source is refused, so is this
+command, with no prompt open. -/
 def prompt (label : String) (continuation : Invocation) (initial : String := "")
     (sources : List Completion.SourceRef := []) : EditorM (Except PromptRefusal ViewId) := do
   let state ← editorState
@@ -948,19 +960,41 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
     return .error (.alreadyOpen asked.view)
   let some asker := state.focusedTarget? | return .error .noWindow
   let query : Completion.Query := { text := initial, view := asker.window.id }
-  let mut collected : Completion.Collected := {}
+  -- Each source to ask, as itself or by name. A category is asked for its
+  -- sources' names once: a default is asked by name where a source of its
+  -- name is registered in the category, and as itself otherwise, then the
+  -- category's other sources, in registration order.
+  let mut resolved : Array (Completion.Source ⊕ String) := #[]
   for source in sources do
+    match source with
+    | .given source => resolved := resolved.push (.inl source)
+    | .named name => resolved := resolved.push (.inr name)
+    | .category category defaults =>
+      let names ← EditorState.ask (.categorySources category)
+      resolved :=
+        resolved ++
+            defaults.toArray.map (fun default =>
+              if names.contains default.name then .inr default.name else .inl default) ++
+          (names.filter fun name => !defaults.any (·.name == name)).map .inr
+  -- The prompt's category is its first reference's: the one a category
+  -- reference names, or the first source's.
+  let mut collected : Completion.Collected :=
+    { category :=
+        match sources.head? with
+        | some (.category category _) => some category
+        | _ => none }
+  for source in resolved do
     let answer : Completion.Answer ←
       match source with
-      | .given source =>
+      | .inl source =>
         pure
           { category := source.category, filtered := source.filtered
             candidates := (← source.candidates query).map (·.inGroup source.name) }
-      | .named name =>
+      | .inr name =>
         let some answered ←
           EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
         pure { answered with candidates := answered.candidates.map (·.inGroup name) }
-    -- The prompt's category is its first source's.
+    -- Failing that, the prompt's category is its first source's.
     let category := collected.category <|> some answer.category
     collected :=
       if answer.filtered then

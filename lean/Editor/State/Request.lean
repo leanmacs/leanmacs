@@ -45,13 +45,16 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   theme is registered under, `runCommand`, which there runs the
   command registered under a name inside the asking command, `askSource`,
   which there runs the completion source registered under a name inside
-  the asking command (`Editor/Completion.lean`), and
+  the asking command (`Editor/Completion.lean`), `categorySources`, which
+  there is answered the names of the sources registered in a category,
+  and
   `displayRules`, which there is answered config's display rules
   (`Editor/DisplayRules.lean`). Here
   `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
   answered `none`, `exNames` and `themeNames` are answered no name,
   `runCommand` is answered `false` and runs nothing, `askSource` is answered
-  `none` and runs nothing, and `displayRules` is
+  `none` and runs nothing, `categorySources` is answered no name, and
+  `displayRules` is
   answered no rule: this handler knows no registry.
 - **A reply holds plain data too**, so no request is answered a command:
   a command is a program over the port these requests are part of, and a
@@ -120,7 +123,9 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   category and whether it filtered already (`Completion.Answer`), or
   `none` when no source is registered under the name. A source is a
   program over this port, so the request names it and the reply holds its
-  candidates, which are plain data.
+  candidates, which are plain data. Which sources a category has is asked
+  by another, `categorySources`, whose reply is their names: plain data
+  too, so no program crosses the request.
 - **The editor is asked to quit by one request**, `quit`, which sets the
   state's flag and nothing else (`Editor/State.lean`, "Quit"). The handler
   does not judge whether the editor may quit: the command that asks
@@ -340,6 +345,9 @@ inductive StateRequest where
   /-- Ask the completion source registered under `name` for its candidates
   for `query`, inside this command. -/
   | askSource (name : String) (query : Completion.Query)
+  /-- Which completion sources are registered in `category`, by name, in
+  registration order. -/
+  | categorySources (category : String)
   /-- Ask the editor to quit. -/
   | quit
   /-- Ask for the config to be reloaded. -/
@@ -445,6 +453,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .invoke _ => Unit
   | .runCommand .. => Bool
   | .askSource .. => Option Completion.Answer
+  | .categorySources _ => Array String
   | .quit => Unit
   | .reload => Unit
   | .giveUp _ => Unit
@@ -549,6 +558,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
   | .runCommand .., state => (false, state)
   | .askSource .., state => (none, state)
+  | .categorySources _, state => (#[], state)
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with reload := true })
   | .giveUp _, state => ((), state)

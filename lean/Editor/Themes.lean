@@ -20,8 +20,10 @@ the themes that ship, are in `Editor/Themes/Compiled.lean`.
   registered under (`themeNames`), which the loop answers from the registry
   as it is when the name is asked for. They come from the completion
   source `themes`, of the category `theme` (`source`,
-  `Editor/Completion.lean`), which the prompt is given as a value and
-  compiled code registers under its name.
+  `Editor/Completion.lean`), which compiled code registers under its name:
+  the prompt asks for the sources of the category `theme`, with `source`
+  as its default, so config adds to the list by registering a source in
+  `theme` and replaces it by registering one under `themes`.
 - **Where the prompt is refused**, because one is open, the echo area says
   so (`notAsking`): the command's name, then the refusal's sentence. The
   open prompt stays.
@@ -80,7 +82,8 @@ def loadThemeCommand (call : Call) : EditorM Unit := do
     if let .error refusal← loadTheme name then
       message (notLoaded refusal)
   | _ =>
-    if let .error refusal← prompt label { command := loadName } (sources := [.given source]) then
+    if let .error refusal←
+        prompt label { command := loadName } (sources := [.category "theme" [source]]) then
       message (notAsking refusal)
 
 end Editor.Themes

@@ -36,7 +36,7 @@ the state's indices are from 0.
 | `next` | `tab-next` | Selects the tab after the call's window's tab, wrapping; with a count N, tab N (Vim's `{count}gt`), refused with `noSuchTab` when there is none |
 | `previous` | `tab-previous` | Selects the tab before it, wrapping; with a count N, the tab N before it, wrapping (Vim's `{count}gT`) |
 | `selectNumbered n` | `tab-select-1` … `tab-select-9` | Selects tab n, refused with `noSuchTab` when there is none (tmux's `select-window -t :=n`, which is refused for a missing window too) |
-| `switch` | `tab-switch` | With a string first argument, selects the tab it names (`resolve`). Otherwise it asks, through the minibuffer, labelled `switchPrompt`, with itself as the continuation, as `switch-buffer` asks; the candidates are `"{n} {label}"` for every tab, in order, from the completion source `tabs`, of the category `tab` (`source`). An answer is a candidate exactly, then the first tab whose label it is, then a number of a tab, then the fuzzy matcher's best candidate (`Fuzzy.rank`); otherwise `noMatch` is said. Where the prompt is refused, it says so (`notAsking`) |
+| `switch` | `tab-switch` | With a string first argument, selects the tab it names (`resolve`). Otherwise it asks, through the minibuffer, labelled `switchPrompt`, with itself as the continuation, as `switch-buffer` asks; the candidates are `"{n} {label}"` for every tab, in order, from the completion source `tabs`, of the category `tab` (`source`), which the prompt asks for as the default of the category `tab`, so config adds to the list by registering a source in `tab` and replaces it by registering one under `tabs`. An answer is a candidate exactly, then the first tab whose label it is, then a number of a tab, then the fuzzy matcher's best candidate (`Fuzzy.rank`); otherwise `noMatch` is said. Where the prompt is refused, it says so (`notAsking`) |
 | `rename` | `tab-rename` | With a string first argument, names the call's window's tab, an empty one going back to the generated label. Otherwise it asks, labelled `renamePrompt`, with the name the tab was given as the initial text, and with itself as the continuation |
 | `moveBy forward` | `tab-move-right`, `tab-move-left` | Moves the call's window's tab one place, or by the count, clamped at the ends; the tab in view stays in view |
 
@@ -195,7 +195,7 @@ def switch (call : Call) : EditorM Unit := do
     switchTo text
   | _ =>
     if let .error refusal←
-        prompt switchPrompt { command := switchName } (sources := [.given source]) then
+        prompt switchPrompt { command := switchName } (sources := [.category "tab" [source]]) then
       message (notAsking switchName refusal)
 
 /-- `tab-rename`: the call's window's tab named by its first argument, a
