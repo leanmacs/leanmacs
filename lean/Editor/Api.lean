@@ -175,10 +175,14 @@ at, does its part, and records the tree that comes back as the buffer's
   `excerptCloseGroup` closes the group of each source buffer it touched and
   then makes them one step of its own (`EditorState.closeExcerptGroup`).
   `excerptUndo` closes the group first, then takes the last step: with none
-  it answers `none`; it tells every source buffer of the step the revision
-  its text is at and is refused with `sourceMoved`, changing nothing,
-  unless each is still in the state the step recorded (a removed buffer
-  counts as moved); then it undoes one step in each, with the user's origin,
+  it answers `none`; when a source buffer of the step was removed, it drops
+  each such source from the step, and drops the step once none is left,
+  does nothing more, and is refused with `sourceRemoved` and the source's
+  name as the step recorded it, so a removed source never blocks the steps
+  under it, and the next undo takes what is left; it tells every source
+  buffer of the step the revision its text is at and is refused with
+  `sourceMoved`, changing nothing, unless each is still in the state the
+  step recorded; then it undoes one step in each, with the user's origin,
   and keeps the states each is left in as the step to redo. `excerptRedo`
   is the same over the steps to redo, with nothing pending. Neither hands a
   selection back: the sources' transactions carried none, and a source's
@@ -1236,37 +1240,57 @@ def moved (id : BufferId) (move : UndoTree → TextM (Option UndoTree.Moved)) :
     | .error refusal =>
       return .error refusal
 
-/-- The source buffers of `step` each in the state the step recorded, told
-the revisions their texts are at: the first that is not, or was removed, as
-`sourceMoved`. -/
+/-- The source buffers of `step`, none of them removed, each in the state
+the step recorded, told the revisions their texts are at: the first that is
+not as `sourceMoved`. -/
 def stepHolds (step : Buffer.ExcerptStep) : EditorM (Except BufferRefusal Unit) := do
-  for (source, state) in step.sources do
-    match ← source.synced with
+  for source in step.sources do
+    match ← source.buffer.synced with
     | .ok buffer =>
-      unless buffer.history.state == state do
-        return .error (.sourceMoved source)
+      unless buffer.history.state == source.state do
+        return .error (.sourceMoved source.buffer)
     | .error _ =>
-      return .error (.sourceMoved source)
+      return .error (.sourceMoved source.buffer)
   return .ok ()
 
-/-- Takes the excerpt buffer `id`'s step `step`, of which `rest` is what is
-left of its steps, by `move` in each of its source buffers, and keeps the
-states each is left in as a step of the other kind (`keep`). `none`, with
-nothing done, when `step` is none; `sourceMoved`, with nothing done, when a
-source buffer moved since the step (`stepHolds`). -/
+/-- Takes the excerpt buffer `id`'s step `step`, the last of its steps of
+one kind, by `move` in each of its source buffers. `replaced` makes the
+excerpt buffer's steps with that step in place of the last of that kind,
+or with it taken off for `none`, and `kept` with it taken off and the
+states each source is left in pushed as a step of the other kind. `none`,
+with nothing done, when `step` is none. When a source buffer of the step
+was removed, each such source is dropped from the step, and the step with
+them once none is left (`replaced`), nothing else is done, and the move is
+refused with `sourceRemoved` and the first such source's name as the step
+recorded it. `sourceMoved`, with nothing done, when a source buffer moved
+since the step (`stepHolds`). -/
 def excerptMoved (id : BufferId) (step : Option Buffer.ExcerptStep)
     (move : BufferId → EditorM (Except BufferRefusal (Option Undone)))
+    (replaced : Buffer.Excerpts → Option Buffer.ExcerptStep → Buffer.Excerpts)
     (kept : Buffer.Excerpts → Buffer.ExcerptStep → Buffer.Excerpts) :
     EditorM (Except BufferRefusal (Option Undone)) := do
   let some step := step | return .ok none
+  let state ← editorState
+  let some buffer := state.buffer? id | return .error (.noSuchBuffer id)
+  let some excerpts := buffer.excerpts | return .error .notExcerpts
+  let (live, removed) := step.sources.partition fun source => (state.buffer? source.buffer).isSome
+  if let some first := removed[0]? then
+    let left := if live.isEmpty then none else some { step with sources := live }
+    if let .error refusal← EditorState.ask (.setExcerptHistory id (replaced excerpts left)) then
+      return .error refusal
+    return .error (.sourceRemoved first.name)
   if let .error refusal← stepHolds step then
     return .error refusal
   let mut states := #[]
-  for (source, _) in step.sources do
-    match ← move source with
+  for source in step.sources do
+    match ← move source.buffer with
     | .ok _ =>
-      let state := ((← editorState).buffer? source).map (·.history.state)
-      states := states.push (source, state.getD ⟨0⟩)
+      let moved := (← editorState).buffer? source.buffer
+      states :=
+        states.push
+          { source with
+            name := (moved.map (·.name)).getD source.name
+            state := (moved.map (·.history.state)).getD ⟨0⟩ }
     | .error refusal =>
       return .error refusal
   let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
@@ -1279,7 +1303,9 @@ def excerptMoved (id : BufferId) (step : Option Buffer.ExcerptStep)
 
 /-- Undoes the excerpt buffer `id`'s last step in each of its source
 buffers, with the user's origin (the module docs, "Undo"): the group is
-closed first, and a step whose source moved since is refused with
+closed first; a step a source buffer of which was removed since loses that
+source, or is dropped once it has none, and is refused with
+`sourceRemoved`; and a step whose source moved since is refused with
 `sourceMoved`, changing nothing. `none`, with nothing done, when there is no
 step to undo. Nothing is handed back to place. -/
 def excerptUndo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) := do
@@ -1288,6 +1314,7 @@ def excerptUndo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone))
   let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
   let some excerpts := buffer.excerpts | return .error .notExcerpts
   id.excerptMoved excerpts.undos.back? (fun source => source.moved (·.undo Origin.user))
+      (fun excerpts left => { excerpts with undos := excerpts.undos.pop ++ left.toArray })
       fun excerpts step =>
       { excerpts with
         undos := excerpts.undos.pop, redos := excerpts.redos.push step }
@@ -1302,6 +1329,7 @@ def excerptRedo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone))
   if !excerpts.touched.isEmpty then
     return .ok none
   id.excerptMoved excerpts.redos.back? (fun source => source.moved (·.redo Origin.user))
+      (fun excerpts left => { excerpts with redos := excerpts.redos.pop ++ left.toArray })
       fun excerpts step =>
       { excerpts with
         redos := excerpts.redos.pop, undos := excerpts.undos.push step }

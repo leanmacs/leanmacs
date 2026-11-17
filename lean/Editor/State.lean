@@ -656,15 +656,18 @@ that is not one).
   phase.
 - **What it edited is a list of steps** (`Buffer.Excerpts`): each step
   (`Buffer.ExcerptStep`) names the source buffers an edit through the
-  excerpt buffer reached, each with the state its undo tree was left in
-  once the step was closed. The source buffers an edit reaches since the
-  last step are `touched` (`touch`), and `closeExcerptGroup` makes them a
-  step: pure, over trees already told and closed, it pushes one with each
-  touched buffer's `history.state`, clears `touched` and empties `redos`.
+  excerpt buffer reached, each with its name and the state its undo tree
+  was left in once the step was closed (`Buffer.ExcerptSource`). The source
+  buffers an edit reaches since the last step are `touched` (`touch`), and
+  `closeExcerptGroup` makes them a step: pure, over trees already told and
+  closed, it pushes one with each touched buffer's name and
+  `history.state`, clears `touched` and empties `redos`.
 - **An undo in it undoes one step in each source buffer**, and only when
   each is still in the state the step recorded: otherwise it is refused
-  with `sourceMoved` and the first source that moved (`Editor/Api.lean`,
-  "Undo").
+  with `sourceMoved` and the first source that moved. A source buffer that
+  was removed since is dropped from the step, the step with it once none is
+  left, and the undo is refused with `sourceRemoved` and the name the step
+  recorded (`Editor/Api.lean`, "Undo").
 - `excerptBufferOver?` finds the excerpt buffer over a text, and
   `bufferOver?` the plain buffer over a source text, which the command
   dispatcher asks before an edit through an excerpt buffer
@@ -951,12 +954,24 @@ structure Buffer.File where
   changed : Option Buffer.Changed := none
   deriving DecidableEq, Repr
 
+/-- A source buffer an excerpt buffer's step reached, as the step recorded
+it. -/
+structure Buffer.ExcerptSource where
+  /-- Which buffer. -/
+  buffer : BufferId
+  /-- Its name when the step was recorded: what is said of it once it is
+  removed. -/
+  name : String
+  /-- The state its undo tree was in when the step was recorded. -/
+  state : UndoTree.State
+  deriving DecidableEq, Repr
+
 /-- One step of an excerpt buffer's history: the source buffers an edit
 through it reached, each with the state its undo tree was in when the step
 was closed. -/
 structure Buffer.ExcerptStep where
-  /-- The source buffers and their trees' states. -/
-  sources : Array (BufferId × UndoTree.State) := #[]
+  /-- The source buffers, their names and their trees' states. -/
+  sources : Array Buffer.ExcerptSource := #[]
   deriving DecidableEq, Repr
 
 /-- What an excerpt buffer keeps of what its edits reached ("Excerpt
@@ -1714,8 +1729,11 @@ inductive BufferRefusal where
   | notExcerpts
   /-- The source buffer `source` of an excerpt buffer's step is no longer in
   the state the step left it in: it was edited, or moved in its history,
-  since, or it was removed. -/
+  since. -/
   | sourceMoved (source : BufferId)
+  /-- A source buffer of an excerpt buffer's step, called `name` when the
+  step was recorded, has been removed since. -/
+  | sourceRemoved (name : String)
   deriving DecidableEq, Repr
 
 /-- Why a job was not started. -/
@@ -2629,11 +2647,11 @@ def touch (id : BufferId) (sources : Array BufferId) (state : EditorState) : Edi
   | _ => state
 
 /-- `state` with the excerpt buffer `id`'s touched sources made one step:
-when it touched any, a step of each touched buffer's undo tree's state is
-pushed, `touched` is cleared and the steps to redo are emptied. It is pure:
-the source buffers' trees were told and closed already. Nothing changes
-for a buffer that is not an excerpt buffer, nor for one that touched
-nothing. -/
+when it touched any, a step of each touched buffer's name and undo tree's
+state is pushed, `touched` is cleared and the steps to redo are emptied. It
+is pure: the source buffers' trees were told and closed already. Nothing
+changes for a buffer that is not an excerpt buffer, nor for one that
+touched nothing. -/
 def closeExcerptGroup (id : BufferId) (state : EditorState) : EditorState :=
   match state.buffer? id with
   | some buffer@{ excerpts := some excerpts, .. } =>
@@ -2641,7 +2659,8 @@ def closeExcerptGroup (id : BufferId) (state : EditorState) : EditorState :=
     else
       let sources :=
         excerpts.touched.filterMap fun source =>
-          (state.buffer? source).map fun touched => (source, touched.history.state)
+          (state.buffer? source).map fun touched =>
+            { buffer := source, name := touched.name, state := touched.history.state }
       let excerpts :=
         { excerpts with
           touched := #[], undos := excerpts.undos.push ⟨sources⟩, redos := #[] }

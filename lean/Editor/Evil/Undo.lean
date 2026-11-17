@@ -38,8 +38,12 @@ place nothing. Placing it is these commands'.
 - **In an excerpt buffer** a step is one in each source buffer the step
   edited (`Editor/Api.lean`, "Undo"). When a source buffer moved since, the
   command says so instead (`sourceMovedSays`, with the source's name) and
-  changes nothing. Such a step carries no selection, so the cursor rests
-  where the window's marker moved.
+  changes nothing. When a source buffer of the step was removed since, the
+  command says so (`sourceRemovedSays`, with the name the step recorded),
+  and that source is dropped from the step, the step with it once none is
+  left, so the next `u` or `C-r` takes what is left, or the step under it.
+  Such a step carries no selection, so the cursor rests where the window's
+  marker moved.
 - **The window keeps no wanted column** after either.
 - **This is not Vim's rule for the cursor**, which leaves it at the start
   of the changed text: the phase asks for the cursor from before the
@@ -65,6 +69,12 @@ is refused because its source buffer called `name` changed since. -/
 def sourceMovedSays (name : String) : String :=
   s!"{name} changed since"
 
+/-- What `undo` and `redo` say in the echo area when an excerpt buffer's step
+reached a source buffer called `name`, as it was called when the step was
+closed, that has since been removed. -/
+def sourceRemovedSays (name : String) : String :=
+  s!"{name} was closed; its edits cannot be undone or redone here"
+
 /-- Takes `step`, a move in a buffer's history, up to `count` times, 1 for a
 count of 0, and stops at the first that finds nothing: how many were made,
 the selection the last one handed back, if it handed one, and the refusal
@@ -85,7 +95,9 @@ def moves (step : EditorM (Except BufferRefusal (Option Undone))) (count : Nat) 
   return (made, handed, none)
 
 /-- What `undo` or `redo` says when it made no move: `sourceMovedSays` of the
-source buffer's name for a refused excerpt step, and `nothing` otherwise. -/
+source buffer's name for an excerpt step refused because a source moved,
+`sourceRemovedSays` of the name the step recorded for one refused because a
+source was removed, and `nothing` otherwise. -/
 def unmovedSays (nothing : String) : Option BufferRefusal → EditorM String
   | some (.sourceMoved source) => do
     match (← editorState).buffer? source with
@@ -93,6 +105,7 @@ def unmovedSays (nothing : String) : Option BufferRefusal → EditorM String
       return sourceMovedSays buffer.name
     | none =>
       return nothing
+  | some (.sourceRemoved name) => return sourceRemovedSays name
   | _ => return nothing
 
 /-- The head of the primary range of `handed`, the selection a move in the

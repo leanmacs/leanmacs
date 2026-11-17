@@ -2405,7 +2405,10 @@ operation by a case of `lean/Editor/Api/Cases.lean`).
 - **In an excerpt buffer** `u` and `C-r` take one step in each source buffer
   the step edited, which hands no selection back, so the cursor rests where
   the window's marker moved; when a source buffer moved on since, they say
-  `<source> changed since` and change nothing
+  `<source> changed since` and change nothing; when a source buffer was
+  closed since, they say `<source> was closed; its edits cannot be undone
+  or redone here` and drop that source from the step, so the next `u` or
+  `C-r` reaches what is left
   ([text-and-display.md](text-and-display.md), "As built: editing through
   excerpts").
 - **The window keeps no wanted column** after either.

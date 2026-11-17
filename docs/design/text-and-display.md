@@ -1126,9 +1126,15 @@ in `crates/editor-ffi/src/excerpts.rs`; the text port's "Excerpt texts";
   keeps the inverse of the transaction it was given, and its buffer's tree
   is told of it by the loop as of any edit, so `u` in the source buffer
   takes it back. The excerpt buffer keeps steps of its own: the source
-  buffers an edit through it touched, each with the state its tree was left
-  in. `u` in it undoes one step in each, refused with `<source> changed
-  since` when one moved on. It hands no selection back: the sources'
+  buffers an edit through it touched, each with its name and the state its
+  tree was left in. `u` in it undoes one step in each, refused with
+  `<source> changed since` when one moved on. A source buffer closed since
+  cannot be undone through any more, and a step kept waiting on it would
+  hide every step under it for good: so `u` or `C-r` drops each closed
+  source from the step it reaches, and the step once none is left, and
+  says `<source> was closed; its edits cannot be undone or redone here`,
+  under the name the step recorded; the next one takes the step's live
+  sources, or the step under it. It hands no selection back: the sources'
   transactions carried none, and a source's selection is in source
   offsets, so the cursor rests where the window's marker moved.
 - **The rollback check.** The loop's rollback reverts every buffer a

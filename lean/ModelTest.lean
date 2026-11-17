@@ -37074,6 +37074,55 @@ def excerptBufferChecks : List Check :=
               excerptRead pending "ex" == some "xtwo\n\nalpha\n" &&
               excerptRead undone "one" == some "one\ntwo\nthree\n" &&
               excerptRead undone "ex" == some "two\n\nalpha\n" },
+    { name :=
+        "u in the excerpt buffer once a source buffer of its last step was removed says so, under the name the step recorded, and drops that step, so the next u undoes the older step over a live source"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let older := evilFed (excerptFed (evilFed driver "j j i") [.commit "Q"]) "<Escape>"
+            let newer := evilFed (excerptFed (evilFed older "k k i") [.commit "X"]) "<Escape>"
+            let removed := excerptInvoked newer "remove-one"
+            let refused := evilFed removed "u"
+            let undone := evilFed refused "u"
+            let emptied := evilFed undone "u"
+            excerptRead older "two" == some "Qalpha\nbeta\n" &&
+              excerptRead newer "one" == some "one\nXtwo\nthree\n" &&
+              (excerptBufferNamed removed "one").isNone &&
+              refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
+              excerptRead refused "two" == some "Qalpha\nbeta\n" &&
+              undone.loop.state.echo.isEmpty &&
+              excerptRead undone "two" == some "alpha\nbeta\n" &&
+              emptied.loop.state.echo == Evil.nothingToUndo },
+    { name :=
+        "u in the excerpt buffer once one of the two sources of its last step was removed says so and drops that source from the step, so the next u undoes the step in the source left"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let removed := excerptInvoked (excerptInvoked driver "edit-both") "remove-one"
+            let refused := evilFed removed "u"
+            let undone := evilFed refused "u"
+            excerptRead removed "two" == some "Alpha\nbeta\n" &&
+              refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
+              excerptRead refused "two" == some "Alpha\nbeta\n" &&
+              undone.loop.state.echo.isEmpty &&
+              excerptRead undone "two" == some "alpha\nbeta\n" },
+    { name :=
+        "C-r in the excerpt buffer once the source buffer of the step to redo was removed says so and drops the step, so the next C-r has nothing to redo"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let removed := excerptInvoked (evilFed typed "u") "remove-one"
+            let refused := evilFed removed "C-r"
+            let emptied := evilFed refused "C-r"
+            refused.loop.state.echo == Evil.sourceRemovedSays "one" &&
+              emptied.loop.state.echo == Evil.nothingToRedo },
     { name := "u in the source buffer takes back an edit made through the excerpt buffer"
       run :=
         pure <|
