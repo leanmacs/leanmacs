@@ -5,6 +5,8 @@
 //! leanmacs-release [--root <dir>] build-id
 //! leanmacs-release [--root <dir>] commit
 //! leanmacs-release [--root <dir>] dmg <app> <out-dir>
+//! leanmacs-release [--root <dir>] nightly <dist-dir> <out-dir>
+//! leanmacs-release [--root <dir>] publish <dir>
 //! ```
 //!
 //! - `build-id` prints the build ID (`editor_release::build_id::resolve`):
@@ -20,6 +22,22 @@
 //!   The licence is the workspace's `LICENSE`, the README
 //!   `packaging/macos/README.txt`, and the volume is staged in
 //!   `target/dmg/staging`.
+//! - `nightly <dist-dir> <out-dir>`, on macOS only, prepares the nightly
+//!   (`editor_release::nightly::prepare`) and holds no token: it takes
+//!   `<dist-dir>/Leanmacs-<build-id>.dmg`, mounts it at
+//!   `target/nightly-mount` to check that the app's stamp is this build's
+//!   ID and commit, and writes `Leanmacs-<build-id>.dmg`, `Leanmacs.dmg`,
+//!   `Leanmacs.dmg.sha256`, `build.json` and `notes.md` to `<out-dir>`,
+//!   which it makes. The repository the notes link to is
+//!   `editor_release::nightly::target`'s: `GITHUB_SERVER_URL` and
+//!   `GITHUB_REPOSITORY` when set, else github.com's leanmacs/leanmacs.
+//! - `publish <dir>` publishes a directory `nightly` prepared
+//!   (`editor_release::nightly::publish`) with `gh`, which reads its token
+//!   from `GH_TOKEN`. It refuses to run except on a push to main
+//!   (`editor_release::nightly::publish_gate`), and refuses a directory
+//!   whose `build.json` and `Leanmacs.dmg.sha256` do not describe this
+//!   build and its `Leanmacs.dmg`'s size
+//!   (`editor_release::nightly::read_build`).
 //!
 //! The workspace is the one this binary was built in, two directories above
 //! this crate's manifest, unless `--root` names another. Each failure is
@@ -30,11 +48,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use editor_release::dmg::{self, Inputs};
-use editor_release::{build_id, commit};
-use editor_release_std::{StdEnv, StdProcess};
+use editor_release::{build_id, commit, nightly};
+use editor_release_std::{StdEnv, StdProcess, write_prepared};
 
-const USAGE: &str =
-    "usage: leanmacs-release [--root <dir>] (build-id | commit | dmg <app> <out-dir>)";
+const USAGE: &str = "usage: leanmacs-release [--root <dir>] (build-id | commit | dmg <app> <out-dir> | nightly <dist-dir> <out-dir> | publish <dir>)";
 
 /// The workspace this binary was built in.
 fn built_workspace() -> PathBuf {
@@ -86,6 +103,68 @@ fn run(args: &[String]) -> Result<Option<String>, String> {
             let made = dmg::pack(&mut StdProcess, &inputs, &staging, &out, &id)
                 .map_err(|e| e.to_string())?;
             Ok(Some(made.display().to_string()))
+        }
+        [command, dist, out] if command == "nightly" => {
+            if !cfg!(target_os = "macos") {
+                return Err("nightly: the disk image is mounted on macOS only".to_owned());
+            }
+            let (dist, out) = (absolute(dist)?, absolute(out)?);
+            let id =
+                build_id::resolve(&StdEnv, &mut StdProcess, here).map_err(|e| e.to_string())?;
+            let sha = commit::resolve(&StdEnv, &mut StdProcess, here).map_err(|e| e.to_string())?;
+            let target = nightly::target(&StdEnv).map_err(|e| e.to_string())?;
+            let image = dist.join(dmg::file_name(&id));
+            let size = std::fs::metadata(&image)
+                .map_err(|e| format!("{}: {e}: run `mise run dmg`", image.display()))?
+                .len();
+            let mount_point = root.join("target").join("nightly-mount");
+            for dir in [&out, &mount_point] {
+                std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            }
+            let inputs = nightly::Inputs {
+                image: &image,
+                size,
+                mount_point: &mount_point,
+                out: &out,
+            };
+            let prepared = nightly::prepare(&mut StdProcess, &inputs, &id, &sha, &target)
+                .map_err(|e| e.to_string())?;
+            write_prepared(&out, &prepared).map_err(|e| e.to_string())?;
+            Ok(Some(format!(
+                "{}: build {id}, commit {sha}, SHA-256 {}",
+                out.display(),
+                prepared.build.sha256
+            )))
+        }
+        [command, dir] if command == "publish" => {
+            let target = nightly::publish_gate(&StdEnv).map_err(|e| e.to_string())?;
+            let dir = absolute(dir)?;
+            let id =
+                build_id::resolve(&StdEnv, &mut StdProcess, here).map_err(|e| e.to_string())?;
+            let sha = commit::resolve(&StdEnv, &mut StdProcess, here).map_err(|e| e.to_string())?;
+            let read = |name: &str| {
+                let path = dir.join(name);
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))
+            };
+            let fixed = dir.join(nightly::FIXED);
+            let size = std::fs::metadata(&fixed)
+                .map_err(|e| format!("{}: {e}", fixed.display()))?
+                .len();
+            let build = nightly::read_build(
+                &read(nightly::BUILD_JSON)?,
+                &read(nightly::SHA256)?,
+                size,
+                &id,
+                &sha,
+            )
+            .map_err(|e| e.to_string())?;
+            nightly::publish(&mut StdProcess, &target.repo, &dir, &build)
+                .map_err(|e| e.to_string())?;
+            Ok(Some(format!(
+                "published build {id} as {}'s {}",
+                target.repo,
+                nightly::TAG
+            )))
         }
         _ => Ok(None),
     }

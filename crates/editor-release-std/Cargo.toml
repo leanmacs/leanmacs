@@ -8,8 +8,8 @@ publish = false
 
 [dependencies]
 # The ports, their fakes and contract, and the core this crate wires: the
-# build ID, the commit and the .dmg's plan. Only release tooling depends on
-# this crate, and the editor links neither (deny.toml).
+# build ID, the commit, the .dmg's plan and the nightly. Only release
+# tooling depends on this crate, and the editor links neither (deny.toml).
 editor-release = { path = "../editor-release" }
 
 [dev-dependencies]

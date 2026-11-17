@@ -1,5 +1,5 @@
-//! Release tooling's core: what names a build, and how the disk image is
-//! packed.
+//! Release tooling's core: what names a build, how the disk image is
+//! packed, and how the nightly is published.
 //!
 //! - [`build_id`]: the build ID, HEAD's committer time in UTC as
 //!   `YYYYMMDDHHMMSS`, or `LEANMACS_BUILD_ID` when that is set.
@@ -7,6 +7,10 @@
 //!   is set.
 //! - [`dmg`]: the `.dmg`'s name, the plan of programs that packs it, and the
 //!   check of a mounted volume's root.
+//! - [`nightly`]: the rolling `nightly` prerelease: the check of the
+//!   mounted app's stamp against the build, `build.json`, the `.sha256`
+//!   line, the release notes, which old build-ID copies to prune, and the
+//!   ordered `gh` calls that publish.
 //!
 //! The crate touches nothing itself. It reads the environment through the
 //! [`ports::Env`] port and runs programs through the [`ports::Process`] port,
@@ -21,4 +25,5 @@ pub mod commit;
 pub mod contract;
 pub mod dmg;
 pub mod fake;
+pub mod nightly;
 pub mod ports;

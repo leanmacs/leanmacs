@@ -8,12 +8,14 @@
 # neither knows what this repository needs of it. This checks that, with yq
 # (pinned in mise.toml), and fails on each rule broken
 # (docs/dev-practices/ci.md). The rules it runs are picked by the file's
-# base name: the common rules on every file, then ci.yml's or build.yml's.
+# base name: the common rules on every file, then ci.yml's, build.yml's or
+# release.yml's.
 #
 # Every file:
 #
-#   workflows          the file is ci.yml or build.yml: a workflow file
-#                      with no rules here fails, so none goes unchecked
+#   workflows          the file is ci.yml, build.yml or release.yml: a
+#                      workflow file with no rules here fails, so none
+#                      goes unchecked
 #   continue-on-error  no job or step continues on error: a red leg fails
 #                      the workflow
 #   mise-env           every job sets MISE_AUTO_INSTALL "false", but a job
@@ -55,6 +57,14 @@
 #                      reading contents only. The input names are
 #                      actionlint's to check: it validates a local reusable
 #                      workflow's `with:` against its inputs
+#   release-gating     a `release` job that needs ci, build-id, build and
+#                      secrets-scan, on main pushes only, calling
+#                      release.yml with the ID and `github.sha` as commit
+#                      and ref, with permissions exactly contents: write
+#   release-concurrency  the `release` job's concurrency is exactly the
+#                      group nightly-release, never cancelled in progress
+#   write-scope        the top-level permissions are exactly contents:
+#                      read, and no job but `release` names a write scope
 #
 # build.yml:
 #
@@ -71,7 +81,31 @@
 #   build-cache        no cache save, and the Lake and elan restores have
 #                      ci.yml's keys (and Lake's restore-keys)
 #
-# The other files, ci.yml for build.yml's rules among them, are read from
+# release.yml:
+#
+#   release-trigger    `workflow_call` alone, with exactly the inputs
+#                      build-id, commit and ref, each a required string
+#   release-job        one job, `publish`, on macos-26, a leg of ci.yml's
+#                      matrix; top-level permissions {} and the job's
+#                      exactly contents: write; LEANMACS_BUILD_ID and
+#                      LEANMACS_COMMIT from the inputs, no MISE_ENV; one
+#                      checkout of the `ref` input, and every checkout
+#                      with persist-credentials false
+#   release-steps      one download-artifact of Leanmacs-dmg into dist,
+#                      then exactly one `mise run nightly`, and last, once,
+#                      `target/debug/leanmacs-release publish
+#                      target/nightly`; no step has an if:, and no step
+#                      runs gh release, gh api, git push or git tag
+#   release-token      exactly one step names GH_TOKEN or GITHUB_TOKEN in
+#                      its env, and its run is the publish command; no
+#                      token in the job's or the workflow's env; and no
+#                      value but that one names github.token or secrets.
+#                      (where it falls among the steps is release-steps')
+#   release-cache      no rust-cache and no actions/cache step: the only
+#                      cache is mise-action's, saved from main only
+#
+# The other files, ci.yml for build.yml's and release.yml's rules among
+# them, are read from
 # this checkout, found from the script's own place. It prints every rule
 # broken, then exits 1; 0 when none is.
 set -eu
@@ -358,6 +392,50 @@ ci_rules() {
       fail build-gating 'jobs.build.permissions must be exactly contents: read'
     fi
   fi
+
+  # ---- release-gating
+  # The nightly is published on main pushes only, after the gate, the build
+  # and the secret scan, by release.yml handed the run's ID and commit.
+  if [ "$(q '.jobs | has("release")')" != true ]; then
+    fail release-gating 'jobs must have release'
+  else
+    if [ "$(q '[.jobs.release.needs] | flatten | (contains(["ci"]) and contains(["build-id"]) and contains(["build"]) and contains(["secrets-scan"]))')" != true ]; then
+      fail release-gating 'jobs.release.needs must include ci, build-id, build and secrets-scan'
+    fi
+    if [ "$(q '.jobs.release.if == strenv(main_push)')" != true ]; then
+      fail release-gating "jobs.release.if must be $main_push"
+    fi
+    if [ "$(q '.jobs.release.uses')" != ./.github/workflows/release.yml ]; then
+      fail release-gating 'jobs.release.uses must be ./.github/workflows/release.yml'
+    fi
+    if [ "$(q '.jobs.release.with["build-id"]')" != "\${{ needs.build-id.outputs.id }}" ]; then
+      fail release-gating 'jobs.release.with.build-id must be ${{ needs.build-id.outputs.id }}'
+    fi
+    for input in commit ref; do
+      if [ "$(I=$input yq '.jobs.release.with[strenv(I)]' "$wf")" != "\${{ github.sha }}" ]; then
+        fail release-gating "jobs.release.with.$input must be \${{ github.sha }}"
+      fi
+    done
+    if [ "$(q '.jobs.release.permissions')" != '{"contents":"write"}' ]; then
+      fail release-gating 'jobs.release.permissions must be exactly contents: write'
+    fi
+  fi
+
+  # ---- release-concurrency
+  # Two nightlies never publish at once, and one is never cut off halfway.
+  if [ "$(q '.jobs.release.concurrency')" != '{"group":"nightly-release","cancel-in-progress":false}' ]; then
+    fail release-concurrency 'jobs.release.concurrency must be exactly group: nightly-release, cancel-in-progress: false'
+  fi
+
+  # ---- write-scope
+  # The token reads by default, and only `release` may write.
+  if [ "$(q '.permissions')" != '{"contents":"read"}' ]; then
+    fail write-scope 'the top-level permissions must be exactly contents: read'
+  fi
+  bad=$(q '[.jobs | to_entries[] | select(.key != "release") | select(.value.permissions // {} | tojson | test("write")) | .key] | join(" ")')
+  if [ -n "$bad" ]; then
+    fail write-scope "jobs other than release name a write scope: $bad"
+  fi
 }
 
 # ==== build.yml's rules.
@@ -446,11 +524,120 @@ build_rules() {
   done
 }
 
+# ==== release.yml's rules.
+release_rules() {
+  # ---- release-trigger
+  # Called by ci.yml alone, with exactly its three string inputs, each
+  # required.
+  if [ "$(q '.on | keys')" != '["workflow_call"]' ]; then
+    fail release-trigger 'on: must be workflow_call alone'
+  fi
+  if [ "$(q '.on.workflow_call.inputs | keys | sort')" != '["build-id","commit","ref"]' ]; then
+    fail release-trigger 'on.workflow_call.inputs must be exactly build-id, commit and ref'
+  fi
+  bad=$(q '[.on.workflow_call.inputs // {} | to_entries[] | select(.value.required != true or .value.type != "string") | .key] | join(" ")')
+  if [ -n "$bad" ]; then
+    fail release-trigger "inputs not required: true and type: string: $bad"
+  fi
+
+  # ---- release-job
+  # One job on a leg of ci.yml's matrix, writing contents alone, stamped
+  # from the inputs, with no credentials left on disk.
+  if [ "$(q '.jobs | keys')" != '["publish"]' ]; then
+    fail release-job 'jobs must be exactly publish'
+  fi
+  runs_on=$(q '.jobs.publish["runs-on"]')
+  if [ "$runs_on" != macos-26 ]; then
+    fail release-job "jobs.publish.runs-on must be macos-26, not $runs_on"
+  elif [ "$(R=$runs_on yq '.jobs.ci.strategy.matrix.os | contains([strenv(R)])' "$ci_wf")" != true ]; then
+    fail release-job "jobs.publish.runs-on $runs_on is not a leg of ci.yml's matrix"
+  fi
+  if [ "$(q '.permissions')" != '{}' ]; then
+    fail release-job 'the top-level permissions must be {}'
+  fi
+  if [ "$(q '.jobs.publish.permissions')" != '{"contents":"write"}' ]; then
+    fail release-job 'jobs.publish.permissions must be exactly contents: write'
+  fi
+  if [ "$(q '.jobs.publish.env.LEANMACS_BUILD_ID')" != "\${{ inputs.build-id }}" ]; then
+    fail release-job 'jobs.publish.env.LEANMACS_BUILD_ID must be ${{ inputs.build-id }}'
+  fi
+  if [ "$(q '.jobs.publish.env.LEANMACS_COMMIT')" != "\${{ inputs.commit }}" ]; then
+    fail release-job 'jobs.publish.env.LEANMACS_COMMIT must be ${{ inputs.commit }}'
+  fi
+  if [ "$(q '.jobs.publish.env // {} | has("MISE_ENV")')" != false ]; then
+    fail release-job 'jobs.publish.env must not set MISE_ENV'
+  fi
+  if [ "$(q '[.jobs.publish.steps[]? | select(.uses // "" | test("^actions/checkout@"))] | length')" != 1 ] ||
+    [ "$(q '[.jobs.publish.steps[]? | select((.uses // "" | test("^actions/checkout@")) and .with.ref == "${{ inputs.ref }}")] | length')" != 1 ]; then
+    fail release-job 'jobs.publish must check out once, with ref: ${{ inputs.ref }}'
+  fi
+  if [ "$(q '[.jobs[].steps[]? | select(.uses // "" | test("^actions/checkout@")) | select(.with["persist-credentials"] != false)] | length')" != 0 ]; then
+    fail release-job 'every checkout must have persist-credentials: false'
+  fi
+
+  # ---- release-steps
+  # The .dmg, then every check with no token, and last the one publish; any
+  # failure stops the job before it.
+  publish_run='target/debug/leanmacs-release publish target/nightly'
+  export publish_run
+  download=$(q '[.jobs.publish.steps | to_entries | .[] | select((.value.uses // "" | test("^actions/download-artifact@")) and .value.with.name == "Leanmacs-dmg" and .value.with.path == "dist") | .key] | join(" ")')
+  prepare=$(q '[.jobs.publish.steps | to_entries | .[] | select(.value.run == "mise run nightly") | .key] | join(" ")')
+  case $download in
+  '' | *' '*) fail release-steps 'jobs.publish must have exactly one actions/download-artifact of Leanmacs-dmg into dist' ;;
+  esac
+  case $prepare in
+  '' | *' '*) fail release-steps 'jobs.publish must have exactly one step whose run is `mise run nightly`' ;;
+  *)
+    case $download in
+    '' | *' '*) ;;
+    *)
+      if [ "$download" -ge "$prepare" ]; then
+        fail release-steps 'the download of Leanmacs-dmg must come before `mise run nightly`'
+      fi
+      ;;
+    esac
+    ;;
+  esac
+  if [ "$(q '[.jobs.publish.steps[]? | select(.run == strenv(publish_run))] | length')" != 1 ] ||
+    [ "$(q '.jobs.publish.steps[-1].run == strenv(publish_run)')" != true ]; then
+    fail release-steps "the last step of jobs.publish, and only it, must run \`$publish_run\`"
+  fi
+  if [ "$(q '[.jobs.publish.steps[]? | select(has("if"))] | length')" != 0 ]; then
+    fail release-steps 'no step of jobs.publish may have an if:'
+  fi
+  if [ "$(q '[.jobs.publish.steps[]? | select(.run // "" | test("gh +release|gh +api|git +push|git +tag"))] | length')" != 0 ]; then
+    fail release-steps 'no step may run gh release, gh api, git push or git tag: the publish command does'
+  fi
+
+  # ---- release-token
+  # The token is in one step's env alone, and that step runs the publish.
+  # Where it falls among the steps is release-steps'.
+  token_steps='[.jobs.publish.steps[]? | select(.env // {} | (has("GH_TOKEN") or has("GITHUB_TOKEN")))]'
+  if [ "$(q "$token_steps | length")" != 1 ] ||
+    [ "$(q "$token_steps | .[0].run == strenv(publish_run)")" != true ]; then
+    fail release-token "exactly one step may name GH_TOKEN or GITHUB_TOKEN in its env, the one that runs \`$publish_run\`"
+  fi
+  if [ "$(q '[.env // {}, .jobs[].env // {}] | map(has("GH_TOKEN") or has("GITHUB_TOKEN")) | any')" != false ]; then
+    fail release-token 'no token in the workflow'"'"'s or the job'"'"'s env'
+  fi
+  if [ "$(q '[.. | select(tag == "!!str") | select(test("github[.]token|secrets[.]"))] | length')" != 1 ]; then
+    fail release-token 'exactly one value may name github.token or secrets.: the publish step'"'"'s GH_TOKEN'
+  fi
+
+  # ---- release-cache
+  # The token-holding job restores no build cache. mise-action's tool cache
+  # stays, saved from main only (the common mise-action rule).
+  if [ "$(q '[.jobs[].steps[]? | select(.uses // "" | test("^(Swatinem/rust-cache|actions/cache)(/[a-z]+)?@"))] | length')" != 0 ]; then
+    fail release-cache 'release.yml must have no rust-cache and no actions/cache step'
+  fi
+}
+
 # ---- workflows
 # Every workflow file has its rules here, so a new one cannot go unchecked.
 case $name in
 ci.yml) ci_rules ;;
 build.yml) build_rules ;;
+release.yml) release_rules ;;
 *) fail workflows "no rules for $name: add them to tools/workflow-check.sh" ;;
 esac
 

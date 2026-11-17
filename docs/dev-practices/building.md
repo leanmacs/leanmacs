@@ -222,3 +222,22 @@ demand"). CI's build job packs one on every push to main and uploads it
 The app in it is ad-hoc signed, as the bundle is, and not notarized, so
 Gatekeeper blocks its first launch; README.txt says how to open it.
 Developer ID signing and notarization are rdm:task/developer-id-notarization.
+
+### The nightly's assets
+
+```sh
+mise run nightly
+```
+
+After `mise run dmg`, this checks `dist/Leanmacs-<build-id>.dmg` and
+prepares the nightly release's assets in `target/nightly`, with no token
+and no network: `leanmacs-release nightly` (`crates/editor-release`,
+`nightly`) mounts the image at `target/nightly-mount`, checks that its
+file name and the app's `CFBundleVersion` and `LeanmacsCommit` are this
+build's ID and commit, detaches it, and writes `Leanmacs-<build-id>.dmg`,
+`Leanmacs.dmg`, `Leanmacs.dmg.sha256`, `build.json` and the release notes,
+`notes.md`. Outside Actions the notes link to github.com's
+leanmacs/leanmacs. Only CI's `release` job publishes them
+([`ci.md`](ci.md), "`release`: the nightly"). `mise run nightly-check`
+runs the same preparation on a tiny stamped image it packs in a temporary
+directory.

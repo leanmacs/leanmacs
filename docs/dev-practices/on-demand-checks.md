@@ -204,6 +204,31 @@ It writes nothing but the mount point and takes a few seconds. It does not
 depend on `dmg`, so CI's build job, which runs `dmg` then `dmg-check`,
 packs once. It is not part of the gate, which builds no bundle.
 
+## The nightly's preparation, on demand
+
+```sh
+mise run nightly-check
+```
+
+macOS only. The ignored test `crates/editor-release-std/tests/nightly_mount.rs`
+stages a tiny `Leanmacs.app/Contents/Info.plist` stamped with a build ID
+and a commit, packs it with `hdiutil create` as `Leanmacs-<id>.dmg` in a
+temporary directory it owns, and runs the nightly's preparation
+(`editor_release::nightly::prepare`, as `mise run nightly` does) on it
+through the real process adapter, with real `hdiutil`, `plutil` and
+`shasum`:
+
+- for the stamp's own build and commit, the output holds exactly the two
+  images, `Leanmacs.dmg.sha256`, `build.json` and `notes.md`;
+  `shasum -a 256 -c Leanmacs.dmg.sha256` passes; `build.json` and the
+  checksum read back as the build; and the image is detached;
+- for another commit, the preparation refuses with the mismatch, copies
+  nothing, and the image is detached all the same.
+
+It writes nothing outside its temporary directory and takes a few seconds.
+`mise run nightly`, after `mise run dmg`, prepares the real assets in
+`target/nightly` ([`building.md`](building.md), "The nightly's assets").
+
 ## Installing the app
 
 ```sh

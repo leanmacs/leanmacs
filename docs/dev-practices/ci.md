@@ -4,8 +4,9 @@
 on every push to any branch and on every pull request. Tags are not pushed,
 so a tag push runs nothing. On a push to `main`, once the gate has passed
 on both legs, it also builds the nightly's `.dmg` and uploads it as a
-workflow artifact (`.github/workflows/build.yml`). It publishes no release
-yet: the release and its page come in later phases.
+workflow artifact (`.github/workflows/build.yml`), then publishes it as the
+rolling `nightly` prerelease (`.github/workflows/release.yml`). The
+download page comes in a later phase.
 
 ## The jobs
 
@@ -75,8 +76,8 @@ On a push to `main` only (`if: github.event_name == 'push' && github.ref
 installs Rust alone with mise-action and runs `mise run build-id`: HEAD's
 committer time in UTC as `YYYYMMDDHHMMSS`, worked out by
 `crates/editor-release` ([`building.md`](building.md), "The app bundle").
-Its output `id` is the run's one build ID, so the `.dmg` and, in later
-phases, the release and its page all name the same build, as in ev-nova.
+Its output `id` is the run's one build ID, so the `.dmg`, the release and,
+in a later phase, its page all name the same build, as in ev-nova.
 
 ### `build`: the .dmg
 
@@ -88,8 +89,9 @@ reusable workflow `.github/workflows/build.yml` with the inputs
 never cut off halfway. Its `uses:` carries an inline
 `# zizmor: ignore[self-repository]`: zizmor asks for the newer
 `$/.github/workflows/…` form, which the pinned actionlint refuses, and
-`./` names this repository's file at the commit being run either way. It does not wait for `secrets-scan`: the `.dmg`
-holds no history, and the release that publishes it is where to add that.
+`./` names this repository's file at the commit being run either way. It
+does not wait for `secrets-scan`: the `.dmg` holds no history, and
+`release`, which publishes it, does wait.
 
 `build.yml` has one job, `build`, on `macos-26`, with
 `MISE_AUTO_INSTALL: "false"`, `CARGO_PROFILE_DEV_DEBUG: "0"`, and the
@@ -117,6 +119,107 @@ artifact is on `main`'s runs only; a branch or a pull request builds no
 `.dmg`. Download it from the run's "Artifacts" list: a zip holding
 `Leanmacs-<build-id>.dmg`.
 
+### `release`: the nightly
+
+On a push to `main` only, after both legs of `ci`, `build-id`, `build` and
+`secrets-scan` (`needs: [ci, build-id, build, secrets-scan]`), so a branch
+or a pull request publishes nothing and moves no tag. It is the only job
+in the workflow that writes: its `permissions` are exactly
+`contents: write`, for the release's assets and the tag, while the
+workflow's top-level token reads contents only. It sits in a concurrency
+group of its own, `nightly-release`, never cancelled in progress, so two
+nightlies never publish at once and none is cut off halfway. It calls the
+reusable workflow `.github/workflows/release.yml` with the inputs
+`build-id` (`build-id`'s output), `commit` and `ref` (both `github.sha`),
+with the same `# zizmor: ignore[self-repository]` as `build`.
+
+`release.yml` has one job, `publish`, on `macos-26`, with top-level
+`permissions: {}` and the job's exactly `contents: write`,
+`MISE_AUTO_INSTALL: "false"`, and `LEANMACS_BUILD_ID` and
+`LEANMACS_COMMIT` from its inputs. It runs on macOS because it mounts the
+`.dmg` to read the published app's `Info.plist` with `hdiutil` and
+`plutil`, the tools `dmg-check` already trusts; the repository is public,
+so macOS minutes are free. Its steps:
+
+1. Check out `ref`, without leaving the token in `.git/config`.
+2. mise-action, installing Rust alone. Its tool cache is the job's only
+   cache, saved from `main` only by the common `mise-action` rule: it is
+   written only by `main`'s own runs, holds only the pinned toolchain, and
+   no branch or pull request can write it. There is no rust-cache and no
+   `actions/cache` step; the release tool, `crates/editor-release-std`,
+   has no third-party dependency and is built from source here.
+3. Download the workflow artifact `Leanmacs-dmg` into `dist/`.
+4. "Prepare the nightly": `mise run nightly`, with no token. It builds the
+   release tool and runs `leanmacs-release nightly dist target/nightly`
+   (`crates/editor-release`, `nightly`): it mounts
+   `dist/Leanmacs-<build-id>.dmg`, checks that the file name names the
+   run's build and that the app's `CFBundleVersion` and `LeanmacsCommit`
+   are the run's build ID and commit, detaches it, and writes to
+   `target/nightly` the two images, `Leanmacs.dmg.sha256`, `build.json`
+   and the release notes, made from the same ID and commit it checked. A
+   mismatch fails here, before anything is uploaded.
+5. "Publish the nightly": `target/debug/leanmacs-release publish
+   target/nightly`, the last step and the only one with a token
+   (`GH_TOKEN`, the job's own). It compiles nothing. It refuses to run
+   except on a push to `refs/heads/main`, reads `build.json` and the
+   checksum back and refuses them unless they describe this build and
+   `Leanmacs.dmg`'s size, and re-checks both images' SHA-256. Then, each
+   step only if the one before it succeeded:
+   1. on the first run, `gh release create nightly --prerelease --target
+      <commit>`, which creates the tag at the commit;
+   2. upload `Leanmacs-<build-id>.dmg` (a new name, so the old nightly is
+      untouched), then `Leanmacs.dmg`, then `Leanmacs.dmg.sha256`, then
+      `build.json` last, so `build.json` never names a build whose `.dmg`
+      is not up yet, each with `--clobber`, which replaces an asset in
+      place;
+   3. move the tag to the commit through the API (`gh api --method PATCH
+      repos/<repo>/git/refs/tags/nightly`), so no git credentials are ever
+      set up;
+   4. set the title, "Leanmacs nightly", and the notes, as a prerelease;
+   5. delete old build-ID copies: the release keeps the newest **10**
+      `Leanmacs-<build-id>.dmg`, by build ID, the current one always among
+      them, and never deletes the fixed names or a name it does not
+      recognise.
+
+No step has an `if:`, so a failure before the last step leaves the
+previous nightly's assets and tag as they were. A failure partway through
+the uploads can leave a half-replaced nightly: the next green push fixes
+it.
+
+The assets, at permanent links under
+`https://github.com/leanmacs/leanmacs/releases/download/nightly/`:
+
+| Asset | What |
+|---|---|
+| `Leanmacs.dmg` | The newest build: [`…/nightly/Leanmacs.dmg`](https://github.com/leanmacs/leanmacs/releases/download/nightly/Leanmacs.dmg). |
+| `Leanmacs-<build-id>.dmg` | The same image under its build's name; the newest 10 are kept. |
+| `Leanmacs.dmg.sha256` | `<sha-256>  Leanmacs.dmg`: `shasum -a 256 -c Leanmacs.dmg.sha256` beside the download checks it. |
+| `build.json` | The build, for the download page. |
+
+`build.json`'s keys, in this order, with a two-space indent and a final
+newline:
+
+```json
+{
+  "build_id": "<14 digits>",
+  "commit": "<40 hex>",
+  "date": "YYYY-MM-DDTHH:MM:SSZ",
+  "size": <bytes>,
+  "sha256": "<64 hex>",
+  "file": "Leanmacs.dmg",
+  "build_file": "Leanmacs-<build-id>.dmg"
+}
+```
+
+`date` comes from the build ID: it is the commit's time in UTC, not the
+time of the run. The release notes give the build ID, the commit with its
+link, the date, the size, the SHA-256, "macOS 26.0 or later, on Apple
+silicon", the first-launch steps of `packaging/macos/README.txt` ("Open
+Anyway", and the `xattr` fallback) and `editor --version`.
+
+**Do not re-run an old run's `release / publish` job.** It would republish
+that older build over a newer one. Push again instead.
+
 ### `secrets-scan`
 
 `mise run secrets-scan` ([`publishing.md`](publishing.md), "The secret
@@ -137,8 +240,13 @@ Runs are grouped per workflow and ref
 per group, so a newer push supersedes an older push's pending run. On a
 branch or a pull request a newer run also cancels the one in progress. On
 `main` a running run is never cancelled (`cancel-in-progress` is false
-there): the release jobs later added to `main`'s runs must never be cut off
-halfway.
+there): the build and release jobs must never be cut off halfway.
+
+The `release` job is also in a job-level group of its own,
+`nightly-release`, with `cancel-in-progress: false`: two nightlies never
+publish at once, even from two runs, and a running one is never cancelled.
+GitHub keeps one pending job per group, so of several queued releases only
+the newest waits.
 
 ## Caches
 
@@ -159,6 +267,9 @@ and saves neither: it has no `actions/cache/save` step, because
 `lean/.lake` there holds the bundle, about 600 MB, which must not enter
 the cache. Its rust-cache entry is its own (rust-cache keys on the job),
 saved from `main` only, as is its mise-action's.
+
+`release.yml`'s job has no cache step at all: the only cache it uses is
+its mise-action's, saved from `main` only like every other.
 
 The two `actions/cache/save` steps of `ci` run after the gate, so they hold the
 built tree, and they run when the gate failed too (not when the run was
@@ -233,6 +344,47 @@ lands, the owner confirms it live, in this order.
    to 26.0; see "Deployment target" above). The window opens and edits a
    file. If not, file a bug.
 
+### After the nightly release lands
+
+9. **Push to `main`.** The "CI" run shows `release / publish` green after
+   `build / build` and `secrets-scan`. Releases shows the prerelease
+   "Leanmacs nightly" (not Latest), tagged `nightly`, holding
+   `Leanmacs.dmg`, `Leanmacs-<id>.dmg`, `Leanmacs.dmg.sha256` and
+   `build.json`. Then:
+   - `git ls-remote origin refs/tags/nightly` prints the pushed SHA.
+   - `curl -L https://github.com/leanmacs/leanmacs/releases/download/nightly/build.json`
+     shows that ID and commit.
+   - `curl -LO …/nightly/Leanmacs.dmg -LO …/nightly/Leanmacs.dmg.sha256 &&
+     shasum -a 256 -c Leanmacs.dmg.sha256` passes.
+   - The release body names the ID, the commit and the date, and gives the
+     "Open Anyway" steps.
+   - After a second push, the tag and all four assets move, and the first
+     build's ID copy remains.
+10. **Push a throwaway branch and open a pull request from it.** `release`
+    is skipped in both runs. `git ls-remote origin refs/tags/nightly` and
+    the assets' `updated_at` (`gh release view nightly --json assets`) are
+    unchanged. Delete the branch.
+11. **A failing release leaves the old nightly whole (optional, owner fork
+    only).** This is confirmed offline: the `nightly` module's tests show
+    that a mismatched stamp is refused before any `gh` call, and the
+    workflow lint's `release-steps` and `release-token` rules hold that
+    the publish is the last step and the only one with a token. To also
+    see it live, do this in an owner fork with Actions on, never in
+    leanmacs/leanmacs. The mutation must keep the gate green, or `release`
+    is skipped and the check proves nothing:
+    - In the fork's `ci.yml`, change the `release` job's `commit:` input
+      to another valid 40-hex SHA (any other commit on `main`).
+    - Drop `workflow-lint` from the fork's `[tasks.ci].depends`, since the
+      `release-gating` rule would otherwise fail the gate.
+    - Pass: in `release / publish`, "Prepare the nightly" ran and failed
+      with a mismatch naming both commits; "Publish the nightly" did not
+      run; the fork's `nightly` tag and assets are as before. A run where
+      `release` was skipped does not count.
+12. **Repository settings.** If "immutable releases" is ever turned on,
+    the `--clobber` uploads fail, so leave it off for the `nightly`
+    prerelease. No tag ruleset may protect `nightly`: one would block the
+    tag's move.
+
 ## The workflow lint
 
 ```sh
@@ -268,21 +420,40 @@ it runs the same in `linux-ci`'s copy of the checkout. It runs, in order:
      `mise.toml` tool the gate runs (with `MISE_AUTO_INSTALL` false, a tool
      left out is missing on the runner; the tools the gate never runs are
      named in the check), the `secrets-scan` job, that
-     `tools/ci/install-elan.sh` pins the Dockerfile's elan, and
+     `tools/ci/install-elan.sh` pins the Dockerfile's elan,
      `build-gating`: `build-id` and `build` on `main` pushes only, after
-     the gate, `build` calling `build.yml` with the run's ID and commit.
+     the gate, `build` calling `build.yml` with the run's ID and commit,
+     `release-gating` (`release` on `main` pushes only, after `ci`,
+     `build-id`, `build` and `secrets-scan`, calling `release.yml` with
+     the ID and commit, writing contents alone), `release-concurrency`
+     (the group `nightly-release`, never cancelled) and `write-scope` (the
+     workflow's token reads contents only, and no job but `release` names
+     a write scope).
    - On `build.yml`: `build-trigger` (`workflow_call` alone, its three
      inputs required strings), `build-job` (one job on `macos-26`, a leg of
      `ci.yml`'s matrix, stamped from the inputs, checking out `ref`),
      `build-steps` (app-check, dmg, dmg-check in that order and
      unconditional, then the upload, which fails with no `.dmg`) and
      `build-cache` (no save, and `ci.yml`'s Lake and elan keys).
+   - On `release.yml`: `release-trigger` (`workflow_call` alone, its three
+     inputs required strings), `release-job` (one job, `publish`, on
+     `macos-26`, top-level permissions `{}` and the job's exactly
+     `contents: write`, stamped from the inputs, one checkout of `ref`,
+     every checkout without persisted credentials), `release-steps` (the
+     download of `Leanmacs-dmg`, then `mise run nightly`, and last, once,
+     the publish command; no `if:`; no step running `gh release`, `gh
+     api`, `git push` or `git tag`), `release-token` (exactly one step has
+     a token in its env, the one running the publish command; none in the
+     job's or workflow's env; no other value names `github.token` or
+     `secrets.`) and `release-cache` (no rust-cache or `actions/cache`
+     step).
 
    Each failure names its rule; the script's header lists them.
 4. `tools/workflow-lint-probe.sh`: zizmor must reject
    `tests/workflow-lint/tag-pinned.yml`, a tag-pinned action, with
-   `unpinned-uses`; and the check must reject copies of `ci.yml` and
-   `build.yml` (or of a file it reads) broken one rule at a time, every
+   `unpinned-uses`; and the check must reject copies of `ci.yml`,
+   `build.yml` and `release.yml` (or of a file it reads) broken one rule
+   at a time, every
    rule at least once, naming that rule and no other, and pass the
    unbroken copies. A new rule in the check needs its mutation in the
    probe, and a new workflow file its rules in the check. A config or a

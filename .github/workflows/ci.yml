@@ -8,7 +8,9 @@ on:
     branches: ["**"]
   pull_request:
 
-# The token reads the checkout and nothing more; no job here writes.
+# The token reads the checkout and nothing more. Only `release` writes,
+# with the one scope it names (contents: write, for the nightly's assets
+# and tag).
 permissions:
   contents: read
 
@@ -16,9 +18,9 @@ permissions:
 # one pending run per group and cancels an older pending one when a newer
 # one queues, so a newer push supersedes an older push's pending run.
 # Branches and pull requests also cancel the older run in progress. On main
-# a running run is never cancelled: the release jobs later phases add to
-# main's runs must never be cut off halfway, so a burst of pushes queues one
-# run behind the running one.
+# a running run is never cancelled: the build and release jobs must never
+# be cut off halfway, so a burst of pushes queues one run behind the
+# running one. `release` also has a group of its own, below.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -156,7 +158,9 @@ jobs:
   # `mise run app-check`, the .dmg packed and checked, and uploaded as a
   # workflow artifact. Main pushes only, after both legs of the gate, so
   # only a commit the gate passed is packed. `concurrency` never cancels a
-  # main run in progress, so a build is never cut off halfway.
+  # main run in progress, so a build is never cut off halfway. It does not
+  # wait for `secrets-scan`: the .dmg holds no history, and `release`,
+  # which publishes it, does wait.
   build:
     needs: [ci, build-id]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -167,6 +171,29 @@ jobs:
     # `./` is the documented form, and names this repository's file at the
     # commit being run, as `$/` would.
     uses: ./.github/workflows/build.yml # zizmor: ignore[self-repository]
+    with:
+      build-id: ${{ needs.build-id.outputs.id }}
+      commit: ${{ github.sha }}
+      ref: ${{ github.sha }}
+
+  # The rolling nightly (.github/workflows/release.yml): the prerelease
+  # tagged `nightly` gets the build's .dmg, its build-ID copy, its checksum
+  # and build.json, and the tag moves to this commit. Main pushes only,
+  # after both legs of the gate, the build and the secret scan, so a branch
+  # or a pull request publishes nothing and moves no tag. The one job in
+  # the workflow that writes. Its own concurrency group, never cancelled in
+  # progress, keeps two nightlies from publishing at once even across runs.
+  release:
+    needs: [ci, build-id, build, secrets-scan]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: write
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: false
+    # As for `build`: `./` is the documented form the pinned actionlint
+    # takes.
+    uses: ./.github/workflows/release.yml # zizmor: ignore[self-repository]
     with:
       build-id: ${{ needs.build-id.outputs.id }}
       commit: ${{ github.sha }}

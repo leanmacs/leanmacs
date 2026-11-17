@@ -653,6 +653,33 @@ run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -
 description = "Opt-in, never part of ci; macOS only: mount dist/Leanmacs-<build-id>.dmg and check its root, its files, the app's signature, Info.plist and `editor --version` (crates/editor-release-std/tests/dmg_mount.rs)"
 run = 'id=$(cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- build-id) && dmg="$PWD/dist/Leanmacs-$id.dmg" && { [ -f "$dmg" ] || { echo "dmg-check: no $dmg: run \`mise run dmg\`" >&2; exit 1; }; } && LEANMACS_DMG="$dmg" cargo test --locked -p editor-release-std --test dmg_mount -- --ignored --nocapture'
 
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl:
+# it mounts a disk image. CI's release job runs it on main
+# (.github/workflows/release.yml), as its "Prepare the nightly" step. It
+# does not depend on `dmg`, so CI packs once; run `mise run dmg` first.
+#
+# `leanmacs-release nightly` (crates/editor-release, `nightly`) takes
+# dist/Leanmacs-<build-id>.dmg, mounts it at target/nightly-mount and checks
+# that the app's CFBundleVersion and LeanmacsCommit are this build's ID and
+# commit, then writes the nightly's assets to target/nightly:
+# Leanmacs-<build-id>.dmg, Leanmacs.dmg, Leanmacs.dmg.sha256 and build.json,
+# with the release notes in notes.md. It holds no token and talks to no
+# server; `leanmacs-release publish target/nightly` uploads them, in CI only.
+[tasks.nightly]
+description = "Opt-in, never part of ci; macOS only: check dist/Leanmacs-<build-id>.dmg's stamp and prepare the nightly's assets in target/nightly, with no token (crates/editor-release, `nightly`)"
+run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- nightly dist target/nightly"
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl:
+# it mounts a disk image. The ignored test
+# crates/editor-release-std/tests/nightly_mount.rs packs a tiny stamped app
+# into an image in a temporary directory and runs the nightly's prepare on
+# it through the real process adapter: the five files, `shasum -a 256 -c`,
+# the build read back, a wrong commit refused, and the image detached every
+# time.
+[tasks.nightly-check]
+description = "Opt-in, never part of ci; macOS only: prepare a nightly from a tiny stamped image in a temporary directory, with real hdiutil, plutil and shasum (crates/editor-release-std/tests/nightly_mount.rs)"
+run = "cargo test --locked -p editor-release-std --test nightly_mount -- --ignored --nocapture"
+
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: it writes outside the checkout. After `app-check`,
 # tools/install-app.sh replaces /Applications/Leanmacs.app with the built

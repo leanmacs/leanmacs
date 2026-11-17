@@ -111,6 +111,20 @@ impl BuildId {
         format!("{}-{}-{}", &s[0..4], &s[4..6], &s[6..8])
     }
 
+    /// The ID's time, as ISO 8601 in UTC: `YYYY-MM-DDTHH:MM:SSZ`. It is the
+    /// commit's time, not the time of the run that built it.
+    #[must_use]
+    pub fn timestamp(&self) -> String {
+        let s = &self.0;
+        format!(
+            "{}T{}:{}:{}Z",
+            self.date(),
+            &s[8..10],
+            &s[10..12],
+            &s[12..14]
+        )
+    }
+
     /// The 14 digits.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -505,6 +519,12 @@ mod tests {
     fn date_is_the_iso_day() {
         let id = BuildId::parse("20010203040506").expect("an ID");
         assert_eq!(id.date(), "2001-02-03");
+    }
+
+    #[test]
+    fn timestamp_is_the_iso_utc_time() {
+        let id = BuildId::parse("20010203040506").expect("an ID");
+        assert_eq!(id.timestamp(), "2001-02-03T04:05:06Z");
     }
 
     #[test]

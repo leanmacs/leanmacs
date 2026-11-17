@@ -1,0 +1,87 @@
+name: Release
+
+# The rolling nightly (docs/dev-practices/ci.md, "`release`: the nightly"):
+# the prerelease tagged `nightly`, holding the run's .dmg as Leanmacs.dmg
+# and as Leanmacs-<build-id>.dmg, Leanmacs.dmg.sha256 and build.json, with
+# the tag moved to the run's commit. ci.yml calls it from main pushes only,
+# after both legs of the gate, the build and the secret scan, in a
+# concurrency group that is never cancelled; nothing else does.
+on:
+  workflow_call:
+    inputs:
+      build-id:
+        description: "The run's build ID, YYYYMMDDHHMMSS (UTC): ci.yml's build-id job's output"
+        required: true
+        type: string
+      commit:
+        description: "The commit the app was stamped with and the tag moves to, 40 lowercase hex digits: the run's github.sha"
+        required: true
+        type: string
+      ref:
+        description: "The commit to check out and build the release tool from: the run's github.sha"
+        required: true
+        type: string
+
+# Nothing at the top: the one job names the one scope it needs.
+permissions: {}
+
+jobs:
+  publish:
+    # macOS, to mount the .dmg and read the published app's Info.plist with
+    # hdiutil and plutil, the tools dmg-check trusts. A leg of ci.yml's
+    # matrix.
+    runs-on: macos-26
+    timeout-minutes: 30
+    # The release's assets and the tag. Only the last step holds the token.
+    permissions:
+      contents: write
+    env:
+      # As in ci.yml: mise installs only what the mise-action step names.
+      MISE_AUTO_INSTALL: "false"
+      # The build the .dmg must be, which `leanmacs-release` checks against
+      # the app's stamp and writes into build.json. Inputs reach a step
+      # only through env:, never inside run: (zizmor's template-injection).
+      LEANMACS_BUILD_ID: ${{ inputs.build-id }}
+      LEANMACS_COMMIT: ${{ inputs.commit }}
+    steps:
+      # The commit the gate passed on. Don't leave the job's token in
+      # .git/config: the tag moves through the API, never by git push.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      # Rust alone: the release tool is crates/editor-release-std's binary,
+      # which has no third-party dependency and is built from source here.
+      # mise-action's tool cache is saved from main only, by main's own
+      # trusted runs, and holds only the pinned toolchain. No other cache.
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.11.2
+          install: true
+          install_args: rust
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+      # The .dmg the build job packed and checked, into dist/.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Leanmacs-dmg
+          path: dist
+      # Builds the release tool and prepares target/nightly with no token:
+      # mounts the .dmg, checks that the app's CFBundleVersion and
+      # LeanmacsCommit are the run's build ID and commit and that the file
+      # name names that build, then writes the two images, the checksum,
+      # build.json and the notes (crates/editor-release, `nightly`). A
+      # mismatch fails here, before anything is uploaded.
+      - name: Prepare the nightly
+        run: mise run nightly
+        shell: bash
+      # The one step with the token, and the last. It runs the binary the
+      # step above built and compiles nothing. It refuses anything but a
+      # push to main, re-checks the images' SHA-256, uploads the build-ID
+      # copy, Leanmacs.dmg, the checksum and build.json last, moves the tag
+      # through the API, sets the notes, and prunes old build-ID copies,
+      # stopping at the first failure.
+      - name: Publish the nightly
+        run: target/debug/leanmacs-release publish target/nightly
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
