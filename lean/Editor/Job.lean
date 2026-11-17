@@ -72,7 +72,8 @@ job"). It is not the interrupt port `Editor/Watch.lean`.
 A job reaches a line diff through one request, `diff`, which carries a
 `DiffRequest` (`Editor/Diff.lean`): `Diff.lines` diffs two snapshots, named
 as a save names its source, and replies with an edit script or a refusal,
-an `Except DiffError`. It waits, as a load does: the library's diff service
+an `Except DiffError`; `Diff.hunks` replies with the hunks of whole lines
+instead. It waits, as a load does: the library's diff service
 works it on a thread of its own, so a long diff holds neither the editor
 thread nor a load. A command applies the script (`TextId.applyScript`).
 
@@ -477,6 +478,13 @@ editor's thread, and only the script comes back. `Editor/Diff.lean` has the
 rules. -/
 def Diff.lines (old new : File.Source) (limit : Nat) : JobM (Except DiffError Diff.Script) :=
   ExceptT.lift (Program.request (port := jobPort) (.diff (.lines old new limit)))
+
+/-- The hunks of whole lines that turn what `old` holds into what `new` holds,
+with the engine asked about at most `limit` lines a side, and waits for them,
+or for why they were refused. Worked off the editor's thread, as `Diff.lines`
+is. `Editor/Diff.lean` has the rules. -/
+def Diff.hunks (old new : File.Source) (limit : Nat) : JobM (Except DiffError Diff.Hunks) :=
+  ExceptT.lift (Program.request (port := jobPort) (.diff (.hunks old new limit)))
 
 namespace Job
 

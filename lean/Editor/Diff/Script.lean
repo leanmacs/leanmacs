@@ -19,6 +19,12 @@ becomes a Lean string on the way (`Editor/File.lean`).
 
 `Diff.Script.run` says what applying a script gives: the model of the diff
 (`Editor/Diff/Model.lean`), the text port's model and both contracts use it.
+
+A diff may answer **hunks** instead (`Diff.Hunk`): runs of whole lines of the
+old text replaced by runs of whole lines of the new, as byte ranges of both,
+each from a line's start to the next line's start or its text's end. An empty
+old range is lines added, an empty new range lines removed, and the rest lines
+changed (`Diff.Hunk.kind`). `Diff.Hunks.apply` says what applying them gives.
 -/
 
 namespace Editor
@@ -98,6 +104,75 @@ def Script.changedRuns (script : Script) : Nat :=
         | .retain _ => (runs, false)
         | _ => (if inRun then runs else runs + 1, true))
       (0, false)).1
+
+/-- A run of whole lines of the old text replaced by a run of whole lines of
+the new, as byte ranges, each from a start up to, not including, a stop.
+Either may be empty, never both. -/
+structure Hunk where
+  /-- Where the old lines start. -/
+  oldStart : Nat
+  /-- Where they stop. -/
+  oldStop : Nat
+  /-- Where the new lines start. -/
+  newStart : Nat
+  /-- Where they stop. -/
+  newStop : Nat
+  deriving DecidableEq, Repr, Inhabited
+
+/-- What a hunk does to the old text's lines. -/
+inductive Hunk.Kind where
+  /-- Lines put in: the old range is empty. -/
+  | added
+  /-- Lines taken out: the new range is empty. -/
+  | removed
+  /-- Lines replaced. -/
+  | changed
+  deriving DecidableEq, Repr, Inhabited
+
+/-- What `hunk` does: an empty old range is `added`, an empty new range
+`removed`, and the rest `changed`. -/
+def Hunk.kind (hunk : Hunk) : Hunk.Kind :=
+  if hunk.oldStart == hunk.oldStop then .added
+  else if hunk.newStart == hunk.newStop then .removed else .changed
+
+/-- Hunks, in the order of both texts. -/
+abbrev Hunks :=
+  Array Hunk
+
+/-- Whether `offset` of `bytes` is a line's start or their end: 0, their size,
+or just after a line feed. -/
+def onLine (bytes : ByteArray) (offset : Nat) : Bool :=
+  offset == 0 || offset == bytes.size || (offset < bytes.size && bytes.get! (offset - 1) == 10)
+
+/-- What applying `hunks` to `old` gives, taking what each puts in from `new`:
+`none` when a hunk is out of order or out of range, a range does not start and
+stop at a line's start or its text's end, or the walks of the two texts
+between hunks, or after the last, are not as long. -/
+def Hunks.apply (old new : String) (hunks : Hunks) : Option String := do
+  let (oldBytes, newBytes) := (old.toUTF8, new.toUTF8)
+  let mut (atOld, atNew) := (0, 0)
+  let mut out := ByteArray.empty
+  for hunk in hunks do
+    unless
+      atOld ≤ hunk.oldStart ∧
+        hunk.oldStart ≤ hunk.oldStop ∧
+        hunk.oldStop ≤ oldBytes.size ∧
+        atNew ≤ hunk.newStart ∧
+        hunk.newStart ≤ hunk.newStop ∧
+        hunk.newStop ≤ newBytes.size ∧ hunk.oldStart - atOld == hunk.newStart - atNew do
+      none
+    unless
+      onLine oldBytes hunk.oldStart && onLine oldBytes hunk.oldStop &&
+        onLine newBytes hunk.newStart &&
+        onLine newBytes hunk.newStop do
+      none
+    out :=
+      out ++ oldBytes.extract atOld hunk.oldStart ++ newBytes.extract hunk.newStart hunk.newStop
+    atOld := hunk.oldStop
+    atNew := hunk.newStop
+  unless oldBytes.size - atOld == newBytes.size - atNew ∧ atOld ≤ oldBytes.size do
+    none
+  String.fromUTF8? (out ++ oldBytes.extract atOld oldBytes.size)
 
 end Diff
 

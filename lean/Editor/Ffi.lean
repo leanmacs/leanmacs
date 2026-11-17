@@ -955,6 +955,20 @@ inductive ScriptStep where
   | insert (start count : UInt64)
   deriving DecidableEq, Repr
 
+/-- A hunk of a diff's answer, as the library gives it back
+(`crates/editor-ffi/src/diffs.rs`, "How hunks cross"): byte ranges of whole
+lines of the old text and the new. -/
+structure HunkWords where
+  /-- Where the old lines start. -/
+  oldStart : UInt64
+  /-- Where they stop. -/
+  oldStop : UInt64
+  /-- Where the new lines start. -/
+  newStart : UInt64
+  /-- Where they stop. -/
+  newStop : UInt64
+  deriving DecidableEq, Repr
+
 /-- Why the library refused an edit script. -/
 inductive ScriptRefusal where
   /-- The text has moved past the revision the script was made for. -/
@@ -2108,6 +2122,38 @@ def diffsTake (id : UInt64) : IO (Option (Array ScriptStep)) := do
     return some script
   | .error reason =>
     throw (IO.userError s!"the library's edit script could not be read: {reason}")
+
+/-- As `diffsStart`, for the hunks of whole lines of the two texts in place of
+a script, which are taken with `diffsTakeHunks`. -/
+@[extern "editor_glue_diffs_start_hunks"]
+opaque diffsStartHunks (id : UInt64) (old new : @& Snapshot) (limit : UInt64) : IO Bool
+
+/-- `diffsTakeHunks` before its words are decoded. -/
+@[extern "editor_glue_diffs_take_hunks"]
+private opaque diffsTakeHunksRaw (id : UInt64) : IO (Option ByteArray)
+
+/-- The hunks `bytes` spell: the count of hunks, then four numbers for each
+(`crates/editor-ffi/src/diffs.rs`, "How hunks cross"). An error, with what was
+wrong, for words that spell none. -/
+def HunkWords.decode (bytes : ByteArray) : Except String (Array HunkWords) := do
+  let some words := wordsOf? bytes | throw "its words are not whole words"
+  let some count := words[0]? | throw "it has no count"
+  unless words.size == 1 + 4 * count.toNat do
+    throw s!"{count} hunks are not {words.size - 1} words"
+  return (Array.range count.toNat).map fun index =>
+      { oldStart := words[1 + 4 * index]!, oldStop := words[2 + 4 * index]!
+        newStart := words[3 + 4 * index]!, newStop := words[4 + 4 * index]! }
+
+/-- Hands over the hunks of the diff request `id`, once. `none` when the
+service keeps no hunks for `id`, a script among them. It throws if the library
+sends words these bindings cannot read. -/
+def diffsTakeHunks (id : UInt64) : IO (Option (Array HunkWords)) := do
+  let some bytes ← diffsTakeHunksRaw id | return none
+  match HunkWords.decode bytes with
+  | .ok hunks =>
+    return some hunks
+  | .error reason =>
+    throw (IO.userError s!"the library's hunks could not be read: {reason}")
 
 /-- Cancels the diff request `id`, and returns whether there was anything to
 cancel. Safe for an id that is unknown. -/

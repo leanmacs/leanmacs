@@ -27,6 +27,8 @@ It has the library's core (`crates/editor-diff`) by its own route:
   suffix from what the prefix left. A byte that continues a character is no
   boundary, so a character that differs only in its trailing bytes is
   replaced whole, and an escape, one character of four bytes, is one unit.
+- **Hunks** (`DiffModel.hunks`) are the same line hunks, untrimmed, as byte
+  ranges of whole lines of both texts, with none empty on both sides.
 - **The steps**: a retain between two hunks, and a delete then an insert for
   each hunk; no step of length 0, no two retains side by side, and hunks
   that touch made one delete and one insert. Equal texts give one retain.
@@ -185,12 +187,11 @@ def finish (builder : Builder) (size : Nat) : Diff.Script :=
 
 end Builder
 
-/-- The edit script that turns `old` into `new`, with the middle diffed when
-each side of it is at most `limit` lines. The module docs have the rules. -/
-def script (old new : String) (limit : Nat) : Diff.Script :=
-  let (oldBytes, newBytes) := (old.toUTF8, new.toUTF8)
-  let (oldLines, newLines) := (lines oldBytes, lines newBytes)
-  let (oldStarts, newStarts) := (lineStarts oldBytes, lineStarts newBytes)
+/-- The line hunks of `oldLines` and `newLines`: the common head and tail
+stripped, and the middle's LCS hunks when each side of it is at most `limit`
+lines, or the middle as one hunk otherwise. The rules `script` and `hunks`
+share, written once. -/
+def lineHunks (oldLines newLines : Array ByteArray) (limit : Nat) : Array Hunk :=
   let shorter := min oldLines.size newLines.size
   let head :=
     ((List.range shorter).takeWhile fun index => oldLines[index]! == newLines[index]!).length
@@ -198,14 +199,20 @@ def script (old new : String) (limit : Nat) : Diff.Script :=
     ((List.range (shorter - head)).takeWhile fun back =>
         oldLines[oldLines.size - 1 - back]! == newLines[newLines.size - 1 - back]!).length
   let (oldStop, newStop) := (oldLines.size - tail, newLines.size - tail)
-  let hunks : Array Hunk :=
-    if head == oldStop ∧ head == newStop then #[]
-    else
-      if oldStop - head ≤ limit ∧ newStop - head ≤ limit then
-        (lcsHunks (oldLines.extract head oldStop) (newLines.extract head newStop)).map fun hunk =>
-          { oldStart := hunk.oldStart + head, oldStop := hunk.oldStop + head
-            newStart := hunk.newStart + head, newStop := hunk.newStop + head }
-      else #[{ oldStart := head, oldStop, newStart := head, newStop }]
+  if head == oldStop ∧ head == newStop then #[]
+  else
+    if oldStop - head ≤ limit ∧ newStop - head ≤ limit then
+      (lcsHunks (oldLines.extract head oldStop) (newLines.extract head newStop)).map fun hunk =>
+        { oldStart := hunk.oldStart + head, oldStop := hunk.oldStop + head
+          newStart := hunk.newStart + head, newStop := hunk.newStop + head }
+    else #[{ oldStart := head, oldStop, newStart := head, newStop }]
+
+/-- The edit script that turns `old` into `new`, with the middle diffed when
+each side of it is at most `limit` lines. The module docs have the rules. -/
+def script (old new : String) (limit : Nat) : Diff.Script :=
+  let (oldBytes, newBytes) := (old.toUTF8, new.toUTF8)
+  let (oldStarts, newStarts) := (lineStarts oldBytes, lineStarts newBytes)
+  let hunks := lineHunks (lines oldBytes) (lines newBytes) limit
   let (builder, reached) :=
     hunks.foldl
       (fun (builder, reached) hunk =>
@@ -219,6 +226,19 @@ def script (old new : String) (limit : Nat) : Diff.Script :=
             removed.2))
       (({} : Builder), 0)
   (builder.retain (oldBytes.size - reached)).finish oldBytes.size
+
+/-- The hunks that turn `old` into `new`, as byte ranges of whole lines in
+both: the line hunks `script` trims, untrimmed, and none empty on both sides.
+Equal texts have none. -/
+def hunks (old new : String) (limit : Nat) : Diff.Hunks :=
+  let (oldBytes, newBytes) := (old.toUTF8, new.toUTF8)
+  let (oldStarts, newStarts) := (lineStarts oldBytes, lineStarts newBytes)
+  (lineHunks (lines oldBytes) (lines newBytes) limit).filterMap fun hunk =>
+    if hunk.oldStart == hunk.oldStop ∧ hunk.newStart == hunk.newStop then none
+    else
+      some
+        { oldStart := oldStarts[hunk.oldStart]!, oldStop := oldStarts[hunk.oldStop]!
+          newStart := newStarts[hunk.newStart]!, newStop := newStarts[hunk.newStop]! }
 
 end DiffModel
 

@@ -383,6 +383,11 @@ def stepOf : Ffi.ScriptStep → Diff.Step
   | .delete count => .delete count.toNat
   | .insert start count => .insert start.toNat count.toNat
 
+/-- The port's form of a hunk of the library's answer. -/
+def hunkOf (hunk : Ffi.HunkWords) : Diff.Hunk :=
+  { oldStart := hunk.oldStart.toNat, oldStop := hunk.oldStop.toNat
+    newStart := hunk.newStart.toNat, newStop := hunk.newStop.toNat }
+
 /-- The diff port answered by the library's diff service. A source is found as
 a save's is: in `held` for one the job loaded, and through the read half of
 the text store's table (`published`) for one a command took, as the table is
@@ -394,36 +399,26 @@ the largest. -/
 def realDiffs (completions : Completions) (published : SnapshotReader) (held : HeldSnapshots)
     (refused : RefusedDiffs) : Diffs :=
   { start := fun id request => do
+      let find (source : File.Source) : BaseIO (Option Ffi.Snapshot) :=
+        match source with
+        | .snapshot taken => published.find? taken
+        | .held loaded => held.find? loaded
+      let (old, new) := request.sources
+      match ← find old, ← find new with
+      | some old, some new =>
+        let start :=
+          match request with
+          | .lines _ _ limit => Ffi.diffsStart id old new (word limit)
+          | .hunks _ _ limit => Ffi.diffsStartHunks id old new (word limit)
+        let started ← start.catchExceptions fun _ => pure false
+        unless started do
+          refuse id (.failed "the diff service did not take the request")
+      | _, _ =>
+        refuse id .noSuchSnapshot
+    take := fun id request =>
       match request with
-      | .lines old new limit =>
-        let find (source : File.Source) : BaseIO (Option Ffi.Snapshot) :=
-          match source with
-          | .snapshot taken => published.find? taken
-          | .held loaded => held.find? loaded
-        match ← find old, ← find new with
-        | some old, some new =>
-          let started ← (Ffi.diffsStart id old new (word limit)).catchExceptions fun _ => pure false
-          unless started do
-            refuse id (.failed "the diff service did not take the request")
-        | _, _ =>
-          refuse id .noSuchSnapshot
-    take := fun id request => do
-      match request with
-      | .lines .. =>
-        let refusal? ← refused.refused.modifyGet fun table => (table[id]?, table.erase id)
-        if let some refusal := refusal? then
-          return .error refusal
-        let script? ←
-          (return .ok (← Ffi.diffsTake id) :
-                  IO (Except String (Option (Array Ffi.ScriptStep)))).catchExceptions
-              fun error => pure (.error (toString error))
-        match script? with
-        | .ok (some script) =>
-          return .ok (script.map stepOf)
-        | .ok none =>
-          return .error (.failed "the diff service kept no script for the request")
-        | .error detail =>
-          return .error (.failed detail)
+      | .lines .. => takeScript id
+      | .hunks .. => takeHunks id
     cancel := fun id => do
       refused.refused.modify (·.erase id)
       (discard <| Ffi.diffsCancel id : IO Unit).catchExceptions fun _ => pure () }
@@ -433,6 +428,39 @@ where
   refuse (id : UInt64) (refusal : DiffError) : BaseIO Unit := do
     refused.refused.modify (·.insert id refusal)
     completions.finish id .completed
+  /-- The refusal kept for the wait `id`, taken out of the table. -/
+  refusalOf (id : UInt64) : BaseIO (Option DiffError) :=
+    refused.refused.modifyGet fun table => (table[id]?, table.erase id)
+  /-- The script of the wait `id`, or why there is none. -/
+  takeScript (id : UInt64) : BaseIO (Except DiffError Diff.Script) := do
+    if let some refusal← refusalOf id then
+      return .error refusal
+    let script? ←
+      (return .ok (← Ffi.diffsTake id) :
+              IO (Except String (Option (Array Ffi.ScriptStep)))).catchExceptions
+          fun error => pure (.error (toString error))
+    match script? with
+    | .ok (some script) =>
+      return .ok (script.map stepOf)
+    | .ok none =>
+      return .error (.failed "the diff service kept no script for the request")
+    | .error detail =>
+      return .error (.failed detail)
+  /-- The hunks of the wait `id`, or why there are none. -/
+  takeHunks (id : UInt64) : BaseIO (Except DiffError Diff.Hunks) := do
+    if let some refusal← refusalOf id then
+      return .error refusal
+    let hunks? ←
+      (return .ok (← Ffi.diffsTakeHunks id) :
+              IO (Except String (Option (Array Ffi.HunkWords)))).catchExceptions
+          fun error => pure (.error (toString error))
+    match hunks? with
+    | .ok (some hunks) =>
+      return .ok (hunks.map hunkOf)
+    | .ok none =>
+      return .error (.failed "the diff service kept no hunks for the request")
+    | .error detail =>
+      return .error (.failed detail)
 
 /-- The refusals of the process runs that never reached the library, which
 the process service's adapter completed itself, by the id of their wait,
