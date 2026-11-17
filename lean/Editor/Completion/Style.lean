@@ -1,4 +1,5 @@
 import Editor.Completion.Candidate
+import Editor.Config.Owner
 import Editor.Fuzzy
 
 /-!
@@ -25,8 +26,12 @@ editor's: it may ask the matcher and nothing else. So it cannot read the
 editor state, cannot be refused (the fuzzy port has no error) and cannot be
 interrupted. That is why the loop may run config's style inside the
 publish, as it runs config's mode-line segments, without the questions of
-refusal and interruption a source raises; and why a later phase can run it
-on a worker against the real matcher alone.
+refusal and interruption a source raises; and why it runs on a pool thread,
+in a match job, against the real matcher alone, for a list longer than the
+inline limit (`Loop.inlineMatches`, `Editor/Loop.lean`, "Prompts"). There
+it cannot outlive its config: the match job is spawned under the owner of
+the style (`Matching.ownerFor`), so an install that cancels config's jobs
+cancels a match of config's style.
 
 ## Choosing one
 
@@ -35,7 +40,8 @@ style and, for a category, the style config chose for it. `styleFor`
 answers a category's style, or the default for a category with none and for
 a prompt with no category. The host builds it from the registry for each
 step (`Config.Registry.matching`), so a reload changes it from the next
-listing; the state holds the prompt's category and never a style.
+listing; the state holds the prompt's category and never a style. It also
+says who registered the style a category gets (`ownerFor`).
 
 ## Where an addition goes
 
@@ -79,6 +85,11 @@ structure Matching where
   default : Style
   /-- The style chosen for a category; `none` for one with none. -/
   byCategory : String → Option Style := fun _ => none
+  /-- Who registered the style `styleFor` answers for a prompt's category:
+  a match job that runs it is that owner's, so an install that removes
+  config's jobs ends a match of config's style (`Editor/Loop.lean`,
+  "Prompts"). Compiled for every category unless the host says. -/
+  ownerFor : Option String → Config.Owner := fun _ => .compiled
 
 /-- The style a prompt of `category` is matched with: the one chosen for
 it, else the default. -/

@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
+import Editor.Completion.Later
 import Editor.Completion.Styles
 import Editor.Config.Owner
 import Editor.Config.Stores
@@ -213,6 +214,12 @@ holds no job table.
 - **On the models** `Loop.Driver` (`Editor/Loop/Driver.lean`) is that host:
   it runs each job a step hands back on the job model and keeps what it
   ended with until a test says the job is finished.
+- **The loop's own work is spawned, not started** (`Loop.Stepped.spawns`,
+  `Loop.Spawn`): work a step made, a prompt's match ("Prompts", below),
+  which no registered name and no plain arguments can carry, with its key,
+  the label its delivery is printed with, and its owner. A host runs the
+  spawns after the step's cancels and starts, each as a job of its owner
+  under its key: a spawn of a key ends the running job of that key first.
 
 Pinned by `ModelTest.driverChecks`.
 
@@ -284,19 +291,62 @@ loop has little of its own to do.
     hands, and never kept in the state: the state holds only the prompt's
     category. So a reload changes it from the next listing, and a listing
     already made stays until the text changes.
-  - **It runs on the editor thread**, inside the publish, as config's
-    mode-line segments do: a style is a program over the fuzzy port alone,
-    so it cannot be refused, read the state or be interrupted.
-  - So the first listing is made by the scene of the asking step, for the
-    initial text, and every event ends in a scene: a command always finds
-    the listing of the text the last scene showed.
+  - **It runs on the editor thread for a short list**, inside the publish,
+    as config's mode-line segments do: a style is a program over the fuzzy
+    port alone, so it cannot be refused, read the state or be interrupted.
+    A short list is one with at most `Loop.Keys.inlineMatches` candidates
+    to match (`Loop.inlineMatches`, 1,000, set by the prompt benchmark).
+  - So the first listing of a short list is made by the scene of the asking
+    step, for the initial text, and every event ends in a scene: a command
+    always finds the listing of the text the last scene showed.
+  - **A long list is matched by a job of the loop's own**, on Lean's task
+    pool (`completionJobs`, `matchWork`): the publish asks no style and only
+    reads the text, and the step hands back a spawn (`Loop.Stepped.spawns`)
+    under `completion-match <view>`, of the owner of the style, whose work
+    makes the listing with the same program a short list's is made with
+    (`Candidates.listing`), asking the matcher through the job port
+    (`JobRequest.fuzzy`), and finishes with the command that lists it
+    (`StateRequest.listMatched`) if it is still the match in flight. So a
+    key never waits on the match, and the listing arrives a moment after the
+    key: while typing fast it can be the listing of an earlier text.
+    - **At most one match is in flight** (`Candidates.matching`): a key or a
+      batch while one runs spawns nothing, and the scene of its delivery
+      spawns the next, for the latest text. So a stream of batches cannot
+      starve the listing, as cancelling and restarting would.
+    - **A match that fails** (its matcher threw) finishes with the command
+      that says `completion-match: ` and why in the echo area
+      (`StateRequest.matchFailed`); the text and revision it failed for are
+      not matched again until one of them changes.
+    - **A match is stamped with the config generation** it was spawned
+      under: an install cancels a match of config's style with config's
+      other jobs, and the first scene after the install, which reconciles
+      too (`Headless.Running.publish`), finds the stamp old and spawns a
+      match with the new config's style.
+  - **The status line shows the first `Loop.shownCandidates`** (10) of the
+    listing (`promptStatus`), as Emacs's vertico and ivy list ten: a
+    listing of 100,000 would otherwise be 100,000 fields built at every key.
+- **Sources that answer later** (`Editor/Completion/Later.lean`) are asked
+  by the loop, after each publish, by the same reconciler
+  (`completionJobs`), pure over the state and the text the publish read
+  (`Loop.typed`): an asking source not yet asked has its registered job
+  started under `completion <view> <source>`; one that depends on the text
+  and was asked with another has its key cancelled and its job started
+  again, at the next generation, after its pause. Their batches come back
+  as posts, taken by `minibuffer-candidates`, and the scene after each
+  lists them: a later source's candidates after those that answered now.
+- **Closing the prompt cancels its jobs**: every key the loop recorded for
+  the prompt (`EditorState.completionKeys`) that the open prompt no longer
+  wants is cancelled at the publish of the step that closed it, accepted or
+  cancelled, its sources' jobs and its match alike.
   - **The typing command knows no prompt.** The listing is made here and
     not by the command that typed because that is the scheme's
     self-insert, and an undo, a put and a committed text change the text
     too.
   - **A text that did not change costs one read and no ranking**, and
-    leaves the listing and the choice as they were. A new listing has no
-    choice: the choice was an index of the old one.
+    leaves the listing and the choice as they were, unless a batch came in
+    since (`Candidates.revision`): the list is then listed again for the
+    same text, the choice kept on its candidate. A listing for a new text
+    has no choice.
   - **A prompt with no candidates costs what it cost before**: nothing is
     read and no style is asked. Nor is one asked when every candidate was
     passed by a filtered source.
@@ -307,8 +357,10 @@ loop has little of its own to do.
   - The listing is editor state, so a command that fails is rolled back
     to the listing and the choice from before it.
 
-Pinned by `ModelTest.promptChecks`, and the listing by
-`ModelTest.candidateChecks`.
+Pinned by `ModelTest.promptChecks`, the listing by
+`ModelTest.candidateChecks`, the reconciler by `completionJobChecks`, and
+sources that answer later and matching off the thread through the loop by
+`laterLoopChecks`; on the headless host by `ConfigTest.promptChecks`.
 
 ## Reload from a command
 
@@ -696,8 +748,8 @@ changed the state or not (`Loop.publish`):
    and no status face; its cursor is the scheme's report's. That is how the
    scene shows the prompt text: the scene's shape is the display
    contract, and it has no field for a prompt. **After the label comes one
-   field for each candidate the prompt has listed**, every one, in the
-   listing's order, in the face `Loop.candidateFace`; the chosen one, if
+   field for each of the first `Loop.shownCandidates` (10) candidates the
+   prompt has listed**, in the listing's order, in the face `Loop.candidateFace`; the chosen one, if
    one is chosen, is in `Loop.chosenFace` instead. So the candidates the
    typed text matches, their order and which is chosen are in the scene as
    data, and with nothing listed the line is the label alone, as for a
@@ -1098,6 +1150,10 @@ structure Loop (scheme : InputScheme) where
   delivery was handed (`Keys.menu`, `keyedBy`), with its key equivalents
   as the registry's bindings then were; `none` until one is. -/
   menu : Option Menu := none
+  /-- The minibuffer's text as the last publish read it, while a prompt
+  with candidates was open; `none` otherwise ("Prompts", in the module
+  docs). The reconciler of the prompt's jobs reads it (`completionJobs`). -/
+  typed : Option String := none
 
 /-- What the loop does after a step. -/
 inductive Loop.Next where
@@ -1120,6 +1176,21 @@ every window's text is inset by from its edges, and the bottom row at least
 handed no padding (`Loop.Keys.padding`) has none. -/
 def Loop.padding : Nat :=
   8
+
+/-- How many candidates a prompt may have to match for the loop to list it
+on the editor thread, in the scene of the step ("Prompts", in the module
+docs): more are matched by a job, off the thread. Set by the prompt
+benchmark (`mise run prompt-bench`, `docs/design/concurrency.md`,
+"Matching off the editor thread, measured"). -/
+def Loop.inlineMatches : Nat :=
+  1000
+
+/-- How many of a prompt's listed candidates the minibuffer's status line
+shows, the first of the listing: ten, what Emacs's vertico
+(`vertico-count`) and ivy (`ivy-height`) list by default
+(`Loop.promptStatus`). -/
+def Loop.shownCandidates : Nat :=
+  10
 
 /-- What a step is handed beside the loop and the event: what the keys are
 looked up in, and what an invocation runs. It is rebuilt by the caller for
@@ -1172,6 +1243,10 @@ structure Loop.Keys (scheme : InputScheme) where
   step and never kept in the state, so a reload changes it from the next
   listing. -/
   matching : Completion.Matching := Completion.Matching.standard
+  /-- How many candidates a prompt may have to match for its listing to be
+  made in the publish, on the editor thread; more are matched by a job of
+  the loop's own ("Prompts", in the module docs). -/
+  inlineMatches : Nat := Loop.inlineMatches
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1324,12 +1399,13 @@ def chosenFace : FaceName :=
   ⟨"minibuffer.chosen"⟩
 
 /-- The fields of the minibuffer's status line for the prompt `asked`: its
-label, in `promptFace`, then one field for each candidate it has listed, in
-the listing's order, in `candidateFace`, but for the chosen one, which is
-in `chosenFace`. With nothing listed it is the label alone. -/
+label, in `promptFace`, then one field for each of the first
+`shownCandidates` candidates it has listed, in the listing's order, in
+`candidateFace`, but for the chosen one, which is in `chosenFace`. With
+nothing listed it is the label alone. -/
 def promptStatus (asked : Prompt) : Array StatusField :=
   #[{ text := asked.label, face := promptFace }] ++
-    asked.candidates.listed.mapIdx fun index candidate =>
+    (asked.candidates.listed.extract 0 shownCandidates).mapIdx fun index candidate =>
       { text := candidate.text
         face := if asked.candidates.chosen == some index then chosenFace else candidateFace }
 
@@ -1498,34 +1574,60 @@ otherwise ("Quit", in the module docs). -/
 def nextOf (loop : Loop scheme) : Next :=
   if loop.state.leaves then .stop else .continue
 
+/-- The listing of `candidates` for `pattern` with `style`, as a program
+over the fuzzy port: the candidates to match (`Candidates.matchable`) that
+the style answers, in its order, each with the ranges that matched, then
+those listed as given (`Candidates.passing`). No style is asked when there
+is nothing to match. It is the one way a listing is made ("Prompts", in the
+module docs): in the publish for a short list, and in a match job, on a
+pool thread, for a long one, so the editor thread never maps the
+candidates of a long list. -/
+def _root_.Editor.Candidates.listing (candidates : Candidates) (pattern : String)
+    (style : Completion.Style) : FuzzyM (Array Completion.Listed) := do
+  let matchable := candidates.matchable
+  let hits ← if matchable.isEmpty then pure #[] else style.hits pattern (matchable.map (·.text))
+  let matched := hits.filterMap fun hit => (matchable[hit.index]?).map (.of · hit.ranges)
+  return matched ++ candidates.passing.map Completion.Listed.of
+
 /-- `state` with the open prompt's listing brought up to date ("Prompts", in
-the module docs): while a prompt is open and has candidates, the
-minibuffer's text is read, and when it is not the text the listing is for,
-the style `matching` chooses for the prompt's category is asked and the
-state keeps the candidates it answers, in its order, with their ranges,
-then the passed ones, with nothing chosen. No style is asked when every
-candidate was passed. A state with no prompt, or a prompt with no
-candidates, is as it was, and nothing is asked. It is not refused: a
-refusal of the read is handed back, with the state as it was. -/
-def listed (state : EditorState) (matching : Completion.Matching := .standard) :
-    EditorM (EditorState × Option TextError) := do
-  let some asked := state.prompt | return (state, none)
+the module docs), and the minibuffer's text it read: while a prompt is open
+and has candidates, given, passed or to come from a source that answers
+later, the minibuffer's text is read. When the listing is not for that text
+or not at the candidates' revision, a prompt with at most `inlineMatches`
+candidates to match is listed here (`Candidates.listing`, with the style
+`matching` chooses for the prompt's category, and `Candidates.relist`,
+which keeps the choice on its candidate while the text is the same); one
+with more is listed by a match job (`completionJobs`), and here only
+forgets its choice when the text changed. A state with no prompt, or a
+prompt with no candidates, is as it was, and nothing is read or asked. It
+is not refused: a refusal of the read is handed back, with the state as it
+was. -/
+def listed (state : EditorState) (matching : Completion.Matching := .standard)
+    (inlineMatches : Nat := Loop.inlineMatches) :
+    EditorM (EditorState × Option String × Option TextError) := do
+  let some asked := state.prompt | return (state, none, none)
   let candidates := asked.candidates
-  if candidates.all.isEmpty && candidates.passed.isEmpty then
-    return (state, none)
-  let some minibuffer := state.target? asked.view | return (state, none)
+  if candidates.all.isEmpty && candidates.passed.isEmpty && candidates.asking.isEmpty then
+    return (state, none, none)
+  let some minibuffer := state.target? asked.view | return (state, none, none)
   match ← (observing minibuffer.buffer.text.read : TextM (Except TextError String)) with
   | .error error =>
-    return (state, some error)
+    return (state, none, some error)
   | .ok pattern =>
+    if candidates.listedFor == some pattern && candidates.listedAt == candidates.revision then
+      return (state, some pattern, none)
+    if candidates.matchableSize ≤ inlineMatches then
+      let listing ← candidates.listing pattern (matching.styleFor candidates.category)
+      -- A match job that was running is overtaken by this listing.
+      return (state.replaceCandidates
+            { candidates.relist pattern candidates.revision listing with
+              matching := none },
+          some pattern, none)
+    -- A long list is matched by a job: the choice was made in a listing for
+    -- another text, and is forgotten.
     if candidates.listedFor == some pattern then
-      return (state, none)
-    let hits ←
-      if candidates.all.isEmpty then
-        pure #[]
-      else
-        (matching.styleFor candidates.category).hits pattern (candidates.all.map (·.text))
-    return ((state.listCandidates pattern hits).2, none)
+      return (state, some pattern, none)
+    return (state.replaceCandidates { candidates with chosen := none }, some pattern, none)
 
 /-- Has `view`, a view of the scene about to be published, follow its cursor
 ("Following the cursor", in the module docs): where the row of the cursor,
@@ -1720,7 +1822,8 @@ text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
 def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0)
     (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none)
-    (matching : Completion.Matching := .standard) : EditorM (Loop scheme) := do
+    (matching : Completion.Matching := .standard) (inlineMatches : Nat := Loop.inlineMatches) :
+    EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
@@ -1729,7 +1832,7 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let (state, keepRunning) := state.answerSystemQuit
   if keepRunning then
     Display.askFrame .keepRunning
-  let (state, unlisted) ← listed state matching
+  let (state, typed, unlisted) ← listed state matching inlineMatches
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
   -- The padding the views are laid out with is the one handed in, and so
@@ -1794,7 +1897,7 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
       gaveUp before placed
   return { loop with
       state := state.refusedBy (unreleased <|> ungiven), shown := named
-      input := forgetViews closed loop.input, atRest := forgetViews closed loop.atRest }
+      input := forgetViews closed loop.input, atRest := forgetViews closed loop.atRest, typed }
 
 /-- Replaces what each range of `target`'s selection covers with `text`, as
 one transaction with the user's origin, which carries the selection before
@@ -2285,6 +2388,139 @@ def fileJobs (loop : Loop scheme) (keys : Keys scheme) :
       seen := seenOf loop.state, state },
     checks ++ follows, cancels)
 
+/-- The key the job of the source `source` of the prompt in `view` runs
+under ("Prompts", in the module docs). -/
+def sourceKey (view : ViewId) (source : String) : String :=
+  s!"completion {view.index} {source}"
+
+/-- The key the match job of the prompt in `view` runs under. -/
+def matchKey (view : ViewId) : String :=
+  s!"completion-match {view.index}"
+
+/-- What a match job's delivery is labelled with, `job <id> completion-match`,
+and what it says before why it could not list. -/
+def matchLabel : String :=
+  "completion-match"
+
+/-- The work of a match job: the listing of `candidates` for `pattern` with
+`style` (`Candidates.listing`), made on the job's thread over the job
+port's matcher (`Job.embedFuzzy`), finishing with the command that lists it
+in the prompt open in `view`, if it is still the match in flight
+(`StateRequest.listMatched`). A matcher that fails finishes it with the
+command that says so (`StateRequest.matchFailed`): a match job that is not
+cancelled always delivers, and its delivery always ends the match in
+flight. -/
+def matchWork (view : ViewId) (candidates : Candidates) (pattern : String) (revision : Nat)
+    (style : Completion.Style) : Work := fun _ => do
+  let listed : Except String (Array Completion.Listed) ←
+    try
+      pure (.ok (← Job.embedFuzzy (candidates.listing pattern style)))
+    catch message =>
+      pure (.error message)
+  match listed with
+  | .ok listed =>
+    return EditorState.ask (.listMatched view pattern revision listed)
+  | .error message =>
+    return EditorState.ask (.matchFailed view pattern revision message)
+
+/-- The reconciler of the open prompt's jobs ("Prompts", in the module
+docs), pure over `loop.state` and the text the last publish read
+(`Loop.typed`): the loop with what the prompt holds of its jobs brought up
+to date, the source jobs to start, the keys to cancel, and the match to
+spawn.
+
+- **Each asking source** whose job is registered is asked once: its job
+  starts under `sourceKey`, at generation 1, for the text it was asked
+  with and with no pause. A source that depends on the text and was asked
+  with another than the typed one (`Reask.asksAgain`) has its key
+  cancelled and its job started again at the next generation, for the
+  typed text, after its pause; what it answered stays listed until the new
+  generation's first batch.
+- **The match**: a prompt with more candidates to match than
+  `keys.inlineMatches`, whose listing is not for the typed text at the
+  candidates' revision, and for which no match is in flight and none
+  failed for that text and revision (`Candidates.unmatched`), has one
+  spawned under `matchKey`, of the owner of its style
+  (`Completion.Matching.ownerFor`), and recorded as in flight, stamped with
+  the config generation (`Loop.Registered.generation`). One stamped with an
+  older generation was ended by an install: its key is cancelled and it is
+  spawned again with the style the new config chose.
+- **Closing**: every key recorded for the prompt's jobs
+  (`EditorState.completionKeys`) that the open prompt does not want, all
+  of them once no prompt is open, is cancelled. -/
+def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
+    Loop scheme × Array JobStart × Array String × Array Spawn :=
+  let state := loop.state
+  match state.prompt with
+  | none =>
+    ({ loop with
+        state := { state with completionKeys := #[] } },
+      #[], state.completionKeys, #[])
+  | some asked =>
+    let view := asked.view
+    let candidates := asked.candidates
+    -- The sources' jobs.
+    let (asking, starts, cancels, wanted) :=
+      (List.range candidates.asking.size).foldl
+        (init := (candidates.asking, (#[] : Array JobStart), (#[] : Array String),
+          (#[] : Array String)))
+        fun (asking, starts, cancels, wanted) index =>
+          match asking[index]? with
+          | none => (asking, starts, cancels, wanted)
+          | some source =>
+            let key := sourceKey view source.source
+            let start (generation : Nat) (text : String) (pause : Nat) : JobStart :=
+              { name := source.later.job
+                arguments :=
+                  Completion.Order.arguments
+                    { view, index, generation, query := { text, view := asked.asker }, pause }
+                key := some key }
+            if !keys.registered.jobs source.later.job then (asking, starts, cancels, wanted)
+            else if source.generation == 0 then
+              (asking.set! index { source with generation := 1 },
+                starts.push (start 1 source.askedFor 0), cancels, wanted.push key)
+            else
+              match loop.typed with
+              | some typed =>
+                if source.later.reask.asksAgain source.askedFor typed then
+                  let generation := source.generation + 1
+                  (asking.set! index
+                      { source with
+                        askedFor := typed, generation, fresh := false, done := false },
+                    starts.push (start generation typed source.later.reask.pause),
+                    cancels.push key, wanted.push key)
+                else (asking, starts, cancels, wanted.push key)
+              | none => (asking, starts, cancels, wanted.push key)
+    let candidates := { candidates with asking }
+    -- The match: one stamped with an older config generation is no longer in
+    -- flight, since an install ended it.
+    let generation := keys.registered.generation
+    let stale := candidates.matching.any (·.generation != generation)
+    let candidates := if stale then { candidates with matching := none } else candidates
+    let cancels := if stale then cancels.push (matchKey view) else cancels
+    let (candidates, spawns) : Candidates × Array Spawn :=
+      match loop.typed with
+      | some typed =>
+        if candidates.matchableSize > keys.inlineMatches &&
+            (candidates.listedFor != some typed || candidates.listedAt != candidates.revision) &&
+            candidates.matching.isNone &&
+            candidates.unmatched != some (typed, candidates.revision) then
+          let revision := candidates.revision
+          let style := keys.matching.styleFor candidates.category
+          ({ candidates with matching := some { pattern := typed, revision, generation } },
+            #[{ key := matchKey view, label := matchLabel
+                owner := keys.matching.ownerFor candidates.category
+                work := matchWork view candidates typed revision style }])
+        else (candidates, #[])
+      | none => (candidates, #[])
+    let wanted := if candidates.matching.isSome then wanted.push (matchKey view) else wanted
+    let unwanted := state.completionKeys.filter (!wanted.contains ·)
+    ({ loop with
+        state :=
+          { state.replaceCandidates candidates with
+            completionKeys := wanted } },
+      starts, cancels ++ unwanted.filter (!cancels.contains ·), spawns)
+
 /-- `loop` with the menu bar `keys` names (`Keys.menu`) as the one its
 scenes name: how a step, an invocation and a delivery start, so that a
 reload's bindings move the menu's shortcuts from the next one. -/
@@ -2295,18 +2531,23 @@ def keyedBy (keys : Keys scheme) (loop : Loop scheme) : Loop scheme :=
 (`publish`), its views' status lines drawn by the mode line `keys` names
 and padded by its padding, its windows laid out by its layout and a
 prompt's candidates listed by its matching (`Keys.modeLine`,
-`Keys.padding`, `Keys.layout`, `Keys.matching`): its loop is
+`Keys.padding`, `Keys.layout`, `Keys.matching`), a long one by a match
+job (`Keys.inlineMatches`): its loop is
 the one the publish left, with the file jobs it starts and cancels
-(`fileJobs`) after the step's own, and it says stop when the editor then
+(`fileJobs`) after the step's own, then the open prompt's jobs it starts,
+cancels and spawns (`completionJobs`), and it says stop when the editor then
 leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
 scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
-  let loop ← stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
+  let loop ←
+    stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
+        keys.inlineMatches
   let (loop, starts, cancels) := loop.fileJobs keys
+  let (loop, sourceStarts, sourceCancels, spawns) := loop.completionJobs keys
   return { stepped with
-      loop, next := nextOf loop, starts := stepped.starts ++ starts
-      cancels := stepped.cancels ++ cancels }
+      loop, next := nextOf loop, starts := stepped.starts ++ starts ++ sourceStarts
+      cancels := stepped.cancels ++ cancels ++ sourceCancels, spawns := stepped.spawns ++ spawns }
 
 /-- Hands the answer `invocation` carries, its first argument, to the input
 scheme, for the focused view (`InputScheme.answered`), and runs the

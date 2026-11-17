@@ -19920,7 +19920,11 @@ finishes with a command that makes a text of it. `adopt` loads nothing, and
 finishes with a command that adopts the job snapshot of the number it is
 started with. `save` saves the snapshot of the store whose index it is
 started with as `out.txt`, which must not be there. `lose` loads `note.txt`
-and then throws. -/
+and then throws.
+
+Two answer completion sources (`Editor/Completion/Later.lean`):
+`later-pick` posts `wq` and `edit`, then `rewrite` and `w`, whatever it is
+asked, and `later-echo` posts the text it was asked with, `!` after it. -/
 def driverJobs (name : String) : Option (List Argument → Work) :=
   let inserts (text : String) : EditorM Unit := discard <| (⟨0⟩ : ViewId).insertAtSelections text
   match name with
@@ -19939,6 +19943,8 @@ def driverJobs (name : String) : Option (List Argument → Work) :=
         (⟨0⟩ : TextId).delete 9 99
   | "chain" =>
     some fun _ => Work.of (fun _ => pure ()) fun _ => discard <| startJob "double" [.nat 5]
+  | "later-pick" => some (Completion.Later.batches #[offered #["wq", "edit"], offered #["rewrite", "w"]])
+  | "later-echo" => some Completion.Later.echoing
   | "load" =>
     some fun arguments =>
       Work.of
@@ -21145,6 +21151,12 @@ def candidateCommands : List (String × Dispatched) :=
     ("ask-only-filtered", asks "" [.given filteredSource]),
     ("ask-category", asks "" [.category "pick" [pickSource]]),
     ("ask-other", asks "" [.given (.ofTexts "other" "other" pickCandidates)]),
+    ("ask-later", asks "" [.given (.answeringLater "later" "pick" "later-pick")]),
+    ("ask-echo-later",
+      asks "" [.given (.answeringLater "echo" "pick" "later-echo" (.afterPause 30) true)]),
+    (Minibuffer.candidatesName, fun call => do
+      Minibuffer.candidatesCommandOf call
+      return none),
     ("ask-named", fun _ => do
       if let .error refusal← prompt pickLabel pickContinuation "" [.named pickSource.name] then
         message refusal.describe
@@ -21178,7 +21190,8 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
       ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
       ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"), ("C-c 5", invoke "ask-filtered"),
       ("C-c 7", invoke "ask-category"), ("C-c 6", invoke "ask-other"),
-      ("C-c 8", invoke "ask-only-filtered")]
+      ("C-c 8", invoke "ask-only-filtered"), ("C-c l", invoke "ask-later"),
+      ("C-c t", invoke "ask-echo-later")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -21186,6 +21199,27 @@ checks and the jobs of the driver checks, on the models `model`; `none` if
 making the state was refused. -/
 def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
   (Loop.Driver.over candidateKeys driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
+
+/-- `candidateDriver` whose prompts are matched by a job over more than two
+candidates (`Loop.Keys.inlineMatches`), so the four pick candidates are. -/
+def smallLimitDriver (model : EditorModel := editorModel) : Option TestDriver :=
+  (Loop.Driver.over { candidateKeys with inlineMatches := 2 } driverJobs
+      (EditorState.initial ⟨640, 480⟩) model).toOption
+
+/-- The status line of the minibuffer's view of a prompt of the candidate
+checks listing `texts` for `pattern`: the label, then a field for each the
+fuzzy model answers for the pattern, in its order, in the candidates'
+face. -/
+def laterFields (pattern : String) (texts : Array String) : Array StatusField :=
+  #[{ text := pickLabel, face := Loop.promptFace }] ++
+    (FuzzyModel.rank pattern texts).filterMap fun index =>
+      (texts[index]?).map fun text => { text, face := Loop.candidateFace }
+
+/-- The ids of the jobs `driver` holds, at a post or finished and not
+delivered, each with its name. -/
+def heldJobs (driver : TestDriver) : Array (Nat × String) :=
+  driver.posting.map (fun job => (job.id, job.name)) ++
+    driver.pending.map fun job => (job.id, job.name)
 
 /-- A driver of the candidate checks whose loop is told of one source,
 `pickSource`, registered under its name. -/
@@ -21840,7 +21874,340 @@ def laterChecks : List Check :=
                   some #[#[(Completion.Candidate.ofText "a").inGroup "later"]] &&
                 bad.model.display.scenes.back?.map (·.echo) ==
                   some s!"{Completion.candidatesCommand}: malformed batch" &&
-                candidatesOf bad == candidatesOf set }]
+                (candidatesOf bad).map (·.asking) == (candidatesOf set).map (·.asking) }]
+
+/-- A loop over `twoBuffers` with a prompt open whose candidates are
+`candidates`, its minibuffer read as `typed` at the last publish, and the
+keys `keys` of its completion jobs recorded; with the prompt's view.
+`none` if making the state was refused. -/
+def promptLoop (candidates : Candidates) (typed : Option String := none)
+    (keys : Array String := #[]) : Option (Loop TestScheme.scheme × ViewId) := do
+  let state ← onTextModel twoBuffers
+  match prompted state with
+  | (.ok view, asking) =>
+    some
+      ({ state := { withCandidates asking candidates with completionKeys := keys }, typed }, view)
+  | _ => none
+
+/-- What a step of the completion job checks is handed: `later-pick` is the
+one job registered, the config generation is `generation`, a prompt over
+more than `inline` candidates is matched by a job, and the style is
+`style`, which config owns when `owned`. -/
+def jobKeys (generation : Nat := 0) (inline : Nat := 2)
+    (style : Completion.Style := Completion.Styles.fuzzy) (owned : Bool := false) :
+    Loop.Keys TestScheme.scheme :=
+  { registered := { jobs := (· == "later-pick"), generation }, inlineMatches := inline
+    matching :=
+      { default := style
+        ownerFor := fun _ => if owned then Config.Owner.config else Config.Owner.compiled } }
+
+/-- The candidates of the prompt `loop` holds once `spawn`'s work has run on
+the job model and the command it finished with has run on that loop's
+state: what the match lists. `none` if the work did not finish. -/
+def matchedBy (loop : Loop TestScheme.scheme) (spawn : Loop.Spawn) : Option Candidates :=
+  match ((spawn.work ()).runModel {}).1 with
+  | .finished command =>
+    let program : EditorM (Guarded Unit × EditorState) := command.dispatched {} loop.state
+    match (program.runModel editorModel).1 with
+    | .ok (_, state) => state.prompt.map (·.candidates)
+    | .error _ => none
+  | _ => none
+
+/-- The checks of the reconciler of a prompt's jobs (`Loop.completionJobs`,
+`Editor/Loop.lean`, "Prompts"), pure over the editor state: which source
+jobs it starts and cancels, which match it spawns, and that closing a
+prompt cancels every job it started for it. -/
+def completionJobChecks : List Check :=
+  let later : Completion.Later := { job := "later-pick" }
+  let source (reask : Completion.Reask := .never) : Completion.Asking :=
+    { source := "later", later := { later with reask }, askedFor := "a" }
+  [{  name :=
+        "a source not yet asked has its job started once, under `completion <view> <source>`, with the order of the first generation for the text it was asked with and no pause, and its key recorded; asked again with the text unchanged, or by a source asked once with the text changed, nothing is started"
+      run :=
+        pure <|
+          match promptLoop { asking := #[source] } (some "a") with
+          | none => false
+          | some (loop, view) =>
+            let (started, starts, cancels, spawns) := loop.completionJobs (jobKeys)
+            let key := Loop.sourceKey view "later"
+            let order : Completion.Order :=
+              { view, index := 0, generation := 1, query := { text := "a", view := ⟨0⟩ } }
+            let (_, again, againCancels, _) := started.completionJobs (jobKeys)
+            let (_, typed, _, _) := { started with typed := some "b" }.completionJobs (jobKeys)
+            starts == #[{ name := "later-pick", arguments := order.arguments, key := some key }] &&
+              cancels.isEmpty && spawns.isEmpty &&
+              started.state.completionKeys == #[key] &&
+              (started.state.prompt.map (·.candidates.asking.map (·.generation))) == some #[1] &&
+              again.isEmpty && againCancels.isEmpty && typed.isEmpty },
+    { name :=
+        "a source that depends on the text, asked with another text than the typed one, has its job cancelled and started again under its key, at the next generation, for the typed text, after its pause; what it answered stays until the new generation's first batch"
+      run :=
+        pure <|
+          let asked : Completion.Asking :=
+            { source (.afterPause 30) with
+              generation := 1, answered := offered #["old"], fresh := true, done := true }
+          match promptLoop { asking := #[asked] } (some "b") with
+          | none => false
+          | some (loop, view) =>
+            let key := Loop.sourceKey view "later"
+            let (after, starts, cancels, _) :=
+              { loop with
+                  state := { loop.state with completionKeys := #[key] } }.completionJobs
+                (jobKeys)
+            let order : Completion.Order :=
+              { view, index := 0, generation := 2, query := { text := "b", view := ⟨0⟩ }
+                pause := 30 }
+            cancels == #[key] &&
+              starts == #[{ name := "later-pick", arguments := order.arguments, key := some key }] &&
+              after.state.prompt.map (·.candidates.asking) ==
+                some
+                  #[{ asked with
+                      askedFor := "b", generation := 2, fresh := false, done := false }] &&
+              after.state.completionKeys == #[key] },
+    { name :=
+        "with no prompt open every key recorded for a prompt's jobs is cancelled, none is kept, and nothing is started or spawned"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let loop : Loop TestScheme.scheme :=
+              { state := { state with completionKeys := #["completion 3 later", "completion-match 3"] } }
+            let (after, starts, cancels, spawns) := loop.completionJobs (jobKeys)
+            cancels == #["completion 3 later", "completion-match 3"] && starts.isEmpty &&
+              spawns.isEmpty &&
+              after.state.completionKeys.isEmpty },
+    { name :=
+        "a source whose job is not registered is not started, and stays unasked"
+      run :=
+        pure <|
+          let unregistered : Completion.Asking :=
+            { source .never with later := { job := "nope" } }
+          match promptLoop { asking := #[unregistered] } (some "a") with
+          | none => false
+          | some (loop, _) =>
+            let (after, starts, _, _) := loop.completionJobs (jobKeys)
+            starts.isEmpty && after.state.completionKeys.isEmpty &&
+              after.state.prompt.map (·.candidates.asking.map (·.generation)) == some #[0] },
+    { name :=
+        "a prompt over more candidates than the inline limit, whose listing is not for the typed text, has one match spawned under `completion-match <view>`, labelled `completion-match`, of the owner of its style, and its match in flight for the text, the revision and the config generation; none while one is in flight, none at or under the limit, none for the text and revision a match failed for, and one again for another text"
+      run :=
+        pure <|
+          let candidates : Candidates := { all := offered #["wq", "edit", "rewrite", "w"] }
+          match promptLoop candidates (some "w") with
+          | none => false
+          | some (loop, view) =>
+            let keys := jobKeys (generation := 4) (owned := true)
+            let (spawned, starts, cancels, spawns) := loop.completionJobs keys
+            let (_, _, _, inFlight) := spawned.completionJobs keys
+            let (_, _, _, under) := loop.completionJobs (jobKeys (inline := 4))
+            let failed :=
+              { loop with
+                state := withCandidates loop.state { candidates with unmatched := some ("w", 0) } }
+            let (_, _, _, unmatched) := failed.completionJobs keys
+            let (_, _, _, other) := { failed with typed := some "e" }.completionJobs keys
+            let key := Loop.matchKey view
+            spawns.map (fun spawn => (spawn.key, spawn.label, spawn.owner)) ==
+                #[(key, Loop.matchLabel, Config.Owner.config)] &&
+              starts.isEmpty && cancels.isEmpty &&
+              spawned.state.prompt.map (·.candidates.matching) ==
+                some (some { pattern := "w", revision := 0, generation := 4 }) &&
+              spawned.state.completionKeys == #[key] &&
+              inFlight.isEmpty && under.isEmpty && unmatched.isEmpty && other.size == 1 &&
+              (spawns[0]?.bind (matchedBy spawned ·)).map (·.listed.map (·.text)) ==
+                some ((FuzzyModel.rank "w" #["wq", "edit", "rewrite", "w"]).map
+                    fun index => #["wq", "edit", "rewrite", "w"][index]!) },
+    { name :=
+        "a match in flight stamped with an older config generation is not in flight: its key is cancelled, and a match is spawned for the typed text, stamped with the keys' generation, running the keys' style"
+      run :=
+        pure <|
+          let candidates : Candidates :=
+            { all := offered #["wq", "edit", "rewrite", "w"]
+              matching := some { pattern := "w", revision := 0, generation := 1 } }
+          match promptLoop candidates (some "w") with
+          | none => false
+          | some (loop, view) =>
+            let key := Loop.matchKey view
+            let keys := jobKeys (generation := 2) (style := Completion.Styles.orderless)
+            let (after, _, cancels, spawns) :=
+              { loop with
+                  state := { loop.state with completionKeys := #[key] } }.completionJobs
+                keys
+            cancels == #[key] && spawns.map (·.key) == #[key] &&
+              after.state.prompt.map (·.candidates.matching) ==
+                some (some { pattern := "w", revision := 0, generation := 2 }) &&
+              (spawns[0]?.bind (matchedBy after ·)).map (·.listed.map (·.text)) ==
+                some #["wq", "rewrite", "w"] },
+    { name :=
+        "the minibuffer's status line shows the label and the first ten of a listing of fifteen, in the listing's order, the chosen one among them in the chosen face; a listing of ten or fewer shows every one"
+      run :=
+        pure <|
+          let texts := (Array.range 15).map (s!"c{·}")
+          let prompt (count : Nat) : Prompt :=
+            { label := "L: ", view := ⟨1⟩, asker := ⟨0⟩, continuation := asked
+              candidates :=
+                { listed := ((offered texts).extract 0 count).map Completion.Listed.of
+                  chosen := some 2 } }
+          let fields := Loop.promptStatus (prompt 15)
+          Loop.shownCandidates == 10 &&
+            fields.map (·.text) == #["L: "] ++ texts.extract 0 10 &&
+            fields.map (·.face == Loop.chosenFace) ==
+              #[false, false, false, true] ++ Array.replicate 7 false &&
+            (Loop.promptStatus (prompt 10)).size == 11 &&
+            (Loop.promptStatus (prompt 4)).size == 5 }]
+
+/-- The step a fed key handed back last, if it was not refused. -/
+def lastStep (steps : Array (Option (Loop.Stepped TestScheme.scheme))) :
+    Option (Loop.Stepped TestScheme.scheme) :=
+  steps.back?.join
+
+/-- The text of the candidate chosen in the prompt open in `driver`. -/
+def chosenText (driver : TestDriver) : Option String := do
+  let candidates ← candidatesOf driver
+  let index ← candidates.chosen
+  return (← candidates.listed[index]?).text
+
+/-- The checks of sources that answer later and of matching off the editor
+thread through the loop (`Editor/Loop.lean`, "Prompts"), on the loop's
+driver over the editor's models and the job model, with the candidate
+checks' commands: the phase's four criteria on the models, a match that
+fails, and what a key costs while a match runs. -/
+def laterLoopChecks : List Check :=
+  let label : Array StatusField := #[{ text := pickLabel, face := Loop.promptFace }]
+  [{  name :=
+        "criterion 1 on the models: a prompt asked with a source that answers later lists nothing while its job is held at its first post, then the first batch, then everything once the second arrives, each in the fuzzy model's order for the text, and after a key the order for the typed text; a choice made before the second batch stays on its candidate"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c l")
+            match asked.posting[0]? with
+            | none => false
+            | some job =>
+              let (one, _) := asked.posted job.id
+              let chosen := chose one [.next, .next]
+              let (two, _) := chosen.posted job.id
+              let (typed, _) := fedTo two (presses "w")
+              job.name == "later-pick" && pickStatus asked == some label &&
+                pickStatus one == some (laterFields "" #["wq", "edit"]) &&
+                chosenText chosen == some "edit" &&
+                (candidatesOf two).map (·.listed.map (·.text)) ==
+                  some (((laterFields "" pickCandidates).extract 1).map (·.text)) &&
+                chosenText two == some "edit" &&
+                pickStatus typed == some (laterFields "w" pickCandidates) },
+    { name :=
+        "criterion 2 on the models: in a prompt whose source depends on the text, a key hands back a cancel of the source's key and a start of its job for the typed text, at the next generation, after its pause; the first job is held no more, what it answered stays listed until the new job's batch, which lists the answer for the typed text"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c t")
+            match asked.posting[0]?, asked.loop.state.minibufferView? with
+            | some first, some view =>
+              let (echoed, _) := asked.posted first.id
+              let (typed, steps) := fedTo echoed (presses "w")
+              match typed.posting[0]? with
+              | none => false
+              | some second =>
+                let (answered, _) := typed.posted second.id
+                let stepped := lastStep steps
+                let order :=
+                  (stepped.bind (·.starts[0]?)).bind fun start =>
+                    Completion.Order.ofArguments? start.arguments
+                (candidatesOf echoed).map (·.listed.map (·.text)) == some #["!"] &&
+                  stepped.map (·.cancels) == some #[Loop.sourceKey view "echo"] &&
+                  stepped.map (·.starts.map (·.name)) == some #["later-echo"] &&
+                  order.map (fun order => (order.query.text, order.generation, order.pause)) ==
+                    some ("w", 2, 30) &&
+                  !(heldJobs typed).any (·.1 == first.id) &&
+                  (candidatesOf typed).map (·.listed.map (·.text)) == some #["!"] &&
+                  (candidatesOf answered).map (·.listed.map (·.text)) == some #["w!"]
+            | _, _ => false },
+    { name :=
+        "criterion 3 on the models: accepting or cancelling a prompt whose source's job is held hands back a cancel of the key it was started under; the driver then holds no job of it, its post never runs, and no key is kept for the prompt"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let closes (asks source closing : String) : Bool :=
+              let (asked, _) := fedTo driver (presses asks)
+              match asked.loop.state.minibufferView?, asked.posting[0]? with
+              | some view, some job =>
+                let (closed, steps) := fedTo asked (presses closing)
+                (lastStep steps).map (·.cancels.contains (Loop.sourceKey view source)) ==
+                    some true &&
+                  heldJobs closed == #[] &&
+                  (closed.posted job.id).2.isNone &&
+                  closed.loop.state.prompt.isNone &&
+                  closed.loop.state.completionKeys.isEmpty
+              | _, _ => false
+            closes "C-c l" "later" "C-c y" && closes "C-c l" "later" "C-c n" &&
+              closes "C-c t" "echo" "C-c y" &&
+              closes "C-c t" "echo" "C-c n" },
+    { name :=
+        "criterion 4 on the models: over the inline limit the step that opens the prompt spawns one match and lists nothing until it is delivered, which lists the fuzzy model's order; a key then costs its step the read of the minibuffer and no ranking, and hands back one match for the typed text, the listing staying the old text's; keys typed while it runs spawn nothing; its delivery lists the hits for the text it was spawned with, and its scene spawns one match for the latest text"
+      run :=
+        pure <|
+          match smallLimitDriver, smallLimitDriver countingModel, candidateDriver countingModel with
+          | some driver, some counting, some plain =>
+            -- How many requests the last of `keys` took.
+            let cost (driver : TestDriver) (keys : String) : Nat :=
+              let events := presses keys
+              let (before, _) := fedTo driver events.dropLast
+              let (after, _) := fedTo before (events.drop (events.length - 1))
+              after.model.watch.clock - before.model.watch.clock
+            let (asked, askSteps) := fedTo driver (presses "C-c a")
+            match asked.pending[0]? with
+            | none => false
+            | some first =>
+              let (listed, _) := asked.finish first.id
+              let (typed, typeSteps) := fedTo listed (presses "w")
+              match typed.pending[0]? with
+              | none => false
+              | some second =>
+                let (more, moreSteps) := fedTo typed (presses "q z")
+                let (delivered, deliveredStep) := more.finish second.id
+                (lastStep askSteps).map (·.spawns.size) == some 1 &&
+                  first.name == Loop.matchLabel &&
+                  pickStatus asked == some label &&
+                  (candidatesOf listed).map (·.listed) == some (pickListed "").listed &&
+                  (lastStep typeSteps).map (·.spawns.size) == some 1 &&
+                  (candidatesOf typed).map (·.listedFor) == some (some "") &&
+                  moreSteps.all (fun step => step.map (·.spawns.size) == some 0) &&
+                  minibufferText more == some "wqz" &&
+                  (candidatesOf delivered).map (·.listedFor) == some (some "w") &&
+                  (candidatesOf delivered).map (·.listed) == some (pickListed "w").listed &&
+                  deliveredStep.map (·.spawns.size) == some 1 &&
+                  cost counting "C-c a w" == cost plain "C-c p w" + 1
+          | _, _, _ => false },
+    { name :=
+        "a match that fails does not freeze the listing: its delivery says `completion-match: fuzzy: ` and why in the echo area, the listing stays empty and its scene spawns nothing; a key typed once the matcher answers again spawns a new match, whose delivery lists the fuzzy model's order for the typed text"
+      run :=
+        pure <|
+          match smallLimitDriver with
+          | none => false
+          | some driver =>
+            let broken := { driver with jobs := { driver.jobs with fuzzyRefusal := some "broken" } }
+            let (asked, _) := fedTo broken (presses "C-c a")
+            match asked.pending[0]? with
+            | none => false
+            | some first =>
+              let (failed, failedStep) := asked.finish first.id
+              let mended := { failed with jobs := { failed.jobs with fuzzyRefusal := none } }
+              let (typed, steps) := fedTo mended (presses "w")
+              match typed.pending[0]? with
+              | none => false
+              | some second =>
+                let (listed, _) := typed.finish second.id
+                failed.model.display.scenes.back?.map (·.echo) ==
+                    some "completion-match: fuzzy: broken" &&
+                  (candidatesOf failed).map (·.listed.size) == some 0 &&
+                  failedStep.map (·.spawns.size) == some 0 &&
+                  (lastStep steps).map (·.spawns.size) == some 1 &&
+                  (candidatesOf listed).map (·.listed) == some (pickListed "w").listed }]
 
 /-- The contract's runner on the editor's models (`Completion.Contract.Runner`):
 the source asked with `text` from the focused view of `twoBuffers`, dispatched
@@ -38093,6 +38460,8 @@ def checks : List Check :=
     promptChecks ++
     candidateChecks ++
     laterChecks ++
+    completionJobChecks ++
+    laterLoopChecks ++
     sourceContractChecks ++
     fileCommandChecks ++
     openFilesChecks ++
