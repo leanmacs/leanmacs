@@ -194,7 +194,10 @@ as before, so reload and job completion work as they did.
   command and the job that finds a file's workspace (`Workspace.commands`,
   `Workspace.jobs`, `Editor/Workspace/Compiled.lean`): `workspace-current`,
   and `find-workspace`, which a file's open starts for its directory when
-  no answer is cached, so a script that opens a file has that job too. The ex line is handed no key
+  no answer is cached, so a script that opens a file has that job too; and
+  `find-mode-markers`, which gives a buffer the minor modes the compile
+  contributions' markers turn on, and which no file's open starts while no
+  contribution is registered. The ex line is handed no key
   binding: the Vim scheme's keys are its states' own keymaps. The frame's
   bindings bind `s-q` to `quit`. Every default key names a command the host
   is handed.

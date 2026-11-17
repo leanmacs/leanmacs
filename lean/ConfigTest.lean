@@ -4515,6 +4515,18 @@ def shippedChecks (_ : Unit) : List Check :=
             (registry.ex? "next-error").map (·.command) == some Compile.nextName &&
             (registry.ex? "previous-error").map (·.command) == some Compile.previousName },
     { name :=
+        "the executable's hosts start with the job find-mode-markers registered for the owner compiled, beside find-workspace, and with no compile contribution, so no file's open starts it"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return (registry.findJob? Workspace.markerJob).any (·.owner == .compiled) &&
+            (registry.findJob? Workspace.findJob).any (·.owner == .compiled) &&
+            registry.compileContributions.isEmpty },
+    { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
       run := do
         let completions ← Job.Completions.new
