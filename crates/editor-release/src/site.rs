@@ -152,14 +152,7 @@ fn size(bytes: u64) -> String {
 
 /// The build's time, the commit's, from its ID: `YYYY-MM-DD HH:MM:SS UTC`.
 fn date(build: &Build) -> String {
-    let s = build.id.as_str();
-    format!(
-        "{} {}:{}:{} UTC",
-        build.id.date(),
-        &s[8..10],
-        &s[10..12],
-        &s[12..14]
-    )
+    format!("{} {} UTC", build.id.date(), build.id.time())
 }
 
 /// The page's one style sheet: the system's fonts, one narrow column, and
