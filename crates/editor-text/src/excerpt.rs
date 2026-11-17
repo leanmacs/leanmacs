@@ -28,9 +28,10 @@
 //!
 //! **The assembled text keeps no inverse**: each transaction's is dropped
 //! as soon as it is applied, since the list, not an undo, says what the
-//! assembled text holds. Anything else that writes it is caught: every
-//! method first checks that the assembled text is at the revision the list
-//! last wrote ([`ExcerptError::Moved`]).
+//! assembled text holds. Anything else that writes it is caught:
+//! [`Excerpts::refresh`] and [`Excerpts::set`] first check that the
+//! assembled text is at the revision the list last wrote
+//! ([`ExcerptError::Moved`]).
 //!
 //! There is no port here. The sources are texts in the same process, and
 //! the caller passes them in, with the key it names each by, for each call
@@ -223,6 +224,10 @@ impl Excerpts {
     /// read it changed in that excerpt is applied to `assembled` as one
     /// transaction, whose revision is returned. `None`, with nothing
     /// applied, when no source moved. The module docs give the rule.
+    ///
+    /// Refused, changing nothing, with [`ExcerptError::Moved`] when
+    /// something other than the list wrote `assembled` since the list last
+    /// did.
     pub fn refresh(
         &mut self,
         assembled: &mut Text,
@@ -258,6 +263,8 @@ impl Excerpts {
     /// revision after it.
     ///
     /// Refused, changing nothing, in this order: with
+    /// [`ExcerptError::Moved`] when something other than the list wrote
+    /// `assembled` since the list last did; with
     /// [`ExcerptError::NoSuchSource`] when the source of an excerpt of the
     /// list, as it is or as it is wanted, is not among `sources`; with
     /// [`ExcerptError::BadRange`] when a range wanted is not two positions
