@@ -143,7 +143,8 @@ take the same files. Last, it replaces the artwork with a 512×300 PNG, a
 256×256 PNG and a 1024×1024 JPEG and builds each: each build must fail
 with an error that `app/Leanmacs.png` must be a 1024x1024 PNG and leave
 the old bundle; then it puts the artwork back. It builds with
-`LEANMACS_BUILD_ID=20010203040506` and `LEANMACS_COMMIT` forty `a`s: the
+`LEANMACS_BUILD_ID=20010203040506` and `LEANMACS_COMMIT` forty `a`s
+(20010203040507 and forty `b`s when it was given that stamp itself): the
 bundle must be rebuilt and verify, name both, and its `editor --version`
 must print them. Last, it builds with `LEANMACS_BUILD_ID` unset, `2026` and
 `2001020304050x`, and with `LEANMACS_COMMIT` unset, in upper case and 39

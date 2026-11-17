@@ -88,7 +88,8 @@
 #    which must be a 1024x1024 PNG, and leave the old bundle, which must
 #    still verify. The artwork is then put back;
 # 13. builds the clone with LEANMACS_BUILD_ID=20010203040506 and
-#    LEANMACS_COMMIT forty `a`s: the bundle must be rebuilt and verify, its
+#    LEANMACS_COMMIT forty `a`s (20010203040507 and forty `b`s when the
+#    stamp expected is that one): the bundle must be rebuilt and verify, its
 #    `CFBundleVersion` and `LeanmacsCommit` must be those two, and its
 #    `editor --version` must print them;
 # 14. builds the clone with LEANMACS_BUILD_ID unset, `2026` and
@@ -557,16 +558,23 @@ step "artwork that is not a 1024x1024 PNG failed the build on the artwork and le
 build_clone_env() {
   (cd "$clone/lean" && env "$@" PATH="$clone/bin:$PATH" LEAN_CC=/usr/bin/cc lake build --wfail editorApp)
 }
+# The fake stamp, or the next one when this check was given the fake stamp
+# itself (the by-hand run in docs/dev-practices/on-demand-checks.md), so
+# that it always differs from the stamp the clone was built with.
+other_id=20010203040506 other_sha=$sha_a
+if [ "$build_id" = "$other_id" ] || [ "$commit" = "$other_sha" ]; then
+  other_id=20010203040507 other_sha=$(printf 'b%.0s' $(seq 40))
+fi
 before=$(clone_marks)
-build_clone_env LEANMACS_BUILD_ID=20010203040506 LEANMACS_COMMIT="$sha_a" ||
+build_clone_env LEANMACS_BUILD_ID=$other_id LEANMACS_COMMIT="$other_sha" ||
   fail "building editorApp in the clone with a build ID and commit of its own failed"
 [ "$before" != "$(clone_marks)" ] || fail "another build ID and commit did not rebuild the bundle"
 codesign --verify --strict --deep "$cloned" || fail "after another build ID and commit, the bundle does not verify"
-check_key "$cloned/Contents/Info.plist" CFBundleVersion 20010203040506 "LEANMACS_BUILD_ID"
-check_key "$cloned/Contents/Info.plist" LeanmacsCommit "$sha_a" "LEANMACS_COMMIT"
+check_key "$cloned/Contents/Info.plist" CFBundleVersion "$other_id" "LEANMACS_BUILD_ID"
+check_key "$cloned/Contents/Info.plist" LeanmacsCommit "$other_sha" "LEANMACS_COMMIT"
 read_version "$clone/lean/app/version"
-check_says "$cloned" "$version_read" 20010203040506 "$sha_a"
-step "another build ID and commit rebuilt the bundle, signed, naming both, and its editor --version said them"
+check_says "$cloned" "$version_read" "$other_id" "$other_sha"
+step "another build ID and commit, $other_id and $other_sha, rebuilt the bundle, signed, naming both, and its editor --version said them"
 
 # 14. A missing or malformed stamp fails the build, naming the variable,
 # and leaves the old bundle.
