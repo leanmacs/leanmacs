@@ -11,7 +11,7 @@
 //! [`ManualClock`] is published, not test-only, as the timer service's fake
 //! clock is: tests of this crate and of its users set it and advance it. A
 //! worker parked on the old reading does not notice by itself; a test tells
-//! it with [`Handle::wake`](crate::worker::Handle::wake), and then waits for
+//! it with `Handle::wake`, and then waits for
 //! what it expects with a bound. No test sleeps for a fixed time.
 
 use std::sync::Arc;

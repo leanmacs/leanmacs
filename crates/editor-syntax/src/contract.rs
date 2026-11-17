@@ -24,7 +24,6 @@ use editor_text::{ChangeSet, Origin, Revision, Snapshot, Text, Transaction};
 use crate::highlight::Highlighter;
 use crate::port::{Capture, GrammarName, Node, QueryErrorKind, QueryKind, Syntax};
 use crate::query::{captures_in, flatten, overlaps, widened};
-use crate::session::reparse;
 
 /// What is language-specific in the contract: a grammar, texts of it, and
 /// queries.
@@ -67,7 +66,7 @@ pub const WHOLE: &str = "the root reaches the end of the text, every node lies w
 /// Two fresh parses of one snapshot are equal.
 pub const DETERMINISTIC: &str = "two fresh parses of one snapshot are equal";
 /// After edits, the tree told the log's patch and reparsed with it, as the
-/// core reparses ([`crate::session::reparse`]), equals a fresh parse of the
+/// core reparses (`reparse`), equals a fresh parse of the
 /// same snapshot, for every text, with errors or without.
 ///
 /// The core drops an incremental parse whose tree has an error or a missing
@@ -463,6 +462,40 @@ fn errors<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> boo
     every && with && without
 }
 
+/// A tree as a run makes it ([`reparse`]).
+struct Reparse<T> {
+    /// The tree.
+    tree: T,
+    /// Whether it is the incremental parse's, kept: false for a whole
+    /// parse, asked for or fallen back to.
+    incremental: bool,
+}
+
+/// The tree of `text` as a run makes it: parsed with `old`, a tree of an
+/// earlier text told every edit since, when there is one; and parsed whole
+/// when there is none, or when the incremental parse's tree has an error or
+/// a missing node.
+fn reparse<S: Syntax>(
+    syntax: &S,
+    parser: &mut S::Parser,
+    text: &Snapshot,
+    old: Option<&S::Tree>,
+) -> Reparse<S::Tree> {
+    if let Some(old) = old {
+        let tree = syntax.parse(parser, text, Some(old));
+        if !syntax.has_errors(&tree) {
+            return Reparse {
+                tree,
+                incremental: true,
+            };
+        }
+    }
+    Reparse {
+        tree: syntax.parse(parser, text, None),
+        incremental: false,
+    }
+}
+
 /// A text being edited, and the tree that follows it by reparsing from the
 /// log's patches.
 struct Run<'a, S: Syntax> {
@@ -535,7 +568,7 @@ impl<'a, S: Syntax> Run<'a, S> {
     }
 
     /// Tells the tree the log's patch since its revision, reparses with it
-    /// as the core reparses ([`crate::session::reparse`]), keeps the result,
+    /// as the core reparses ([`reparse`]), keeps the result,
     /// and returns whether `same` holds of it and a fresh parse of the
     /// snapshot.
     fn reparse(&mut self, parser: &mut S::Parser, same: Same<'_, S>) -> bool {

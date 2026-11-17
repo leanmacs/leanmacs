@@ -168,7 +168,7 @@ impl QueryKind {
 pub enum ReparsePolicy {
     /// Each round reuses the old tree, told the edits since: a reparse
     /// costs what the edits touched. The grammar keeps
-    /// [`crate::contract::GRAMMAR_QUALITY`]: on a text without errors, an
+    /// [`crate::contract::INCREMENTAL`]: on a text without errors, an
     /// incremental reparse equals a fresh parse.
     Incremental,
     /// Each round parses the text from scratch, handed no old tree: for a

@@ -13,21 +13,21 @@
 //!    ends the session ([`Outcome::Gone`]). One still at the base's revision
 //!    needs nothing ([`Outcome::UpToDate`]), unless the injections have
 //!    changed since the base's layers were found (step 4).
-//! 2. With a base and a patch that chains from it (`patch.from` is the
-//!    base's revision and `patch.to` the snapshot's), a clone of the base
-//!    tree is told each of the patch's edits, in order, and the text is
-//!    reparsed with it. Otherwise (the first parse, a log that has
-//!    forgotten the base's revision, a patch that does not chain) the text
-//!    is parsed whole.
-//! 3. **The fallback rule** ([`reparse`]). An incremental reparse whose tree
-//!    has an error or a missing node ([`Syntax::has_errors`]) is dropped,
-//!    and the text parsed whole: how a library recovers from an error can
-//!    depend on what it reuses, so only a fresh parse is sure to give the
-//!    tree a fresh parse gives. A reparse with no error is kept, and the
-//!    contract ([`crate::contract::INCREMENTAL`]) holds it equal to a fresh
-//!    parse. So the tree of a round is always the tree a fresh parse of
-//!    its snapshot gives. The second parse is the worker's: the editor
-//!    thread never waits for it.
+//! 2. **The policy** ([`ReparsePolicy`], read once from the grammar when
+//!    the session is made). With an [`ReparsePolicy::Incremental`] grammar,
+//!    a base, and a patch that chains from it (`patch.from` is the base's
+//!    revision and `patch.to` the snapshot's), a clone of the base tree is
+//!    told each of the patch's edits, in order, and the text is reparsed
+//!    with it. Otherwise (a [`ReparsePolicy::Whole`] grammar, the first
+//!    parse, a log that has forgotten the base's revision, a patch that
+//!    does not chain) the text is parsed whole, handed no old tree.
+//! 3. **No fallback.** The incremental reparse's tree is kept whatever the
+//!    text holds, errors or not, as other tree-sitter editors keep it. How
+//!    a library recovers from an error can depend on what it reuses, so
+//!    while a text has an error its tree may differ from a fresh parse's;
+//!    on a text without errors the grammar is held equal to a fresh parse
+//!    ([`crate::contract::INCREMENTAL`]). Exactness is restored once the
+//!    text is quiet, by the idle refresh.
 //! 4. **Layers.** When the session has an injections query
 //!    ([`Session::set_injections`]), the new tree's layers are found
 //!    ([`crate::inject::layers`]) and parsed, each whole, on the worker, by
@@ -244,40 +244,6 @@ pub enum KeptRefusal {
 /// The capture names of a kept query and its captures in a range
 /// ([`Session::kept_captures`]).
 pub type Kept = (Vec<String>, Vec<Capture>);
-
-/// A tree as a round makes it ([`reparse`]).
-pub struct Reparse<T> {
-    /// The tree.
-    pub tree: T,
-    /// Whether it is the incremental parse's, kept: false for a whole
-    /// parse, asked for or fallen back to.
-    pub incremental: bool,
-}
-
-/// The tree of `text` as a round makes it: parsed with `old`, a tree of an
-/// earlier text told every edit since, when there is one; and parsed whole
-/// when there is none, or when the incremental parse's tree has an error or
-/// a missing node (the fallback rule of the module docs).
-pub fn reparse<S: Syntax>(
-    syntax: &S,
-    parser: &mut S::Parser,
-    text: &Snapshot,
-    old: Option<&S::Tree>,
-) -> Reparse<S::Tree> {
-    if let Some(old) = old {
-        let tree = syntax.parse(parser, text, Some(old));
-        if !syntax.has_errors(&tree) {
-            return Reparse {
-                tree,
-                incremental: true,
-            };
-        }
-    }
-    Reparse {
-        tree: syntax.parse(parser, text, None),
-        incremental: false,
-    }
-}
 
 /// One text's parse state.
 pub struct Session<S: Syntax> {
@@ -655,8 +621,8 @@ impl<S: Syntax> Session<S> {
                 );
             }
             _ => {
-                let edited = match (base.as_ref(), &latest.patch) {
-                    (Some(base), Some(patch))
+                let edited = match (self.policy, base.as_ref(), &latest.patch) {
+                    (ReparsePolicy::Incremental, Some(base), Some(patch))
                         if patch.from == base.revision && patch.to == revision =>
                     {
                         let mut edited = base.tree.clone();
@@ -667,7 +633,7 @@ impl<S: Syntax> Session<S> {
                     }
                     _ => None,
                 };
-                reparse(syntax, parser, &latest.snapshot, edited.as_ref()).tree
+                syntax.parse(parser, &latest.snapshot, edited.as_ref())
             }
         };
         let layers = layers(syntax, &injections, &tree, &latest.snapshot, parsers);
@@ -716,7 +682,7 @@ pub(crate) mod tests {
     use crate::fake::{GRAMMAR, Parens, ParensParser, ParensQuery, ParensTree};
     use crate::highlight::Highlighter;
     use crate::inject::{Injections, Language, Layer};
-    use crate::port::{Node, QueryError, QueryKind};
+    use crate::port::{Node, QueryError, QueryKind, ReparsePolicy};
 
     /// A text behind a lock, as a document holds one, read as a source.
     pub(crate) struct TextSource(pub(crate) Weak<Mutex<Text>>);
@@ -736,10 +702,9 @@ pub(crate) mod tests {
     /// edits that tree was told, or `None` for a whole parse), and running
     /// a hook once, inside the next parse.
     ///
-    /// With `recovers_otherwise`, it recovers from an error as a real
-    /// library may: an incremental parse whose tree has an error or a
-    /// missing node answers another tree than a fresh parse would, the
-    /// tree of the text with one more atom.
+    /// With `recovers`, it recovers from an error as a real library may:
+    /// an incremental parse whose tree has an error or a missing node
+    /// answers another tree than a fresh parse would ([`Recovers`]).
     ///
     /// Its grammar's policy is `policy`: incremental by default, and none
     /// for a test of a grammar that declares none.
@@ -747,8 +712,37 @@ pub(crate) mod tests {
         pub(crate) olds: Mutex<Vec<Option<Vec<InputEdit>>>>,
         pub(crate) asked: Mutex<Vec<Range<usize>>>,
         pub(crate) hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-        pub(crate) recovers_otherwise: bool,
+        pub(crate) recovers: Recovers,
         pub(crate) policy: Option<ReparsePolicy>,
+    }
+
+    /// What [`Recording`]'s incremental parse of a text with an error
+    /// answers.
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Recovers {
+        /// The fresh parse's tree.
+        #[default]
+        AsFresh,
+        /// The tree of the text with one more atom: it still has an error,
+        /// and its root runs past the text.
+        OutsideText,
+    }
+
+    impl Recovers {
+        /// What an incremental parse of `text`, whose tree as the fake
+        /// parses it is `tree`, answers.
+        pub(crate) fn tree(self, tree: ParensTree, text: &Snapshot) -> ParensTree {
+            if !Parens.has_errors(&tree) {
+                return tree;
+            }
+            match self {
+                Self::AsFresh => tree,
+                Self::OutsideText => {
+                    let other = Text::from(format!("{text} x").as_str()).snapshot();
+                    Parens.parse(&mut ParensParser, &other, None)
+                }
+            }
+        }
     }
 
     impl Default for Recording {
@@ -757,7 +751,7 @@ pub(crate) mod tests {
                 olds: Mutex::default(),
                 asked: Mutex::default(),
                 hook: Mutex::default(),
-                recovers_otherwise: false,
+                recovers: Recovers::AsFresh,
                 policy: Some(ReparsePolicy::Incremental),
             }
         }
@@ -788,9 +782,8 @@ pub(crate) mod tests {
                 hook();
             }
             let tree = Parens.parse(parser, text, old);
-            if self.recovers_otherwise && old.is_some() && Parens.has_errors(&tree) {
-                let other = Text::from(format!("{text} x").as_str()).snapshot();
-                return Parens.parse(parser, &other, None);
+            if old.is_some() {
+                return self.recovers.tree(tree, text);
             }
             tree
         }
@@ -986,11 +979,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_incremental_reparse_whose_tree_has_an_error_is_dropped_for_a_whole_parse() {
+    fn an_edit_whose_incremental_reparse_has_an_error_delivers_that_tree_with_no_whole_parse() {
         let fixture = Fixture::with(
             "(a b)",
             Recording {
-                recovers_otherwise: true,
+                recovers: Recovers::OutsideText,
                 ..Recording::default()
             },
         );
@@ -1003,8 +996,40 @@ pub(crate) mod tests {
             Outcome::Delivered(revision)
         );
         let told: Vec<InputEdit> = patch.edits.iter().map(|edit| edit.input_edit()).collect();
-        assert_eq!(fixture.olds(), [None, Some(told), None]);
-        assert!(fixture.delivered_is_fresh());
+        // No third parse: the incremental one is kept, error and all.
+        assert_eq!(fixture.olds(), [None, Some(told)]);
+        let delivered = fixture.session.parsed().unwrap();
+        assert!(fixture.syntax.has_errors(&delivered.tree));
+        // The recovering tree's nodes, not a fresh parse's.
+        let recovered = Text::from("((a b) x").snapshot();
+        assert_eq!(
+            Parens.nodes(&delivered.tree),
+            Parens.nodes(&Parens.parse(&mut ParensParser, &recovered, None))
+        );
+        assert!(!fixture.delivered_is_fresh());
+    }
+
+    #[test]
+    fn a_whole_grammars_rounds_are_never_handed_an_old_tree() {
+        let fixture = Fixture::with(
+            "(a b)",
+            Recording {
+                policy: Some(ReparsePolicy::Whole),
+                ..Recording::default()
+            },
+        );
+        fixture.session.parse_once(&fixture.syntax);
+        for (range, with) in [(0..0, "("), (5..5, " c"), (0..1, "")] {
+            let revision = fixture.replace(range, with);
+            assert_eq!(
+                fixture.session.parse_once(&fixture.syntax),
+                Outcome::Delivered(revision)
+            );
+            assert!(fixture.delivered_is_fresh());
+        }
+
+        assert_eq!(fixture.olds(), [None, None, None, None]);
+        assert_eq!(fixture.session.policy(), ReparsePolicy::Whole);
     }
 
     #[test]
@@ -1012,7 +1037,7 @@ pub(crate) mod tests {
         let fixture = Fixture::with(
             "(a b",
             Recording {
-                recovers_otherwise: true,
+                recovers: Recovers::OutsideText,
                 ..Recording::default()
             },
         );
