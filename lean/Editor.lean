@@ -139,8 +139,11 @@ in faces. A major mode says how its text is parsed and drawn
 (`Mode.SyntaxTree`), and setting it asks the port
 (`Editor/Highlight.lean`, which comes with the loop's dispatch). Setting it
 also keeps the mode's indents and text objects queries for its text: the
-indent level of each row is `TextId.indentLevels` (`Editor/Indent.lean`), a
-primitive config's and evil's indent commands call, and the syntax tree's
+indent level of each row is `TextId.indentLevels` (`Editor/Indent.lean`),
+the level of a line opened at a position `TextId.openingLevel`, and the
+edits that re-indent rows `TextId.reindentEdits`: primitives config's and
+evil's indent commands (`=`, `RET`, `o`, `O`) call, in a buffer's indent
+unit (`Target.indentUnit`, `Editor/Language/IndentUnit.lean`); and the syntax tree's
 text objects are entries of evil's vocabulary
 (`Editor/Evil/TreeObjects.lean`). Its model and contract are for tests, and
 are not imported.
