@@ -1391,6 +1391,7 @@ mod tests {
 
     /// A window out of fullscreen whose title bar the system reads as
     /// covering `top` points.
+    #[cfg(target_os = "macos")]
     fn covered(top: f64) -> Shape {
         Shape {
             top: Some(top),
