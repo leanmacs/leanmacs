@@ -7109,7 +7109,140 @@ def layoutChecks : List Check :=
                   (fun selected =>
                     Layout.monocle.place windows selected whole == #[(selected, whole)]) &&
                 Layout.monocle.place windows ⟨9⟩ whole == #[(⟨0⟩, whole)] &&
-                Layout.monocle.place #[] ⟨0⟩ whole == #[] }]
+                Layout.monocle.place #[] ⟨0⟩ whole == #[] },
+    { name :=
+        "criterion 2: an edge layout gives the windows docked at its side a strip of its size in percent of the extent along the side's axis, divided the other way, and the layout inside it the rest; tiles first, then the strip; a right edge cuts from the right, and a bottom edge inside a left one spans only the width the left strip leaves"
+      run :=
+        pure <|
+          let docked (entries : List (Nat × Side)) : Array (ViewId × Side) :=
+            entries.toArray.map fun (index, side) => (⟨index⟩, side)
+          let two := windowsUpTo 2
+          let whole := rect 0 0 640 464
+          (Layout.edge .left 25 Layout.default).place two ⟨0⟩ whole (docked [(2, .left)]) ==
+              #[(⟨0⟩, rect 160 0 240 464), (⟨1⟩, rect 400 0 240 464), (⟨2⟩, rect 0 0 160 464)] &&
+            (Layout.edge .left 25 Layout.default).place two ⟨0⟩ whole
+                (docked [(2, .left), (3, .left)]) ==
+              #[(⟨0⟩, rect 160 0 240 464), (⟨1⟩, rect 400 0 240 464), (⟨2⟩, rect 0 0 160 232),
+                (⟨3⟩, rect 0 232 160 232)] &&
+            (Layout.edge .right 25 Layout.default).place two ⟨0⟩ whole (docked [(2, .right)]) ==
+              #[(⟨0⟩, rect 0 0 240 464), (⟨1⟩, rect 240 0 240 464), (⟨2⟩, rect 480 0 160 464)] &&
+            (Layout.edge .left 20 (.edge .bottom 30 Layout.default)).place two ⟨0⟩
+                (rect 0 0 640 480) (docked [(2, .left), (3, .bottom)]) ==
+              #[(⟨0⟩, rect 128 0 256 336), (⟨1⟩, rect 384 0 256 336), (⟨3⟩, rect 128 336 512 144),
+                (⟨2⟩, rect 0 0 128 480)] },
+    { name :=
+        "an edge layout with no window docked at its side reserves no strip: it lays out exactly as the layout inside it, and the default arguments dock nothing"
+      run :=
+        pure <|
+          let whole := rect 0 0 640 464
+          [Layout.default, .monocle, Layout.manual].all fun inner =>
+            (List.range 4).all fun count =>
+              let windows := windowsUpTo (count + 1)
+              (Layout.edge .left 25 inner).place windows ⟨0⟩ whole #[] ==
+                  inner.place windows ⟨0⟩ whole &&
+                (Layout.edge .top 40 (.edge .left 25 inner)).place windows ⟨0⟩ whole ==
+                  inner.place windows ⟨0⟩ whole },
+    { name :=
+        "criterion 2: edge layouts of up to two layers, at each side and sizes of 0, 1, 25, 50 and 100 percent, over master-and-stack, monocle and manual splits, give every docked window exactly one rectangle and every tile one (under monocle the selected tile alone), tiles first in list order, and the rectangles tile the area, for one to five tiles, none to two windows docked at each layer's side, at even, odd, small and zero sizes"
+      run :=
+        pure <|
+          let sizes := [0, 1, 25, 50, 100]
+          let sides := [Side.left, .right, .top, .bottom]
+          let layers : List (List (Side × Nat)) :=
+            [[]] ++ sides.flatMap (fun side => sizes.map fun size => [(side, size)]) ++
+              sides.flatMap fun outer =>
+                (sides.filter (· != outer)).flatMap fun inner =>
+                  [0, 25, 100].flatMap fun first =>
+                    [1, 50].map fun second => [(outer, first), (inner, second)]
+          let wrapped (inner : Layout) (layers : List (Side × Nat)) : Layout :=
+            layers.foldr (fun (side, size) layout => .edge side size layout) inner
+          let dockings (layers : List (Side × Nat)) : List (Array (ViewId × Side)) :=
+            layers.foldl
+              (fun (all : List (Array (ViewId × Side))) (side, _) =>
+                all.flatMap fun so =>
+                  (List.range 3).map fun count =>
+                    so ++ (Array.range count).map fun index => (⟨10 + so.size + index⟩, side))
+              [#[]]
+          let sorted (ids : Array ViewId) : Array Nat := (ids.map (·.index)).qsort (· < ·)
+          [Layout.default, .monocle, Layout.manual].all fun inner =>
+            layers.all fun layer =>
+              let layout := wrapped inner layer
+              (dockings layer).all fun docked =>
+                (List.range 5).all fun index =>
+                  let windows := windowsUpTo (index + 1)
+                  sampleRects.all fun whole =>
+                    let laid := layout.place windows ⟨0⟩ whole docked
+                    let ids := laid.map (·.1)
+                    let shownTiles := if inner == .monocle then #[⟨0⟩] else windows
+                    tiles whole (laid.map (·.2)) &&
+                      sorted ids == sorted (shownTiles ++ docked.map (·.1)) &&
+                      ids.extract 0 shownTiles.size == shownTiles },
+    { name :=
+        "monocle with the selected view docked shows it over the whole area, as a zoom from a docked window does; with a selected view docked or tiled nowhere it shows the first window"
+      run :=
+        pure <|
+          let whole := rect 0 0 640 464
+          Layout.monocle.place (windowsUpTo 2) ⟨2⟩ whole #[(⟨2⟩, .left)] == #[(⟨2⟩, whole)] &&
+            Layout.monocle.place (windowsUpTo 2) ⟨7⟩ whole #[(⟨2⟩, .left)] == #[(⟨0⟩, whole)] },
+    { name :=
+        "the operations of a layout on its list pass through an edge to the layout inside it: inserted, removed, fits, fitted, balanced, resized and rotated under an edge are the inner layout's, wrapped; the edge's sides, its tiling layout and a tiling replaced are read through every layer"
+      run :=
+        pure <|
+          let tree := Splits.split .columns 3 1 .tile (.split .rows 1 1 .tile .tile)
+          let inners : List Layout :=
+            [Layout.default, .masterStack { share := 70, count := 2 }, .monocle, .splits tree]
+          let four := windowsUpTo 4
+          inners.all
+                        (fun inner =>
+                          let edged := Layout.edge .left 25 inner
+                          edged.inserted 1 { axis := .columns } ==
+                              .edge .left 25 (inner.inserted 1 { axis := .columns }) &&
+                            edged.removed 1 ==
+                              (.edge .left 25 (inner.removed 1).1, (inner.removed 1).2) &&
+                            edged.fits 5 == .edge .left 25 (inner.fits 5) &&
+                            edged.fitted 3 == inner.fitted 3 &&
+                            edged.balanced == .edge .left 25 inner.balanced &&
+                            edged.resized 0 3 .columns true 1 ==
+                              (inner.resized 0 3 .columns true 1).map (.edge .left 25 ·) &&
+                            edged.rotated four true == inner.rotated four true) &&
+                      (Layout.edge .left 20 (.edge .bottom 30 Layout.manual)).edgeSides ==
+                        [.left, .bottom] &&
+                    Layout.default.edgeSides == [] &&
+                  (Layout.edge .left 20 (.edge .bottom 30 Layout.manual)).tiling == Layout.manual &&
+                Layout.monocle.tiling == .monocle &&
+              (Layout.edge .left 20 (.edge .bottom 30 Layout.manual)).withTiling .monocle ==
+                .edge .left 20 (.edge .bottom 30 .monocle) &&
+            Layout.manual.withTiling .monocle == .monocle },
+    { name :=
+        "resizing an edge's strip moves its size by 5 percent a step, growing or shrinking, clamped to 0 and 100, at any layer; across the side's axis, and for a side the layout has no edge at, it is none"
+      run :=
+        pure <|
+          let d := Layout.default
+          (Layout.edge .left 25 d).resizedEdge .left .columns true 1 == some (.edge .left 30 d) &&
+            (Layout.edge .left 25 d).resizedEdge .left .columns false 2 ==
+              some (.edge .left 15 d) &&
+            (Layout.edge .left 98 d).resizedEdge .left .columns true 1 ==
+              some (.edge .left 100 d) &&
+            (Layout.edge .left 3 d).resizedEdge .left .columns false 1 == some (.edge .left 0 d) &&
+            (Layout.edge .left 25 d).resizedEdge .left .rows true 1 == none &&
+            (Layout.edge .left 25 d).resizedEdge .right .columns true 1 == none &&
+            d.resizedEdge .left .columns true 1 == none &&
+            (Layout.edge .left 20 (.edge .bottom 30 d)).resizedEdge .bottom .rows true 1 ==
+              some (.edge .left 20 (.edge .bottom 35 d)) },
+    { name :=
+        "what is wrong with a layout config chooses: an edge above 100 percent, a side given twice, and a share above 100 at any depth, each with its sentence; every other layout has nothing wrong"
+      run :=
+        pure <|
+          let d := Layout.default
+          (Layout.edge .left 101 d).problem? == some (Layout.edgeTooLarge 101) &&
+            (Layout.edge .left 20 (.edge .bottom 30 (.edge .left 10 d))).problem? ==
+              some (Layout.edgeTwice .left) &&
+            (Layout.edge .left 20 (.masterStack { share := 150 })).problem? ==
+              some (Layout.shareTooLarge 150) &&
+            (Layout.masterStack { share := 150 }).problem? == some (Layout.shareTooLarge 150) &&
+            (Layout.edge .left 100 (.edge .right 0 d)).problem? == none &&
+            [d, .monocle, Layout.manual].all (·.problem? == none) &&
+            Layout.edgeTooLarge 101 != Layout.edgeTwice .left }]
 
 /-- The initial state at 640 by 480 with two more windows over its one
 buffer, each with markers of its own, laid out by the default layout: view

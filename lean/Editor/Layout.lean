@@ -96,7 +96,8 @@ inductive Axis where
   | columns
   deriving DecidableEq, Repr
 
-/-- The edge of the tiled area main takes. -/
+/-- An edge of a rectangle: the one main takes under master-and-stack, and
+the one an edge layout docks windows at. -/
 inductive Side where
   /-- Main is on the left, the stack on its right. -/
   | left
@@ -113,6 +114,14 @@ and `right`, rows for `top` and `bottom`. -/
 def Side.axis : Side → Axis
   | .left | .right => .columns
   | .top | .bottom => .rows
+
+/-- The side's name, as a sentence says it: `left`, `right`, `top` or
+`bottom`. -/
+def Side.name : Side → String
+  | .left => "left"
+  | .right => "right"
+  | .top => "top"
+  | .bottom => "bottom"
 
 /-- Whether `rect` lies wholly on `side` of `start` and overlaps it across:
 for `left`, its right edge is at or before the start's left edge and their
@@ -183,6 +192,9 @@ inductive Layout where
   | monocle
   /-- The windows of the list take the tiles of `tree` in order. -/
   | splits (tree : Splits)
+  /-- The windows docked at `side` share a strip of `size` percent of the
+  area's extent along the side's axis; `inner` lays out the rest. -/
+  | edge (side : Side) (size : Nat) (inner : Layout)
   deriving DecidableEq, Repr
 
 /-- The extent of `rect` along `axis`: its height for rows, and its width for
@@ -371,6 +383,46 @@ a share is a percentage. -/
 def shareTooLarge (share : Nat) : String :=
   s!"main's share of a master-and-stack layout must be at most 100 percent, not {share}"
 
+/-- What an edge layout whose size is `size`, above 100, is refused with when
+config chooses it: a size is a percentage. -/
+def edgeTooLarge (size : Nat) : String :=
+  s!"an edge's size must be at most 100 percent, not {size}"
+
+/-- What a layout with two edges at `side` is refused with when config
+chooses it: the inner strip could never get a window. -/
+def edgeTwice (side : Side) : String :=
+  s!"the layout has the {side.name} edge twice"
+
+/-- The sides of the layout's edges (`Layout.edge`), outermost first; none
+for a layout with no edge. -/
+def edgeSides : Layout → List Side
+  | .edge side _ inner => side :: inner.edgeSides
+  | _ => []
+
+/-- The layout inside every edge of the layout: the one that tiles the
+list. A layout with no edge is its own. -/
+def tiling : Layout → Layout
+  | .edge _ _ inner => inner.tiling
+  | other => other
+
+/-- The layout with `tiling` in place of the one inside every edge
+(`tiling`), the edges kept. -/
+def withTiling : Layout → Layout → Layout
+  | .edge side size inner, tiling => .edge side size (inner.withTiling tiling)
+  | _, tiling => tiling
+
+/-- What is wrong with a layout config chooses, at any depth, if anything:
+an edge above 100 percent (`edgeTooLarge`), a side whose edge is inside
+another edge at that side (`edgeTwice`), and a master-and-stack share above
+100 (`shareTooLarge`). -/
+def problem? : Layout → Option String
+  | .masterStack parameters =>
+    if parameters.share > 100 then some (shareTooLarge parameters.share) else none
+  | .monocle | .splits _ => none
+  | .edge side size inner =>
+    if size > 100 then some (edgeTooLarge size)
+    else if inner.edgeSides.contains side then some (edgeTwice side) else inner.problem?
+
 /-- `rect` divided along `axis` into `count` parts, in order: each takes
 the extent divided by `count`, rounded down, and the first `extent % count`
 take a pixel more, so the parts sum to the extent. No part for a count of
@@ -386,9 +438,10 @@ def divide (axis : Axis) (rect : Rect) (count : Nat) : Array Rect :=
       rest := after
     return parts
 
-/-- The rectangle of each window shown of `windows`, laid out in `rect`, in
-drawing order. `selected` is the window the user is working in, which
-monocle shows.
+/-- The rectangle of each window shown of `windows` and of `docked`, the
+windows docked at an edge with their sides, laid out in `rect`, in drawing
+order. `selected` is the window the user is working in, which monocle
+shows.
 
 - **Master-and-stack.** With `0 < count < n` for `n` windows, main takes
   `extent * min share 100 / 100` of the extent along its side's axis
@@ -398,14 +451,23 @@ monocle shows.
   order, divide the stack's. With a count of 0, or of `n` or more, all the
   windows divide the whole rectangle that way. Every window gets exactly
   one rectangle, in list order, and they tile `rect`.
-- **Monocle.** `selected` takes the whole rectangle when it is in the list,
-  and the first window otherwise. The other windows get none.
+- **Monocle.** `selected` takes the whole rectangle when it is in the list
+  or docked, and the first window otherwise. The other windows get none.
 - **Manual splits.** The tree, fitted to the windows (`Splits.fit`), gives
   its tiles' rectangles (`Splits.rects`) to the windows in list order.
+- **Edge.** The windows docked at its side, in order, take a strip on that
+  side, `extent * min size 100 / 100` of the extent along the side's axis
+  (rounded down), divided the other way (`divide`); `inner` lays out the
+  rest with the other docked windows. With no window docked at its side no
+  strip is reserved, and `inner` has the whole rectangle. `inner`'s
+  rectangles come first, then the strip's, so main stays first.
 
-An empty list gives none. -/
-def place : Layout → (windows : Array ViewId) → (selected : ViewId) → Rect → Array (ViewId × Rect)
-  | .masterStack parameters, windows, _, rect =>
+Master-and-stack and manual splits ignore `docked`: a docked window has an
+edge to go to (`EditorState.wellFormed`). An empty list gives none. -/
+def place (layout : Layout) (windows : Array ViewId) (selected : ViewId) (rect : Rect)
+    (docked : Array (ViewId × Side) := #[]) : Array (ViewId × Rect) :=
+  match layout with
+  | .masterStack parameters =>
     let axis := parameters.side.axis
     let count := parameters.count
     if count == 0 || count ≥ windows.size then windows.zip (divide axis.across rect windows.size)
@@ -419,9 +481,24 @@ def place : Layout → (windows : Array ViewId) → (selected : ViewId) → Rect
           (after, before)
       (windows.extract 0 count).zip (divide axis.across inMain count) ++
         (windows.extract count windows.size).zip (divide axis.across inStack (windows.size - count))
-  | .monocle, windows, selected, rect =>
-    if windows.contains selected then #[(selected, rect)] else (windows[0]?.map (·, rect)).toArray
-  | .splits tree, windows, _, rect => windows.zip ((tree.fit windows.size).rects rect)
+  | .monocle =>
+    if windows.contains selected || docked.any (·.1 == selected) then #[(selected, rect)]
+    else (windows[0]?.map (·, rect)).toArray
+  | .splits tree => windows.zip ((tree.fit windows.size).rects rect)
+  | .edge side size inner =>
+    let mine := (docked.filter (·.2 == side)).map (·.1)
+    let rest := docked.filter (·.2 != side)
+    if mine.isEmpty then inner.place windows selected rect rest
+    else
+      let axis := side.axis
+      let size := extent axis rect * min size 100 / 100
+      let (strip, remaining) :=
+        match side with
+        | .left | .top => cut axis rect size
+        | .right | .bottom =>
+          let (before, after) := cut axis rect (extent axis rect - size)
+          (after, before)
+      inner.place windows selected remaining rest ++ mine.zip (divide axis.across strip mine.size)
 
 /-- The layout once tile `index`, the source window's index in a list of
 windows the layout fits, was split by `placement`: under manual splits the
@@ -431,6 +508,7 @@ unchanged. -/
 def inserted (layout : Layout) (index : Nat) (placement : Placement) : Layout :=
   match layout with
   | .splits tree => .splits ((tree.insert index placement.axis).balance (· == placement.axis))
+  | .edge side size inner => .edge side size (inner.inserted index placement)
   | other => other
 
 /-- The layout once the window at `index` of a list of windows the layout
@@ -444,6 +522,9 @@ def removed (layout : Layout) (index : Nat) : Layout × Option Nat :=
     match tree.remove index with
     | some (removed, inheritor, axis) => (.splits (removed.balance (· == axis)), some inheritor)
     | none => (layout, none)
+  | .edge side size inner =>
+    let (inner, inheritor) := inner.removed index
+    (.edge side size inner, inheritor)
   | other => (other, none)
 
 /-- The layout with its windows made equal, as Vim's `C-w =`: under manual
@@ -454,6 +535,7 @@ def balanced : Layout → Layout
   | .splits tree => .splits (tree.balance fun _ => true)
   | .masterStack parameters => .masterStack { parameters with share := 50 }
   | .monocle => .monocle
+  | .edge side size inner => .edge side size inner.balanced
 
 /-- The layout with the window at `index` of `size` windows grown or shrunk
 along `axis` by `steps` steps of 5 percent; none when it cannot be.
@@ -478,6 +560,7 @@ def resized (layout : Layout) (index size : Nat) (axis : Axis) (grow : Bool) (st
       some (.masterStack { parameters with share })
     else none
   | .monocle => none
+  | .edge side strip inner => (inner.resized index size axis grow steps).map (.edge side strip ·)
 
 /-- `windows` rotated as the layout defines: under master-and-stack the
 stack, the windows after main's `count`, rotates and main stays; under
@@ -487,6 +570,7 @@ the reverse, as `C-w R`. -/
 def rotated (layout : Layout) (windows : Array ViewId) (forward : Bool) : Array ViewId :=
   match layout with
   | .masterStack parameters => rotateTail windows (min parameters.count windows.size) forward
+  | .edge _ _ inner => inner.rotated windows forward
   | _ => rotateTail windows 0 forward
 
 /-- Whether the layout fits `count` windows: under manual splits whether its
@@ -494,6 +578,7 @@ tree has `count` tiles, and always under the others. -/
 def fitted (layout : Layout) (count : Nat) : Bool :=
   match layout with
   | .splits tree => tree.size == count
+  | .edge _ _ inner => inner.fitted count
   | _ => true
 
 /-- The layout fitted to `count` windows: under manual splits its tree is
@@ -501,7 +586,22 @@ fitted (`Splits.fit`); the others are unchanged. -/
 def fits (layout : Layout) (count : Nat) : Layout :=
   match layout with
   | .splits tree => .splits (tree.fit count)
+  | .edge side size inner => .edge side size (inner.fits count)
   | other => other
+
+/-- The layout with the strip of its edge at `side` grown or shrunk by
+`steps` steps of 5 percent, clamped to 0 and 100, a size above 100 read as
+100, at whichever layer that edge is; none across the side's axis and when
+the layout has no edge at `side`. -/
+def resizedEdge (side : Side) (axis : Axis) (grow : Bool) (steps : Nat) : Layout → Option Layout
+  | .edge at_ size inner =>
+    if at_ == side then
+      if axis == side.axis then
+        let size := min size 100
+        some (.edge at_ (if grow then min 100 (size + 5 * steps) else size - 5 * steps) inner)
+      else none
+    else (inner.resizedEdge side axis grow steps).map (.edge at_ size ·)
+  | _ => none
 
 end Layout
 
