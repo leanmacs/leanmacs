@@ -6,7 +6,7 @@ import Editor.Scene
 # The display interface
 
 The port through which Lean publishes a scene (`Editor/Scene.lean`) and asks
-layout the two questions commands need of it, answered in the same call:
+layout the three questions commands need of it, answered in the same call:
 
 - **the rows a view shows** from its scroll anchor (`Display.rowsShown`): the
   byte range of each visual row, from the one that holds the anchor, as many
@@ -22,7 +22,21 @@ pixels; the contract holds every binding to "a padded question is the
 unpadded question of the smaller area" (`Display/Contract.lean`).
 - **the position some visual lines away** from a position
   (`Display.linesFrom`), with the x it aimed for passed back so that the next
-  move aims for it too (Vim's "curswant").
+  move aims for it too (Vim's "curswant");
+- **where a position is drawn** in a view (`Display.spotOf`): the x of its
+  left edge and the y of the top of the row that holds it, in pixels from
+  the view's top left with its padding included, and that row's height;
+  none when the view does not show it. A float anchored at a position is
+  placed against it (`Editor/Floating.lean`).
+
+The third is a question of its own, not worked out from the first two,
+for two reasons. The padding is in points, which the display takes off
+at a scale Lean never sees, so Lean cannot add it back in pixels; and
+rows are not one height, since a face may set a size or a line height,
+so the k-th row shown is not `k` text rows down. The contract ties it to
+the first two (`Display/Contract.lean`): in cells, a spot's y is the
+padding plus `k` rows for the `k`-th row `rowsShown` answers, and its x
+is the padding plus the goal a move of no lines passes back.
 
 Lean keeps no layout of its own: what wraps where, and how tall a row is, is
 asked here every time. Xi's experience is the reason
@@ -56,7 +70,7 @@ binding:
 
 | Addition | Where | Owner |
 |---|---|---|
-| Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, its answer in the model, the recorder and the real binding, and a property in the contract | The display pipeline adds it when something needs it; `heights` came so, for sizing a view's text area and the minibuffer's place |
+| Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, its answer in the model, the recorder and the real binding, and a property in the contract | The display pipeline adds it when something needs it; `heights` came so, for sizing a view's text area and the minibuffer's place, and `spot` for placing a float beside a position (window management, phase 4) |
 | A field of what is published | A field of `Scene` (`Editor/Scene.lean`) | The command loop |
 | A request a command makes of the display | Nothing new: a command reaches this port through the editor's composite port (`Editor/Command.lean`), which lifts every operation here | The command loop |
 | A new thing to ask of the window | A constructor of `FrameRequest`, its case in the model, the recorder, the real binding, `Ffi.WindowRequest` and `editor-ffi`'s request tags, and a variant of `editor-platform`'s `Request` | The macOS app roadmap added the first three |
@@ -174,6 +188,34 @@ structure Moved where
   goal : Nat
   deriving DecidableEq, Repr
 
+/-- Where a position is drawn in a view. -/
+structure SpotQuery where
+  /-- The text the view shows. -/
+  snapshot : SnapshotId
+  /-- The view's width, in pixels, as `RowsQuery.width`. -/
+  width : Nat
+  /-- The view's height less its bottom row, in pixels, as
+  `RowsQuery.height`. -/
+  height : Nat
+  /-- The scroll anchor's byte offset, as `RowsQuery.anchor`. -/
+  anchor : Nat
+  /-- The view's padding, in points, as `RowsQuery.padding`. -/
+  padding : Padding := {}
+  /-- The byte offset of the position. -/
+  position : Nat
+  deriving DecidableEq, Repr
+
+/-- Where a position is drawn in a view, in whole pixels from the view's
+top left, its padding included. -/
+structure Spot where
+  /-- From the view's left edge to the position's left. -/
+  x : Nat
+  /-- From the view's top edge to the top of the row that holds it. -/
+  y : Nat
+  /-- How tall that row is. -/
+  height : Nat
+  deriving DecidableEq, Repr, Inhabited
+
 end Display
 
 namespace Display
@@ -206,6 +248,8 @@ inductive DisplayRequest where
   | rows (query : Display.RowsQuery)
   /-- Where a position goes when it moves some visual lines. -/
   | move (query : Display.MoveQuery)
+  /-- Where a position is drawn in a view. -/
+  | spot (query : Display.SpotQuery)
   /-- How tall a text row, a window's status row and the frame's bottom row
   are. -/
   | heights
@@ -217,6 +261,7 @@ def DisplayRequest.Reply : DisplayRequest → Type
   | .publish _ => Unit
   | .rows _ => Except DisplayError (Array Display.Row)
   | .move _ => Except DisplayError Display.Moved
+  | .spot _ => Except DisplayError (Option Display.Spot)
   | .heights => Display.Heights
   | .frame _ => Unit
 
@@ -261,6 +306,16 @@ next move. A move past the first or the last row stops there. Refused as
 `rowsShown` is. -/
 def linesFrom (query : MoveQuery) : DisplayM Moved :=
   ExceptT.mk (Program.request (port := displayPort) (.move query))
+
+/-- Where `query.position` is drawn in a view that shows from
+`query.anchor`: the x of its left edge and the y of the top of the row that
+holds it, from the view's top left with its padding included, and that
+row's height, in whole pixels at the display's scale. None when the
+position is not among the rows `rowsShown` answers for the same view,
+which includes a position before the anchor. Refused as `rowsShown` is,
+for the anchor or the position. -/
+def spotOf (query : SpotQuery) : DisplayM (Option Spot) :=
+  ExceptT.mk (Program.request (port := displayPort) (.spot query))
 
 /-- The heights of the rows a frame is built of, in whole pixels at the
 display's scale: a text row in the default face, a window's status row, and

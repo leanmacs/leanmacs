@@ -3,7 +3,7 @@ import Editor.Display
 /-!
 # The contract of the display interface
 
-What every implementation of the display interface's two queries
+What every implementation of the display interface's three queries
 (`Editor/Display.lean`) answers, as one list of properties. The model
 (`Editor/Display/Model.lean`) is held to it by `model-test`, under
 `lake test`. The display pipeline's real binding (its phase 1) is to be held
@@ -47,6 +47,19 @@ character that a font draws wide. How wide a character is drawn is the
 shaper's, and the fake shaper a runner uses makes every glyph one cell, so
 what is wide, and how wide, is left open. No property has a tab or a wide
 character in a line that wraps either.
+
+## What the spot query is held to
+
+The spot query is tied to the other two (`spotAgrees`), so it cannot drift
+from them: for a position among the rows `rowsShown` answers, the spot's y
+is the padding's `down` and `top` plus `k` text rows, where `k` is its
+row's index in that answer; its x is the padding's `across` plus the goal
+a move of no lines with no goal passes back; and its height is a text
+row's. A position before the anchor, or past the rows shown, has none.
+Which row holds a position is asked of `rowsShown` too, from an anchor at
+the position itself. That a row's height is a text row's is so in cells;
+at a scale, and where a face sets another height, it is
+`editor-layout`'s tests that pin the spot.
 
 ## What a caller that wants a column of a line relies on
 
@@ -101,6 +114,31 @@ def downAndUp (cells : Display.Cells) (snapshot : SnapshotId) (columns position 
     Display.linesFrom
         { snapshot, width, position := down.position, lines := -lines, goal := some down.goal }
   return up.position == position && down.position != position
+
+/-- Whether the spot of `position` in a view of `snapshot` whose text area
+is `columns` cells by `rows` rows, padded `padding` around it, that shows
+from `anchor`, is where `rowsShown` and a move of no lines say it is (the
+module docs, "What the spot query is held to"). -/
+def spotAgrees (cells : Display.Cells) (snapshot : SnapshotId) (columns rows anchor : Nat)
+    (padding : Padding) (position : Nat) : DisplayM Bool := do
+  let width := columns * cells.advance + 2 * padding.across
+  let height := rows * cells.lineHeight + 2 * padding.down + padding.top
+  let shown ← Display.rowsShown { snapshot, width, height, anchor, padding }
+  let own ← Display.rowsShown { snapshot, width, height, anchor := position, padding }
+  let spot ← Display.spotOf { snapshot, width, height, anchor, padding, position }
+  let heights ← Display.heights
+  match own[0]?.bind fun held => shown.findIdx? (· == held) with
+  | none =>
+    return spot.isNone
+  | some k =>
+    let moved ←
+      Display.linesFrom
+          { snapshot, width, across := padding.across, position, lines := 0, goal := none }
+    return spot ==
+        some
+          { x := padding.across + moved.goal
+            y := padding.down + padding.top + k * heights.text
+            height := heights.text }
 
 /-- The properties of the queries at the cell size `cells`. -/
 def properties (cells : Display.Cells) : List Property :=
@@ -234,6 +272,39 @@ def properties (cells : Display.Cells) : List Property :=
             under == smaller &&
             paddedMove == (← move 4 0) &&
             paddedMove != (← move 6 0) },
+    { name :=
+        "a spot is where the rows and a move say: its y the padding and k rows for the k-th row shown, its x the padding and a move's goal, its height a row's, and none for a position before the anchor or past the rows shown, at every position of a text with wrapped and short lines"
+      texts := #["abcdefgh\nij\n\nklmnopqrst\nu"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let paddings : List Padding :=
+          [{}, { across := cells.advance, down := cells.lineHeight, top := cells.lineHeight }]
+        let mut holds := true
+        for padding in paddings do
+          for anchor in [0, 4, 13] do
+            for position in List.range 26 do
+              holds := holds && (← spotAgrees cells snapshot 4 3 anchor padding position)
+        return holds },
+    { name :=
+        "a spot is shown exactly where the rows are: the third row shown is two rows down, a position before the anchor has none, and one past the rows shown has none"
+      texts := #["ab\ncd\nefgh\nij"]
+      holds := fun snapshots => do
+        let spot (anchor position : Nat) (padding : Padding := {}) :
+          DisplayM (Option Display.Spot) :=
+          Display.spotOf
+            { snapshot := nth snapshots 0, width := 10 * cells.advance + 2 * padding.across
+              height := 3 * cells.lineHeight + 2 * padding.down + padding.top, anchor, padding
+              position }
+        let padding : Padding := { across := cells.advance, down := cells.lineHeight, top := 1 }
+        return (← spot 0 9) ==
+              some
+                { x := 3 * cells.advance, y := 2 * cells.lineHeight, height := cells.lineHeight } &&
+            (← spot 3 0) == none &&
+            (← spot 0 12) == none &&
+            (← spot 0 9 padding) ==
+              some
+                { x := 4 * cells.advance, y := 3 * cells.lineHeight + 1
+                  height := cells.lineHeight } },
     { name := "each height of a row the display answers is at least one pixel"
       texts := #[]
       holds := fun _ => do
@@ -254,7 +325,12 @@ def properties (cells : Display.Cells) : List Property :=
               refusedWith .noSuchSnapshot
                   (Display.linesFrom
                     { snapshot := unknown snapshots, width := 4 * cells.advance, position := 0
-                      lines := 1, goal := none })) },
+                      lines := 1, goal := none })) &&
+            (←
+              refusedWith .noSuchSnapshot
+                  (Display.spotOf
+                    { snapshot := unknown snapshots, width := 4 * cells.advance
+                      height := cells.lineHeight, anchor := 0, position := 0 })) },
     { name := "a position inside a character, or past the end of the text, is refused"
       texts := #["é\nab"]
       holds := fun snapshots => do
@@ -264,7 +340,17 @@ def properties (cells : Display.Cells) : List Property :=
               refusedWith .badPosition
                   (Display.linesFrom
                     { snapshot := nth snapshots 0, width := 4 * cells.advance, position := 1
-                      lines := 1, goal := none })) }]
+                      lines := 1, goal := none })) &&
+            (←
+              refusedWith .badPosition
+                  (Display.spotOf
+                    { snapshot := nth snapshots 0, width := 4 * cells.advance
+                      height := cells.lineHeight, anchor := 0, position := 1 })) &&
+            (←
+              refusedWith .badPosition
+                  (Display.spotOf
+                    { snapshot := nth snapshots 0, width := 4 * cells.advance
+                      height := cells.lineHeight, anchor := 1, position := 0 })) }]
 
 /-- The names of `properties` that do not hold, with the refusal of each
 that was refused. `run` runs one property against an implementation, made

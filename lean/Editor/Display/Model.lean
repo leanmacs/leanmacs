@@ -10,8 +10,8 @@ for tests, not a copy of layout kept at run time: an editor with a window
 asks the real display every time. The one exception is a host with no
 window, which has no layout to ask: there the recorder
 (`Editor/Display/Recorder.lean`) answers each query with this module's rule
-(`DisplayModel.rows`, `DisplayModel.move`), over a model that holds the one
-snapshot the query names.
+(`DisplayModel.rows`, `DisplayModel.move`, `DisplayModel.spot`), over a
+model that holds the one snapshot the query names.
 
 It sees a snapshot's text through `texts`, which a test fills, and which the
 command loop fills from the text model when it runs both ports together.
@@ -41,7 +41,9 @@ command loop fills from the text model when it runs both ports together.
 - A position at a wrap is the start of the later row. Only a line's last row
   holds the position at the line's end, before its break.
 - The x of a position is its character's first cell in its row times
-  `advance`. A move aims for the cell `goal / advance` of its row and goes
+  `advance`. Its spot is that x and the top of its row, `k * lineHeight`
+  for the `k`-th row shown, each with the padding added back, and a row's
+  height. A move aims for the cell `goal / advance` of its row and goes
   to the character that cell is in.
 
 This is arithmetic of tab stops and widths, and it is here because this is
@@ -243,6 +245,28 @@ def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayErro
     else if row.lastOfLine then row.row.stop else row.chars.back?.getD row.row.stop
   return { position, goal }
 
+/-- Where a position is drawn in a view: on the row `k` rows below the one
+that holds the anchor, when that is among the rows `rows` shows, at `y = down
++ top + k * lineHeight`, `lineHeight` tall, and at `x = across + cell *
+advance`, where `cell` is the position's first cell in its row as a move
+counts it; none when the rows shown do not hold it. -/
+def spot (model : DisplayModel) (query : Display.SpotQuery) :
+    Except DisplayError (Option Display.Spot) := do
+  let width := query.width - 2 * query.padding.across
+  let height := query.height - 2 * query.padding.down - query.padding.top
+  let laid ← model.laidOut query.snapshot width query.anchor
+  discard <| model.laidOut query.snapshot width query.position
+  let first := rowOf laid query.anchor
+  let here := rowOf laid query.position
+  unless first ≤ here && here < first + height / model.cells.lineHeight do
+    return none
+  let held := laid[here]!
+  let cell := held.firsts[(held.chars.filter (· < query.position)).size]?.getD held.reach
+  return some
+      { x := query.padding.across + cell * model.cells.advance
+        y := query.padding.down + query.padding.top + (here - first) * model.cells.lineHeight
+        height := model.cells.lineHeight }
+
 /-- Answers `request`: a scene is recorded, a request of the window is
 recorded and answers nothing, and a query is answered from the model as it
 is. -/
@@ -250,6 +274,7 @@ def handle : (request : DisplayRequest) → DisplayModel → request.Reply × Di
   | .publish scene, model => ((), { model with published := model.published.push scene })
   | .rows query, model => (model.rows query, model)
   | .move query, model => (model.move query, model)
+  | .spot query, model => (model.spot query, model)
   | .heights, model => (model.cells.heights, model)
   | .frame request, model => ((), { model with asked := model.asked.push request })
 

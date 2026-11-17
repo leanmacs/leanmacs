@@ -66,6 +66,8 @@ def handle (recorder : DisplayRecorder) : DisplayHandler
     return (← recorder.modelOf query.snapshot).rows query
   | .move query => do
     return (← recorder.modelOf query.snapshot).move query
+  | .spot query => do
+    return (← recorder.modelOf query.snapshot).spot query
   | .heights => return recorder.cells.heights
   -- There is no window to ask.
   | .frame _ => return ()

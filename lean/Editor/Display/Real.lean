@@ -150,6 +150,21 @@ def move (real : RealDisplay) (query : Display.MoveQuery) :
   | none =>
     return .error .badPosition
 
+/-- Where a position is drawn in a view: `Display.spotOf`'s answer. -/
+def spot (real : RealDisplay) (query : Display.SpotQuery) :
+    IO (Except DisplayError (Option Display.Spot)) := do
+  let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
+  let answer ←
+    real.display.spot snapshot (RealTexts.word query.width) (RealTexts.word query.height)
+        (offset query.anchor) (offset query.position) (paddingWord query.padding.across)
+        (paddingWord query.padding.down) (paddingWord query.padding.top)
+  match answer with
+  | some spot =>
+    return .ok
+        (spot.map fun spot => { x := spot.x.toNat, y := spot.y.toNat, height := spot.height.toNat })
+  | none =>
+    return .error .badPosition
+
 /-- The library's tag of a cursor shape. -/
 def shapeTag : CursorShape → UInt64
   | .block => 0
@@ -403,6 +418,7 @@ def handle (real : RealDisplay) : (request : DisplayRequest) → IO request.Repl
   | .publish scene => real.publish scene
   | .rows query => real.rows query
   | .move query => real.move query
+  | .spot query => real.spot query
   | .heights => real.heights
   | .frame request => do
     if let some platform := real.platform then

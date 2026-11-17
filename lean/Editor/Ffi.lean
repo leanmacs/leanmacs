@@ -2496,6 +2496,42 @@ def Display.move (display : Display) (snapshot : Snapshot) (width : UInt64) (pos
   | _ =>
     throw (IO.userError "the library's words do not spell a move")
 
+/-- Where a position is drawn in a view, as the library answers it: in whole
+pixels from the view's top left, its padding included. -/
+structure DisplaySpot where
+  /-- From the view's left edge to the position's left, rounded down. -/
+  x : UInt64
+  /-- From the view's top edge to the top of the row that holds it,
+  rounded down. -/
+  y : UInt64
+  /-- How tall that row is, rounded up. -/
+  height : UInt64
+  deriving DecidableEq, Repr
+
+/-- `Display.spot` as it crosses: the answer as words, and its status. -/
+@[extern "editor_glue_display_spot"]
+private opaque Display.spotRaw (display : @& Display) (snapshot : @& Snapshot)
+    (width height across down top : UInt64) (anchor position : USize) : IO RawWords
+
+/-- Where `position` of `snapshot` is drawn in a view `width` pixels wide
+and `height` tall, padded as for `Display.rows`, that shows from the visual
+row that holds `anchor`: `some none` when the view does not show it, and
+`none` when `anchor` or `position` is not a position of the text. Words
+that do not spell a spot are an error. -/
+def Display.spot (display : Display) (snapshot : Snapshot) (width height : UInt64)
+    (anchor position : USize) (across down top : UInt64 := 0) : IO (Option (Option DisplaySpot)) :=
+  do
+  let raw ← display.spotRaw snapshot width height across down top anchor position
+  if raw.status != 0 then
+    return none
+  match wordsOf? raw.words with
+  | some #[0, _, _, _] =>
+    return some none
+  | some #[_, x, y, height] =>
+    return some (some { x, y, height })
+  | _ =>
+    throw (IO.userError "the library's words do not spell a spot")
+
 /-- `Display.publish` as it crosses: the words as bytes, the string, and the
 snapshot handles, which the glue passes as a C array. -/
 @[extern "editor_glue_display_publish"]

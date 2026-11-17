@@ -718,6 +718,7 @@ def over (answer : DisplayHandler) (setTheme : Theme → BaseIO Unit := fun _ =>
         asked.modify fun (before, since) => (before, since.push { query, rows })
       return reply
     | .move query => answer (.move query)
+    | .spot query => answer (.spot query)
     | .heights => answer .heights
     | .frame request => answer (.frame request)
   let setNamed (name : String) (theme : Theme) : BaseIO Unit := do
