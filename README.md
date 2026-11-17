@@ -21,6 +21,8 @@ close with unsaved changes.
 - [`AGENTS.md`](AGENTS.md) holds the working rules.
 - [`docs/dev-practices/publishing.md`](docs/dev-practices/publishing.md)
   says what is published and how the repository's settings are kept.
+- The nightly, the newest build of `main` for macOS on Apple silicon, is on
+  its download page: <https://leanmacs.github.io/leanmacs/>.
 
 ## Building
 

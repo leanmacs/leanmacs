@@ -5,8 +5,9 @@ on every push to any branch and on every pull request. Tags are not pushed,
 so a tag push runs nothing. On a push to `main`, once the gate has passed
 on both legs, it also builds the nightly's `.dmg` and uploads it as a
 workflow artifact (`.github/workflows/build.yml`), then publishes it as the
-rolling `nightly` prerelease (`.github/workflows/release.yml`). The
-download page comes in a later phase.
+rolling `nightly` prerelease and deploys the download page,
+<https://leanmacs.github.io/leanmacs/>, for that build
+(`.github/workflows/release.yml`).
 
 ## The jobs
 
@@ -44,7 +45,8 @@ installs that toolchain on first use.
 **Deployment target.** Every build, local and CI alike, targets macOS
 26.0: `MACOSX_DEPLOYMENT_TARGET` in `mise.toml`'s `[env]`, the executable's
 `minos`, equals `appMinimumSystemVersion` in `lean/lakefile.lean`, the
-bundle's `LSMinimumSystemVersion`. There is no CI profile of `mise.toml`
+bundle's `LSMinimumSystemVersion`. The download page's "macOS … or later"
+reads the same variable (`mise run site`), so it has no copy of its own. There is no CI profile of `mise.toml`
 and no `MISE_ENV`. The owner chose 26.0 on 2026-11-17, lowering it from
 27.2, because:
 
@@ -123,18 +125,22 @@ artifact is on `main`'s runs only; a branch or a pull request builds no
 
 On a push to `main` only, after both legs of `ci`, `build-id`, `build` and
 `secrets-scan` (`needs: [ci, build-id, build, secrets-scan]`), so a branch
-or a pull request publishes nothing and moves no tag. It is the only job
-in the workflow that writes: its `permissions` are exactly
-`contents: write`, for the release's assets and the tag, while the
-workflow's top-level token reads contents only. It sits in a concurrency
+or a pull request publishes nothing, moves no tag and deploys no page. It
+is the only job in the workflow that writes: its `permissions` are exactly
+`contents: write`, for the release's assets and the tag, and
+`pages: write` and `id-token: write`, for the page's deploy, while the
+workflow's top-level token reads contents only. A called workflow's jobs
+can never hold more than the calling job grants, so it grants the union of
+`release.yml`'s two jobs, and each of those names exactly its own. It sits in a concurrency
 group of its own, `nightly-release`, never cancelled in progress, so two
 nightlies never publish at once and none is cut off halfway. It calls the
 reusable workflow `.github/workflows/release.yml` with the inputs
 `build-id` (`build-id`'s output), `commit` and `ref` (both `github.sha`),
 with the same `# zizmor: ignore[self-repository]` as `build`.
 
-`release.yml` has one job, `publish`, on `macos-26`, with top-level
-`permissions: {}` and the job's exactly `contents: write`,
+`release.yml` has two jobs, `publish` and `pages`. `publish` runs on
+`macos-26`, with top-level `permissions: {}` and the job's exactly
+`contents: write`,
 `MISE_AUTO_INSTALL: "false"`, and `LEANMACS_BUILD_ID` and
 `LEANMACS_COMMIT` from its inputs. It runs on macOS because it mounts the
 `.dmg` to read the published app's `Info.plist` with `hdiutil` and
@@ -158,7 +164,21 @@ so macOS minutes are free. Its steps:
    `target/nightly` the two images, `Leanmacs.dmg.sha256`, `build.json`
    and the release notes, made from the same ID and commit it checked. A
    mismatch fails here, before anything is uploaded.
-5. "Publish the nightly": `target/debug/leanmacs-release publish
+5. "Render the download page": `mise run site -- target/nightly/build.json
+   target/site`, with no token (`crates/editor-release`, `site`). It
+   reads the `build.json` the step above wrote, the very file the publish
+   step re-reads and uploads, so the page names the build this run
+   publishes; a re-download would need a token and network and could
+   race a newer nightly. The minimum macOS is `MACOSX_DEPLOYMENT_TARGET`.
+   It writes `target/site/index.html`, one self-contained page that loads
+   no resource (no script, stylesheet, font or image): the build ID,
+   commit, date, size and SHA-256, the link to `Leanmacs.dmg` and its
+   checksum, the requirements, the install and first-launch steps
+   (`packaging/macos/README.txt`'s, word for word) and `editor
+   --version`. A page that cannot be rendered stops the nightly here.
+6. `actions/upload-pages-artifact`, of `target/site`, still with no token:
+   the `github-pages` artifact `pages` deploys.
+7. "Publish the nightly": `target/debug/leanmacs-release publish
    target/nightly`, the last step and the only one with a token
    (`GH_TOKEN`, the job's own). It compiles nothing. It refuses to run
    except on a push to `refs/heads/main`, reads `build.json` and the
@@ -232,8 +252,18 @@ link, the date, the size, the SHA-256, "macOS 26.0 or later, on Apple
 silicon", the first-launch steps of `packaging/macos/README.txt` ("Open
 Anyway", and the `xattr` fallback) and `editor --version`.
 
+`pages` needs `publish` and has no `if:`, so it runs only after a publish
+that succeeded. On `ubuntu-24.04`, with exactly `pages: write` and
+`id-token: write`, in the `github-pages` environment, which only `main`
+may deploy to (`infra/github/pages.tf`), and in a concurrency group of its
+own, `pages`, never cancelled in progress. Its one step is
+`actions/deploy-pages`: it checks out nothing and runs no code of this
+repository, so the job holding the deploy scopes runs only a GitHub-owned
+action. The environment's URL is the deployment's `page_url`.
+
 **Do not re-run an old run's `release / publish` job.** It would republish
-that older build over a newer one. Push again instead.
+that older build over a newer one, and its page with it. Push again
+instead.
 
 ### `secrets-scan`
 
@@ -261,7 +291,11 @@ The `release` job is also in a job-level group of its own,
 `nightly-release`, with `cancel-in-progress: false`: two nightlies never
 publish at once, even from two runs, and a running one is never cancelled.
 GitHub keeps one pending job per group, so of several queued releases only
-the newest waits.
+the newest waits. The group holds the whole called workflow, `pages`
+included, so one run's deploy finishes before the next run's publish
+starts, and the page never names an older build than the release. `pages`
+also has a group of its own, `pages`, never cancelled in progress, as
+`actions/deploy-pages` recommends.
 
 ## Caches
 
@@ -283,8 +317,8 @@ and saves neither: it has no `actions/cache/save` step, because
 the cache. Its rust-cache entry is its own (rust-cache keys on the job),
 saved from `main` only, as is its mise-action's.
 
-`release.yml`'s job has no cache step at all: the only cache it uses is
-its mise-action's, saved from `main` only like every other.
+`release.yml`'s jobs have no cache step at all: the only cache either uses
+is `publish`'s mise-action's, saved from `main` only like every other.
 
 The two `actions/cache/save` steps of `ci` run after the gate, so they hold the
 built tree, and they run when the gate failed too (not when the run was
@@ -400,6 +434,31 @@ lands, the owner confirms it live, in this order.
     prerelease. No tag ruleset may protect `nightly`: one would block the
     tag's move.
 
+### After the download page lands
+
+13. **Before pushing:** `mise run infra-check`; then the one-time manual
+    import of the `github-pages` environment's `main` policy
+    ([`infra/github/README.md`](../../infra/github/README.md), "Taking over
+    `github-pages`"); then `mise run infra-plan`, which must show only
+    `github_repository_environment.github_pages` imported and **0 to add,
+    0 to change, 0 to destroy** (a change means a declared value differs
+    from the live one: align it); then `mise run infra-apply`.
+14. **Push to `main`.** `release / publish` and then `release / pages` are
+    green, and `pages` shows the `github-pages` deployment URL.
+15. **The page names the release's build.** These print the same 14
+    digits (allow up to 10 minutes for the Pages CDN):
+
+    ```sh
+    curl -sL https://github.com/leanmacs/leanmacs/releases/download/nightly/build.json | grep build_id
+    curl -s https://leanmacs.github.io/leanmacs/ | grep -o 'id="build-id">[0-9]*'
+    ```
+16. **On a Mac,** open the page, click Download, install with the page's
+    steps, and `/Applications/Leanmacs.app/Contents/MacOS/editor
+    --version` prints that build ID. On a phone, the page has no sideways
+    scroll.
+17. **Push a branch:** `release`, and so `pages`, is skipped, and the page
+    is unchanged.
+
 ## The workflow lint
 
 ```sh
@@ -440,7 +499,8 @@ it runs the same in `linux-ci`'s copy of the checkout. It runs, in order:
      the gate, `build` calling `build.yml` with the run's ID and commit,
      `release-gating` (`release` on `main` pushes only, after `ci`,
      `build-id`, `build` and `secrets-scan`, calling `release.yml` with
-     the ID and commit, writing contents alone), `release-concurrency`
+     the ID and commit, with exactly `contents: write`, `pages: write` and
+     `id-token: write`), `release-concurrency`
      (the group `nightly-release`, never cancelled) and `write-scope` (the
      workflow's token reads contents only, and no job but `release` names
      a write scope).
@@ -451,8 +511,9 @@ it runs the same in `linux-ci`'s copy of the checkout. It runs, in order:
      unconditional, then the upload, which fails with no `.dmg`) and
      `build-cache` (no save, and `ci.yml`'s Lake and elan keys).
    - On `release.yml`: `release-trigger` (`workflow_call` alone, its three
-     inputs required strings), `release-job` (one job, `publish`, on
-     `macos-26`, top-level permissions `{}` and the job's exactly
+     inputs required strings), `release-job` (exactly the jobs `publish`
+     and `pages`; `publish` on `macos-26`, top-level permissions `{}` and
+     its exactly
      `contents: write`, stamped from the inputs, one checkout of `ref`,
      every checkout without persisted credentials), `release-steps` (the
      download of `Leanmacs-dmg`, then `mise run nightly`, and last, once,
@@ -460,8 +521,15 @@ it runs the same in `linux-ci`'s copy of the checkout. It runs, in order:
      api`, `git push` or `git tag`), `release-token` (exactly one step has
      a token in its env, the one running the publish command; none in the
      job's or workflow's env; no other value names `github.token` or
-     `secrets.`) and `release-cache` (no rust-cache or `actions/cache`
-     step).
+     `secrets.`), `release-cache` (no rust-cache or `actions/cache`
+     step), `release-page` (one render of `target/nightly/build.json` into
+     `target/site` after `mise run nightly`, and one
+     `actions/upload-pages-artifact` of `target/site` after it),
+     `pages-job` (`pages` needs exactly `publish`, has no `if:`, runs on a
+     leg of `ci.yml`'s matrix with exactly `pages: write` and
+     `id-token: write` in the `github-pages` environment, and has one
+     step, `actions/deploy-pages` with `id: deployment`) and
+     `pages-concurrency` (the group `pages`, never cancelled).
 
    Each failure names its rule; the script's header lists them.
 4. `tools/workflow-lint-probe.sh`: zizmor must reject
