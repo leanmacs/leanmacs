@@ -15456,18 +15456,50 @@ def indentRuleChecks : List Check :=
     { name :=
         "an opening bracket the tree did not close counts its row for every row after it, not for its own, and with a begin on the same row it counts once"
       run :=
+        -- Each is held by an error from the text's start through its last row.
+        let error := indentNode "indent.incomplete" 0 0 2
         pure
-          (Indent.rule #[indentNode "indent.open" 10 0 0] (indentLines [0, 12, 20]) ==
+          (Indent.rule #[indentNode "indent.open" 10 0 0, error] (indentLines [0, 12, 20]) ==
               #[some 0, some 1, some 1] &&
-            Indent.rule #[indentNode "indent.open" 10 1 1] (indentLines [0, 12, 20]) ==
+            Indent.rule #[indentNode "indent.open" 10 1 1, error] (indentLines [0, 12, 20]) ==
               #[some 0, some 0, some 1] &&
-            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.begin" 0 0 1]
+            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.begin" 0 0 1, error]
                 (indentLines [0, 12, 20]) ==
               #[some 0, some 1, some 1] &&
-            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.open" 30 1 1]
+            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.open" 30 1 1, error]
                 (indentLines [0, 12, 40]) ==
               #[some 0, some 1, some 2]) },
-    { name := "an incomplete node is read by no rule: the rows it holds keep the level they had"
+    { name :=
+        "an opening bracket counts only on the rows an incomplete node that starts at or before it reaches: a call's `(` whose partner is missing mid-function leaves the rows after its node, the function's `}` and the next function, at their levels"
+      run :=
+        -- fn a() {        row 0
+        --     foo(1;      row 1: `(` at 16, where `arguments` starts
+        -- }               row 2
+        --                 row 3
+        -- fn b() {        row 4
+        --     x           row 5
+        -- }               row 6
+        let captured :=
+          #[indentNode "indent.begin" 7 0 2, indentNode "indent.branch" 21 2 2,
+            indentNode "indent.open" 16 1 1, indentNode "indent.incomplete" 16 1 1,
+            indentNode "indent.begin" 31 4 6, indentNode "indent.branch" 39 6 6]
+        pure
+          (Indent.rule captured (indentLines [0, 13, 21, 23, 24, 37, 39]) ==
+              #[some 0, some 1, some 0, some 0, some 0, some 1, some 0] &&
+            -- An incomplete node that ends before the bracket's row, or
+            -- starts after the bracket, does not hold it.
+            Indent.rule #[indentNode "indent.open" 10 1 1, indentNode "indent.incomplete" 0 0 0]
+                (indentLines [0, 5, 20]) ==
+              #[some 0, some 0, some 0] &&
+            Indent.rule #[indentNode "indent.open" 10 1 1, indentNode "indent.incomplete" 12 1 3]
+                (indentLines [0, 5, 20, 30]) ==
+              #[some 0, some 0, some 0, some 0] &&
+            -- An error that holds the bracket counts it on the rows it
+            -- reaches only.
+            Indent.rule #[indentNode "indent.open" 10 0 0, indentNode "indent.incomplete" 0 0 2]
+                (indentLines [0, 12, 20, 30]) ==
+              #[some 0, some 1, some 1, some 0]) },
+    { name := "an incomplete node alone adds no level: the rows it holds keep the level they had"
       run :=
         pure
           (Indent.rule #[indentNode "indent.incomplete" 0 0 2] (indentLines [0, 2, 3]) ==

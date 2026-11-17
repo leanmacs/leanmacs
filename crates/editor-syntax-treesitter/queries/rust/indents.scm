@@ -11,11 +11,13 @@
 ; - `@indent.ignore`: the rows after the first of such a node keep the
 ;   indent they have: a multi-line string or block comment.
 ; - `@indent.open`: an opening bracket the tree did not close, which counts
-;   its row for every row after it: code being typed, with no closing
-;   bracket yet.
-; - `@indent.incomplete`: a node the parser could not complete. No rule
-;   reads it: a question of the captures is asked again from its start, so
-;   the bare brackets it holds are seen.
+;   its row for every row after it that an `@indent.incomplete` node holding
+;   it reaches (a new line opened after it, for every later row): code being
+;   typed, with no closing bracket yet.
+; - `@indent.incomplete`: a node the parser could not complete. It bounds the
+;   rows an `@indent.open` bracket it holds counts on, and a question of the
+;   captures is asked again from its start, so the bare brackets it holds are
+;   seen.
 ;
 ; The first three names follow nvim-treesitter's, so a config author can
 ; read them; the last two are ours, and every rule is ours, not nvim's.
@@ -47,7 +49,7 @@
 (_ "[" @indent.open (MISSING "]"))
 
 ; A node the parser could not complete. A question of the captures is asked
-; again from its start, so the bare brackets it holds are seen. No rule reads
-; it.
+; again from its start, so the bare brackets it holds are seen, and an
+; opening bracket it holds counts only on the rows it reaches.
 (ERROR) @indent.incomplete
 (_ (MISSING)) @indent.incomplete

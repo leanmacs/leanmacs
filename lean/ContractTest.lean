@@ -1699,6 +1699,31 @@ def rustIndentHolds (source : String) (kept : List String) (levels : Array (Opti
         if line.trimAscii.isEmpty then true
         else level == some ((line.toList.takeWhile (· == ' ')).length / 4)
 
+/-- Rust texts with a bracket the tree did not close, each indented as its
+levels must be: a call's `(` and an array's `[` whose partner is missing,
+mid-function, followed by another function, whose rows after the bracket's
+node keep their levels; and brackets left open at the text's end, which
+the error that holds them counts on every row it reaches. -/
+def rustUnclosedTexts : List String :=
+  ["fn a() {\n    foo(1;\n}\n\nfn b() {\n    x\n}\n",
+    "fn a() {\n    let v = [1, 2;\n}\n\nfn b() {\n    x\n}\n", "fn main() {\n    let x = 1;\n",
+    "impl A {\n    fn f(&self) {\n        x();\n"]
+
+/-- The indent levels of `source`, whose major mode is the shipped Rust one,
+over the real syntax tree binding: `none` when the run was refused. The
+question waits for its snapshot's tree (`settling`). -/
+def rustSourceLevels (source : String) : IO (Option (Array (Option Nat))) := do
+  let table ← Snapshots.new
+  let real ← RealSyntaxTree.new table.reader
+  let entered : EditorM TextId := do
+    let text ← createText source
+    Highlight.enter "rust" text { grammar := "rust" }
+    return text
+  let (.ok text, texts) ←
+    entered.runReal (.over table) (← recorderOf table).handle (syntaxTree :=
+        settling table real.handle) | return none
+  rustIndentLevels table texts text
+
 /-- A row of the tree's text objects over the Rust fixture: where the
 cursor is, as the text it is at the start of (its first occurrence), the
 object, the count, where the anchor of a visual selection is, as a text
@@ -1894,6 +1919,20 @@ def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
             | none => some "nothing"
           if let some said := said then
             wrong := wrong.push s!"{repr fixture} (rest {rest}) answered {said}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong.toList))
+        return true },
+    { name :=
+        "the indent levels of Rust texts with a bracket the tree did not close are their own indentation: a call's ( and an array's [ whose partner is missing mid-function count on no row after their node, so the function's } and the next function keep their levels, and brackets open at the text's end count on the rows their error holds"
+      run := do
+        let mut wrong := #[]
+        for source in rustUnclosedTexts do
+          match ← rustSourceLevels source with
+          | some levels =>
+            unless rustIndentHolds source [] levels do
+              wrong := wrong.push s!"{repr source} answered {repr levels}"
+          | none =>
+            wrong := wrong.push s!"{repr source} was refused"
         unless wrong.isEmpty do
           throw (IO.userError ("; ".intercalate wrong.toList))
         return true }]

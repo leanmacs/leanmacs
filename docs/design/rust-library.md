@@ -1740,11 +1740,17 @@ has such a row).
 phase 3). Two capture names of Rust's indents query are ours, not
 nvim's: `@indent.open`, an opening bracket the tree did not close (a bare
 `{`, `(` or `[` directly in an `ERROR`, or one whose partner is `MISSING`),
-which counts its row for every later row; and `@indent.incomplete`, an
-`ERROR` or a node with a `MISSING` child, which no rule reads. A question of
-the indents captures that answers an incomplete node is asked once more
-from its start (`Indent.widenedStart`, `lean/Editor/Indent.lean`), so the
-bare brackets it holds are seen. Valid code has neither, so the fixture's
+which counts its row for every later row a new line opens on, and, for
+`=`, for every later row an incomplete node that holds it reaches; and
+`@indent.incomplete`, an `ERROR` or a node with a `MISSING` child. A
+question of the indents captures that answers an incomplete node is asked
+once more from its start (`Indent.widenedStart`, `lean/Editor/Indent.lean`),
+so the bare brackets it holds are seen. The bound came from the code
+review: `foo(1;` mid-function recovers as `(arguments (integer_literal)
+(MISSING ")"))`, a node and not an `ERROR`, and with the `(` counted on
+every later row `gg=G` put the function's `}` and every function after it
+one level in; bounded by its `arguments`, which ends on its own row, the
+rows after it keep their levels. Valid code has neither, so the fixture's
 levels and the checks of them are unchanged. Spiked while planning over
 `tree-sitter` 0.27.2 and `tree-sitter-rust` 0.24.2: without them,
 `fn main() {` at the text's end is `(ERROR fn identifier parameters "{")`

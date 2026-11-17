@@ -32,10 +32,14 @@ a node that ends at a row's start does not reach that row. For a row `r`:
 2. **Otherwise the level**: the number of distinct start rows of the nodes
    captured `indent.begin` that start on a row before `r` and whose rows
    reach `r`, and of the nodes captured `indent.open` (an opening bracket
-   the tree did not close) that start on a row before `r`, whatever their
-   last row (nodes that begin on one row count once); less one when the
-   row's first non-blank is where a node captured `indent.branch` starts (a
-   closing bracket), and never below 0.
+   the tree did not close) that start on a row before `r` and are held by
+   a node captured `indent.incomplete` (one that starts at or before the
+   bracket) whose rows reach `r` (nodes that begin on one row count once);
+   less one when the row's first non-blank is where a node captured
+   `indent.branch` starts (a closing bracket), and never below 0. So a
+   call's `(` whose partner is `MISSING` (`foo(1;`) counts on no row after
+   its `arguments`, and the rows after it keep their levels; a bracket in
+   an `ERROR` at the text's end counts on every row the `ERROR` holds.
 
 A blank row gets a level by the same rule: the level a line typed there
 would have.
@@ -59,6 +63,10 @@ there with their offsets (`Indent.Node`), and the first non-blank after
 
 So a position in the text before the break answers what the new row's
 level will be, and nothing is asked of a revision that has no tree.
+
+The opening rule below counts an `indent.open` bracket whatever the rows
+of the node that holds it: a new line typed after an unclosed bracket at
+the text's end is past every node's last byte, and must still open deeper.
 
 ## Widening (`Indent.widenedStart`)
 
@@ -118,7 +126,12 @@ ending go, replaced by the line ending and the whitespace, as Vim's
 ## Known limits
 
 - An `ERROR` that holds a bare `{` and its bare `}` counts the `{` for the
-  rows after the `}` too; a later `=` on code that parses corrects it.
+  rows after the `}` that the `ERROR` still holds; a later `=` on code that
+  parses corrects it.
+- A blank row past the last row an unclosed bracket's incomplete node
+  reaches (`fn main() {` then a blank row, at the text's end) gets its level
+  without that bracket, where a line opened there gets it; `=` empties a
+  blank row whatever its level, so its edits are the same.
 - A continuation in an error state (`let x =` with nothing after) is one
   level in where rustfmt would give two.
 - Indentation inside an injected layer is not asked.
@@ -128,14 +141,16 @@ Pinned by `ModelTest.indentRuleChecks` (the rule, pure),
 `ModelTest.indentEditChecks` (whitespace, re-indent, new line and break,
 pure), `ModelTest.indentLevelChecks` (the primitives, on the editor's
 models) and, real-only, by `ContractTest`'s checks of the Rust fixture
-`tests/syntax/rust/indent.rs`, whose levels are its own indentation, and of
-the opening level of Rust texts at unclosed brackets.
+`tests/syntax/rust/indent.rs`, whose levels are its own indentation, of
+the levels of Rust texts with unclosed brackets, mid-function and at the
+text's end, and of the opening level of Rust texts at unclosed brackets.
 -/
 
 namespace Editor.Indent
 
 /-- The capture names the rules read: the row rule and the opening rule
-read the first four, and the primitives widen what they ask by the last. -/
+read the first four, the row rule bounds `indent.open` by the last, and
+the primitives widen what they ask by it. -/
 def names : List String :=
   ["indent.begin", "indent.branch", "indent.ignore", "indent.open", "indent.incomplete"]
 
@@ -173,13 +188,17 @@ def rule (captured : Array Captured) (lines : Array Line) : Array (Option Nat) :
       captured.any fun node => node.name == "indent.ignore" && node.holdsAfterFirst line.row
     if ignored then none
     else
+      -- An opening bracket the tree did not close reaches a later row while
+      -- an incomplete node that holds it does.
+      let heldOpen (node : Captured) :=
+        node.firstRow < line.row &&
+          captured.any fun incomplete =>
+            incomplete.name == "indent.incomplete" && incomplete.start ≤ node.start &&
+              line.row ≤ incomplete.lastRow
       let begins :=
         captured.filterMap fun node =>
           if node.name == "indent.begin" && node.holdsAfterFirst line.row then some node.firstRow
-          -- An opening bracket the tree did not close reaches every later row.
-          else
-            if node.name == "indent.open" && node.firstRow < line.row then some node.firstRow
-            else none
+          else if node.name == "indent.open" && heldOpen node then some node.firstRow else none
       let level := (begins.toList.eraseDups).length
       let branch :=
         captured.any fun node => node.name == "indent.branch" && node.start == line.firstNonBlank
