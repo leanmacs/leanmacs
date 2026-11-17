@@ -31,6 +31,7 @@ import Editor.Text.Contract
 import Editor.Text.Model
 import Editor.Text.Real
 import Editor.UndoTree.Cases
+import Editor.VersionControl.Compiled
 import Editor.VersionControl.Contract
 import Editor.Watch.Contract
 import Editor.Watch.Real
@@ -2966,41 +2967,46 @@ structure ProjectRig where
   /-- The services the jobs run on. -/
   services : Job.Services
 
-/-- A rig over `services`, whose children get `path` as their `PATH`
-(`onFixturePath`), with a file service of its own. -/
-def ProjectRig.new (services : Job.Services) (path : String) : IO ProjectRig := do
+/-- A rig over `services`, with a file service of its own. -/
+def ProjectRig.over (services : Job.Services) : IO ProjectRig := do
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
   let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
   return {
       published, held, display := recorder.handle
-      services :=
-        { onFixturePath services path with
-          files := Job.realFiles services.completions published.reader held } }
+      services := { services with files := Job.realFiles services.completions published.reader held } }
+
+/-- A rig over `services`, whose children get `path` as their `PATH`
+(`onFixturePath`), with a file service of its own. -/
+def ProjectRig.new (services : Job.Services) (path : String) : IO ProjectRig :=
+  ProjectRig.over (onFixturePath services path)
 
 /-- `stepped`'s loop once what the step asked for is done, as a host does
-it: each invocation it answered run as a step of its own; each job it
+it, with `keys` and the jobs `jobs`, the project mode checks' by default:
+each invocation it answered run as a step of its own; each job it
 started spawned on the rig's services with its posts collected, waited for,
 then each post delivered in order (`runPosted`) and then its command, handed
 what the job held (`Job.finishWith`); each taken in the same way, at most
 `depth` deep. Only a job's end is waited for. `none` when a job did not end
 in time or ended otherwise than finished, or a step was refused. -/
 partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
-    (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8) :
+    (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8)
+    (keys : Loop.Keys TestScheme.scheme := projectKeys)
+    (jobs : Array Config.JobRegistration := projectJobs) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   if depth == 0 then
     return none
   let mut loop := stepped.loop
   let mut texts := texts
   for invocation in stepped.answered do
-    let (next, after) ← (loop.invoke projectKeys invocation).runReal texts rig.display
+    let (next, after) ← (loop.invoke keys invocation).runReal texts rig.display
     let .ok next := next | return none
-    let some (settled, after) ← settleProjects rig after next (depth - 1) | return none
+    let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs | return none
     loop := settled
     texts := after
   for start in stepped.starts do
     let some work :=
-      (projectJobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+      (jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
     let posts ← IO.mkRef (#[] : Array Invocation)
     let handle ←
       Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
@@ -3010,38 +3016,50 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
     let label := s!"job {start.name}"
     for invocation in ← posts.get do
       let (next, after) ←
-        (loop.deliver projectKeys label (runPosted invocation)).runReal texts rig.display
+        (loop.deliver keys label (runPosted invocation)).runReal texts rig.display
       let .ok next := next | return none
-      let some (settled, after) ← settleProjects rig after next (depth - 1) | return none
+      let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs | return none
       loop := settled
       texts := after
     let some (.finished command) ← handle.outcome? | return none
     let (next, after) ←
-      Job.finishWith rig.held handle (loop.deliver projectKeys label command) texts rig.display
+      Job.finishWith rig.held handle (loop.deliver keys label command) texts rig.display
     let .ok next := next | return none
-    let some (settled, after) ← settleProjects rig after next (depth - 1) | return none
+    let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs | return none
+    loop := settled
+    texts := after
+  return some (loop, texts)
+
+/-- `loop`, over `texts`, once each of `invocations` has run with `keys` and
+settled with `jobs` (`settleProjects`), in order. -/
+def runSettledFrom (rig : ProjectRig) (loop : Loop TestScheme.scheme) (texts : RealTexts)
+    (invocations : List Invocation) (keys : Loop.Keys TestScheme.scheme := projectKeys)
+    (jobs : Array Config.JobRegistration := projectJobs) :
+    IO (Option (Loop TestScheme.scheme × RealTexts)) := do
+  let mut loop := loop
+  let mut texts := texts
+  for invocation in invocations do
+    let (stepped, after) ← (loop.invoke keys invocation).runReal texts rig.display
+    let .ok stepped := stepped | return none
+    let some (settled, after) ← settleProjects rig after stepped (keys := keys) (jobs := jobs)
+      | return none
     loop := settled
     texts := after
   return some (loop, texts)
 
 /-- The loop, with its working directory `base`, once each of
-`invocations` has run and settled (`settleProjects`), in order. -/
-def runSettled (rig : ProjectRig) (base : System.FilePath) (invocations : List Invocation) :
+`invocations` has run with `keys` and settled with `jobs`
+(`settleProjects`), in order. -/
+def runSettled (rig : ProjectRig) (base : System.FilePath) (invocations : List Invocation)
+    (keys : Loop.Keys TestScheme.scheme := projectKeys)
+    (jobs : Array Config.JobRegistration := projectJobs) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   let begin : EditorM (Loop TestScheme.scheme) := do
     let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
     return { loop with state := { loop.state with workingDirectory := base } }
   let (started, texts) ← begin.runReal (RealTexts.over rig.published) rig.display
   let .ok loop := started | return none
-  let mut loop := loop
-  let mut texts := texts
-  for invocation in invocations do
-    let (stepped, after) ← (loop.invoke projectKeys invocation).runReal texts rig.display
-    let .ok stepped := stepped | return none
-    let some (settled, after) ← settleProjects rig after stepped | return none
-    loop := settled
-    texts := after
-  return some (loop, texts)
+  runSettledFrom rig loop texts invocations keys jobs
 
 /-- The invocation that opens `path`. -/
 def openFile (path : System.FilePath) : Invocation :=
@@ -3355,6 +3373,99 @@ def versionControlFailures (services : Job.Services) : IO (List String) := do
   return failed.map (s!"the version-control interface over git: {·}") ++
       if reaped then [] else ["every child the git implementation ran is reaped"]
 
+/-- The jobs of the status buffer check: the file commands', the workspace
+finder's and the status buffer's, as a host registers them. -/
+def statusJobs : Array Config.JobRegistration :=
+  Files.jobs ++ Workspace.jobs ++ VersionControl.jobs
+
+/-- The keys of the status buffer check: none bound; the file commands',
+the workspace's and the status buffer's commands by name, and `to-row`,
+which puts the window's cursor at the start of the row its argument names;
+their jobs registered; and the status buffer's mode known to the loop. -/
+def statusKeys : Loop.Keys TestScheme.scheme :=
+  let toRow : Call → EditorM (Option Config.Write) := fun call => do
+    if let .nat row :: _ := call.arguments then
+      let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
+      discard <| call.target.window.id.select { ranges := #[⟨offset, offset⟩] }
+    return none
+  { command? := fun name =>
+      if name == "to-row" then some toRow
+      else
+        ((Files.commands ++ Workspace.commands ++ VersionControl.commands).find? (·.name == name)).bind
+          fun registration =>
+          match registration.action with
+          | .call run =>
+            some fun call => do
+              run call
+              return none
+          | _ => none
+    registered :=
+      { jobs := fun name => statusJobs.any (·.name == name)
+        entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) } }
+
+/-- The invocation that puts the window's cursor at the start of `row`. -/
+def toRow (row : Nat) : Invocation :=
+  { command := "to-row", arguments := [.nat row] }
+
+/-- Whether the git implementation reads the status of the repository at
+`directory` as `expected`, over `services`. -/
+def gitStatusIs (services : Job.Services) (directory : System.FilePath)
+    (expected : VersionControl.Status) : IO Bool := do
+  let read : JobM Bool := do
+    return (← Program.runM (VersionControl.Git.handler "git" directory) VersionControl.status) ==
+        .ok expected
+  return (← runOnTimers services read) == .finished true
+
+/-- The checks of the status buffer (`Editor/VersionControl/Status.lean`)
+over real git: its jobs run over the library's process and file services in
+a temporary repository, the real finder recording the workspace, every
+child's git kept from the user's and the system's config. -/
+def statusBufferChecks (services : Job.Services) : List Check :=
+  [{ name :=
+       "criteria 2 to 4 over real git: vc-status in a file of a repository with a.txt changed and b.txt staged shows one line for each naming its state; toggling on a.txt's line stages it in git and its line then says so, and toggling on b.txt's line unstages it in git"
+     run :=
+       withRepository fun home directory => do
+         writeGitRepository home directory
+           { committed := #[("a.txt", "one\n"), ("b.txt", "one\n")]
+             index := #[("a.txt", .file "one\n"), ("b.txt", .file "two\n")]
+             worktree := #[("a.txt", "two\n"), ("b.txt", "two\n")] }
+         let isolated := onIsolatedGit services home
+         let rig ← ProjectRig.over isolated
+         let name := "*vc-status: repo@main*"
+         let some (shown, texts) ←
+           runSettled rig directory
+             [openFile (directory / "a.txt"), { command := VersionControl.statusName }] statusKeys
+             statusJobs
+           | return false
+         let first ← bufferText rig texts shown name
+         let some (staged, texts) ←
+           runSettledFrom rig shown texts [toRow 1, { command := VersionControl.toggleName }]
+             statusKeys statusJobs
+           | return false
+         let afterStage ←
+           gitStatusIs isolated directory
+             { head := .branch "main"
+               files :=
+                 #[{ path := "a.txt", state := .changed (some .modified) none },
+                   { path := "b.txt", state := .changed (some .modified) none }] }
+         let second ← bufferText rig texts staged name
+         let some (_, _) ←
+           runSettledFrom rig staged texts [toRow 2, { command := VersionControl.toggleName }]
+             statusKeys statusJobs
+           | return false
+         let afterUnstage ←
+           gitStatusIs isolated directory
+             { head := .branch "main"
+               files :=
+                 #[{ path := "a.txt", state := .changed (some .modified) none },
+                   { path := "b.txt", state := .changed none (some .modified) }] }
+         return first ==
+               some "repo@main: on main\nunstaged: a.txt (modified)\nstaged: b.txt (modified)\n" &&
+             afterStage &&
+             second ==
+               some "repo@main: on main\nstaged: a.txt (modified)\nstaged: b.txt (modified)\n" &&
+             afterUnstage }]
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
@@ -3436,6 +3547,8 @@ def main (arguments : List String) : IO UInt32 := do
   let projectModeChecks := ContractTest.projectModeChecks services compileFixtures workspaceFixtures
   let projectModeCheckFailed ← ContractTest.checkFailures projectModeChecks
   let versionControlFailed ← ContractTest.versionControlFailures services
+  let statusBufferChecks := ContractTest.statusBufferChecks services
+  let statusBufferCheckFailed ← ContractTest.checkFailures statusBufferChecks
   let fileWatchFailed ← ContractTest.fileWatchFailures services
   let fileWatchChecks := ContractTest.fileWatchChecks services
   let fileWatchCheckFailed ← ContractTest.checkFailures fileWatchChecks
@@ -3480,6 +3593,7 @@ def main (arguments : List String) : IO UInt32 := do
       compileCheckFailed ++
       projectModeCheckFailed ++
       versionControlFailed ++
+      statusBufferCheckFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
       checkFailed ++
@@ -3504,6 +3618,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, with {statusBufferChecks.length} check of the status buffer over it, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0
