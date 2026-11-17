@@ -2829,6 +2829,29 @@ def setupChecks : List Check :=
               refusal twice == some Config.Registrations.shellTimeLimitTwice)
         | _, _ => pure false },
     { name :=
+        "a setup's languages are collected in order; a setup that defines a language name twice, or a language with a pattern no file name can be meant by, is refused with a message that names it"
+      run :=
+        let toml : Language :=
+          { name := "toml", patterns := [.extension "toml"], syntaxTree := { grammar := "toml" } }
+        let both : SetupM Unit := do
+          defineLanguage toml
+          defineLanguage Language.rust
+        let twice : SetupM Unit := do
+          defineLanguage toml
+          defineLanguage { toml with patterns := [.name "Cargo.lock"] }
+        match Config.Registrations.ofSetup both,
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.languages.map (·.name) == #["toml", "rust"] && plain.languages.isEmpty &&
+              refusal twice == some "the language `toml` is defined twice" &&
+              refusal (defineLanguage { toml with patterns := [.extension ""] }) ==
+                some "the language `toml` cannot be meant: its extension pattern is empty" &&
+              refusal (defineLanguage { toml with patterns := [.extension "rs", .name "a/b"] }) ==
+                some "the language `toml` cannot be meant: its file name pattern `a/b` holds `/`" &&
+              refusal (defineLanguage { toml with patterns := [] }) == none)
+        | _, _ => pure false },
+    { name :=
         "a setup's syntax refresh delay is collected, a setup that sets none has none, and one that sets it twice is refused with a message that says so"
       run :=
         let twice : SetupM Unit := do
@@ -3963,6 +3986,25 @@ def reloadChecks : List Check :=
         pure
           (told (reduce []).1 == none && told loaded == some 5000 && told kept == some 5000 &&
             told bare == none) },
+    { name :=
+        "an installed reload puts config's languages in the registry over the compiled ones, so the loop is told config's rust in place of the shipped one; a rejected reload keeps them, and a config that defines none brings the shipped one back"
+      run :=
+        let mine :=
+          { Language.rust with
+            syntaxTree := { grammar := "rust", highlights := some "(identifier) @variable" } }
+        let start : Config.State Elaborated :=
+          { registry := ({} : Config.Registry).replaceLanguages .compiled Language.shipped }
+        let (loaded, _) :=
+          reduceFrom start [.requested, .finished (accepted ["a"] (defineLanguage mine))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let rustOf (state : Config.State Elaborated) : Option Language :=
+          state.registry.registered.languages.find? (·.name == "rust")
+        pure
+          (rustOf start == some Language.rust && rustOf loaded == some mine &&
+            loaded.registry.registered.languages.map (·.name) == ["rust", "json", "markdown"] &&
+            rustOf kept == some mine &&
+            rustOf bare == some Language.rust) },
     { name :=
         "an installed reload puts config's syntax refresh delay in the registry, which tells the loop of it; a rejected reload leaves it, and a config that sets none goes back to none"
       run :=
@@ -14723,6 +14765,24 @@ def languageMatchChecks : List Check :=
         pure
           (["/p/notes.txt", "/p/Makefile", "/p/rs", "/p/.rs", "/p/main.RS", "/"].all fun path =>
             chosenIn shipped path == none) },
+    { name :=
+        "the registry's language table is each owner's entries over the earlier owners', the latest owner's first and in its order: config's entry of a shipped language's name replaces it whole, config's entry beats a shipped one of equal pattern, and the loop is told the table"
+      run :=
+        let compiled := ({} : Config.Registry).replaceLanguages .compiled Language.shipped
+        let rusty := testLanguage "rusty" [.extension "rs"] "rust"
+        let mine :=
+          { Language.rust with syntaxTree := { grammar := "rust", highlights := some "q" } }
+        let registry := compiled.replaceLanguages .config #[rusty, mine]
+        let names (table : List Language) : List String := table.map (·.name)
+        pure
+          (names compiled.languageTable == ["rust", "json", "markdown"] &&
+            names registry.languageTable == ["rusty", "rust", "json", "markdown"] &&
+            registry.languageTable[1]? == some mine &&
+            chosenIn registry.languageTable "/p/main.rs" == some "rusty" &&
+            chosenIn (compiled.replaceLanguages .config #[mine]).languageTable "/p/main.rs" ==
+              some "rust" &&
+            registry.registered.languages == registry.languageTable &&
+            (registry.replaceLanguages .config #[]).languageTable == compiled.languageTable) },
     { name :=
         "the shipped table is rust, json and markdown, each parsed with the grammar of its name and the grammar's own queries, rust indented by four spaces and json and markdown by two"
       run :=

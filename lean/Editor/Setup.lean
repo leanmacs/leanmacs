@@ -3,6 +3,7 @@ import Editor.Ex.Line
 import Editor.Face
 import Editor.Job
 import Editor.Key.Notation
+import Editor.Language
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
@@ -225,6 +226,22 @@ reparse, and the whole parse once the text is quiet makes it exact. Setting
 it twice is refused, and a reload changes it from the next buffer whose mode
 is entered.
 
+Config defines a language with `defineLanguage` (`Editor/Language.lean`):
+the file names it is chosen for, its grammar with any query overrides, and
+its indent unit. One of a shipped language's name replaces it whole, so
+config overrides the shipped Rust entry's highlights query with
+
+```lean
+def setup : SetupM Unit := do
+  defineLanguage
+    { Language.rust with
+      syntaxTree := { Language.rust.syntaxTree with highlights := some "(identifier) @variable" } }
+```
+
+Config's entries are matched before the shipped ones. Defining a language
+name twice, or a pattern that is empty or holds `/`, is refused; a reload's
+languages hold from the next file opened.
+
 Config declares a workspace root with `workspace`, for a directory that is
 not a repository, or to split one, with the name of the project it belongs
 to if it gives one (`Editor/Workspace.lean`):
@@ -318,6 +335,10 @@ inductive SetupRequest where
   /-- Set how long a text goes unchanged after an edit, in milliseconds,
   before it is parsed whole again (`Editor/Highlight.lean`). -/
   | syntaxRefreshDelay (milliseconds : Nat)
+  /-- Define the language `language`: a name, the file names it is chosen
+  for, how its text is parsed and drawn, and its indent unit
+  (`Editor/Language.lean`). -/
+  | language (language : Language)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -341,6 +362,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .workspace .. => Unit
   | .shellTimeLimit _ => Unit
   | .syntaxRefreshDelay _ => Unit
+  | .language _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -552,6 +574,17 @@ mode is entered, for every text. A second call in one `setup` is refused,
 as a second shell time limit is. -/
 def syntaxRefreshDelay (milliseconds : Nat) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.syntaxRefreshDelay milliseconds))
+
+/-- Defines the language `language` (`Editor/Language.lean`): a buffer
+opened from a file whose name it matches records it and is put in the
+`code` mode, whose text is parsed and drawn as the language says. A
+language of a shipped language's name (`Language.shipped`) replaces that
+one whole; config's entries are matched before the shipped ones, in the
+order config defines them. A reload's languages hold from the next file
+opened. The editor refuses the `setup` for a language name defined twice,
+and for a pattern no file name can be meant by (`Language.problems`). -/
+def defineLanguage (language : Language) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.language language))
 
 /-- The message a workspace root is refused with when it is not absolute. -/
 def relativeWorkspace (root : System.FilePath) : String :=

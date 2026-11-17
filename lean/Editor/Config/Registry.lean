@@ -156,6 +156,22 @@ A `setup` that defines a segment name twice, or lists the mode line twice
 (`modeLine`), is refused. Listing a segment nobody registered is not
 refused here: it is left out at install, and the report names it.
 
+## Languages
+
+A language (`Editor/Language.lean`) is held by owner like a theme, in a
+`LanguageEntry`, and replaced as a set (`replaceLanguages`). Compiled code
+registers the languages that ship (`Language.shipped`, through
+`Headless.Collaborators.languages`); `setup` registers more with
+`defineLanguage` (`Editor/Setup.lean`). The table a path's language is
+chosen from (`languageTable`) is each owner's entries over the earlier
+owners' (`Language.over`): config's first, in the order it defined them,
+then the compiled ones it did not replace by name. So config's entry of a
+shipped name is used in that one's place until a reload drops it, and the
+loop is told the table (`registered`).
+
+A `setup` that defines a language name twice, or a language with a pattern
+no file name can be meant by (`Language.problems`), is refused.
+
 ## Compiled commands
 
 Compiled code is an owner too (`Owner.compiled`). A host registers its
@@ -268,6 +284,14 @@ structure SegmentEntry where
   /-- The segment. -/
   segment : Segment
 
+/-- A language entry of the registry: a language and who registered it. -/
+structure LanguageEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The language. -/
+  language : Language
+  deriving DecidableEq, Repr
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -294,6 +318,8 @@ structure Registry where
   themes : Array ThemeEntry := #[]
   /-- The segment entries. -/
   segments : Array SegmentEntry := #[]
+  /-- The language entries. -/
+  languages : Array LanguageEntry := #[]
   /-- Where a child's environment comes from, as config set it; `none` when
 it did not, which a host reads as `auto`. -/
   environment : Option Process.Setting := none
@@ -468,6 +494,29 @@ def replaceModes (registry : Registry) (owner : Owner) (modes : Array Mode) : Re
   { registry with
     modes := registry.modes.filter (·.owner != owner) ++ modes.map fun mode => { owner, mode } }
 
+/-- `registry` with every language entry of `owner` removed and
+`languages` added as its language entries, in their order. -/
+def replaceLanguages (registry : Registry) (owner : Owner) (languages : Array Language) :
+    Registry :=
+  { registry with
+    languages :=
+      registry.languages.filter (·.owner != owner) ++
+        languages.map fun language => { owner, language } }
+
+/-- The language table, in precedence order (`Language.forPath`): each
+owner's entries, in order, over the owners' before it (`Language.over`),
+so the latest owner's come first and a name it registers replaces an
+earlier owner's entry of that name whole. -/
+def languageTable (registry : Registry) : List Language :=
+  let owners :=
+    registry.languages.foldl
+      (fun owners entry => if owners.contains entry.owner then owners else owners.push entry.owner)
+      #[]
+  owners.foldl
+    (fun table owner =>
+      Language.over ((registry.languages.filter (·.owner == owner)).map (·.language)).toList table)
+    []
+
 /-- The mode called `name`: the latest entry of that name. -/
 def mode? (registry : Registry) (name : String) : Option Mode :=
   (registry.modes.findRev? (·.mode.name == name)).map (·.mode)
@@ -523,7 +572,8 @@ command to start; and the ex binding of an ex name (`ex?`) and the ex
 names that are bound (`exNames`), for the ex line; and the names themes
 are registered under (`themeNames`), for the command that loads one; and
 config's workspace roots and the config generation, for the finder; and
-config's shell time limit, for `:!`. Which command a name stands for, for a command run inside another,
+config's shell time limit, for `:!`; and the language table
+(`languageTable`), for a file's open and a mode's entry. Which command a name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
 another"). -/
@@ -533,7 +583,7 @@ def registered (registry : Registry) : Loop.Registered :=
     exNames := registry.exNames, themeNames := registry.themeNames
     autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
     generation := registry.generation, shellTimeLimit := registry.shellTimeLimit
-    syntaxRefreshDelay := registry.syntaxRefreshDelay }
+    syntaxRefreshDelay := registry.syntaxRefreshDelay, languages := registry.languageTable }
 
 end Registry
 
@@ -586,6 +636,8 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The syntax refresh delays `setup` set (`syntaxRefreshDelay`), in
   order: one at most, in a `setup` that is not refused. -/
   syntaxRefreshDelays : Array Nat := #[]
+  /-- The languages, in the order they were defined. -/
+  languages : Array Language := #[]
 
 namespace Registrations
 
@@ -662,6 +714,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with shellTimeLimits := collected.shellTimeLimits.push milliseconds })
   | .syntaxRefreshDelay milliseconds, collected =>
     ((), { collected with syntaxRefreshDelays := collected.syntaxRefreshDelays.push milliseconds })
+  | .language language, collected =>
+    ((), { collected with languages := collected.languages.push language })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -691,9 +745,11 @@ theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
 twice, the title bar chosen twice, a key sequence bound twice, a binding of
 no keys, an ex name bound twice, the process environment set twice,
-auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a mode name defined twice, or a
+auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a mode name defined twice, a
 mode with a problem under any scheme (`Mode.problems`), of which the first
-is named.
+is named, a language name defined twice, or a language with a pattern no
+file name can be meant by (`Language.problems`), of which the first is
+named.
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
@@ -754,6 +810,11 @@ def problem? (collected : Registrations) : Option String := do
   for mode in collected.modes do
     if let some problem := mode.problems.head? then
       return s!"the mode `{mode.name}` cannot be meant: {problem.describe}"
+  if let some name := repeated? (collected.languages.map (·.name)) then
+    return s!"the language `{name}` is defined twice"
+  for language in collected.languages do
+    if let some problem := language.problems.head? then
+      return s!"the language `{language.name}` cannot be meant: {problem}"
   none
 
 /-- What `setup` registers, or the message it is refused with: the one it

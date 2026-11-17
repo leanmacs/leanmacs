@@ -1,5 +1,6 @@
 import Editor.Command
 import Editor.Highlight
+import Editor.Language
 import Editor.Mode
 
 /-!
@@ -320,6 +321,9 @@ structure Loop.Registered where
   whole again, in milliseconds, as config set it (`syntaxRefreshDelay`,
   `Editor/Setup.lean`); `none` for the default. -/
   syntaxRefreshDelay : Option Nat := none
+  /-- The language table, in precedence order (`Language.forPath`): config's
+  entries, then the compiled ones it did not replace by name. -/
+  languages : List Language := []
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/

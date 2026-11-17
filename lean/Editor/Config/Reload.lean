@@ -283,15 +283,16 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         chunks := built.chunks,
         registry :=
           {
-            (((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                                      built.registrations.jobs).replaceBindings
-                                  .config built.registrations.bindings).replaceModes
-                              .config built.registrations.modes).replaceEx
-                          .config built.registrations.ex).replaceFaces
-                      .config built.registrations.faces).replaceThemes
-                  .config built.registrations.themes).replaceSegments
+            ((((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                                          built.registrations.jobs).replaceBindings
+                                      .config built.registrations.bindings).replaceModes
+                                  .config built.registrations.modes).replaceEx
+                              .config built.registrations.ex).replaceFaces
+                          .config built.registrations.faces).replaceThemes
+                      .config built.registrations.themes).replaceSegments
+                  .config built.registrations.segments).replaceLanguages
               .config
-              built.registrations.segments with
+              built.registrations.languages with
             environment := built.registrations.environment
             autoReload := built.registrations.autoReload.back?.getD false
             workspaceRoots := built.registrations.workspaceRoots
