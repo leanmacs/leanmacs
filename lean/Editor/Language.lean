@@ -1,3 +1,4 @@
+import Editor.Language.IndentUnit
 import Editor.Mode
 
 /-!
@@ -25,7 +26,11 @@ entries (`Language.forPath`); config only supplies entries.
   loaded from a path at run time would be a registration that makes a name
   known to the service, and an entry would still name it.
 - **`indentUnit`** is one level of indentation: a number of spaces, or a
-  tab.
+  tab (`Editor/Language/IndentUnit.lean`, its own module so the state
+  requests can name it). An entry that says none has four spaces
+  (`Language.IndentUnit.default`). `=` and the commands that open a line
+  read it (`Editor/Indent.lean`), through `Target.indentUnit`, which asks
+  the loop (`indentUnitOf`, `Editor/Api.lean`).
 
 ## The shipped table
 
@@ -88,14 +93,6 @@ inductive Language.Pattern where
   | extension (extension : String)
   deriving DecidableEq, Repr
 
-/-- One level of a language's indentation. -/
-inductive Language.IndentUnit where
-  /-- This many spaces. -/
-  | spaces (count : Nat)
-  /-- One tab. -/
-  | tab
-  deriving DecidableEq, Repr
-
 /-- A language: what it is called, the file names it is chosen for, how its
 text is parsed and drawn, and one level of its indentation. -/
 structure Language where
@@ -106,8 +103,8 @@ structure Language where
   /-- How its text is parsed and drawn: a grammar, and the same optional
   query and capture overrides a mode takes. -/
   syntaxTree : Mode.SyntaxTree
-  /-- One level of its indentation. -/
-  indentUnit : Language.IndentUnit := .spaces 4
+  /-- One level of its indentation (`Editor/Language/IndentUnit.lean`). -/
+  indentUnit : Language.IndentUnit := Language.IndentUnit.default
   deriving DecidableEq, Repr
 
 namespace Language

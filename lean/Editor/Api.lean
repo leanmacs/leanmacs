@@ -273,6 +273,9 @@ has a case on the real binding. They are pinned once, on the models
 - `BufferId.setLanguage id name` records a buffer's language by name, and
   `languageOf path` is the name of the language the registry's table
   chooses for a path (`Editor/Language.lean`), which the loop answers.
+  `indentUnitOf name` is the indent unit of the table's entry of a name,
+  which the loop answers too, and `Target.indentUnit` the unit of a
+  target's buffer's language, four spaces when it has none.
 - `ViewId.setMajorMode view name` makes a mode the major mode of the buffer
   the view shows, and says whether it became it: `false`, with nothing
   run, when the buffer already had it. The loop that runs the command
@@ -755,6 +758,19 @@ records as its buffer's language. `none` where no loop runs the
 command. -/
 def languageOf (path : System.FilePath) : EditorM (Option String) :=
   EditorState.ask (.languageOf path)
+
+/-- The indent unit of the language called `name`: the unit of the
+registry's first entry of that name, or none when the table has none. `none`
+where no loop runs the command. -/
+def indentUnitOf (name : String) : EditorM (Option Language.IndentUnit) :=
+  EditorState.ask (.indentUnitOf name)
+
+/-- One level of indentation in `target`'s buffer: the unit of its
+language's entry, or four spaces (`Language.IndentUnit.default`) for a
+buffer with no language or one the table has no entry of. -/
+def Target.indentUnit (target : Target) : EditorM Language.IndentUnit := do
+  let some language := target.buffer.language | return Language.IndentUnit.default
+  return (← indentUnitOf language).getD Language.IndentUnit.default
 
 /-- Runs `action` with the buffer `id` writable, as Emacs's
 `inhibit-read-only` does, for the command that owns a read-only buffer: a

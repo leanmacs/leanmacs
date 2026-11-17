@@ -8288,7 +8288,7 @@ def stateRequests : List StateRequest :=
     .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
     .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
     .setLanguage ⟨0⟩ (some "rust"), .setLanguage ⟨0⟩ none, .setLanguage ⟨9⟩ (some "rust"),
-    .languageOf notePath]
+    .languageOf notePath, .indentUnitOf "rust"]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -8326,6 +8326,30 @@ def stateRequestChecks : List Check :=
           (EditorState.none.handle (.languageOf "/p/main.rs")).1 == none &&
             match (program.runModel editorModel).1 with
             | .ok (.finished answer, _) => answer == (some "rust", none)
+            | _ => false },
+    { name :=
+        "with no loop to answer, a language's indent unit is none; a dispatched command that asks is answered the unit of the loop's entry of that name, the first in the table, or none; and a target's unit is its buffer's language's, or four spaces for a buffer with no language or one the table has no entry of"
+      run :=
+        let table := [{ Language.json with indentUnit := .tab }, Language.rust, Language.json]
+        let program :
+          EditorM
+            (Guarded (List (Option Language.IndentUnit) × List Language.IndentUnit) ×
+              EditorState) :=
+          do
+          (do
+                  let asked := [← indentUnitOf "json", ← indentUnitOf "rust", ← indentUnitOf "toml"]
+                  let unitOf (language : Option String) : EditorM Language.IndentUnit := do
+                    discard <| (⟨0⟩ : BufferId).setLanguage language
+                    let some target := (← editorState).target? ⟨0⟩ | throw TextError.noSuchText
+                    target.indentUnit
+                  let units := [← unitOf (some "json"), ← unitOf none, ← unitOf (some "toml")]
+                  return (asked, units)).dispatched
+              { languages := table } (← twoBuffers)
+        pure <|
+          (EditorState.none.handle (.indentUnitOf "rust")).1 == none &&
+            match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) =>
+              answer == ([some .tab, some (.spaces 4), none], [.tab, .spaces 4, .spaces 4])
             | _ => false },
     { name := "a read hands back the whole state and changes nothing"
       run :=
@@ -14826,7 +14850,12 @@ def languageMatchChecks : List Check :=
               (fun language => language.syntaxTree == { grammar := language.name }) &&
             Language.rust.indentUnit == .spaces 4 &&
             Language.json.indentUnit == .spaces 2 &&
-            Language.markdown.indentUnit == .spaces 2) }]
+            Language.markdown.indentUnit == .spaces 2) },
+    { name := "an entry that says no indent unit is indented by the default unit, four spaces"
+      run :=
+        pure
+          (Language.IndentUnit.default == .spaces 4 &&
+            (testLanguage "plain" [.extension "txt"]).indentUnit == Language.IndentUnit.default) }]
 
 /-- A mode called `name` that fills each of `roles` with a command named
 after the mode and the role, and derives from `parent`, if given. -/

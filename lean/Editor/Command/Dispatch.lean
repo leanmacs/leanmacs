@@ -191,6 +191,11 @@ from the next command.
   (`Language.forPath` over `Loop.Registered.languages`), or `none`, the
   state not read and not changed. A file's open asks, for the language its
   buffer records (`Editor/Files.lean`).
+- **Asking for a language's indent unit** (`StateRequest.indentUnitOf`) is
+  answered the unit of the first entry of that name in the loop's table
+  (`Loop.Registered.languages`, config's entries first), or `none`. `=`
+  and the commands that open a line ask (`Target.indentUnit`,
+  `Editor/Api.lean`).
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -411,6 +416,9 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     dispatched registered state (next registered.syntaxRefreshDelay)
   | state, .step (.state (.languageOf path)) next =>
     dispatched registered state (next ((Language.forPath registered.languages path).map (·.name)))
+  | state, .step (.state (.indentUnitOf name)) next =>
+    dispatched registered state
+      (next ((registered.languages.find? (·.name == name)).map (·.indentUnit)))
   | state, .step (.state .workspaceSettings) next =>
     dispatched registered state
       (next ({ roots := registered.workspaceRoots }, registered.generation))

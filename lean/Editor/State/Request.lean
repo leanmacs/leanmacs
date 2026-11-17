@@ -1,6 +1,7 @@
 import Editor.Command.Call
 import Editor.Ex.Line
 import Editor.Invocation
+import Editor.Language.IndentUnit
 import Editor.State
 
 /-!
@@ -163,7 +164,9 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   which the loop answers the same way; here it is answered `none`. So is
   **config's syntax refresh delay**, `syntaxRefreshDelay`, and **a path's
   language**, `languageOf`, which the loop answers with the name of the
-  language its table chooses for the path (`Language.forPath`).
+  language its table chooses for the path (`Language.forPath`), and **a
+  language's indent unit**, `indentUnitOf`, which the loop answers with the
+  unit of its table's first entry of that name.
 - **A buffer's language is recorded by name**, `setLanguage`, as its major
   mode is: any name is taken, and refused `noSuchBuffer` alone.
 
@@ -328,6 +331,9 @@ inductive StateRequest where
   /-- The name of the language the registry's table chooses for `path`,
   which the loop that runs the command answers with. -/
   | languageOf (path : System.FilePath)
+  /-- The indent unit of the language called `language`, which the loop
+  that runs the command answers from its table. -/
+  | indentUnitOf (language : String)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -386,6 +392,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .syntaxRefreshDelay => Option Nat
   | .setLanguage .. => Except BufferRefusal Unit
   | .languageOf _ => Option String
+  | .indentUnitOf _ => Option Language.IndentUnit
 
 namespace EditorState
 
@@ -480,6 +487,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   -- The language table is the loop's to answer from (`Program.dispatched`):
   -- here, with no registry, no path has a language.
   | .languageOf _, state => (none, state)
+  -- So is a language's indent unit.
+  | .indentUnitOf _, state => (none, state)
 
 end EditorState
 
