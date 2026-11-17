@@ -1,0 +1,46 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which keeps the default layout, binds `C-c n` and
+# `C-c m` to commands that each make a buffer and display it, and sends what
+# the first opens to a transient float and what the second opens to a
+# pinned one. It shows a float a display rule opens centred in the tiled
+# area and listed after the window it floats over, a transient float closed
+# when the focus moves to another window, a pinned one that stays, and a
+# pinned float moved into the tiles with `C-w F`, where it joins the stack.
+# What it prints must be exactly `expected`. It touches no file.
+
+reload
+settle
+
+# A frame of 640 by 480: the tiled area is 640 by 464, above the bottom row.
+resize 640 480
+
+# `C-c n` opens `notes` in a float, view 1, centred in the tiled area at 60
+# by 50 percent, 384 by 232 at 128, 116, listed after view 0 and focused.
+key c KeyC control
+key n KeyN -
+scene
+
+# `C-w C-p` focuses view 0, the window focused before: the float is
+# transient, so it closes, and view 0 is alone.
+key w KeyW control
+key p KeyP control
+scene
+
+# `C-c m` opens `memo` in a float, view 2, placed the same way, focused.
+key c KeyC control
+key m KeyM -
+scene
+
+# `C-w C-p` focuses view 0 again: the float is pinned, so it stays, listed
+# after view 0 and drawn above it.
+key w KeyW control
+key p KeyP control
+scene
+
+# `C-w C-w` focuses the next window, the float, and `C-w F` moves it into
+# the tiles: it joins the stack, beside main, and keeps the focus.
+key w KeyW control
+key w KeyW control
+key w KeyW control
+key F KeyF shift
+scene

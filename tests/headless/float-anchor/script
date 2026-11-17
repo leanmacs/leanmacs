@@ -1,0 +1,53 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which keeps the default layout, binds `C-c f` to a
+# command that puts eighty lines at the cursor, and `C-c h` to one that
+# opens a buffer in a transient float anchored at the cursor, without the
+# focus. It shows the float placed against the cursor's position, directly
+# under its row, the float closed when its anchor scrolls out of the view,
+# and a float anchored on the last row the view shows flipped above it.
+# What it prints must be exactly `expected`. It touches no file.
+
+reload
+settle
+
+# A frame of 640 by 480: the tiled area is 640 by 464, above the bottom row.
+# View 0 is padded 8 pixels each way, and in the recorder's cells of 8 by
+# 16 its text has 27 rows: 464 less its status row and the padding.
+resize 640 480
+
+# `C-c f` puts the eighty lines; `g g` goes to the start, `2 j` to the
+# third row and `4 l` to its fifth column, at byte 18.
+key c KeyC control
+key f KeyF -
+key g KeyG -
+key g KeyG -
+key 2 Digit2 -
+key j KeyJ -
+key 4 Digit4 -
+key l KeyL -
+
+# `C-c h` opens `hint` in a float, view 1, listed after view 0. Its anchor
+# is drawn 8 + 4 * 8 = 40 pixels across and 8 + 2 * 16 = 40 down, its row
+# 16 tall, so the float, 320 by 116, is at 40, 56: directly under the row.
+# The focus stays on view 0.
+key c KeyC control
+key h KeyH -
+scene
+
+# `C-f` scrolls a view forward: the view now shows from row 27, the
+# anchor's row is no longer shown, so the transient float closes, and the
+# focus is still view 0. The cursor is on row 29, the third row shown, at
+# its fifth column.
+key f KeyF control
+scene
+
+# `24j` puts the cursor on row 53, the last row the view shows, at its
+# fifth column, and `C-c h` opens a float, view 2, anchored there. Below the
+# row there is no room for it, so it is flipped above: its bottom is the
+# row's top, 8 + 26 * 16 = 424 pixels down, and it is at 40, 308.
+key 2 Digit2 -
+key 4 Digit4 -
+key j KeyJ -
+key c KeyC control
+key h KeyH -
+scene

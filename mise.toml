@@ -283,7 +283,7 @@ run = [
   # It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-word-delete/expected -",
   # Display rules (tests/headless/display-rules): a config whose one rule
-  # names a float is installed with the rule left out, and says so in its
+  # names a new tab is installed with the rule left out, and says so in its
   # report's `rule:` line and in the echo area; `:ls` and a command of
   # config's that makes a buffer each show it in a new window at the end of
   # the stack, focused, while main keeps the buffer being edited, and `:ls`
@@ -297,6 +297,19 @@ run = [
   # closed with `C-w C-c`, and `C-w H` on the last tile is refused with the
   # reason in the echo area (`edge-sidebar/expected`). It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/edge-sidebar/config ../tests/headless/edge-sidebar/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/edge-sidebar/expected -",
+  # Floats a display rule opens (tests/headless/float-rule): a config whose
+  # rules send what two commands open to a transient and to a pinned float;
+  # each opens centred in the tiled area, listed after view 0 and focused,
+  # the transient one closes when `C-w C-p` moves the focus, the pinned one
+  # stays, and `C-w F` moves it into the tiles, where it joins the stack
+  # (`float-rule/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/float-rule/config ../tests/headless/float-rule/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/float-rule/expected -",
+  # A float anchored at the cursor (tests/headless/float-anchor): a config
+  # whose command opens a transient float at the cursor without the focus;
+  # it is placed directly under the cursor's row, closes when `C-f` scrolls
+  # the row out of the view, and on the last row shown is flipped above it
+  # (`float-anchor/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/float-anchor/config ../tests/headless/float-anchor/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/float-anchor/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed

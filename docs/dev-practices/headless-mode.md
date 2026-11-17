@@ -1172,6 +1172,108 @@ view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
+A twenty-first, `tests/headless/float-rule/script`, runs on the config in
+`tests/headless/float-rule/config`, which keeps the default layout, binds
+`C-c n` and `C-c m` to commands that each make a buffer and display it, and
+sends what the first opens to a float and what the second opens to a float
+`(pinned := true)` with two display rules. `C-c n` opens `notes` in a
+float, view 1, centred in the tiled area at 60 by 50 percent, 384 by 232
+at 128, 116, listed after view 0 and focused; `C-w C-p` focuses view 0,
+and the float, transient, is gone; `C-c m` opens `memo` in a pinned float,
+view 2, placed the same way, which stays when `C-w C-p` focuses view 0
+again; and `C-w C-w` (the next window; plain `C-w w` is left for tabs)
+reaches it, and `C-w F` moves it into the tiles, where it joins the stack
+beside main. Its output must be exactly
+`tests/headless/float-rule/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/float-rule/config ../tests/headless/float-rule/script
+reload 1: installed, 1 chunks, 2 commands
+key arrived: c KeyC control
+key arrived: n KeyN -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 128,116 384x232: "a note", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: p KeyP control
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: c KeyC control
+key arrived: m KeyM -
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 9, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 2 128,116 384x232: "a memo", scroll 0, selections 0..0, padding 8 8
+status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "memo" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: p KeyP control
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 12, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 2 128,116 384x232: "a memo", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.inactive: mode-line.inactive "memo" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+key arrived: w KeyW control
+key arrived: w KeyW control
+key arrived: w KeyW control
+key arrived: F KeyF shift
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 17, theme "default"
+view 0 0,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 2 320,0 320x464: "a memo", scroll 0, selections 0..0, padding 8 8
+status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "memo" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+```
+
+A twenty-second, `tests/headless/float-anchor/script`, runs on the config
+in `tests/headless/float-anchor/config`, which keeps the default layout,
+binds `C-c f` to a command that puts eighty lines, `line00` to `line79`, at
+the cursor, and `C-c h` to one that opens a buffer `hint` in a transient
+float anchored at the cursor (`BufferId.float`), 50 percent of the tiled
+area wide and 25 percent tall, without the focus. With the cursor on the
+third row at its fifth column, the float is placed directly under the row,
+at 40, 56: the padding of 8 and 4 cells of 8 across, the padding and two
+rows of 16 down, and the row's 16. `C-f` scrolls the anchor's row out of
+the view, and the float closes, the focus staying on view 0. With the
+cursor on the last row the view shows, a new float has no room below the
+row and is flipped above it, its bottom at the row's top, at 40, 308. Its
+output must be exactly `tests/headless/float-anchor/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/float-anchor/config ../tests/headless/float-anchor/script
+reload 1: installed, 1 chunks, 2 commands
+key arrived: c KeyC control
+key arrived: f KeyF -
+key arrived: g KeyG -
+key arrived: g KeyG -
+key arrived: 2 Digit2 -
+key arrived: j KeyJ -
+key arrived: 4 Digit4 -
+key arrived: l KeyL -
+key arrived: c KeyC control
+key arrived: h KeyH -
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 11, theme "default"
+view 0 0,0 640x464: "line00\nline01\nline02\nline03\nline04\nline05\nline06\nline07\nline08\nline09\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51\nline52\nline53\nline54\nline55\nline56\nline57\nline58\nline59\nline60\nline61\nline62\nline63\nline64\nline65\nline66\nline67\nline68\nline69\nline70\nline71\nline72\nline73\nline74\nline75\nline76\nline77\nline78\nline79", scroll 0, selections 18..18, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "3:5" +4, mode-line.secondary "3%" +4
+view 1 40,56 320x116: "a hint", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "hint" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+key arrived: f KeyF control
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 13, theme "default"
+view 0 0,0 640x464: "line00\nline01\nline02\nline03\nline04\nline05\nline06\nline07\nline08\nline09\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51\nline52\nline53\nline54\nline55\nline56\nline57\nline58\nline59\nline60\nline61\nline62\nline63\nline64\nline65\nline66\nline67\nline68\nline69\nline70\nline71\nline72\nline73\nline74\nline75\nline76\nline77\nline78\nline79", scroll 189, selections 207..207, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "30:5" +4, mode-line.secondary "37%" +4
+key arrived: 2 Digit2 -
+key arrived: 4 Digit4 -
+key arrived: j KeyJ -
+key arrived: c KeyC control
+key arrived: h KeyH -
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 19, theme "default"
+view 0 0,0 640x464: "line00\nline01\nline02\nline03\nline04\nline05\nline06\nline07\nline08\nline09\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51\nline52\nline53\nline54\nline55\nline56\nline57\nline58\nline59\nline60\nline61\nline62\nline63\nline64\nline65\nline66\nline67\nline68\nline69\nline70\nline71\nline72\nline73\nline74\nline75\nline76\nline77\nline78\nline79", scroll 189, selections 375..375, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "54:5" +4, mode-line.secondary "67%" +4
+view 2 40,308 320x116: "a hint", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.inactive: mode-line.inactive "hint" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+```
+
 Two more runs of the gate are on a real file, and so on a script that
 cannot be checked in whole: the file port takes absolute paths only. Each
 is one entry of the `ffi-test` task, a shell of its own that makes a
