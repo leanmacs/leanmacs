@@ -228,7 +228,9 @@ Which style a prompt is matched with is config's choice, by category, with a
 default for the rest (`useStyleFor`, `useStyle`): the choices are config's
 alone, set by each install (`styleChoices`), as its project commands are.
 `matching` resolves them for the loop: the default is the chosen default's
-registered style, else `fuzzy`; a category's is the style chosen for it
+registered style, else the style registered under `fuzzy` (config's, when
+it registers one of that name), else the compiled fuzzy style, for a
+registry where no style of that name is; a category's is the style chosen for it
 when one is registered under that name, else the category falls to the
 default. A chosen name no style is registered under is reported at install
 (`unknownStyles`, `Report.unknownStyles`, `Editor/Config/Reload.lean`).
@@ -485,11 +487,15 @@ def chosenStyle? (registry : Registry) (category : Option String) : Option Compl
   (registry.styleChoices.find? (·.1 == category)).bind fun (_, name) => registry.style? name
 
 /-- The styles a prompt is matched with ("Styles", in the module docs): the
-default is the chosen default's registered style, else the fuzzy style;
-a category's is the style chosen for it when one is registered under that
-name, else none, so the category falls to the default. -/
+default is the chosen default's registered style, else the style
+registered under `fuzzy`, so config's style of that name is used in the
+shipped one's place, else the compiled fuzzy style, for a registry where
+none is; a category's is the style chosen for it when one is registered
+under that name, else none, so the category falls to the default. -/
 def matching (registry : Registry) : Completion.Matching :=
-  { default := (registry.chosenStyle? none).getD Completion.Styles.fuzzy
+  { default :=
+      ((registry.chosenStyle? none) <|> registry.style? Completion.Styles.fuzzy.name).getD
+        Completion.Styles.fuzzy
     byCategory := fun category => registry.chosenStyle? (some category) }
 
 /-- The names config chose that no style is registered under, in the order

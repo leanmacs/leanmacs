@@ -3512,7 +3512,7 @@ def registryChecks : List Check :=
               registry.registered.categorySources category == registry.sourcesIn category &&
                 moved.registered.categorySources category == moved.sourcesIn category) },
     { name :=
-        "the matching follows config's choices over the registered styles: a category's chosen style, the chosen default for a category with none, and the fuzzy style with no choice; a choice of a name nobody registered falls to the default and is reported once; config's style of a shipped name is the one found until config's styles are replaced"
+        "the matching follows config's choices over the registered styles: a category's chosen style, the chosen default for a category with none, and the fuzzy style with no choice; a choice of a name nobody registered falls to the default and is reported once; config's style of a shipped name is the one found until config's styles are replaced, and with no choice config's style named fuzzy is the default, on a host that ships the fuzzy style and on one that ships none"
       run :=
         let shipped : Config.Registry :=
           ({} : Config.Registry).replaceStyles .compiled Completion.Styles.shipped
@@ -3523,10 +3523,10 @@ def registryChecks : List Check :=
         let unknown : Config.Registry :=
           { shipped with
             styleChoices := #[(some "pick", "nope"), (some "other", "nope"), (none, "gone")] }
-        let overridden : Config.Registry :=
-          { shipped.replaceStyles .config #[.keeping "fuzzy" fun _ _ => true] with
-            styleChoices := #[(none, "fuzzy")] }
+        let keepingAll : Completion.Style := .keeping "fuzzy" fun _ _ => true
+        let overridden : Config.Registry := shipped.replaceStyles .config #[keepingAll]
         let dropped := overridden.replaceStyles .config #[]
+        let unshipped : Config.Registry := ({} : Config.Registry).replaceStyles .config #[keepingAll]
         let nameOf (registry : Config.Registry) (category : Option String) : String :=
           (registry.matching.styleFor category).name
         let hitsOf (registry : Config.Registry) : Array Completion.Hit :=
@@ -3542,7 +3542,9 @@ def registryChecks : List Check :=
             chosen.unknownStyles == #[] &&
             (overridden.style? "fuzzy").isSome &&
             hitsOf overridden == #[.ofIndex 0] &&
-            hitsOf dropped == #[]) },
+            hitsOf dropped == #[] &&
+            hitsOf unshipped == #[.ofIndex 0] &&
+            hitsOf {} == #[]) },
     { name :=
         "completion sources are held by owner and replaced as a set: the latest entry of a name is the one found, config's source of a compiled source's name while config registers it and the compiled one again once it does not; the loop is told what the lookup answers"
       run :=
