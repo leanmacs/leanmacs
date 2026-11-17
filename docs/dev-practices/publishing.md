@@ -47,20 +47,24 @@ mise run secrets-scan
 [gitleaks](https://github.com/gitleaks/gitleaks), pinned in `mise.toml`,
 with its default rules (`.gitleaks.toml` changes none) and the reviewed
 exceptions in `.gitleaksignore`. Every pass prints its findings redacted.
-It runs five things, and fails if any fails:
+The four passes are defined in one place, `tools/secrets-scan.sh <repo>`,
+which runs them all and fails if any fails:
 
-1. `tools/secrets-scan-probe.sh`: in a throwaway repository it plants a
-   GitHub token-shaped string (made at random on each run, never written
-   in the script) where each of the four passes below looks, and only
-   there, and requires each pass to report its token. A broken config or a
-   wrong flag fails here rather than passing silently.
-2. Every commit reachable from the local `main` (`--log-opts=main`).
-3. Every first-parent commit of `main`, with each merge diffed against its
+1. Every commit reachable from the local `main` (`--log-opts=main`).
+2. Every first-parent commit of `main`, with each merge diffed against its
    first parent (`--log-opts="-m --first-parent main"`). A plain `git log`
    shows no diff for a merge, so a secret typed into a conflict resolution
    is caught only here.
-4. The unstaged changes to tracked files (`--pre-commit`).
-5. The staged changes (`--staged`).
+3. The unstaged changes to tracked files (`--pre-commit`).
+4. The staged changes (`--staged`).
+
+The task first runs `tools/secrets-scan-probe.sh`: in a throwaway
+repository it plants a GitHub token-shaped string (made at random on each
+run, never written in the script) where each of the four passes looks, and
+only there, runs `tools/secrets-scan.sh` on it, and requires each pass to
+report its token. A broken config, a wrong flag or a dropped pass in the
+script fails here rather than passing silently. Then it runs
+`tools/secrets-scan.sh .` on this repository.
 
 Untracked files that are not staged are not scanned; stage them first.
 

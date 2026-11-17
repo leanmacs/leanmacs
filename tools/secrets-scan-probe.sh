@@ -5,20 +5,23 @@
 #   sh tools/secrets-scan-probe.sh    # run first by `mise run secrets-scan`
 #
 # In a throwaway repository under `mktemp -d` it plants four GitHub
-# token-shaped strings, each where exactly one of the task's passes looks:
+# token-shaped strings, each where exactly one of the scan's passes looks:
 #
 # (a) in an ordinary commit on `main`: the plain pass (`--log-opts=main`);
 # (b) only in a merge commit's conflict resolution, in neither parent: the
-#     `-m --first-parent` pass, which diffs a merge against its first
-#     parent. The plain pass must miss it, which is why that pass exists;
-# (c) staged and not committed: the `--staged` pass;
-# (d) in an unstaged change to a tracked file: the `--pre-commit` pass.
+#     merges pass (`-m --first-parent`), which diffs a merge against its
+#     first parent. The plain pass must miss it, which is why that pass
+#     exists;
+# (c) staged and not committed: the staged pass (`--staged`);
+# (d) in an unstaged change to a tracked file: the pre-commit pass
+#     (`--pre-commit`).
 #
-# It runs gitleaks with the same flags as the task, against this
-# repository's `.gitleaks.toml` and `.gitleaksignore`, and requires each
-# pass to exit 1 with a `github-pat` finding at the planted place, not just
-# a non-zero exit. The tokens are made at run time from /dev/urandom and
-# never written here, so scanning this repository does not flag this file.
+# It runs `tools/secrets-scan.sh`, the one definition of the passes that
+# `mise run secrets-scan` also runs, on the throwaway repository, and
+# requires each pass to exit 1 with a `github-pat` finding at the planted
+# place, not just a non-zero exit. A pass the script drops or breaks fails
+# here. The tokens are made at run time from /dev/urandom and never
+# written here, so scanning this repository does not flag this file.
 # It needs no network and leaves nothing behind (docs/dev-practices/
 # publishing.md, "The secret scan").
 set -eu
@@ -85,53 +88,51 @@ g add c.env
 # (d) An unstaged change to a tracked file.
 printf 'TOKEN=%s\n' "$(token)" >>"$repo/README"
 
-# scan <label> <gitleaks git flags...>: run one pass; it must exit 1 and
-# write its JSON report to $work/<label>.json. gitleaks also exits 1 on a
-# fatal error (a missing config, a bad flag), which writes no report, so the
-# report's existence is checked as well as the status.
-scan() {
-  label=$1
-  shift
-  status=0
-  gitleaks git --no-banner --redact --log-level error \
-    --config "$root/.gitleaks.toml" \
-    --gitleaks-ignore-path "$root/.gitleaksignore" \
-    --report-format json --report-path "$work/$label.json" \
-    "$@" "$repo" >/dev/null 2>"$work/$label.err" || status=$?
-  if [ "$status" -ne 1 ] || [ ! -f "$work/$label.json" ]; then
+# Run the scan's passes on the probe repository. Every pass finds its
+# token, so the script must exit 1.
+reports="$work/reports"
+mkdir "$reports"
+status=0
+sh "$root/tools/secrets-scan.sh" "$repo" "$reports" 2>"$work/scan.err" ||
+  status=$?
+if [ "$status" -ne 1 ]; then
+  printf 'FAIL: tools/secrets-scan.sh exited %s, not 1\n' "$status" >&2
+  cat "$work/scan.err" >&2
+  exit 1
+fi
+
+# expect <label> <fingerprint prefix> <what>: pass <label> exited 1 and
+# wrote its JSON report (gitleaks also exits 1 on a fatal error, a missing
+# config or a bad flag, which writes no report, so both are checked), and
+# the report has a finding whose fingerprint (`[<commit>:]<file>:<rule>:
+# <line>`) starts with the prefix, so the rule and the place are matched in
+# the same finding.
+expect() {
+  pass_status=$(cat "$reports/$1.status" 2>/dev/null || echo missing)
+  if [ "$pass_status" != 1 ] || [ ! -f "$reports/$1.json" ]; then
     printf 'FAIL: %s pass: gitleaks exited %s with no finding report\n' \
-      "$label" "$status" >&2
-    cat "$work/$label.err" >&2
+      "$1" "$pass_status" >&2
+    cat "$reports/$1.out" >&2 2>/dev/null || true
     exit 1
   fi
-}
-
-# expect <label> <fingerprint prefix> <what>: the pass's report has a
-# finding whose fingerprint (`[<commit>:]<file>:<rule>:<line>`) starts with
-# the prefix, so the rule and the place are matched in the same finding.
-expect() {
-  if ! grep -q "\"Fingerprint\": *\"$2" "$work/$1.json"; then
+  if ! grep -q "\"Fingerprint\": *\"$2" "$reports/$1.json"; then
     printf 'FAIL: %s pass: no finding %s... (%s)\n' "$1" "$2" "$3" >&2
-    cat "$work/$1.json" >&2
+    cat "$reports/$1.json" >&2
     exit 1
   fi
   printf 'ok: %s pass catches %s\n' "$1" "$3"
 }
 
-scan plain --log-opts=main
 expect plain "$commit_a:a.env:github-pat:" "(a), a token committed on main"
-if grep -q "\"Commit\": *\"$commit_b\"" "$work/plain.json"; then
-  printf 'FAIL: plain pass now sees merge diffs; revisit the -m pass\n' >&2
+if grep -q "\"Commit\": *\"$commit_b\"" "$reports/plain.json"; then
+  printf 'FAIL: plain pass now sees merge diffs; revisit the merges pass\n' >&2
   exit 1
 fi
-printf 'ok: plain pass misses (b), so the merge pass is needed\n'
+printf 'ok: plain pass misses (b), so the merges pass is needed\n'
 
-scan merges '--log-opts=-m --first-parent main'
 expect merges "$commit_b:conflict.txt:github-pat:" \
   "(b), a token only in a merge's resolution"
 
-scan staged --staged
 expect staged "c.env:github-pat:" "(c), a staged token"
 
-scan pre-commit --pre-commit
 expect pre-commit "README:github-pat:" "(d), an unstaged token in a tracked file"

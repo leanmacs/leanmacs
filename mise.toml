@@ -1011,8 +1011,10 @@ depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt"
 # commit reachable from the local `main`, then again with each merge diffed
 # against its first parent (a secret typed into a conflict resolution is in
 # no parent's diff), then the unstaged and the staged changes to tracked
-# files. `tools/secrets-scan-probe.sh` runs first and proves each pass
-# catches a token planted where only it looks. `infra-apply` runs this
+# files. The passes are defined once, in `tools/secrets-scan.sh`.
+# `tools/secrets-scan-probe.sh` runs first: it runs that same script on a
+# throwaway repository and proves each pass catches a token planted where
+# only it looks. `infra-apply` runs this
 # before it changes anything on GitHub. A CI job that runs it needs the full
 # history and a local `main` (docs/dev-practices/publishing.md, "The secret
 # scan", which also says what to do with a finding).
@@ -1020,10 +1022,7 @@ depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt"
 description = "gitleaks (pinned) over every commit reachable from main, merges included, and the uncommitted tree; never part of ci (linux-ci's copy has no history). infra-apply runs it first"
 run = [
   "sh tools/secrets-scan-probe.sh",
-  "gitleaks git --no-banner --redact --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --log-opts=main .",
-  "gitleaks git --no-banner --redact --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --log-opts='-m --first-parent main' .",
-  "gitleaks git --no-banner --redact --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --pre-commit .",
-  "gitleaks git --no-banner --redact --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --staged .",
+  "sh tools/secrets-scan.sh .",
 ]
 
 # OpenTofu over infra/github, the repository's GitHub settings
