@@ -3,6 +3,7 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Completion.Styles
+import Editor.Config.Owner
 import Editor.Config.Stores
 import Editor.Event
 import Editor.Ex
@@ -1192,6 +1193,23 @@ inductive Loop.Ending where
   | noWindow
   deriving DecidableEq, Repr
 
+/-- Work the loop hands its host to run as a job of its own ("Prompts", in
+the module docs): not a `JobStart`, since the work is made by this step
+(the style it chose and the candidates it matches), which no registered
+name and no plain arguments can carry. A step's spawns are a one-shot
+output and never state, so a spawn may hold a program. -/
+structure Loop.Spawn where
+  /-- The key it runs under: a spawn of a key ends the running job of that
+  key first, as a start of a key does. -/
+  key : String
+  /-- What its delivery is labelled with, `job <id> <label>`. -/
+  label : String
+  /-- Whose job it is: an install that removes this owner's jobs ends it
+  (`Jobs.removeOwner`). -/
+  owner : Config.Owner := .compiled
+  /-- The job. -/
+  work : Work
+
 /-- What a step hands back: the loop after it, and what to do next. A
 one-shot output of a step is a field here. -/
 structure Loop.Stepped (scheme : InputScheme) where
@@ -1239,6 +1257,10 @@ structure Loop.Stepped (scheme : InputScheme) where
   asked for (`cancelJob`), when it ran to its end, come first, then the
   loop's own ("Jobs from commands", "Auto-reload", in the module docs). -/
   cancels : Array String := #[]
+  /-- The work the loop hands its host to run as jobs of its own, each under
+  its key (`Loop.Spawn`): a prompt's match ("Prompts", in the module docs).
+  A host runs them after the cancels and the starts. -/
+  spawns : Array Loop.Spawn := #[]
 
 namespace EditorState
 

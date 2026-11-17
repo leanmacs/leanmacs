@@ -29,6 +29,10 @@ operations take it on:
 - **`posted id`** is the job's next post arriving: the loop is handed what
   it posted (`runPosted`), labelled `job <id> <name>` as its command is,
   and then the job goes on, so it ends, parks or posts again.
+- **A spawn** (`Loop.Stepped.spawns`, a prompt's match) is run as a start
+  is, after the step's cancels and starts: the job of its key is cancelled,
+  and its work is run on the job model under the next id, kept under its
+  label, so `finish` delivers it labelled `job <id> <label>` (`spawned`).
 
 Each step is taken in as a host takes one in (`took`): the jobs it asked
 for are started, and each invocation it answered, the continuation of a
@@ -371,9 +375,22 @@ def started (driver : Loop.Driver scheme) (starts : Array JobStart) : Loop.Drive
           (work start.arguments ()).run)
     driver
 
+/-- The driver once each of `spawns` is run (`Loop.Spawn`): the job of its
+key is cancelled first, and its work is run on the job model as a started
+job's is, under the next id, kept under its label and its key. -/
+def spawned (driver : Loop.Driver scheme) (spawns : Array Loop.Spawn) : Loop.Driver scheme :=
+  spawns.foldl
+    (fun driver spawn =>
+      let driver := driver.cancel spawn.key
+      let id := driver.next
+      ({ driver with next := driver.next + 1 } : Loop.Driver scheme).ranOn id spawn.label
+        (some spawn.key) (spawn.work ()).run)
+    driver
+
 /-- Takes in `stepped`, a step the driver's loop took, which left the models
-as `model`, as a host does: the driver with the loop the step left, the
-jobs it asked for started, and each invocation it answered run as a step
+as `model`, as a host does: the driver with the loop the step left, its
+cancels made, the jobs it asked for started and the work it spawned run, in
+that order, and each invocation it answered run as a step
 of its own (`Loop.invoke`), which is taken in the same way, before anything
 else is fed. An answer's step that is refused changes the models and not
 the loop. A step that said stop is recorded (`stopped`), and no invocation
@@ -393,6 +410,7 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
             reloads := driver.reloads + if stepped.reload then 1 else 0
             themes := driver.themes ++ stepped.theme.toArray }).started
       stepped.starts
+  let driver := driver.spawned stepped.spawns
   stepped.answered.foldl
     (fun driver invocation =>
       -- A host whose loop has ended runs nothing more.

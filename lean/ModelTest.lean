@@ -19883,6 +19883,33 @@ def driverChecks : List Check :=
     steps.flatMap fun step => (step.map (·.starts)).getD #[]
   let echoOf (driver : TestDriver) : Option String := driver.model.display.scenes.back?.map (·.echo)
   [{  name :=
+        "a step that hands back a spawn has its work run on the job model under the spawn's key, kept under the spawn's label, and its command delivered at finish; a second spawn of the key ends the first undelivered, and a cancel of the key ends the second undelivered"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let candidates := #["wq", "edit", "w"]
+            let spawn (pattern : String) : Loop.Spawn :=
+              { key := "m", label := "matching"
+                work := fun _ => do
+                  let ranked ← Job.embedFuzzy (Fuzzy.rank pattern candidates)
+                  return discard <| (⟨0⟩ : ViewId).insertAtSelections (toString ranked) }
+            let handed (driver : TestDriver) (spawns : Array Loop.Spawn)
+                (cancels : Array String := #[]) : TestDriver :=
+              driver.took { loop := driver.loop, next := .continue, spawns, cancels } driver.model
+            let one := handed driver #[spawn "w"]
+            let (delivered, stepped) := one.finish 1
+            let two := handed one #[spawn "e"]
+            let three := handed two #[] #["m"]
+            one.pending.map (fun job => (job.id, job.name, job.key)) ==
+                #[(1, "matching", some "m")] &&
+              stepped.isSome &&
+              driverText delivered == some (toString (FuzzyModel.rank "w" candidates)) &&
+              delivered.pending.isEmpty &&
+              two.pending.map (fun job => (job.id, job.key)) == #[(2, some "m")] &&
+              three.pending.isEmpty && (three.finish 2).2.isNone },
+    { name :=
         "a job that posts is held at each post until it arrives: the post runs as a command labelled with the job, the job then goes on to its next post, and its own command runs after its posts"
       run :=
         pure <|
