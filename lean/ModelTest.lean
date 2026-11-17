@@ -7906,6 +7906,82 @@ def windowOperationChecks : List Check :=
             refused (.splits tree) (.mainCount true 1) .noMain &&
             refused Layout.default (.resize .rows true 1) (.notResizable .rows) },
     { name :=
+        "while zoomed under a left edge round manual splits, docking a tile, undocking a window, resizing the strip and opening a window at the edge change the layout zoom returns to and leave monocle shown: the tree is fitted to the tiles, the strip's size moves, the state is well formed, and zoom again lays out what the change makes unzoomed; the edge's refusals are the layout zoom returns to's, and the state is as it was"
+      run :=
+        pure <|
+          match onTextModel (dockedUnder 2 [.left] (.edge .left 25 Layout.manual)) with
+          | none => false
+          | some state =>
+            match state.arrange ⟨0⟩ .zoom with
+            | (.ok (), zoomed) =>
+              let edged (tree : Splits) (size : Nat := 25) : Option Layout :=
+                some (.edge .left size (.splits tree))
+              let row := Splits.split .rows 1 1 .tile .tile
+              -- What a change made while zoomed leaves: monocle shown, the
+              -- layout zoom returns to, and the rectangles zoom again gives,
+              -- the frame then being the one the same change makes unzoomed.
+              let shown (zoomedAfter plainAfter : EditorState) :
+                Option (Option Layout × Array (ViewId × Rect)) :=
+                match zoomedAfter.arrange zoomedAfter.frame.focused .zoom with
+                | (.ok (), back) =>
+                  if
+                      zoomedAfter.wellFormed && zoomedAfter.frame.layout == .monocle &&
+                        back.wellFormed &&
+                        back.frame == plainAfter.frame then
+                    some (zoomedAfter.frame.zoomedFrom, back.rects)
+                  else none
+                | _ => none
+              let arranged (view : Nat) (change : Arrange) :
+                Option (Option Layout × Array (ViewId × Rect)) :=
+                match zoomed.arrange ⟨view⟩ change, state.arrange ⟨view⟩ change with
+                | (.ok (), after), (.ok (), plain) => shown after plain
+                | _, _ => none
+              let opened : Option (Option Layout × Array (ViewId × Rect)) :=
+                match zoomed.openWindow ⟨0⟩ (marker 8) (marker 9) (.edge .left),
+                  state.openWindow ⟨0⟩ (marker 8) (marker 9) (.edge .left) with
+                | (.ok made, after), (.ok _, plain) =>
+                  if made == ⟨3⟩ && after.frame.docked == #[(⟨2⟩, .left), (⟨3⟩, .left)] then
+                    shown after plain
+                  else none
+                | _, _ => none
+              let refused (view : Nat) (change : Arrange) (refusal : LayoutRefusal) : Bool :=
+                match zoomed.arrange ⟨view⟩ change with
+                | (.error got, after) => got == refusal && after == zoomed
+                | _ => false
+              let (_, oneTile) := zoomed.arrange ⟨1⟩ (.edge .left)
+              -- C-w H on tile 1: it joins the strip, below view 2.
+              arranged 1 (.edge .left) ==
+                  some
+                    (edged .tile,
+                      #[(⟨0⟩, rect 160 0 480 464), (⟨2⟩, rect 0 0 160 232),
+                        (⟨1⟩, rect 0 232 160 232)]) &&
+                oneTile.frame.docked == #[(⟨2⟩, .left), (⟨1⟩, .left)] &&
+                -- The docked window back into the tiles, at the end: the
+                -- last tile is split along rows, and the strip, empty, takes
+                -- no room.
+                arranged 2 (.edge .left) ==
+                  some
+                    (edged (.split .rows 1 2 .tile row),
+                      #[(⟨0⟩, rect 0 0 640 154), (⟨1⟩, rect 0 154 640 155),
+                        (⟨2⟩, rect 0 309 640 155)]) &&
+                arranged 2 (.resize .columns true 1) ==
+                  some
+                    (edged row 30,
+                      #[(⟨0⟩, rect 192 0 448 232), (⟨1⟩, rect 192 232 448 232),
+                        (⟨2⟩, rect 0 0 192 464)]) &&
+                opened ==
+                  some
+                    (edged row,
+                      #[(⟨0⟩, rect 160 0 480 232), (⟨1⟩, rect 160 232 480 232),
+                        (⟨2⟩, rect 0 0 160 232), (⟨3⟩, rect 0 232 160 232)]) &&
+                refused 2 (.resize .rows true 1) (.notResizable .rows) &&
+                refused 0 (.edge .right) (.noSuchEdge .right) &&
+                refused 2 (.edge .top) (.noSuchEdge .top) &&
+                match oneTile.arrange ⟨0⟩ (.edge .left) with
+                | (.error .lastTile, after) => after == oneTile
+                | _ => false
+            | _ => false },
+    { name :=
         "every change of the window list refuses a view not in the list with noSuchWindow and the minibuffer's view with ofMinibuffer, and the state is as it was"
       run :=
         pure <|
@@ -21137,6 +21213,25 @@ def displayRuleChecks : List Check :=
                   (rule (.edge .left)) ⟨1⟩ ⟨0⟩ "make" ==
                 (.opened (.edge .left), true)
           | _, _ => false },
+    { name :=
+        "while zoomed, an edge target reads the layout zoom returns to, not monocle: a buffer goes to an edge that layout has, and to the stack at a side it has no edge at, or when it has none"
+      run :=
+        pure <|
+          match onTextModel twoBuffers,
+            onTextModel (dockedUnder 1 [.left] (.edge .left 25 Layout.default)),
+            onTextModel (windowsUnder 1 Layout.default) with
+          | some two, some docked, some plain =>
+            -- Buffer 1 is in no window, so the rule decides.
+            let zoomed (state : EditorState) : EditorState :=
+              ({ state with buffers := two.buffers }.arrange ⟨0⟩ .zoom).2
+            let edge (side : Side) : Array DisplayRule := #[{ target := .edge side }]
+            (zoomed docked).frame.layout == .monocle && (zoomed docked).wellFormed &&
+              (zoomed plain).frame.layout == .monocle &&
+              (zoomed docked).displaying (edge .left) ⟨1⟩ ⟨0⟩ "make" ==
+                (.opened (.edge .left), true) &&
+              (zoomed docked).displaying (edge .right) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              (zoomed plain).displaying (edge .left) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true)
+          | _, _, _ => false },
     { name :=
         "the focused target, asked from the minibuffer's view, is the window the prompt was asked from, a tiled one or a docked one; asked from another window, that window"
       run :=
