@@ -3625,6 +3625,27 @@ def registryChecks : List Check :=
             hitsOf unshipped == #[.ofIndex 0] &&
             hitsOf {} == #[]) },
     { name :=
+        "the matching says who registered the style each category gets: config for a category config chose its own style for, and for the default config's style; compiled for a shipped style chosen by config, for the shipped default, and on a registry with no style"
+      run :=
+        let shipped : Config.Registry :=
+          ({} : Config.Registry).replaceStyles .compiled Completion.Styles.shipped
+        let mine : Completion.Style := .keeping "mine" fun _ _ => true
+        let chosen : Config.Registry :=
+          { shipped.replaceStyles .config #[mine] with
+            styleChoices := #[(some "pick", "orderless"), (some "own", "mine")] }
+        let defaulted : Config.Registry :=
+          { shipped.replaceStyles .config #[mine] with
+            styleChoices := #[(none, "mine")] }
+        pure
+          (chosen.matching.ownerFor (some "own") == .config &&
+            chosen.matching.ownerFor (some "pick") == .compiled &&
+            chosen.matching.ownerFor (some "other") == .compiled &&
+            chosen.matching.ownerFor none == .compiled &&
+            defaulted.matching.ownerFor none == .config &&
+            defaulted.matching.ownerFor (some "pick") == .config &&
+            shipped.matching.ownerFor none == .compiled &&
+            ({} : Config.Registry).matching.ownerFor none == .compiled) },
+    { name :=
         "completion sources are held by owner and replaced as a set: the latest entry of a name is the one found, config's source of a compiled source's name while config registers it and the compiled one again once it does not; the loop is told what the lookup answers"
       run :=
         let registry : Config.Registry :=

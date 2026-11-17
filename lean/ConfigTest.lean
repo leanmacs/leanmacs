@@ -598,8 +598,8 @@ def onStage {σ : Type} (stage : Stage σ) (check : Headless.Host → Stage σ �
 host. `false` if the check did not hold or the host did not stop. -/
 def staged {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
     (source : Config.Source) (check : Headless.Host → Stage σ → IO Bool)
-    (compiled : Compiled := {}) : IO Bool := do
-  onStage (← Stage.new context elaborator source compiled) check
+    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool := do
+  onStage (← Stage.new context elaborator source compiled (fuzzy := fuzzy)) check
 
 /-- Runs `check` against a host started over `elaborator` and `source`, with
 its output in a buffer `check` is handed, and stops the host. `false` if the
@@ -615,7 +615,7 @@ elaboration or counts reads passes a decorator. The directory is removed. -/
 def withHostOver (context : Context) (files : List (String × String))
     (around : Config.Elaborator Config.Elaborate.State → Config.Elaborator Config.Elaborate.State)
     (through : Config.Source → Config.Source) (check : Session → IO Bool)
-    (compiled : Compiled := {}) : IO Bool :=
+    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeFiles directory files
     staged context (around context.elaborator) (through (Config.Directory.source directory))
@@ -623,14 +623,15 @@ def withHostOver (context : Context) (files : List (String × String))
           check
             { host, directory, output := stage.output, threads := stage.threads,
               clock := stage.clock, watches := stage.watches, log := stage.log })
-        compiled
+        compiled fuzzy
 
 /-- Runs `check` against a host started on a fresh temporary directory
 holding `files`, with the real elaborator, and stops the host. `false` if the
-check did not hold or the host did not stop. The directory is removed. -/
+check did not hold or the host did not stop. The directory is removed. Its
+jobs ask `fuzzy` for the matcher, the library's unless a check holds it. -/
 def withHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
-    (compiled : Compiled := {}) : IO Bool :=
-  withHostOver context files id id check compiled
+    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool :=
+  withHostOver context files id id check compiled fuzzy
 
 /-- A chunk that defines the command `greet`, which makes a text holding
 `text`. -/
@@ -3044,6 +3045,60 @@ def laterCompiled : Compiled :=
               sleep 10
               deliver #[.ofText "rewrite", .ofText "w"] }] }
 
+/-- `count` paths of about 40 bytes, the size the matcher was measured at
+(`docs/design/rust-library.md`): what the checks and the benchmark of long
+prompts list. -/
+def manyPaths (count : Nat) : Array String :=
+  (Array.range count).map fun index =>
+    s!"src/area-{index % 97}/module-{index % 1009}/file-{index}.lean"
+
+/-- What compiled code hands the hosts of the checks of long prompts: the
+minibuffer's commands and its mode, and `ask-many`, which asks `Pick: ` with
+a source given as a value over `manyPaths count`. -/
+def manyCompiled (count : Nat) : Compiled :=
+  { minibufferCompiled with
+    commands :=
+      Minibuffer.commands ++
+        #[{ name := "ask-many"
+            action :=
+              .plain
+                (discard <|
+                  prompt "Pick: " { command := "picked" } ""
+                    [.given (.ofTexts "many" "pick" (manyPaths count))]) }] }
+
+/-- The library's matcher, held: each request waits until `gate` is
+resolved, and is then answered by the library (`Fuzzy.real`). What a check
+gives a host's jobs to hold a match in flight. -/
+def heldMatcher (gate : IO.Promise Unit) : FuzzyHandler := fun request => do
+  discard <| IO.wait gate.result?
+  Fuzzy.real request
+
+/-- The ids of the match jobs the host printed `job <id> completion-match:
+<what>` of, in order. -/
+def matchJobs (lines : Array String) (what : String) : Array String :=
+  lines.filterMap fun line =>
+    match line.splitOn " " with
+    | ["job", id, label, said] =>
+      if label == s!"{Loop.matchLabel}:" && said == what then some id else none
+    | _ => none
+
+/-- A chunk whose `setup` defines the style `slow`, which asks the matcher
+and then answers what the orderless style answers, and chooses `chosen` as
+the default style. -/
+def slowStyleChunk (chosen : String) : String :=
+  "def slow : Completion.Style :=
+  { name := \"slow\"
+    hits := fun text candidates => do
+      discard <| Fuzzy.rank text candidates
+      Completion.Styles.orderless.hits text candidates }
+
+def setup : SetupM Unit := do
+  defineStyle slow
+  useStyle " ++
+    chosen.quote ++
+    "
+"
+
 /-- A chunk whose `setup` registers a source's job `echo`, which answers
 the text it is asked with, `!` after it; a source `echo` of the category
 `pick` that it answers, asked again 20 ms after the text changes; and
@@ -3399,7 +3454,70 @@ def promptChecks (context : Context) : List Check :=
             let typed ← session.sceneLines
             return listsAfter asked "Pick: " ["!"] && listsAfter typed "Pick: " ["w!"] &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
-          minibufferCompiled }]
+          minibufferCompiled },
+    { name :=
+        "criterion 4 on the host: in a prompt over 100,000 candidates, with the matcher held, each of five keys committed one after another is handled and its scene shows the minibuffer with it, while the one match started at the ask is held; once the matcher answers, the listing is the library's first ten for the whole typed text, from a second match started for it"
+      run := do
+        let gate ← IO.Promise.new
+        withHost context []
+          (fun session => do
+            try
+              session.ask [.run "ask-many"]
+              let mut typed := ""
+              let mut handled := true
+              for key in ["f", "i", "l", "e", "7"] do
+                session.host.commit key
+                typed := typed ++ key
+                unless ← session.host.settle patience do
+                  handled := false
+                unless (← session.sceneLines).contains (minibufferLine typed typed.length) do
+                  handled := false
+              let held := matchJobs (← session.output.get) "started"
+              gate.resolve ()
+              unless (← session.host.join patience) == .settled do
+                return false
+              let listed ← session.sceneLines
+              let expected := (← realOrder typed (manyPaths 100000)).take Loop.shownCandidates
+              return handled && held.size == 1 &&
+                  (matchJobs (← session.output.get) "started").size == 2 &&
+                  listsAfter listed "Pick: " expected &&
+                  !(← session.output.get).any (·.startsWith "loop: refused")
+            finally
+              gate.resolve ())
+          (manyCompiled 100000) (heldMatcher gate) },
+    { name :=
+        "a reload that installs while a match of config's style is held cancels that match before the reload is reported, and the scene after the install, with no key typed, starts a match with the new config's style; once the matcher answers, the listing is the new style's, and the first match never delivered"
+      run := do
+        let gate ← IO.Promise.new
+        withHost context [("10-slow.lean", slowStyleChunk "slow")]
+          (fun session => do
+            try
+              session.ask [.reload]
+              session.ask [.run "ask-many"]
+              unless ← eventually (return (matchJobs (← session.output.get) "started").size == 1) do
+                return false
+              session.write "10-slow.lean" (slowStyleChunk "orderless")
+              session.ask [.reload]
+              let reloaded ← session.output.get
+              gate.resolve ()
+              unless (← session.host.join patience) == .settled do
+                return false
+              let listed ← session.sceneLines
+              let output ← session.output.get
+              let started := matchJobs output "started"
+              let cancelledAt := reloaded.findIdx? fun line =>
+                matchJobs #[line] "cancelled" == started.extract 0 1
+              let reportedAt := reloaded.findIdx? (·.startsWith "reload 2: installed")
+              return started.size == 2 && matchJobs reloaded "started" == started &&
+                  (match cancelledAt, reportedAt with
+                    | some cancelled, some reported => cancelled < reported
+                    | _, _ => false) &&
+                  matchJobs output "ok" == started.extract 1 2 &&
+                  listsAfter listed "Pick: " ((manyPaths 2000).toList.take Loop.shownCandidates) &&
+                  !output.any (·.startsWith "loop: refused")
+            finally
+              gate.resolve ())
+          (manyCompiled 2000) (heldMatcher gate) }]
 
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the ex names that ship (`Ex.commands`, `Ex.bindings`,

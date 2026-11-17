@@ -334,6 +334,17 @@ the arguments the command gave. `setup` starts none.
   owner's jobs out of the table and cancels them. A wake-up one of them had
   already posted then finds nothing, and its handler never runs. A rejected
   reload cancels nothing.
+- **The loop's own work is started the same way** (`Loop.Stepped.spawns`):
+  a prompt's match job, as a job of the owner of the style it runs, under
+  its key and its label (`Running.startWork`, `Running.launch`), after the
+  step's cancels and starts. So an install that cancels config's jobs
+  cancels a match of config's style too.
+- **The publish after an event the loop does not take reconciles a
+  prompt's jobs** (`Running.publish`, `Loop.completionJobs`): after an
+  install, a theme switch, or any other such event. It is how a match an
+  install ended is spawned again, with the new config's style, with no key
+  typed. A publish that changes nothing reconciles to nothing. The window
+  mode is this host, so there is no other publish path.
 - **The loop cancels every job when it ends**: nothing would deal with their
   results.
 
@@ -1113,14 +1124,13 @@ def finish (collaborators : Collaborators σ scheme) (running : Running σ schem
         built := none }
   { running with job := none }.reduce collaborators (.finished outcome)
 
-/-- Starts the job registered under `name` with `arguments`, for the owner
-that registered it: its id, and the jobs with it, or `none` for a name no
-job is registered under. The job runs on the pool; when it has ended the
-runner posts a wake-up to the editor queue, with the job's id, from
-whichever thread the job ended on. -/
-def startJob (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String)
-    (arguments : List Argument := []) : IO (Option Nat × Running σ scheme) := do
-  let some (owner, work) := running.config.work? name arguments | return (none, running)
+/-- Starts `work` as a job of `owner` called `name`: its id, and the jobs with
+it. It runs on the pool; its posts wait in the mailbox, and when it has
+ended the runner posts a wake-up to the editor queue, with the job's id.
+How a registered job is started (`startJob`) and how the loop's own work is
+(`Loop.Spawn`, `launch`). -/
+def startWork (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (owner : Config.Owner) (name : String) (work : Work) : IO (Nat × Running σ scheme) := do
   let wake (id : Nat) : BaseIO Unit :=
     (discard <| Ffi.postEvent .editor collaborators.jobs id.toUInt64 "" : IO Unit).catchExceptions
       fun _ => pure ()
@@ -1131,7 +1141,18 @@ def startJob (collaborators : Collaborators σ scheme) (running : Running σ sch
     (discard <| Ffi.postEvent .editor collaborators.posts id.toUInt64 "" : IO Unit).catchExceptions
         fun _ => pure ()
   let (id, jobs) ← running.jobs.start owner name work wake posted
-  return (some id, { running with jobs })
+  return (id, { running with jobs })
+
+/-- Starts the job registered under `name` with `arguments`, for the owner
+that registered it: its id, and the jobs with it, or `none` for a name no
+job is registered under. The job runs on the pool; when it has ended the
+runner posts a wake-up to the editor queue, with the job's id, from
+whichever thread the job ended on. -/
+def startJob (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String)
+    (arguments : List Argument := []) : IO (Option Nat × Running σ scheme) := do
+  let some (owner, work) := running.config.work? name arguments | return (none, running)
+  let (id, running) ← running.startWork collaborators owner name work
+  return (some id, running)
 
 /-- Cancels the job started with `key`, if one is running or has finished and
 not been delivered (`Job.Jobs.cancel`), and forgets the key. -/
@@ -1140,6 +1161,41 @@ def cancelKeyed (running : Running σ scheme) (key : String) : IO (Running σ sc
   let jobs ← running.jobs.cancel id
   return { running with
       jobs, keyed := running.keyed.filter (·.1 != key) }
+
+/-- Carries out what the loop handed back to start and to end: each key of
+`cancels` is cancelled; then each of `starts` is started, for the owner
+that registered it, a start of a key cancelling the running job of that key
+first, and printed, `job <id> <name>: started`; then each of `spawns`, the
+loop's own work, is started as a job of its owner under its key, which ends
+the running job of that key first, and printed, `job <id> <label>:
+started`. How a step's jobs are taken in (`took`), and the jobs the
+reconciler of a prompt hands back after a publish no step made
+(`publish`). -/
+def launch (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (starts : Array JobStart) (cancels : Array String) (spawns : Array Loop.Spawn) :
+    IO (Running σ scheme) := do
+  let mut running := running
+  -- A cancel ends the job of its key, finished and not delivered or not.
+  for key in cancels do
+    running ← running.cancelKeyed key
+  for start in starts do
+    -- Starting a job of a key cancels the running job of that key.
+    if let some key := start.key then
+      running ← running.cancelKeyed key
+    let (id?, started) ← running.startJob collaborators start.name start.arguments
+    running := started
+    -- The loop refused a name no job is registered under when the command
+    -- asked, from the registry as it is in this event: one is found.
+    if let some id := id? then
+      collaborators.emit s!"job {id} {start.name}: started"
+      if let some key := start.key then
+        running := { running with keyed := running.keyed.push (key, id) }
+  for spawn in spawns do
+    running ← running.cancelKeyed spawn.key
+    let (id, started) ← running.startWork collaborators spawn.owner spawn.label spawn.work
+    collaborators.emit s!"job {id} {spawn.label}: started"
+    running := { started with keyed := started.keyed.push (spawn.key, id) }
+  return running
 
 /-- Starts the job registered under `name`, with no arguments, as the driver
 asks, and prints its id. -/
@@ -1216,16 +1272,25 @@ def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme)
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what
 the loop does after every event that is not the window's. A publish that is
-refused is printed (`attempt`), and the frame stays as it was. -/
+refused is printed (`attempt`), and the frame stays as it was.
+
+Then the open prompt's jobs are reconciled with the same keys
+(`Loop.completionJobs`) and what that hands back is carried out
+(`launch`), as a step's publish does: this publish is the one after an
+install, a theme switch and every other event the loop does not take, so a
+match that an install ended, stamped with the old config generation, is
+spawned again here with the new config's style, with no key typed. A
+publish that changes nothing reconciles to nothing. -/
 def publish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
     IO (Running σ scheme) := do
   let some frame := running.frame | return running
+  let keys := running.keys collaborators
   let (published, running) ←
     running.attempt collaborators
-        (frame.publish (running.keys collaborators).modeLine (running.keys collaborators).padding
-          (running.keys collaborators).layout (running.keys collaborators).tabBar
-          (running.keys collaborators).matching)
-  return { running with frame := some (published.getD frame) }
+        (frame.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
+          keys.inlineMatches)
+  let (frame, starts, cancels, spawns) := (published.getD frame).completionJobs keys
+  { running with frame := some frame }.launch collaborators starts cancels spawns
 
 /-- The loop's frame, made if there is none (`Collaborators.start`): the
 frame is made when the loop is first needed, for a window event, a command
@@ -1258,9 +1323,10 @@ def describeEnding : Loop.Ending → String
 
 /-- Takes in what a step of the loop handed back: the loop after it is the
 frame, what the step has to log is logged, what its command asked to be
-written is written back to the stores, and each job its command asked for
-is started, for the owner that registered it, and printed,
-`job <id> <name>: started`. A step whose command asked for the config to be
+written is written back to the stores, and the jobs it hands back are
+carried out (`launch`): its cancels, then each job its command and the loop
+asked for, started for the owner that registered it, then the loop's own
+work it spawned, each printed `job <id> <name>: started`. A step whose command asked for the config to be
 reloaded (`Loop.Stepped.reload`) feeds the reload reducer a request, as the
 driver's `reload` does. A step whose command asked for a theme to be loaded
 (`Loop.Stepped.theme`) feeds the reducer a choice of it, which hands the
@@ -1283,25 +1349,12 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
     (stepped : Loop.Stepped scheme) : IO (Running σ scheme) := do
   for entry in stepped.log do
     collaborators.log entry
-  let mut running :=
-    { running with
-      frame := some stepped.loop, stepped := true, config := running.config.written stepped.write
-      stopped := running.stopped || stepped.next == .stop }
-  -- A cancel ends the job of its key, finished and not delivered or not.
-  for key in stepped.cancels do
-    running ← running.cancelKeyed key
-  for start in stepped.starts do
-    -- Starting a job of a key cancels the running job of that key.
-    if let some key := start.key then
-      running ← running.cancelKeyed key
-    let (id?, started) ← running.startJob collaborators start.name start.arguments
-    running := started
-    -- The loop refused a name no job is registered under when the command
-    -- asked, from the registry as it is in this event: one is found.
-    if let some id := id? then
-      collaborators.emit s!"job {id} {start.name}: started"
-      if let some key := start.key then
-        running := { running with keyed := running.keyed.push (key, id) }
+  let mut running ←
+    ({ running with
+          frame := some stepped.loop, stepped := true
+          config := running.config.written stepped.write
+          stopped := running.stopped || stepped.next == Loop.Next.stop }).launch
+      collaborators stepped.starts stepped.cancels stepped.spawns
   if stepped.reload then
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested

@@ -234,6 +234,11 @@ registry where no style of that name is; a category's is the style chosen for it
 when one is registered under that name, else the category falls to the
 default. A chosen name no style is registered under is reported at install
 (`unknownStyles`, `Report.unknownStyles`, `Editor/Config/Reload.lean`).
+`matching` also says who registered the style each category gets
+(`Completion.Matching.ownerFor`): the owner of the entry found, compiled for
+the compiled fuzzy style a registry with none falls to. A match job that
+runs a style is that owner's (`Editor/Loop.lean`, "Prompts"), so an install
+that cancels config's jobs cancels a match of config's style.
 
 A `setup` that defines a style name twice is refused
 (`Registrations.styleTwice`), and so is one that chooses the style of one
@@ -496,7 +501,22 @@ def matching (registry : Registry) : Completion.Matching :=
   { default :=
       ((registry.chosenStyle? none) <|> registry.style? Completion.Styles.fuzzy.name).getD
         Completion.Styles.fuzzy
-    byCategory := fun category => registry.chosenStyle? (some category) }
+    byCategory := fun category => registry.chosenStyle? (some category)
+    ownerFor := styleOwner }
+where
+  /-- Who registered the style a prompt of `category` is matched with: the
+  owner of the latest entry of the name `matching` answers by, the
+  category's choice, the default's, or `fuzzy`; compiled for the compiled
+  fuzzy style a registry with none falls to. A match job running it is
+  that owner's (`Editor/Loop.lean`, "Prompts"). -/
+  styleOwner (category : Option String) : Owner :=
+    let named (name : String) : Option Owner :=
+      (registry.styles.findRev? (·.style.name == name)).map (·.owner)
+    let chosen (category : Option String) : Option Owner :=
+      (registry.styleChoices.find? (·.1 == category)).bind fun (_, name) => named name
+    ((category.bind fun category => chosen (some category)) <|> chosen none <|>
+          named Completion.Styles.fuzzy.name).getD
+      .compiled
 
 /-- The names config chose that no style is registered under, in the order
 chosen, each once. -/
