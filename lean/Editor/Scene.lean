@@ -25,7 +25,8 @@ the last scene published, on its own thread, so painting never waits on Lean
   is not selected, every field and the row (`View.statusFace`) in
   `mode-line.inactive`. For the minibuffer's view while a prompt is open
   it is the prompt's label and then a field for each candidate the prompt
-  has listed, in the matcher's order, the chosen one in a face of its own.
+  has listed, in the prompt's style's order, the chosen one in a face of
+  its own.
   Where the fields go across the row, and what is cut when they do not
   fit, is layout's (`crates/editor-layout/src/frame.rs`, "The mode
   line").

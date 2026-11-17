@@ -55,8 +55,15 @@ session's, and are not imported. A command of config's asks for a string
 with `prompt` (`Editor/Api.lean`), with candidates the answer may be
 chosen from when it gives completion sources that answer them
 (`prompt … (sources := [.given source, .named "name"])`,
-`Editor/Completion.lean`); a source is registered by name with
-`defineSource` (`Editor/Setup.lean`). The commands that accept and
+`Editor/Completion.lean`), or every source of a category
+(`.category "buffer" defaults`); a source is registered by name with
+`defineSource` (`Editor/Setup.lean`). Which candidates the typed text
+matches is a completion style's (`Editor/Completion/Style.lean`): the
+shipped ones, `fuzzy` and `orderless`, come with `Editor/Setup.lean`
+(`Editor/Completion/Styles.lean`), and config registers one with
+`defineStyle` (`.keeping name keep` for one written as a predicate) and
+chooses the default with `useStyle` and a category's with
+`useStyleFor`. The commands that accept and
 cancel a prompt and move through its candidates and the minibuffer's mode
 are here as well
 (`Editor/Minibuffer.lean`); their registrations

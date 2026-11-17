@@ -2986,7 +2986,8 @@ def styleChunk (choices : List String) : String :=
       s!"    (sources := [.given (.ofTexts \"{command}s\" \"{category}\" " ++
       "#[\"wq\", \"edit\", \"rewrite\", \"w\"])]))\n"
   "def setup : SetupM Unit := do\n" ++ String.join (choices.map (s!"  {·}\n")) ++
-    asks "pick" "pick" ++ asks "other" "other"
+    asks "pick" "pick" ++
+    asks "other" "other"
 
 /-- A chunk whose `setup` chooses the orderless style for the category
 `buffer`, so `switch-buffer` lists its candidates in their own order, and
@@ -3243,7 +3244,8 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a style config defines and chooses as the default lists every prompt: after `w` both prompts list `wq` and `w`, the candidates that begin with it; a config that also chooses a style nobody registered for pick says so in the echo area and on a report line, and pick falls to the default"
       run :=
-        let defines := "defineStyle (.keeping \"starts\" fun text candidate => candidate.startsWith text)"
+        let defines :=
+          "defineStyle (.keeping \"starts\" fun text candidate => candidate.startsWith text)"
         withHost context [("10-style.lean", styleChunk [defines, "useStyle \"starts\""])]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
@@ -3257,7 +3259,7 @@ def promptChecks (context : Context) : List Check :=
             let pick ← asked "pick"
             let other ← asked "other"
             session.write "10-style.lean"
-              (styleChunk [defines, "useStyle \"starts\"", "useStyleFor \"pick\" \"nope\""])
+                (styleChunk [defines, "useStyle \"starts\"", "useStyleFor \"pick\" \"nope\""])
             session.ask [.reload]
             let (echo, _) ← session.scene
             let fallen ← asked "pick"

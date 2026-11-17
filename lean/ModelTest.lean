@@ -2907,7 +2907,8 @@ def setupChecks : List Check :=
     { name :=
         "a setup's completion styles and its choices of them are collected in the order it made them; one that defines two styles under one name, or chooses the style of one category or the default twice, is refused with exactly the reason that names it"
       run :=
-        let mine : Completion.Style := .keeping "mine" fun text candidate => candidate.startsWith text
+        let mine : Completion.Style :=
+          .keeping "mine" fun text candidate => candidate.startsWith text
         let setup : SetupM Unit := do
           defineStyle mine
           useStyleFor "pick" "orderless"
@@ -2929,7 +2930,8 @@ def setupChecks : List Check :=
           ((match Config.Registrations.ofSetup setup with
             | .ok collected =>
               collected.styles.map (·.name) == #["mine"] &&
-                collected.styleChoices == #[(some "pick", "orderless"), (none, "mine"), (some "other", "mine")]
+                collected.styleChoices ==
+                  #[(some "pick", "orderless"), (none, "mine"), (some "other", "mine")]
             | .error _ => false) &&
             refusal twice == some (Config.Registrations.styleTwice "mine") &&
             Config.Registrations.styleTwice "mine" ==
@@ -7160,16 +7162,17 @@ def fuzzyChecks : List Check :=
 first. -/
 def wordsOver (letters : List Char) : Nat → List (List Char)
   | 0 => [[]]
-  | length + 1 => [] :: (letters.flatMap fun letter => (wordsOver letters length).map (letter :: ·))
-      |>.eraseDups
+  | length + 1 =>
+    [] :: (letters.flatMap fun letter => (wordsOver letters length).map (letter :: ·)) |>.eraseDups
 
 /-- `text` split at each space, the empty pieces dropped: the orderless
 style's components, written apart from the style. -/
 def spaceSplit (text : List Char) : List (List Char) :=
   let (pieces, last) :=
     text.foldl
-        (fun (pieces, piece) char => if char == ' ' then (pieces ++ [piece], []) else (pieces, piece ++ [char]))
-        (([] : List (List Char)), ([] : List Char))
+      (fun (pieces, piece) char =>
+        if char == ' ' then (pieces ++ [piece], []) else (pieces, piece ++ [char]))
+      (([] : List (List Char)), ([] : List Char))
   (pieces ++ [last]).filter (!·.isEmpty)
 
 /-- Whether `part` occurs in `whole` as a run of adjacent characters. -/
@@ -7180,10 +7183,10 @@ def isInfixOf (part whole : List Char) : Bool :=
 def charsWithin (text : String) (span : Completion.Span) : List Char :=
   let (kept, _) :=
     text.toList.foldl
-        (fun (kept, offset) char =>
+      (fun (kept, offset) char =>
           let next := offset + char.utf8Size
           (if span.start ≤ offset && next ≤ span.stop then kept ++ [char] else kept, next))
-        (([] : List Char), 0)
+      (([] : List Char), 0)
   kept
 
 /-- The hits a style answers for `text` among `candidates`, run over the
@@ -7205,18 +7208,19 @@ def styleChecks : List Check :=
               ("wq", #["wq", "w", "qw", "wxq"]), ("é", #["aéé", "e", "é"]), ("ew", #["rewrite"]),
               ("z", #["a", "b"])]
           table.all
-              (fun (text, candidates) =>
-                let hits := styled Completion.Styles.fuzzy text candidates
-                hits.map (·.index) == FuzzyModel.rank text candidates &&
-                  hits.all fun hit =>
-                    hit.ranges ==
-                      Completion.Styles.inOrderSpans text ((candidates[hit.index]?).getD "")) &&
-            Completion.Styles.fuzzy.name == "fuzzy" &&
-            Completion.Styles.inOrderSpans "rt" "rewrite" == #[⟨0, 1⟩, ⟨5, 6⟩] &&
-            Completion.Styles.inOrderSpans "ew" "rewrite" == #[⟨1, 3⟩] &&
-            Completion.Styles.inOrderSpans "wq" "rewrite" == #[] &&
-            Completion.Styles.inOrderSpans "é" "aéé" == #[⟨1, 3⟩] &&
-            Completion.Styles.inOrderSpans "éb" "xébb" == #[⟨1, 4⟩] &&
+                          (fun (text, candidates) =>
+                            let hits := styled Completion.Styles.fuzzy text candidates
+                            hits.map (·.index) == FuzzyModel.rank text candidates &&
+                              hits.all fun hit =>
+                                hit.ranges ==
+                                  Completion.Styles.inOrderSpans text
+                                    ((candidates[hit.index]?).getD "")) &&
+                        Completion.Styles.fuzzy.name == "fuzzy" &&
+                      Completion.Styles.inOrderSpans "rt" "rewrite" == #[⟨0, 1⟩, ⟨5, 6⟩] &&
+                    Completion.Styles.inOrderSpans "ew" "rewrite" == #[⟨1, 3⟩] &&
+                  Completion.Styles.inOrderSpans "wq" "rewrite" == #[] &&
+                Completion.Styles.inOrderSpans "é" "aéé" == #[⟨1, 3⟩] &&
+              Completion.Styles.inOrderSpans "éb" "xébb" == #[⟨1, 4⟩] &&
             Completion.Styles.inOrderSpans "" "rewrite" == #[] },
     { name :=
         "the orderless style matches exactly the candidates that contain every space-separated component of the text, in any order, in the candidates' order; the text with its components in another order matches the same, and each component lies within one of the hit's ranges"
@@ -7255,9 +7259,11 @@ def styleChecks : List Check :=
         "a style that keeps what its predicate says answers the candidates it holds of, in their order, with no ranges, and asks the matcher nothing"
       run :=
         pure <|
-          let starts := Completion.Style.keeping "starts" fun text candidate => candidate.startsWith text
+          let starts :=
+            Completion.Style.keeping "starts" fun text candidate => candidate.startsWith text
           let (hits, asked) :=
-            Program.run (port := fuzzyPort) (fun request count => (FuzzyModel.handle request ()).1 |> (·, count + 1))
+            Program.run (port := fuzzyPort)
+              (fun request count => (FuzzyModel.handle request ()).1 |> (·, count + 1))
               (starts.hits "w" #["wq", "edit", "w", "aw"]) 0
           starts.name == "starts" && hits == #[.ofIndex 0, .ofIndex 2] && asked == 0 },
     { name :=
@@ -7290,7 +7296,9 @@ def styleContractChecks : List Check :=
       run := do
         return (← styleBroken Completion.Styles.fuzzy).isEmpty &&
             (← styleBroken Completion.Styles.orderless).isEmpty &&
-            (← styleBroken (.keeping "starts" fun text candidate => candidate.startsWith text)).isEmpty &&
+            (←
+                styleBroken
+                    (.keeping "starts" fun text candidate => candidate.startsWith text)).isEmpty &&
             !Completion.StyleContract.properties.isEmpty },
     { name :=
         "the style contract reports a style that answers every index twice, by its property of the indices and not by that of the ranges"
@@ -7298,7 +7306,9 @@ def styleContractChecks : List Check :=
         let twice : Completion.Style :=
           { name := "twice"
             hits := fun _ candidates =>
-              pure ((Array.range candidates.size).flatMap fun index => #[.ofIndex index, .ofIndex index]) }
+              pure
+                ((Array.range candidates.size).flatMap fun index =>
+                  #[.ofIndex index, .ofIndex index]) }
         let broken ← styleBroken twice
         return broken.contains Completion.StyleContract.indices &&
             !broken.contains Completion.StyleContract.ranges },
@@ -10657,7 +10667,8 @@ def stateChecks : List Check :=
                 let (_, asking) := prompted state
                 let all := offered #["wq", "edit", "w"]
                 let passed := offered #["zz", "a"]
-                let (set, collected) := asking.setCandidates { all, passed, category := some "pick" }
+                let (set, collected) :=
+                  asking.setCandidates { all, passed, category := some "pick" }
                 let (_, first) := collected.listCandidates "" #[⟨0, #[]⟩, ⟨1, #[]⟩, ⟨2, #[]⟩]
                 let (_, chosen) := first.chooseCandidate .next
                 let (listed, after) :=
@@ -11083,13 +11094,13 @@ def stateRequests : List StateRequest :=
     .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
-    .closePrompt none, .closePrompt (some "typed"), .setCandidates { all := offered #["one", "two"] },
-    .chooseCandidate .next, .chooseCandidate .previous,
-    .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
-    .categorySources "buffer", .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
-    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
-    .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
+    .closePrompt none, .closePrompt (some "typed"),
+    .setCandidates { all := offered #["one", "two"] }, .chooseCandidate .next,
+    .chooseCandidate .previous, .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }),
+    .setWanted ⟨1⟩ none, .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames,
+    .themeNames, .categorySources "buffer", .loadTheme "second", .invoke asked, .quit, .reload,
+    .giveUp "no", .breakOff "far enough", .setRegister "a" { text := "a line\n", linewise := true },
+    .setScrollMargin 2, .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
     .arrange ⟨0⟩ .promote, .arrange ⟨1⟩ (.exchange none), .arrange ⟨0⟩ .zoom, .arrange ⟨9⟩ .zoom,
     .arrange ⟨0⟩ (.mainCount true 1), .arrange ⟨1⟩ (.edge .left),
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .stack,
@@ -11682,7 +11693,8 @@ def stateRequestChecks : List Check :=
             let (previous, last) := listed.handle (.chooseCandidate .previous)
             let (noSet, sameSet) := state.handle (.setCandidates { all := offered #["x"] })
             let (noChoice, sameChoice) := state.handle (.chooseCandidate .next)
-            replied set == .inr () && replaced == (listed.setCandidates { all := offered #["x"] }).2 &&
+            replied set == .inr () &&
+              replaced == (listed.setCandidates { all := offered #["x"] }).2 &&
               replaced.prompt.map (·.candidates) == some { all := offered #["x"] } &&
               replied next == .inr () &&
               first == (listed.chooseCandidate .next).2 &&
@@ -14507,14 +14519,16 @@ def dispatchStateChecks : List Check :=
               sources := fun name =>
                 match name with
                 | "echo" => some (Completion.Fake.echo "echo" "test")
-                | "filtering" => some { Completion.Fake.echo "filtering" "test" with filtered := true }
+                | "filtering" =>
+                  some { Completion.Fake.echo "filtering" "test" with filtered := true }
                 | "said" => some said
                 | _ => none }
           let command :
             EditorM
               (Option Completion.Answer ×
-                Bool × Option Completion.Answer × Option (Array Completion.Candidate) ×
-                  Option Completion.Answer) :=
+                Bool ×
+                Option Completion.Answer ×
+                Option (Array Completion.Candidate) × Option Completion.Answer) :=
             do
             let start ← editorState
             let missing ← EditorState.ask (.askSource "nope" { text := "w", view := ⟨0⟩ })
@@ -14544,14 +14558,15 @@ def dispatchStateChecks : List Check :=
       run :=
         pure <|
           let registered : Loop.Registered :=
-            { categorySources := fun category =>
+            {
+              categorySources := fun category =>
                 if category == "buffer" then #["buffers", "mine"] else #[] }
           let asks (category : String) : Option (Guarded (Array String) × Bool) :=
             let program : EditorM (Guarded (Array String) × Bool) := do
               let start ← EditorState.initial ⟨640, 480⟩
               let (outcome, state) ←
                 (EditorState.ask (.categorySources category) : EditorM (Array String)).dispatched
-                  registered start
+                    registered start
               return (outcome, state == start)
             (program.runModel editorModel).1.toOption
           asks "buffer" == some (.finished #["buffers", "mine"], true) &&
@@ -20821,9 +20836,8 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
       ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c s", invoke "still"),
       ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
       ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
-      ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"),
-      ("C-c 5", invoke "ask-filtered"), ("C-c 7", invoke "ask-category"),
-      ("C-c 6", invoke "ask-other")]
+      ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"), ("C-c 5", invoke "ask-filtered"),
+      ("C-c 7", invoke "ask-category"), ("C-c 6", invoke "ask-other")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -20956,7 +20970,9 @@ def candidateChecks : List Check :=
                 { default := Completion.Styles.fuzzy
                   byCategory := fun category =>
                     if category == "pick" then some Completion.Styles.orderless else none } }
-          match (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption with
+          match
+            (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
           | none => false
           | some driver =>
             let (pick, _) := fedTo driver (presses "C-c a w")
@@ -20976,17 +20992,18 @@ def candidateChecks : List Check :=
         pure <|
           let extra : Completion.Source := .ofTexts "extra" "pick" #["xw"]
           let only : Completion.Source := .ofTexts "pick" "pick" #["only"]
-          let lookup (sources : List Completion.Source) (name : String) : Option Completion.Source :=
-            sources.find? (·.name == name)
+          let lookup (sources : List Completion.Source) (name : String) :
+            Option Completion.Source := sources.find? (·.name == name)
           match candidateDriver, categoryDriver #["extra"] (lookup [extra]),
-              categoryDriver #["pick", "extra"] (lookup [only, extra]) with
+            categoryDriver #["pick", "extra"] (lookup [only, extra]) with
           | some bare, some added, some replaced =>
             let (asked, _) := fedTo bare (presses "C-c 7")
             let (picked, _) := fedTo bare (presses "C-c a")
             let (more, _) := fedTo added (presses "C-c 7")
             let (instead, _) := fedTo replaced (presses "C-c 7")
             let xw := (Completion.Candidate.ofText "xw").inGroup "extra"
-            candidatesOf asked == candidatesOf picked && candidatesOf asked == some (pickListed "") &&
+            candidatesOf asked == candidatesOf picked &&
+              candidatesOf asked == some (pickListed "") &&
               (candidatesOf more).map (·.all) == some (pickOffered.push xw) &&
               (candidatesOf more).map (·.category) == some (some "pick") &&
               (candidatesOf instead).map (·.all) ==
@@ -21004,7 +21021,8 @@ def candidateChecks : List Check :=
             let passed := (offered #["zz", "w"]).map (·.inGroup filteredSource.name)
             let passedListed := passed.map Completion.Listed.of
             let withPassed (listed : Candidates) : Candidates :=
-              { listed with passed, listed := listed.listed ++ passedListed }
+              { listed with
+                passed, listed := listed.listed ++ passedListed }
             candidatesOf asking == some (withPassed (pickListed "")) &&
               (candidatesOf asking).map (·.all) == some pickOffered &&
               (candidatesOf asking).map (·.category) == some (some "pick") &&

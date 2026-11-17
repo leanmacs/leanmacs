@@ -1499,8 +1499,10 @@ def listed (state : EditorState) (matching : Completion.Matching := .standard) :
     if candidates.listedFor == some pattern then
       return (state, none)
     let hits ←
-      if candidates.all.isEmpty then pure #[]
-      else (matching.styleFor candidates.category).hits pattern (candidates.all.map (·.text))
+      if candidates.all.isEmpty then
+        pure #[]
+      else
+        (matching.styleFor candidates.category).hits pattern (candidates.all.map (·.text))
     return ((state.listCandidates pattern hits).2, none)
 
 /-- Has `view`, a view of the scene about to be published, follow its cursor
@@ -2277,8 +2279,7 @@ leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
 scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
-  let loop ←
-    stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
+  let loop ← stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
   let (loop, starts, cancels) := loop.fileJobs keys
   return { stepped with
       loop, next := nextOf loop, starts := stepped.starts ++ starts

@@ -1311,8 +1311,7 @@ inductive Step where
 the hits' indices, in that order, each with its hit's ranges, an index that
 is none of theirs dropped; then every passed candidate, in the order given,
 with no ranges; and nothing chosen. -/
-def list (candidates : Candidates) (pattern : String) (hits : Array Completion.Hit) :
-    Candidates :=
+def list (candidates : Candidates) (pattern : String) (hits : Array Completion.Hit) : Candidates :=
   let matched :=
     hits.filterMap fun hit => (candidates.all[hit.index]?).map (Completion.Listed.of · hit.ranges)
   { candidates with

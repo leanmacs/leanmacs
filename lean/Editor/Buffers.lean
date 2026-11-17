@@ -240,8 +240,8 @@ def switchCommand (call : Call) : EditorM Unit := do
     switchTo call.target.window.id text
   | _ =>
     if let .error refusal←
-        prompt switchPrompt { command := switchName } (sources := [.category "buffer" [source]])
-        then
+        prompt switchPrompt { command := switchName } (sources :=
+          [.category "buffer" [source]]) then
       message (notAsking refusal)
 
 /-- The buffer list of `state`, if there is one: the open buffer with no file

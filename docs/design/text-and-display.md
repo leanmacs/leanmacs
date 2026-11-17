@@ -2286,7 +2286,10 @@ decided 2026-11-13 by its phase 2):
     command loop's phase 14; `Loop.promptStatus`). After the label comes
     one field for each candidate the typed text matches, its text (its
     label, annotation and group are not drawn yet), every one, in
-    the fuzzy matcher's order, in the face `minibuffer.candidate`
+    the prompt's style's order (the fuzzy matcher's by default;
+    [keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's matching
+    styles"), then those a filtered source passed, in the face
+    `minibuffer.candidate`
     (`Loop.candidateFace`); the chosen one, if one is chosen, is in
     `minibuffer.chosen` (`Loop.chosenFace`) instead. With nothing listed,
     and for a prompt with no candidates, the line is the label alone.

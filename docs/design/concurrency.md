@@ -1057,9 +1057,10 @@ sources they come from by completion's phase 1.
 | `ex` asking for its line, and running the answer's command | `lean/Editor/Ex.lean` (`exCommand`, `run`) |
 | A prompt's candidates, records, their listing and the choice; setting them and choosing | `lean/Editor/State.lean` ("Prompts": `Candidates`), `lean/Editor/State/Request.lean` |
 | Completion sources, the query and the candidate record; their model, fake and contract | `lean/Editor/Completion.lean`, `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Fake.lean`, `lean/Editor/Completion/Contract.lean` |
-| Sources registered by name; a named source run inside the asking command | `lean/Editor/Config/Registry.lean` ("Sources"), `lean/Editor/Setup.lean` (`defineSource`), `lean/Editor/Command/Dispatch.lean` (`StateRequest.askSource`) |
+| Sources registered by name; a named source run inside the asking command; the names of the sources registered in a category, for a prompt that asks for one | `lean/Editor/Config/Registry.lean` ("Sources": `sourcesIn`), `lean/Editor/Setup.lean` (`defineSource`), `lean/Editor/Command/Dispatch.lean` (`StateRequest.askSource`, `StateRequest.categorySources`) |
+| Matching styles: the interface, its model and contract, the fuzzy and orderless styles; their registration and config's choice by category | `lean/Editor/Completion/Style.lean`, `lean/Editor/Completion/Styles.lean`, `lean/Editor/Completion/StyleContract.lean`, `lean/Editor/Config/Registry.lean` ("Styles"), `lean/Editor/Setup.lean` (`defineStyle`, `useStyle`, `useStyleFor`) |
 | `prompt` with candidates from sources, `setCandidates`, `chooseCandidate`; accepting the chosen candidate | `lean/Editor/Api.lean` ("Prompts") |
-| The listing, made before each scene from what the fuzzy matcher answers | `lean/Editor/Loop.lean` ("Prompts": `Loop.listed`), `lean/Editor/Fuzzy.lean` |
+| The listing, made before each scene from what the prompt's style answers, the style chosen by its category from the matching the host hands | `lean/Editor/Loop.lean` ("Prompts": `Loop.listed`, `Loop.Keys.matching`), `lean/Editor/Completion/Style.lean`, `lean/Editor/Fuzzy.lean` |
 | `minibuffer-next`, `minibuffer-previous` and the roles the mode fills with them | `lean/Editor/Minibuffer.lean` |
 | The `:!` history and the ex names as the ex line's candidates, from two sources | `lean/Editor/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
 | An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `lean/Editor/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
@@ -1344,6 +1345,14 @@ accepting hands the continuation the chosen candidate.
     loop runs from the registered sources (`StateRequest.askSource`): a
     request cannot carry the program, so the name crosses. A name no source
     is registered under refuses the prompt with `noSuchSource`.
+  - A prompt may ask for a category instead: `prompt` asks the loop once
+    for the names of the sources registered in it
+    (`StateRequest.categorySources`), whose reply is names and never a
+    program, and then asks each by name, after the defaults the prompt
+    gave, each of which is asked by name where one of its name is
+    registered there. A category with no source lists nothing and is not
+    refused. The shipped prompts ask this way, so config adds to and
+    replaces what they list.
   - Each is asked inside the asking command, in order, after the two
     refusals that make nothing and before the minibuffer's text is made,
     and what they answer is what the open prompt holds, as plain data,
@@ -1366,17 +1375,30 @@ accepting hands the continuation the chosen candidate.
   to the listing and the choice from before it. A reload leaves them: they
   are strings, not config's code.
 - **The loop brings the listing up to date before each scene, and nothing
-  else asks the matcher.** While a prompt is open and has candidates, the
-  publish reads the minibuffer's text; when it is not the text the listing
-  is for, it asks the fuzzy matcher and keeps the candidates it answers,
-  in its order, with nothing chosen
+  else asks a style for a prompt.** While a prompt is open and has
+  candidates, the publish reads the minibuffer's text; when it is not the
+  text the listing is for, it asks the style chosen for the prompt's
+  category (`Loop.Keys.matching`; the fuzzy matcher's by default) and
+  keeps the candidates it answers, in its order, with the ranges that
+  matched, then those a filtered source passed, with nothing chosen
   ([lean-runtime.md](lean-runtime.md), "The editor's port is a
-  composite").
+  composite"; [keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's
+  matching styles").
+  - The style runs on the editor thread, in the publish, as config's
+    mode-line segments do; phase 3 moves it. That is safe for config's
+    style because a style is a program over the fuzzy port alone: it
+    cannot read the state, cannot be refused, since the fuzzy port has no
+    error, and cannot be interrupted. A source, a program over the
+    editor's port, is kept out of the publish for those reasons.
+  - The style is looked up from the step's keys each time and never kept
+    in the state, which holds only the prompt's category: a reload
+    changes it from the next listing.
   - The first listing is made by the scene of the asking step, for the
     initial text. Every event ends in a scene, so a command always finds
     the listing of the text the last scene showed.
   - A text that did not change costs one read and no ranking. A prompt
-    with no candidates costs what it cost before.
+    with no candidates costs what it cost before, and one whose every
+    candidate was passed asks no style.
   - It is the loop's own request: it is not guarded, so the interrupt flag
     never stops a scene. The ranking runs on the editor thread, in the
     call ([rust-library.md](rust-library.md), "Fuzzy matching, as built").

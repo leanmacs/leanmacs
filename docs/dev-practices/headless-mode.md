@@ -1521,6 +1521,7 @@ reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
 theme: no theme is registered as `<name>`
 segment: no segment is registered as `<name>`
+style: no completion style is registered under `<name>`
 rule: display rule <n> is left out: <reason>
 run <name>: ok            (or "refused: <error>", "interrupted",
                            "gave up: <reason>", "broke off: <reason>",
@@ -1587,12 +1588,18 @@ reload whose config lists a segment nobody registered (`modeLine`) is
 installed too, the segment left out: its report has a line
 ``segment: no segment is registered as `<name>` `` for each, after the
 theme's, and the echo area says each sentence after `reload: `, joined by
-`; ` (`tests/headless/mode-line`). A reload whose config makes a display
+`; ` (`tests/headless/mode-line`). A reload whose config chooses a
+completion style nobody registered (`useStyle`, `useStyleFor`) is
+installed too, its category left to the default style and the default to
+`fuzzy`: its report has a line
+``style: no completion style is registered under `<name>` `` for each,
+after the segments', and the echo area says each sentence after the
+segments'. A reload whose config makes a display
 rule whose target does not exist under the layout it chose (`displayRule`)
 is installed too, the rule left out: its report has a line
 `rule: display rule <n> is left out: <reason>` for each, `<n>` its place
-in the `setup` from 1, after the segments', and the echo area says each
-sentence after the segments' (`tests/headless/display-rules`).
+in the `setup` from 1, after the styles', and the echo area says each
+sentence after the styles' (`tests/headless/display-rules`).
 
 What the editor loop is refused is in the scene's echo area, as
 `refused: <error>`: a commit the library refused, and a text or a snapshot

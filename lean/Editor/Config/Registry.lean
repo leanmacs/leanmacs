@@ -471,7 +471,8 @@ as its style entries, in their order. -/
 def replaceStyles (registry : Registry) (owner : Owner) (styles : Array Completion.Style) :
     Registry :=
   { registry with
-    styles := registry.styles.filter (·.owner != owner) ++ styles.map fun style => { owner, style } }
+    styles :=
+      registry.styles.filter (·.owner != owner) ++ styles.map fun style => { owner, style } }
 
 /-- The completion style registered under `name`: the latest entry of that
 name. -/
@@ -494,7 +495,8 @@ def matching (registry : Registry) : Completion.Matching :=
 /-- The names config chose that no style is registered under, in the order
 chosen, each once. -/
 def unknownStyles (registry : Registry) : Array String :=
-  ((registry.styleChoices.map (·.2)).filter fun name => (registry.style? name).isNone).toList.eraseDups.toArray
+  ((registry.styleChoices.map (·.2)).filter fun name =>
+      (registry.style? name).isNone).toList.eraseDups.toArray
 
 /-- The names of the completion sources registered in `category`: each name
 once, in the order it was first registered, kept only when its latest

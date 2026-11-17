@@ -468,6 +468,22 @@ elaborator.
   listing over the registry for each step (`Headless.keys`,
   `Loop.Keys.modeLine`). Defining a segment name twice, or listing the
   mode line twice, rejects the reload.
+- **Completion styles are named, and config chooses them by category**:
+  every host registers the shipped styles, `fuzzy` and `orderless`
+  (`Completion.Styles.shipped`, the host's `Collaborators.styles`), and
+  `setup` registers more with `defineStyle`, chooses the default with
+  `useStyle "name"` and a category's with `useStyleFor "buffer" "name"`;
+  the registry holds the styles by owner and an install replaces config's
+  as a set, and sets config's choices (`Registry.styleChoices`), so a
+  config that chooses none has the fuzzy style for every prompt. A chosen
+  name nobody registered leaves its category to the default and is said,
+  in the echo area after the segments' sentences, and on the report's
+  lines (`style: no completion style is registered under `<name>``). The
+  host resolves the choices over the registry for each step
+  (`Headless.keys`, `Loop.Keys.matching`;
+  [keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's matching
+  styles"). Defining a style name twice, or choosing a category's style or
+  the default twice, rejects the reload.
 - **The frame padding is config's**: `framePadding 12` sets, in whole
   points, how far every window's text and its mode line's first and last
   fields are inset from its edges, and the bottom row at least (theming

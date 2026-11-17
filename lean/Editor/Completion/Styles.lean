@@ -47,7 +47,8 @@ starts at or after the last's start. -/
 def mergeInto (spans : Array Span) (span : Span) : Array Span :=
   match spans.back? with
   | some last =>
-    if span.start ≤ last.stop then spans.pop.push { start := last.start, stop := max last.stop span.stop }
+    if span.start ≤ last.stop then
+      spans.pop.push { start := last.start, stop := max last.stop span.stop }
     else spans.push span
   | none => spans.push span
 
@@ -112,7 +113,8 @@ def orderless : Style :=
           let candidate ← candidates[index]?
           let spans ← parts.mapM (occurrence? · candidate)
           let sorted :=
-            spans.toArray.qsort fun a b => a.start < b.start || (a.start == b.start && a.stop < b.stop)
+            spans.toArray.qsort fun a b =>
+              a.start < b.start || (a.start == b.start && a.stop < b.stop)
           some { index, ranges := sorted.foldl mergeInto #[] } }
 
 /-- The styles that ship, registered compiled by every host

@@ -6,6 +6,8 @@ import Editor.Command.Model
 import Editor.Command.Real
 import Editor.Compile.Compiled
 import Editor.Compile.Shipped
+import Editor.Completion.StyleContract
+import Editor.Completion.Styles
 import Editor.Display.Contract
 import Editor.Display.Real
 import Editor.Display.Recorder
@@ -14,8 +16,6 @@ import Editor.Evil.TreeObjects
 import Editor.Ex.Compiled
 import Editor.File.Cases
 import Editor.Files.Compiled
-import Editor.Completion.StyleContract
-import Editor.Completion.Styles
 import Editor.Fuzzy.Contract
 import Editor.Fuzzy.Real
 import Editor.Indent
@@ -1573,7 +1573,7 @@ fuzzy model. -/
 def styleFailures : IO (List String) := do
   let failed ←
     Completion.StyleContract.failures (Program.runM (port := fuzzyPort) Fuzzy.real)
-      Completion.Styles.fuzzy
+        Completion.Styles.fuzzy
   return failed.map (s!"the fuzzy style over the real fuzzy binding: {·}")
 
 /-- Where a command's fuzzy requests go when it is run against the

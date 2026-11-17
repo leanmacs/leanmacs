@@ -62,15 +62,18 @@ share (`defineSource`, `Editor/Setup.lean`; `Editor/Config/Registry.lean`,
 |---|---|
 | Something more a source is asked | A field of `Query` (`Editor/Completion/Candidate.lean`), filled where `prompt` asks |
 | Something more a candidate carries | A field of `Candidate`, optional, and what draws it is the display's |
-| A shipped source | A value beside the rule it lists, given to the prompt that asks for it, registered compiled in `Headless.shippedOver`, and run by `ModelTest.sourceContractChecks` |
+| A shipped source | A value beside the rule it lists, a default of the category the prompt that lists it asks for, registered compiled in `Headless.shippedOver`, and run by `ModelTest.sourceContractChecks` |
+| A way to match candidates | A style (`Editor/Completion/Style.lean`), not a source |
 | A rule every source keeps | A property of `Editor/Completion/Contract.lean` |
 
 Pinned by `ModelTest.sourceContractChecks` (the contract, on the model,
 the fake and the shipped sources), `candidateChecks` (sources asked by a
 prompt through the loop), `dispatchStateChecks` (a named source run
-inside the asking command), `setupChecks` and `registryChecks`
-(registration), and `ConfigTest.promptChecks` (a source from config, on
-the real elaborator).
+inside the asking command, and the names of a category's sources),
+`apiStateChecks` (a category with no source), `setupChecks` and
+`registryChecks` (registration, and a category's sources), and
+`ConfigTest.promptChecks` (a source from config, on the real elaborator,
+asked by name and added to a shipped prompt by its category).
 -/
 
 namespace Editor.Completion

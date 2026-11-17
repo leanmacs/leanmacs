@@ -967,19 +967,23 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
   let mut resolved : Array (Completion.Source ⊕ String) := #[]
   for source in sources do
     match source with
-    | .given source => resolved := resolved.push (.inl source)
-    | .named name => resolved := resolved.push (.inr name)
+    | .given source =>
+      resolved := resolved.push (.inl source)
+    | .named name =>
+      resolved := resolved.push (.inr name)
     | .category category defaults =>
       let names ← EditorState.ask (.categorySources category)
       resolved :=
         resolved ++
-            defaults.toArray.map (fun default =>
+          defaults.toArray.map
+            (fun default =>
               if names.contains default.name then .inr default.name else .inl default) ++
           (names.filter fun name => !defaults.any (·.name == name)).map .inr
   -- The prompt's category is its first reference's: the one a category
   -- reference names, or the first source's.
   let mut collected : Completion.Collected :=
-    { category :=
+    {
+      category :=
         match sources.head? with
         | some (.category category _) => some category
         | _ => none }
@@ -987,9 +991,9 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
     let answer : Completion.Answer ←
       match source with
       | .inl source =>
-        pure
-          { category := source.category, filtered := source.filtered
-            candidates := (← source.candidates query).map (·.inGroup source.name) }
+        pure {
+              category := source.category, filtered := source.filtered
+              candidates := (← source.candidates query).map (·.inGroup source.name) }
       | .inr name =>
         let some answered ←
           EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
@@ -998,8 +1002,11 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
     let category := collected.category <|> some answer.category
     collected :=
       if answer.filtered then
-        { collected with passed := collected.passed ++ answer.candidates, category }
-      else { collected with all := collected.all ++ answer.candidates, category }
+        { collected with
+          passed := collected.passed ++ answer.candidates, category }
+      else
+        { collected with
+          all := collected.all ++ answer.candidates, category }
   let text ← createText initial
   let scroll ← text.mark (.anchor { offset := 0, bias := .before })
   let cursor := initial.utf8ByteSize

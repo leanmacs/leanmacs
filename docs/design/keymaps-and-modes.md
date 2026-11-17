@@ -3397,7 +3397,8 @@ asked and what accepting gives).
   twice is refused with `the completion source <name> is registered twice`
   (`Registrations.sourceTwice`), as a second registration of any name is.
 - **A prompt is asked with a list of sources**, each given as a value
-  (`.given source`) or by name (`.named name`):
+  (`.given source`), by name (`.named name`) or as a category
+  (`.category category defaults`, below):
   `prompt label continuation initial (sources := …)`. A source given is
   run by `prompt`; a named one is run by the loop that runs the asking
   command, which looks the name up (`StateRequest.askSource`), since a
@@ -3407,7 +3408,28 @@ asked and what accepting gives).
 - **The prompt holds the candidates of every source, in the sources'
   order, each in its source's group**: a candidate with no group of its
   own takes its source's name (`Candidate.inGroup`). Matching is the
-  loop's, over the candidates' texts, as before.
+  loop's, over the candidates' texts, by the prompt's style ("A prompt's
+  matching styles", below). A source that declares it has filtered already
+  (`Source.filtered`) has its candidates kept apart and listed after the
+  matches, as it gave them.
+- **A prompt may ask for a category.** `.category c defaults`
+  (`SourceRef.ofCategory c` for none) is answered by every source
+  registered in `c`, compiled and config alike. `prompt` asks the loop for
+  the names once (`StateRequest.categorySources`, answered from
+  `Config.Registry.sourcesIn`): the names whose latest entry is of `c`,
+  each once, in the order the name was first registered. Compiled entries
+  come before config's, so this is registration order across owners. Each
+  default is then asked by name where a source of its name is registered
+  in `c`, so config's source of a shipped name replaces it in its place,
+  and as itself otherwise; the category's other sources follow the
+  defaults, in that order. A category with no source and no defaults asks
+  nothing: the prompt opens with no candidates and is not refused. The
+  defaults exist for hosts handed no registered sources, the model
+  drivers and most config-test hosts among them, which list what a
+  shipped prompt lists by running its defaults by value. A default whose
+  name is registered only in another category is not replaced: the
+  category's listing decides. The request carries names, never a program,
+  as `askSource` does.
 - **A source answers synchronously, inside the asking command**: each is
   asked once, with the initial text, after the refusals that make nothing
   and before the minibuffer's text is made. Its state requests are
@@ -3416,30 +3438,33 @@ asked and what accepting gives).
   here and not as the text changes because asking at each change would run
   config's code inside the publish, which nothing does yet: what a refusal
   or an interrupt there means is a later phase's.
-- **The shipped sources are asked by value.** `ex` asks with
-  `Ex.historySource` (`ex-history`) and `Ex.namesSource` (`ex-names`), of
-  the category `ex-line`, in that order, so it lists the `:!` history and
-  then the bound names as before; `switch-buffer` with `Buffers.source`
-  (`buffers`, `buffer`); `tab-switch` with `TabCommands.source` (`tabs`,
-  `tab`); `load-theme` with `Themes.source` (`themes`, `theme`). Each is
-  registered compiled under its name too, so config can name it. They are
-  given as values so that every host lists them, the model drivers handed
-  no compiled sources among them. Letting config replace what a shipped
-  prompt lists is a lookup by category, which is phase 2's. The compile
-  prompts ask with model sources of the lists they made
-  (`compile-history`, `compile-commands`), not registered: what they list
-  is the asking command's scope.
+- **The shipped prompts ask by category**, with their own sources as the
+  defaults. `ex` asks for `ex-line` with `Ex.historySource` (`ex-history`)
+  and `Ex.namesSource` (`ex-names`), in that order, so it lists the `:!`
+  history and then the bound names as before; `switch-buffer` for
+  `buffer` with `Buffers.source` (`buffers`); `tab-switch` for `tab` with
+  `TabCommands.source` (`tabs`); `load-theme` for `theme` with
+  `Themes.source` (`themes`). Each is registered compiled under its name
+  in its category, in that order, so on the executable's hosts the
+  defaults' places are registration order. So config adds candidates to a
+  shipped prompt by registering a source in its category, after the
+  shipped ones, and replaces a shipped source by registering one under
+  its name; a host that registered nothing lists what it listed before.
+  The compile prompts ask with model sources of the lists they made
+  (`compile-history`, `compile-commands`), by value and not registered:
+  what they list is the asking command's scope.
 - **Carried, not drawn.** A candidate's label, annotation, kind and group
   are held by the prompt and not drawn: the scene shows each candidate's
   text, as before, so nothing a user sees changed.
 
 - **The scene lists them in the minibuffer's status line.** After the
   prompt's label comes one field for each candidate the typed text
-  matches, every one, in the fuzzy matcher's order, in the face
-  `minibuffer.candidate`; the chosen one is in `minibuffer.chosen`
-  ([text-and-display.md](text-and-display.md), "Views as built"). A
-  candidate that is the typed text is first. With nothing listed the line
-  is the label alone.
+  matches, every one, in the order of the prompt's style, then those a
+  filtered source passed, in the face `minibuffer.candidate`; the chosen
+  one is in `minibuffer.chosen`
+  ([text-and-display.md](text-and-display.md), "Views as built"). Under
+  the fuzzy style, the default, a candidate that is the typed text is
+  first. With nothing listed the line is the label alone.
 - **Two commands move a choice through the list**, `minibuffer-next` and
   `minibuffer-previous` (`lean/Editor/Minibuffer.lean`).
   - From nothing chosen, next chooses the first and previous the last;
@@ -3467,9 +3492,8 @@ asked and what accepting gives).
   candidate `"{n} {label}"` for every tab, in order, so `C-w w`, a number
   and `<Enter>` select that tab; `tab-rename` asks labelled `Rename tab: `
   with the tab's name as the initial text, and no candidates.
-- **Set aside**, each to the phase of completion that builds it: matching
-  styles, and a prompt that asks for the sources of a category, to phase 2;
-  asking again as the text changes, and answers that come later from a
+- **Set aside**, each to the phase of completion that builds it: asking
+  again as the text changes, and answers that come later from a
   job, to phase 3; drawing labels, annotations and groups, a limit on how
   many candidates the scene lists or a window round the choice, a popup or
   a view of their own, and highlighting the characters that matched, to
@@ -3488,11 +3512,118 @@ run inside the asking command), `setupChecks` and `registryChecks`
 contract, on the model, the fake and each shipped source),
 `vimDefaultChecks` (the four keys of the Vim state),
 `ConfigTest.promptChecks` (a source config registers, asked by name,
-through the headless host and the real elaborator), and the fixture
+through the headless host and the real elaborator; and, criterion 5 of
+completion's phase 2, a source config registers in `buffer` added to
+`switch-buffer` after the shipped one's names, and one under `buffers`
+replacing it), `apiStateChecks` again (criterion 6: a category with no
+source lists nothing and is not refused), `candidateChecks` again (a
+category's defaults, its other sources after them, and a default
+replaced by name; a filtered source's candidates after the matches),
+`registryChecks` (`sourcesIn`), `ConfigTest.shippedChecks` (the shipped
+sources in each shipped category, in the defaults' order), and the fixture
 `tests/headless/candidates`, whose config registers its source with
 `defineSource` and asks for it by name, and which is where `<Tab>` and
 `<Enter>` are pressed under the Vim scheme the executable runs, with the
 library's matcher.
+
+**A prompt's matching styles** (completion's phase 2). Which of a
+prompt's candidates the typed text matches, and in what order, is a
+style's, chosen by the prompt's category, as Emacs's completion styles
+and orderless choose it.
+
+- **The interface** (`lean/Editor/Completion/Style.lean`): a name, and a
+  function from the typed text and the candidates' texts to hits
+  (`Completion.Hit`): the indices of the candidates that match, in order,
+  each with the ranges of its text that matched, as UTF-8 byte offsets
+  (`Completion.Span`). It is a program over the fuzzy port alone
+  (`lean/Editor/Fuzzy.lean`), not the editor's: it may ask the matcher and
+  nothing else, so it cannot read the state, be refused or be interrupted.
+  That is why the loop may run config's style inside the publish, as it
+  runs config's mode-line segments, without the questions of refusal and
+  interruption that keep sources out of it; and why phase 3 can run it on
+  a worker against the real matcher.
+- **A model and a contract.** `Style.keeping name keep` matches the
+  candidates `keep` holds of, in their order, with no ranges, and asks the
+  matcher nothing. The contract (`lean/Editor/Completion/StyleContract.lean`)
+  holds every style to three properties over a table of texts and
+  candidates: each index is a candidate's and none is answered twice; each
+  range is not empty, lies within its candidate's text on character
+  boundaries, and a candidate's ranges are ascending and apart; and the
+  empty text lists every candidate. `model-test` runs it against the
+  shipped styles and the model, `contract-test` against the fuzzy style
+  over the real binding.
+- **The fuzzy style** (`Completion.Styles.fuzzy`, the default) answers
+  what `Fuzzy.rank` answers, in its order: **the order rule is the fuzzy
+  style's now**, a candidate that is the typed text first, then the
+  matcher's scores. The rule stays implemented where it was, in the Rust
+  ranking and `FuzzyModel.rank`. Its ranges are computed in Lean
+  (`Styles.inOrderSpans`): the leftmost in-order occurrence of the text's
+  scalar values, the port's own rule, adjacent positions merged into one
+  span. The matching library's own alignment is not asked: it may pick
+  other positions for a repeated character, and asking it would need a new
+  request of the port, its contract, a new result shape across the FFI
+  and a decoder, while phase 3 decides whether the library's worker
+  replaces the port off the editor thread. Revisit it when a mismatch a
+  user sees is measured, once phase 4 draws the ranges.
+- **The orderless style** (`Completion.Styles.orderless`) splits the text
+  at spaces into components, the empty ones dropped. A candidate matches
+  when every component occurs in it as a substring, case kept, in any
+  order, and no other does; a text with no component matches every
+  candidate. The order is the candidates' own. The ranges are each
+  component's first occurrence, sorted, overlapping or touching ones
+  merged. It asks the matcher nothing.
+- **A prompt's category is its first reference's**: the category a
+  `.category` reference names, or its first source's, as an Emacs
+  completion table has one. A prompt with no source has none. The state
+  holds it (`Candidates.category`), and the loop asks the style chosen for
+  it (`Loop.Keys.matching`, `Completion.Matching.styleFor`), the default
+  for a category with none and for a prompt with no category.
+- **Filtered sources pass through.** A source that declares it has
+  filtered already (`Source.filtered`) has its candidates held apart
+  (`Candidates.passed`) and listed after the style's matches, in the order
+  it gave, whatever is typed. It answered for the text it was asked with
+  and the matches are for the text typed now, so the matches come first;
+  until phase 3 asks a source again as the text changes, its list stays as
+  it first answered. No style is asked when every candidate was passed.
+- **Config chooses** (`lean/Editor/Setup.lean`): `defineStyle style`
+  registers one, `useStyleFor category name` chooses a category's, and
+  `useStyle name` the default. Every host registers `fuzzy` and
+  `orderless` for the owner `compiled` (`Headless.Collaborators.styles`).
+  Styles are held by owner and replaced as a set, latest entry of a name
+  wins; the choices are config's alone, set at each install
+  (`Config.Registry.styleChoices`). `Registry.matching` resolves them: the
+  default is the chosen default's registered style, else `fuzzy`; a
+  category's is the style chosen for it when one is registered under that
+  name, else the category falls to the default. A chosen name no style is
+  registered under is reported at install (`Report.unknownStyles`), said
+  in the echo area after the segments' sentences
+  (`no completion style is registered under <name>`) and on a `style:`
+  report line. A `setup` that defines a style name twice is refused
+  (`styleTwice`), and so is one that chooses one category's style, or the
+  default, twice (`styleChosenTwice`).
+- **Looked up for each step, never kept.** The host hands the registry's
+  matching with each step's keys (`Headless.keys`), and the loop asks it
+  before each scene, so a reload changes the style from the next listing;
+  the state holds only the category string, and a listing already made
+  stays until the text changes.
+- **Ranges are carried, not drawn.** Each listed candidate holds its
+  ranges (`Completion.Listed`); phase 4 draws them.
+
+Pinned by `ModelTest.styleChecks` (the fuzzy style's order and spans, the
+orderless style's rule as a property over every short text and candidate
+of a small alphabet, the model, and the choice by category),
+`styleContractChecks` (the contract on the shipped styles and the model,
+seen to bite), `stateChecks` (hits with their ranges, then the passed
+candidates), `candidateChecks` (criterion 3 on the model: orderless for
+one category and the fuzzy style for the rest, through the loop; and the
+existing listing checks, criterion 1), `setupChecks`, `registryChecks`
+and `reloadChecks` (registration, the choice, the report),
+`ConfigTest.promptChecks` (criterion 3 through the headless host and the
+real elaborator, and a style config defines), `ConfigTest.shippedChecks`
+(the shipped styles) and `ContractTest.styleFailures` (the contract on the
+real matcher). The fixtures `tests/headless/candidates`, `ex` and `tabs`
+are unchanged: criterion 1 on the executable, under the Vim scheme with
+the library's matcher.
 
 ### The compile mode, as built
 

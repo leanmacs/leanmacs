@@ -57,8 +57,10 @@ def candidateSets : List (Array String) :=
 /-- The byte offsets of the character boundaries of `text`: 0, then the
 end of each character. -/
 def boundaries (text : String) : Array Nat :=
-  (text.toList.foldl (fun (offsets, offset) char =>
-      (offsets.push (offset + char.utf8Size), offset + char.utf8Size)) (#[0], 0)).1
+  (text.toList.foldl
+      (fun (offsets, offset) char =>
+        (offsets.push (offset + char.utf8Size), offset + char.utf8Size))
+      (#[0], 0)).1
 
 /-- Whether each of `hits`' indices is one of `candidates`', and none is
 answered twice. -/
@@ -74,8 +76,9 @@ def rangesHold (candidates : Array String) (hits : Array Hit) : Bool :=
     let text := (candidates[hit.index]?).getD ""
     let bounds := boundaries text
     let spans := hit.ranges.toList
-    spans.all (fun span =>
-        span.start < span.stop && bounds.contains span.start && bounds.contains span.stop) &&
+    spans.all
+        (fun span =>
+          span.start < span.stop && bounds.contains span.start && bounds.contains span.stop) &&
       (spans.zip spans.tail).all fun (first, second) => first.stop < second.start
 
 /-- Whether `check` holds of the hits `style` answers for every text of
