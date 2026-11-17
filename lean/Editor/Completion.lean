@@ -26,8 +26,11 @@ pure model (`Source.fixed`), a fake for tests
   so it may ask what a command may, the state and a text, and has no `IO`
   and cannot wait. It reads and does not write: that is the contract.
 
-It answers now, inside the command that asks. A source that answers later,
-from a job, is a later phase's.
+It answers now, inside the command that asks, unless it **answers later**
+(`later`, `Source.answeringLater`): then its function is never run, and the
+registered job it names answers, in batches, as they come, asked once or
+again as the text changes (`Reask`). How that goes is in
+`Editor/Completion/Later.lean`.
 
 ## Asking one
 
@@ -92,6 +95,17 @@ structure Source where
   then listed in the order it gave, after the matches, and not matched
   (`Candidates.list`, `Editor/State.lean`). -/
   filtered : Bool := false
+  /-- How it answers later, when it does: then `candidates` is never run,
+  and the registered job it names answers, in batches
+  (`Editor/Completion/Later.lean`). -/
+  later : Option Later := none
+
+/-- A source called `name`, of `category`, that answers later, from the job
+registered under `job`, asked again as `reask` says: its `candidates` are
+never run. -/
+def Source.answeringLater (name category job : String) (reask : Reask := .never)
+    (filtered : Bool := false) : Source :=
+  { name, category, candidates := fun _ => pure #[], filtered, later := some { job, reask } }
 
 /-- The model of a source: one called `name`, of `category`, that answers
 `all` whatever it is asked, and asks the port nothing. -/

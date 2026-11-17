@@ -593,6 +593,12 @@ A command asks for a string without waiting for it
     its own (`Completion.Candidate.inGroup`; `Editor/State.lean`,
     "Prompts"). If a source is refused, the asking command is refused, like
     any command, and no prompt opens.
+  - **A source that answers later** (`Completion.Source.later`) is not
+    run: the prompt records it as asking, for the initial text, and starts
+    nothing; the loop starts its job after the scene, and its batches come
+    in as they are posted (`Editor/Completion/Later.lean`). Its category
+    counts as any source's. The prompt is refused with `noSuchJob`, with
+    no text made, when no job is registered under the name it gives.
   - **A source that has filtered already** (`Completion.Source.filtered`)
     has its candidates kept apart (`passed`): they are listed after the
     matches, in the order it gave, whatever is typed.
@@ -954,7 +960,11 @@ source's apart, to be listed as given, and every other's to be matched.
 The prompt's category is its first reference's. A source given as
 a value is run here; one named is run by the loop (`StateRequest.askSource`),
 and refused, with no text made, with `noSuchSource` when no source is
-registered under its name. A category (`.category category defaults`) is
+registered under its name. A source that answers later
+(`Completion.Source.later`), given or named, is not run: it is recorded as
+asking, for `initial`, and the loop starts its job
+(`Editor/Completion/Later.lean`); the prompt is refused, with no text made,
+with `noSuchJob` when no job is registered under its job's name. A category (`.category category defaults`) is
 asked for the names of its registered sources once
 (`StateRequest.categorySources`): each default is asked by name where one
 of its name is registered in the category and as itself otherwise, then
@@ -996,25 +1006,41 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
         | some (.category category _) => some category
         | _ => none }
   for source in resolved do
-    let answer : Completion.Answer ←
+    let (name, answer) : String × Completion.Answer ←
       match source with
+      | .inl { name, category, filtered, later := some later, .. } =>
+        -- A source that answers later is not run here: its job answers.
+        pure (name, { category, filtered, candidates := #[], later := some later })
       | .inl source =>
-        pure {
-              category := source.category, filtered := source.filtered
-              candidates := (← source.candidates query).map (·.inGroup source.name) }
+        pure
+            (source.name,
+              { category := source.category, filtered := source.filtered
+                candidates := (← source.candidates query).map (·.inGroup source.name) })
       | .inr name =>
         let some answered ←
           EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
-        pure { answered with candidates := answered.candidates.map (·.inGroup name) }
+        pure (name, { answered with candidates := answered.candidates.map (·.inGroup name) })
     -- Failing that, the prompt's category is its first source's.
     let category := collected.category <|> some answer.category
     collected :=
-      if answer.filtered then
+      match answer.later with
+      | some later =>
         { collected with
-          passed := collected.passed ++ answer.candidates, category }
-      else
-        { collected with
-          all := collected.all ++ answer.candidates, category }
+          asking :=
+            collected.asking.push
+              { source := name, filtered := answer.filtered, later, askedFor := initial }
+          category }
+      | none =>
+        if answer.filtered then
+          { collected with
+            passed := collected.passed ++ answer.candidates, category }
+        else
+          { collected with
+            all := collected.all ++ answer.candidates, category }
+  -- Each job a source that answers later names must be registered.
+  for source in collected.asking do
+    unless ← EditorState.ask (.hasJob source.later.job) do
+      return .error (.noSuchJob source.later.job)
   let text ← createText initial
   let scroll ← text.mark (.anchor { offset := 0, bias := .before })
   let cursor := initial.utf8ByteSize
@@ -1022,7 +1048,8 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
   let opened ←
     EditorState.ask (.openPrompt label continuation text (← UndoTree.over text) scroll selection)
   -- A prompt with no candidates makes no request for them.
-  if opened.isOk && !(collected.all.isEmpty && collected.passed.isEmpty) then
+  if opened.isOk &&
+      !(collected.all.isEmpty && collected.passed.isEmpty && collected.asking.isEmpty) then
     discard <| EditorState.ask (.setCandidates collected)
   return opened
 

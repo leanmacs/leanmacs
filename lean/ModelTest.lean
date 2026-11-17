@@ -14783,6 +14783,33 @@ def dispatchStateChecks : List Check :=
                       candidates := #[{ text := "w", annotation := some "0" }] })
           | .error _ => false },
     { name :=
+        "a command that asks a registered source that answers later is answered its category, whether it filtered, no candidates and how it answers, and the source's candidates are never run; asked whether a job is registered, it is answered from the names the loop was told"
+      run :=
+        pure <|
+          let later : Completion.Source :=
+            { Completion.Source.answeringLater "later" "pick" "later-pick" (.afterPause 20) true with
+              candidates := fun _ => do
+                discard <| (⟨99⟩ : TextId).read
+                return offered #["never"] }
+          let registered : Loop.Registered :=
+            { sources := fun name => if name == "later" then some later else none
+              jobs := (· == "later-pick") }
+          let command : EditorM (Option Completion.Answer × Bool × Bool) := do
+            let answered ← EditorState.ask (.askSource "later" { text := "w", view := ⟨0⟩ })
+            return (answered, ← EditorState.ask (.hasJob "later-pick"),
+                ← EditorState.ask (.hasJob "nope"))
+          let program : EditorM (Guarded _ × EditorState) := do
+            command.dispatched registered (← EditorState.initial ⟨640, 480⟩)
+          match (program.runModel editorModel).1 with
+          | .ok (outcome, _) =>
+            outcome ==
+              .finished
+                (some
+                    { category := "pick", filtered := true, candidates := #[]
+                      later := some { job := "later-pick", reask := .afterPause 20 } },
+                  true, false)
+          | .error _ => false },
+    { name :=
         "a command that asks which sources are registered in a category is answered the names the loop was told, in their order, and none for a category it was told none of; the state is as it was"
       run :=
         pure <|
@@ -19757,6 +19784,35 @@ def apiStateChecks : List Check :=
               texts.contains "w" &&
               state.wellFormed
           | _ => false },
+    { name :=
+        "a prompt asked for with a source that answers later, where its job is registered, opens with that source asking, not yet asked, for the initial text, and runs none of it; where no job is registered under its job's name it is refused with noSuchJob, with no text made"
+      run :=
+        pure <|
+          let source : Completion.Source :=
+            { Completion.Source.answeringLater "later" "pick" "later-pick" with
+              candidates := fun _ => do
+                discard <| createText "ran"
+                return #[] }
+          let registered : Loop.Registered := { jobs := (· == "later-pick") }
+          let asking : EditorM (Except PromptRefusal ViewId) :=
+            prompt "Pick: " asked "w" [.given source]
+          let program : EditorM (Guarded (Except PromptRefusal ViewId) × EditorState) := do
+            asking.dispatched registered (← twoBuffers)
+          match (program.runModel editorModel), dispatchedOn asking,
+            dispatchedOn (pure () : EditorM Unit) with
+          | (.ok (.finished (.ok _), state), model), some (.finished refused, unasked, texts),
+            some (_, _, before) =>
+            state.prompt.map (·.candidates) ==
+                some
+                  { category := some "pick"
+                    asking :=
+                      #[{ source := "later", later := { job := "later-pick" }, askedFor := "w" }] } &&
+              !model.texts.contents.contains "ran" &&
+              state.wellFormed &&
+              replied refused == .inl (.noSuchJob "later-pick") &&
+              unasked.prompt == none &&
+              texts == before
+          | _, _, _ => false },
     { name :=
         "a prompt that asks for a category no source is registered in, with no defaults, is not refused: it opens with no candidates, having asked for none, and the state is well formed"
       run :=

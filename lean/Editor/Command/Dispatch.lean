@@ -254,7 +254,13 @@ from the next command.
   at the request. A reply cannot hold the source: it is a program over the
   port the reply is part of. `prompt` asks it for a source named
   (`Editor/Api.lean`, "Prompts"), and the registry fills the lookup
-  (`Config.Registry.registered`).
+  (`Config.Registry.registered`). A source that answers later
+  (`Completion.Source.later`) is not run: the reply is its category,
+  whether it filtered, no candidates and how it answers, and its job
+  answers (`Editor/Completion/Later.lean`).
+- **Whether a job is registered** (`StateRequest.hasJob`) is answered from
+  the names the loop was told (`Loop.Registered.jobs`), as a start is
+  checked: `prompt` asks it of a source that answers later.
 - **Which sources a category has** (`StateRequest.categorySources`) is
   answered the names the loop was told (`Loop.Registered.categorySources`,
   filled from `Config.Registry.sourcesIn`), none for a category with none.
@@ -547,6 +553,10 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
   | state, .step (.state (.askSource name query)) next =>
     match registered.sources name with
     | none => dispatched registered state (next none)
+    | some { category, filtered, later := some later, .. } =>
+      -- A source that answers later is not run: its job answers.
+      dispatched registered state
+        (next (some { category, filtered, candidates := #[], later := some later }))
     | some source =>
       dispatched registered state do
         match ← (source.candidates query).run with
@@ -556,6 +566,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           pure (.error error)
   | state, .step (.state (.categorySources category)) next =>
     dispatched registered state (next (registered.categorySources category))
+  | state, .step (.state (.hasJob name)) next => dispatched registered state (next (registered.jobs name))
   | state, .step (.state (.matchCandidates category text candidates)) next =>
     dispatched registered state do
       next (← ((registered.matching.styleFor category).hits text candidates).embedFuzzy)
