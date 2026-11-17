@@ -36,7 +36,10 @@ worktree of that codebase has them and no other project does.
   mode's root. A project's command of a name the contribution already
   gives replaces it in place; one of a new name comes after the
   contribution's. A mode whose contribution is not registered offers
-  nothing.
+  nothing. An offer is shown as `<name> (<mode>)` (`Offer.candidate`).
+- **Choosing** (`chooseOffer`): an answer, trimmed, matches an offer's
+  candidate whole first, then a bare command name, the first offer of that
+  name.
 - **Formats in use** (`formatsOf`): each on-mode's contribution's formats,
   in on-mode order, then `Format.general`. A mode whose contribution is not
   registered, as after a reload that dropped it, gives none.
@@ -125,6 +128,16 @@ structure Offer where
   /-- The mode's root. -/
   root : System.FilePath
   deriving DecidableEq, Repr
+
+/-- How an offer is shown among a prompt's candidates: `<name> (<mode>)`. -/
+def Offer.candidate (offer : Offer) : String :=
+  s!"{offer.name} ({offer.mode})"
+
+/-- The offer `answer` chooses ("Choosing", in the module docs): the one
+whose candidate it is, else the first of its name; none for any other. -/
+def chooseOffer (offers : Array Offer) (answer : String) : Option Offer :=
+  let answer := answer.trimAscii.toString
+  (offers.find? (·.candidate == answer)).orElse fun _ => offers.find? (·.name == answer)
 
 /-- `commands` with each of `project`'s in it: one of a name already there
 in its place, one of a new name after them ("Offers", in the module

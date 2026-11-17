@@ -19657,7 +19657,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, recompile, next-error and previous-error, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error and previous-error, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -19668,8 +19668,8 @@ def exChecks : List Check :=
             candidatesOf typed == some (exListed "e" none Ex.bindings) &&
               (candidatesOf typed).map (·.listed) ==
                 some
-                  #["e", "e!", "autoread", "noautoread", "reload", "compile", "recompile",
-                    "next-error", "previous-error"] &&
+                  #["e", "e!", "autoread", "noautoread", "reload", "compile", "compile-command",
+                    "recompile", "next-error", "previous-error"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
 
@@ -29982,14 +29982,15 @@ def hookDirectories : Array System.FilePath :=
   #["/r/src", "/w/src", "/x", "/clone/r/src", "/r/a/b/c", "/up/repo/src", "/loose/deep", "/loose2",
     "/r/hook/one/two/three/four", "/r/crate/src", "/w/crate/src", "/o/src"]
 
-/-- The bindings of the hook checks: the compile checks', and `C-o m`, `C-o
-u`, `C-o l`, `C-o 2`, `C-o h`, `C-o g`, `C-o k`, `C-o 3` and `C-o 4`, which
-open the files of `hookFiles` in that order. Test-scheme chords only. -/
+/-- The bindings of the hook checks: the compile checks', `C-k i`
+(`compile-command`), and `C-o m`, `C-o u`, `C-o l`, `C-o 2`, `C-o h`, `C-o
+g`, `C-o k`, `C-o 3` and `C-o 4`, which open the files of `hookFiles` in
+that order. Test-scheme chords only. -/
 def hookBindings : List (String × Invocation) :=
   compileBindings ++
-    [("C-o m", opens "/r/a/b/c/x.txt"), ("C-o u", opens "/up/repo/src/u.txt"),
-      ("C-o l", opens "/loose/deep/l.txt"), ("C-o 2", opens "/loose2/l.txt"),
-      ("C-o h", opens "/r/hook/one/two/three/four/f.txt"),
+    [("C-k i", invoke Compile.commandName), ("C-o m", opens "/r/a/b/c/x.txt"),
+      ("C-o u", opens "/up/repo/src/u.txt"), ("C-o l", opens "/loose/deep/l.txt"),
+      ("C-o 2", opens "/loose2/l.txt"), ("C-o h", opens "/r/hook/one/two/three/four/f.txt"),
       ("C-o g", opens "/r/hook/one/two/three/four/g.txt"), ("C-o k", opens "/r/crate/src/main.rs"),
       ("C-o 3", opens "/w/crate/src/main.rs"), ("C-o 4", opens "/o/src/main.rs")]
 
@@ -30209,14 +30210,21 @@ def compileHookChecks : List Check :=
               locationsOf off placeR == #[("general", "/r/src/main.rs")] &&
               locationsOf on placeR == hookLocations },
     { name :=
-        "hook criterion 8: config's contribution of a-mode replaces the compiled one's commands: compile defaults to config-build"
+        "hook criterion 8: config's contribution of a-mode replaces the compiled one's commands: compile defaults to config-build, and compile-command offers config's commands alone, its build running config-build"
       run :=
         pure <|
           match hookDriver hookOverCompiled with
           | none => false
           | some driver =>
-            let asked := pressedOn (settledAfter driver "C-o h") "C-k c"
-            (showing asked asked.loop.state.frame.focused).bind (·.text) == some "config-build" },
+            let opened := settledAfter driver "C-o h"
+            let asked := pressedOn opened "C-k c"
+            let offered := pressedOn opened "C-k i"
+            let built := (fedTo offered ([.commit "build (a-mode)"] ++ presses "C-e y")).1
+            (showing asked asked.loop.state.frame.focused).bind (·.text) == some "config-build" &&
+              (candidatesOf offered).map (·.all) ==
+                some #["build (a-mode)", "test (a-mode)", "build (b-mode)", "check (b-mode)"] &&
+              built.jobs.processes.started.back? ==
+                some (shellCommand "/r/hook/one/two" "config-build") },
     { name :=
         "recompile reruns the last line in its directory with the run's modes, so a-mode's format still reads its lines, from the compilation buffer too; compile in the compilation buffer defaults to the run's line and runs in its first mode's root"
       run :=
@@ -30318,6 +30326,111 @@ def compileHookChecks : List Check :=
             Compile.projectStore.decode (.list [.str "x"]) == none &&
             Compile.projectStore.name == "compile-project" &&
             Compile.projectStore.version == 1) },
+    { name :=
+        "hook criterion 6: compile-command offers build (a-mode), test (a-mode), build (b-mode) and check (b-mode); test runs a-test in /r/hook/one/two, and check (b-mode) given whole runs b-check in /r/hook"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let asked := pressedOn (settledAfter driver "C-o h") "C-k i"
+            let tested := drained (fedTo asked ([.commit "test"] ++ presses "C-e y")).1
+            let checked :=
+              drained
+                (fedTo (pressedOn tested "C-k i") ([.commit "check (b-mode)"] ++ presses "C-e y")).1
+            let name := "*compilation: r@main*"
+            asked.loop.state.prompt.map (·.label) == some Compile.commandPromptLabel &&
+              Compile.commandPromptLabel == "Mode command: " &&
+              (showing asked asked.loop.state.frame.focused).bind (·.text) == some "" &&
+              (candidatesOf asked).map (·.all) ==
+                some #["build (a-mode)", "test (a-mode)", "build (b-mode)", "check (b-mode)"] &&
+              tested.jobs.processes.started.back? ==
+                some (shellCommand "/r/hook/one/two" "a-test") &&
+              (compiledText tested name).map
+                  (·.startsWith "r@main in /r/hook/one/two: a-test\nok\n") ==
+                some true &&
+              checked.jobs.processes.started.back? == some (shellCommand "/r/hook" "b-check") &&
+              (compiledText checked name).map (·.startsWith "r@main in /r/hook: b-check\nok\n") ==
+                some true },
+    { name :=
+        "compile-command in a buffer with no mode on says compile-command: no mode gives commands in r@main and opens no prompt; an answer that names no command says compile-command: no command make in r@main; an empty one says compile-command: no command; in a workspace that cannot run commands it says so"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let plain := pressedOn (settledAfter driver "C-o a") "C-k i"
+            let opened := settledAfter driver "C-o h"
+            let unknown :=
+              (fedTo (pressedOn opened "C-k i") ([.commit "make"] ++ presses "C-e y")).1
+            let empty := pressedOn (pressedOn opened "C-k i") "C-e y"
+            let kube := pressedOn (settledAfter opened "C-e k") "C-k i"
+            plain.loop.state.prompt.isNone &&
+              echoOf plain == some "compile-command: no mode gives commands in r@main" &&
+              echoOf unknown == some "compile-command: no command make in r@main" &&
+              unknown.jobs.processes.started == opened.jobs.processes.started &&
+              unknown.loop.state.prompt.isNone &&
+              echoOf empty == some "compile-command: no command" &&
+              empty.jobs.processes.started == opened.jobs.processes.started &&
+              kube.loop.state.prompt.isNone &&
+              echoOf kube ==
+                some
+                  "compile-command: r@app is reachable through kube pod at /app, where commands cannot run" },
+    { name :=
+        "the ex line runs compile-command: `:compile-command test` runs a-test in /r/hook/one/two with no prompt"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let ran := (fedTo (settledAfter driver "C-o h") (exLine "compile-command test")).1
+            ran.jobs.processes.started.back? == some (shellCommand "/r/hook/one/two" "a-test") &&
+              ran.loop.state.prompt.isNone },
+    { name :=
+        "hook criterion 9: lint, a command config gives cargo-mode for the project github.com/o/r, is offered in /r/crate and in its worktree /w/crate and not in /o of github.com/o/other; it runs cargo clippy in /r/crate, and is kept in that project's store with its settings"
+      run :=
+        pure <|
+          match hookDriver with
+          | none => false
+          | some driver =>
+            let inR := pressedOn (settledAfter driver "C-o k") "C-k i"
+            let worktree := settledAfter driver "C-o 3"
+            let inW := pressedOn worktree "C-k i"
+            let inO := pressedOn (settledAfter driver "C-o 4") "C-k i"
+            let linted := (fedTo inR ([.commit "lint"] ++ presses "C-e y")).1
+            let state := linted.loop.state
+            let cargo := #["build (cargo-mode)", "test (cargo-mode)"]
+            let dev : List (String × Value) := [("profile", .str "dev")]
+            (candidatesOf inR).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
+              (shownWorkspace worktree).map (·.1.location) == some (.local "/w") &&
+              shownOnModes worktree == some #[{ mode := "cargo-mode", root := "/w/crate" }] &&
+              (candidatesOf inW).map (·.all) == some (cargo.push "lint (cargo-mode)") &&
+              (candidatesOf inO).map (·.all) == some cargo &&
+              linted.jobs.processes.started.back? ==
+                some (shellCommand "/r/crate" "cargo clippy") &&
+              (state.workspaces.getOfProject Compile.projectStore (.remote "github.com/o/r")).map
+                  (fun entry => (entry.mode, entry.commands.map (·.line), entry.settings)) ==
+                #[("cargo-mode", #["cargo clippy"], dev)] &&
+              Compile.projectSettings state (.remote "github.com/o/r") "cargo-mode" == dev &&
+              Compile.projectSettings inO.loop.state (.remote "github.com/o/other") "cargo-mode" ==
+                [] },
+    { name :=
+        "chooseOffer takes a whole candidate first, then the first offer of a bare name, and none for anything else; an offer is shown as its name and its mode"
+      run :=
+        let a : Compile.Offer :=
+          { mode := "a-mode", name := "build", line := "a-build", root := "/a" }
+        let b : Compile.Offer :=
+          { mode := "b-mode", name := "build", line := "b-build", root := "/b" }
+        let odd : Compile.Offer :=
+          { mode := "b-mode", name := "build (a-mode)", line := "odd", root := "/b" }
+        pure
+          (Compile.chooseOffer #[a, b] "build" == some a &&
+            Compile.chooseOffer #[a, b] "build (b-mode)" == some b &&
+            Compile.chooseOffer #[a, b] " build (b-mode) " == some b &&
+            Compile.chooseOffer #[odd, a] "build (a-mode)" == some a &&
+            Compile.chooseOffer #[a, b] "make" == none &&
+            Compile.chooseOffer #[a, b] "" == none &&
+            a.candidate == "build (a-mode)") },
     { name :=
         "a marker order crosses as arguments and back, and arguments that are no order read as none; the marker job started with them fails"
       run :=

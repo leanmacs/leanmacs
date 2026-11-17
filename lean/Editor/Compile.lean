@@ -63,6 +63,16 @@ starts.
   and the answer comes back to it; an empty answer says `compile: no
   command`. With a line it starts the run ("The run"), in the first
   on-mode's root, or the scope's root with none.
+- **`compile-command`** (`commandName`): the same location refusal; then,
+  with no command any on-mode offers, it says `compile-command: no mode
+  gives commands in <label>` and asks nothing. With no answer it prompts,
+  `Mode command: `, empty, with the offers as candidates, `<name> (<mode>)`,
+  in on-mode order ("The hook"). The answer chooses an offer, its whole
+  candidate first, then a bare name (`chooseOffer`), whose line runs in its
+  mode's root with no second prompt, through the same restart rule; an
+  answer that chooses none says `compile-command: no command <answer> in
+  <label>`, and an empty one `compile-command: no command`. No key binds
+  it; it is a command and an ex name.
 - **`recompile`** (`recompileName`): the same location refusal; then the
   scope's last line, in the directory it ran in, with no prompt; with none
   it says `recompile: nothing has been compiled in <label>`.
@@ -213,6 +223,8 @@ command.
   carries them) and the scan of its output use the modes it started with.
   In the scope's own compilation buffer, which has no file and so no
   on-modes of its own, `compile` uses the record's (`modesOf`).
+- **Named commands.** `compile-command` offers every on-mode's commands
+  (`offers`) and runs the chosen one's line in its mode's root.
 - **Formats.** A run's output is read with its modes' formats, then the
   general one ("Locations").
 - **Project commands.** Config's project commands for the scope's project
@@ -255,6 +267,11 @@ def recompileName : String :=
 registered under. -/
 def confirmName : String :=
   "compile-confirm"
+
+/-- The name the command that runs one of the on-modes' named commands is
+registered under. -/
+def commandName : String :=
+  "compile-command"
 
 /-- The name the command that kills the scope's compilation is registered
 under. -/
@@ -624,6 +641,25 @@ def notCompilation (name : String) : String :=
 def promptLabel : String :=
   "Compile command: "
 
+/-- The label of `compile-command`'s prompt for one of the on-modes'
+commands. -/
+def commandPromptLabel : String :=
+  "Mode command: "
+
+/-- What `compile-command` says in the scope labelled `label` when no
+on-mode offers a command. -/
+def noModeCommands (label : String) : String :=
+  s!"{commandName}: no mode gives commands in {label}"
+
+/-- What `compile-command` says of an empty answer. -/
+def noNamedCommand : String :=
+  s!"{commandName}: no command"
+
+/-- What `compile-command` says of an answer that chooses no command in
+the scope labelled `label`. -/
+def noSuchCommand (answer label : String) : String :=
+  s!"{commandName}: no command {answer} in {label}"
+
 /-- The header line of a run of `line` in `directory` in the scope labelled
 `label`. -/
 def header (label : String) (directory : System.FilePath) (line : String) : String :=
@@ -887,6 +923,44 @@ where
     discard <|
         prompt promptLabel { command := compileName, arguments := [.bool true] } initial
           (pure (history state scope))
+
+/-- `compile-command` ("The commands", in the module docs): the answer is
+its first argument; an answer of its prompt comes back with `true` after
+it. The chosen command's line runs in its mode's root, with every on-mode
+as the run's. -/
+def commandCommand (call : Call) : EditorM Unit := do
+  let (scope, refusal) ← scopeOf call commandName
+  if let some reason := refusal then
+    message reason
+    return
+  let record := recordOf (← editorState) scope.place
+  let modes := modesOf (← editorState) record call.target.window.buffer
+  let offered ← hookOffers scope modes
+  if offered.isEmpty then
+    message (noModeCommands scope.label)
+    return
+  match call.arguments with
+  | .str answer :: rest =>
+    if answer.trimAscii.isEmpty then
+      if rest matches .bool true :: _ then
+        message noNamedCommand
+      else
+        ask offered
+    else
+      match chooseOffer offered answer with
+      | some offer =>
+        startOrAsk commandName call.target.window.id scope offer.line offer.root modes
+      | none =>
+        message (noSuchCommand answer.trimAscii.toString scope.label)
+  | _ =>
+    ask offered
+where
+  /-- Opens the prompt for a command, whose answer comes back to
+  `compile-command`. -/
+  ask (offered : Array Offer) : EditorM Unit :=
+    discard <|
+      prompt commandPromptLabel { command := commandName, arguments := [.bool true] } ""
+        (pure (offered.map (·.candidate)))
 
 /-- `recompile` ("The commands", in the module docs): reruns the scope's last
 line in the directory it ran in, with no prompt, asking first when the
