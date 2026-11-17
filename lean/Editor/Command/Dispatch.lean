@@ -134,6 +134,12 @@ from the next command.
   detached (`Highlight.leave`). When neither says, the syntax tree port is
   asked nothing. It runs inside the command as an on-enter action does, so
   its requests are guarded.
+- **The buffer's language is the `code` mode's tree.** Both lineages, the
+  old and the new, are read with the tree of the buffer's language
+  (`Buffer.language`, looked up by name in `Loop.Registered.languages`),
+  which a mode that takes the language's (`Mode.syntaxTreeOfLanguage`,
+  `Editor/Language.lean`) gives. A buffer with no language, or one no
+  entry is registered under, gives none: `code` over it is plain text.
 - **An on-enter action runs inside the command.** Its program is put before
   the rest of the command's and goes through this same transformation: its
   state requests are answered from the state the command had reached, its
@@ -180,6 +186,11 @@ from the next command.
   (`StateRequest.syntaxRefreshDelay`) is answered the same way, from
   `Loop.Registered.syntaxRefreshDelay`. A mode's entry asks, for the
   interval it hands the syntax service (`Editor/Highlight.lean`).
+- **Asking for a path's language** (`StateRequest.languageOf`) is answered
+  the name of the language the loop's table chooses for the path
+  (`Language.forPath` over `Loop.Registered.languages`), or `none`, the
+  state not read and not changed. A file's open asks, for the language its
+  buffer records (`Editor/Files.lean`).
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -356,11 +367,15 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     | none, _ => dispatched registered state (next (.error (.noSuchWindow view)))
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
     | some target, some lineage =>
-      let before := (target.buffer.major.bind registered.entering).bind Mode.syntaxTreeOf
+      let language :=
+        (target.buffer.language.bind fun name => registered.languages.find? (·.name == name)).map
+          (·.syntaxTree)
+      let before :=
+        (target.buffer.major.bind registered.entering).bind (Mode.syntaxTreeOf · language)
       match state.handle (.setMajorMode view name) with
       | (.ok true, state) =>
         let highlighting : EditorM Unit :=
-          match Mode.syntaxTreeOf lineage, before with
+          match Mode.syntaxTreeOf lineage language, before with
           | some syntaxTree, _ => Highlight.enter name target.buffer.text syntaxTree
           | none, some _ => Highlight.leave target.buffer.text
           | none, none => pure ()
@@ -394,6 +409,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     dispatched registered state (next registered.shellTimeLimit)
   | state, .step (.state .syntaxRefreshDelay) next =>
     dispatched registered state (next registered.syntaxRefreshDelay)
+  | state, .step (.state (.languageOf path)) next =>
+    dispatched registered state (next ((Language.forPath registered.languages path).map (·.name)))
   | state, .step (.state .workspaceSettings) next =>
     dispatched registered state
       (next ({ roots := registered.workspaceRoots }, registered.generation))

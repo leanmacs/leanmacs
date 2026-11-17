@@ -161,7 +161,11 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   no root and generation 0.
 - **Config's shell time limit is asked by one request**, `shellTimeLimit`,
   which the loop answers the same way; here it is answered `none`. So is
-  **config's syntax refresh delay**, `syntaxRefreshDelay`.
+  **config's syntax refresh delay**, `syntaxRefreshDelay`, and **a path's
+  language**, `languageOf`, which the loop answers with the name of the
+  language its table chooses for the path (`Language.forPath`).
+- **A buffer's language is recorded by name**, `setLanguage`, as its major
+  mode is: any name is taken, and refused `noSuchBuffer` alone.
 
 ## Where an addition goes
 
@@ -318,6 +322,12 @@ inductive StateRequest where
   whole again, in milliseconds, as config set it, which the loop that runs
   the command answers with. -/
   | syntaxRefreshDelay
+  /-- Record `name` as the language of the buffer `id`, or that it has
+  none. -/
+  | setLanguage (id : BufferId) (name : Option String)
+  /-- The name of the language the registry's table chooses for `path`,
+  which the loop that runs the command answers with. -/
+  | languageOf (path : System.FilePath)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -374,6 +384,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setUnscopedValue .. => Unit
   | .shellTimeLimit => Option Nat
   | .syntaxRefreshDelay => Option Nat
+  | .setLanguage .. => Except BufferRefusal Unit
+  | .languageOf _ => Option String
 
 namespace EditorState
 
@@ -464,6 +476,10 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .shellTimeLimit, state => (none, state)
   -- So is config's syntax refresh delay.
   | .syntaxRefreshDelay, state => (none, state)
+  | .setLanguage id name, state => state.setLanguage id name
+  -- The language table is the loop's to answer from (`Program.dispatched`):
+  -- here, with no registry, no path has a language.
+  | .languageOf _, state => (none, state)
 
 end EditorState
 

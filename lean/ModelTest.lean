@@ -8286,14 +8286,48 @@ def stateRequests : List StateRequest :=
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
     .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
-    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2]
+    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
+    .setLanguage ⟨0⟩ (some "rust"), .setLanguage ⟨0⟩ none, .setLanguage ⟨9⟩ (some "rust"),
+    .languageOf notePath]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
 asks the text store nothing, so a marker's id is written out by hand. -/
 def stateRequestChecks : List Check :=
   let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
-  [{  name := "a read hands back the whole state and changes nothing"
+  [{  name :=
+        "setLanguage records a buffer's language by name and clears it, and refuses a buffer there is none of with the state unchanged; a buffer has no language until one is set"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let languageOf (state : EditorState) : Option String :=
+              (state.buffer? ⟨1⟩).bind (·.language)
+            let (set, recorded) := state.handle (.setLanguage ⟨1⟩ (some "rust"))
+            let (cleared, plain) := recorded.handle (.setLanguage ⟨1⟩ none)
+            let (refused, same) := state.handle (.setLanguage ⟨9⟩ (some "rust"))
+            set.toOption.isSome && languageOf state == none && languageOf recorded == some "rust" &&
+              (recorded.buffer? ⟨0⟩).bind (·.language) == none &&
+              cleared.toOption.isSome &&
+              languageOf plain == none &&
+              (match refused with
+              | .error (.noSuchBuffer id) => id == ⟨9⟩
+              | _ => false) &&
+              same == state },
+    { name :=
+        "with no loop to answer, a path's language is none; a dispatched command that asks is answered the name of the language the loop's table chooses for the path, or none"
+      run :=
+        let program : EditorM (Guarded (Option String × Option String) × EditorState) := do
+          (do
+                  return (← languageOf "/p/main.rs", ← languageOf "/p/notes.txt")).dispatched
+              { languages := Language.shipped.toList } (← twoBuffers)
+        pure <|
+          (EditorState.none.handle (.languageOf "/p/main.rs")).1 == none &&
+            match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) => answer == (some "rust", none)
+            | _ => false },
+    { name := "a read hands back the whole state and changes nothing"
       run :=
         pure <|
           match onTextModel twoBuffers with
@@ -15072,15 +15106,18 @@ def parsedMode (name : String) (syntaxTree : Mode.SyntaxTree := { grammar := "js
 /-- Sets each mode of `steps`, in turn, as the major mode of buffer 1
 through view 1, by an invocation of `enter` the loop runs, over the
 registry of the on-enter checks with `modes` registered for config, and
-config's syntax refresh delay `refreshDelay`, on the editor's models: what each left in the echo area, buffer 1's major mode at
+config's syntax refresh delay `refreshDelay`, the compiled languages
+`languages` and buffer 1's language `language`, on the editor's models: what each left in the echo area, buffer 1's major mode at
 the end, and the syntax tree model then. `none` when the run was
 refused. -/
-def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Option Nat := none) :
+def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Option Nat := none)
+    (languages : Array Language := #[]) (language : Option String := none) :
     Option (List String × Option String × SyntaxTreeModel) :=
   let registry :=
-    { enterRegistry.replaceModes .config modes with syntaxRefreshDelay := refreshDelay }
+    { (enterRegistry.replaceModes .config modes).replaceLanguages .compiled languages with
+      syntaxRefreshDelay := refreshDelay }
   let program : EditorM (List String × EditorState) := do
-    let mut state ← twoBuffers
+    let mut state := ((← twoBuffers).setLanguage ⟨1⟩ language).2
     let mut echoes := []
     for name in steps do
       state := (← Loop.run (enterKeys registry) state (entersMode ⟨1⟩ name) []).state
@@ -15102,6 +15139,39 @@ models through the loop's dispatch: what the syntax tree model is asked and
 records. -/
 def highlightEnterChecks : List Check :=
   [{  name :=
+        "the code mode over a buffer whose language is json attaches its text with json and highlights it with the language's tree, the grammar's shipped query; the language's own query is compiled in its place when it has one"
+      run :=
+        pure <|
+          let numbers :=
+            { Language.json with
+              syntaxTree := { grammar := "json", highlights := some "(number) @number" } }
+          (match
+              highlightedBy Language.modes ["code"] (languages := #[Language.json]) (language :=
+                some "json") with
+            | some (echoes, major, model) =>
+              echoes == [""] && major == some "code" && model.attached.map (·.2) == #["json"] &&
+                highlightedFaces model ==
+                  some #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
+            | none => false) &&
+            match
+              highlightedBy Language.modes ["code"] (languages := #[numbers]) (language :=
+                some "json") with
+            | some (_, _, model) => highlightedFaces model == some #["syntax.number"]
+            | none => false },
+    { name :=
+        "the code mode over a buffer with no language, or with a language no entry is registered under, is set and asks the syntax tree port nothing"
+      run :=
+        pure <|
+          [none, some "cobol"].all fun language =>
+            match
+              highlightedBy Language.modes ["code"] (languages := #[Language.json]) (language :=
+                language) with
+            | some (echoes, major, model) =>
+              echoes == [""] && major == some "code" && model.attached.isEmpty &&
+                model.highlighted.isEmpty &&
+                model.refreshAfter == none
+            | none => false },
+    { name :=
         "entering a major mode with a syntax tree hands the syntax service config's refresh delay, or the default when config sets none"
       run :=
         pure <|

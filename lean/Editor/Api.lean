@@ -270,6 +270,9 @@ has a case on the real binding. They are pinned once, on the models
   had, and `BufferId.value?` reads it.
 - `BufferId.addMinorMode` and `BufferId.removeMinorMode` add and remove a
   minor mode. No action runs.
+- `BufferId.setLanguage id name` records a buffer's language by name, and
+  `languageOf path` is the name of the language the registry's table
+  chooses for a path (`Editor/Language.lean`), which the loop answers.
 - `ViewId.setMajorMode view name` makes a mode the major mode of the buffer
   the view shows, and says whether it became it: `false`, with nothing
   run, when the buffer already had it. The loop that runs the command
@@ -736,6 +739,22 @@ says (`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a
 buffer there is none of. -/
 def BufferId.setReadOnly (id : BufferId) (on : Bool) : EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setReadOnly id on)
+
+/-- Records `name` as the language of the buffer `id`, or, with `none`,
+that it has none (`Editor/Language.lean`): the `code` mode's text is then
+parsed and drawn as that language says, from the next time a major mode is
+set. Any name is taken. Refused with `noSuchBuffer` for a buffer there is
+none of. -/
+def BufferId.setLanguage (id : BufferId) (name : Option String) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setLanguage id name)
+
+/-- The name of the language the registry's table chooses for `path`
+(`Language.forPath`), or none when no entry matches: what a file's open
+records as its buffer's language. `none` where no loop runs the
+command. -/
+def languageOf (path : System.FilePath) : EditorM (Option String) :=
+  EditorState.ask (.languageOf path)
 
 /-- Runs `action` with the buffer `id` writable, as Emacs's
 `inhibit-read-only` does, for the command that owns a read-only buffer: a

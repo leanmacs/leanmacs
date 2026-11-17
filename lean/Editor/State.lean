@@ -649,6 +649,10 @@ structure Buffer where
   major : Option String := none
   /-- The names of its minor modes, the one added last first. -/
   minors : Array String := #[]
+  /-- The name of its language (`Editor/Language.lean`), if it has one: the
+  entry is looked up in the registry's table when a mode is entered, so a
+  reload's entry of that name is the one used next. -/
+  language : Option String := none
   /-- The file it shows; `none` for a buffer that shows none. -/
   file : Option Buffer.File := none
   /-- The line break a command inserts in it: its file's dominant line
@@ -1434,6 +1438,13 @@ def setMajorMode (id : BufferId) (name : String) (state : EditorState) :
       if buffer.major == some name then (false, buffer)
       else (true, { buffer with major := some name }))
     state
+
+/-- Records `name` as the language of the buffer `id`, or, with `none`,
+that it has none. Any name is taken. Refused, with the state unchanged,
+with `noSuchBuffer` for a buffer there is none of. -/
+def setLanguage (id : BufferId) (name : Option String) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with language := name })) state
 
 /-- Adds the minor mode `name` to the buffer `id`, first; a minor mode the
 buffer already has changes nothing. Refused, with the state unchanged,
