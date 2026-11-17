@@ -283,7 +283,7 @@ def away (area : Area) (position : Nat) (lines : Int) : DisplayM Nat := do
     return ← area.rowStart position
   return (←
         Display.linesFrom
-            { snapshot := area.snapshot, width := area.width, across := area.padding.across
+            { snapshot := area.snapshot, width := area.width, across := area.padding.across, gutter := area.padding.gutter
               position, lines, goal := some 0 }).position
 
 /-- A position of the row `lines` rows above the one that holds `position`,

@@ -864,6 +864,15 @@ def BufferId.setSpans (id : BufferId) (spans : Array Decoration) :
     EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setSpans id spans)
 
+/-- Sets the gutter of the buffer `id`, marks at a revision of its text that
+every window of it draws in a column before its text, carried through the
+edits made since; or takes it away, and the column with it, with `none`
+(`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a buffer
+there is none of. -/
+def BufferId.setGutter (id : BufferId) (gutter : Option Buffer.Gutter) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setGutter id gutter)
+
 /-- Runs `action` with the buffer `id` writable, as Emacs's
 `inhibit-read-only` does, for the command that owns a read-only buffer: a
 buffer that is read-only is made writable, `action` runs, and the buffer is

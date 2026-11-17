@@ -6,6 +6,7 @@ import Editor.Config.Stores
 import Editor.Event
 import Editor.Ex
 import Editor.Files
+import Editor.Gutter
 import Editor.InputScheme
 import Editor.Key.Notation
 import Editor.ModeLine
@@ -869,6 +870,13 @@ A view of an excerpt buffer also has its headers as blocks
 the view is made (`views`), so the follow and a float's spot ask with them
 (`follow`, `spots`).
 
+A view of a buffer with a gutter (`Buffer.gutter`) has its marks
+(`View.marks`, `marksOf`), carried from the gutter's revision to the one
+its snapshot shows through the text's log and clipped to the same range as
+its decorations (`Gutter.marksOf`, `Editor/Gutter.lean`), and its window's
+padding has the gutter's column (`EditorState.paddingOf`), so the follow
+asks the display with it.
+
 - **Every view but the minibuffer's** covers the range from the start of
   its scroll anchor's row to the start of the row `rows + 1` text rows
   below, or the text's end, where `rows` is the view's height over the
@@ -1423,6 +1431,40 @@ def spansIn (spans : Array Decoration) (start stop : Nat) : Array Decoration :=
           start := max span.start start, stop := min span.stop stop }).filter
     fun span => span.start < span.stop
 
+/-- The range of `view`'s snapshot its decorations and its gutter marks are
+read over ("Decorations", in the module docs): from the row of its scroll
+anchor through `rect.height / heights.text + 1` rows below, or the text's
+end; `none` when its anchor is not a marker of its text. -/
+def rangeOf (state : EditorState) (view : View) : TextM (Option (Nat × Nat)) := do
+  let some target := state.target? view.id | return none
+  let .anchor anchor ← target.buffer.text.marker view.scroll | return none
+  let snapshot := view.snapshot
+  let row := (← snapshot.pointOf anchor.offset).row
+  -- A view of `n` display rows shows at most `n` text rows from its
+  -- anchor's, however its rows wrap; one more is drawn, which nothing sees.
+  let rows := view.rect.height / max 1 state.heights.text + 1
+  let start ← snapshot.offsetOf ⟨row, 0⟩
+  let stop ←
+    if row + rows + 1 < (← snapshot.rowCount) then
+      snapshot.offsetOf ⟨row + rows + 1, 0⟩
+    else
+      snapshot.byteLength
+  return some (start, stop)
+
+/-- The gutter marks of `view` in `state` ("Decorations", in the module docs):
+its buffer's gutter's marks carried to the revision its snapshot shows and
+clipped to its range (`Gutter.marksOf`); none for the minibuffer's view, a
+buffer with no gutter, and a text that refuses. -/
+def marksOf (state : EditorState) (view : View) : TextM (Array GutterMark) := do
+  if state.prompt.map (·.view) == some view.id then
+    return #[]
+  let some target := state.target? view.id | return #[]
+  try
+    let some (start, stop) ← rangeOf state view | return #[]
+    Gutter.marksOf target.buffer.text target.buffer.gutter view.snapshot start stop
+  catch _ =>
+    return #[]
+
 /-- The decorations of `view` in `state` ("Decorations", in the module docs),
 for a view that is not the minibuffer's, over the range from the row of the
 view's scroll anchor through `rect.height / heights.text + 1` rows below:
@@ -1435,18 +1477,8 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
     return #[]
   let some target := state.target? view.id | return #[]
   try
-    let .anchor anchor ← target.buffer.text.marker view.scroll | return #[]
+    let some (start, stop) ← rangeOf state view | return #[]
     let snapshot := view.snapshot
-    let row := (← snapshot.pointOf anchor.offset).row
-    -- A view of `n` display rows shows at most `n` text rows from its
-    -- anchor's, however its rows wrap; one more is drawn, which nothing sees.
-    let rows := view.rect.height / max 1 state.heights.text + 1
-    let start ← snapshot.offsetOf ⟨row, 0⟩
-    let stop ←
-      if row + rows + 1 < (← snapshot.rowCount) then
-        snapshot.offsetOf ⟨row + rows + 1, 0⟩
-      else
-        snapshot.byteLength
     -- An excerpt buffer's sources' spans come first, under its own.
     let sources := spansIn (← ExcerptView.sourceSpansOf state target.buffer snapshot) start stop
     let spans := sources ++ spansIn target.buffer.spans start stop
@@ -1461,10 +1493,11 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
   catch _ =>
     return #[]
 
-/-- `views` with their decorations (`decorationsOf`), each read with its
-scroll anchor where the follow left it. -/
+/-- `views` with their decorations (`decorationsOf`) and their gutter marks
+(`marksOf`), each read with its scroll anchor where the follow left it. -/
 def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
-  views.mapM fun view => return { view with decorations := ← decorationsOf state view }
+  views.mapM fun view =>
+    return { view with decorations := ← decorationsOf state view, marks := ← marksOf state view }
 
 /-- The face the dividers between tiled windows are drawn in, Emacs's
 `window-divider`: the divider is filled in its foreground. -/

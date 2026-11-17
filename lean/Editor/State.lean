@@ -640,6 +640,14 @@ A prompt is a request for one string, with a text to show beside the input
   are for a buffer its owner alone writes, such as a compilation buffer,
   which is read-only and whose spans the compile mode resets with its text
   (`Editor/Compile.lean`, "Locations").
+- A buffer may have a **gutter** (`Buffer.gutter`, set by `setGutter`,
+  which refuses `noSuchBuffer`): marks, each a byte range of its text at
+  the gutter's revision with a short text and a face, which every window
+  of it draws in a column `Buffer.Gutter.width` points wide before its text
+  (`paddingOf`). Unlike spans they follow the edits made since: a view
+  carries them to the revision it shows through the text's log
+  (`Gutter.marksOf`). The version-control gutter is their owner
+  (`Editor/VersionControl/Gutter.lean`).
 
 ### Excerpt buffers
 
@@ -1004,6 +1012,22 @@ structure Buffer.Excerpts where
   entries : Array Buffer.ExcerptEntry := #[]
   deriving DecidableEq, Repr
 
+/-- A buffer's gutter: the marks its views draw in a gutter column, as byte
+ranges of its text at `revision` ("Buffers", in the module docs). Its owner
+sets it; a view carries the marks to the revision it shows through the
+text's log (`Gutter.marksOf`, `Editor/Gutter.lean`). -/
+structure Buffer.Gutter where
+  /-- The revision of the text the marks are ranges of. -/
+  revision : Nat
+  /-- The marks. -/
+  marks : Array GutterMark := #[]
+  deriving DecidableEq, Repr
+
+/-- The width of a gutter column, in points: a named constant of policy, the
+padding of a window whose buffer has a gutter (`EditorState.paddingOf`). -/
+def Buffer.Gutter.width : Nat :=
+  12
+
 /-- A buffer: a text and what the editor keeps about it. -/
 structure Buffer where
   /-- Its name, as the user sees it. -/
@@ -1037,6 +1061,9 @@ structure Buffer where
   /-- For an excerpt buffer, what its edits reached ("Excerpt buffers", in
   the module docs); `none` for any other buffer. -/
   excerpts : Option Buffer.Excerpts := none
+  /-- Its gutter, which every window of it draws in a column before its text
+  ("Buffers", in the module docs); `none`, no column, by default. -/
+  gutter : Option Buffer.Gutter := none
   deriving BEq, Repr
 
 /-- Whether the buffer's text is in another state than the one last saved,
@@ -1996,7 +2023,11 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
     if state.isTabBar id then { across := state.padding, down := 0 }
     else
       let top := if (state.rect? id).any (·.y == 0) then state.topInset else 0
-      { across := state.padding, down := state.padding, top }
+      let gutter :=
+        if ((state.window? id).bind fun window => (state.buffer? window.buffer).bind (·.gutter)).isSome
+        then Buffer.Gutter.width
+        else 0
+      { across := state.padding, down := state.padding, top, gutter }
 
 /-- Whether the state keeps the layout invariants ("The window list, the
 layout and their invariants" and "Tabs", in the module docs). For every tab
@@ -2613,6 +2644,13 @@ def setReadOnly (id : BufferId) (on : Bool) (state : EditorState) :
 def setSpans (id : BufferId) (spans : Array Decoration) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with spans })) state
+
+/-- Sets the gutter of the buffer `id`, or takes it away with `none`
+("Buffers", in the module docs). Refused with `noSuchBuffer` for a buffer
+there is none of. -/
+def setGutter (id : BufferId) (gutter : Option Buffer.Gutter) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with gutter })) state
 
 /-- The buffer over the text `text` that is read-only, with its name: what
 refuses an edit of that text ("Buffers", in the module docs). -/
