@@ -495,9 +495,12 @@ def indent : Vocabulary.Operator :=
         let cursor ←
           match edits[0]? with
           | some (extent, leading) =>
-            if extent.start == firstStart then pure (firstStart + leading.utf8ByteSize)
-            else text.motion .lineFirstNonBlank firstStart
-          | none => text.motion .lineFirstNonBlank firstStart
+            if extent.start == firstStart then
+              pure (firstStart + leading.utf8ByteSize)
+            else
+              text.motion .lineFirstNonBlank firstStart
+          | none =>
+            text.motion .lineFirstNonBlank firstStart
         unless edits.isEmpty do
           call.target.replaceEachCarrying edits operand.before (cursorAt call cursor)
         settle call cursor }

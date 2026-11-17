@@ -15501,7 +15501,8 @@ def indentOpeningChecks : List Check :=
               some (#[], false) &&
             Indent.openingCounts #[openingNode "indent.open" 12 13] { offset := 10 } ==
               some (#[], false)) },
-    { name := "a branch at the first non-blank that moves to the new row says so, and none for an empty new row"
+    { name :=
+        "a branch at the first non-blank that moves to the new row says so, and none for an empty new row"
       run :=
         let nodes := #[openingNode "indent.begin" 0 20, openingNode "indent.branch" 12 13]
         pure
@@ -15530,7 +15531,8 @@ def indentOpeningChecks : List Check :=
       run :=
         pure
           (Indent.levelOf #[0, 0, 2] false == 2 && Indent.levelOf #[0, 0, 2] true == 1 &&
-            Indent.levelOf #[] true == 0 && Indent.levelOf #[] false == 0) },
+            Indent.levelOf #[] true == 0 &&
+            Indent.levelOf #[] false == 0) },
     { name :=
         "the widened start is the earliest start of an incomplete node, or the asked start when that is earlier"
       run :=
@@ -15558,7 +15560,8 @@ def indentEditChecks : List Check :=
       run :=
         pure
           (Indent.whitespace (.spaces 4) 2 == "        " && Indent.whitespace .tab 2 == "\t\t" &&
-            Indent.whitespace (.spaces 2) 0 == "" && Indent.whitespace .tab 0 == "") },
+            Indent.whitespace (.spaces 2) 0 == "" &&
+            Indent.whitespace .tab 0 == "") },
     { name :=
         "the re-indent replaces each row's leading whitespace with its level, from its start to its first non-blank, and leaves a row already right"
       run :=
@@ -15570,17 +15573,20 @@ def indentEditChecks : List Check :=
     { name := "a blank row gets no whitespace, whatever its level"
       run :=
         pure
-          (Indent.reindent (.spaces 4) #[reindentRow 0 "   " 0 (some 2), reindentRow 4 "" 0 (some 1)] ==
+          (Indent.reindent (.spaces 4)
+              #[reindentRow 0 "   " 0 (some 2), reindentRow 4 "" 0 (some 1)] ==
             #[(⟨0, 3⟩, "")]) },
     { name := "a row with no level keeps its whitespace, a blank one too"
       run :=
         pure
-          (Indent.reindent (.spaces 4) #[reindentRow 0 "   " 4 none, reindentRow 8 "     " 0 none] ==
+          (Indent.reindent (.spaces 4)
+              #[reindentRow 0 "   " 4 none, reindentRow 8 "     " 0 none] ==
             #[]) },
     { name := "a tab unit indents with tabs"
       run :=
         pure
-          (Indent.reindent .tab #[reindentRow 0 "    " 1 (some 1), reindentRow 6 "\t\t" 1 (some 2)] ==
+          (Indent.reindent .tab
+              #[reindentRow 0 "    " 1 (some 1), reindentRow 6 "\t\t" 1 (some 2)] ==
             #[(⟨0, 4⟩, "\t")]) },
     { name :=
         "a new line gets its level as whitespace, nothing inside a string or comment, the row's own indent when the text is not parsed yet, and nothing when the text has no tree or no indents query"
@@ -15715,8 +15721,8 @@ def indentLevelChecks : List Check :=
         "the opening level is asked from the start of a node captured incomplete, so an opening bracket it holds far above counts"
       run :=
         pure
-          (openingLevelOf "[\n1,\n2,\n3\n]" (some { grammar := "json", indents := some widenedIndents }) 7
-              false ==
+          (openingLevelOf "[\n1,\n2,\n3\n]"
+              (some { grammar := "json", indents := some widenedIndents }) 7 false ==
             some (.inr (some 1))) },
     { name :=
         "the re-indent's edits of rows read from the text: each row's leading whitespace from its start to its first non-blank becomes its level in the unit, a row already right and a blank row already empty have none; refused as the primitive is"
@@ -22734,7 +22740,8 @@ def treeSelected (fixture typed : String) : Option (List (Nat × Nat) × Shape �
 `jsonIndents` and `jsonTextObjects`, indented by two spaces. -/
 def modelJsonIndented : Language :=
   { name := "model-json", patterns := [.extension "json"]
-    syntaxTree := { grammar := "json", indents := some jsonIndents, textObjects := some jsonTextObjects }
+    syntaxTree :=
+      { grammar := "json", indents := some jsonIndents, textObjects := some jsonTextObjects }
     indentUnit := .spaces 2 }
 
 /-- What a step of the indent checks is handed: evil's commands
@@ -22839,7 +22846,8 @@ def wrong (row : OperatorRow) : Option String :=
       match row.tree with
       | some textObjects =>
         (treeRegistered row.before textObjects).map fun driver => evilLeft (evilFed driver row.keys)
-      | none => if row.indented then indentEdited row.before row.keys else evilEdited row.before row.keys
+      | none =>
+        if row.indented then indentEdited row.before row.keys else evilEdited row.before row.keys
     match edited with
     | none => some s!"no driver for {repr row.before}"
     | some left =>
@@ -23161,10 +23169,11 @@ answers (`Evil.cannotIndent`; a motion that fails gives up first). What
 def indentTableRows : List OperatorRow :=
   operatorSituations.flatMap fun (before, counted) =>
     (Vim.Default.motions.filterMap fun (key, bound) =>
-        match bound with
-        | .motion _ => some key
-        | _ => none).map
-      fun motion => .givesUp before (" ".intercalate ((if counted then ["2"] else []) ++ ["=", motion]))
+          match bound with
+          | .motion _ => some key
+          | _ => none).map
+      fun motion =>
+      .givesUp before (" ".intercalate ((if counted then ["2"] else []) ++ ["=", motion]))
 
 /-- The oracle table's rows for each operator over `;` and `,` in its five
 situations. In each nothing was found before the keys, so there is no last
@@ -25261,7 +25270,8 @@ def evilIndentChecks : List Check :=
         "g g = G over a mangled JSON text gives the two-space text, a blank row of blanks emptied, with the cursor on the first row's first non-blank; = G from a row whose indent changes leaves the cursor on that row's new first non-blank"
       run :=
         let mangled := "{\n\"a\": [\n      1,\n   \n {\n\"b\": null\n    }\n],\n\"c\": {}\n}"
-        let pretty := "{\n  \"a\": [\n    1,\n\n    {\n      \"b\": null\n    }\n  ],\n  \"c\": {}\n}"
+        let pretty :=
+          "{\n  \"a\": [\n    1,\n\n    {\n      \"b\": null\n    }\n  ],\n  \"c\": {}\n}"
         operatorRows
           [.indents (withBar mangled 25) "g g = G" (withBar pretty 0),
             .indents (withBar mangled 2) "= G" (withBar pretty 4)] },
@@ -25278,8 +25288,7 @@ def evilIndentChecks : List Check :=
             .indents indentRepeatText "3 = =" "[\n  |1,\n  2,\n  3,\n4,\n   5,\n6\n]",
             .indents indentRepeatText "= j" "[\n  |1,\n  2,\n 3,\n4,\n   5,\n6\n]",
             .indents indentRepeatText "V j =" "[\n  |1,\n  2,\n 3,\n4,\n   5,\n6\n]",
-            .indents "[\n  |1\n]" "= =" "[\n  |1\n]",
-            .indents "|[\n  1\n]" "= j" "|[\n  1\n]"] },
+            .indents "[\n  |1\n]" "= =" "[\n  |1\n]", .indents "|[\n  1\n]" "= j" "|[\n  1\n]"] },
     { name :=
         "one = is one step of the history: u gives back the mangled text and the cursor from before"
       run :=
@@ -25327,23 +25336,29 @@ def evilIndentChecks : List Check :=
         pure <|
           let fixture := "[\n|1\n]"
           evilGaveUp
-            (indentEdited fixture "= =" { modelJsonIndented with syntaxTree := { grammar := "json" } })
+            (indentEdited fixture "= ="
+              { modelJsonIndented with syntaxTree := { grammar := "json" } })
             fixture (Evil.cannotIndent .noQuery) },
     { name :=
         "a config entry of the buffer's language that indents by a tab wins over the compiled one: = = indents with tabs"
       run :=
         pure
-          ((indentEdited "[\n[\n|1\n]\n]" "= =" (config := #[{ modelJsonIndented with indentUnit := .tab }])).map
+          ((indentEdited "[\n[\n|1\n]\n]" "= =" (config :=
+                  #[{ modelJsonIndented with indentUnit := .tab }])).map
               (·.shown) ==
             some "[\n[\n\t\t|1\n]\n]") },
     { name :=
         "RET after an opening bracket starts the new line one level deeper than its row; o inside an object and O on its closing row start at the object's level"
       run :=
         operatorRows
-          [{ OperatorRow.indents "{\n  \"a\": |[\n  ]\n}" "A RET" "{\n  \"a\": [\n    |\n  ]\n}" with
+          [{
+              OperatorRow.indents "{\n  \"a\": |[\n  ]\n}" "A RET"
+                "{\n  \"a\": [\n    |\n  ]\n}" with
               insert := true },
-            { OperatorRow.indents "{\n  |\"a\": 1\n}" "o" "{\n  \"a\": 1\n  |\n}" with insert := true },
-            { OperatorRow.indents "{\n  \"a\": 1\n|}" "O" "{\n  \"a\": 1\n  |\n}" with insert := true },
+            { OperatorRow.indents "{\n  |\"a\": 1\n}" "o" "{\n  \"a\": 1\n  |\n}" with
+              insert := true },
+            { OperatorRow.indents "{\n  \"a\": 1\n|}" "O" "{\n  \"a\": 1\n  |\n}" with
+              insert := true },
             { OperatorRow.indents "{\n  \"a\": [\n|  ]\n}" "O" "{\n  \"a\": [\n    |\n  ]\n}" with
               insert := true }] },
     { name :=
@@ -25352,13 +25367,16 @@ def evilIndentChecks : List Check :=
         operatorRows
           [{ OperatorRow.indents "{\n  \"a\": [|]\n}" "i RET" "{\n  \"a\": [\n  |]\n}" with
               insert := true },
-            { OperatorRow.indents "[\n  1,   |   2\n]" "i RET" "[\n  1,\n  |2\n]" with insert := true },
-            { OperatorRow.indents "[\n  |1\n]" "a RET RET" "[\n  1\n\n  |\n]" with insert := true }] },
+            { OperatorRow.indents "[\n  1,   |   2\n]" "i RET" "[\n  1,\n  |2\n]" with
+              insert := true },
+            { OperatorRow.indents "[\n  |1\n]" "a RET RET" "[\n  1\n\n  |\n]" with
+              insert := true }] },
     { name :=
         ". replays an insert session's RET with its new line indented, and o replayed indents itself"
       run :=
         pure <|
-          (indentDriver "[\n  |1,\n  2\n]").bind (fun driver => evilText (evilFed driver "o RET <Escape> j .")) ==
+          (indentDriver "[\n  |1,\n  2\n]").bind
+                (fun driver => evilText (evilFed driver "o RET <Escape> j .")) ==
               some "[\n  1,\n\n  \n  2\n\n  \n]" &&
             (indentDriver "[\n  |1,\n  2\n]").bind
                 (fun driver => evilText (evilFed driver "A RET <Escape> j .")) ==
@@ -25366,7 +25384,8 @@ def evilIndentChecks : List Check :=
     { name := "a config entry's tab unit indents new lines with tabs"
       run :=
         pure
-          ((indentEdited "[\n[\n|1\n]\n]" "o" (config := #[{ modelJsonIndented with indentUnit := .tab }])).map
+          ((indentEdited "[\n[\n|1\n]\n]" "o" (config :=
+                  #[{ modelJsonIndented with indentUnit := .tab }])).map
               (·.shown) ==
             some "[\n[\n1\n\t\t|\n]\n]") },
     { name :=

@@ -177,8 +177,9 @@ def rule (captured : Array Captured) (lines : Array Line) : Array (Option Nat) :
         captured.filterMap fun node =>
           if node.name == "indent.begin" && node.holdsAfterFirst line.row then some node.firstRow
           -- An opening bracket the tree did not close reaches every later row.
-          else if node.name == "indent.open" && node.firstRow < line.row then some node.firstRow
-          else none
+          else
+            if node.name == "indent.open" && node.firstRow < line.row then some node.firstRow
+            else none
       let level := (begins.toList.eraseDups).length
       let branch :=
         captured.any fun node => node.name == "indent.branch" && node.start == line.firstNonBlank
@@ -220,8 +221,7 @@ def openingCounts (nodes : Array Node) (opening : Opening) : Option (Array Nat �
     let counted :=
       nodes.filterMap fun node =>
         if node.name == "indent.begin" && node.start < at_ && at_ < node.stop then some node.start
-        else if node.name == "indent.open" && node.start < at_ then some node.start
-        else none
+        else if node.name == "indent.open" && node.start < at_ then some node.start else none
     let branch :=
       match opening.firstNonBlank with
       | some first => nodes.any fun node => node.name == "indent.branch" && node.start == first
@@ -239,7 +239,8 @@ again from, so the bare brackets an incomplete node holds are seen: the
 earliest start of the nodes of `nodes` captured `indent.incomplete`, or
 `start` when that is earlier. -/
 def widenedStart (nodes : Array Node) (start : Nat) : Nat :=
-  nodes.foldl (fun least node => if node.name == "indent.incomplete" then min least node.start else least)
+  nodes.foldl
+    (fun least node => if node.name == "indent.incomplete" then min least node.start else least)
     start
 
 /-- `level` levels of `unit`: that many times the unit's spaces, or that
@@ -328,7 +329,10 @@ private def indentNodes (snapshot : SnapshotId) (start stop : Nat) :
     return .error refusal
   | .ok nodes =>
     let widened := Indent.widenedStart nodes start
-    if widened < start then ask widened else return .ok nodes
+    if widened < start then
+      ask widened
+    else
+      return .ok nodes
 
 /-- The indent level of each row of `text` from `first` through `last`, by
 the indents query its text keeps (`Indent.rule`, "The primitive" in
@@ -388,11 +392,12 @@ def TextId.openingLevel (text : TextId) (offset : Nat) (rest : Bool) :
   text.withSnapshot fun snapshot => do
     let length ← text.byteLength
     let firstNonBlank ←
-      if rest then do
-        let lineEnd ← text.motion .lineEnd offset
-        let after ← text.slice offset lineEnd
-        let blanks := (after.takeWhile fun char => char == ' ' || char == '\t').utf8ByteSize
-        pure (if offset + blanks < lineEnd then some (offset + blanks) else none)
+      if rest then
+        do
+          let lineEnd ← text.motion .lineEnd offset
+          let after ← text.slice offset lineEnd
+          let blanks := (after.takeWhile fun char => char == ' ' || char == '\t').utf8ByteSize
+          pure (if offset + blanks < lineEnd then some (offset + blanks) else none)
       else
         pure none
     let start ←

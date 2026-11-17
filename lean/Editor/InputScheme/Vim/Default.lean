@@ -206,8 +206,7 @@ def motions : List (String × Bound) :=
 def operators : List (String × Bound) :=
   [("d", .operator { name := "delete" }),
     ("c", .operator { name := "change", enters := some "insert" }),
-    ("y", .operator { name := "yank", changes := false }),
-    ("=", .operator { name := "indent" })]
+    ("y", .operator { name := "yank", changes := false }), ("=", .operator { name := "indent" })]
 
 /-- The text objects: each key string, and the object's vocabulary name. -/
 def objects : List (String × Bound) :=

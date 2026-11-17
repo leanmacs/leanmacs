@@ -3462,13 +3462,15 @@ def cursorAt (text needle : String) : Nat :=
 the language its buffer is set to, if any (`indentChunk`): the mangled Rust
 fixture `mangled`, and texts written here. -/
 def indentFixtures (mangled : String) : List (String × String × Nat × Option String) :=
-  let twoFns := "struct S;\n\nfn one() {\nlet a = 1;\n        a\n}\n\nfn two() {\nlet b = 2;\n        b\n}\n"
+  let twoFns :=
+    "struct S;\n\nfn one() {\nlet a = 1;\n        a\n}\n\nfn two() {\nlet b = 2;\n        b\n}\n"
   let mid := "fn main() {\n    x();\n}\n"
   let nested := "impl S {\n    fn one(&self) {"
   [("mangled", mangled, 0, some "rust"), ("two-fns", twoFns, cursorAt twoFns "let b", some "rust"),
     ("strings", "fn f() {\nlet s = \"a\n   b\";\n/* c\n     d */\n        s\n}\n", 0, some "rust"),
     ("closed", "fn main() {\n    let x = 1;\n}\n", 0, some "rust"),
-    ("eof", "fn main() {", 0, some "rust"), ("nested-eof", nested, cursorAt nested "fn one", some "rust"),
+    ("eof", "fn main() {", 0, some "rust"),
+    ("nested-eof", nested, cursorAt nested "fn one", some "rust"),
     ("mid", mid, cursorAt mid "x()", some "rust"),
     ("method", rustObjectsText, cursorAt rustObjectsText "let x", some "rust"),
     ("method-closing", rustObjectsText, cursorAt rustObjectsText "}\n}\n", some "rust"),
@@ -3483,7 +3485,8 @@ says. -/
 def indentChunk (mangled : String) : String :=
   let commands :=
     (indentFixtures mangled).map fun (name, text, cursor, language) =>
-      let language := match language with
+      let language :=
+        match language with
         | some name => s!"(some {name.quote})"
         | none => "none"
       s!"  command {("load-" ++ name).quote} (load {text.quote} {cursor} {language})"
@@ -3497,7 +3500,9 @@ def indentChunk (mangled : String) : String :=
     discard <| (⟨0⟩ : ViewId).setMajorMode \"code\"
 
 def setup : SetupM Unit := do
-" ++ "\n".intercalate commands ++ "\n"
+" ++
+    "\n".intercalate commands ++
+    "\n"
 
 /-- Runs `check` against a host of the Vim scheme that ships
 (`withVimHost`) over `indentChunk` of the mangled Rust indent fixture, with
@@ -3506,8 +3511,8 @@ def withIndentHost (context : Context) (check : Session → String → String �
   let source ← IO.FS.readFile (context.syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept
   withVimHost context [("10-indent.lean", indentChunk mangled)] fun session => do
-    session.ask [.reload]
-    check session source mangled
+      session.ask [.reload]
+      check session source mangled
 
 /-- Whether the view line `line` shows the text `text` and one selection
 from `anchor` to `head`. -/
@@ -3590,8 +3595,8 @@ def indentChecks (context : Context) : List Check :=
           let closedText := "fn main() {\n    \n    let x = 1;\n}\n"
           let nestedText := "impl S {\n    fn one(&self) {\n        "
           unless
-              showsText closed closedText 16 16 && showsText eof "fn main() {\n    " 16 16 &&
-                showsText nested nestedText nestedText.utf8ByteSize nestedText.utf8ByteSize do
+            showsText closed closedText 16 16 && showsText eof "fn main() {\n    " 16 16 &&
+              showsText nested nestedText nestedText.utf8ByteSize nestedText.utf8ByteSize do
             throw (IO.userError s!"{closed} / {eof} / {nested}")
           return true },
     { name :=
@@ -3616,14 +3621,15 @@ def indentChecks (context : Context) : List Check :=
             let at_ ← offsetOf rustObjectsText needle
             let bar := at_ + needle.utf8ByteSize + 8
             return ((rustObjectsText.take (at_ + needle.length)).toString ++ "        \n" ++
-                (rustObjectsText.drop (at_ + needle.length)).toString, bar)
+                  (rustObjectsText.drop (at_ + needle.length)).toString,
+                bar)
           let some (belowText, belowBar) := opened "let x = 1;\n" | return false
           let some (aboveText, aboveBar) := opened "u8 {\n" | return false
           let some (closingText, closingBar) := opened "        x\n" | return false
           unless
-              showsText below belowText belowBar belowBar &&
-                showsText above aboveText aboveBar aboveBar &&
-                showsText closing closingText closingBar closingBar do
+            showsText below belowText belowBar belowBar &&
+              showsText above aboveText aboveBar aboveBar &&
+              showsText closing closingText closingBar closingBar do
             throw (IO.userError s!"{below} / {above} / {closing}")
           return true },
     { name :=
@@ -3641,10 +3647,11 @@ def indentChecks (context : Context) : List Check :=
           let said (refusal : SyntaxTreeError) :=
             s!"{Vim.operateCommand}: {Evil.cannotIndent refusal}".quote
           unless
-              showsText plain "    ab" 5 5 && plainEcho == said .notAttached &&
-                (opened.splitOn s!"{"    ab\n\n\n".quote}, scroll").length == 2 &&
-                showsText json "[\n  1\n]" 4 4 && jsonEcho == said .noQuery &&
-                showsText broken "[\n  1\n\n]" 6 6 do
+            showsText plain "    ab" 5 5 && plainEcho == said .notAttached &&
+              (opened.splitOn s!"{"    ab\n\n\n".quote}, scroll").length == 2 &&
+              showsText json "[\n  1\n]" 4 4 &&
+              jsonEcho == said .noQuery &&
+              showsText broken "[\n  1\n\n]" 6 6 do
             throw (IO.userError s!"{plain} {plainEcho} / {opened} / {json} {jsonEcho} / {broken}")
           return true }]
 

@@ -615,7 +615,7 @@ def newline (call : Call) : EditorM Unit := do
   let blanksBefore := (leading.toList.reverse.takeWhile isBlank).length
   let blanksAfter := (trailing.toList.takeWhile isBlank).length
   call.target.replaceEach before
-    #[Indent.breakAt call.target.buffer.lineEnding.text indent head blanksBefore blanksAfter]
+      #[Indent.breakAt call.target.buffer.lineEnding.text indent head blanksBefore blanksAfter]
 
 /-- The command `TAB` runs in insert state, as it is called: a tab character
 is inserted at the bar. -/
