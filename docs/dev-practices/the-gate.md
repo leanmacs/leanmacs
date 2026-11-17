@@ -229,8 +229,8 @@ that turns captures into spans and the carrying of spans through a patch
 its touch, a language set for injections and a read of the highlights on
 other threads each complete within a bound. `crates/editor-ffi/tests/syntax.rs` runs the syntax service on real
 documents through their edit paths and the C functions, and
-`crates/editor-ffi/tests/highlight.rs` highlights a Rust fixture and a
-TOML fixture through the C functions, edits each, and holds its spans once
+`crates/editor-ffi/tests/highlight.rs` highlights a Rust fixture, a TOML
+fixture and a Lean fixture through the C functions, edits each, and holds its spans once
 reparsed to a fresh highlight of its text; it runs layout's spans contract on the service, and
 checks that a published scene paints a keyword in its face. It does the
 same for a Markdown document given its injections and languages through the
@@ -1082,4 +1082,6 @@ cargo fmt --all        # Rust
 ```
 
 `mise run c-format` and its check, `mise run c-fmt`, look at tracked files
-only, so `git add` a new C file before running them.
+only, so `git add` a new C file before running them. They leave `vendor/`
+out: vendored C is upstream's generated code (`vendor/README.md`), neither
+checked nor rewritten here.

@@ -2218,8 +2218,8 @@ library's Rust grammar):
 - **With no levels to read it gives up** (`Evil.cannotIndent`), having
   changed nothing, and is not the last change: a buffer with no syntax
   tree (`indent: this buffer has no syntax tree`), a tree that keeps no
-  indents query (`indent: its language has no indents query`, JSON and
-  Markdown today), or a text whose last edit's tree is not delivered yet
+  indents query (`indent: its language has no indents query`, JSON,
+  Markdown, TOML and Lean today), or a text whose last edit's tree is not delivered yet
   (`indent: the syntax tree is not parsed yet`).
 - **A recorded departure**: Vim's own `=` reads `indentexpr` or `cindent`;
   ours reads the language's indents query, so its levels are the query's.
@@ -2586,7 +2586,7 @@ structure Mode where
   onEnter    : ViewId → EditorM Unit := fun _ => pure ()
 
 structure Mode.SyntaxTree where
-  grammar     : String                               -- the library's grammar: rust, json, markdown, toml
+  grammar     : String                               -- the library's grammar: rust, json, markdown, toml, lean
   highlights  : Option String := none                -- query source; none: the grammar's shipped one
   captures    : List (String × Option FaceName) := [] -- config's capture faces, over the shipped default
   injections  : Option String := none                -- injections query source; none: the shipped one
@@ -2837,12 +2837,15 @@ requests can name it (`Language → Mode → Command → State.Request` would
 otherwise be a cycle).
 
 - **The shipped table** (`Language.shipped`) is `rust` (`*.rs`, four
-  spaces), `json` (`*.json`, two), `markdown` (`*.md`, two) and `toml`
-  (`*.toml` and `Cargo.lock`, two), each parsed with the grammar of its
-  name and its shipped queries. Each is a named definition, so config
-  writes `{ Language.rust with … }`. `toml` draws its booleans, a capture
-  the face vocabulary has no face for, as constants; a TOML file with
-  another name (`uv.lock`) is one line of config.
+  spaces), `json` (`*.json`, two), `markdown` (`*.md`, two), `toml`
+  (`*.toml` and `Cargo.lock`, two) and `lean` (`*.lean`, `lakefile.lean`
+  included, two), each parsed with the grammar of its name and its shipped
+  queries. Each is a named definition, so config writes
+  `{ Language.rust with … }`. `toml` draws its booleans, a capture the face
+  vocabulary has no face for, as constants; a TOML file with another name
+  (`uv.lock`) is one line of config. `lean` draws its booleans as
+  constants, its characters as strings and its namespaces as modules, three
+  captures the vocabulary has no face for.
 - **The rule is pure and the core's** (`Language.forPath`). The table is in
   precedence order: config's entries, in the order config defined them,
   then the shipped ones config did not replace by name
@@ -2889,11 +2892,12 @@ otherwise be a cycle).
 Pinned by `ModelTest.languageMatchChecks` (the rule and the table, pure),
 `ModelTest.modeRecordChecks` (`code`'s tree), `ModelTest.languageOpenChecks`
 (opening on the models, over the model's one grammar, `json`), and
-`ConfigTest.languageChecks` (Rust, JSON, Markdown and TOML, a `.toml` file
-and `Cargo.lock`, and config's override of Rust's query, through the host
-and the real syntax binding), and `ContractTest`'s check that a TOML text
-is drawn by the real display with its keys, string and brackets in their
-faces' colours.
+`ConfigTest.languageChecks` (Rust, JSON, Markdown, TOML and Lean, a
+`.toml` file and `Cargo.lock`, a `.lean` file and `lakefile.lean`, and
+config's override of Rust's query, through the host and the real syntax
+binding), and `ContractTest`'s checks that a TOML text is drawn by the real
+display with its keys, string and brackets in their faces' colours, and a
+Lean text with its keyword, string and comment in theirs.
 
 ### Why this shape
 

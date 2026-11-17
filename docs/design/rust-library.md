@@ -1373,12 +1373,19 @@ restated the contract to match.
 **How grammars are loaded: compiled in.** Each grammar is a crates.io
 grammar crate, pinned exactly (`tree-sitter-rust` 0.24.2,
 `tree-sitter-json` 0.24.8, `tree-sitter-md` 0.5.4 and
-`tree-sitter-toml-ng` 0.7.0, over `tree-sitter` 0.27.2), whose build
-compiles
+`tree-sitter-toml-ng` 0.7.0, over `tree-sitter` 0.27.2), or, for Lean,
+upstream's own crate vendored unmodified under `vendor/`
+(`tree-sitter-lean` 0.2.0, from `Julian/tree-sitter-lean` at `0d28e5d`,
+MIT; `vendor/README.md`), whose build compiles
 the generated `parser.c` (and the grammar's scanner, if it has one) with
 `cc` when Cargo builds the library; the objects end up in
 `libeditor_ffi.a`, which Lake links. Nothing is fetched, generated or
-loaded at run time. Set aside, and why:
+loaded at run time. Lean is vendored because no crates.io crate builds
+against the pinned library: the one Lean grammar crate, `tree-sitter-lean4`,
+has a normal dependency on tree-sitter 0.25, which cannot coexist with
+0.27.2. The workspace excludes `vendor/`, so the copy is a path dependency
+whose dev-dependencies never enter the lock, and `mise run c-fmt` leaves its
+generated C alone. Set aside, and why:
 
 - **Native libraries** loaded with `dlopen`: a second build product for
   each grammar and platform, a search path, a check of the ABI when one is
@@ -1442,7 +1449,7 @@ never handed an old tree, an `Incremental` grammar's handed one after an
 edit (`REPARSE_POLICY`). Each property is seen to bite on an implementation
 written to break it, and each such mutant's failures are pinned exactly.
 The fake passes it, and the adapter passes it for Rust, JSON, Markdown,
-Markdown's inline grammar and TOML.
+Markdown's inline grammar, TOML and Lean.
 
 - **The edits** are named cases (an insert inside a token, a delete across
   lines, everything deleted, an edit at offset 0 and at the end, a CRLF,
@@ -1632,6 +1639,15 @@ drawn under the key, the `=` and the value, so `syntax.property` shows only
 on a pair's spaces. That is upstream's query as shipped; config may replace
 it per language.
 
+`lean` maps three captures the vocabulary lacks: `boolean` to
+`syntax.constant`, `character` to `syntax.string` and `namespace` to
+`syntax.module`. Under the first-pattern rule, upstream's
+`(identifier) @variable`, which comes before its declaration-name patterns,
+draws every identifier in `syntax.variable`, declaration names included;
+keywords, literals and comments are unaffected. Lean's query is vendored
+with its grammar, from the same upstream commit, so it cannot drift from the
+grammar's node types.
+
 **Which tree draws a snapshot** (`Session::highlights`), resolved once a
 frame and fixed for it, with the tree delivered last of revision M and a
 snapshot of revision N: nothing with no highlighter or no delivery; the
@@ -1729,6 +1745,7 @@ is used wherever it ships one, as phase 2 decided for highlights:
 | `markdown` | the crate's, of the block grammar | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none |
 | `markdown_inline` | the crate's, of the inline grammar | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none |
 | `toml` | the crate's | none | none | none |
+| `lean` | upstream's, vendored with the grammar | none | none | none |
 
 `tree-sitter-rust` 0.24.2 ships no `indents.scm` or `textobjects.scm`, so
 Rust's are this repository's (`crates/editor-syntax-treesitter/queries/rust/`,
@@ -1817,6 +1834,17 @@ Since every compiled grammar is a language a layer can be injected in, a
 Markdown fence whose info string is `toml` is now a TOML layer. The crates
 looked at and set aside are in the adapter's `Cargo.toml`.
 
+**Lean is upstream's grammar, vendored** (language-modes phase 5,
+2026-11-17): `Julian/tree-sitter-lean` at `0d28e5d`, under `vendor/`, with
+the highlights query of the same commit and no other used, so Lean has no
+injections, indents or text objects. It is of policy `Incremental`: in a
+sweep on 2026-11-17, 6,894 incremental reparses of texts without errors, of
+random edits to the fixtures under `tests/syntax/lean/` and to the files of
+`lean/Editor/` that parse without errors, all equalled a fresh parse, and
+its contract passes. A Markdown fence whose info string is `lean` is now a
+Lean layer. Upstream also ships an injections query, which hands doc and
+module-doc comments to `markdown`; it is off (see the open questions).
+
 **What the port gains.** `Syntax::matches` (a query's matches, each with
 its captures, and each captured node's named children), `pattern_settings`
 (a pattern's `#set!`s) and `parse_in` (the tree of the bytes in some ranges
@@ -1869,6 +1897,26 @@ takes 10.0 ms at the median and 10.8 ms at most over 20 runs, under a
 16 ms frame, so reusing a layer's tree across rounds stays an open
 question.
 
+**Lean, measured** by `mise run syntax-bench` on 2026-11-17, in a release
+build on the owner's machine. Lean's syntax is extensible and the grammar is
+a fixed approximation of it: a construct it does not know is an error node,
+which the idle refresh corrects once the text is quiet. The largest Lean
+file in the repository (`find lean tests -name '*.lean' -not -path
+'*/.lake/*' | xargs ls -S | head -1`) is `lean/ModelTest.lean`: 1,701,630
+bytes, 30,504 lines, 1,629 error nodes. Its first parse takes 142.7 ms; a
+round after an edit 85.0 ms at the median and 87.6 ms at most over 20 runs;
+the idle refresh (a whole parse and its compare) 208.1 ms at the median.
+The round is above a 16 ms frame on this test file; it runs on the worker,
+off the editor thread, and the delivered spans are carried meanwhile. The
+largest file under `lean/Editor/` (`Ffi.lean`, 180,989 bytes) took about
+6 ms a round when the grammar was chosen. How much of this repository's Lean
+the grammar parses (2026-11-17, when it was chosen): 20 of the 52 files of
+`lean/Editor/` and 65 of all 172 Lean files parse with no error, and 97.5 %
+of `lean/Editor/`'s non-space bytes are captured by the shipped highlights
+query, since an error node's tokens are still keywords, strings and
+comments to it. Reusing work across rounds for files this size is an open
+question, with this measurement as its trigger.
+
 **Kept queries.** A session keeps one query of each structural kind it is
 given (`Session::keep`), and answers a kept query's names and captures in a
 range from the tree delivered (`Session::kept_captures`), refused, in this
@@ -1893,6 +1941,12 @@ indents queries (`lean/Editor/Highlight.lean`); the indent rule
 **Open questions:**
 
 - Reusing an injected layer's tree across rounds (measured above).
+- Reusing work across rounds for a file the size of `lean/ModelTest.lean`,
+  whose round is above a frame (Lean, measured above).
+- Lean's upstream injections query, which hands doc and module-doc comments
+  to `markdown`: off, since each doc comment would be a Markdown layer, and
+  its inline layers, parsed whole every round (`lean/Editor/` is about 65 %
+  comment bytes), and doc comments already draw in `syntax.comment`.
 - Language aliases for injections (`rs`, `jsonc`), and where they are
   configured.
 - `injection.combined`: one layer of several matches.
