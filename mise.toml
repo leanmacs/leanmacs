@@ -12,6 +12,9 @@ pkl = "0.32.1"
 # The secret scanner (`mise run secrets-scan`), never part of `ci`. Like
 # cargo-deny, a prebuilt release binary whose checksum aqua checks.
 "aqua:gitleaks/gitleaks" = "8.30.1"
+# OpenTofu, for infra/ only (`mise run infra-check`, `infra-plan`,
+# `infra-apply`); never part of `ci`.
+opentofu = "1.13.2"
 # Lean (lean, lake) is not listed here: `lean/lean-toolchain` is its one pin
 # (AGENTS.md, "Toolchains"). mise reads that file through the `lean` plugin,
 # which the global mise config declares along with
@@ -1023,3 +1026,36 @@ run = [
   "gitleaks git --no-banner --redact --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --staged .",
 ]
 
+# OpenTofu over infra/github, the repository's GitHub settings
+# (infra/github/README.md). infra-plan and infra-apply act on the LIVE
+# repository with the owner's `gh` token and 1Password, so they are never
+# part of `ci` or hk.pkl, and only the owner runs them. infra-check needs no
+# credentials and no GitHub API, only the OpenTofu registry once for the
+# provider download (then cached under infra/github/.terraform/). It is
+# kept out of `ci` and hk.pkl too, so the gate does not depend on OpenTofu
+# or its registry; run it after any change under infra/.
+[tasks.infra-check]
+description = "fmt, validate, mocked-provider plan tests and the state-encryption guard for infra/github, with no credentials and no GitHub API; never part of ci or hk"
+# Evaluating the encryption block needs some passphrase. No state exists
+# where this runs, so the value protects nothing.
+env = { TF_VAR_state_passphrase = "check-only-not-a-secret" }
+run = [
+  "tofu -chdir=infra/github fmt -check -recursive",
+  "tofu -chdir=infra/github init -backend=false -input=false -lockfile=readonly",
+  "tofu -chdir=infra/github validate",
+  "tofu -chdir=infra/github test",
+  "sh infra/check-encryption.sh infra/github",
+]
+
+# Even `tofu init` evaluates the encryption block, so it needs the
+# passphrase and runs inside the same `op run` as plan/apply.
+[tasks.infra-plan]
+description = "OWNER ONLY: plan infra/github against the LIVE repository (gh token, 1Password); never part of ci or hk"
+run = "GITHUB_TOKEN=$(gh auth token) op run --env-file=infra/github/op.env -- sh -c 'tofu -chdir=infra/github init -input=false -lockfile=readonly && tofu -chdir=infra/github plan'"
+
+# Runs `secrets-scan` first: this is the apply that makes the repository
+# public (docs/dev-practices/publishing.md).
+[tasks.infra-apply]
+description = "OWNER ONLY: run secrets-scan, then apply infra/github to the LIVE repository interactively (makes it public); never part of ci or hk"
+depends = ["secrets-scan"]
+run = "GITHUB_TOKEN=$(gh auth token) op run --env-file=infra/github/op.env -- sh -c 'tofu -chdir=infra/github init -input=false -lockfile=readonly && tofu -chdir=infra/github apply'"
