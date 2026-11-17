@@ -38065,6 +38065,24 @@ def statusViewChecks : List Check :=
             VersionControl.StatusView.fileAt files 5 == files[4]? &&
             VersionControl.StatusView.fileAt files 6 == none },
     { name :=
+        "a file is deleted when it is gone from the working tree: an unstaged deletion, a change deleted since, a rename deleted since and a staged deletion its status does not also list untracked; not a staged deletion still on disk, a modification, an untracked file or a conflict, whose file the status cannot say is gone"
+      run :=
+        pure <|
+          let deleted := VersionControl.StatusView.deleted
+          let removed := file "r" (.changed (some .deleted) none)
+          let kept := file "k" (.changed (some .deleted) none)
+          let onDisk := #[kept, file "k" .untracked]
+          deleted #[] (file "g" (.changed none (some .deleted))) &&
+            deleted #[] (file "m" (.changed (some .modified) (some .deleted))) &&
+            deleted #[] (file "n" (.renamed "o" (some .deleted))) &&
+            deleted #[removed, file "k" .untracked] removed &&
+            !deleted onDisk kept &&
+            !deleted #[] (file "s" (.changed (some .modified) none)) &&
+            !deleted #[] (file "u" (.changed none (some .modified))) &&
+            !deleted #[] (file "t" .untracked) &&
+            !deleted #[] (file "c" (.conflicted .bothDeleted)) &&
+            !deleted #[] (file "d" (.conflicted .deletedByUs)) },
+    { name :=
         "toggling stages an untracked, a conflicted or an unstaged file, and unstages a staged one, a staged rename by both its paths"
       run :=
         pure <|
@@ -38153,20 +38171,29 @@ def statusWrites : Array VersionControl.Request :=
   #[.stage #["unstaged.txt"], .unstage #["staged.txt"], .unstage #["new.txt", "old.txt"]]
 
 /-- A driver of the status buffer checks: the workspace driver's world, with
-the status buffer's keys and jobs, whose git in `/r` meets the contract's
-first repository (`Repository.jobModel`) and answers `statusWrites`, and
-with `/r/unstaged.txt` on disk; `none` if making the state was refused. -/
-def statusDriver : Option TestDriver :=
+the status buffer's keys and jobs, whose git in `/r` meets `repository`
+(`Repository.jobModel`) and answers `writes`, and with each file of
+`repository`'s working tree on disk under `/r`; `none` if making the state
+was refused. -/
+def statusDriverOf (repository : VersionControl.Model.Repository)
+    (writes : Array VersionControl.Request := #[]) : Option TestDriver :=
   (workspaceDriver statusJobs statusKeys).map fun driver =>
-    let scripts :=
-      (VersionControlContract.criterionRepository.jobModel "git" "/r"
-          statusWrites).processes.scripts
+    let scripts := (repository.jobModel "git" "/r" writes).processes.scripts
     { driver with
       jobs :=
         { driver.jobs with
-          files := driver.jobs.files.withFile "/r/unstaged.txt" "two\n".toUTF8
+          files :=
+            repository.worktree.foldl
+              (fun (files : FileModel) (path, content) =>
+                files.withFile (("/r" : System.FilePath) / path) content.toUTF8)
+              driver.jobs.files
           processes :=
             { driver.jobs.processes with scripts := driver.jobs.processes.scripts ++ scripts } } }
+
+/-- The driver of the status buffer checks over the contract's first
+repository, answering `statusWrites` (`statusDriverOf`). -/
+def statusDriver : Option TestDriver :=
+  statusDriverOf VersionControlContract.criterionRepository statusWrites
 
 /-- The name of the status buffer of `/r`. -/
 def statusBufferName : String :=
@@ -38296,6 +38323,29 @@ def statusBufferChecks : List Check :=
             ((showingFocused visited).bind (·.buffer.file)).map (·.path) ==
                 some ("/r/unstaged.txt" : System.FilePath) &&
               echoOf head == some "vc-status: no file on this line" },
+    { name :=
+        "visiting on a line whose file is gone from the working tree says it is deleted and opens no buffer; on a staged deletion still on disk it opens the file"
+      run :=
+        pure <|
+          match
+            statusDriverOf
+              { committed := #[("gone.txt", "g\n"), ("kept.txt", "k\n")]
+                index := #[("gone.txt", .file "g\n")]
+                worktree := #[("kept.txt", "k\n")] } with
+          | none => false
+          | some driver =>
+            let shown := settledAfter (settledAfter driver "C-o a") "C-v s"
+            let gone := settledAfter shown "C-v 1 C-v v"
+            let kept := settledAfter shown "C-v 2 C-v v"
+            let buffers (driver : TestDriver) := (driver.loop.state.buffers.filterMap id).size
+            namedText shown statusBufferName ==
+                some
+                  "r@main: on main\nunstaged: gone.txt (deleted)\nstaged: kept.txt (deleted)\nuntracked: kept.txt\n" &&
+              echoOf gone == some "vc-status-visit: gone.txt is deleted" &&
+              buffers gone == buffers shown &&
+              (showingFocused gone).map (·.buffer.name) == some statusBufferName &&
+              ((showingFocused kept).bind (·.buffer.file)).map (·.path) ==
+                some ("/r/kept.txt" : System.FilePath) },
     { name :=
         "refreshing reads the status again into the buffer without opening another window; outside a status buffer it says the buffer is not one"
       run :=

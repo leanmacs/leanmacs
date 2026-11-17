@@ -173,7 +173,7 @@ in the major mode `vc-status`.
 
 | Command | Role or suffix | What it does |
 |---|---|---|
-| `vc-status-visit` | `activate` | Opens the cursor's file under the root; a file gone from the working tree, or a row with no file, is said |
+| `vc-status-visit` | `activate` | Opens the cursor's file under the root; a file gone from the working tree, or a row with no file, is said. A staged deletion the status also lists as untracked is still on disk, and opens; a conflict always opens, since the status cannot say its file is gone |
 | `vc-status-toggle` | `toggle` | Stages an untracked, a conflicted or an unstaged file; unstages a staged one, a staged rename by both its paths |
 | `vc-status-refresh` | `refresh` | Reads the status again, without showing the buffer again |
 | `vc-status-stage` | leader `s` | Stages the cursor's file, or says there is nothing to stage |

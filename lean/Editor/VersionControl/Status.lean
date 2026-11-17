@@ -50,6 +50,12 @@ Pure, and tested on values the model gives (`StatusView`):
   (`StatusView.toggleRequest`). The explicit forms
   (`StatusView.stageRequest`, `StatusView.unstageRequest`) refuse, with a
   sentence, a file with nothing to stage or nothing staged.
+- **A file is deleted** (`StatusView.deleted`) when it is gone from the
+  working tree: its unstaged change is a deletion, a rename's included, or
+  it is a staged deletion the status does not also list as untracked,
+  which it does while the file is still on disk. A conflict is never
+  deleted: the status cannot say whether its file is on disk, and the
+  file is where its resolution is written.
 
 ## The record
 
@@ -81,9 +87,10 @@ files last shown, which the commands read the cursor's file from.
   any other buffer it says `vc-status-refresh: <buffer> is not a status
   buffer`, as each command below does.
 - **`vc-status-visit`** (`visitName`, the mode's `activate`): opens the
-  cursor's file at `<root>/<path>` in the window (`Files.visit`). A file
-  gone from the working tree says `vc-status-visit: <path> is deleted`,
-  and a row with no file `vc-status: no file on this line`.
+  cursor's file at `<root>/<path>` in the window (`Files.visit`). A
+  deleted file (`StatusView.deleted`) says `vc-status-visit: <path> is
+  deleted` and opens nothing, and a row with no file `vc-status: no file
+  on this line`.
 - **`vc-status-toggle`** (`toggleName`, the mode's `toggle`): starts the
   unkeyed job `vc-status-apply` with the root, the git program, the label,
   the view and the cursor's file's toggle request. The job runs it; what
@@ -255,9 +262,13 @@ def unstageRequest (file : FileStatus) : Except String Request :=
   | some paths => .ok (.unstage paths)
   | none => .error s!"{unstageName}: {file.path} has nothing staged"
 
-/-- Whether `state`'s file is gone from the working tree. -/
-def deleted : FileState → Bool
-  | .changed _ (some .deleted) | .changed (some .deleted) none | .renamed _ (some .deleted) => true
+/-- Whether `file`'s file is gone from the working tree, among the status's
+`files` ("The view", in the module docs). -/
+def deleted (files : Array FileStatus) (file : FileStatus) : Bool :=
+  match file.state with
+  | .changed _ (some .deleted) | .renamed _ (some .deleted) => true
+  | .changed (some .deleted) none =>
+    !files.any fun other => other.path == file.path && other.state == .untracked
   | _ => false
 
 end StatusView
@@ -592,7 +603,7 @@ def refreshCommand (call : Call) : EditorM Unit := do
 def visitCommand (call : Call) : EditorM Unit := do
   let some (order, record) ← statusOf call visitName | return
   let some file ← cursorFile call record.files | message noFile
-  if StatusView.deleted file.state then
+  if StatusView.deleted record.files file then
     message s!"{visitName}: {file.path} is deleted"
   else
     Files.visit call.target.window.id (order.root / file.path) { row := 0, column := 0 } true
