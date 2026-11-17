@@ -26,9 +26,12 @@ against it.
   `unparsable`.
 - **A status** (`Status`) is what is checked out (`Head`) and every file
   that differs from it, sorted by path, then by state in the order of
-  `FileState.rank`. A file appears once per record the system prints. One
-  case gives a path two: a path removed from the index and still on disk is
-  a staged deletion and also untracked. The model does the same.
+  `FileState.rank`. A path appears once, with one exception: a path
+  removed from the index and still on disk is a staged deletion and also
+  untracked. The model does the same. A rename only in the working tree (a
+  file added with intent to add after a move) is no state of its own: it is
+  the origin's unstaged deletion and the new path's unstaged addition, the
+  origin's staged change, if it has one, joined to the first.
 - **`stage paths`** makes the index hold each path as the working tree has
   it: a path that is gone from the working tree is removed from the index,
   and a conflict is resolved to the working tree's content. A path in

@@ -2915,22 +2915,25 @@ def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
   onChanged services (withPath path)
 
 /-- The variables that keep a git run from reading the user's or the
-system's config: no system config, `/dev/null` as the global one, and
-`home` as its home. -/
-def isolatedGit (home : System.FilePath) : Array (String × String) :=
-  #[("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_CONFIG_GLOBAL", "/dev/null"), ("HOME", home.toString),
+system's config: no system config, `global` as the global one, `/dev/null`
+unless it is given, and `home` as its home. -/
+def isolatedGit (home : System.FilePath) (global : System.FilePath := "/dev/null") :
+    Array (String × String) :=
+  #[("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_CONFIG_GLOBAL", global.toString), ("HOME", home.toString),
     ("XDG_CONFIG_HOME", home.toString)]
 
 /-- `services` whose process service starts every child with the variables
-of `isolatedGit home` set, over any of theirs its command sets
+of `isolatedGit home global` set, over any of theirs its command sets
 (`onChanged`). -/
-def onIsolatedGit (services : Job.Services) (home : System.FilePath) : Job.Services :=
+def onIsolatedGit (services : Job.Services) (home : System.FilePath)
+    (global : System.FilePath := "/dev/null") : Job.Services :=
   onChanged services fun command =>
-    let names := (isolatedGit home).map (·.1)
+    let names := (isolatedGit home global).map (·.1)
     { command with
       environment :=
         { command.environment with
-          set := (command.environment.set.filter (!names.contains ·.1)) ++ isolatedGit home } }
+          set :=
+            (command.environment.set.filter (!names.contains ·.1)) ++ isolatedGit home global } }
 
 /-- The jobs of the project mode checks: the file commands', the workspace
 finder's and the compile mode's, as a host registers them. -/
@@ -3348,14 +3351,22 @@ def withRepository {α : Type} (check : System.FilePath → System.FilePath → 
     IO.FS.createDirAll (base / "repo")
     check (base / "home") (base / "repo")
 
+/-- A user's global git config asking for what the git implementation's
+command line pins away (`Editor/VersionControl/Git.lean`, "The command
+lines"): copies found as well as renames, by `status.renames` and by
+`diff.renames`, and no untracked files listed. The editor runs git under
+the user's config, so the contract runs it under this one. -/
+def pinnedAwayConfig : String :=
+  "[status]\n\trenames = copies\n\tshowUntrackedFiles = no\n[diff]\n\trenames = copies\n"
+
 /-- The names of the version-control contract's properties
 (`Editor/VersionControl/Contract.lean`) that do not hold of the git
 implementation over the library's process service, each property's
 repository written out with real git in a temporary directory of its own
-(`writeGitRepository`), every child's git kept from the user's and the
-system's config (`onIsolatedGit`); and that every child it ran is
-reaped. Property 1 is the phase's adapter test of git against the
-model. -/
+(`writeGitRepository`), every child's git kept from the system's config and
+given `pinnedAwayConfig` as the user's (`onIsolatedGit`); and that every
+child it ran is reaped. Property 1 is the phase's adapter test of git
+against the model. -/
 def versionControlFailures (services : Job.Services) : IO (List String) := do
   let before ← Ffi.processesPending
   let failed ←
@@ -3363,8 +3374,10 @@ def versionControlFailures (services : Job.Services) : IO (List String) := do
         withRepository fun home directory => do
           try
             writeGitRepository home directory property.repository
+            let config := home / "gitconfig"
+            IO.FS.writeFile config pinnedAwayConfig
             let outcome ←
-              runOnTimers (onIsolatedGit services home)
+              runOnTimers (onIsolatedGit services home config)
                   (property.holds.runM (VersionControl.Git.handler "git" directory))
             return if outcome == .finished true then none
               else some s!"{property.name} ({repr outcome})"
@@ -3417,6 +3430,29 @@ def gitStatusIs (services : Job.Services) (directory : System.FilePath)
     return (← Program.runM (VersionControl.Git.handler "git" directory) VersionControl.status) ==
         .ok expected
   return (← runOnTimers services read) == .finished true
+
+/-- The checks of the git implementation's status read over real git of
+what the model has no value for: files added with intent to add, which git
+alone makes. -/
+def versionControlChecks (services : Job.Services) : List Check :=
+  [{  name :=
+        "files moved in the working tree and added with intent to add, which git reads as renames in the working tree, read as each origin's unstaged deletion, joined with its staged change, and each new path's unstaged addition"
+      run :=
+        withRepository fun home directory => do
+          writeGitRepository home directory
+              { committed := #[("a.txt", "a\n"), ("b.txt", "b\n")]
+                index := #[("a.txt", .file "a\n"), ("b.txt", .file "staged\n")]
+                worktree := #[("a.txt", "a\n"), ("b.txt", "staged\n")] }
+          IO.FS.rename (directory / "a.txt") (directory / "c.txt")
+          IO.FS.rename (directory / "b.txt") (directory / "d.txt")
+          discard <| gitIn home directory #["add", "-N", "--", "c.txt", "d.txt"]
+          gitStatusIs (onIsolatedGit services home) directory
+              { head := .branch "main"
+                files :=
+                  #[{ path := "a.txt", state := .changed none (some .deleted) },
+                    { path := "b.txt", state := .changed (some .modified) (some .deleted) },
+                    { path := "c.txt", state := .changed none (some .added) },
+                    { path := "d.txt", state := .changed none (some .added) }] } }]
 
 /-- The checks of the status buffer (`Editor/VersionControl/Status.lean`)
 over real git: its jobs run over the library's process and file services in
@@ -3546,6 +3582,8 @@ def main (arguments : List String) : IO UInt32 := do
   let projectModeChecks := ContractTest.projectModeChecks services compileFixtures workspaceFixtures
   let projectModeCheckFailed ← ContractTest.checkFailures projectModeChecks
   let versionControlFailed ← ContractTest.versionControlFailures services
+  let versionControlChecks := ContractTest.versionControlChecks services
+  let versionControlCheckFailed ← ContractTest.checkFailures versionControlChecks
   let statusBufferChecks := ContractTest.statusBufferChecks services
   let statusBufferCheckFailed ← ContractTest.checkFailures statusBufferChecks
   let fileWatchFailed ← ContractTest.fileWatchFailures services
@@ -3592,6 +3630,7 @@ def main (arguments : List String) : IO UInt32 := do
       compileCheckFailed ++
       projectModeCheckFailed ++
       versionControlFailed ++
+      versionControlCheckFailed ++
       statusBufferCheckFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
@@ -3617,6 +3656,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, with {statusBufferChecks.length} check of the status buffer over it, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} check of its status read of what only git makes and {statusBufferChecks.length} check of the status buffer over it, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

@@ -35,9 +35,12 @@ request in `JobM`, run with `Program.runM` inside a job.
   `deleted`, at least one of them there; a staged rename from an origin,
   with a change in the working tree since; untracked; or a conflict, of the
   seven kinds the index's base, ours and theirs name.
-- **A status** holds its files sorted by path, then by state. A file
-  appears once per record git prints: a path removed from the index and
-  still on disk is both a staged deletion and untracked.
+- **A status** holds its files sorted by path, then by state. A path
+  appears once, except that a path removed from the index and still on
+  disk is both a staged deletion and untracked. A rename only in the
+  working tree (a file added with intent to add after a move) is no state
+  of its own: it is the origin's unstaged deletion and the new path's
+  unstaged addition, as git prints it with renames off.
 - **Staging** a path that is gone removes it from the index, and staging a
   conflict resolves it to the working tree's content. A path in neither
   the index nor the working tree refuses the whole request, as git does,
@@ -81,8 +84,11 @@ the repository it starts from, run three ways:
   property's repository with git's own plumbing (`init`, `commit`,
   `hash-object`, `update-index` with `--cacheinfo` and, for a conflict's
   stages, `--index-info`), every child's git kept from the user's and the
-  system's config (`GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL=/dev/null`,
-  and the test's own `HOME`).
+  system's config (`GIT_CONFIG_NOSYSTEM` and the test's own `HOME`) and
+  given, as the user's (`GIT_CONFIG_GLOBAL`), a config that asks for what
+  the command line pins away: copies found by `status.renames` and
+  `diff.renames`, and no untracked files listed. The editor runs git under
+  the user's config, so the contract does too, under a hostile one.
 
 Its first property is the adapter test that git and the model agree on a
 repository with a staged, an unstaged, an untracked, a renamed and a
@@ -96,15 +102,19 @@ group when its job is cancelled. No binding is added.
 
 | Request | Command line |
 |---|---|
-| status | `git status --porcelain=v2 -z --branch --untracked-files=all --find-renames` |
+| status | `git -c status.renames=true -c diff.renames=true status --porcelain=v2 -z --branch --untracked-files=all --find-renames` |
 | stage | `git add --all -- <paths>` |
 | unstage | `git reset -q -- <paths>` |
 
-- Each flag pins what a user's config could change: `-z` ends each record
-  with a NUL and never quotes a path; `--branch` adds the headers that say
-  what is checked out; `--untracked-files=all` lists untracked files one
-  per file, so the status buffer has one line per file; `--find-renames`
-  turns renames on whatever `status.renames` says.
+- git runs under the user's config, so each flag pins what that config
+  could change: `-z` ends each record with a NUL and never quotes a path;
+  `--branch` adds the headers that say what is checked out;
+  `--untracked-files=all` lists untracked files one per file, so the
+  status buffer has one line per file; `--find-renames` turns renames on.
+  `--find-renames` leaves copies as the config says, and a config of
+  `copies` in `status.renames`, or in `diff.renames` when the first is
+  not set, makes git print copy records, so the two `-c`, which outrank
+  every config file, pin detection at renames, never copies.
 - `git reset` unstages on an unborn branch, where `git restore --staged`
   does not.
 - The environment is the editor's less `GIT_DIR`, `GIT_WORK_TREE` and
@@ -126,7 +136,7 @@ records ended by NUL; each must be UTF-8.
 |---|---|
 | `# branch.head <name>`, `# branch.head (detached)` | The head; other headers are ignored |
 | `1 XY sub mH mI mW hH hI path` | A change: `X` staged, `Y` unstaged; `.` none, `M` and `T` modified, `A` added, `D` deleted |
-| `2 XY … Xscore path`, then the origin as the next record | A rename; only `R`, since copies are never asked for |
+| `2 XY … Xscore path`, then the origin as the next record | A staged rename (`R` staged); or, as `.R`, a rename in the working tree, read as the origin's unstaged deletion, joined with its own record's staged change, and the path's unstaged addition. A copy (`C`) is refused: the command line pins copies off |
 | `u XY … path` | A conflict: `UU`, `AA`, `DD`, `AU`, `UA`, `DU`, `UD` |
 | `? path` | Untracked |
 

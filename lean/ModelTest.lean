@@ -37606,10 +37606,11 @@ def modeMarkerFailures : IO (List String) :=
 
 ### The fixtures
 
-What `git status --porcelain=v2 -z --branch --untracked-files=all
---find-renames` printed, byte for byte, with each NUL written `\x00`. Each
-was captured with git 2.56.1, with `GIT_CONFIG_NOSYSTEM=1`,
-`GIT_CONFIG_GLOBAL=/dev/null`, a fresh `HOME`, author and committer `a
+What `git -c status.renames=true -c diff.renames=true status
+--porcelain=v2 -z --branch --untracked-files=all --find-renames` printed,
+byte for byte, with each NUL written `\x00`. Each was captured with git
+2.56.1, with `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null` unless
+its comment names another config, a fresh `HOME`, author and committer `a
 <a@example.com>` at `2026-01-01T00:00:00Z`, in a repository made by `git -c
 init.defaultBranch=main init` and the commands each fixture's comment
 gives (`g` is `git -c commit.gpgsign=false`). -/
@@ -37657,6 +37658,39 @@ def porcelainMixed : String :=
     "u UU N... 100644 100644 100644 100644 1725e6630303461c56479543dedc4bc177dc5b57 b19a1e93bec1317dc6097229e12afaffbfa74dc2 950b81b7eee953d050aa05a641f8e056c85dd1bd uu.txt\x00" ++
     "? dir/new.txt\x00" ++
     "? héllo.txt\x00"
+
+/-- Files moved in the working tree and added with intent to add, which git
+reads as renames in the working tree (`.R`), one of them from a file with a
+staged change: `echo a > a.txt; echo b > b.txt; git add -A; g commit -m
+head`, then `mv a.txt c.txt; git add -N c.txt`, then `echo staged > b.txt;
+git add b.txt; mv b.txt d.txt; git add -N d.txt`. -/
+def porcelainMovedIntent : String :=
+  "# branch.oid d31190785150cdec68c388db596be4b901320656\x00" ++ "# branch.head main\x00" ++
+    "1 M. N... 100644 100644 100644 61780798228d17af2d34fce4cfbdf35556832472 19d9cc8584ac2c7dcf57d2680375e80f099dc481 b.txt\x00" ++
+    "2 .R N... 100644 100644 100644 78981922613b2afb6025042ff6bd878ac1994e85 78981922613b2afb6025042ff6bd878ac1994e85 R100 c.txt\x00" ++
+    "a.txt\x00" ++
+    "2 .R N... 100644 100644 100644 19d9cc8584ac2c7dcf57d2680375e80f099dc481 19d9cc8584ac2c7dcf57d2680375e80f099dc481 R100 d.txt\x00" ++
+    "b.txt\x00"
+
+/-- A file copied in the index from a file modified in the index, under a
+global config that asks for copies (`[status] renames = copies`, `[diff]
+renames = copies`): `echo a > a.txt; git add -A; g commit -m head`, then
+`cp a.txt c.txt; echo more >> a.txt; git add -A`. The command line's
+`-c status.renames=true` pins copies off, so git prints an addition. -/
+def porcelainCopyPinned : String :=
+  "# branch.oid a655a818d91215d2e13ebd735265b112d61e150d\x00" ++ "# branch.head main\x00" ++
+    "1 M. N... 100644 100644 100644 78981922613b2afb6025042ff6bd878ac1994e85 d49c2e721b44b101b9b65c1e2847063a0f0c53b9 a.txt\x00" ++
+    "1 A. N... 000000 100644 100644 0000000000000000000000000000000000000000 78981922613b2afb6025042ff6bd878ac1994e85 c.txt\x00"
+
+/-- What `porcelainCopyPinned`'s repository prints with the command line
+less its `-c` pins, `git status --porcelain=v2 -z --branch
+--untracked-files=all --find-renames`, under the same config: a copy
+record. -/
+def porcelainCopied : String :=
+  "# branch.oid a655a818d91215d2e13ebd735265b112d61e150d\x00" ++ "# branch.head main\x00" ++
+    "1 M. N... 100644 100644 100644 78981922613b2afb6025042ff6bd878ac1994e85 d49c2e721b44b101b9b65c1e2847063a0f0c53b9 a.txt\x00" ++
+    "2 C. N... 100644 100644 100644 78981922613b2afb6025042ff6bd878ac1994e85 78981922613b2afb6025042ff6bd878ac1994e85 C100 c.txt\x00" ++
+    "a.txt\x00"
 
 /-- The status `porcelainMixed` stands for, sorted by path. -/
 def mixedStatus : VersionControl.Status :=
@@ -37724,13 +37758,30 @@ def versionControlParserChecks : List Check :=
             (porcelainClean ++
               "1 Q. N... 100644 100644 100644 3367afdbbf91e638efe983616377c60477cc6612 3367afdbbf91e638efe983616377c60477cc6612 q.txt\x00")
             "q.txt" },
-    { name := "a copy record is refused, since copies are never asked for"
+    { name :=
+        "files moved in the working tree and added with intent to add read as git prints them with renames off: each origin an unstaged deletion, joined with its own staged change, and each new path an unstaged addition"
       run :=
         pure <|
-          refusedQuoting
-            (porcelainClean ++
-              "2 C. N... 100644 100644 100644 3367afdbbf91e638efe983616377c60477cc6612 3367afdbbf91e638efe983616377c60477cc6612 C100 copy.txt\x00old.txt\x00")
-            "copy.txt" },
+          parse porcelainMovedIntent ==
+            some
+              { head := .branch "main"
+                files :=
+                  #[{ path := "a.txt", state := .changed none (some .deleted) },
+                    { path := "b.txt", state := .changed (some .modified) (some .deleted) },
+                    { path := "c.txt", state := .changed none (some .added) },
+                    { path := "d.txt", state := .changed none (some .added) }] } },
+    { name :=
+        "a copy git prints with copies pinned off reads as a staged addition beside the staged modification it was copied from"
+      run :=
+        pure <|
+          parse porcelainCopyPinned ==
+            some
+              { head := .branch "main"
+                files :=
+                  #[{ path := "a.txt", state := .changed (some .modified) none },
+                    { path := "c.txt", state := .changed (some .added) none }] } },
+    { name := "a copy record is refused, since the command line pins copies off"
+      run := pure (refusedQuoting porcelainCopied "c.txt") },
     { name := "output with no branch.head header is refused"
       run := pure (parse "? a.txt\x00" == none) },
     { name := "output that is not UTF-8 is refused"
@@ -37876,9 +37927,10 @@ answer. -/
 def versionControlGitChecks : List Check :=
   let status := gitStatus
   let statusArguments :=
-    #["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--find-renames"]
+    #["-c", "status.renames=true", "-c", "diff.renames=true", "status", "--porcelain=v2", "-z",
+      "--branch", "--untracked-files=all", "--find-renames"]
   [{  name :=
-        "a status read runs git status --porcelain=v2 -z --branch --untracked-files=all --find-renames in the root, once, with GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE removed, GIT_OPTIONAL_LOCKS=0 and GIT_LITERAL_PATHSPECS=1"
+        "a status read runs git -c status.renames=true -c diff.renames=true status --porcelain=v2 -z --branch --untracked-files=all --find-renames in the root, once, with GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE removed, GIT_OPTIONAL_LOCKS=0 and GIT_LITERAL_PATHSPECS=1"
       run :=
         pure <|
           let (read, after) := status (mixedRepository.jobModel "git" "/r")

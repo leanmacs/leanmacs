@@ -17,7 +17,10 @@ cannot drift from git:
   only a read runs there;
 - by `contract-test`, against the git implementation over the library's
   process service, in a temporary repository written from the property's
-  repository with git's plumbing (`ContractTest.writeRepository`).
+  repository with git's plumbing (`ContractTest.writeGitRepository`),
+  under a user config that asks for copies and for no untracked files,
+  which the git implementation's command line pins away
+  (`ContractTest.pinnedAwayConfig`).
 
 Property 1 is the adapter test of the phase's first criterion: git and the
 model agree on a repository with a staged, an unstaged, an untracked, a
@@ -167,6 +170,19 @@ def properties : List Property :=
         return renamed && succeeded unstaged &&
             (← stateIs "old.txt" (.changed none (some .deleted))) &&
             (← stateIs "new.txt" .untracked) },
+    { name :=
+        "a file copied in the index from a file modified in the index is a staged addition beside the staged modification, never a copy"
+      repository :=
+        { committed := #[("a.txt", "a\n")]
+          index := #[("a.txt", .file "a\nmore\n"), ("c.txt", .file "a\n")]
+          worktree := #[("a.txt", "a\nmore\n"), ("c.txt", "a\n")] }
+      holds := do
+        return (← statusOf) ==
+            some
+              { head := .branch "main"
+                files :=
+                  #[{ path := "a.txt", state := .changed (some .modified) none },
+                    { path := "c.txt", state := .changed (some .added) none }] } },
     { name := "an empty file moved in the index is a rename, as a file with content is"
       repository :=
         { committed := #[("e.txt", "")], index := #[("f.txt", .file "")]

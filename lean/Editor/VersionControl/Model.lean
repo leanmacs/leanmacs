@@ -215,9 +215,9 @@ def listing : FileState → Nat
   | .conflicted _ => 1
   | .untracked => 2
 
-/-- What `git status --porcelain=v2 -z --branch --untracked-files=all
---find-renames` prints of `repository`: the `branch.oid` and `branch.head`
-headers, then a record for each file in git's order. -/
+/-- What the git implementation's status read (`Git.statusArguments`)
+prints of `repository`: the `branch.oid` and `branch.head` headers, then a
+record for each file in git's order. -/
 def porcelain (repository : Repository) : ByteArray :=
   let status := repository.status
   let oid := if repository.committed.isEmpty then "(initial)" else zeros

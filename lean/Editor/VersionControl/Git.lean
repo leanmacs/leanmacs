@@ -15,15 +15,22 @@ group when the job is cancelled. No new binding is needed. Its model is
 
 ## The command lines
 
-Each flag pins what a user's config could change:
+git runs under the user's config, so each flag pins what that config could
+change:
 
-- **status**: `git status --porcelain=v2 -z --branch
-  --untracked-files=all --find-renames`. `-z` ends each record with a NUL
-  and never quotes a path; `--branch` adds the headers that say what is
-  checked out; `--untracked-files=all` lists untracked files one per file,
-  so the status buffer has one line per file; `--find-renames` turns
-  renames on whatever `status.renames` says. Read by `parseStatus`
-  (`Editor/VersionControl/Porcelain.lean`).
+- **status**: `git -c status.renames=true -c diff.renames=true status
+  --porcelain=v2 -z --branch --untracked-files=all --find-renames`.
+  `--find-renames` turns renames on, but leaves copies as the config says,
+  and a config of `copies` would make git print copy records; the two `-c`
+  pin rename detection at renames, never copies, for each key that can
+  set it (`status.renames`, and `diff.renames`, which status reads when
+  the first is not set). A `-c` outranks every config file. `-z` ends each
+  record with a NUL and never quotes a path; `--branch` adds the headers
+  that say what is checked out; `--untracked-files=all` lists untracked
+  files one per file, so the status buffer has one line per file. Read by
+  `parseStatus` (`Editor/VersionControl/Porcelain.lean`). The contract
+  runs this under a config asking for copies and for no untracked files
+  (`ContractTest.pinnedAwayConfig`).
 - **stage**: `git add --all -- <paths>`: a path that is gone is removed
   from the index, and a conflict is resolved.
 - **unstage**: `git reset -q -- <paths>`, which works on an unborn branch,
@@ -67,9 +74,11 @@ def environment : Process.Environment :=
   { unset := Workspace.Git.environment.unset.push "GIT_INDEX_FILE"
     set := #[("GIT_OPTIONAL_LOCKS", "0"), ("GIT_LITERAL_PATHSPECS", "1")] }
 
-/-- The arguments of a status read. -/
+/-- The arguments of a status read, rename detection pinned at renames
+("The command lines", in the module docs). -/
 def statusArguments : Array String :=
-  #["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--find-renames"]
+  #["-c", "status.renames=true", "-c", "diff.renames=true", "status", "--porcelain=v2", "-z",
+    "--branch", "--untracked-files=all", "--find-renames"]
 
 /-- The arguments that stage `paths`. -/
 def stageArguments (paths : Array String) : Array String :=

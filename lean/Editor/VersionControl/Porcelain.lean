@@ -3,10 +3,11 @@ import Editor.VersionControl
 /-!
 # Reading git's porcelain status
 
-`parseStatus` reads what `git status --porcelain=v2 -z --branch
---untracked-files=all --find-renames` prints (`Editor/VersionControl/Git.lean`)
-as a `Status`. It is pure, and tested on output git printed, checked in as
-fixtures (`ModelTest.versionControlParserChecks`).
+`parseStatus` reads what `git -c status.renames=true -c diff.renames=true
+status --porcelain=v2 -z --branch --untracked-files=all --find-renames`
+prints (`Editor/VersionControl/Git.lean`) as a `Status`. It is pure, and
+tested on output git printed, checked in as fixtures
+(`ModelTest.versionControlParserChecks`).
 
 ## The records
 
@@ -19,13 +20,19 @@ allowed. Each record is UTF-8, or the whole output is refused.
 | `# branch.head (detached)` | | `.detached` |
 | any other `# ...` header | | ignored |
 | `1 XY sub mH mI mW hH hI path` | 7 fields after the kind, then the path | a change; the path is the rest of the record, so spaces survive |
-| `2 XY sub mH mI mW hH hI Xscore path` | 8 fields after the kind, then the path | a rename; the next record is its origin. Only `R` is read: copies are never asked for |
+| `2 XY sub mH mI mW hH hI Xscore path` | 8 fields after the kind, then the path | a rename; the next record is its origin. `R.` and the like are a staged rename; `.R` is a rename in the working tree; copies (`C`) are pinned off by the command line, and refused |
 | `u XY sub m1 m2 m3 mW h1 h2 h3 path` | 9 fields after the kind, then the path | a conflict |
 | `? path` | | untracked |
 
 - In `1` and `2` records, each of `X` (staged) and `Y` (unstaged) maps
   `.` to no change, `M` and `T` to `modified`, `A` to `added` and `D` to
   `deleted`.
+- **A rename in the working tree** (`.R`) is git pairing a file deleted
+  from the working tree with a file added with intent to add (`git add
+  -N`) holding its content. It is not a state of its own: it reads as git
+  prints it with renames off, the origin an unstaged deletion and the path
+  an unstaged addition. When the origin has a record of its own, a staged
+  change, the two join into one file, staged and unstaged.
 - In a `u` record, `XY` names the conflict: `UU`, `AA`, `DD`, `AU`, `UA`,
   `DU` and `UD`.
 - An unknown kind, an unknown `XY`, a rename with no origin after it, a
@@ -109,6 +116,15 @@ def readRecords :
             match fields 8 (record.drop 2).toString with
             | some (xy :: _, path) =>
               match xy.toList with
+              | ['.', 'R'] =>
+                match rest with
+                | origin :: rest =>
+                  if origin.isEmpty then refused "a rename record with no origin" record
+                  else
+                    readRecords fuel rest head
+                      ((files.push { path := origin, state := .changed none (some .deleted) }).push
+                        { path, state := .changed none (some .added) })
+                | [] => refused "a rename record with no origin" record
               | ['R', y] =>
                 match change? y, rest with
                 | some unstaged, origin :: rest =>
@@ -118,7 +134,7 @@ def readRecords :
                       (files.push { path, state := .renamed origin unstaged })
                 | some _, [] => refused "a rename record with no origin" record
                 | none, _ => refused "a rename record with an unknown XY" record
-              | ['C', _] => refused "a copy record, though copies are never asked for" record
+              | ['C', _] => refused "a copy record, though the command line pins copies off" record
               | _ => refused "a rename record with an unknown XY" record
             | _ => refused "a rename record with too few fields" record
           else
@@ -147,13 +163,33 @@ def records (bytes : ByteArray) : Option (List String) :=
   let pieces := pieces.push (bytes.extract start bytes.size)
   pieces.toList.mapM String.fromUTF8?
 
-/-- What `git status --porcelain=v2 -z --branch --untracked-files=all
---find-renames` printed, read as a status ("The records", in the module
-docs), or why it cannot be read. -/
+/-- `files`, sorted, with two changes of one path joined into one, the
+staged change of either and the unstaged change of either: a rename in the
+working tree's origin and the origin's own record ("A rename in the working
+tree", in the module docs). -/
+def joined (files : Array FileStatus) : Array FileStatus :=
+  (sorted files).foldl
+    (fun (kept : Array FileStatus) file =>
+      match kept.back?, file.state with
+      | some last, .changed staged unstaged =>
+        match last.state with
+        | .changed lastStaged lastUnstaged =>
+          if last.path == file.path then
+            kept.pop.push
+              { file with state := .changed (lastStaged <|> staged) (lastUnstaged <|> unstaged) }
+          else kept.push file
+        | _ => kept.push file
+      | _, _ => kept.push file)
+    #[]
+
+/-- What `git -c status.renames=true -c diff.renames=true status
+--porcelain=v2 -z --branch --untracked-files=all --find-renames` printed,
+read as a status ("The records", in the module docs), or why it cannot be
+read. -/
 def parseStatus (bytes : ByteArray) : Except String Status := do
   let some records := records bytes | throw "a record is not UTF-8"
   let (head, files) ← readRecords (records.length + 1) records none #[]
   let some head := head | throw "there is no branch.head header"
-  return { head, files := sorted files }
+  return { head, files := joined files }
 
 end Editor.VersionControl.Porcelain
