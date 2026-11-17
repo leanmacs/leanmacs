@@ -103,6 +103,43 @@ rebuilds the workspace's crates and `libeditor_ffi.a` since rust-cache
 does not hold them, and may relink), and saves nothing. A change of `lean/lean-toolchain` or
 `lean/lake-manifest.json` starts Lake's and elan's caches afresh.
 
+## Owner checks after the first push
+
+Nothing here can be checked offline: the gate's own run (`mise run ci`)
+checks the workflow's shape, but only GitHub runs it. After this workflow
+lands, the owner confirms it live, in this order.
+
+1. **Before the first push, apply the allowlist.** `Swatinem/rust-cache@*`
+   is newly in `infra/github/actions.tf`'s `patterns_allowed`; until it is
+   applied, the `ci` jobs fail at startup. Run `mise run infra-apply`. If
+   the repository's settings have never been applied, that is the two-step
+   first apply in [`infra/github/README.md`](../../infra/github/README.md),
+   "The first apply".
+2. **First push to `main`.** On the Actions tab, the run of "CI" shows three
+   green jobs: `ci (macos-26)`, `ci (ubuntu-24.04)` and `secrets-scan`.
+   - In each `ci` leg's "Gate" step, the log ends with mise finishing the
+     `ci` task with no error.
+   - In `secrets-scan`, the log shows four `secrets-scan: … pass` lines and
+     no `failed:`.
+   - If the macOS leg fails with dyld's "built for newer macOS", `MISE_ENV`
+     is not reaching mise, so `mise.ci.toml` is not read.
+3. **(Optional) a red leg fails the workflow.** Push a throwaway branch with
+   an unformatted `.rs` file. The workflow is red, the `fmt` failure appears
+   in both legs, and then delete the branch.
+4. **The caches restore.** On that `main` run, choose "Re-run all jobs",
+   with no new commit. In each `ci` leg:
+   - The rust-cache step logs `Restored from cache key "v0-rust-…"` with
+     `full match: true`.
+   - The Lake restore step logs
+     `Cache restored from key: lake-v1-<OS>-<ARCH>-<hash>-<that commit's sha>`.
+   - The elan restore step logs `Cache restored from key: elan-v1-…`.
+   - In the Gate log, the `lean` task prints no `Built Editor.` lines for
+     Lean modules. Lines for `rustlib`, the C glue or the executable's link
+     may appear: Lake reruns Cargo on every build, and the workspace's own
+     crates are rebuilt because rust-cache does not hold them.
+   - Both `actions/cache/save` steps are skipped: the exact keys were
+     restored.
+
 ## The workflow lint
 
 ```sh
