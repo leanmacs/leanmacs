@@ -3474,8 +3474,11 @@ asked and what accepting gives).
   one with the new style, since a match stamped with an older config
   generation is no longer in flight. At most one match is in flight; its
   delivery lists for the text it was spawned with, and the delivery's
-  scene spawns the next for the latest text. A key never waits on it, and
-  the listing arrives a moment after the key (concurrency.md, "Prompts").
+  scene spawns the next for the latest text. A match whose listing came
+  back current while it ran, as when a key is typed and undone, is no
+  longer in flight: its job is cancelled, so it never replaces that
+  listing or the choice in it. A key never waits on it, and the listing
+  arrives a moment after the key (concurrency.md, "Prompts").
 - **Closing cancels.** Accepting or cancelling a prompt cancels its
   sources' jobs and its match, by the keys the loop recorded for it
   (`EditorState.completionKeys`), at the publish of the closing step.
@@ -3579,7 +3582,8 @@ and a batch as arguments, a source's job on the job model,
 source asked once, asked again after its pause, closing cancels, a match
 spawned under its style's owner, one in flight, none for a failed text,
 one again after an install), `laterLoopChecks` (the phase's four
-criteria through the loop on the models, a match that fails),
+criteria through the loop on the models, a key undone while its match
+runs, a match that fails),
 `stateRequestChecks` (batches, a source's end, a match's listing and its
 failure), `apiStateChecks` and `dispatchStateChecks` (a later source
 recorded, never run, `noSuchJob`), `setupChecks` (`sourceJob`),

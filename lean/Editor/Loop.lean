@@ -312,7 +312,10 @@ loop has little of its own to do.
     - **At most one match is in flight** (`Candidates.matching`): a key or a
       batch while one runs spawns nothing, and the scene of its delivery
       spawns the next, for the latest text. So a stream of batches cannot
-      starve the listing, as cancelling and restarting would.
+      starve the listing, as cancelling and restarting would. A match
+      whose listing came back current while it ran, as when a key is
+      typed and undone, is no longer in flight (`listed`): its job is
+      cancelled, and a delivery of it already on its way lists nothing.
     - **A match that fails** (its matcher threw) finishes with the command
       that says `completion-match: ` and why in the echo area
       (`StateRequest.matchFailed`); the text and revision it failed for are
@@ -1603,10 +1606,12 @@ candidates to match is listed here (`Candidates.listing`, with the style
 `matching` chooses for the prompt's category, and `Candidates.relist`,
 which keeps the choice on its candidate while the text is the same); one
 with more is listed by a match job (`completionJobs`), and here only
-forgets its choice when the text changed. A state with no prompt, or a
-prompt with no candidates, is as it was, and nothing is read or asked. It
-is not refused: a refusal of the read is handed back, with the state as it
-was. -/
+forgets its choice when the text changed. When the listing is already for
+that text at that revision, a match still in flight is for a text or a
+revision gone by, and is no longer in flight, so the reconciler cancels it.
+A state with no prompt, or a prompt with no candidates, is as it was, and
+nothing is read or asked. It is not refused: a refusal of the read is
+handed back, with the state as it was. -/
 def listed (state : EditorState) (matching : Completion.Matching := .standard)
     (inlineMatches : Nat := Loop.inlineMatches) :
     EditorM (EditorState × Option String × Option TextError) := do
@@ -1620,6 +1625,12 @@ def listed (state : EditorState) (matching : Completion.Matching := .standard)
     return (state, none, some error)
   | .ok pattern =>
     if candidates.listedFor == some pattern && candidates.listedAt == candidates.revision then
+      -- The listing is current, so a match still running is for a text or a
+      -- revision gone by (a key typed and undone while it ran): it is no
+      -- longer in flight, so the reconciler cancels its job and its
+      -- delivery, if it was already on its way, lists nothing.
+      if candidates.matching.isSome then
+        return (state.replaceCandidates { candidates with matching := none }, some pattern, none)
       return (state, some pattern, none)
     if candidates.matchableSize ≤ inlineMatches then
       let listing ← candidates.listing pattern (matching.styleFor candidates.category)

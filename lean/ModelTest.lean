@@ -21197,7 +21197,9 @@ def filteredSource : Completion.Source :=
 - The test scheme's self-insert inserts its argument at its target's
   cursors.
 - `still` does nothing, and `edit-then-fail` inserts `x` at its target's
-  cursors and is then refused. -/
+  cursors and is then refused.
+- `delete-backward` is the minibuffer's command that deletes the character
+  before its cursor (`Minibuffer.deleteBackwardCommand`). -/
 def candidateCommands : List (String × Dispatched) :=
   let asks (initial : String) (sources : List Completion.SourceRef) : Dispatched := fun _ => do
     discard <| prompt pickLabel pickContinuation initial sources
@@ -21236,7 +21238,10 @@ def candidateCommands : List (String × Dispatched) :=
       call.target.insertAtSelections text
       return none),
     ("still", fun _ => return none),
-    ("edit-then-fail", failingAfter fun call => call.target.insertAtSelections "x")]
+    ("edit-then-fail", failingAfter fun call => call.target.insertAtSelections "x"),
+    ("delete-backward", fun call => do
+      Minibuffer.deleteBackwardCommand call
+      return none)]
 
 /-- What a step of the candidate checks is handed: one keymap, the same for
 every view, the minibuffer's among them, that binds a key sequence under
@@ -21252,7 +21257,7 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
       ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"), ("C-c 5", invoke "ask-filtered"),
       ("C-c 7", invoke "ask-category"), ("C-c 6", invoke "ask-other"),
       ("C-c 8", invoke "ask-only-filtered"), ("C-c l", invoke "ask-later"),
-      ("C-c t", invoke "ask-echo-later")]
+      ("C-c t", invoke "ask-echo-later"), ("C-c b", invoke "delete-backward")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -22255,6 +22260,57 @@ def laterLoopChecks : List Check :=
                   deliveredStep.map (·.spawns.size) == some 1 &&
                   cost counting "C-c a w" == cost plain "C-c p w" + 1
           | _, _, _ => false },
+    { name :=
+        "over the inline limit, a key undone while the match for it runs leaves the listing it had, current again: the undoing step cancels that match and spawns none, the driver holds no job, a choice made then stays through the match's delivery, even one that raced the cancel, and that delivery spawns nothing"
+      run :=
+        pure <|
+          match smallLimitDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c a")
+            match asked.pending[0]? with
+            | none => false
+            | some first =>
+              let (opened, _) := asked.finish first.id
+              let (typed, _) := fedTo opened (presses "w")
+              match typed.pending[0]? with
+              | none => false
+              | some second =>
+                let (listed, _) := typed.finish second.id
+                let (more, _) := fedTo listed (presses "q")
+                match more.pending[0]?, more.loop.state.minibufferView? with
+                | some third, some view =>
+                  let (undone, undoSteps) := fedTo more (presses "C-c b")
+                  let chosen := chose undone [.next]
+                  let (delivered, deliveredStep) := chosen.finish third.id
+                  -- A delivery that was already on its way when the cancel
+                  -- came.
+                  let raced :=
+                    match third.outcome with
+                    | .finished command =>
+                      some
+                          (chosen.stepped
+                            (chosen.loop.deliver chosen.handed s!"job {third.id} {third.name}"
+                              command))
+                    | _ => none
+                  let kept (driver : TestDriver) : Bool :=
+                    (candidatesOf driver).map (·.listedFor) == some (some "w") &&
+                      (candidatesOf driver).map (·.listed) == some (pickListed "w").listed &&
+                      chosenText driver == chosenText chosen
+                  minibufferText more == some "wq" &&
+                    (candidatesOf more).map (·.listedFor) == some (some "w") &&
+                    minibufferText undone == some "w" &&
+                    (lastStep undoSteps).map (·.spawns.size) == some 0 &&
+                    (lastStep undoSteps).map (·.cancels.contains (Loop.matchKey view)) ==
+                      some true &&
+                    heldJobs undone == #[] &&
+                    (chosenText chosen).isSome &&
+                    kept delivered &&
+                    deliveredStep.all (·.spawns.isEmpty) &&
+                    raced.any (fun (racedDriver, racedStep) =>
+                      kept racedDriver &&
+                        racedStep.toOption.any (·.spawns.isEmpty))
+                | _, _ => false },
     { name :=
         "a match that fails does not freeze the listing: its delivery says `completion-match: fuzzy: ` and why in the echo area, the listing stays empty and its scene spawns nothing; a key typed once the matcher answers again spawns a new match, whose delivery lists the fuzzy model's order for the typed text"
       run :=
