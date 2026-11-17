@@ -2763,6 +2763,17 @@ def excerptProperties : List Property :=
         return made && replaced && dropped && marked && kept && shrunk && (← text.revision) == 4 &&
             (← text.changesSince 3) == ⟨3, 4, #[]⟩ },
     { name :=
+        "replacing the list after a source moved catches up first, one revision, then replaces it, a second, keeping the moved excerpt with its anchors where they moved to"
+      holds := do
+        let (one, two, text) ← excerpted
+        one.insert 0 "zero\n"
+        text.setExcerpts #[⟨one, 9, 13⟩, ⟨two, 6, 11⟩]
+        return (← text.read) == "two\n\nbeta\n" && (← text.revision) == 3 &&
+            (← text.changesSince 1) ==
+              ⟨1, 3, #[⟨span 4 11 (1, 0) (3, 0), span 4 10 (1, 0) (3, 0)⟩]⟩ &&
+            (← one.marker ⟨one, 0⟩) == anchorAt 9 .before &&
+            (← one.marker ⟨one, 1⟩) == anchorAt 13 .after },
+    { name :=
         "an insert, a delete, a transaction, an inverse, an edit script and a trace of an excerpt text are refused with excerpted, first, change nothing and catch nothing up"
       holds := do
         let (one, _, text) ← excerpted

@@ -1025,6 +1025,49 @@ mod tests {
     }
 
     #[test]
+    fn a_new_list_after_a_source_moved_catches_up_then_keeps_the_moved_excerpt() {
+        let (mut one, mut two) = sources();
+        let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
+        let before = assembled.current().revision();
+        let old = assembled.current().to_string();
+
+        one.replace(0..0, "zero\n").expect("0 is a position");
+        let revision = excerpts
+            .set(
+                &mut assembled,
+                &[wanted(ONE, 9..13), wanted(TWO, 6..11)],
+                &mut [(ONE, &mut one), (TWO, &mut two)],
+            )
+            .expect("accepted");
+
+        // One revision catches up, one replaces the list.
+        assert_eq!(revision.get(), before.get() + 2);
+        let new = assembled.current().to_string();
+        assert_eq!(new, "two\n\nbeta\n");
+        let patch = assembled.changes_since(before).expect("the log holds it");
+        let mut made = String::new();
+        let mut kept_from = 0;
+        for edit in &patch.edits {
+            made.push_str(&old[kept_from..edit.old.start]);
+            made.push_str(&new[edit.new.start..edit.new.end]);
+            kept_from = edit.old.end;
+        }
+        made.push_str(&old[kept_from..]);
+        assert_eq!(made, new);
+        // The moved excerpt was kept with its anchors, 0 and 1 of the first
+        // source, at its caught-up range.
+        assert_eq!(
+            one.marker(MarkerId::new(0)),
+            Some(&Marker::Anchor(Anchor::new(9, Bias::Before)))
+        );
+        assert_eq!(
+            one.marker(MarkerId::new(1)),
+            Some(&Marker::Anchor(Anchor::new(13, Bias::After)))
+        );
+        assert_eq!(source_ranges(&excerpts), [9..13, 6..11]);
+    }
+
+    #[test]
     fn an_assembled_text_written_behind_the_lists_back_is_refused() {
         let (mut one, mut two) = sources();
         let (mut excerpts, mut assembled) = made(&mut one, &mut two, &rows());
