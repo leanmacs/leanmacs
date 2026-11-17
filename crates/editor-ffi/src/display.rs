@@ -48,7 +48,7 @@
 //! text ([`crate::snapshot`]): a document's snapshots share their
 //! document's key, and layout pulls the document's patches through the
 //! snapshot's source, which is its changes port
-//! ([`Source`](crate::snapshot::Source)), to move what it kept. A snapshot
+//! ([`Source`]), to move what it kept. A snapshot
 //! with no source is never moved, only laid out again.
 //!
 //! **The queries** answer in words ([`crate::log::RawWords`]), with a status
