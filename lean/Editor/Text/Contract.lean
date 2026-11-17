@@ -265,16 +265,18 @@ def snapshotProperties : List Property :=
         let release ← refusedWith .noSuchSnapshot never.release
         return before && read && ask && release && (← taken.read) == "a" }]
 
-/-- The properties of rows, points and positions. -/
-def positionProperties : List Property :=
+/-- The properties of rows, points and positions. Every one only reads a text, made by `make`, so they
+run over any text of the contents asked for: a plain text and an excerpt
+text. -/
+def positionPropertiesOver (make : String → TextM TextId) : List Property :=
   [{
       name :=
         "an empty text has one row, a text that ends in a line feed has an empty last row, and a carriage return alone starts no row",
       holds := do
-        let empty ← createText ""
-        let ended ← createText "a\n"
-        let alone ← createText "a\rb"
-        let paired ← createText "a\r\nb"
+        let empty ← make ""
+        let ended ← make "a\n"
+        let alone ← make "a\rb"
+        let paired ← make "a\r\nb"
         return (← empty.rowCount) == 1 && (← empty.pointOf 0) == ⟨0, 0⟩ &&
             (← ended.rowCount) == 2 &&
             (← ended.pointOf 2) == ⟨1, 0⟩ &&
@@ -286,7 +288,7 @@ def positionProperties : List Property :=
     { name :=
         "the point of every offset of a text is the one in a table written out by hand, in bytes, in UTF-16 and in cells, and an offset inside a character or past the end is refused"
       holds := do
-        let text ← createText rows
+        let text ← make rows
         let mut held := (← text.byteLength) == 20 && (← text.rowCount) == 3
         -- To one past the end, which is not a position either.
         for offset in [0:22] do
@@ -307,7 +309,7 @@ def positionProperties : List Property :=
       holds := do
         let mut held := true
         for contents in [rows, "", "a\n", "a\r\nb", "\n\n", "héllo wörld", escaped] do
-          let text ← createText contents
+          let text ← make contents
           let snapshot ← text.snapshot
           for source in [TextSource.text text, TextSource.snapshot snapshot] do
             for unit in [ColumnUnit.bytes, ColumnUnit.utf16, ColumnUnit.cells] do
@@ -323,7 +325,7 @@ def positionProperties : List Property :=
     { name :=
         "a point past the end of its row, in a row the text does not have, inside a character or between the two UTF-16 units of one is refused"
       holds := do
-        let text ← createText rows
+        let text ← make rows
         -- The first row is seven bytes and six units long. The column just
         -- past its last character is the position before its line feed; one
         -- more is not carried into the next row.
@@ -341,7 +343,7 @@ def positionProperties : List Property :=
     -- implementation that converted without looking would answer.
     { name := "an offset, a row or a column that no machine word holds is refused"
       holds := do
-        let text ← createText rows
+        let text ← make rows
         let huge := 2 ^ 64 + 1
         let mut held := true
         for unit in [ColumnUnit.bytes, ColumnUnit.utf16, ColumnUnit.cells] do
@@ -357,7 +359,7 @@ def positionProperties : List Property :=
         -- 1. The carriage return, where the content ends, is at column 2.
         -- The line break's cell starts there, so the position between its
         -- two bytes has three cells before it. The row has no column 4.
-        let text ← createText "ab\r\ncd"
+        let text ← make "ab\r\ncd"
         let atReturn := (← text.offsetOf ⟨0, 2⟩ .cells) == 2 && (← text.pointOf 2 .cells) == ⟨0, 2⟩
         let between := (← text.offsetOf ⟨0, 3⟩ .cells) == 3 && (← text.pointOf 3 .cells) == ⟨0, 3⟩
         let past ← refusedWith .badPosition (discard <| text.offsetOf ⟨0, 4⟩ .cells)
@@ -365,15 +367,15 @@ def positionProperties : List Property :=
         -- With a line feed alone the column past the content is the row's
         -- last, and a carriage return with no line feed is a cell of the
         -- content.
-        let alone ← createText "ab\ncd"
+        let alone ← make "ab\ncd"
         let lineFeed := (← alone.offsetOf ⟨0, 2⟩ .cells) == 2
         let pastLineFeed ← refusedWith .badPosition (discard <| alone.offsetOf ⟨0, 3⟩ .cells)
-        let bare ← createText "a\rb"
+        let bare ← make "a\rb"
         let bareReturn :=
           (← bare.pointOf 2 .cells) == ⟨0, 2⟩ && (← bare.offsetOf ⟨0, 3⟩ .cells) == 3
         -- A character of several bytes is one cell, and a letter and a
         -- combining mark after it are two.
-        let wide ← createText "aé😀éb"
+        let wide ← make "aé😀éb"
         let counted :=
           (← wide.pointOf 7 .cells) == ⟨0, 3⟩ && (← wide.pointOf 8 .cells) == ⟨0, 4⟩ &&
             (← wide.pointOf 10 .cells) == ⟨0, 5⟩ &&
@@ -383,7 +385,7 @@ def positionProperties : List Property :=
     { name :=
         "the character a raw byte is kept as is one character: four bytes of the text and two UTF-16 units"
       holds := do
-        let text ← createText escaped
+        let text ← make escaped
         let inside ← refusedWith .badPosition (discard <| text.pointOf 3)
         let betweenUnits ← refusedWith .badPosition (discard <| text.offsetOf ⟨0, 2⟩ .utf16)
         return (← text.read) == escaped && (← text.byteLength) == 6 &&
@@ -392,6 +394,10 @@ def positionProperties : List Property :=
             (← text.offsetOf ⟨0, 3⟩ .utf16) == 5 &&
             inside &&
             betweenUnits }]
+
+/-- The properties of rows, points and positions. -/
+def positionProperties : List Property :=
+  positionPropertiesOver createText
 
 /-- The properties of releasing a text or a snapshot. -/
 def releaseProperties : List Property :=
@@ -1163,18 +1169,19 @@ def markerProperties : List Property :=
             released }]
 
 /-- What the selection of shape `shape` with `ranges`, each an anchor and a
-head, covers in a new text holding `initial`: each extent as its start and
-its stop. -/
-def covered (initial : String) (shape : Shape) (ranges : Array (Nat × Nat)) :
-    TextM (Array (Nat × Nat)) := do
-  let text ← createText initial
+head, covers in a new text holding `initial`, made by `make`: each extent as
+its start and its stop. -/
+def covered (make : String → TextM TextId) (initial : String) (shape : Shape)
+    (ranges : Array (Nat × Nat)) : TextM (Array (Nat × Nat)) := do
+  let text ← make initial
   let extents ← text.extents { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, shape }
   return extents.map fun extent => (extent.start, extent.stop)
 
 /-- What the normal-state cursor on the character at `offset` covers in a new
-text holding `initial`: an inclusive range with equal ends. -/
-def cursorCovers (initial : String) (offset : Nat) : TextM (Array (Nat × Nat)) :=
-  covered initial .inclusive #[(offset, offset)]
+text holding `initial`, made by `make`: an inclusive range with equal ends. -/
+def cursorCovers (make : String → TextM TextId) (initial : String) (offset : Nat) :
+    TextM (Array (Nat × Nat)) :=
+  covered make initial .inclusive #[(offset, offset)]
 
 /-- Whether asking `text` what the selection of shape `shape` with `ranges`
 and `primary` covers is refused with `badSelection`. -/
@@ -1184,54 +1191,56 @@ def extentsRefused (text : TextId) (shape : Shape) (ranges : Array (Nat × Nat))
     (discard <|
       text.extents { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, primary, shape })
 
-/-- The properties of what a selection covers. -/
-def extentProperties : List Property :=
+/-- The properties of what a selection covers. Every one only reads a text, made by `make`, so they
+run over any text of the contents asked for: a plain text and an excerpt
+text. -/
+def extentPropertiesOver (make : String → TextM TextId) : List Property :=
   [{
       name :=
         "a cursor on the last character of a line covers it and not the line break, with a line feed and with a carriage return and a line feed",
       holds := do
-        let lineFeed ← cursorCovers "ab\ncd" 1
-        let both ← cursorCovers "ab\r\ncd" 1
-        let lastLine ← cursorCovers "ab\ncd" 4
+        let lineFeed ← cursorCovers make "ab\ncd" 1
+        let both ← cursorCovers make "ab\r\ncd" 1
+        let lastLine ← cursorCovers make "ab\ncd" 4
         return lineFeed == #[(1, 2)] && both == #[(1, 2)] && lastLine == #[(4, 5)] },
     { name :=
         "a cursor on an empty line covers its line break, and one on a line break covers all of it"
       holds := do
-        let empty ← cursorCovers "a\n\nb" 2
-        let emptyBoth ← cursorCovers "a\r\n\r\nb" 3
-        let onLineFeed ← cursorCovers "ab\ncd" 2
-        let onBoth ← cursorCovers "ab\r\ncd" 2
+        let empty ← cursorCovers make "a\n\nb" 2
+        let emptyBoth ← cursorCovers make "a\r\n\r\nb" 3
+        let onLineFeed ← cursorCovers make "ab\ncd" 2
+        let onBoth ← cursorCovers make "ab\r\ncd" 2
         return empty == #[(2, 3)] && emptyBoth == #[(3, 5)] && onLineFeed == #[(2, 3)] &&
             onBoth == #[(2, 4)] },
     { name :=
         "a cursor at the end of the text covers nothing: in an empty text, after the last character, and on the empty last row"
       holds := do
-        let emptyText ← cursorCovers "" 0
-        let afterLast ← cursorCovers "ab" 2
-        let lastRow ← cursorCovers "ab\n" 3
-        let lastRowBoth ← cursorCovers "ab\r\n" 4
+        let emptyText ← cursorCovers make "" 0
+        let afterLast ← cursorCovers make "ab" 2
+        let lastRow ← cursorCovers make "ab\n" 3
+        let lastRowBoth ← cursorCovers make "ab\r\n" 4
         return emptyText == #[(0, 0)] && afterLast == #[(2, 2)] && lastRow == #[(3, 3)] &&
             lastRowBoth == #[(4, 4)] },
     { name := "a cursor on a character of several bytes covers all of them"
       holds := do
-        let four ← cursorCovers "a😀b" 1
-        let two ← cursorCovers "aéb" 1
-        let escape ← cursorCovers escaped 1
+        let four ← cursorCovers make "a😀b" 1
+        let two ← cursorCovers make "aéb" 1
+        let escape ← cursorCovers make escaped 1
         return four == #[(1, 5)] && two == #[(1, 3)] && escape == #[(1, 5)] },
     { name :=
         "an exclusive range covers from its lower end up to its higher, and an inclusive one through the character at its higher, whichever way each points"
       holds := do
-        let exclusive ← covered rows .exclusive #[(1, 5)]
-        let exclusiveBackward ← covered rows .exclusive #[(5, 1)]
-        let bar ← covered rows .exclusive #[(3, 3)]
-        let inclusive ← covered rows .inclusive #[(1, 5)]
-        let inclusiveBackward ← covered rows .inclusive #[(5, 1)]
+        let exclusive ← covered make rows .exclusive #[(1, 5)]
+        let exclusiveBackward ← covered make rows .exclusive #[(5, 1)]
+        let bar ← covered make rows .exclusive #[(3, 3)]
+        let inclusive ← covered make rows .inclusive #[(1, 5)]
+        let inclusiveBackward ← covered make rows .inclusive #[(5, 1)]
         -- Through "é", through the carriage return and its line feed,
         -- through the line feed alone, and through "😀".
-        let throughTwo ← covered rows .inclusive #[(0, 1)]
-        let throughBreak ← covered rows .inclusive #[(0, 6)]
-        let throughLineFeed ← covered rows .inclusive #[(0, 7)]
-        let throughFour ← covered rows .inclusive #[(15, 13)]
+        let throughTwo ← covered make rows .inclusive #[(0, 1)]
+        let throughBreak ← covered make rows .inclusive #[(0, 6)]
+        let throughLineFeed ← covered make rows .inclusive #[(0, 7)]
+        let throughFour ← covered make rows .inclusive #[(15, 13)]
         return exclusive == #[(1, 5)] && exclusiveBackward == #[(1, 5)] && bar == #[(3, 3)] &&
             inclusive == #[(1, 6)] &&
             inclusiveBackward == #[(1, 6)] &&
@@ -1242,16 +1251,16 @@ def extentProperties : List Property :=
     { name :=
         "a line-wise range covers its rows and the line feed of the last: one row, several, an empty row, a row that ends in a carriage return and a line feed, and a last row with no line feed"
       holds := do
-        let one ← covered rows .line #[(9, 9)]
-        let oneWide ← covered rows .line #[(8, 14)]
-        let several ← covered rows .line #[(3, 11)]
-        let severalBackward ← covered rows .line #[(11, 3)]
-        let withBoth ← covered rows .line #[(0, 0)]
-        let last ← covered rows .line #[(19, 19)]
-        let all ← covered rows .line #[(20, 0)]
-        let emptyRow ← covered "a\n\nb" .line #[(2, 2)]
-        let emptyLastRow ← covered "ab\n" .line #[(3, 3)]
-        let emptyText ← covered "" .line #[(0, 0)]
+        let one ← covered make rows .line #[(9, 9)]
+        let oneWide ← covered make rows .line #[(8, 14)]
+        let several ← covered make rows .line #[(3, 11)]
+        let severalBackward ← covered make rows .line #[(11, 3)]
+        let withBoth ← covered make rows .line #[(0, 0)]
+        let last ← covered make rows .line #[(19, 19)]
+        let all ← covered make rows .line #[(20, 0)]
+        let emptyRow ← covered make "a\n\nb" .line #[(2, 2)]
+        let emptyLastRow ← covered make "ab\n" .line #[(3, 3)]
+        let emptyText ← covered make "" .line #[(0, 0)]
         return one == #[(8, 15)] && oneWide == #[(8, 15)] && several == #[(0, 15)] &&
             severalBackward == #[(0, 15)] &&
             withBoth == #[(0, 8)] &&
@@ -1264,20 +1273,20 @@ def extentProperties : List Property :=
         "a block covers the columns between its corners on each of its rows, counted in cells and cut off at each row's content"
       holds := do
         -- Columns 1 and 2 of three rows, the second too short for either.
-        let block ← covered "abcd\nx\nabcd" .block #[(1, 9)]
-        let backward ← covered "abcd\nx\nabcd" .block #[(9, 1)]
-        let otherCorners ← covered "abcd\nx\nabcd" .block #[(2, 8)]
+        let block ← covered make "abcd\nx\nabcd" .block #[(1, 9)]
+        let backward ← covered make "abcd\nx\nabcd" .block #[(9, 1)]
+        let otherCorners ← covered make "abcd\nx\nabcd" .block #[(2, 8)]
         -- Columns 1 to 3, and a second row with only columns 0 and 1.
-        let cutOff ← covered "abcde\nxy\nabcde" .block #[(1, 12)]
+        let cutOff ← covered make "abcde\nxy\nabcde" .block #[(1, 12)]
         -- Rows that end in a carriage return and a line feed.
-        let withBoth ← covered "abcd\r\nxy\r\nabcd" .block #[(1, 12)]
+        let withBoth ← covered make "abcd\r\nxy\r\nabcd" .block #[(1, 12)]
         -- "é" is two bytes and one column.
-        let twoBytes ← covered "aéb\nabc" .block #[(1, 7)]
+        let twoBytes ← covered make "aéb\nabc" .block #[(1, 7)]
         -- A corner on a line break is past its row's content.
-        let onBreak ← covered "ab\r\nabcd" .block #[(2, 4)]
-        let emptyRow ← covered "ab\n\nab" .block #[(0, 5)]
-        let oneCell ← covered "abcde" .block #[(2, 2)]
-        let emptyText ← covered "" .block #[(0, 0)]
+        let onBreak ← covered make "ab\r\nabcd" .block #[(2, 4)]
+        let emptyRow ← covered make "ab\n\nab" .block #[(0, 5)]
+        let oneCell ← covered make "abcde" .block #[(2, 2)]
+        let emptyText ← covered make "" .block #[(0, 0)]
         return block == #[(1, 3), (6, 6), (8, 10)] && backward == block && otherCorners == block &&
             cutOff == #[(1, 4), (7, 8), (10, 13)] &&
             withBoth == #[(1, 3), (7, 8), (11, 13)] &&
@@ -1289,15 +1298,15 @@ def extentProperties : List Property :=
     { name :=
         "the extents of several ranges come back in order, those that overlap are one, and those that only touch stay two"
       holds := do
-        let inOrder ← covered "abcdef" .inclusive #[(4, 4), (0, 1)]
-        let touching ← covered "abcdef" .inclusive #[(0, 1), (2, 3)]
-        let rowsApart ← covered "ab\ncd\nef" .line #[(7, 7), (0, 0)]
+        let inOrder ← covered make "abcdef" .inclusive #[(4, 4), (0, 1)]
+        let touching ← covered make "abcdef" .inclusive #[(0, 1), (2, 3)]
+        let rowsApart ← covered make "ab\ncd\nef" .line #[(7, 7), (0, 0)]
         -- Two line-wise ranges on one row.
-        let oneRow ← covered "abcd\nef" .line #[(0, 0), (2, 3)]
+        let oneRow ← covered make "abcd\nef" .line #[(0, 0), (2, 3)]
         -- A second block inside the columns of the first, on its last row.
-        let blocks ← covered "abcdef\nabcdef" .block #[(4, 8), (10, 10)]
+        let blocks ← covered make "abcdef\nabcdef" .block #[(4, 8), (10, 10)]
         -- An empty extent that touches another: the empty last row.
-        let emptyTouching ← covered "ab\n" .line #[(0, 0), (3, 3)]
+        let emptyTouching ← covered make "ab\n" .line #[(0, 0), (3, 3)]
         return inOrder == #[(0, 2), (4, 5)] && touching == #[(0, 2), (2, 4)] &&
             rowsApart == #[(0, 3), (6, 8)] &&
             oneRow == #[(0, 5)] &&
@@ -1306,7 +1315,7 @@ def extentProperties : List Property :=
     { name :=
         "a selection that is none, or has an end that is not a position, covers nothing that can be said, in every shape; an end of a range that merged into another is no end of it"
       holds := do
-        let text ← createText "héllo"
+        let text ← make "héllo"
         let refused ←
           [Shape.exclusive, .inclusive, .line, .block].allM fun shape => do
               let noRange ← extentsRefused text shape #[]
@@ -1318,9 +1327,13 @@ def extentProperties : List Property :=
               let huge ← extentsRefused text shape #[(0, 2 ^ 64 + 1)]
               return noRange && noPrimary && inside && cursorInside && pastEnd && huge
         let absent ← refusedWith .noSuchText (discard <| (⟨7⟩ : TextId).extents { ranges := #[] })
-        let merged ← covered "héllo" .exclusive #[(0, 6), (2, 1)]
-        return refused && absent && merged == #[(0, 6)] },
-    { name :=
+        let merged ← covered make "héllo" .exclusive #[(0, 6), (2, 1)]
+        return refused && absent && merged == #[(0, 6)] }]
+
+/-- The property of `extentPropertiesOver` that edits its text, which only a plain
+text takes. -/
+def extentPropertiesOfPlain : List Property :=
+  [{  name :=
         "a text and a snapshot of it answer alike, and a snapshot goes on answering for the text it holds"
       holds := do
         let text ← createText rows
@@ -1341,6 +1354,10 @@ def extentProperties : List Property :=
             (← before.extents { ranges := #[⟨1, 19⟩], shape := .block }) ==
               -- Column 1 of each row: "é", "ö" and "x".
               #[extent 1 3, extent 9 11, extent 19 20] }]
+
+/-- The properties of what a selection covers. -/
+def extentProperties : List Property :=
+  extentPropertiesOver createText ++ extentPropertiesOfPlain
 
 /-- Whether applying the inverse of the run from `first` to `last` to `text`
 is refused with `error`. -/
@@ -1788,24 +1805,26 @@ def copyProperties : List Property :=
         return never && gone && neverTaken && goneSnapshot && next.index == released.index + 1 &&
             (← next.read) == "next" }]
 
-/-- The properties of reading a part of a text: one row, and a range. -/
-def readProperties : List Property :=
+/-- The properties of reading a part of a text: one row, and a range. Every one only reads a text, made by `make`, so they
+run over any text of the contents asked for: a plain text and an excerpt
+text. -/
+def readPropertiesOver (make : String → TextM TextId) : List Property :=
   [{
       name :=
         "a row is read as its content, without its line break: without its line feed and without the carriage return before that line feed, with an empty row and the empty last row read as nothing and a carriage return alone kept",
       holds := do
-        let text ← createText rows
+        let text ← make rows
         let three :=
           (← text.rowContent 0) == "héllo" && (← text.rowContent 1) == "wörld" &&
             (← text.rowContent 2) == "😀x"
         -- Rows: "a", an empty one, "b", and the empty last row.
-        let gaps ← createText "a\n\nb\n"
+        let gaps ← make "a\n\nb\n"
         let empty :=
           (← gaps.rowContent 0) == "a" && (← gaps.rowContent 1) == "" &&
             (← gaps.rowContent 2) == "b" &&
             (← gaps.rowContent 3) == ""
-        let alone ← createText "a\rb\r"
-        let nothing ← createText ""
+        let alone ← make "a\rb\r"
+        let nothing ← make ""
         return three && empty && (← alone.rowContent 0) == "a\rb\r" &&
             (← nothing.rowContent 0) == "" },
     -- Cut down to a 64-bit word, `2 ^ 64` is row 0 and `2 ^ 64 + 1` row 1:
@@ -1813,20 +1832,20 @@ def readProperties : List Property :=
     { name :=
         "a row the text does not have, and one no machine word holds, is refused as no position and reads nothing"
       holds := do
-        let text ← createText rows
+        let text ← make rows
         let snapshot ← text.snapshot
         let past ← refusedWith .badPosition (discard <| text.rowContent 3)
         let far ← refusedWith .badPosition (discard <| text.rowContent 99)
         let huge ← refusedWith .badPosition (discard <| text.rowContent (2 ^ 64))
         let hugeNext ← refusedWith .badPosition (discard <| text.rowContent (2 ^ 64 + 1))
         let ofSnapshot ← refusedWith .badPosition (discard <| snapshot.rowContent 3)
-        let empty ← createText ""
+        let empty ← make ""
         let none ← refusedWith .badPosition (discard <| empty.rowContent 1)
         return past && far && huge && hugeNext && ofSnapshot && none },
     { name :=
         "a range is read exactly: nothing for an empty one, the characters of several bytes and the line break in one, and the whole text, which is its contents"
       holds := do
-        let text ← createText rows
+        let text ← make rows
         let empty := (← text.slice 4 4) == "" && (← text.slice 20 20) == ""
         let across := (← text.slice 1 9) == "éllo\r\nw" && (← text.slice 15 20) == "😀x"
         let lineBreak := (← text.slice 6 8) == "\r\n" && (← text.slice 7 8) == "\n"
@@ -1838,7 +1857,7 @@ def readProperties : List Property :=
     { name :=
         "a range that is backwards, splits a character, runs past the end or that no machine word holds is refused as a bad range"
       holds := do
-        let text ← createText rows
+        let text ← make rows
         let snapshot ← text.snapshot
         let backwards ← refusedWith .badRange (discard <| text.slice 9 1)
         let splitStop ← refusedWith .badRange (discard <| text.slice 0 2)
@@ -1848,8 +1867,12 @@ def readProperties : List Property :=
         let hugeStart ← refusedWith .badRange (discard <| text.slice (2 ^ 64) 3)
         let ofSnapshot ← refusedWith .badRange (discard <| snapshot.slice 9 1)
         return backwards && splitStop && splitStart && pastEnd && hugeStop && hugeStart &&
-            ofSnapshot },
-    { name :=
+            ofSnapshot }]
+
+/-- The property of `readPropertiesOver` that edits its text, which only a plain
+text takes. -/
+def readPropertiesOfPlain : List Property :=
+  [{  name :=
         "a text and a snapshot of it read a row and a range alike, after an edit the snapshot still reads what it held, and a source that names nothing is refused"
       holds := do
         let text ← createText rows
@@ -1868,6 +1891,10 @@ def readProperties : List Property :=
         let noSnapshot ← refusedWith .noSuchSnapshot (discard <| (SnapshotId.mk 99).rowContent 0)
         let noSnapshotRange ← refusedWith .noSuchSnapshot (discard <| (SnapshotId.mk 99).slice 0 0)
         return alike && kept && moved && noText && noTextRange && noSnapshot && noSnapshotRange }]
+
+/-- The properties of reading a part of a text: one row, and a range. -/
+def readProperties : List Property :=
+  readPropertiesOver createText ++ readPropertiesOfPlain
 
 /-- Text of four rows, 30 bytes long, for the motions. The combining acute
 (U+0301) is two bytes and "😀" four.
@@ -1970,11 +1997,12 @@ def answersFrom (source : TextSource) (motion : Motion) (offsets : List Nat) : T
   offsets.mapM fun offset => source.ask (.motion motion offset)
 
 /-- Whether `motion` answers `answers` from the offsets from 0 on, one each,
-in a new text holding `initial`. For a text with no character of several
-bytes, those are its positions when there is one answer more than it has
-bytes. -/
-def answersIn (initial : String) (motion : Motion) (answers : List Nat) : TextM Bool := do
-  let text ← createText initial
+in a new text holding `initial`, made by `make`. For a text with no character
+of several bytes, those are its positions when there is one answer more than
+it has bytes. -/
+def answersIn (make : String → TextM TextId) (initial : String) (motion : Motion)
+    (answers : List Nat) : TextM Bool := do
+  let text ← make initial
   return answers.length == initial.utf8ByteSize + 1 &&
       (← answersFrom (.text text) motion (List.range answers.length)) == answers
 
@@ -1983,13 +2011,15 @@ def answersIn (initial : String) (motion : Motion) (answers : List Nat) : TextM 
 def motionRefused (source : TextSource) (motion : Motion) (offset : Nat) : TextM Bool :=
   refusedWith .badPosition (discard <| source.ask (.motion motion offset))
 
-/-- The properties of the motions: from a position to a position. -/
-def motionProperties : List Property :=
+/-- The properties of the motions: from a position to a position. Every one only reads a text, made by `make`, so they
+run over any text of the contents asked for: a plain text and an excerpt
+text. -/
+def motionPropertiesOver (make : String → TextM TextId) : List Property :=
   [{
       name :=
         "each motion by cells, lines, the text's ends and rows answers, from every position of a text, what a table written out by hand says",
       holds := do
-        let text ← createText lines
+        let text ← make lines
         let mut held := (← text.byteLength) == 30 && (← text.rowCount) == 4
         for (motion, answers) in lineAnswers do
           held :=
@@ -1999,7 +2029,7 @@ def motionProperties : List Property :=
     { name :=
         "each motion by words and by WORDs answers, from every position of a text, what a table written out by hand says: mid-word, at a word boundary, on an empty line, at the start and the end of the text, and beside a character of several bytes and a combining mark"
       holds := do
-        let text ← createText lines
+        let text ← make lines
         let mut held := wordAnswers.length == 8
         for (motion, answers) in wordAnswers do
           held :=
@@ -2033,14 +2063,14 @@ def motionProperties : List Property :=
               ("a_1-+b\x00c", .nextWordStart .word, [3, 3, 3, 5, 5, 6, 7, 8, 8]),
               ("a_1-+b\x00c", .nextWordStart .bigWord, [8, 8, 8, 8, 8, 8, 8, 8, 8])] :
             List (String × Motion × List Nat)) do
-          held := held && (← answersIn initial motion answers)
+          held := held && (← answersIn make initial motion answers)
         return held },
     { name :=
         "in small texts the motions answer as the rules say: an empty text, a text that is one line break, a line of blanks, empty lines, a carriage return alone, and a row that ends in a carriage return and a line feed"
       holds := do
         let mut held := true
         for motion in tabledMotions do
-          held := held && (← answersIn "" motion [0])
+          held := held && (← answersIn make "" motion [0])
         for (initial, motion, answers) in
           ([("\n", .lineEnd, [0, 1]), ("\n", .rowsDown 1 1, [1, 1]),
               ("a\n \t\n\nb\n", .lineFirstNonBlank, [0, 0, 4, 4, 4, 5, 6, 6, 8]),
@@ -2057,7 +2087,7 @@ def motionProperties : List Property :=
               ("ab\r\ncd", .rowsDown 0 9, [2, 2, 2, 2, 6, 6, 6]),
               ("ab\r\ncd", .lineEnd, [2, 2, 2, 2, 6, 6, 6])] :
             List (String × Motion × List Nat)) do
-          held := held && (← answersIn initial motion answers)
+          held := held && (← answersIn make initial motion answers)
         return held },
     { name :=
         "from every position of a text the next cell is where what an inclusive cursor covers stops, the line start is the offset of column 0 of the position's row and its own line start, the row read is the range from the line start to the line end, and no rows away at the position's own column in cells is the position, or the end of its row's content when it is past that"
@@ -2065,7 +2095,7 @@ def motionProperties : List Property :=
         let mut held := true
         for contents in
           [lines, rows, "", "a\n", "a\r\nb", "\n\n", "héllo wörld", escaped, "a\n \t\n\nb\n"] do
-          let text ← createText contents
+          let text ← make contents
           let source := TextSource.text text
           for offset in [0:contents.utf8ByteSize + 1] do
             if let some point← pointOf? source .bytes offset then
@@ -2088,7 +2118,7 @@ def motionProperties : List Property :=
     { name :=
         "a motion from an offset inside a character, past the end or that no machine word holds is refused as no position, whichever motion it is, of a text and of a snapshot; a count and a column that no machine word holds are answered as the largest are"
       holds := do
-        let text ← createText lines
+        let text ← make lines
         let snapshot ← text.snapshot
         let mut refused := true
         for source in [TextSource.text text, TextSource.snapshot snapshot] do
@@ -2100,8 +2130,12 @@ def motionProperties : List Property :=
         let farDown := (← text.motion (.rowsDown huge 0) 0) == 27
         let farColumn := (← text.motion (.rowsDown 0 huge) 0) == 10
         let farUp := (← text.motion (.rowsUp (2 ^ 64) (2 ^ 64)) 30) == 10
-        return refused && farDown && farColumn && farUp },
-    { name :=
+        return refused && farDown && farColumn && farUp }]
+
+/-- The property of `motionPropertiesOver` that edits its text, which only a plain
+text takes. -/
+def motionPropertiesOfPlain : List Property :=
+  [{  name :=
         "a text and a snapshot of it answer every motion alike, after an edit the snapshot still answers as it did, and a source that names nothing is refused before the offset is looked at"
       holds := do
         let text ← createText lines
@@ -2118,6 +2152,10 @@ def motionProperties : List Property :=
         let noSnapshot ←
           refusedWith .noSuchSnapshot (discard <| (SnapshotId.mk 99).motion .nextCell 99)
         return alike && kept && moved && noText && noSnapshot }]
+
+/-- The properties of the motions: from a position to a position. -/
+def motionProperties : List Property :=
+  motionPropertiesOver createText ++ motionPropertiesOfPlain
 
 /-- A case of a search: the text, the pattern, the direction, the offset
 searched from, and what is answered. -/
@@ -2171,14 +2209,16 @@ def matchesAnswers : List (String × String × Nat × Nat × Array Extent) :=
 
 /-- The properties of the two search questions ("Search", in the rules of
 the port), all of literal patterns, which both the model and the library
-answer. -/
-def searchProperties : List Property :=
+answer. Every one only reads a text, made by `make`, so they
+run over any text of the contents asked for: a plain text and an excerpt
+text. -/
+def searchPropertiesOver (make : String → TextM TextId) : List Property :=
   [{  name :=
         "a search answers, for a literal pattern, the match the rule of the port says: forward the first that starts after the offset and back the last that starts before it, walking each row from its start, wrapping to the text's first or last, case kept, words by the text's class"
       holds := do
         let mut held := true
         for (contents, pattern, forward, offset, answer) in searchAnswers do
-          let text ← createText contents
+          let text ← make contents
           let snapshot ← text.snapshot
           held :=
             held && (← text.search pattern forward offset) == answer &&
@@ -2189,7 +2229,7 @@ def searchProperties : List Property :=
       holds := do
         let mut held := true
         for (contents, pattern, start, stop, all) in matchesAnswers do
-          let text ← createText contents
+          let text ← make contents
           let snapshot ← text.snapshot
           held :=
             held && (← text.matches pattern start stop) == .ranges all &&
@@ -2198,13 +2238,19 @@ def searchProperties : List Property :=
     { name :=
         "a search is refused with badPosition for an offset that is not a position, and the matches with badRange for a range that is not two positions in order"
       holds := do
-        let text ← createText "héllo"
+        let text ← make "héllo"
         let inside ← refusedWith .badPosition (discard <| text.search "l" true 2)
         let past ← refusedWith .badPosition (discard <| text.search "l" false 9)
         let reversed ← refusedWith .badRange (discard <| text.matches "l" 3 1)
         let split ← refusedWith .badRange (discard <| text.matches "l" 0 2)
         let beyond ← refusedWith .badRange (discard <| text.matches "l" 0 9)
         return inside && past && reversed && split && beyond }]
+
+/-- The properties of the two search questions ("Search", in the rules of
+the port), all of literal patterns, which both the model and the library
+answer. -/
+def searchProperties : List Property :=
+  searchPropertiesOver createText
 
 /-- The text the bracket walk's cases are of: nested brackets of the three
 kinds, an escaped pair, a row that ends in a carriage return and a line
@@ -2323,12 +2369,14 @@ def quoteAnswers : List (String × Quote × Nat × Option Extent) :=
     ("é\"x\"", .double, 3, some ⟨2, 5⟩)]
 
 /-- The properties of the two questions of pairs ("Pairs", in the rules of
-the port). -/
-def pairProperties : List Property :=
+the port). Every one only reads a text, made by `make`, so they
+run over any text of the contents asked for: a plain text and an excerpt
+text. -/
+def pairPropertiesOver (make : String → TextM TextId) : List Property :=
   [{  name :=
         "the bracket walk answers what a table written out by hand says, for each kind, both sides, both directions and both escapednesses, across rows and through characters of several bytes"
       holds := do
-        let text ← createText bracketText
+        let text ← make bracketText
         let snapshot ← text.snapshot
         let mut held := true
         for (bracket, opening, forward, escaped, offset, answer) in bracketAnswers do
@@ -2341,7 +2389,7 @@ def pairProperties : List Property :=
       holds := do
         let mut held := true
         for (contents, bracket, forward, offset, answer) in quotedBracketAnswers do
-          let text ← createText contents
+          let text ← make contents
           let snapshot ← text.snapshot
           held :=
             held && (← text.unmatched bracket (!forward) forward false true offset) == answer &&
@@ -2352,7 +2400,7 @@ def pairProperties : List Property :=
       holds := do
         let mut held := true
         for contents in bracketText :: quotedBracketTexts do
-          let text ← createText contents
+          let text ← make contents
           let snapshot ← text.snapshot
           for offset in
             (List.range (contents.utf8ByteSize + 1)).filter fun offset =>
@@ -2383,7 +2431,7 @@ def pairProperties : List Property :=
       holds := do
         let mut held := true
         for (contents, quote, offset, answer) in quoteAnswers do
-          let text ← createText contents
+          let text ← make contents
           let snapshot ← text.snapshot
           held :=
             held && (← text.quoted quote offset) == answer &&
@@ -2392,8 +2440,8 @@ def pairProperties : List Property :=
     { name :=
         "neither walk reads past what it says: a quoted string never leaves its row, and the bracket walk never answers the position it starts from"
       holds := do
-        let across ← createText "\"a\nb\""
-        let pair ← createText "(a)"
+        let across ← make "\"a\nb\""
+        let pair ← make "(a)"
         return (← across.quoted .double 1) == none && (← across.quoted .double 3) == none &&
             (← pair.unmatched .round false true false false 0) == some 2 &&
             (← pair.unmatched .round false true false false 2) == none &&
@@ -2402,7 +2450,7 @@ def pairProperties : List Property :=
     { name :=
         "both walks are refused with badPosition inside a character of several bytes and past the end"
       holds := do
-        let text ← createText "(é)"
+        let text ← make "(é)"
         let inside ←
           refusedWith .badPosition (discard <| text.unmatched .round false true false true 2)
         let past ←
@@ -2410,6 +2458,11 @@ def pairProperties : List Property :=
         let quoteInside ← refusedWith .badPosition (discard <| text.quoted .double 2)
         let quotePast ← refusedWith .badPosition (discard <| text.quoted .double 5)
         return inside && past && quoteInside && quotePast }]
+
+/-- The properties of the two questions of pairs ("Pairs", in the rules of
+the port). -/
+def pairProperties : List Property :=
+  pairPropertiesOver createText
 
 /-- Applies `script` to `text` from `base`, taking its inserts from `source`,
 by `Origin.disk`, and returns whether it was refused with `error`. -/
@@ -2530,7 +2583,239 @@ def scriptProperties : List Property :=
         let revision ← text.applyScript 0 (.text source) #[.retain 2] .disk
         return revision == 1 && (← text.read) == "ab" }]
 
-/-- The properties every implementation of the text port has. -/
+/-- A new excerpt text holding `s`, to run the read-only properties over: `s`
+cut at its first line feed into the part before it and the part after, each
+an excerpt of a source of its own with bytes on each side of it
+(`"<<" ++ before ++ ">>"` and `"[" ++ after ++ "]"`), so the separator stands
+where the line feed was. With no line feed it is one excerpt of one source. -/
+def excerptOf (s : String) : TextM TextId := do
+  match s.splitOn "\n" with
+  | before :: after@(_ :: _) =>
+    let after := "\n".intercalate after
+    let first ← createText ("<<" ++ before ++ ">>")
+    let second ← createText ("[" ++ after ++ "]")
+    createExcerpts #[⟨first, 2, 2 + before.utf8ByteSize⟩, ⟨second, 1, 1 + after.utf8ByteSize⟩]
+  | _ =>
+    let source ← createText ("<<" ++ s ++ ">>")
+    createExcerpts #[⟨source, 2, 2 + s.utf8ByteSize⟩]
+
+/-- `properties` with " over an excerpt text" added to each name. -/
+def overExcerpts (properties : List Property) : List Property :=
+  properties.map fun property => { property with name := property.name ++ " over an excerpt text" }
+
+/-- The two sources of the excerpt properties, and an excerpt text of the
+second row of the first, `two\n` (4 to 8), and the first row of the second,
+`alpha\n` (0 to 6), which reads `two\n\nalpha\n`: 11 bytes, at revision 1. -/
+def excerpted : TextM (TextId × TextId × TextId) := do
+  let one ← createText "one\ntwo\nthree\n"
+  let two ← createText "alpha\nbeta\n"
+  let text ← createExcerpts #[⟨one, 4, 8⟩, ⟨two, 0, 6⟩]
+  return (one, two, text)
+
+/-- The properties of excerpt texts ("Excerpt texts", in the rules of the
+port). -/
+def excerptProperties : List Property :=
+  [{  name :=
+        "an excerpt text of ranges of two texts reads the ranges joined by one line feed, at revision 1; one of no ranges is empty, one of one range has no line feed, and an empty range and one at its source's end are kept"
+      holds := do
+        let (one, two, text) ← excerpted
+        let empty ← createExcerpts #[]
+        let single ← createExcerpts #[⟨two, 0, 5⟩]
+        let ends ← createExcerpts #[⟨one, 3, 3⟩, ⟨two, 11, 11⟩]
+        return (← text.read) == "two\n\nalpha\n" && (← text.revision) == 1 &&
+            (← text.rowCount) == 4 &&
+            (← text.rowContent 1) == "" &&
+            (← empty.read) == "" &&
+            (← empty.revision) == 1 &&
+            (← single.read) == "alpha" &&
+            (← ends.read) == "\n" },
+    { name :=
+        "making an excerpt text is refused with noSuchText, then excerpted, then badRange, and a refused one makes no text"
+      holds := do
+        let one ← createText "héllo"
+        let other ← createExcerpts #[⟨one, 0, 1⟩]
+        let gone ← createText "x"
+        gone.release
+        let noText ←
+          refusedWith .noSuchText (discard <| createExcerpts #[⟨other, 9, 0⟩, ⟨⟨99⟩, 0, 0⟩])
+        let released ← refusedWith .noSuchText (discard <| createExcerpts #[⟨gone, 0, 0⟩])
+        let excerpted ←
+          refusedWith .excerpted (discard <| createExcerpts #[⟨one, 9, 0⟩, ⟨other, 0, 0⟩])
+        let backwards ← refusedWith .badRange (discard <| createExcerpts #[⟨one, 3, 1⟩])
+        -- 2 is inside "é", 7 is past the end, and `2 ^ 64 + 1` is 1 cut
+        -- down to a word.
+        let inside ← refusedWith .badRange (discard <| createExcerpts #[⟨one, 0, 2⟩])
+        let past ← refusedWith .badRange (discard <| createExcerpts #[⟨one, 0, 7⟩])
+        let huge ← refusedWith .badRange (discard <| createExcerpts #[⟨one, 0, 2 ^ 64 + 1⟩])
+        let next ← createText "y"
+        return noText && released && excerpted && backwards && inside && past && huge &&
+            next == ⟨3⟩ },
+    { name :=
+        "replacing an excerpt text's list is refused with noSuchText, then notExcerpted, then as making one is, changes nothing and catches nothing up"
+      holds := do
+        let (one, _, text) ← excerpted
+        let noText ← refusedWith .noSuchText ((⟨99⟩ : TextId).setExcerpts #[])
+        let plain ← refusedWith .notExcerpted (one.setExcerpts #[⟨⟨99⟩, 0, 0⟩])
+        let noSource ← refusedWith .noSuchText (text.setExcerpts #[⟨text, 9, 0⟩, ⟨⟨99⟩, 0, 0⟩])
+        let excerpted ← refusedWith .excerpted (text.setExcerpts #[⟨one, 9, 0⟩, ⟨text, 0, 0⟩])
+        one.insert 5 "X"
+        let bad ← refusedWith .badRange (text.setExcerpts #[⟨one, 9, 0⟩])
+        one.insert 5 "Y"
+        return noText && plain && noSource && excerpted && bad &&
+            (← text.read) == "tYXwo\n\nalpha\n" &&
+            (← text.revision) == 2 },
+    { name :=
+        "an insert into a source before an excerpt moves its anchors: the excerpt text reads the same, one revision on, with no edit since"
+      holds := do
+        let (one, _, text) ← excerpted
+        one.insert 0 "zero\n"
+        return (← text.read) == "two\n\nalpha\n" && (← text.revision) == 2 &&
+            (← text.changesSince 1) == ⟨1, 2, #[]⟩ },
+    { name :=
+        "an insert into a source inside an excerpt is in the excerpt text's next read, snapshot and patch, and a snapshot taken before it still reads what it held"
+      holds := do
+        let (one, _, text) ← excerpted
+        let before ← text.snapshot
+        one.insert 5 "X"
+        let after ← text.snapshot
+        return (← text.read) == "tXwo\n\nalpha\n" && (← after.read) == "tXwo\n\nalpha\n" &&
+            (← before.read) == "two\n\nalpha\n" &&
+            (← text.motion .lineEnd 0) == 4 &&
+            (← text.changesSince 1) ==
+              ⟨1, 2, #[⟨span 1 1 (0, 1) (0, 1), span 1 2 (0, 1) (0, 2)⟩]⟩ },
+    { name :=
+        "text inserted at either end of an excerpt is inside it, a delete across its start cuts it, and deleting all of it leaves it empty with its separator"
+      holds := do
+        let (one, _, text) ← excerpted
+        one.insert 4 "A"
+        one.insert 9 "B"
+        let ends := (← text.read) == "Atwo\nB\nalpha\n"
+        -- "e\nAt": two bytes before the excerpt and two of it.
+        one.delete 2 6
+        let cut := (← text.read) == "wo\nB\nalpha\n"
+        one.delete 1 7
+        let emptied := (← text.read) == "\nalpha\n"
+        return ends && cut && emptied && (← text.revision) == 4 },
+    { name :=
+        "edits to two sources between two requests are one revision of the excerpt text, whose patch holds an edit of each"
+      holds := do
+        let (one, two, text) ← excerpted
+        one.insert 7 "!"
+        one.insert 4 "A"
+        two.delete 0 1
+        two.insert 0 "A"
+        return (← text.read) == "Atwo!\n\nAlpha\n" && (← text.revision) == 2 &&
+            (← text.changesSince 1) ==
+              ⟨1, 2,
+                #[⟨span 0 0 (0, 0) (0, 0), span 0 1 (0, 0) (0, 1)⟩,
+                  ⟨span 3 3 (0, 3) (0, 3), span 4 5 (0, 4) (0, 5)⟩,
+                  ⟨span 5 6 (2, 0) (2, 1), span 7 8 (2, 0) (2, 1)⟩]⟩ },
+    { name :=
+        "an edit to a source outside every excerpt is still one revision of the excerpt text, with no edit, and a source whose log no longer reaches the revision read replaces its excerpt whole"
+      holds := do
+        let (one, two, text) ← excerpted
+        two.insert 11 "gamma"
+        let outside := (← text.revision) == 2 && (← text.changesSince 1) == ⟨1, 2, #[]⟩
+        one.insert 5 "X"
+        one.forget (← one.revision)
+        return outside && (← text.read) == "tXwo\n\nalpha\n" &&
+            (← text.changesSince 2) ==
+              ⟨2, 3, #[⟨span 0 4 (0, 0) (1, 0), span 0 5 (0, 0) (1, 0)⟩]⟩ },
+    { name :=
+        "an excerpt takes the next two marker ids of its source, start then end, as anchors before and after, and an excerpt whose anchors are given up is kept as it was"
+      holds := do
+        let (one, two, text) ← excerpted
+        let start := (← one.marker ⟨one, 0⟩) == anchorAt 4 .before
+        let stop := (← one.marker ⟨one, 1⟩) == anchorAt 8 .after
+        let next := (← two.mark (anchorAt 0 .before)) == ⟨two, 2⟩
+        one.unmark ⟨one, 0⟩
+        one.insert 5 "X"
+        return start && stop && next && (← text.read) == "two\n\nalpha\n" &&
+            (← text.revision) == 1 },
+    { name := "an anchor and a selection the excerpt text holds move through an edit of a source"
+      holds := do
+        let (one, two, text) ← excerpted
+        let anchor ← text.mark (anchorAt 5 .before)
+        let selection ← text.mark (selected .exclusive #[(1, 3)])
+        one.insert 4 "AB"
+        two.insert 6 "zzz"
+        return (← text.marker anchor) == anchorAt 7 .before &&
+            (← text.marker selection) == selected .exclusive #[(3, 5)] },
+    { name :=
+        "replacing the list reads the new ranges at one revision more, keeps the excerpts it starts and ends with out of its one edit, gives up the anchors of those dropped and marks the new ones"
+      holds := do
+        let one ← createText "one\ntwo\nthree\n"
+        let two ← createText "alpha\nbeta\n"
+        let text ← createExcerpts #[⟨one, 0, 3⟩, ⟨two, 0, 5⟩, ⟨one, 8, 13⟩]
+        let made := (← text.read) == "one\nalpha\nthree"
+        text.setExcerpts #[⟨one, 0, 3⟩, ⟨two, 6, 10⟩, ⟨one, 8, 13⟩]
+        let replaced :=
+          (← text.read) == "one\nbeta\nthree" && (← text.revision) == 2 &&
+            (← text.changesSince 1) == ⟨1, 2, #[⟨span 3 10 (0, 3) (2, 0), span 3 9 (0, 3) (2, 0)⟩]⟩
+        let dropped ← refusedWith .noSuchMarker (discard <| two.marker ⟨two, 0⟩)
+        let marked :=
+          (← two.marker ⟨two, 2⟩) == anchorAt 6 .before &&
+            (← two.marker ⟨two, 3⟩) == anchorAt 10 .after
+        let kept := (← one.marker ⟨one, 3⟩) == anchorAt 13 .after
+        text.setExcerpts #[⟨two, 0, 5⟩]
+        let shrunk := (← text.read) == "alpha" && (← text.revision) == 3
+        text.setExcerpts #[⟨two, 0, 5⟩]
+        return made && replaced && dropped && marked && kept && shrunk && (← text.revision) == 4 &&
+            (← text.changesSince 3) == ⟨3, 4, #[]⟩ },
+    { name :=
+        "an insert, a delete, a transaction, an inverse, an edit script and a trace of an excerpt text are refused with excerpted, first, change nothing and catch nothing up"
+      holds := do
+        let (one, _, text) ← excerpted
+        one.insert 5 "X"
+        let refused ←
+          [refusedWith .excerpted (text.insert 0 "x"), refusedWith .excerpted (text.delete 0 99),
+                  refusedWith .excerpted (discard <| text.apply (.replacing 11 0 0 "x")),
+                  refusedWith .excerpted
+                    (discard <| text.apply { changes := #[], before := some { ranges := #[] } }),
+                  refusedWith .excerpted (discard <| text.applyInverse 1 1),
+                  refusedWith .excerpted (discard <| text.applyInverse (2 ^ 64 + 1) 1),
+                  refusedWith .excerpted (discard <| text.applyScript 99 (.text one) #[] .disk),
+                  refusedWith .excerpted (discard <| text.trace 0 1),
+                  refusedWith .excerpted (discard <| text.trace 0 99)].allM
+              id
+        one.insert 5 "Y"
+        return refused && (← text.read) == "tYXwo\n\nalpha\n" && (← text.revision) == 2 },
+    { name :=
+        "an excerpt text's log can be forgotten and its inverses dropped, a copy of it is a plain text of its contents, and it is the source of an edit script"
+      holds := do
+        let (one, _, text) ← excerpted
+        one.insert 5 "X"
+        let copy ← text.copy
+        copy.insert 0 "!"
+        let copied := (← copy.read) == "!tXwo\n\nalpha\n" && (← copy.revision) == 1
+        text.forget 2
+        text.dropInverses 1 2
+        let forgotten ← refusedWith .forgotten (discard <| text.changesSince 1)
+        let target ← createText "tXwo\n"
+        one.insert 5 "Y"
+        let applied ←
+          target.applyScript 0 (.text text) #[.retain 1, .insert 1 1, .retain 4, .insert 6 7] .disk
+        return copied && forgotten && applied == 1 && (← target.read) == "tYXwo\n\nalpha\n" &&
+            (← text.revision) == 3 },
+    { name :=
+        "a source that is released is read as it was released, and releasing an excerpt text gives up its anchors in its sources"
+      holds := do
+        let (one, two, text) ← excerpted
+        one.insert 5 "X"
+        one.release
+        let kept := (← text.read) == "tXwo\n\nalpha\n" && (← text.revision) == 2
+        two.insert 0 "A"
+        let followed := (← text.read) == "tXwo\n\nAalpha\n" && (← text.revision) == 3
+        text.release
+        let gone ← refusedWith .noSuchMarker (discard <| two.marker ⟨two, 0⟩)
+        let goneEnd ← refusedWith .noSuchMarker (discard <| two.marker ⟨two, 1⟩)
+        let noText ← refusedWith .noSuchText (discard text.read)
+        return kept && followed && gone && goneEnd && noText &&
+            (← two.mark (anchorAt 0 .before)) == ⟨two, 2⟩ }]
+
+/-- The properties every implementation of the text port has: the read-only
+ones once over plain texts and once over excerpt texts of the same contents
+(`excerptOf`). -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
     releaseProperties ++
@@ -2545,7 +2830,14 @@ def properties : List Property :=
     motionProperties ++
     searchProperties ++
     pairProperties ++
-    scriptProperties
+    scriptProperties ++
+    overExcerpts
+      (positionPropertiesOver excerptOf ++ readPropertiesOver excerptOf ++
+        extentPropertiesOver excerptOf ++
+        motionPropertiesOver excerptOf ++
+        searchPropertiesOver excerptOf ++
+        pairPropertiesOver excerptOf) ++
+    excerptProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property

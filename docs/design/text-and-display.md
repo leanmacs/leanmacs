@@ -820,6 +820,10 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 | The file requests as data, and the model of the files a job reaches | `lean/Editor/File.lean`, `lean/Editor/File/Model.lean` |
 | The file requests in the job port, the runner's file port, its fake and its real implementation, and the file properties | `lean/Editor/Job.lean`, `lean/Editor/Job/` ([lean-runtime.md](lean-runtime.md)) |
 | The cases that cross the text port and the job port | `lean/Editor/File/Cases.lean` |
+| An excerpt text: the list, its anchors, catching up, replacing the list, and locating a position | `crates/editor-text/src/excerpt.rs` |
+| The properties of excerpt texts, against the ranges' strings and anchors mapped by hand | `crates/editor-text/tests/properties/excerpts.rs` |
+| An excerpt document as a handle: catching up on lock, the lock order, the refused edits | `crates/editor-ffi/src/excerpts.rs` |
+| Excerpt texts in the Lean port, the model's lending, and the contract over them | "Excerpt texts" in `lean/Editor/Text.lean`, `TextModel.onText` in `lean/Editor/Text/Model.lean`, `excerptOf` and `excerptProperties` in `lean/Editor/Text/Contract.lean` |
 
 ## The edit log
 
@@ -999,6 +1003,77 @@ reader over making the reader navigate to it.
 Excerpts are held by anchors into their source buffers, so they stay
 correct as the sources change. A source can be a file at a past revision
 (read-only), which is how a review shows code as it was when reviewed.
+
+### As built: the excerpt text
+
+Phase 1 of the excerpts roadmap built the text an excerpt buffer shows
+(`crates/editor-text/src/excerpt.rs`, the module docs of which have the
+rules; `crates/editor-ffi/src/excerpts.rs`; the text port's "Excerpt texts").
+Edits through it, its headers and its decorations are later phases.
+
+- **An assembled text, not a snapshot of pieces.** An excerpt text is a list
+  of excerpts and one plain `Text` only the list writes, holding the
+  excerpts' bytes. Every reader of a text takes one concrete snapshot, one
+  rope: layout's `TextRef`, the syntax service's `Latest`, search, the FFI's
+  snapshot handle, every motion, pair and extent walk, and the Lean model. A
+  snapshot made of the sources' snapshots would need a read trait over all of
+  them and a second walk for every motion across pieces, in the library and
+  in the model. The assembled rope copies only the excerpts' bytes (for a
+  review, hunks with their context: kilobytes), and after the first assembly
+  a catch-up costs what changed, not the sources' size. The list keeps, with
+  each excerpt, its source's snapshot at the revision it last read
+  (`Placed::snapshot`), so the assembled snapshot and the list are the
+  sources' snapshots plus the list, which is what the later phases map
+  positions and decorations against.
+- **The anchors.** Each excerpt is two markers its source holds: its start
+  with `Bias::Before` and its end with `Bias::After`, so text typed at
+  either end of an excerpt is in it. The source moves them at every
+  transaction, as it moves a cursor. They take the source's next marker ids.
+- **Catching up.** At every request that names the excerpt text (in the FFI,
+  whenever the document is locked), each source whose revision moved gives
+  its patch since the revision last read; each edit's old range is cut to
+  where the excerpt was, its new range to where the anchors are now, and the
+  cut edits of every excerpt are applied to the assembled text as one
+  transaction: one revision, one log entry, and its markers moved. When the
+  cut edits do not line up with the anchors, or the source's log was
+  forgotten past the revision read, the excerpt is replaced whole. The
+  assembled text keeps no inverse, and a list refuses an assembled text that
+  something else wrote.
+- **The separator** is one line feed between two excerpts, none at either
+  end. It is the least that keeps the end of one excerpt and the start of
+  the next two positions, which the next phase needs to send an insert at
+  either to the right source. When an excerpt is whole lines, as a review
+  hunk is, the separator is an empty row.
+- **Motions cross excerpt edges.** A motion is a question of a snapshot, and
+  stopping at hidden edges would make every walk consult them, in the
+  library and the model; a review buffer must be navigable with `j`, `k`,
+  `gg`, `G` and `n`, as Zed's multibuffer cursor is; and the separator's
+  empty row already stops `w`, `b`, `ge` and `}` as a paragraph break does.
+  Whether an operator may act across two excerpts is an edit question, for
+  the next phase.
+- **Replacing the list** is one transaction that keeps the excerpts the two
+  lists start and end with alike, with their anchors, and gives up the
+  anchors of those dropped. The FFI locks the sources of the list as it is
+  and as it will be, so a source dropped from the list gives its anchors up
+  even when the caller does not name it, and the document then holds only
+  the sources the new list names.
+- **Refused for now**: an edit, an inverse, an edit script and a trace of an
+  excerpt text, before it is caught up, so a refusal changes nothing; an
+  excerpt text as a source.
+- **The lock order** is the excerpt document's list, its text, then its
+  sources in ascending key order. An edit to a source takes only the
+  source's own lock, so two excerpt documents over the same sources never
+  wait for each other. An excerpt document holds its sources' texts
+  strongly: a source document that is freed is read as it was.
+- **The cost**: catching up after a one-byte insert in a megabyte source with
+  a kilobyte excerpt allocates a few kilobytes, nothing sized by the source
+  (`tests/snapshot_cost.rs`).
+- **In the Lean model** an excerpt text's slot among the texts is empty
+  between requests; a request that names it lends it its content, caught up
+  first, and takes it back, so a text's own requests are refused with
+  `excerpted` by the lookup alone and every theorem about plain texts stands
+  (`lean/Editor/Text/Model.lean`). The contract runs every read-only
+  property over plain texts and over excerpt texts of the same contents.
 
 ## Decorations
 

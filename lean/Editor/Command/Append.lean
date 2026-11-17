@@ -51,7 +51,7 @@ theorem append_spec (model : TextModel) (id : TextId) (content : TextContent) (s
         model.texts.setIfInBounds id.index
           (some { contents := content.contents ++ s, revision := content.revision + 1 }) ∧
       ((append id s).runModel model).2.snapshots = model.snapshots := by
-  simp [append, TextModel.handle, TextModel.edit, TextModel.changed, TextModel.lookup, live,
-    TextModel.splice_end]
+  simp [append, TextModel.handle, TextModel.onText, TextModel.edit, TextModel.changed,
+    TextModel.lookup, live, TextModel.splice_end]
 
 end Editor
