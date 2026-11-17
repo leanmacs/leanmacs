@@ -3014,6 +3014,48 @@ def listsAfter (lines : Array String) (label : String) (fields : List String) : 
         fields.toArray.map fun text => { text, face := Loop.candidateFace })
   lines.any fun line => line.startsWith "status " && after line == after status
 
+/-- The texts of `texts` that the library's matcher (`Fuzzy.real`) answers
+for `pattern`, in its order: what a prompt of the fuzzy style lists, so a
+check computes the library's order and never writes it out. -/
+def realOrder (pattern : String) (texts : Array String) : IO (List String) := do
+  let ranked ← Fuzzy.real (.rank pattern texts)
+  return (ranked.filterMap (texts[·]?)).toList
+
+/-- What compiled code hands the hosts of the checks of a source that
+answers later: the minibuffer's commands and its mode; `ask-later`, which
+asks `Pick: ` with a source that answers later from the job `later-pick`;
+and that job, which delivers `wq` and `edit`, sleeps 10 ms on the stage's
+clock, and delivers `rewrite` and `w`. -/
+def laterCompiled : Compiled :=
+  { minibufferCompiled with
+    commands :=
+      Minibuffer.commands ++
+        #[{ name := "ask-later"
+            action :=
+              .plain
+                (discard <|
+                  prompt "Pick: " { command := "picked" } ""
+                    [.given (.answeringLater "later" "pick" "later-pick")]) }]
+    jobs :=
+      #[{ name := "later-pick"
+          work :=
+            Completion.answering fun _ deliver => do
+              deliver #[.ofText "wq", .ofText "edit"]
+              sleep 10
+              deliver #[.ofText "rewrite", .ofText "w"] }] }
+
+/-- A chunk whose `setup` registers a source's job `echo`, which answers
+the text it is asked with, `!` after it; a source `echo` of the category
+`pick` that it answers, asked again 20 ms after the text changes; and
+`pick`, which asks `Pick: ` with that source by name. -/
+def echoSourceChunk : String :=
+  "def setup : SetupM Unit := do
+  sourceJob \"echo\" fun query deliver => deliver #[.ofText (query.text ++ \"!\")]
+  defineSource (.answeringLater \"echo\" \"pick\" \"echo\" (reask := .afterPause 20))
+  command \"pick\" (discard <| prompt \"Pick: \" { command := \"picked\" }
+    (sources := [.named \"echo\"]))
+"
+
 /-- The line of the minibuffer's view, view 1 in a frame of no size, showing
 `text` with its one cursor at `cursor`. -/
 def minibufferLine (text : String) (cursor : Nat) : String :=
@@ -3316,7 +3358,48 @@ def promptChecks (context : Context) : List Check :=
                 accepted.contains (statusOf 0 "mars.txt") &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           { minibufferCompiled with
-            commands := Minibuffer.commands ++ Buffers.commands, sources := Buffers.sources } }]
+            commands := Minibuffer.commands ++ Buffers.commands, sources := Buffers.sources } },
+    { name :=
+        "criterion 1 over the recorder: a prompt asked with a source that answers later, from a compiled job that delivers two batches 10 ms apart on the fake clock, lists the first batch once it has arrived, in the library's order, and both once the job has ended; no step is refused"
+      run :=
+        withHost context []
+          (fun session => do
+            session.ask [.run "ask-later"]
+            -- The job has posted its first batch, whose event is queued, and
+            -- is in its sleep.
+            unless ← eventually (return (← session.clock.waiting) == 1) do
+              return false
+            let first ← session.sceneLines
+            session.clock.advance 10
+            unless (← session.host.join patience) == .settled do
+              return false
+            let both ← session.sceneLines
+            return listsAfter first "Pick: " (← realOrder "" #["wq", "edit"]) &&
+                listsAfter both "Pick: " (← realOrder "" #["wq", "edit", "rewrite", "w"]) &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          laterCompiled },
+    { name :=
+        "a source that answers later, from a job config registers with sourceJob, on the real elaborator: its prompt lists the job's answer for the initial text; after a key the job is asked again, after the source's pause, and the prompt lists its answer for the typed text"
+      run :=
+        withHost context [("10-echo.lean", echoSourceChunk)]
+          (fun session => do
+            session.ask [.reload]
+            session.ask [.run "pick"]
+            unless (← session.host.join patience) == .settled do
+              return false
+            let asked ← session.sceneLines
+            unless ← Event.post (.commit "w") do
+              return false
+            -- The job started again for the typed text sleeps its pause.
+            unless ← eventually (return (← session.clock.waiting) == 1) do
+              return false
+            session.clock.advance 20
+            unless (← session.host.join patience) == .settled do
+              return false
+            let typed ← session.sceneLines
+            return listsAfter asked "Pick: " ["!"] && listsAfter typed "Pick: " ["w!"] &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          minibufferCompiled }]
 
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the ex names that ship (`Ex.commands`, `Ex.bindings`,

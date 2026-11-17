@@ -1,6 +1,7 @@
 import Editor.Command.Call
 import Editor.Compile.Contribution
 import Editor.Completion
+import Editor.Completion.Later
 import Editor.Completion.Styles
 import Editor.DisplayRules
 import Editor.Ex.Line
@@ -189,6 +190,21 @@ def setup : SetupM Unit := do
 source of a compiled source's name is used in that one's place until a
 reload drops it. A `setup` that defines a source name twice is refused
 (`Config.Registrations.sourceTwice`).
+
+A source that cannot answer before the next key answers later, from a job
+it names (`Editor/Completion/Later.lean`):
+
+```lean
+def setup : SetupM Unit := do
+  sourceJob "echo" fun query deliver => deliver #[.ofText query.text]
+  defineSource (.answeringLater "echo" "pick" "echo" (reask := .afterPause 20))
+```
+
+`sourceJob` registers the job, which is given the query and delivers its
+candidates in batches as they come; the source says which job answers it
+and when it is asked again (`never`, or `afterPause` for one that depends
+on the text). A reload cancels config's source jobs, as it cancels any job
+of config's, and the listing keeps what came.
 
 Config registers completion styles by name and chooses one for each
 category, with a default for the rest (`Editor/Completion/Style.lean`):
@@ -551,6 +567,18 @@ def jobWith {α : Type} (name : String) (run : List Argument → JobM α) (handl
   ExceptT.lift
     (Program.request (port := setupPort)
       (.job name fun arguments => Work.of (fun _ => run arguments) handler))
+
+/-- Registers the job called `name` that answers a completion source that
+answers later (`Editor/Completion/Later.lean`): `answer` is given the query
+and a way to deliver a batch of candidates, which it may call as often as it
+likes, as its candidates come. A source names it
+(`Completion.Source.answeringLater`, registered with `defineSource`); the
+editor starts it when a prompt asks that source, and cancels it when the
+prompt closes or asks again. -/
+def sourceJob (name : String)
+    (answer : Completion.Query → (Array Completion.Candidate → JobM Unit) → JobM Unit) :
+    SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.job name (Completion.answering answer)))
 
 /-- The message a binding of no keys to the command called `command` is
 refused with. -/

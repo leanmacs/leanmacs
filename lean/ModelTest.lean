@@ -2713,6 +2713,25 @@ def setupChecks : List Check :=
               started "fixed" [.nat 1] == some (.finished #["x"]) &&
               started "fixed" [] == some (.finished #["x"])) },
     { name :=
+        "a setup that registers a source's job collects it as a job of its name, which, started with an order, posts what it answers for the order's query as a batch for the order's prompt and source"
+      run :=
+        let setup : SetupM Unit :=
+          sourceJob "echo" fun query deliver => deliver #[.ofText (query.text ++ "?")]
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure <|
+            match collected.jobs.find? (·.name == "echo") with
+            | none => false
+            | some job =>
+              let order : Completion.Order :=
+                { view := ⟨3⟩, index := 1, generation := 2, query := { text := "w", view := ⟨0⟩ } }
+              let (outcome, model) := (job.work order.arguments ()).runModel {}
+              (outcome matches .finished _) &&
+                model.posted ==
+                  #[{ command := Completion.candidatesCommand
+                      arguments := Completion.batchArguments ⟨3⟩ 1 2 #[.ofText "w?"] }] },
+    { name :=
         "a job that takes arguments registered under the name of another job is refused with a message that names the job, whichever of the two was first"
       run :=
         let doubling (name : String) : SetupM Unit :=
