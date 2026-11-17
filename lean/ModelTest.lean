@@ -29731,22 +29731,32 @@ def tabBarChecks : List Check :=
                 releasedSnapshot named bar.snapshot
             | _, _ => false },
     { name :=
-        "a loop handed never shows no bar with two tabs, and the tiled area is whole; handed always it shows one with one tab; handed none it keeps the state's"
+        "a loop handed never shows no bar with two tabs, and the tiled area is whole; handed always it shows one with one tab; handed none it keeps the state's, never or always as an earlier publish left it"
       run :=
         pure <|
+          let handed (shown : Option TabBar.Shown) : Loop.Keys Vim.Default.scheme :=
+            { tabHanded Layout.default with tabBar := shown }
+          let barredDriver (shown : Option TabBar.Shown) (typed : String) : Option EvilDriver :=
+            (windowDriver 1 Layout.default (handed := handed shown)).map (evilFed · typed)
           let barred (shown : Option TabBar.Shown) (typed : String) : Option EditorState :=
-            (windowDriver 1 Layout.default (handed :=
-                  { tabHanded Layout.default with tabBar := shown })).map
-              fun driver => (evilFed driver typed).loop.state
-          match barred (some .never) "C-w c", barred (some .always) "<Escape>",
-            barred none "C-w c" with
-          | some never, some always, some kept =>
+            (barredDriver shown typed).map (·.loop.state)
+          -- Published once handed `shown`, then handed none.
+          let kept (shown : TabBar.Shown) (typed : String) : Option EditorState :=
+            (barredDriver (some shown) typed).map fun driver =>
+              (evilFed { driver with keys := handed none } "<Escape>").loop.state
+          match barred (some .never) "C-w c", barred (some .always) "<Escape>", kept .never "C-w c",
+            kept .always "<Escape>" with
+          | some never, some always, some keptNever, some keptAlways =>
             never.tabBarShown == .never && never.tabBarRect? == none &&
               never.tiled == rect 0 0 640 464 &&
               always.tabBarRect? == some (rect 0 448 640 16) &&
-              kept.tabBarShown == .several &&
-              kept.tabBarRect? == some (rect 0 448 640 16)
-          | _, _, _ => false }]
+              keptNever.tabBarShown == .never &&
+              keptNever.frame.tabs.size == 2 &&
+              keptNever.tabBarRect? == none &&
+              keptAlways.tabBarShown == .always &&
+              keptAlways.frame.tabs.size == 1 &&
+              keptAlways.tabBarRect? == some (rect 0 448 640 16)
+          | _, _, _, _ => false }]
 
 /-- The checks of the window commands (`Editor/WindowCommands.lean`), by
 key, on the loop's driver over the editor's models, under the Vim scheme
