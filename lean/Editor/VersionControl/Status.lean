@@ -212,8 +212,7 @@ def headText : Head → String
 `status`: the head line, then one line per file, or `no changes`; each
 line ended by a line feed. -/
 def render (label : String) (status : Status) : String :=
-  let rows :=
-    if status.files.isEmpty then #["no changes"] else status.files.map line
+  let rows := if status.files.isEmpty then #["no changes"] else status.files.map line
   String.join ((#[s!"{label}: {headText status.head}"] ++ rows).toList.map (· ++ "\n"))
 
 /-- The file on row `row` of a status buffer showing `files`: none on the
@@ -294,7 +293,8 @@ def decodeChange? : Value → Option (Option Change)
 
 /-- A state as a tree. -/
 def FileState.encode : FileState → Value
-  | .changed staged unstaged => .record [("changed", .list [encodeChange staged, encodeChange unstaged])]
+  | .changed staged unstaged =>
+    .record [("changed", .list [encodeChange staged, encodeChange unstaged])]
   | .renamed origin unstaged => .record [("renamed", .list [.str origin, encodeChange unstaged])]
   | .untracked => .str "untracked"
   | .conflicted how => .record [("conflicted", .str how.describe)]
@@ -333,13 +333,17 @@ def StatusRecord.decode? : Value → Option StatusRecord
   | .record [("buffer", buffer), ("files", .list files)] => do
     let buffer ←
       match buffer with
-      | .nat index => some (some index)
-      | .null => some none
-      | _ => none
+      | .nat index =>
+        some (some index)
+      | .null =>
+        some none
+      | _ =>
+        none
     let files ←
       files.toArray.mapM fun
-        | .list [.str path, state] => (fun state => ({ path, state } : FileStatus)) <$> FileState.decode? state
-        | _ => none
+          | .list [.str path, state] =>
+            (fun state => ({ path, state } : FileStatus)) <$> FileState.decode? state
+          | _ => none
     return { buffer, files }
   | _ => none
 
@@ -406,14 +410,18 @@ def ApplyOrder.arguments (order : ApplyOrder) : List Argument :=
 /-- The order `arguments` are, if they are one (`ApplyOrder.arguments`). -/
 def ApplyOrder.ofArguments? : List Argument → Option ApplyOrder
   | .str root :: .str git :: .str label :: .nat view :: .str kind :: rest => do
-    let paths ← rest.toArray.mapM fun
-      | .str path => some path
-      | _ => none
+    let paths ←
+      rest.toArray.mapM fun
+          | .str path => some path
+          | _ => none
     let request ←
       match kind with
-      | "stage" => some (Request.stage paths)
-      | "unstage" => some (.unstage paths)
-      | _ => none
+      | "stage" =>
+        some (Request.stage paths)
+      | "unstage" =>
+        some (.unstage paths)
+      | _ =>
+        none
     return { read := { root, git, label, view := ⟨view⟩, shows := false }, request }
   | _ => none
 
@@ -517,7 +525,8 @@ write order. -/
 def applyWork (arguments : List Argument) : Work := fun _ => do
   let some order :=
     ApplyOrder.ofArguments? arguments | throw s!"{applyJob}: its arguments are not a write order"
-  return applied order (← Program.runM (Git.handler order.read.git order.read.root) (write order.request))
+  return applied order
+      (← Program.runM (Git.handler order.read.git order.read.root) (write order.request))
 
 /-- The git program config's workspace settings name. -/
 def gitProgram : EditorM String := do
@@ -534,8 +543,8 @@ def statusCommand (call : Call) : EditorM Unit := do
     | .local root =>
       if workspace.location.can.runCommands then
         startRead
-          { root, git := ← gitProgram, label := workspace.label, view := call.target.window.id
-            shows := true }
+            { root, git := ← gitProgram, label := workspace.label, view := call.target.window.id
+              shows := true }
       else
         message s!"{statusName}: {workspace.label} cannot run commands"
     | _ =>
@@ -548,8 +557,12 @@ def statusOf (call : Call) (name : String) : EditorM (Option (ReadOrder × Statu
   let state ← editorState
   let buffer := call.target.window.buffer
   let notStatus := s!"{name}: {call.target.buffer.name} is not a status buffer"
-  let some (workspace, _) := state.workspaceOf? buffer | message notStatus; return none
-  let .local root := workspace.location | message notStatus; return none
+  let some (workspace, _) := state.workspaceOf? buffer |
+    message notStatus;
+    return none
+  let .local root := workspace.location |
+    message notStatus;
+    return none
   let record := state.workspaces.get statusStore workspace.location
   if kept state record != some buffer then
     message notStatus

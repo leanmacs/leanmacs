@@ -2974,7 +2974,8 @@ def ProjectRig.over (services : Job.Services) : IO ProjectRig := do
   let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
   return {
       published, held, display := recorder.handle
-      services := { services with files := Job.realFiles services.completions published.reader held } }
+      services :=
+        { services with files := Job.realFiles services.completions published.reader held } }
 
 /-- A rig over `services`, whose children get `path` as their `PATH`
 (`onFixturePath`), with a file service of its own. -/
@@ -3005,8 +3006,7 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
     loop := settled
     texts := after
   for start in stepped.starts do
-    let some work :=
-      (jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+    let some work := (jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
     let posts ← IO.mkRef (#[] : Array Invocation)
     let handle ←
       Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
@@ -3015,8 +3015,7 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
       return none
     let label := s!"job {start.name}"
     for invocation in ← posts.get do
-      let (next, after) ←
-        (loop.deliver keys label (runPosted invocation)).runReal texts rig.display
+      let (next, after) ← (loop.deliver keys label (runPosted invocation)).runReal texts rig.display
       let .ok next := next | return none
       let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs | return none
       loop := settled
@@ -3041,8 +3040,8 @@ def runSettledFrom (rig : ProjectRig) (loop : Loop TestScheme.scheme) (texts : R
   for invocation in invocations do
     let (stepped, after) ← (loop.invoke keys invocation).runReal texts rig.display
     let .ok stepped := stepped | return none
-    let some (settled, after) ← settleProjects rig after stepped (keys := keys) (jobs := jobs)
-      | return none
+    let some (settled, after) ←
+      settleProjects rig after stepped (keys := keys) (jobs := jobs) | return none
     loop := settled
     texts := after
   return some (loop, texts)
@@ -3313,7 +3312,8 @@ def writeGitRepository (home directory : System.FilePath)
     if repository.head == .detached then
       discard <| gitIn home directory #["checkout", "-q", "--detach"]
   let hash (content : String) : IO String := do
-    return (← gitIn home directory #["hash-object", "-w", "--stdin"] (some content)).trimAscii.toString
+    return (←
+          gitIn home directory #["hash-object", "-w", "--stdin"] (some content)).trimAscii.toString
   let paths := repository.committed.map (·.1) ++ repository.index.map (·.1)
   for path in paths.toList.eraseDups do
     let committed := VersionControl.Model.lookup repository.committed path
@@ -3321,7 +3321,8 @@ def writeGitRepository (home directory : System.FilePath)
     | some (.file content) =>
       if committed != some content then
         discard <|
-          gitIn home directory #["update-index", "--add", "--cacheinfo", s!"100644,{← hash content},{path}"]
+            gitIn home directory
+              #["update-index", "--add", "--cacheinfo", s!"100644,{← hash content},{path}"]
     | some (.conflict base ours theirs) =>
       if committed.isSome then
         discard <| gitIn home directory #["update-index", "--force-remove", "--", path]
@@ -3359,16 +3360,16 @@ def versionControlFailures (services : Job.Services) : IO (List String) := do
   let before ← Ffi.processesPending
   let failed ←
     VersionControlContract.properties.filterMapM fun property =>
-      withRepository fun home directory => do
-        try
-          writeGitRepository home directory property.repository
-          let outcome ←
-            runOnTimers (onIsolatedGit services home)
-              (property.holds.runM (VersionControl.Git.handler "git" directory))
-          return if outcome == .finished true then none
-            else some s!"{property.name} ({repr outcome})"
-        catch error =>
-          return some s!"{property.name} (writing its repository: {error})"
+        withRepository fun home directory => do
+          try
+            writeGitRepository home directory property.repository
+            let outcome ←
+              runOnTimers (onIsolatedGit services home)
+                  (property.holds.runM (VersionControl.Git.handler "git" directory))
+            return if outcome == .finished true then none
+              else some s!"{property.name} ({repr outcome})"
+          catch error =>
+            return some s!"{property.name} (writing its repository: {error})"
   let reaped ← eventually (return (← Ffi.processesPending) == before)
   return failed.map (s!"the version-control interface over git: {·}") ++
       if reaped then [] else ["every child the git implementation ran is reaped"]
@@ -3391,7 +3392,8 @@ def statusKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
       if name == "to-row" then some toRow
       else
-        ((Files.commands ++ Workspace.commands ++ VersionControl.commands).find? (·.name == name)).bind
+        ((Files.commands ++ Workspace.commands ++ VersionControl.commands).find?
+              (·.name == name)).bind
           fun registration =>
           match registration.action with
           | .call run =>
@@ -3421,50 +3423,47 @@ over real git: its jobs run over the library's process and file services in
 a temporary repository, the real finder recording the workspace, every
 child's git kept from the user's and the system's config. -/
 def statusBufferChecks (services : Job.Services) : List Check :=
-  [{ name :=
-       "criteria 2 to 4 over real git: vc-status in a file of a repository with a.txt changed and b.txt staged shows one line for each naming its state; toggling on a.txt's line stages it in git and its line then says so, and toggling on b.txt's line unstages it in git"
-     run :=
-       withRepository fun home directory => do
-         writeGitRepository home directory
-           { committed := #[("a.txt", "one\n"), ("b.txt", "one\n")]
-             index := #[("a.txt", .file "one\n"), ("b.txt", .file "two\n")]
-             worktree := #[("a.txt", "two\n"), ("b.txt", "two\n")] }
-         let isolated := onIsolatedGit services home
-         let rig ← ProjectRig.over isolated
-         let name := "*vc-status: repo@main*"
-         let some (shown, texts) ←
-           runSettled rig directory
-             [openFile (directory / "a.txt"), { command := VersionControl.statusName }] statusKeys
-             statusJobs
-           | return false
-         let first ← bufferText rig texts shown name
-         let some (staged, texts) ←
-           runSettledFrom rig shown texts [toRow 1, { command := VersionControl.toggleName }]
-             statusKeys statusJobs
-           | return false
-         let afterStage ←
-           gitStatusIs isolated directory
-             { head := .branch "main"
-               files :=
-                 #[{ path := "a.txt", state := .changed (some .modified) none },
-                   { path := "b.txt", state := .changed (some .modified) none }] }
-         let second ← bufferText rig texts staged name
-         let some (_, _) ←
-           runSettledFrom rig staged texts [toRow 2, { command := VersionControl.toggleName }]
-             statusKeys statusJobs
-           | return false
-         let afterUnstage ←
-           gitStatusIs isolated directory
-             { head := .branch "main"
-               files :=
-                 #[{ path := "a.txt", state := .changed (some .modified) none },
-                   { path := "b.txt", state := .changed none (some .modified) }] }
-         return first ==
-               some "repo@main: on main\nunstaged: a.txt (modified)\nstaged: b.txt (modified)\n" &&
-             afterStage &&
-             second ==
-               some "repo@main: on main\nstaged: a.txt (modified)\nstaged: b.txt (modified)\n" &&
-             afterUnstage }]
+  [{  name :=
+        "criteria 2 to 4 over real git: vc-status in a file of a repository with a.txt changed and b.txt staged shows one line for each naming its state; toggling on a.txt's line stages it in git and its line then says so, and toggling on b.txt's line unstages it in git"
+      run :=
+        withRepository fun home directory => do
+          writeGitRepository home directory
+              { committed := #[("a.txt", "one\n"), ("b.txt", "one\n")]
+                index := #[("a.txt", .file "one\n"), ("b.txt", .file "two\n")]
+                worktree := #[("a.txt", "two\n"), ("b.txt", "two\n")] }
+          let isolated := onIsolatedGit services home
+          let rig ← ProjectRig.over isolated
+          let name := "*vc-status: repo@main*"
+          let some (shown, texts) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), { command := VersionControl.statusName }]
+                statusKeys statusJobs | return false
+          let first ← bufferText rig texts shown name
+          let some (staged, texts) ←
+            runSettledFrom rig shown texts [toRow 1, { command := VersionControl.toggleName }]
+                statusKeys statusJobs | return false
+          let afterStage ←
+            gitStatusIs isolated directory
+                { head := .branch "main"
+                  files :=
+                    #[{ path := "a.txt", state := .changed (some .modified) none },
+                      { path := "b.txt", state := .changed (some .modified) none }] }
+          let second ← bufferText rig texts staged name
+          let some (_, _) ←
+            runSettledFrom rig staged texts [toRow 2, { command := VersionControl.toggleName }]
+                statusKeys statusJobs | return false
+          let afterUnstage ←
+            gitStatusIs isolated directory
+                { head := .branch "main"
+                  files :=
+                    #[{ path := "a.txt", state := .changed (some .modified) none },
+                      { path := "b.txt", state := .changed none (some .modified) }] }
+          return first ==
+                some "repo@main: on main\nunstaged: a.txt (modified)\nstaged: b.txt (modified)\n" &&
+              afterStage &&
+              second ==
+                some "repo@main: on main\nstaged: a.txt (modified)\nstaged: b.txt (modified)\n" &&
+              afterUnstage }]
 
 end ContractTest
 

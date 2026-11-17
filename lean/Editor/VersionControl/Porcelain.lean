@@ -76,7 +76,8 @@ def refused {α : Type} (why : String) (record : String) : Except String α :=
 /-- Reads the records `records` into `head` and `files`, through at most
 `fuel` records. -/
 def readRecords :
-    Nat → List String → Option Head → Array FileStatus → Except String (Option Head × Array FileStatus)
+    Nat →
+      List String → Option Head → Array FileStatus → Except String (Option Head × Array FileStatus)
   | 0, _, head, files => .ok (head, files)
   | _, [], head, files => .ok (head, files)
   | fuel + 1, record :: rest, head, files =>

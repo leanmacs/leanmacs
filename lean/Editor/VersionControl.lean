@@ -185,7 +185,10 @@ instance : DecidableEq (Except Error Status)
 /-- Two replies of a write are equal when they are the same case with equal
 contents. -/
 instance : DecidableEq (Except Error Unit)
-  | .ok a, .ok b => isTrue (by cases a; cases b; rfl)
+  | .ok a, .ok b =>
+    isTrue
+      (by
+        cases a; cases b; rfl)
   | .error a, .error b =>
     if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
   | .ok _, .error _ => isFalse fun e => by cases e

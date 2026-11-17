@@ -48,15 +48,19 @@ structure Property where
 /-- The status, or `none` when the read failed. -/
 def statusOf : VersionControlM (Option Status) := do
   match ← status with
-  | .ok read => return some read
-  | .error _ => return none
+  | .ok read =>
+    return some read
+  | .error _ =>
+    return none
 
 /-- The states of `path` in the status, in order; none when the read
 failed. -/
 def statesOf (path : String) : VersionControlM (Array FileState) := do
   match ← status with
-  | .ok read => return (read.files.filter (·.path == path)).map (·.state)
-  | .error _ => return #[]
+  | .ok read =>
+    return (read.files.filter (·.path == path)).map (·.state)
+  | .error _ =>
+    return #[]
 
 /-- Whether `path` has exactly the one state `state`. -/
 def stateIs (path : String) (state : FileState) : VersionControlM Bool := do
@@ -74,8 +78,7 @@ def clean (files : Array (String × String)) : Model.Repository :=
 
 /-- `repository` with the working tree's `path` holding `content`. -/
 def writing (repository : Model.Repository) (path content : String) : Model.Repository :=
-  { repository with
-    worktree := (repository.worktree.filter (·.1 != path)).push (path, content) }
+  { repository with worktree := (repository.worktree.filter (·.1 != path)).push (path, content) }
 
 /-- `repository` with `path` gone from the working tree. -/
 def removing (repository : Model.Repository) (path : String) : Model.Repository :=
@@ -162,7 +165,8 @@ def properties : List Property :=
         let renamed ← stateIs "new.txt" (.renamed "old.txt" none)
         let unstaged ← unstage #["new.txt", "old.txt"]
         return renamed && succeeded unstaged &&
-            (← stateIs "old.txt" (.changed none (some .deleted))) && (← stateIs "new.txt" .untracked) },
+            (← stateIs "old.txt" (.changed none (some .deleted))) &&
+            (← stateIs "new.txt" .untracked) },
     { name := "an empty file moved in the index is a rename, as a file with content is"
       repository :=
         { committed := #[("e.txt", "")], index := #[("f.txt", .file "")]
@@ -184,8 +188,11 @@ def properties : List Property :=
     { name := "a detached checkout answers that it is detached"
       repository := { clean #[("a.txt", "a\n")] with head := .detached }
       holds := return ((← statusOf).map (·.head)) == some .detached },
-    { name := "a path with a space and a non-ASCII path round-trip through status, stage and unstage"
-      repository := writing (writing (clean #[("with space.txt", "one\n")]) "with space.txt" "two\n") "héllo.txt" "h\n"
+    { name :=
+        "a path with a space and a non-ASCII path round-trip through status, stage and unstage"
+      repository :=
+        writing (writing (clean #[("with space.txt", "one\n")]) "with space.txt" "two\n")
+          "héllo.txt" "h\n"
       holds := do
         let before :=
           (← stateIs "with space.txt" (.changed none (some .modified))) &&

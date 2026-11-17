@@ -126,7 +126,8 @@ then untracked. -/
 def statesOf (repository : Repository) (path : String) : Array FileStatus :=
   let tracked : Array FileStatus :=
     match lookup repository.index path with
-    | some (.conflict base ours theirs) => #[{ path, state := .conflicted (conflictOf base ours theirs) }]
+    | some (.conflict base ours theirs) =>
+      #[{ path, state := .conflicted (conflictOf base ours theirs) }]
     | some (.file content) =>
       let staged := changeOf (lookup repository.committed path) (some content)
       let unstaged := changeOf (some content) (lookup repository.worktree path)
@@ -146,10 +147,8 @@ def statesOf (repository : Repository) (path : String) : Array FileStatus :=
 docs): each pair is one `renamed` entry at the new path, and the origin's
 staged deletion is dropped. -/
 def paired (repository : Repository) (files : Array FileStatus) : Array FileStatus :=
-  let deleted :=
-    (files.filter (·.state == .changed (some .deleted) none)).map (·.path)
-  let added :=
-    (files.filter fun file => file.state matches .changed (some .added) _).map (·.path)
+  let deleted := (files.filter (·.state == .changed (some .deleted) none)).map (·.path)
+  let added := (files.filter fun file => file.state matches .changed (some .added) _).map (·.path)
   let pairs :=
     added.foldl
       (fun (pairs : Array (String × String)) path =>
@@ -157,8 +156,7 @@ def paired (repository : Repository) (files : Array FileStatus) : Array FileStat
         | some content =>
           match
             deleted.find? fun origin =>
-              !pairs.any (·.2 == origin) && lookup repository.committed origin == some content
-          with
+              !pairs.any (·.2 == origin) && lookup repository.committed origin == some content with
           | some origin => pairs.push (path, origin)
           | none => pairs
         | none => pairs)
@@ -227,9 +225,10 @@ def porcelain (repository : Repository) : ByteArray :=
     match status.head with
     | .branch name => name
     | .detached => "(detached)"
-  let listed := (List.range 3).toArray.flatMap fun place =>
-    status.files.filter (listing ·.state == place)
-  (s!"# branch.oid {oid}\x00# branch.head {head}\x00" ++ String.join (listed.map record).toList).toUTF8
+  let listed :=
+    (List.range 3).toArray.flatMap fun place => status.files.filter (listing ·.state == place)
+  (s!"# branch.oid {oid}\x00# branch.head {head}\x00" ++
+      String.join (listed.map record).toList).toUTF8
 
 /-- `repository` with `path` staged: the working tree's content in the
 index, or the path removed from it when the working tree lacks it. -/
@@ -255,10 +254,13 @@ meets `repository`: its status read prints `porcelain`, and each of
 program that is not there is. -/
 def jobModel (repository : Repository) (git : String) (root : System.FilePath)
     (writes : Array Request := #[]) : JobModel :=
-  { processes :=
-      { scripts :=
+  {
+    processes :=
+      {
+        scripts :=
           #[{ command := Git.command git root .status, reply := ran repository.porcelain }] ++
-            writes.map fun write => { command := Git.command git root write, reply := ran .empty } } }
+            writes.map fun write =>
+              { command := Git.command git root write, reply := ran .empty } } }
 
 end Repository
 
@@ -269,8 +271,7 @@ def handle : (request : Request) → Repository → request.Reply × Repository
   | .stage paths, repository =>
     match
       paths.find? fun path =>
-        (lookup repository.index path).isNone && (lookup repository.worktree path).isNone
-    with
+        (lookup repository.index path).isNone && (lookup repository.worktree path).isNone with
     | some path =>
       (.error (.failed (.code 128) s!"fatal: pathspec '{path}' did not match any files\n"),
         repository)

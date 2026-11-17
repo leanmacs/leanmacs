@@ -37655,7 +37655,8 @@ def porcelainMixed : String :=
     "u DU N... 100644 000000 100644 100644 37dc93f7c0cb2a9a454ded553b3cda499f949d17 0000000000000000000000000000000000000000 950b81b7eee953d050aa05a641f8e056c85dd1bd du.txt\x00" ++
     "u UD N... 100644 100644 000000 100644 11e6c5065a0a24b8cd9fc5b2fbae5db3e94c61a1 b19a1e93bec1317dc6097229e12afaffbfa74dc2 0000000000000000000000000000000000000000 ud.txt\x00" ++
     "u UU N... 100644 100644 100644 100644 1725e6630303461c56479543dedc4bc177dc5b57 b19a1e93bec1317dc6097229e12afaffbfa74dc2 950b81b7eee953d050aa05a641f8e056c85dd1bd uu.txt\x00" ++
-    "? dir/new.txt\x00" ++ "? héllo.txt\x00"
+    "? dir/new.txt\x00" ++
+    "? héllo.txt\x00"
 
 /-- The status `porcelainMixed` stands for, sorted by path. -/
 def mixedStatus : VersionControl.Status :=
@@ -37693,8 +37694,8 @@ def versionControlParserChecks : List Check :=
   let parse (printed : String) := (VersionControl.Porcelain.parseStatus printed.toUTF8).toOption
   let renameRecord :=
     "2 R. N... 100644 100644 100644 3367afdbbf91e638efe983616377c60477cc6612 3367afdbbf91e638efe983616377c60477cc6612 R100 new.txt"
-  [{ name := "a clean checkout on main reads as main with no files"
-     run := pure (parse porcelainClean == some { head := .branch "main" }) },
+  [{  name := "a clean checkout on main reads as main with no files"
+      run := pure (parse porcelainClean == some { head := .branch "main" }) },
     { name := "a detached checkout reads as detached"
       run := pure (parse porcelainDetached == some { head := .detached }) },
     { name := "an unborn main with a staged new file reads as main with that file staged added"
@@ -37714,7 +37715,8 @@ def versionControlParserChecks : List Check :=
     { name := "a changed record with too few fields is refused, quoting the record"
       run :=
         pure <|
-          refusedQuoting (porcelainClean ++ "1 M. N... 100644 a.txt\x00") "1 M. N... 100644 a.txt" },
+          refusedQuoting (porcelainClean ++ "1 M. N... 100644 a.txt\x00")
+            "1 M. N... 100644 a.txt" },
     { name := "a changed record with an unknown XY is refused, quoting the record"
       run :=
         pure <|
@@ -37755,7 +37757,8 @@ def mixedRepository : VersionControl.Model.Repository :=
     worktree :=
       #[("aa.txt", "x"), ("added.txt", "added"), ("dir/new.txt", "new"), ("du.txt", "theirs"),
         ("héllo.txt", "h"), ("mm.txt", "both"), ("new.txt", "old"), ("sm.txt", "staged"),
-        ("ud.txt", "ours"), ("um.txt", "unstaged"), ("uu.txt", "x"), ("with space.txt", "changed")] }
+        ("ud.txt", "ours"), ("um.txt", "unstaged"), ("uu.txt", "x"),
+        ("with space.txt", "changed")] }
 
 /-- The checks of the model of a repository
 (`Editor/VersionControl/Model.lean`): its status of each state, how it
@@ -37768,8 +37771,9 @@ def versionControlModelChecks : List Check :=
       worktree := #[("c.txt", "x"), ("f.txt", ""), ("z.txt", "x")] }
   let printed (repository : VersionControl.Model.Repository) : Bool :=
     (VersionControl.Porcelain.parseStatus repository.porcelain).toOption == some repository.status
-  [{ name := "the model's status of a repository in every state is each file with its state, sorted by path"
-     run := pure (mixedRepository.status == mixedStatus) },
+  [{  name :=
+        "the model's status of a repository in every state is each file with its state, sorted by path"
+      run := pure (mixedRepository.status == mixedStatus) },
     { name :=
         "the model pairs renames as git does: the added paths in path order each take the first deleted path with their content, an empty file among them"
       run :=
@@ -37789,7 +37793,7 @@ def versionControlModelChecks : List Check :=
       run :=
         pure <|
           ({ committed := #[("o.txt", "m")], index := #[("n.txt", .file "m")],
-                worktree := #[("n.txt", "m"), ("o.txt", "m")] } :
+             worktree := #[("n.txt", "m"), ("o.txt", "m")] } :
                 VersionControl.Model.Repository).status.files ==
             #[{ path := "n.txt", state := .renamed "o.txt" none },
               { path := "o.txt", state := .untracked }] },
@@ -37797,8 +37801,11 @@ def versionControlModelChecks : List Check :=
         "staging a path in neither the index nor the working tree is refused with status 128, and nothing changes"
       run :=
         pure <|
-          let repository := VersionControlContract.writing (VersionControlContract.clean #[("a.txt", "one")]) "a.txt" "two"
-          let (reply, after) := VersionControl.Model.handle (.stage #["a.txt", "nope.txt"]) repository
+          let repository :=
+            VersionControlContract.writing (VersionControlContract.clean #[("a.txt", "one")])
+              "a.txt" "two"
+          let (reply, after) :=
+            VersionControl.Model.handle (.stage #["a.txt", "nope.txt"]) repository
           reply matches .error (.failed (.code 128) _) && after == repository },
     { name := "the real parser reads what the model prints as the model's status, in every state"
       run :=
@@ -37808,25 +37815,28 @@ def versionControlModelChecks : List Check :=
             printed { index := #[("a.txt", .file "a")], worktree := #[("a.txt", "a")] } },
     { name :=
         "the real parser reads what the model prints as the model's status, for every repository of the contract"
-      run := pure (VersionControlContract.properties.all fun property => printed property.repository) }]
+      run :=
+        pure (VersionControlContract.properties.all fun property => printed property.repository) }]
 
 /-- The git implementation's status read in `/r` on `model`. -/
 def gitStatus (model : JobModel) :
     Job.Outcome (Except VersionControl.Error VersionControl.Status) × JobModel :=
   (VersionControl.Git.handler "git" "/r" .status :
-      JobM (Except VersionControl.Error VersionControl.Status)).runModel model
+        JobM (Except VersionControl.Error VersionControl.Status)).runModel
+    model
 
 /-- The git implementation's staging of `paths` in `/r` on `model`. -/
 def gitStage (paths : Array String) (model : JobModel) :
     Job.Outcome (Except VersionControl.Error Unit) × JobModel :=
-  (VersionControl.Git.handler "git" "/r" (.stage paths) : JobM (Except VersionControl.Error Unit)).runModel
+  (VersionControl.Git.handler "git" "/r" (.stage paths) :
+        JobM (Except VersionControl.Error Unit)).runModel
     model
 
 /-- The git implementation's unstaging of `paths` in `/r` on `model`. -/
 def gitUnstage (paths : Array String) (model : JobModel) :
     Job.Outcome (Except VersionControl.Error Unit) × JobModel :=
   (VersionControl.Git.handler "git" "/r" (.unstage paths) :
-      JobM (Except VersionControl.Error Unit)).runModel
+        JobM (Except VersionControl.Error Unit)).runModel
     model
 
 /-- The names of the version-control contract's properties
@@ -37856,7 +37866,8 @@ def gitRun (arguments : Array String) : Process.Command :=
 /-- The job model in which `git status` in `/r` answers `reply`, taking
 `takes` milliseconds. -/
 def statusAnswering (reply : Except ProcessError Process.Ran) (takes : Nat := 0) : JobModel :=
-  { processes :=
+  {
+    processes :=
       { scripts := #[{ command := gitRun VersionControl.Git.statusArguments, reply, takes }] } }
 
 /-- The checks of the git implementation (`Editor/VersionControl/Git.lean`)
@@ -37866,12 +37877,13 @@ def versionControlGitChecks : List Check :=
   let status := gitStatus
   let statusArguments :=
     #["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--find-renames"]
-  [{ name :=
-       "a status read runs git status --porcelain=v2 -z --branch --untracked-files=all --find-renames in the root, once, with GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE removed, GIT_OPTIONAL_LOCKS=0 and GIT_LITERAL_PATHSPECS=1"
-     run :=
-       pure <|
-         let (read, after) := status (mixedRepository.jobModel "git" "/r")
-         read == .finished (.ok mixedStatus) && after.processes.started == #[gitRun statusArguments] },
+  [{  name :=
+        "a status read runs git status --porcelain=v2 -z --branch --untracked-files=all --find-renames in the root, once, with GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE removed, GIT_OPTIONAL_LOCKS=0 and GIT_LITERAL_PATHSPECS=1"
+      run :=
+        pure <|
+          let (read, after) := status (mixedRepository.jobModel "git" "/r")
+          read == .finished (.ok mixedStatus) &&
+            after.processes.started == #[gitRun statusArguments] },
     { name := "staging runs git add --all -- and the paths, in the root, a path with a space whole"
       run :=
         pure <|
@@ -37879,7 +37891,8 @@ def versionControlGitChecks : List Check :=
             gitStage #["with space.txt", "b.txt"]
               (mixedRepository.jobModel "git" "/r" #[.stage #["with space.txt", "b.txt"]])
           reply == .finished (.ok ()) &&
-            after.processes.started == #[gitRun #["add", "--all", "--", "with space.txt", "b.txt"]] },
+            after.processes.started ==
+              #[gitRun #["add", "--all", "--", "with space.txt", "b.txt"]] },
     { name := "unstaging runs git reset -q -- and the paths, in the root"
       run :=
         pure <|
@@ -37890,7 +37903,8 @@ def versionControlGitChecks : List Check :=
             after.processes.started == #[gitRun #["reset", "-q", "--", "new.txt", "old.txt"]] },
     { name := "with no git to run, a status read could not run, as notFound"
       run := pure (status {} matches (.finished (.error (.couldNotRun (.notFound _))), _)) },
-    { name := "a status read git refuses with status 128 failed, with what git said on its standard error"
+    { name :=
+        "a status read git refuses with status 128 failed, with what git said on its standard error"
       run :=
         pure <|
           (status
@@ -37903,30 +37917,40 @@ def versionControlGitChecks : List Check :=
       run :=
         pure <|
           let model : JobModel :=
-            { processes :=
-                { scripts :=
+            {
+              processes :=
+                {
+                  scripts :=
                     #[{ command := gitRun #["add", "--all", "--", "nope.txt"]
                         reply :=
-                          .ok
-                            { exit := .code 128, stdout := .empty
-                              stderr := "fatal: pathspec 'nope.txt' did not match any files\n".toUTF8 } }] } }
+                          .ok {
+                              exit := .code 128, stdout := .empty
+                              stderr :=
+                                "fatal: pathspec 'nope.txt' did not match any files\n".toUTF8 } }] } }
           (gitStage #["nope.txt"] model).1 ==
-            .finished (.error (.failed (.code 128) "fatal: pathspec 'nope.txt' did not match any files")) },
+            .finished
+              (.error (.failed (.code 128) "fatal: pathspec 'nope.txt' did not match any files")) },
     { name := "a status read past the output limit could not run, and is never read cut short"
       run :=
         pure <|
-          (status (statusAnswering (.error (.outputTooLarge .out VersionControl.Git.statusOutput)))).1 ==
-            .finished (.error (.couldNotRun (.outputTooLarge .out VersionControl.Git.statusOutput))) },
+          (status
+                (statusAnswering
+                  (.error (.outputTooLarge .out VersionControl.Git.statusOutput)))).1 ==
+            .finished
+              (.error (.couldNotRun (.outputTooLarge .out VersionControl.Git.statusOutput))) },
     { name := "a status read past its time limit could not run, as timedOut"
       run :=
         pure <|
-          (status (statusAnswering (VersionControl.Model.Repository.ran porcelainClean.toUTF8)
-                (VersionControl.Git.gitTime + 1))).1 ==
+          (status
+                (statusAnswering (VersionControl.Model.Repository.ran porcelainClean.toUTF8)
+                  (VersionControl.Git.gitTime + 1))).1 ==
             .finished (.error (.couldNotRun (.timedOut VersionControl.Git.gitTime))) },
     { name := "a status read git answers with what cannot be read is unparsable"
       run :=
         pure <|
-          (status (statusAnswering (VersionControl.Model.Repository.ran "x what\x00".toUTF8))).1 matches
+          (status
+                (statusAnswering
+                  (VersionControl.Model.Repository.ran "x what\x00".toUTF8))).1 matches
             .finished (.error (.unparsable _)) }]
 
 /-- What the status buffer of `r@main` shows of the contract's first
@@ -37934,8 +37958,10 @@ repository (`VersionControlContract.criterionStatus`): the head line, then
 one line per file naming its state. -/
 def criterionText : String :=
   "r@main: on main\n" ++ "conflicted: conflict.txt (both modified)\n" ++
-    "renamed: new.txt (from old.txt)\n" ++ "staged: staged.txt (modified)\n" ++
-    "unstaged: unstaged.txt (modified)\n" ++ "untracked: untracked.txt\n"
+    "renamed: new.txt (from old.txt)\n" ++
+    "staged: staged.txt (modified)\n" ++
+    "unstaged: unstaged.txt (modified)\n" ++
+    "untracked: untracked.txt\n"
 
 /-- The sentence `reply` refuses with; empty for a request. -/
 def requestRefusal (reply : Except String VersionControl.Request) : String :=
@@ -37950,24 +37976,28 @@ def statusViewChecks : List Check :=
   let files := VersionControlContract.criterionStatus.files
   let file (path : String) (state : VersionControl.FileState) : VersionControl.FileStatus :=
     { path, state }
-  [{ name :=
-       "criterion 2: the status of the contract's first repository renders as its head, then one line per changed file naming its state: conflicted, renamed, staged, unstaged and untracked"
-     run :=
-       pure (VersionControl.StatusView.render "r@main" VersionControlContract.criterionStatus == criterionText) },
+  [{  name :=
+        "criterion 2: the status of the contract's first repository renders as its head, then one line per changed file naming its state: conflicted, renamed, staged, unstaged and untracked"
+      run :=
+        pure
+          (VersionControl.StatusView.render "r@main" VersionControlContract.criterionStatus ==
+            criterionText) },
     { name := "a status with no files renders as its head and a line saying there are no changes"
       run :=
         pure <|
-          VersionControl.StatusView.render "r@x" { head := .detached } == "r@x: detached\nno changes\n" },
+          VersionControl.StatusView.render "r@x" { head := .detached } ==
+            "r@x: detached\nno changes\n" },
     { name :=
         "a file staged and unstaged, a rename changed since, a staged addition, an unstaged deletion and each kind of conflict each say so on their line"
       run :=
         pure <|
           (#[file "m.txt" (.changed (some .modified) (some .modified)),
-                file "n.txt" (.renamed "o.txt" (some .modified)),
-                file "a.txt" (.changed (some .added) none), file "g.txt" (.changed none (some .deleted)),
-                file "c1" (.conflicted .bothAdded), file "c2" (.conflicted .bothDeleted),
-                file "c3" (.conflicted .addedByUs), file "c4" (.conflicted .addedByThem),
-                file "c5" (.conflicted .deletedByUs), file "c6" (.conflicted .deletedByThem)].map
+                  file "n.txt" (.renamed "o.txt" (some .modified)),
+                  file "a.txt" (.changed (some .added) none),
+                  file "g.txt" (.changed none (some .deleted)), file "c1" (.conflicted .bothAdded),
+                  file "c2" (.conflicted .bothDeleted), file "c3" (.conflicted .addedByUs),
+                  file "c4" (.conflicted .addedByThem), file "c5" (.conflicted .deletedByUs),
+                  file "c6" (.conflicted .deletedByThem)].map
               VersionControl.StatusView.line) ==
             #["staged, unstaged: m.txt (modified, modified)",
               "renamed, unstaged: n.txt (from o.txt, modified)", "staged: a.txt (added)",
@@ -37998,14 +38028,23 @@ def statusViewChecks : List Check :=
         "staging explicitly refuses a file with nothing to stage, and unstaging one with nothing staged, each with a sentence"
       run :=
         pure <|
-              requestRefusal (VersionControl.StatusView.stageRequest (file "s" (.changed (some .modified) none))) == "vc-status-stage: s has nothing to stage" &&
-              requestRefusal (VersionControl.StatusView.unstageRequest (file "u" .untracked)) == "vc-status-unstage: u has nothing staged" &&
-              requestRefusal (VersionControl.StatusView.unstageRequest (file "c" (.conflicted .bothModified))) == "vc-status-unstage: c has nothing staged" &&
-            (VersionControl.StatusView.stageRequest (file "m" (.changed (some .modified) (some .modified)))).toOption ==
+          requestRefusal
+                (VersionControl.StatusView.stageRequest
+                  (file "s" (.changed (some .modified) none))) ==
+              "vc-status-stage: s has nothing to stage" &&
+            requestRefusal (VersionControl.StatusView.unstageRequest (file "u" .untracked)) ==
+              "vc-status-unstage: u has nothing staged" &&
+            requestRefusal
+                (VersionControl.StatusView.unstageRequest (file "c" (.conflicted .bothModified))) ==
+              "vc-status-unstage: c has nothing staged" &&
+            (VersionControl.StatusView.stageRequest
+                  (file "m" (.changed (some .modified) (some .modified)))).toOption ==
               some (.stage #["m"]) &&
-            (VersionControl.StatusView.unstageRequest (file "m" (.changed (some .modified) (some .modified)))).toOption ==
+            (VersionControl.StatusView.unstageRequest
+                  (file "m" (.changed (some .modified) (some .modified)))).toOption ==
               some (.unstage #["m"]) &&
-            (VersionControl.StatusView.unstageRequest (file "n" (.renamed "o" (some .modified)))).toOption ==
+            (VersionControl.StatusView.unstageRequest
+                  (file "n" (.renamed "o" (some .modified)))).toOption ==
               some (.unstage #["n", "o"]) }]
 
 /-- The jobs of the status buffer checks: the workspace driver checks', and
@@ -38024,10 +38063,10 @@ row. -/
 def statusBindings : List (String × Invocation) :=
   workspaceBindings ++
     [("C-v s", invoke VersionControl.statusName), ("C-v t", invoke VersionControl.toggleName),
-        ("C-v v", invoke VersionControl.visitName), ("C-v r", invoke VersionControl.refreshName),
-        ("C-v a", invoke VersionControl.stageName), ("C-v u", invoke VersionControl.unstageName),
-        ("C-v k", invoke "kube")] ++
-      (List.range 6).map fun row => (s!"C-v {row}", { command := "to-row", arguments := [.nat row] })
+      ("C-v v", invoke VersionControl.visitName), ("C-v r", invoke VersionControl.refreshName),
+      ("C-v a", invoke VersionControl.stageName), ("C-v u", invoke VersionControl.unstageName),
+      ("C-v k", invoke "kube")] ++
+    (List.range 6).map fun row => (s!"C-v {row}", { command := "to-row", arguments := [.nat row] })
 
 /-- The commands of the status buffer checks (`statusBindings`). -/
 def statusCommands : List (String × Dispatched) :=
@@ -38051,7 +38090,8 @@ def statusKeys : Loop.Keys TestScheme.scheme :=
   let keys := dispatchKeys statusBindings statusCommands
   let registry := ({} : Config.Registry).replaceModes .compiled VersionControl.modes
   { keys with
-    maps := fun state view => registry.activeMaps TestScheme.scheme state view ++ keys.maps state view
+    maps := fun state view =>
+      registry.activeMaps TestScheme.scheme state view ++ keys.maps state view
     registered :=
       { keys.registered with
         entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) } }
@@ -38067,7 +38107,8 @@ with `/r/unstaged.txt` on disk; `none` if making the state was refused. -/
 def statusDriver : Option TestDriver :=
   (workspaceDriver statusJobs statusKeys).map fun driver =>
     let scripts :=
-      (VersionControlContract.criterionRepository.jobModel "git" "/r" statusWrites).processes.scripts
+      (VersionControlContract.criterionRepository.jobModel "git" "/r"
+          statusWrites).processes.scripts
     { driver with
       jobs :=
         { driver.jobs with
@@ -38095,16 +38136,17 @@ the loop's driver over the editor's models, the job model and the model of a
 repository in `/r`. -/
 def statusBufferChecks : List Check :=
   let statusRead := gitRun VersionControl.Git.statusArguments
-  [{ name := "vc-status in a buffer with no workspace says so, and makes no buffer and starts no job"
-     run :=
-       pure <|
-         match statusDriver with
-         | none => false
-         | some driver =>
-           let asked := settledAfter driver "C-v s"
-           echoOf asked == some s!"vc-status: {EditorState.scratchName} has no workspace" &&
-             (asked.loop.state.buffers.filterMap id).all (!·.name.startsWith "*vc-status") &&
-             gitStarted asked == #[] },
+  [{  name :=
+        "vc-status in a buffer with no workspace says so, and makes no buffer and starts no job"
+      run :=
+        pure <|
+          match statusDriver with
+          | none => false
+          | some driver =>
+            let asked := settledAfter driver "C-v s"
+            echoOf asked == some s!"vc-status: {EditorState.scratchName} has no workspace" &&
+              (asked.loop.state.buffers.filterMap id).all (!·.name.startsWith "*vc-status") &&
+              gitStarted asked == #[] },
     { name := "vc-status in a workspace that cannot run commands says so, and starts no job"
       run :=
         pure <|
@@ -38113,7 +38155,7 @@ def statusBufferChecks : List Check :=
           | some driver =>
             let asked := settledAfter (settledAfter (settledAfter driver "C-o a") "C-v k") "C-v s"
             ((echoOf asked).map fun echo =>
-                echo.startsWith "vc-status: " && echo.endsWith " cannot run commands") ==
+                  echo.startsWith "vc-status: " && echo.endsWith " cannot run commands") ==
                 some true &&
               (gitStarted asked).all (· != statusRead) },
     { name :=
@@ -38152,7 +38194,9 @@ def statusBufferChecks : List Check :=
               namedText toggled statusBufferName == some criterionText &&
               ((showingFocused toggled).bind (·.cursors)).map (·.map (·.head)) ==
                 some #[rowOffset criterionText 4] &&
-              ((toggled.loop.state.buffers.filterMap id).filter (·.name.startsWith "*vc-status")).size == 1 },
+              ((toggled.loop.state.buffers.filterMap id).filter
+                    (·.name.startsWith "*vc-status")).size ==
+                1 },
     { name :=
         "criterion 4: toggling on a staged file's line runs git reset -q -- and that path in the root, and on a staged rename's line both its paths"
       run :=
@@ -38163,7 +38207,8 @@ def statusBufferChecks : List Check :=
             let shown := settledAfter (settledAfter driver "C-o a") "C-v s"
             let staged := settledAfter shown "C-v 3 C-v t"
             let renamed := settledAfter shown "C-v 2 C-v t"
-            gitStarted staged == #[statusRead, gitRun #["reset", "-q", "--", "staged.txt"], statusRead] &&
+            gitStarted staged ==
+                #[statusRead, gitRun #["reset", "-q", "--", "staged.txt"], statusRead] &&
               gitStarted renamed ==
                 #[statusRead, gitRun #["reset", "-q", "--", "new.txt", "old.txt"], statusRead] },
     { name :=
@@ -38178,7 +38223,8 @@ def statusBufferChecks : List Check :=
             let unstaged := settledAfter shown "C-v 3 C-v u"
             let nothingStaged := settledAfter shown "C-v 5 C-v u"
             let nothingToStage := settledAfter shown "C-v 3 C-v a"
-            gitStarted staged == #[statusRead, gitRun #["add", "--all", "--", "unstaged.txt"], statusRead] &&
+            gitStarted staged ==
+                #[statusRead, gitRun #["add", "--all", "--", "unstaged.txt"], statusRead] &&
               gitStarted unstaged ==
                 #[statusRead, gitRun #["reset", "-q", "--", "staged.txt"], statusRead] &&
               echoOf nothingStaged == some "vc-status-unstage: untracked.txt has nothing staged" &&
@@ -38223,8 +38269,8 @@ def statusBufferChecks : List Check :=
               withScript driver
                 { command := statusRead
                   reply :=
-                    .ok
-                      { exit := .code 128, stdout := .empty
+                    .ok {
+                        exit := .code 128, stdout := .empty
                         stderr := "fatal: not a git repository\n".toUTF8 } }
             let asked := settledAfter (settledAfter refusing "C-o a") "C-v s"
             echoOf asked == some "vc-status: exited with status 128: fatal: not a git repository" &&
@@ -38235,7 +38281,8 @@ def statusBufferChecks : List Check :=
         pure <|
           VersionControl.mode.name == "vc-status" &&
             VersionControl.mode.roles ==
-              [(Role.refresh, VersionControl.refreshName), (Role.activate, VersionControl.visitName),
+              [(Role.refresh, VersionControl.refreshName),
+                (Role.activate, VersionControl.visitName),
                 (Role.toggle, VersionControl.toggleName)] &&
             VersionControl.mode.locals ==
               [("s", VersionControl.stageName), ("u", VersionControl.unstageName)] &&
