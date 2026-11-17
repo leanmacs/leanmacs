@@ -29,9 +29,10 @@
 //! which gives up the anchors it holds in its sources.
 //!
 //! **Its list crosses as words**: [`editor_ffi_excerpts_set`] takes a C
-//! array of the source documents' handles and three words for each
-//! excerpt, the index of its source in that array, its start and its end.
-//! It answers with a status ([`ExcerptStatus`]).
+//! array of the source documents' handles, which the glue builds from a Lean
+//! `Array`, and words: the count of excerpts, then three words for each,
+//! the index of its source in that array, its start and its end. It
+//! answers with a status ([`ExcerptStatus`]).
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -39,6 +40,7 @@ use editor_text::Text;
 use editor_text::excerpt::{ExcerptError, Excerpts, SourceKey, Wanted};
 
 use crate::document::{Document, hand_out};
+use crate::words::Reader;
 
 /// The list of an excerpt document and the texts of its sources, each by
 /// its document's key, sorted by key with no key twice. The texts are held
@@ -111,8 +113,8 @@ pub enum ExcerptStatus {
     NotExcerpts = 1,
     /// Refused: a source is an excerpt document.
     Excerpted = 2,
-    /// Refused: the words could not be read: they are not three for each
-    /// excerpt, or one names no source of the array.
+    /// Refused: the words could not be read, or an index names no source
+    /// of the array.
     Unreadable = 3,
     /// Refused: a range is not two positions of its source in order.
     BadRange = 4,
@@ -120,8 +122,7 @@ pub enum ExcerptStatus {
 
 impl Document {
     /// Replaces the list of this excerpt document with the excerpts `words`
-    /// spell, three each: the index in `sources` of its source, its start
-    /// and its end. Anything but [`ExcerptStatus::Done`] changed nothing;
+    /// spell over `sources`, in the layout the module docs give. Anything but [`ExcerptStatus::Done`] changed nothing;
     /// the order of the refusals is [`ExcerptStatus`]'s.
     ///
     /// The list's lock is taken, then the text's, then every source's of
@@ -129,7 +130,7 @@ impl Document {
     /// anchors of an excerpt dropped from the list are given up even when
     /// its source is not among `sources`. Afterwards the document holds the
     /// texts of the sources the new list names, and no others.
-    pub fn set_excerpts(&self, sources: &[&Document], words: &[u64]) -> ExcerptStatus {
+    pub fn set_excerpts(&self, sources: &[&Document], words: &[u8]) -> ExcerptStatus {
         let Some(mut excerpted) = self.excerpted() else {
             return ExcerptStatus::NotExcerpts;
         };
@@ -160,29 +161,28 @@ impl Document {
     }
 }
 
-/// The excerpts `words` spell over `sources`, three words each, and the
-/// texts of the sources they name, sorted by key with no key twice. `None`
-/// when the words are not three for each excerpt, an index names no source,
-/// or a start or an end is more than a `usize` holds.
+/// The excerpts `words` spell over `sources`, in the layout the module docs
+/// give, and the texts of the sources they name, sorted by key with no key
+/// twice. `None` when the words cannot be read or an index names no source.
 #[allow(clippy::type_complexity)]
 fn read(
     sources: &[&Document],
-    words: &[u64],
+    words: &[u8],
 ) -> Option<(Vec<Wanted>, Vec<(u64, Arc<Mutex<Text>>)>)> {
-    let (triples, []) = words.as_chunks::<3>() else {
-        return None;
-    };
-    let mut wanted = Vec::with_capacity(triples.len());
-    let mut named = Vec::with_capacity(triples.len());
-    for &[index, start, end] in triples {
-        let source = sources.get(usize::try_from(index).ok()?)?;
-        let range = usize::try_from(start).ok()?..usize::try_from(end).ok()?;
+    let mut reader = Reader::new(words)?;
+    let count = reader.count(3)?;
+    let mut wanted = Vec::with_capacity(count);
+    let mut named = Vec::with_capacity(count);
+    for _ in 0..count {
+        let source = sources.get(reader.size()?)?;
+        let range = reader.size()?..reader.size()?;
         wanted.push(Wanted {
             source: SourceKey(source.key()),
             range,
         });
         named.push((source.key(), source.text()));
     }
+    reader.finish()?;
     Some((wanted, sorted(named)))
 }
 
@@ -195,7 +195,7 @@ pub extern "C" fn editor_ffi_excerpts_new() -> *mut Document {
 }
 
 /// [`Document::set_excerpts`] for C: replaces the list of `document` with
-/// the excerpts the `word_count` words at `words` spell, over the
+/// the excerpts the `words_len` bytes at `words` spell, over the
 /// `source_count` documents at `sources`, and returns an [`ExcerptStatus`]
 /// as its number.
 ///
@@ -203,31 +203,36 @@ pub extern "C" fn editor_ffi_excerpts_new() -> *mut Document {
 ///
 /// `document` and each of the `source_count` pointers at `sources` are
 /// document handles this library handed out and has not taken back, and
-/// `words` points to `word_count` readable `u64`s.
+/// `words` points to `words_len` readable bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_excerpts_set(
     document: *const Document,
     sources: *const *const Document,
     source_count: usize,
-    words: *const u64,
-    word_count: usize,
+    words: *const u8,
+    words_len: usize,
 ) -> u64 {
     // SAFETY: the caller guarantees the pointers and the counts.
-    let (handles, words) = unsafe { (borrow(sources, source_count), borrow(words, word_count)) };
+    let (handles, words) = unsafe {
+        (
+            handles(sources, source_count),
+            crate::words::borrow(words, words_len),
+        )
+    };
     // SAFETY: the caller guarantees each handle points to a live document.
     let sources: Vec<&Document> = handles.iter().map(|&each| unsafe { &*each }).collect();
     // SAFETY: the caller guarantees `document` points to a live document.
     unsafe { &*document }.set_excerpts(&sources, words) as u64
 }
 
-/// The `count` values at `pointer` as a slice, which is empty for a count
+/// The `count` handles at `pointer` as a slice, which is empty for a count
 /// of 0 whatever the pointer.
 ///
 /// # Safety
 ///
-/// Unless `count` is 0, `pointer` points to `count` readable values that
+/// Unless `count` is 0, `pointer` points to `count` readable pointers that
 /// outlive the slice.
-unsafe fn borrow<'a, T>(pointer: *const T, count: usize) -> &'a [T] {
+unsafe fn handles<'a>(pointer: *const *const Document, count: usize) -> &'a [*const Document] {
     if count == 0 {
         return &[];
     }
@@ -258,6 +263,7 @@ mod tests {
     use crate::inverse::InverseStatus;
     use crate::snapshot::Snapshot;
     use crate::transaction::ApplyStatus;
+    use crate::words::tests::buffer;
 
     /// The first source; excerpts take its second row, `4..8`.
     const ONE: &str = "one\ntwo\nthree\n";
@@ -268,7 +274,7 @@ mod tests {
     /// `two`.
     fn rows_of(one: &Document, two: &Document) -> Document {
         let excerpts = Document::excerpts();
-        let status = excerpts.set_excerpts(&[one, two], &[0, 4, 8, 1, 0, 6]);
+        let status = excerpts.set_excerpts(&[one, two], &buffer(&[2, 0, 4, 8, 1, 0, 6]));
         assert_eq!(status, ExcerptStatus::Done);
         excerpts
     }
@@ -377,26 +383,26 @@ mod tests {
 
         // A plain document, whatever its sources and words.
         assert_eq!(
-            one.set_excerpts(&[&other], &[0, 9, 0, 1]),
+            one.set_excerpts(&[&other], &buffer(&[1, 0, 9, 0, 1])),
             ExcerptStatus::NotExcerpts
         );
         // A source that is an excerpt document, whatever the words.
         assert_eq!(
-            excerpts.set_excerpts(&[&one, &other], &[0, 9, 0, 1]),
+            excerpts.set_excerpts(&[&one, &other], &buffer(&[1, 0, 9, 0, 1])),
             ExcerptStatus::Excerpted
         );
-        // Words that are not three an excerpt, and an index of no source.
+        // Words left over, and an index of no source.
         assert_eq!(
-            excerpts.set_excerpts(&[&one], &[0, 0, 9, 1]),
+            excerpts.set_excerpts(&[&one], &buffer(&[1, 0, 0, 9, 1])),
             ExcerptStatus::Unreadable
         );
         assert_eq!(
-            excerpts.set_excerpts(&[&one], &[1, 0, 9, 0, 9, 0]),
+            excerpts.set_excerpts(&[&one], &buffer(&[1, 1, 0, 9])),
             ExcerptStatus::Unreadable
         );
         // A range out of order.
         assert_eq!(
-            excerpts.set_excerpts(&[&one], &[0, 9, 0]),
+            excerpts.set_excerpts(&[&one], &buffer(&[1, 0, 9, 0])),
             ExcerptStatus::BadRange
         );
 
@@ -413,7 +419,7 @@ mod tests {
         // Only the second source is given: the first is dropped from the
         // list all the same.
         assert_eq!(
-            excerpts.set_excerpts(&[&two], &[0, 6, 10]),
+            excerpts.set_excerpts(&[&two], &buffer(&[1, 0, 6, 10])),
             ExcerptStatus::Done
         );
 
@@ -463,7 +469,7 @@ mod tests {
         let forward = rows_of(&one, &two);
         let backward = Document::excerpts();
         assert_eq!(
-            backward.set_excerpts(&[&two, &one], &[0, 0, 6, 1, 4, 8]),
+            backward.set_excerpts(&[&two, &one], &buffer(&[2, 0, 0, 6, 1, 4, 8])),
             ExcerptStatus::Done
         );
 

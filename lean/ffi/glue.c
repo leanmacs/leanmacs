@@ -424,6 +424,60 @@ lean_obj_res editor_glue_document_from_snapshot(b_lean_obj_arg snapshot) {
       editor_ffi_document_from_snapshot(lean_get_external_data(snapshot))));
 }
 
+// ---- Excerpt documents ----
+//
+// A document whose text is made of ranges of other documents
+// (`crates/editor-ffi/src/excerpts.rs`). It is a document handle like any
+// other, freed by the same finaliser. Its list crosses as a C array of the
+// source documents, built here from a Lean `Array`, and words that name a
+// source by its index in it.
+
+editor_ffi_document *editor_ffi_excerpts_new(void);
+uint64_t editor_ffi_excerpts_set(const editor_ffi_document *document,
+                                 const editor_ffi_document *const *sources,
+                                 size_t source_count, const uint8_t *words,
+                                 size_t words_len);
+bool editor_ffi_document_is_excerpts(const editor_ffi_document *document);
+
+// `Editor.Ffi.Document.excerptsNew : IO Document`. The third way a document
+// is made.
+lean_obj_res editor_glue_excerpts_new(void) {
+  pthread_once(&document_class_once, document_class_register);
+  return lean_io_result_mk_ok(
+      lean_alloc_external(document_class, editor_ffi_excerpts_new()));
+}
+
+// `Editor.Ffi.Document.excerptsSetRaw : @& Document → @& Array Document →
+// @& ByteArray → IO UInt64`
+lean_obj_res editor_glue_excerpts_set(b_lean_obj_arg document,
+                                      b_lean_obj_arg sources,
+                                      b_lean_obj_arg words) {
+  size_t count = lean_array_size(sources);
+  const editor_ffi_document **handles = NULL;
+  if (count != 0) {
+    handles = malloc(count * sizeof *handles);
+    if (handles == NULL) {
+      return lean_io_result_mk_error(lean_mk_io_user_error(
+          lean_mk_string("no memory for the sources of an excerpt list")));
+    }
+    for (size_t index = 0; index < count; index++) {
+      handles[index] =
+          lean_get_external_data(lean_array_get_core(sources, index));
+    }
+  }
+  uint64_t status =
+      editor_ffi_excerpts_set(lean_get_external_data(document), handles, count,
+                              byte_array_bytes(words), byte_array_len(words));
+  free(handles);
+  return lean_io_result_mk_ok(lean_box_uint64(status));
+}
+
+// `Editor.Ffi.Document.isExcerpts : @& Document → IO Bool`
+lean_obj_res editor_glue_document_is_excerpts(b_lean_obj_arg document) {
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_document_is_excerpts(lean_get_external_data(document))));
+}
+
 // `Editor.Ffi.Snapshot.info : @& Snapshot → IO SnapshotInfo`
 lean_obj_res editor_glue_snapshot_info(b_lean_obj_arg snapshot) {
   editor_ffi_raw_snapshot_info raw;

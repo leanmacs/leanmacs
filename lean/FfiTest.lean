@@ -760,6 +760,13 @@ def useDocument (text : String) : IO String := do
   discard <| document.replace text.utf8ByteSize.toUSize text.utf8ByteSize.toUSize "!"
   document.read
 
+/-- Makes an excerpt document of the first two bytes of `source`, reads it
+and drops it. Only plain data leaves: the text it read. -/
+def useExcerpts (source : Editor.Ffi.Document) : IO String := do
+  let excerpts ← Editor.Ffi.Document.excerptsNew
+  discard <| excerpts.excerptsSet #[source] #[(0, 0, 2)]
+  excerpts.read
+
 /-- The checks of a document (`Editor.Ffi.Document`): a handle whose bindings
 take a string and hand one back. "é" and "ö" are two bytes each, so in
 `"héllo"` the byte offset 2 is inside a character. -/
@@ -797,7 +804,23 @@ def documentChecks (_ : Unit) : List Check :=
         discard <| useDocument "dropped"
         let afterDrop ← Editor.Ffi.Document.live
         -- `held` is used here, so it is alive until now.
-        return whileHeld == before + 1 && afterDrop == before + 1 && (← held.read) == "held" }]
+        return whileHeld == before + 1 && afterDrop == before + 1 && (← held.read) == "held" },
+    { name :=
+        "an excerpt document is one more live document, reads its source's range, and is freed when Lean drops the last reference"
+      run := do
+        let source ← Editor.Ffi.Document.new "held"
+        let before ← Editor.Ffi.Document.live
+        let excerpts ← Editor.Ffi.Document.excerptsNew
+        let whileHeld ← Editor.Ffi.Document.live
+        let set ← excerpts.excerptsSet #[source] #[(0, 1, 3)]
+        let read ← useExcerpts source
+        let afterDrop ← Editor.Ffi.Document.live
+        -- `excerpts` is used here, so it is alive until now.
+        return whileHeld == before + 1 && afterDrop == before + 1 && set matches .ok () &&
+            read == "he" &&
+            (← excerpts.read) == "el" &&
+            (← excerpts.isExcerpts) &&
+            !(← source.isExcerpts) }]
 
 /-- Text of three rows. "é" and "ö" are two bytes and one UTF-16 unit each,
 and "😀" is four bytes and two units. The first row ends in a carriage return

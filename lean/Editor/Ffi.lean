@@ -517,7 +517,8 @@ This exists for `FfiTest`, which uses it to see a counter's finaliser run. -/
 opaque Counter.live : IO UInt64
 
 /-- The type behind `Document`. It is opaque, so the only ways to get a
-document are `Document.new` and `Document.ofSnapshot`. -/
+document are `Document.new`, `Document.ofSnapshot` and
+`Document.excerptsNew`. -/
 opaque DocumentPointed : NonemptyType
 
 /-- Text held by the Rust library, edited in place: a second handle, and the
@@ -794,6 +795,8 @@ inductive ApplyRefusal where
   /-- A selection has no range, its primary names none, or an end of one of
   its ranges is not a position of its text. -/
   | badSelection
+  /-- The document is an excerpt document, whose edits are refused. -/
+  | excerpted
   deriving DecidableEq, Repr
 
 /-- `words` with `word` added: its eight bytes, least significant first. -/
@@ -855,7 +858,8 @@ private def Transaction.inserted (transaction : Transaction) : String :=
 `UInt64` fields only, so the order here is the layout the glue writes. -/
 private structure RawApplied where
   /-- 0 applied, 1 the changes do not fit, 2 a selection does not fit, 3 the
-  words could not be read. -/
+  words could not be read, 4 the text moved past an edit script's revision,
+  5 an excerpt document. -/
   status : UInt64
   /-- The revision the transaction produced, when it was applied. -/
   revision : UInt64
@@ -871,10 +875,11 @@ edit, and returns the revision it produced: one more than before, however
 many changes it has. `origin` is a number the library stores and gives back
 (`Document.trace`) and never reads.
 
-A refused transaction changes nothing. A selection that is none (no range,
-or a primary that names none) is refused first, then changes that do not
-fit, then a selection with an end that is not a position of its text. A
-length or an offset given as the largest `UInt64` is one no text accepts. -/
+A refused transaction changes nothing. An excerpt document is refused first,
+then a selection that is none (no range, or a primary that names none), then
+changes that do not fit, then a selection with an end that is not a position
+of its text. A length or an offset given as the largest `UInt64` is one no
+text accepts. -/
 def Document.apply (document : Document) (transaction : Transaction) (origin : UInt64) :
     IO (Except ApplyRefusal UInt64) := do
   let raw ← document.applyRaw transaction.words transaction.inserted origin
@@ -885,6 +890,8 @@ def Document.apply (document : Document) (transaction : Transaction) (origin : U
     return .error .badChange
   | 2 =>
     return .error .badSelection
+  | 5 =>
+    return .error .excerpted
   | status =>
     throw (IO.userError s!"the library could not read a transaction's words (status {status})")
 
@@ -906,6 +913,8 @@ inductive ScriptRefusal where
   /-- The steps do not walk the whole of the text and of the source, or one
   starts or stops inside a character of either. -/
   | badChange
+  /-- The document is an excerpt document, whose edits are refused. -/
+  | excerpted
   deriving DecidableEq, Repr
 
 /-- An edit script as it crosses: the count of steps, then a kind (0 a
@@ -927,8 +936,9 @@ private opaque Document.applyScriptRaw (document : @& Document) (base : UInt64)
 /-- Applies the edit script `script` to the document as one transaction,
 taking what it puts in from `source` and recording `origin` as who made the
 edit, unless the document's revision is not `base`; and returns the revision
-it produced. A refused script changes nothing: the revision is looked at
-first, under the document's lock, then whether the steps fit. -/
+it produced. A refused script changes nothing: an excerpt document is
+refused first, then the revision is looked at, under the document's lock,
+then whether the steps fit. -/
 def Document.applyScript (document : Document) (base : UInt64) (source : Snapshot)
     (script : Array ScriptStep) (origin : UInt64) : IO (Except ScriptRefusal UInt64) := do
   let raw ← document.applyScriptRaw base source (scriptWords script) origin
@@ -939,6 +949,8 @@ def Document.applyScript (document : Document) (base : UInt64) (source : Snapsho
     return .error .badChange
   | 4 =>
     return .error .moved
+  | 5 =>
+    return .error .excerpted
   | status =>
     throw (IO.userError s!"the library could not apply an edit script (status {status})")
 
@@ -1375,6 +1387,8 @@ inductive InverseRefusal where
   | noInverse
   /-- The document's text is not in the state the run ended in. -/
   | notInState
+  /-- The document is an excerpt document, whose edits are refused. -/
+  | excerpted
   deriving DecidableEq, Repr
 
 /-- The inverted result `words` spell: the revision, a presence word, and for
@@ -1405,8 +1419,8 @@ produced `first`. It is one more revision and one entry of the log, like any
 transaction, and its own inverse is kept, so the inverse of the revision this
 returns takes it back.
 
-A refused inverse changes nothing. A run that names a revision the document
-has not reached is refused first, then a run the document keeps no inverse
+A refused inverse changes nothing. An excerpt document is refused first,
+then a run that names a revision the document has not reached, then a run the document keeps no inverse
 for, then a run the text is not in the state at the end of: the text is there
 just after the run, and again whenever inverses have brought it back, and
 not when it merely reads the same. A revision given as the largest `UInt64`
@@ -1427,6 +1441,8 @@ def Document.applyInverse (document : Document) (first last origin : UInt64) :
     return .error .noInverse
   | 3 =>
     return .error .notInState
+  | 4 =>
+    return .error .excerpted
   | status =>
     throw (IO.userError s!"the library reported an unknown inverse status ({status})")
 
@@ -1670,6 +1686,61 @@ neither the snapshot nor the document the snapshot was taken from, and it
 outlives both. -/
 @[extern "editor_glue_document_from_snapshot"]
 opaque Document.ofSnapshot (snapshot : @& Snapshot) : IO Document
+
+/-- A new excerpt document with no excerpts: a document whose text is made of
+ranges of other documents, its sources, joined by one line feed
+(`crates/editor-ffi/src/excerpts.rs`). Its text is caught up with its
+sources whenever it is read, so a snapshot of it, its edit log and its
+markers follow them; its edits are refused. It holds its sources' texts, so
+a source freed is read as it was. -/
+@[extern "editor_glue_excerpts_new"]
+opaque Document.excerptsNew : IO Document
+
+/-- Why the library refused an excerpt document's list. -/
+inductive ExcerptRefusal where
+  /-- The document is not an excerpt document. -/
+  | notExcerpts
+  /-- A source is an excerpt document. -/
+  | excerpted
+  /-- A range is not two positions of its source in order. -/
+  | badRange
+  deriving DecidableEq, Repr
+
+/-- `Document.excerptsSet` as it crosses: the sources as an array of
+handles, and the list as words, the count of excerpts and then the index of
+each one's source in the array, its start and its end. -/
+@[extern "editor_glue_excerpts_set"]
+private opaque Document.excerptsSetRaw (document : @& Document) (sources : @& Array Document)
+    (words : @& ByteArray) : IO UInt64
+
+/-- Replaces the list of the excerpt document with `list`: for each excerpt,
+the index in `sources` of its source, and its range there, as byte offsets.
+A refused list changes nothing: a document that is not an excerpt document
+is refused first, then a source that is one, then a range that is not two
+positions of its source in order. An index into `sources` that names none
+is a fault of the caller's, thrown. -/
+def Document.excerptsSet (document : Document) (sources : Array Document)
+    (list : Array (Nat × UInt64 × UInt64)) : IO (Except ExcerptRefusal Unit) := do
+  let words :=
+    list.foldl
+      (fun words (index, start, stop) =>
+        pushWord (pushWord (pushWord words index.toUInt64) start) stop)
+      (pushWord ByteArray.empty list.size.toUInt64)
+  match ← document.excerptsSetRaw sources words with
+  | 0 =>
+    return .ok ()
+  | 1 =>
+    return .error .notExcerpts
+  | 2 =>
+    return .error .excerpted
+  | 4 =>
+    return .error .badRange
+  | status =>
+    throw (IO.userError s!"the library could not read an excerpt list (status {status})")
+
+/-- Whether the document is an excerpt document. -/
+@[extern "editor_glue_document_is_excerpts"]
+opaque Document.isExcerpts (document : @& Document) : IO Bool
 
 /-- What the file service compares to tell whether a file changed: when it
 was last modified and how long it is. Two stamps are compared for equality
