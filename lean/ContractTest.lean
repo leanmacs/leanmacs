@@ -31,6 +31,7 @@ import Editor.Text.Contract
 import Editor.Text.Model
 import Editor.Text.Real
 import Editor.UndoTree.Cases
+import Editor.VersionControl.Contract
 import Editor.Watch.Contract
 import Editor.Watch.Real
 import Editor.Workspace.Compiled
@@ -2876,33 +2877,59 @@ def withPath (path : String) (command : Process.Command) : Process.Command :=
       { command.environment with
         set := (command.environment.set.filter (·.1 != "PATH")).push ("PATH", path) } }
 
-/-- `services` whose process service starts every child with `PATH` set to
-`path`, after the environment its directory's lookup gives it: each request
-that starts a child is matched constructor by constructor, so the replies'
-types line up. The test process's own environment is never touched. -/
-def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
+/-- `services` whose process service starts every child with its command
+changed by `change`, after the environment its directory's lookup gives it:
+each request that starts a child is matched constructor by constructor, so
+the replies' types line up. The test process's own environment is never
+touched. -/
+def onChanged (services : Job.Services) (change : Process.Command → Process.Command) :
+    Job.Services :=
   let processes := services.processes
-  let pathed : ProcessRequest → ProcessRequest
-    | .run command limit => .run (withPath path command) limit
-    | .runWithin command limit time => .runWithin (withPath path command) limit time
-    | .runInput command input limit time => .runInput (withPath path command) input limit time
-    | .start command streaming => .start (withPath path command) streaming
+  let changed : ProcessRequest → ProcessRequest
+    | .run command limit => .run (change command) limit
+    | .runWithin command limit time => .runWithin (change command) limit time
+    | .runInput command input limit time => .runInput (change command) input limit time
+    | .start command streaming => .start (change command) streaming
     | other => other
   { services with
     processes :=
-      { start := fun id request => processes.start id (pathed request)
+      { start := fun id request => processes.start id (changed request)
         take := fun id request =>
           match request with
-          | .run command limit => processes.take id (.run (withPath path command) limit)
+          | .run command limit => processes.take id (.run (change command) limit)
           | .runWithin command limit time =>
-            processes.take id (.runWithin (withPath path command) limit time)
+            processes.take id (.runWithin (change command) limit time)
           | .runInput command input limit time =>
-            processes.take id (.runInput (withPath path command) input limit time)
-          | .start command streaming => processes.take id (.start (withPath path command) streaming)
+            processes.take id (.runInput (change command) input limit time)
+          | .start command streaming => processes.take id (.start (change command) streaming)
           | .read process => processes.take id (.read process)
           | .write process bytes => processes.take id (.write process bytes)
           | .closeInput process => processes.take id (.closeInput process)
         cancel := processes.cancel } }
+
+/-- `services` whose process service starts every child with `PATH` set to
+`path`, after the environment its directory's lookup gives it
+(`onChanged`). -/
+def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
+  onChanged services (withPath path)
+
+/-- The variables that keep a git run from reading the user's or the
+system's config: no system config, `/dev/null` as the global one, and
+`home` as its home. -/
+def isolatedGit (home : System.FilePath) : Array (String × String) :=
+  #[("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_CONFIG_GLOBAL", "/dev/null"), ("HOME", home.toString),
+    ("XDG_CONFIG_HOME", home.toString)]
+
+/-- `services` whose process service starts every child with the variables
+of `isolatedGit home` set, over any of theirs its command sets
+(`onChanged`). -/
+def onIsolatedGit (services : Job.Services) (home : System.FilePath) : Job.Services :=
+  onChanged services fun command =>
+    let names := (isolatedGit home).map (·.1)
+    { command with
+      environment :=
+        { command.environment with
+          set := (command.environment.set.filter (!names.contains ·.1)) ++ isolatedGit home } }
 
 /-- The jobs of the project mode checks: the file commands', the workspace
 finder's and the compile mode's, as a host registers them. -/
@@ -3226,6 +3253,108 @@ def projectModeChecks (services : Job.Services) (compile workspaces : System.Fil
               (← focusedAt rig mainTexts inMain) == some (main.toString, 3, 17) &&
               history == #["cargo build"] }]
 
+/-! ## The version-control interface over real git -/
+
+/-- The environment of the git runs that write a repository out: the
+variables of `isolatedGit home`, a fixed author and committer, and
+`GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` removed. Applied to each
+child only; the test process's environment is never touched. -/
+def writerEnvironment (home : System.FilePath) : Array (String × Option String) :=
+  (isolatedGit home).map (fun (name, value) => (name, some value)) ++
+    #[("GIT_AUTHOR_NAME", some "a"), ("GIT_AUTHOR_EMAIL", some "a@example.com"),
+      ("GIT_COMMITTER_NAME", some "a"), ("GIT_COMMITTER_EMAIL", some "a@example.com"),
+      ("GIT_AUTHOR_DATE", some "2026-01-01T00:00:00Z"),
+      ("GIT_COMMITTER_DATE", some "2026-01-01T00:00:00Z"), ("GIT_DIR", none),
+      ("GIT_WORK_TREE", none), ("GIT_INDEX_FILE", none)]
+
+/-- Runs `git` with `arguments` in `directory`, fed `input` if it is given,
+with the writer's environment: what it printed, or a throw when it did not
+exit 0. -/
+def gitIn (home directory : System.FilePath) (arguments : Array String)
+    (input : Option String := none) : IO String :=
+  IO.Process.run
+    { cmd := "git", args := arguments, cwd := directory, env := writerEnvironment home } input
+
+/-- Writes `repository` out as a git repository in `directory`, with git's
+own commands: initialised on its branch, `HEAD`'s files committed, checked
+out detached if it is, each index entry that differs from `HEAD` written
+with `update-index` (a conflict as its stages, through `--index-info`), and
+then the working tree made exactly `repository.worktree`. -/
+def writeGitRepository (home directory : System.FilePath)
+    (repository : VersionControl.Model.Repository) : IO Unit := do
+  let branch :=
+    match repository.head with
+    | .branch name => name
+    | .detached => "main"
+  discard <| gitIn home directory #["-c", s!"init.defaultBranch={branch}", "init", "-q"]
+  unless repository.committed.isEmpty do
+    for (path, content) in repository.committed do
+      writeMaking (directory / path) content
+    discard <| gitIn home directory #["add", "-A"]
+    discard <| gitIn home directory #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "head"]
+    if repository.head == .detached then
+      discard <| gitIn home directory #["checkout", "-q", "--detach"]
+  let hash (content : String) : IO String := do
+    return (← gitIn home directory #["hash-object", "-w", "--stdin"] (some content)).trimAscii.toString
+  let paths := repository.committed.map (·.1) ++ repository.index.map (·.1)
+  for path in paths.toList.eraseDups do
+    let committed := VersionControl.Model.lookup repository.committed path
+    match VersionControl.Model.lookup repository.index path with
+    | some (.file content) =>
+      if committed != some content then
+        discard <|
+          gitIn home directory #["update-index", "--add", "--cacheinfo", s!"100644,{← hash content},{path}"]
+    | some (.conflict base ours theirs) =>
+      if committed.isSome then
+        discard <| gitIn home directory #["update-index", "--force-remove", "--", path]
+      let mut lines := ""
+      for (stage, content) in [(1, base), (2, ours), (3, theirs)] do
+        if let some content := content then
+          lines := lines ++ s!"100644 {← hash content} {stage}\t{path}\n"
+      discard <| gitIn home directory #["update-index", "--index-info"] (some lines)
+    | none =>
+      if committed.isSome then
+        discard <| gitIn home directory #["update-index", "--force-remove", "--", path]
+  for (path, _) in repository.committed do
+    if (VersionControl.Model.lookup repository.worktree path).isNone then
+      IO.FS.removeFile (directory / path)
+  for (path, content) in repository.worktree do
+    writeMaking (directory / path) content
+
+/-- `check` handed a home and a repository directory of its own, under a
+temporary directory removed afterwards (`withBase`). -/
+def withRepository {α : Type} (check : System.FilePath → System.FilePath → IO α) : IO α :=
+  withBase fun base => do
+    IO.FS.createDirAll (base / "home")
+    IO.FS.createDirAll (base / "repo")
+    check (base / "home") (base / "repo")
+
+/-- The names of the version-control contract's properties
+(`Editor/VersionControl/Contract.lean`) that do not hold of the git
+implementation over the library's process service, each property's
+repository written out with real git in a temporary directory of its own
+(`writeGitRepository`), every child's git kept from the user's and the
+system's config (`onIsolatedGit`); and that every child it ran is
+reaped. Property 1 is the phase's adapter test of git against the
+model. -/
+def versionControlFailures (services : Job.Services) : IO (List String) := do
+  let before ← Ffi.processesPending
+  let failed ←
+    VersionControlContract.properties.filterMapM fun property =>
+      withRepository fun home directory => do
+        try
+          writeGitRepository home directory property.repository
+          let outcome ←
+            runOnTimers (onIsolatedGit services home)
+              (property.holds.runM (VersionControl.Git.handler "git" directory))
+          return if outcome == .finished true then none
+            else some s!"{property.name} ({repr outcome})"
+        catch error =>
+          return some s!"{property.name} (writing its repository: {error})"
+  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  return failed.map (s!"the version-control interface over git: {·}") ++
+      if reaped then [] else ["every child the git implementation ran is reaped"]
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
@@ -3306,6 +3435,7 @@ def main (arguments : List String) : IO UInt32 := do
   let compileCheckFailed ← ContractTest.checkFailures compileChecks
   let projectModeChecks := ContractTest.projectModeChecks services compileFixtures workspaceFixtures
   let projectModeCheckFailed ← ContractTest.checkFailures projectModeChecks
+  let versionControlFailed ← ContractTest.versionControlFailures services
   let fileWatchFailed ← ContractTest.fileWatchFailures services
   let fileWatchChecks := ContractTest.fileWatchChecks services
   let fileWatchCheckFailed ← ContractTest.checkFailures fileWatchChecks
@@ -3349,6 +3479,7 @@ def main (arguments : List String) : IO UInt32 := do
       shellCheckFailed ++
       compileCheckFailed ++
       projectModeCheckFailed ++
+      versionControlFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
       checkFailed ++
@@ -3373,6 +3504,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

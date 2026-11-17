@@ -163,6 +163,12 @@ def properties : List Property :=
         let unstaged ← unstage #["new.txt", "old.txt"]
         return renamed && succeeded unstaged &&
             (← stateIs "old.txt" (.changed none (some .deleted))) && (← stateIs "new.txt" .untracked) },
+    { name := "an empty file moved in the index is a rename, as a file with content is"
+      repository :=
+        { committed := #[("e.txt", "")], index := #[("f.txt", .file "")]
+          worktree := #[("f.txt", "")] }
+      holds := do
+        return (← stateIs "f.txt" (.renamed "e.txt" none)) && (← statesOf "e.txt").isEmpty },
     { name :=
         "on an unborn branch a staged new file is staged as added on that branch, and unstaging it leaves it untracked"
       repository := { index := #[("a.txt", .file "a\n")], worktree := #[("a.txt", "a\n")] }
