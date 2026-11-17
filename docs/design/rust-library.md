@@ -1365,7 +1365,10 @@ state the editor can draw itself.
 Built by the syntax roadmap's phase 1 (2026-11-16): the port, the
 reparse off the editor thread, and the Lean interface with its model; and
 by its phase 2 (2026-11-16): highlights, a mode's grammar and capture
-faces ("Highlights, as built", below).
+faces ("Highlights, as built", below). The language-modes roadmap's
+phase 1 (2026-11-16) made each edit deliver its incremental reparse and an
+idle refresh restore exactness, gave each grammar a reparse policy, and
+restated the contract to match.
 
 **How grammars are loaded: compiled in.** Each grammar is a crates.io
 grammar crate, pinned exactly (`tree-sitter-rust` 0.24.2,
@@ -1391,8 +1394,8 @@ loaded at run time. Set aside, and why:
 `deny.toml` bans `wasmtime` and `tree-sitter-loader` outright, and lets only
 the adapter depend on tree-sitter and the grammars. The grammars are Rust,
 for the editor's own language, JSON, which the Lean model reproduces, and
-Markdown, whose block grammar alone is listed ("Injections, indentation
-and text objects, as built", below).
+Markdown's two grammars, the inline one as an injected layer ("Injections,
+indentation and text objects, as built", below).
 
 **The port** (`crates/editor-syntax`, over `editor-text` alone) is
 `Syntax`: the grammars it has, a parser for one, a parse of a snapshot
@@ -1401,60 +1404,82 @@ edits left alone), an edit told to a tree, a query compiled or refused as a
 value with its kind and offset, a query's capture names, its captures in or
 around a range, a tree read as plain `Node`s in pre-order (kind, named,
 field, depth, range and points, error, missing), and whether a tree has an
-error or a missing node, answered without reading it out. Two trees are
-equal when their nodes are. The tree, the parser and the query are the
-implementation's own types. `fake::Parens` is the published fake, a toy
-grammar of parens and atoms that reparses whole.
+error or a missing node, answered without reading it out, and the reparse
+policy a grammar declares (`ReparsePolicy`: `Incremental`, each round reuses
+the old tree, or `Whole`, each round parses from scratch), read once by the
+core. Two trees are equal when their nodes are. The tree, the parser and
+the query are the implementation's own types. `fake::Parens` is the
+published fake, a toy grammar of parens and atoms that reparses whole and
+declares `Incremental`.
 
 **The contract** (`editor_syntax::contract::check`, over a `Corpus` of a
 grammar: texts, pieces random edits insert, a query and its names, bad
 queries with their kinds, the kinds of query it ships, a query with `#set!`
-settings) holds every implementation to fourteen properties:
+settings, and the reparse policy the grammar declares) holds every
+implementation to seventeen properties:
 the grammar listed and opening a parser; a whole tree (the root reaches
 the text's end, each node within its parent on positions with their points,
 siblings in order; the root may start after the blanks that lead the text,
 as tree-sitter's does); two fresh parses equal; a tree having errors
 exactly when one of its nodes is an error or missing, over a corpus with
-texts of both; the incremental reparse, as the core makes it, equal to a
-fresh parse; queries refused by kind; capture names in order; a
-range answering the whole text's captures that overlap it; and every
-capture naming one of the query's and being a node's range, in the core's
-order; the grammar shipping a query of each kind the corpus lists, each
-compiling, and none of another kind, and an unlisted grammar shipping none
-(`SHIPPED`); over the same edits as the incremental property, the shipped
-highlights of the reparsed tree equal to a fresh parse's
+texts of both; **grammar quality** (`GRAMMAR_QUALITY`, below); queries
+refused by kind; capture names in order; a range answering the whole
+text's captures that overlap it; and every capture naming one of the
+query's and being a node's range, in the core's order; the grammar
+shipping a query of each kind the corpus lists, each compiling, and none of
+another kind, and an unlisted grammar shipping none (`SHIPPED`); over the
+same edits as grammar quality, the shipped highlights of an incremental
+reparse of a text without errors equal to a fresh parse's
 (`HIGHLIGHTS_AFTER_EDITS`); a parse in ranges reading only the ranges
 (`IN_RANGES`); a range's matches, flattened, being its captures, each with
-its node's named children (`MATCHES`); and each pattern's `#set!` settings
-(`SETTINGS`). Each property is seen to bite on an implementation written to
-break it. The fake passes it, and the adapter passes it for Rust, JSON and
-Markdown.
+its node's named children (`MATCHES`); each pattern's `#set!` settings
+(`SETTINGS`); every tree a round keeps whole, incremental trees of texts
+with errors among them (`DELIVERED_WHOLE`); **convergence** (`CONVERGES`,
+below); and the grammar declaring the corpus's policy, an unlisted grammar
+declaring none, and the core's rounds honouring it: a `Whole` grammar's
+never handed an old tree, an `Incremental` grammar's handed one after an
+edit (`REPARSE_POLICY`). Each property is seen to bite on an implementation
+written to break it, and each such mutant's failures are pinned exactly.
+The fake passes it, and the adapter passes it for Rust, JSON, Markdown and
+Markdown's inline grammar.
 
-- **Incremental equals fresh** is checked on named cases (an insert inside
-  a token, a delete across lines, everything deleted, an edit at offset 0
-  and at the end, a CRLF, multibyte text, one transaction of several
-  changes, several transactions pulled as one patch) and on a sweep of
-  random edit sequences from a fixed seed, each ended by its own inverse.
-  Every edit goes through a real `Text`, and the tree is told the log's own
-  patch, so this is where `Edit::input_edit` is held to tree-sitter. Every
-  reparse is compared exactly, texts with errors among them, and at least
-  one incremental parse must be kept, so the property is never held only by
-  whole parses.
-- **A reparse with an error is parsed again whole** (the fallback rule,
-  `session::reparse`, which the session and the contract both run). How
-  tree-sitter recovers from an error depends on what it reuses, and its own
-  randomized tests compare reparses with fresh parses only of texts without
-  errors: seen on 2026-11-16, 11 of some 6,700 incremental parses of random
-  edits of Rust differed from the fresh parse, every one with an error, and
-  none of JSON. So the core drops an incremental parse whose tree has an
-  error or a missing node and parses the snapshot whole, with no old tree,
-  and the tree a round makes is always the tree a fresh parse gives. The
-  second parse is on the worker thread; the editor thread never waits for
-  it. It costs a whole parse for every edit while a text has an error. On
-  sweeps of five times the contract's, from three seeds (some 23,000
-  reparses of Rust and JSON), every incremental parse with no error equalled
-  the fresh parse, and every fresh parse had an error exactly when the
-  incremental one did.
+- **The edits** are named cases (an insert inside a token, a delete across
+  lines, everything deleted, an edit at offset 0 and at the end, a CRLF,
+  multibyte text, one transaction of several changes, several transactions
+  pulled as one patch) and a sweep of random edit sequences from a fixed
+  seed, each ended by its own inverse. Every edit goes through a real
+  `Text`, and the tree is told the log's own patch, so this is where
+  `Edit::input_edit` is held to tree-sitter. Each fresh parse a reparse is
+  compared with is made on a parser opened for the oracle, never the run's
+  own, so a parser that remembers cannot hide its own answer.
+- **Grammar quality: on a text without errors, an incremental reparse
+  equals a fresh parse.** A reparse is compared exactly when the fresh
+  parse of its snapshot has no error or missing node, and at least one must
+  be compared. How tree-sitter recovers from an error depends on what it
+  reuses, and its own randomized tests compare reparses with fresh parses
+  only of texts without errors: seen on 2026-11-16, 11 of some 6,700
+  incremental parses of random edits of Rust differed from the fresh parse,
+  every one with an error, and none of JSON. On sweeps of five times the
+  contract's, from three seeds (some 23,000 reparses of Rust and JSON),
+  every incremental parse with no error equalled the fresh parse. A grammar
+  that fails it ships as `Whole`, promised nothing incremental: Markdown's
+  inline grammar, whose reparses of texts without errors differ.
+- **The eventual guarantee: incremental now, exactly a fresh parse once the
+  text is quiet.** An edit's round keeps its incremental reparse, errors or
+  not; once the text has gone the idle interval unchanged, the worker
+  parses it whole (the refresh round, below), so the tree delivered equals
+  a fresh parse. Neovim, Helix, Zed and Emacs highlight from the
+  incremental tree and never check it against a fresh parse; this keeps
+  their per-edit behaviour and adds exactness when the text is quiet. Until
+  2026-11-16 the core instead dropped an incremental parse with an error
+  and parsed the text whole, a second parse for most rounds while someone
+  types. `CONVERGES` holds the core to it on the real implementation: a
+  real `Session` driven round by round over the named cases and a short
+  sweep, then refreshed, delivers a tree equal to a fresh parse, drawn with
+  the shipped highlights as a fresh highlight draws them, and a second
+  refresh delivers nothing. The criteria of the syntax roadmap's phase 1
+  that said the delivered tree equals a fresh parse after every edit are
+  restated here to this guarantee.
 
 **What a range answers** is the core's rule (`query::captures_in`), so the
 model and every implementation answer alike: the captures whose node
@@ -1466,46 +1491,82 @@ each side: tree-sitter leaves out a node that only touches an end of its
 byte range, and answers nothing of an empty one.
 
 **A session and the worker.** A `Session` is one text's parse state: its
-grammar and parser, its `Source`, its consumers, the last tree parsed (the
-base, delivered or not) and the newest revision it has been told of.
+grammar, its policy and parser, its `Source`, its consumers, the last tree
+parsed (the base, delivered or not, and whether it is a whole parse) and
+the newest revision it has been told of.
 
 1. A round asks the source for the text as it is now and the patch since
    the base's revision, taken together under the document's lock
    (`Source::latest`, which `editor_ffi::snapshot::Source` implements over
    a snapshot's weak hold on its document's text). A text gone ends the
    session; one at the base's revision needs nothing.
-2. With a base and a patch that chains from it, a clone of the base tree is
-   told each edit of the patch, in order, and the text reparsed with it;
-   otherwise (the first parse, a log that has forgotten the base's
-   revision, a patch that does not chain) it is parsed whole. The bytes go
-   from the snapshot's chunks to the parser; parsing never passes through
-   Lean. An incremental parse whose tree has an error or a missing node is
-   dropped and the text parsed whole (the fallback rule above).
+2. With an `Incremental` grammar, a base and a patch that chains from it, a
+   clone of the base tree is told each edit of the patch, in order, and the
+   text reparsed with it, and the result is kept whatever it holds: there
+   is no fallback. Otherwise (a `Whole` grammar, the first parse, a log
+   that has forgotten the base's revision, a patch that does not chain) it
+   is parsed whole, handed no old tree. The bytes go from the snapshot's
+   chunks to the parser; parsing never passes through Lean.
 3. **The delivery rule.** The result is the new base. It is delivered only
    if its revision is at least the newest the session has been told of;
    delivering moves that revision to the result's, keeps the result and
    hands it to each consumer. A result older than a revision the session
    has been told of is stale: nobody sees it, and the session is queued
-   again. So the revisions delivered only grow.
+   again. So the revisions delivered only grow, and repeat only for new
+   injected layers at the same text or a refresh whose whole parse
+   differed.
+4. **The refresh round** (`Session::refresh_once`). A text that has moved
+   past the base, or has none, gets an ordinary round. A base that is
+   already a whole parse needs nothing. Otherwise the text is parsed whole
+   and that tree becomes the base; when its nodes equal the base tree's,
+   nothing is delivered and no consumer is called, and otherwise it is
+   delivered at the same revision through the delivery rule (stale if a
+   newer revision has been told by then, and still the next reparse's
+   base). The base is compared, not the tree delivered: in this case it is
+   the tree delivered, unless a stale result came between, and then the
+   text has moved and it is the ordinary round. The comparison reads both
+   trees' nodes, once per quiet period, on the worker. The session keeps
+   the revision its delivered tree is exact for, which `Session::wait_exact`
+   waits on, for tests.
 
 The `Worker` holds a queue of sessions, each in it at most once; a touch
 tells a session of a revision and queues it, and the worker takes one out
-before its round, so a touch during a round queues it again. Its loop
-blocks with no deadline while the queue is empty. The crate starts no
-thread.
+before its round, so a touch during a round queues it again. It also keeps
+a pure schedule of refreshes, each a session, by an id given out once in
+the process, and a deadline on a clock port of the crate's
+(`editor_syntax::clock::Clock`, with a published `ManualClock`): a touch
+whose revision is newer than every one the session was told of, an edit,
+sets the session's refresh to the clock's reading plus the interval, in
+place of any before, so an edit during the interval postpones it; a touch
+at a revision told already (an attach, a change of injections) sets
+nothing; and a `Whole` grammar's session is never scheduled. A queued
+round runs before a refresh that is due. The loop parks with no deadline
+while nothing is queued or scheduled, and until the earliest deadline
+otherwise, capped at an hour; a touch, a stop and `Handle::wake` wake it.
+The crate starts no thread.
 
 **Locks.** A round holds the session's work lock (its parser and base),
 which only the worker takes, and no other lock while it parses: it takes
 the document's lock only inside `Source::latest`, and the session's state
-lock only to deliver. A touch takes the registry's lock, then the
-session's state lock, then the worker's queue lock, each let go before the
-next where it can, and never the document's: the edit paths touch once the
-edit is made and the document's lock let go. There is no cycle. A consumer
+lock only to deliver, or to mark the tree delivered exact. A touch takes
+the registry's lock, then the session's state lock, then the worker's
+queue lock, each let go before the next where it can, and never the
+document's: the edit paths touch once the edit is made and the document's
+lock let go. Every touch with a newer revision takes the queue lock to set
+its refresh, whether or not the session is queued already: one short lock
+on the editor thread, which no parse holds. There is no cycle. A consumer
 is called under the session's state lock and must not call back into it.
 
 **In `editor-ffi`** the syntax service is one process-wide registry of the
 attached documents by key, the tree-sitter adapter, and one worker thread
-named `syntax`, started at the first attach. Every edit path of a document
+named `syntax`, started at the first attach. Its idle interval is measured
+on the job clock (`timers::Monotonic`, which implements the crate's
+`Clock`) and set by Lean through `editor_ffi_syntax_refresh_after`; the
+service keeps it, tells the worker of a change, and starts the worker with
+it, and until Lean sets it, it is `syntax::REFRESH_AFTER_MS`, 500 ms.
+Lean's default, the one users see, is its own
+(`Highlight.defaultRefreshDelay`, set in config by `syntaxRefreshDelay`),
+sent each time a buffer's major mode with a syntax tree is entered. Every edit path of a document
 (a replace, a transaction, an inverse) touches it, and freeing a document
 detaches it. A question of captures is refused as not attached for a
 document not in the registry, and otherwise forwarded to the document's
@@ -1597,8 +1658,10 @@ subscribes a consumer (`ParsedNotice`) that pushes one `EventKind::Parsed`
 editor queue for each delivery. Lean's host hands it to its loop, which
 changes no state and publishes a scene, laid out with the new tree: the
 old highlights stay until then, and a file is highlighted on open with no
-key pressed. The consumer takes only the queue's lock, under the session's
-state lock, which nothing takes the other way round.
+key pressed. An idle refresh whose whole parse differs from the tree
+delivered is a delivery and reports once; one that finds no difference
+reports nothing. The consumer takes only the queue's lock, under the
+session's state lock, which nothing takes the other way round.
 
 **An attach with the grammar a document has keeps its session**, its tree
 and its highlighter, so a switch between two modes of one grammar does not
@@ -1632,6 +1695,11 @@ its buffer's text (`lean/Editor/Highlight.lean`).
   buffers, in place of one compiled each time a mode is set.
 - Drawing typed text in its token's face before the reparse, by
   interpolating the tree (set aside above).
+- Comparing a refresh's whole parse with the tree delivered without reading
+  both out (tree-sitter's `changed_ranges`), to add only if the comparison
+  is measured to cost.
+- Coalescing an idle refresh with the next edit's round, when an edit
+  arrives while the refresh parses.
 
 ### Injections, indentation and text objects, as built
 
@@ -1646,7 +1714,8 @@ is used wherever it ships one, as phase 2 decided for highlights:
 |---|---|---|---|---|
 | `rust` | the crate's | the crate's (a macro's or a macro rule's token tree, as Rust, its children included) | ours | ours |
 | `json` | the crate's | none | none | none |
-| `markdown` | the crate's, of the block grammar | the crate's, of the block grammar (a fence's code in the language its info string names) | none | none |
+| `markdown` | the crate's, of the block grammar | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none |
+| `markdown_inline` | the crate's, of the inline grammar | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none |
 
 `tree-sitter-rust` 0.24.2 ships no `indents.scm` or `textobjects.scm`, so
 Rust's are this repository's (`crates/editor-syntax-treesitter/queries/rust/`,
@@ -1667,19 +1736,25 @@ only as a generic list's closing angle bracket (`type_arguments`,
 keeps that row's level (the plan review's advice; the Rust indent fixture
 has such a row).
 
-**Markdown is `tree-sitter-md`'s block grammar alone.** `tree-sitter-md`
-0.5.4 (MIT, the tree-sitter-grammars project's, the one nvim, Helix and Zed
-use) is depended on with no features: its `parser` feature only adds a
-wrapper over tree-sitter the adapter does not use. Its inline grammar is not
-listed: in a sweep of 4,000 random incremental reparses on 2026-11-16, 598
-gave a tree other than a fresh parse's with no error in it, so the core's
-fallback would not catch them and `INCREMENTAL` would fail; the block
-grammar's 6,000 all equalled the fresh parse. So inline Markdown (emphasis,
-code spans, links) is not highlighted, and the block grammar's injection of
-each `(inline)` node as `markdown_inline` names a grammar the service does
-not have. A Markdown tree may say it has an error with no error node the
-walk shows (a heading marker that ends the text), which only makes the core
-parse it whole.
+**Markdown is `tree-sitter-md`'s two grammars.** `tree-sitter-md` 0.5.4
+(MIT, the tree-sitter-grammars project's, the one nvim, Helix and Zed use)
+is depended on with no features: its `parser` feature only adds a wrapper
+over tree-sitter the adapter does not use, and its build compiles both
+grammars. The block grammar is `markdown`, of policy `Incremental`: its
+6,000 reparses in a sweep on 2026-11-16 all equalled the fresh parse. The
+inline grammar is `markdown_inline`, the name the block grammar's
+injections query gives each `(inline)` node, so a paragraph's or a
+heading's text is an injected layer drawn with the inline grammar's
+captures (emphasis, code spans, links). It is of policy `Whole`: in sweeps
+of random incremental reparses on 2026-11-16, 598 of 4,000, and 136 of
+6,400 in a second, gave a tree other than a fresh parse's with no error in
+it, so it fails `GRAMMAR_QUALITY`. A layer is parsed whole each round
+anyway, so the policy changes nothing for it as a layer. The default face
+mapping has no entry for its `text.*` captures, so they draw nothing until
+config maps them; `punctuation.delimiter` draws in `syntax.punctuation`. A
+Markdown tree may say it has an error with no error node the walk shows (a
+heading marker that ends the text); its round keeps it as it keeps any
+incremental tree.
 
 **What the port gains.** `Syntax::matches` (a query's matches, each with
 its captures, and each captured node's named children), `pattern_settings`
@@ -1757,8 +1832,6 @@ indents queries (`lean/Editor/Highlight.lean`); the indent rule
 **Open questions:**
 
 - Reusing an injected layer's tree across rounds (measured above).
-- Listing a grammar that is only ever parsed whole as an injected layer:
-  Markdown's inline grammar.
 - Language aliases for injections (`rs`, `jsonc`), and where they are
   configured.
 - `injection.combined`: one layer of several matches.
