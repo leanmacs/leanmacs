@@ -20,6 +20,12 @@
 //! Blocks never enter a text's wrap layer: what layout keeps of a text is
 //! unchanged by them, and they are matched to the text's rows afresh in
 //! each frame and query, from their `before`.
+//!
+//! **Gutter marks** ([`GutterMark`]) are laid out through the same store:
+//! a mark is the block of its text with two decorations over the whole of
+//! it, `gutter` and then its own face ([`mark_block`]), so it is keyed by
+//! its text and its face, and two marks of one text and face share one
+//! entry and one row hash. Only a mark's first visual line is drawn.
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -33,7 +39,7 @@ use crate::decoration::{DecorationSource, FaceSpanSource, Span, Styles, fonts_of
 use crate::face::{FaceId, Paint};
 use crate::frame::paint_line;
 use crate::query::{Shown, Walker};
-use crate::scene::Block;
+use crate::scene::{Block, Decoration, GutterMark};
 use crate::shaper::{FontId, Shaper, VisualLine};
 use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
@@ -149,6 +155,112 @@ impl<S: Shaper> BlockLayout<'_, S> {
         }
         self.counters.add(&seen);
         lines
+    }
+}
+
+/// The face every gutter mark is drawn over, under its own.
+pub(crate) const GUTTER_FACE: &str = "gutter";
+
+/// The block `mark`'s text is laid out as: its text, in `gutter` and then
+/// in its face over the whole of it.
+pub(crate) fn mark_block(mark: &GutterMark) -> Block {
+    let whole = |face: &str| Decoration {
+        start: 0,
+        stop: mark.text.len(),
+        face: face.to_owned(),
+    };
+    Block {
+        before: 0,
+        text: mark.text.clone(),
+        decorations: vec![whole(GUTTER_FACE), whole(&mark.face)],
+    }
+}
+
+/// A view's gutter marks for one frame: the buffer rows each covers, and
+/// its text laid out when it is first drawn.
+pub(crate) struct ViewMarks {
+    /// Each mark as the block its text is laid out as.
+    blocks: Vec<Block>,
+    /// Each block's decorations, their faces interned.
+    spans: Vec<Vec<(Range<usize>, FaceId)>>,
+    /// The buffer rows each mark is drawn beside, from the first to the
+    /// last, both included.
+    rows: Vec<(usize, usize)>,
+    /// The first line of each mark laid out so far.
+    laid: HashMap<usize, Option<BlockLine>>,
+}
+
+impl ViewMarks {
+    /// `marks` over `snapshot`, the view's text, their faces interned into
+    /// `styles`. A mark covers each row its range has a byte in, or the
+    /// row that holds its start when the range is empty; its offsets are
+    /// moved back to a character boundary, and past the end to the end.
+    pub(crate) fn new(marks: &[GutterMark], snapshot: &Snapshot, styles: &mut Styles) -> Self {
+        let blocks: Vec<Block> = marks.iter().map(mark_block).collect();
+        let spans = blocks
+            .iter()
+            .map(|block| {
+                block
+                    .decorations
+                    .iter()
+                    .map(|decoration| {
+                        (
+                            decoration.start..decoration.stop,
+                            styles.intern(&decoration.face),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let row_of = |offset| {
+            snapshot
+                .offset_to_point(boundary_at_or_before(snapshot, offset))
+                .map_or(0, |point| point.row)
+        };
+        let rows = marks
+            .iter()
+            .map(|mark| {
+                let start = boundary_at_or_before(snapshot, mark.start);
+                let stop = boundary_at_or_before(snapshot, mark.stop).max(start);
+                let last = if stop > start { stop - 1 } else { start };
+                (row_of(start), row_of(last))
+            })
+            .collect();
+        Self {
+            blocks,
+            spans,
+            rows,
+            laid: HashMap::new(),
+        }
+    }
+
+    /// The marks drawn beside buffer row `row`, by index, in the view's
+    /// order.
+    pub(crate) fn on(&self, row: usize) -> Vec<usize> {
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, (first, last))| (*first..=*last).contains(&row))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// The first line of mark `mark`, laid out by `layout` when it is first
+    /// asked for; `None` for a mark of no text.
+    pub(crate) fn line<S: Shaper>(
+        &mut self,
+        mark: usize,
+        layout: &mut BlockLayout<'_, S>,
+    ) -> Option<&BlockLine> {
+        self.laid
+            .entry(mark)
+            .or_insert_with(|| {
+                layout
+                    .lay(&self.blocks[mark], &self.spans[mark])
+                    .into_iter()
+                    .next()
+            })
+            .as_ref()
     }
 }
 

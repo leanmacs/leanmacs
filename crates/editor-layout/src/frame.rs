@@ -114,6 +114,32 @@
 //! - **The view's background** (the default face's) fills its rectangle,
 //!   so the padding round the text is paper, not a border.
 //!
+//! **The gutter.** A view whose [`Padding::gutter`](crate::scene::Padding::gutter)
+//! is not 0 has a column that many points wide (`gutter` pixels below)
+//! between `across` and its text:
+//!
+//! - **The text** wraps at the width less twice `across` and once
+//!   `gutter`, and its rows, cursors and selection areas are `across` and
+//!   `gutter` in from the view's left. The rows, spot and move queries
+//!   take the column off by the same functions.
+//! - **A mark** ([`View::marks`](crate::scene::View::marks)) is a row of
+//!   [`ViewFrame::rows`] with [`FrameRow::mark`] naming it, pushed after
+//!   each text row it is drawn beside: on every visual line of each buffer
+//!   row its range has a byte in, or of the row that holds its start when
+//!   the range is empty. Its `x` is `across`, it sits on its text row's
+//!   baseline, and only its text's first visual line is drawn. Its text is
+//!   laid out through the block store in its face over `gutter` over the
+//!   default face, so a mark's hash is a row's hash of its text and paint,
+//!   and an unchanged mark keeps it. Marks beside rows not shown draw
+//!   nothing.
+//! - **The column's paper** is `gutter`'s only behind a mark's glyphs; the
+//!   rest of it is the view's background.
+//! - **Text rows** are told from block and mark rows by
+//!   [`FrameRow::is_text`]: what reads a frame's text rows picks them by
+//!   it.
+//!
+//! A gutter of 0 and no mark lay out as before there was a gutter.
+//!
 //! The echo's view, [`ECHO_VIEW`], has no padding of its own: its fields
 //! are inset [`Scene::echo_padding`] points from the frame's left and
 //! right edges, by the same function. A padding of 0, a scene's default,
@@ -214,7 +240,7 @@ use editor_text::{Selection, SelectionRange, Snapshot};
 use crate::Layout;
 use std::collections::{HashMap, HashSet};
 
-use crate::blocks::{BlockKey, BlockLayout, ViewBlocks};
+use crate::blocks::{BlockKey, BlockLayout, ViewBlocks, ViewMarks, mark_block};
 
 use crate::cache::{FieldKept, StatusKept, state};
 use crate::decoration::{
@@ -289,6 +315,11 @@ pub struct FrameRow {
     /// [`query`](crate::query), "Blocks"). A block row is drawn like any
     /// row: the renderer needs to tell it from no other.
     pub block: Option<usize>,
+    /// Which gutter mark it draws: `Some(i)` for the view's `marks[i]`
+    /// ([`View::marks`](crate::scene::View::marks); module docs, "The
+    /// gutter"), whose bytes are those of the mark's text, and `None`
+    /// otherwise. A mark row is drawn like any row too.
+    pub mark: Option<usize>,
 }
 
 impl FrameRow {
@@ -318,7 +349,15 @@ impl FrameRow {
             runs,
             hash,
             block: None,
+            mark: None,
         }
+    }
+
+    /// Whether it is a row of the view's text: neither a block's nor a
+    /// gutter mark's. What reads the text rows of a frame picks them by
+    /// this, so a kind of row added later is not taken for one.
+    pub fn is_text(&self) -> bool {
+        self.block.is_none() && self.mark.is_none()
     }
 }
 
@@ -458,7 +497,8 @@ impl Frame {
     ///
     /// - A row is `row`, then ` x <x>` when its `x` is not 0 (a padded
     ///   view's), then its `y`, its height, its baseline and its bytes. A
-    ///   block row has `block <i> ` before it.
+    ///   block row has `block <i> ` before it, and a gutter mark's row
+    ///   `mark <i> `.
     /// - A colour is its eight hexadecimal digits, `rrggbbaa`.
     /// - A glyph is `id@x`, with `^dx,dy` after it when its outline is
     ///   drawn off its pen position, and then `#font` when it is drawn in
@@ -494,6 +534,9 @@ impl Frame {
                 out.push_str("  ");
                 if let Some(block) = row.block {
                     let _ = write!(out, "block {block} ");
+                }
+                if let Some(mark) = row.mark {
+                    let _ = write!(out, "mark {mark} ");
                 }
                 out.push_str("row");
                 if row.x != 0.0 {
@@ -708,7 +751,7 @@ impl<S: Shaper> Layout<S> {
                     .offset_to_point(offset)
                     .map_or(0, |point| point.row)
             };
-            let text_row = |row: &&FrameRow| row.block.is_none();
+            let text_row = |row: &&FrameRow| row.is_text();
             let first = laid.rows.iter().find(text_row);
             let last = laid.rows.iter().rev().find(text_row);
             if let (Some(first), Some(last)) = (first, last) {
@@ -718,12 +761,17 @@ impl<S: Shaper> Layout<S> {
             }
         }
         self.texts.retain(|key, _| shown.contains_key(key));
-        // The blocks no view names are dropped.
+        // The blocks and the marks no view names are dropped.
         let named: HashSet<BlockKey> = scene
             .views
             .iter()
-            .flat_map(|view| &view.blocks)
-            .map(BlockKey::of)
+            .flat_map(|view| {
+                let marks = view
+                    .marks
+                    .iter()
+                    .map(|mark| BlockKey::of(&mark_block(mark)));
+                view.blocks.iter().map(BlockKey::of).chain(marks)
+            })
             .collect();
         self.blocks.retain(|key, _| named.contains(key));
         for (key, state) in &mut self.texts {
@@ -1035,6 +1083,7 @@ impl<S: Shaper> Layout<S> {
             heights.status
         };
         let across = self.padding_pixels(view.padding.across);
+        let text_left = self.text_left(view.padding);
         let first_row = self.first_row(view.padding);
         let status = self.status_row(view, MODE_LINE_FACE, bottom, across);
         // What is left for the text above the status row, in whole pixels,
@@ -1044,7 +1093,7 @@ impl<S: Shaper> Layout<S> {
             None => view.rect.height,
         } as f32;
         let text_height = self.text_height(text_height, view.padding);
-        let text_width = self.inset(view.rect.width as f32, view.padding.across);
+        let text_width = self.text_width(view.rect.width as f32, view.padding);
         let cursor_face = self.styles.intern(&view.cursor.face);
         let selection_face = self.styles.intern(SELECTION_FACE);
         let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
@@ -1075,6 +1124,7 @@ impl<S: Shaper> Layout<S> {
             })
             .collect();
         let mut view_blocks = ViewBlocks::new(&view.blocks, snapshot, &mut self.styles);
+        let mut view_marks = ViewMarks::new(&view.marks, snapshot, &mut self.styles);
         let selections: Vec<Selection> = view
             .selections
             .iter()
@@ -1132,7 +1182,7 @@ impl<S: Shaper> Layout<S> {
                         frame.rows.push(FrameRow {
                             block: Some(block),
                             ..FrameRow::text_row(
-                                across,
+                                text_left,
                                 y,
                                 laid.bytes.clone(),
                                 Arc::clone(&laid.line),
@@ -1174,7 +1224,7 @@ impl<S: Shaper> Layout<S> {
                 let covered = entry.cells(visual.line).map(|cells| cells.covered(held));
                 for (left, right) in covered.unwrap_or_default() {
                     frame.selections.push(Area {
-                        x: across + left,
+                        x: text_left + left,
                         y,
                         width: right - left,
                         height: line.height,
@@ -1183,13 +1233,30 @@ impl<S: Shaper> Layout<S> {
             }
             shown.push((visual, frame.rows.len()));
             frame.rows.push(FrameRow::text_row(
-                across,
+                text_left,
                 y,
                 bytes,
                 Arc::clone(&line),
                 painted.runs,
                 painted.hash,
             ));
+            // The marks beside this row, in the gutter column, each on the
+            // row's baseline.
+            for mark in view_marks.on(visual.row) {
+                if let Some(laid) = view_marks.line(mark, &mut block_layout) {
+                    frame.rows.push(FrameRow {
+                        mark: Some(mark),
+                        ..FrameRow::text_row(
+                            across,
+                            y + line.baseline - laid.line.baseline,
+                            laid.bytes.clone(),
+                            Arc::clone(&laid.line),
+                            laid.runs.clone(),
+                            laid.hash,
+                        )
+                    });
+                }
+            }
             y += line.height;
         }
         // The cursors on the rows shown.
@@ -1507,6 +1574,7 @@ mod tests {
             status_face: None,
             padding: Padding::default(),
             blocks: vec![],
+            marks: vec![],
         }
     }
 

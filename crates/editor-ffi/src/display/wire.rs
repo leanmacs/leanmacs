@@ -534,11 +534,11 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
         Some(len) => Some(texts.take(crate::words::size(len))?),
         None => None,
     };
-    let padding = Padding {
-        across: narrow(words.word()?)?,
-        down: narrow(words.word()?)?,
-        top: narrow(words.word()?)?,
-    };
+    let padding = Padding::new(
+        narrow(words.word()?)?,
+        narrow(words.word()?)?,
+        narrow(words.word()?)?,
+    );
     let blocks = read_blocks(words, texts)?;
     Some(WireView {
         id,
@@ -847,6 +847,7 @@ impl WireScene {
                     status_face: view.status_face.clone(),
                     padding: view.padding,
                     blocks: layout_blocks(&view.blocks),
+                    marks: vec![],
                 }
             })
             .collect();

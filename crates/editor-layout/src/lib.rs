@@ -79,6 +79,11 @@
 //!   does not, and that cursors and selections are on text rows only
 //!   ([`query`], "Blocks"; `tests/blocks.rs`); and that a frame that shows
 //!   the same blocks again shapes none of them (`tests/counters.rs`);
+//! - gutter marks: a column before the text, each mark beside every visual
+//!   line of the rows its range covers in its face over `gutter`, the rows,
+//!   spot and move queries taking the column off as the frame does, and
+//!   mark rows kept apart from text rows ([`frame`], "The gutter";
+//!   `tests/gutter.rs`);
 //! - translated spans: a text made of pieces of other texts draws each
 //!   source's own spans at every piece of it, cut at the pieces' edges,
 //!   each source resolved once, and keeps the contract of
@@ -253,8 +258,9 @@ impl<S: Shaper> Layout<S> {
     /// its content inset by `padding` (in points), shows from the visual
     /// line that holds `anchor`, as many as fit whole, fewer at the end of
     /// the text. The padding is taken off as the frame takes it off: twice
-    /// [`Layout::padding_pixels`] of `across` from the width, and twice of
-    /// `down` and once of `top` from the height, at 0 at least.
+    /// [`Layout::padding_pixels`] of `across` and once of `gutter` from the
+    /// width, and twice of `down` and once of `top` from the height, at 0
+    /// at least.
     pub fn rows_shown(
         &mut self,
         text: &TextRef,
@@ -279,7 +285,7 @@ impl<S: Shaper> Layout<S> {
         anchor: usize,
         blocks: &[Block],
     ) -> Result<Vec<RowRange>, QueryError> {
-        let width = self.inset(width, padding.across);
+        let width = self.text_width(width, padding);
         let height = self.text_height(height, padding);
         self.query(text, width, blocks, |walker, above| {
             let shown = walker.shown(height, anchor, above)?;
@@ -310,7 +316,27 @@ impl<S: Shaper> Layout<S> {
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
-        let width = self.inset(width, across);
+        let padding = Padding {
+            across,
+            ..Padding::default()
+        };
+        self.lines_from_padded(text, width, padding, position, lines, goal)
+    }
+
+    /// [`Layout::lines_from`] in a view whose content is inset by
+    /// `padding`: the width it wraps at is `width` less twice
+    /// [`Layout::padding_pixels`] of `across` and once of `gutter`, as the
+    /// frame's. The padding down is not looked at: a move takes no height.
+    pub fn lines_from_padded(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        padding: Padding,
+        position: usize,
+        lines: i64,
+        goal: Option<f32>,
+    ) -> Result<Moved, QueryError> {
+        let width = self.text_width(width, padding);
         self.query(text, width, &[], |walker, _| {
             walker.lines_from(position, lines, goal)
         })
@@ -354,15 +380,15 @@ impl<S: Shaper> Layout<S> {
         position: usize,
         blocks: &[Block],
     ) -> Result<Option<Spot>, QueryError> {
-        let across = self.padding_pixels(padding.across);
+        let left = self.text_left(padding);
         let down = self.first_row(padding);
-        let width = self.inset(width, padding.across);
+        let width = self.text_width(width, padding);
         let height = self.text_height(height, padding);
         self.query(text, width, blocks, |walker, above| {
             Ok(walker
                 .spot(height, anchor, position, above)?
                 .map(|spot| Spot {
-                    x: across + spot.x,
+                    x: left + spot.x,
                     y: down + spot.y,
                     height: spot.height,
                 }))
@@ -373,6 +399,20 @@ impl<S: Shaper> Layout<S> {
     /// layout's scale, and 0 at least.
     pub(crate) fn inset(&self, extent: f32, points: u32) -> f32 {
         (extent - 2.0 * self.padding_pixels(points)).max(0.0)
+    }
+
+    /// The width a view's text rows wrap at of `width`, with `padding`:
+    /// `width` less `across` at each side and `gutter` at the left, in
+    /// pixels at the layout's scale, and 0 at least ([`frame`], "The
+    /// gutter").
+    pub(crate) fn text_width(&self, width: f32, padding: Padding) -> f32 {
+        (self.inset(width, padding.across) - self.padding_pixels(padding.gutter)).max(0.0)
+    }
+
+    /// How far right from a view's left its text rows start, with
+    /// `padding`: `across` and `gutter`, in pixels at the layout's scale.
+    pub(crate) fn text_left(&self, padding: Padding) -> f32 {
+        self.padding_pixels(padding.across) + self.padding_pixels(padding.gutter)
     }
 
     /// The height a view's text rows fill of `height`, with `padding`:

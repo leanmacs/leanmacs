@@ -914,11 +914,7 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
 ) {
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
-    let padding = Padding {
-        across: points(across),
-        down: points(down),
-        top: points(top),
-    };
+    let padding = Padding::new(points(across), points(down), points(top));
     // SAFETY: the caller guarantees the blocks' buffers.
     let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
     let raw = answered(
@@ -1007,11 +1003,7 @@ pub unsafe extern "C" fn editor_ffi_display_spot(
 ) {
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
-    let padding = Padding {
-        across: points(across),
-        down: points(down),
-        top: points(top),
-    };
+    let padding = Padding::new(points(across), points(down), points(top));
     // SAFETY: the caller guarantees the blocks' buffers.
     let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
     let raw = answered(

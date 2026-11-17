@@ -191,6 +191,7 @@ fn scene() -> Scene {
                 status_face: None,
                 padding: Padding::default(),
                 blocks: vec![],
+                marks: vec![],
             },
             View {
                 id: ViewId(2),
@@ -212,6 +213,7 @@ fn scene() -> Scene {
                 status_face: None,
                 padding: Padding::default(),
                 blocks: vec![],
+                marks: vec![],
             },
         ],
         focused: Some(ViewId(1)),

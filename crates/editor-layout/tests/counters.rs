@@ -83,6 +83,7 @@ fn scene_rows(text: &TextRef, width: u32, cursor: usize, rows: u32) -> Scene {
             status_face: None,
             padding: Padding::default(),
             blocks: vec![],
+            marks: vec![],
         }],
         ..Scene::default()
     }

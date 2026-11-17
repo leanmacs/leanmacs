@@ -78,11 +78,7 @@ fn the_padding_is_taken_off_at_the_layouts_scale() {
             .unwrap()
     };
     let bare = spot(Padding::default());
-    let moved = spot(Padding {
-        across: 8,
-        down: 8,
-        top: 32,
-    });
+    let moved = spot(Padding::new(8, 8, 32));
     // 8 points across and 8 + 32 down, each at scale 2.
     assert_eq!(moved.x, bare.x + 16.0);
     assert_eq!(moved.y, bare.y + 80.0);

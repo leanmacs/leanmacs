@@ -39,6 +39,21 @@
 //! ([`query`](crate::query), "Blocks"). Several blocks before one row are
 //! drawn in the order the view lists them.
 //!
+//! # Gutter marks
+//!
+//! A view's [`GutterMark`]s are short texts drawn in a column of their own
+//! before its text: a version-control gutter's added, removed and changed
+//! lines. The column is [`Padding::gutter`] points wide, after `across` at
+//! the view's left, and the text rows are that much further right and
+//! narrower; every query takes it off as the frame does. A mark is drawn
+//! beside every visual line of each row of the view's text that its range
+//! has a byte in, or of the row that holds its start when the range is
+//! empty, in its face over `gutter` over the default face. Like a block it
+//! is the view's, Lean chooses it, and it holds no position of the text:
+//! a mark moves only when Lean publishes it moved. Its offsets are moved
+//! back to a character boundary, and past the text's end to the end, as a
+//! block's are. Marks beside rows the view does not show draw nothing.
+//!
 //! # Where an addition goes
 //!
 //! A new field of Lean's scene is a field here, decoded by the binding.
@@ -140,6 +155,21 @@ pub struct Block {
     pub decorations: Vec<Decoration>,
 }
 
+/// A gutter mark: a short text drawn in a view's gutter column beside the
+/// rows its range covers (module docs, "Gutter marks").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GutterMark {
+    /// A byte offset of the view's snapshot where its range starts.
+    pub start: usize,
+    /// Where it stops, not included. A range of no byte marks the row that
+    /// holds `start`.
+    pub stop: usize,
+    /// What it says.
+    pub text: String,
+    /// The name of the face it takes, over `gutter` over the default face.
+    pub face: String,
+}
+
 /// Which end of a view's status row a field is drawn from
 /// ([`frame`](crate::frame), "The mode line").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -182,6 +212,11 @@ pub struct Padding {
     /// `down`: what a window's title bar covers of a view along the
     /// frame's top edge. 0 by default.
     pub top: u32,
+    /// The width of the gutter column (module docs, "Gutter marks"): a
+    /// further inset of the text rows from the view's left, beyond
+    /// `across`, which the view's marks are drawn in. 0 by default: no
+    /// column.
+    pub gutter: u32,
 }
 
 impl Padding {
@@ -192,7 +227,12 @@ impl Padding {
     /// field added to it at its default, so the field breaks nothing
     /// outside this crate.
     pub const fn new(across: u32, down: u32, top: u32) -> Self {
-        Self { across, down, top }
+        Self {
+            across,
+            down,
+            top,
+            gutter: 0,
+        }
     }
 }
 
@@ -526,6 +566,9 @@ pub struct View {
     /// Its blocks, drawn between the rows of its text (module docs,
     /// "Blocks"); none by default.
     pub blocks: Vec<Block>,
+    /// Its gutter marks, drawn in its gutter column (module docs, "Gutter
+    /// marks"); none by default.
+    pub marks: Vec<GutterMark>,
 }
 
 /// A divider: a strip of the frame between two tiled views, filled in the
