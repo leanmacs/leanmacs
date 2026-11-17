@@ -3436,6 +3436,22 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
+        "a config that chooses a style and a display nobody registered says so on a report line each, the display's after the style's"
+      run :=
+        withHost context [("10-style.lean", styleChunk [])]
+          (fun session => do
+            session.ask [.reload]
+            session.write "10-style.lean"
+                (styleChunk ["useStyleFor \"pick\" \"gone\"", "useDisplay \"nope\""])
+            session.ask [.reload]
+            let lines ← session.output.get
+            let style := lines.findIdx? (· == s!"style: {Completion.Styles.unknown "gone"}")
+            let display := lines.findIdx? (· == s!"display: {Completion.Displays.unknown "nope"}")
+            return match style, display with
+              | some style, some display => style < display
+              | _, _ => false)
+          minibufferCompiled },
+    { name :=
         "criterion 5: a source config registers in the category buffer adds its candidates to switch-buffer's list, after the shipped source's buffer names; one registered under the shipped source's name replaces it; with neither the shipped names alone are listed; while two sources list, each group's rows follow a header of its name (config chooses orderless for buffer, so the empty text lists the candidates in their own order and not by the library's scores)"
       run :=
         let more := "defineSource (.ofTexts \"more\" \"buffer\" #[\"zz-extra\"])"
