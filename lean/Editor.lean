@@ -145,6 +145,14 @@ text objects are entries of evil's vocabulary
 (`Editor/Evil/TreeObjects.lean`). Its model and contract are for tests, and
 are not imported.
 
+Languages are here too (`Editor/Language.lean`, which comes with the file
+commands and `Editor/Setup.lean`): a language as data, the languages that
+ship (`Language.rust`, `Language.json`, `Language.markdown`), the rule that chooses a path's language, and the
+`code` mode, whose text is parsed and drawn as its buffer's language
+says. Opening a file records its language and puts the buffer in `code`;
+`setup` adds a language, or overrides a shipped one by name, with
+`defineLanguage` (`Editor/Setup.lean`).
+
 Projects, workspaces and locations are here too (`Editor/Workspace.lean`):
 which codebase and which checkout a buffer belongs to, as plain values,
 and the finder that answers a directory's workspace through config, git

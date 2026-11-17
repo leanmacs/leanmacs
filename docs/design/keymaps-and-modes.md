@@ -28,6 +28,7 @@ registers, undo and dot repeat, on the editor API:
 | Modes by owner, a mode's lineage, the active keymaps of a view, setting a major mode through a view and its on-enter action | `lean/Editor/Config/Registry.lean` |
 | Defining a mode from `setup`, and its refusals | `lean/Editor/Setup.lean` (`defineMode`), `lean/Editor/Config/Registry.lean` (`Registrations.problem?`) |
 | A buffer's major and minor modes, and the state operations that set them | `lean/Editor/State.lean` |
+| The language entry, the shipped table, the rule that chooses a path's language, and the `code` mode | `lean/Editor/Language.lean`; a buffer's language in `lean/Editor/State.lean`, chosen when a file opens in `lean/Editor/Files.lean` |
 | The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
 | The minibuffer's mode and its six commands (accept, cancel, the next and the previous candidate, delete backward, and delete to the input's start), and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
 | The frame's commands (`toggle-fullscreen`, `minimise-window`) and their compiled bindings `C-s-f` and `s-m` | `lean/Editor/FrameCommands.lean`, `lean/Editor/FrameCommands/Compiled.lean` |
@@ -2475,9 +2476,9 @@ and Testing).
 
 Status: built (`lean/Editor/Role.lean`, `lean/Editor/Mode.lean`, the
 registry's modes in `lean/Editor/Config/Registry.lean`, a buffer's modes in
-`lean/Editor/State.lean`; the module docs have the detail). Two modes
-ship: the minibuffer's ("The minibuffer") and `compilation` ("The compile
-mode, as built").
+`lean/Editor/State.lean`; the module docs have the detail). Three modes
+ship: the minibuffer's ("The minibuffer"), `compilation` ("The compile
+mode, as built") and `code` ("Languages and the code mode").
 
 A mode is a value in a registry keyed by name. It is not a type class,
 because instances resolve at elaboration time and the active mode is chosen
@@ -2491,6 +2492,7 @@ structure Mode where
   roles      : List (Role × String) := []           -- role, command name
   locals     : List (String × String) := []         -- suffix as a key string, command name
   syntaxTree : Option Mode.SyntaxTree := none       -- how its text is parsed and drawn
+  syntaxTreeOfLanguage : Bool := false              -- or as its buffer's language says
   onEnter    : ViewId → EditorM Unit := fun _ => pure ()
 
 structure Mode.SyntaxTree where
@@ -2512,6 +2514,10 @@ structure Mode.SyntaxTree where
   called `syntax`, which is a keyword of Lean's. A derived mode with none
   takes the nearest of its lineage (`Mode.syntaxTreeOf`). Config writes it
   in `defineMode`; there is no other registry API.
+- **`syntaxTreeOfLanguage` takes the tree of the buffer's language** in
+  place of one of the mode's own: the `code` mode's ("Languages and the
+  code mode"). In a lineage the nearest mode that has its own tree, or
+  takes the language's and the buffer has one, says.
 
 No `Key` for a top-level binding and no scheme's `Binding` type appears in
 `Mode`. A mode cannot name the binding type of a scheme it has never heard
@@ -2702,7 +2708,12 @@ contributes nothing.
   syntax tree replaces one with a syntax tree, the text is detached, which
   drops its highlights; when neither has one, the port is asked nothing.
   What the port did is not undone on rollback, as the clipboard is not.
-  Choosing a major mode when a file is opened is not built.
+- **The buffer's language is read too.** Both lineages, the old and the
+  new, are read with the tree of the buffer's language
+  (`Mode.syntaxTreeOf lineage language`, the entry looked up by the
+  buffer's `language` in the loop's table), which a mode that takes the
+  language's gives. Opening a file chooses its language and sets `code`
+  ("Languages and the code mode").
 - **Adding a minor mode runs no action** yet (left open).
 
 Pinned by `ModelTest.modeEnterChecks`, through the loop,
@@ -2710,6 +2721,70 @@ Pinned by `ModelTest.modeEnterChecks`, through the loop,
 `ModelTest.highlightFaceChecks` and `ModelTest.highlightEnterChecks`, and
 `ConfigTest`'s check that a job's command setting such a mode reaches the
 host's syntax tree.
+
+### Languages and the code mode
+
+Status: built by `language-modes` phase 2 (`lean/Editor/Language.lean`;
+the module docs have the detail). A buffer's language is chosen from its
+file name, and one generic major mode, `code`, parses and draws its text
+as the language says. There is no mode per language.
+
+```lean
+inductive Language.Pattern where
+  | name (fileName : String)        -- the exact base name: Cargo.lock
+  | extension (extension : String)  -- rs for *.rs
+
+structure Language where
+  name       : String                -- how a buffer records it, and how config overrides it
+  patterns   : List Language.Pattern
+  syntaxTree : Mode.SyntaxTree       -- a grammar and the overrides a mode takes
+  indentUnit : Language.IndentUnit := .spaces 4  -- spaces n, or tab
+```
+
+- **The shipped table** (`Language.shipped`) is `rust` (`*.rs`, four
+  spaces), `json` (`*.json`, two) and `markdown` (`*.md`, two), each parsed
+  with the grammar of its name and its shipped queries. Each is a named
+  definition, so config writes `{ Language.rust with … }`.
+- **The rule is pure and the core's** (`Language.forPath`). The table is in
+  precedence order: config's entries, in the order config defined them,
+  then the shipped ones config did not replace by name
+  (`Language.over`; the registry's `languageTable`). The first entry with
+  an exact base-name pattern of the path's base name wins; else the first
+  with an extension pattern the base name ends in after a dot, with
+  something before it; else none. So a base name beats an extension, and
+  config's entry beats a shipped one of equal pattern. Patterns are typed
+  and case-sensitive; one that is empty or holds `/` is refused by
+  `setup`.
+- **`code`** (`Language.codeMode`) has no tree of its own and
+  `syntaxTreeOfLanguage` set, so highlighting, injections, text objects
+  and indents come from the buffer's language. It fills no role and has no
+  local command; a user's minor mode for a language is an ordinary minor
+  mode.
+- **A buffer records its language by name** (`Buffer.language`,
+  `BufferId.setLanguage`), as it records its major mode: the entry is
+  looked up in the loop's table when a mode is entered, so a reload's
+  entry of that name is the one used next. An already-highlighted buffer
+  is not highlighted again by a reload.
+- **Opening a file** (`Files.takeIn`): once the new buffer is shown, the
+  path's language is asked (`languageOf`, answered from the loop's table).
+  For one, the buffer records it and is set to `code`, so the mode's entry
+  attaches and highlights the text inside the open's command. For none,
+  nothing is recorded and no mode is set, as before languages. A path a
+  buffer already holds is shown and nothing is chosen again.
+- **A config mode with its own tree wins when the user sets it**: it never
+  looks at the language. One derived from `code` with no tree takes the
+  language's.
+- **A grammar loaded at run time** (deferred) would be a registration that
+  makes a name known to the syntax service; entries name grammars and need
+  no new field.
+- Not built: setting a language on a buffer with no file by command;
+  comment tokens; a formatter.
+
+Pinned by `ModelTest.languageMatchChecks` (the rule and the table, pure),
+`ModelTest.modeRecordChecks` (`code`'s tree), `ModelTest.languageOpenChecks`
+(opening on the models, over the model's one grammar, `json`), and
+`ConfigTest.languageChecks` (Rust, JSON and Markdown, and config's
+override of Rust's query, through the host and the real syntax binding).
 
 ### Why this shape
 
@@ -3332,6 +3407,12 @@ which run the executable on a real file.
   `.`, `$`, `,` or a digit), and a
   `setup` that binds one ex name twice is rejected. A reload replaces
   config's ex bindings and never the compiled ones.
+- Built: `setup` defines a language with `defineLanguage`
+  (`lean/Editor/Setup.lean`; "Languages and the code mode"). One of a
+  shipped language's name replaces it whole; config's entries are matched
+  before the shipped ones. A `setup` that defines a language name twice,
+  or a pattern that is empty or holds `/`, is rejected. A reload's
+  languages hold from the next file opened.
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
   a mistyped key is an error in config before it runs. It is not built. See
   the open questions for its cost.
@@ -3460,13 +3541,15 @@ names a scheme's key:
 | `modeDispatchChecks` | On the editor's models, through the loop: a major mode's role runs its command in a view of its buffer and the global binding elsewhere; a minor mode's wins; a derived mode falls to its parent; the leader then a suffix |
 | `modeEnterChecks` | On the editor's models: the on-enter action runs once, with the view, when the mode becomes the major mode; a derived mode's lineage root first; a refusal runs nothing |
 | `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it; then its injections and a language for the model's grammar, its text objects and indents queries kept, and a refusal of one of those steps said and stopping it alone |
+| `languageMatchChecks`, `languageOpenChecks` | The language rule, pure: by extension, an exact base name over an extension, config's entry over a shipped one and the earlier over the later, no match, `Language.over` and the registry's table, and the shipped table; and, on the loop's driver over the editor's models, a `.json` and a `.rs` file opened into `code` with their language and highlighted, a file of no language opened as before, one already open asking nothing more, a config mode with its own tree winning, and config's entry of a language's name used |
+| `ConfigTest.languageChecks` | Through the headless host, the real elaborator and the real syntax binding: a `.rs`, a `.json` and a `.md` file opened into `code` and highlighted with their grammar's shipped query, a file of no language asking the syntax tree port nothing, and config's `rust` with its own highlights query used in place of the shipped one |
 | `treeObjectRuleChecks` | The syntax tree's text-object rule (`Evil.TreeObjects.choose`), pure, over hand-built rows: the smallest node first, a count, a node no bigger than a wider selection passed over, the inside as the longest inner row within, no inside, and no node round the cursor |
 | `indentRuleChecks`, `indentLevelChecks` | The indent rule (`Indent.rule`), pure, over hand-built rows; and the indent primitive (`TextId.indentLevels`) on the editor's models, under a test mode of the model's JSON grammar with an indents query of its own, refused for a text with no syntax tree or no indents query |
 | `ConfigTest.modeChecks` | Through the headless host and the real elaborator: a config mode's role runs its store command, and once a reload drops the mode the role's key runs the global binding; a compiled mode's role runs its command before any reload and after a reload of a config that defines no mode |
 
 Beside them, `stateChecks` pin the three state operations, `registryChecks`
 and `reloadChecks` modes by owner and their install, `setupChecks`
-`defineMode` and its refusals, `keymapChecks` `Keymap.filter`, and
+`defineMode`, `defineLanguage` and their refusals, `keymapChecks` `Keymap.filter`, and
 `vimStateChecks` that a mode's key, a hand-tuned one among them, is typed
 text in insert state, that a mode's binding is reached as what it wraps,
 and that `Mode.check` under the Vim scheme reads every state's keymaps.

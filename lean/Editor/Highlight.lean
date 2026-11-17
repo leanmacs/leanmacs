@@ -39,7 +39,9 @@ crosses (`SyntaxTree.highlight`).
 ## Entering a major mode with a syntax tree (`enter`)
 
 The loop runs it, inside the command that set the mode, before the new
-lineage's on-enter actions (`Editor/Command/Dispatch.lean`).
+lineage's on-enter actions (`Editor/Command/Dispatch.lean`). The `code`
+mode's tree is its buffer's language's (`Editor/Language.lean`), which the
+loop hands here as it hands any mode's.
 
 0. `refreshAfter` with config's syntax refresh delay (`syntaxRefreshDelay`,
    `Editor/Setup.lean`), or `defaultRefreshDelay`: how long a text goes
