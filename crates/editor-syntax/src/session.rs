@@ -172,7 +172,7 @@
 
 use std::collections::BTreeMap;
 use std::ops::Range;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -304,7 +304,14 @@ pub struct Session<S: Syntax> {
     /// Whether the session is in a worker's queue
     /// ([`crate::worker::Worker`]): a session is queued at most once.
     pub(crate) queued: AtomicBool,
+    /// The session's own number, given out once in the process: what the
+    /// worker's schedule of refreshes knows it by. Not its address, which a
+    /// later session can be given after this one is dropped.
+    pub(crate) id: u64,
 }
+
+/// The next session's id.
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// What only a round takes.
 struct Work<S: Syntax> {
@@ -356,6 +363,8 @@ fn keys<T>(layers: &[Layer<T>]) -> Vec<LayerKey> {
 struct State<S: Syntax> {
     /// The newest revision the session has been told of or delivered.
     current: Revision,
+    /// The newest revision the session has been told of.
+    told: Revision,
     /// The last result delivered.
     delivered: Option<Arc<Parsed<S::Tree>>>,
     /// Who is handed each result.
@@ -401,6 +410,7 @@ impl<S: Syntax> Session<S> {
             }),
             state: Mutex::new(State {
                 current: Revision::default(),
+                told: Revision::default(),
                 delivered: None,
                 consumers: Vec::new(),
                 highlighter: None,
@@ -412,6 +422,7 @@ impl<S: Syntax> Session<S> {
             }),
             delivered: Condvar::new(),
             queued: AtomicBool::new(false),
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         })
     }
 
@@ -431,12 +442,21 @@ impl<S: Syntax> Session<S> {
         lock(&self.state).consumers.push(consumer);
     }
 
-    /// Tells the session the text has reached `revision`. A revision older
+    /// Tells the session the text has reached `revision`, and says whether
+    /// it is newer than every revision it has been told of: an edit, which
+    /// the worker schedules an idle refresh for, and not an attach or a
+    /// change of injections at a revision told already. A revision older
     /// than one it has been told of changes nothing. Queueing it for a
     /// parse is the worker's ([`crate::worker::Handle::touch`]).
-    pub fn touch(&self, revision: Revision) {
+    ///
+    /// A delivery does not count as told: the worker may parse an edit
+    /// before the edit's touch arrives, and that touch is still an edit.
+    pub fn touch(&self, revision: Revision) -> bool {
         let mut state = lock(&self.state);
         state.current = state.current.max(revision);
+        let newer = revision > state.told;
+        state.told = state.told.max(revision);
+        newer
     }
 
     /// The newest revision the session has been told of or delivered.
@@ -1506,6 +1526,32 @@ pub(crate) mod tests {
         fixture.session.parse_once(&fixture.syntax);
         let told: Vec<InputEdit> = patch.edits.iter().map(|edit| edit.input_edit()).collect();
         assert_eq!(fixture.olds(), [None, Some(told)]);
+    }
+
+    #[test]
+    fn a_touch_says_whether_its_revision_is_newer_than_every_one_told() {
+        let fixture = Fixture::new("(a)");
+
+        // Made at revision 0: told of it already.
+        assert!(!fixture.session.touch(Revision::new(0)));
+        assert!(fixture.session.touch(Revision::new(2)));
+        assert!(!fixture.session.touch(Revision::new(2)));
+        assert!(!fixture.session.touch(Revision::new(1)));
+        // A delivery at a revision not told does not make its touch old:
+        // the edit's touch may come after the worker has parsed it.
+        fixture.replace(0..0, "b ");
+        fixture.replace(0..0, "c ");
+        fixture.replace(0..0, "d ");
+        fixture.session.parse_once(&fixture.syntax);
+        assert_eq!(fixture.session.current(), Revision::new(3));
+        assert!(fixture.session.touch(Revision::new(3)));
+    }
+
+    #[test]
+    fn sessions_have_ids_of_their_own() {
+        let (one, two) = (Fixture::new("(a)"), Fixture::new("(a)"));
+
+        assert_ne!(one.session.id, two.session.id);
     }
 
     #[test]

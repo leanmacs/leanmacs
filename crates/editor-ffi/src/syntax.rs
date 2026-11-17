@@ -146,11 +146,24 @@ use crate::events::{Event, Queue, QueueId, Source, SourceKind};
 use crate::fuzzy::candidates;
 use crate::log::RawWords;
 use crate::snapshot::Snapshot;
+use crate::timers::Monotonic;
 use crate::{text, words};
 
 /// The syntax service's id, as the source of the events it reports: the
 /// library's, numbered after the other services'.
 pub const SERVICE: u64 = 6;
+
+/// How long a text goes unchanged after an edit before the worker parses
+/// it whole, until Lean sets the interval ([`Syntaxes::refresh_after`]):
+/// only a text attached before any such call is refreshed after this. The
+/// default users see is Lean's (`Highlight.defaultRefreshDelay`).
+pub const REFRESH_AFTER_MS: u64 = 500;
+
+impl editor_syntax::clock::Clock for Monotonic {
+    fn now_ms(&self) -> u64 {
+        crate::timers::Clock::now_ms(self)
+    }
+}
 
 /// The real syntax's session of one document.
 type SyntaxSession = Session<TreeSitter>;
@@ -473,7 +486,11 @@ impl Syntaxes {
     fn worker(&self) -> Option<Handle<TreeSitter>> {
         let mut worker = lock(&self.worker);
         if worker.is_none() {
-            let started = Worker::new(self.syntax.clone());
+            let started = Worker::new(
+                self.syntax.clone(),
+                Arc::new(Monotonic::new()),
+                Duration::from_millis(REFRESH_AFTER_MS),
+            );
             let handle = started.handle();
             thread::Builder::new()
                 .name("syntax".to_owned())
