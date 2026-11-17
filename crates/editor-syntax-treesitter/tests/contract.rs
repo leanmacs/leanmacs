@@ -1,5 +1,6 @@
 //! The tree-sitter adapter held to the syntax port's contract, once for
-//! each grammar compiled in: Rust, JSON and Markdown.
+//! each grammar compiled in: Rust, JSON, Markdown and Markdown's inline
+//! grammar.
 //!
 //! The check is `editor-syntax`'s, the same one its fake passes
 //! (`editor_syntax::contract::check`). Its incremental property drives a
@@ -130,6 +131,33 @@ const MARKDOWN: Corpus = Corpus {
     policy: ReparsePolicy::Incremental,
 };
 
+/// The Markdown inline grammar's corpus: the grammar of a paragraph's
+/// text, which the block grammar injects into each `(inline)` node. It is
+/// reparsed whole: its incremental reparses of texts without errors were
+/// seen to differ from a fresh parse.
+const MARKDOWN_INLINE: Corpus = Corpus {
+    grammar: "markdown_inline",
+    texts: &[
+        include_str!("../../../tests/syntax/markdown_inline/spans.md"),
+        include_str!("../../../tests/syntax/markdown_inline/broken.md"),
+        "",
+        "*é* `漢`\r\n😀 **b**",
+    ],
+    pieces: &["x", " ", "*", "**", "`", "[", "]", "(", ")", "\\", "<", "é"],
+    query: "(emphasis) @emphasis\n(code_span) @code\n(inline_link (link_destination) @destination)\n",
+    query_names: &["emphasis", "code", "destination"],
+    bad_queries: &[
+        ("((", QueryErrorKind::Syntax),
+        ("(no_such_kind) @x", QueryErrorKind::NodeType),
+        ("(inline_link nope: (link_text)) @x", QueryErrorKind::Field),
+    ],
+    unknown_kind_query: "(emphasis) @e\n(no_such_kind) @x\n",
+    shipped: &[QueryKind::Highlights, QueryKind::Injections],
+    settings_query: "((code_span) @c (#set! injection.language \"rust\"))\n(emphasis) @e\n",
+    settings: &[&[("injection.language", Some("rust"))], &[]],
+    policy: ReparsePolicy::Whole,
+};
+
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_rust() {
     assert_eq!(contract::check(&TreeSitter, &RUST), [""; 0]);
@@ -143,4 +171,9 @@ fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_json() {
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_markdown() {
     assert_eq!(contract::check(&TreeSitter, &MARKDOWN), [""; 0]);
+}
+
+#[test]
+fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_markdown_inline() {
+    assert_eq!(contract::check(&TreeSitter, &MARKDOWN_INLINE), [""; 0]);
 }

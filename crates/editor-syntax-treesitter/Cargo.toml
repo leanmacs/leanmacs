@@ -1,7 +1,7 @@
 [package]
 name = "editor-syntax-treesitter"
 version = "0.1.0"
-description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON and Markdown grammars compiled in"
+description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON, Markdown and Markdown inline grammars compiled in"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -70,13 +70,14 @@ tree-sitter-json = { version = "=0.24.8" }
 # `MarkdownParser` wrapper the adapter does not use. So its dependencies are
 # `tree-sitter-language` and `cc` at build time, both already in the graph.
 #
-# Only the block grammar (`LANGUAGE`) is listed. The inline grammar
-# (`INLINE_LANGUAGE`) was seen, on 2026-11-16, to give 598 of 4,000
-# incremental reparses of random edits a tree other than a fresh parse's,
-# none of them with an error, so the core's fallback to a whole parse would
-# not catch it and the contract's `INCREMENTAL`, which runs on every listed
-# grammar, would fail. The block grammar's 6,000 reparses all equalled the
-# fresh parse. So inline Markdown is not highlighted, and the block
-# grammar's injection of each `(inline)` node names a grammar the service
-# does not have, which injects nothing.
+# Both grammars are listed: the block grammar (`LANGUAGE`) as `markdown`,
+# and the inline grammar (`INLINE_LANGUAGE`) as `markdown_inline`, the name
+# the block grammar's injections query gives each `(inline)` node, so
+# inline Markdown is an injected layer. The inline grammar's reparse policy
+# is `whole`: its incremental reparses of texts without errors differ from
+# a fresh parse (598 of 4,000 reparses of random edits on 2026-11-16, and
+# 136 of 6,400 in a second sweep that day), so it fails the contract's
+# `GRAMMAR_QUALITY`, and each round parses it from scratch. The block
+# grammar's 6,000 reparses all equalled the fresh parse, and it is
+# `incremental`.
 tree-sitter-md = { version = "=0.5.4", default-features = false }
