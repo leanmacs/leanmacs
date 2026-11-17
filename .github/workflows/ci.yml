@@ -80,9 +80,13 @@ jobs:
       # lean/lean-toolchain names on first use. Does nothing but put elan on
       # the PATH when the cache restored it.
       - run: sh tools/ci/install-elan.sh
-      # Cargo's registry and the workspace's target/, which also holds the
-      # target/release/libeditor_ffi.a Lake's `rustlib` builds. Saved even
-      # when the gate fails, so a red main still moves the cache to the
+      # Cargo's registry and the third-party dependencies' build artifacts
+      # in target/. rust-cache prunes the workspace's own crates before it
+      # saves (it keeps only each profile's build/, .fingerprint/ and deps/
+      # entries for non-workspace packages; cache-workspace-crates is off),
+      # so the workspace crates and the target/release/libeditor_ffi.a
+      # Lake's `rustlib` builds are rebuilt on every run; the Lean modules
+      # still come from Lake's cache below. Saved even when the gate fails, so a red main still moves the cache to the
       # current Cargo.lock. Saved only from main: caches saved under a
       # branch or a PR's refs/pull/N/merge are invisible to main, but every
       # ref can restore main's.

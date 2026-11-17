@@ -86,7 +86,7 @@ repository's cache space; every ref can restore `main`'s.
 |---|---|---|---|
 | mise and the tools it installed | mise's data directory | mise-action's default key: the mise version, the config files and the install args | By mise-action itself, at the end of its step, from `main` only (`cache_save`). |
 | elan and the Lean toolchains it installed | `~/.elan` | `elan-v1-<OS>-<arch>-<hash of lean/lean-toolchain and tools/ci/install-elan.sh>` | By an `actions/cache/save` step after the gate, from `main` only, not when the exact key was restored. |
-| Cargo's registry and the workspace's `target/`, which holds the `target/release/libeditor_ffi.a` Lake's `rustlib` builds | `~/.cargo`, `target/` | rust-cache's own: the Rust version, `Cargo.lock` and the Cargo manifests | By rust-cache's post step at the end of the job, from `main` only (`save-if`), even when the gate failed (`cache-on-failure`). |
+| Cargo's registry and the third-party dependencies' build artifacts. Not the workspace's own crates: rust-cache prunes them from `target/` before saving (`cache-workspace-crates` is off), so they and the `target/release/libeditor_ffi.a` Lake's `rustlib` builds are rebuilt on every run, against cached dependencies | `~/.cargo`, `target/` | rust-cache's own: the Rust version, `Cargo.lock` and the Cargo manifests | By rust-cache's post step at the end of the job, from `main` only (`save-if`), even when the gate failed (`cache-on-failure`). |
 | Lake's build output and fetched packages | `lean/.lake` | `lake-v1-<OS>-<arch>-<hash of lean/lean-toolchain and lean/lake-manifest.json>-<commit>`, restoring the newest entry with the same prefix when the commit has none | By an `actions/cache/save` step after the gate, from `main` only, not when the exact key was restored. |
 
 The two `actions/cache/save` steps run after the gate, so they hold the
@@ -98,8 +98,9 @@ Lake's key ends in the commit, so `main` saves a fresh entry for each
 commit, and a later run on any ref restores the newest one for the same
 toolchain and manifest, from which Lake rebuilds only what changed. A
 re-run of the same commit on `main` restores the exact key, rebuilds no
-Lean module (Lake still runs Cargo for `rustlib` on every build, and may
-relink), and saves nothing. A change of `lean/lean-toolchain` or
+Lean module (Lake still runs Cargo for `rustlib` on every build, which
+rebuilds the workspace's crates and `libeditor_ffi.a` since rust-cache
+does not hold them, and may relink), and saves nothing. A change of `lean/lean-toolchain` or
 `lean/lake-manifest.json` starts Lake's and elan's caches afresh.
 
 ## The workflow lint
