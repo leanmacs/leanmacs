@@ -45,6 +45,11 @@ the last scene published, on its own thread, so painting never waits on Lean
   and where, is the command loop's choice (an excerpt buffer's headers,
   `Editor/ExcerptView.lean`). Layout lays them out and counts them among
   the rows that fit; they hold no position.
+- **A gutter mark is text only too.** A view's marks (`View.marks`) are drawn
+  in a column of their own before its text, `Padding.gutter` points wide,
+  beside the lines their ranges cover; which ones is the command loop's
+  (`Gutter.marksOf`). Layout draws them and every query takes the column off
+  the text's width (`crates/editor-layout/src/frame.rs`, "The gutter").
 - Sizes and rectangles are in the frame's physical pixels. Paddings (a
   view's `padding`, the scene's `echoPadding`, a status field's `padding`)
   are in whole points, as a face's lengths are: layout multiplies them by
@@ -58,6 +63,7 @@ the last scene published, on its own thread, so painting never waits on Lean
 | A new field of the scene or of a view | A field here, which the command loop fills | The same field in the Rust scene and its binding (its phase 1); drawing a new face (its phase 2) |
 | A new cursor shape | A constructor of `CursorShape` | Its drawing |
 | A new kind of thing a view shows (a terminal) | A field or a constructor here | The view's renderer |
+| A new decoration of a view drawn beside its text (a gutter mark) | A field of `View`, as `marks` | A field of the Rust `View`, drawn as rows of the frame, and its crossing |
 | Something more the menu bar shows | A field or a constructor of `Editor/Menu.lean`'s types | `editor_platform::menu`, and the scene's crossing (`editor-ffi`'s `display/wire.rs` and `menu.rs`) |
 
 The scene is pinned by `ModelTest.sceneChecks`. It is published through the
@@ -119,6 +125,23 @@ structure Block where
   decorations : Array Decoration := #[]
   deriving DecidableEq, Repr
 
+/-- A gutter mark: a short text drawn in a view's gutter column
+(`Padding.gutter`) beside every visual row of each line its range has a byte
+in, or of the line that holds `start` when the range is empty, in its face
+over `gutter` over the default face. Like a block it is the view's and holds
+no position: the command loop moves it (`Gutter.marksOf`,
+`Editor/Gutter.lean`). -/
+structure GutterMark where
+  /-- A byte offset of the view's snapshot where its range starts. -/
+  start : Nat
+  /-- Where it stops, not included. -/
+  stop : Nat
+  /-- What it says: `+`, `~` or `-` for a version-control gutter. -/
+  text : String
+  /-- The face it takes. -/
+  face : FaceName
+  deriving DecidableEq, Repr
+
 /-- Which end of a view's status row a field is drawn from: the left fields
 run from the row's start, and the right fields end at its end. -/
 inductive StatusSide where
@@ -175,6 +198,10 @@ structure Padding where
   /-- The further inset of the text rows from the view's top, beyond `down`:
   what a window's title bar covers of a view along the frame's top edge. -/
   top : Nat := 0
+  /-- The width of the view's gutter column, a further inset of its text rows
+  from its left, beyond `across`, which its marks (`View.marks`) are drawn
+  in. 0, no column, by default. -/
+  gutter : Nat := 0
   deriving DecidableEq, Repr
 
 /-- The name of a view in a scene. -/
@@ -217,6 +244,10 @@ structure View where
   where several are before one row: the header of each excerpt of an
   excerpt buffer (`Editor/ExcerptView.lean`). None by default. -/
   blocks : Array Block := #[]
+  /-- Its gutter marks, drawn in its gutter column (`Padding.gutter`): the
+  added, removed and changed lines of a tracked file
+  (`Editor/VersionControl/Gutter.lean`). None by default. -/
+  marks : Array GutterMark := #[]
   deriving DecidableEq, Repr
 
 /-- A divider: a strip of the frame between two tiled views, filled in the

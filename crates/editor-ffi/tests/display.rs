@@ -16,7 +16,7 @@ use std::slice;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_ffi::display::{
-    DisplayStatus, RawPicture, WireBlock, WireFace, WireField, WireScene, WireView,
+    DisplayStatus, RawPicture, WireBlock, WireFace, WireField, WireMark, WireScene, WireView,
     editor_ffi_display_define, editor_ffi_display_frame_rows, editor_ffi_display_frame_text,
     editor_ffi_display_free, editor_ffi_display_heights, editor_ffi_display_live,
     editor_ffi_display_move, editor_ffi_display_new_cells, editor_ffi_display_new_font,
@@ -124,6 +124,21 @@ fn rows_blocked(
     anchor: usize,
     blocks: &(Vec<u8>, String),
 ) -> Result<Vec<(usize, usize)>, u64> {
+    rows_guttered(display, snapshot, width, height, padding, 0, anchor, blocks)
+}
+
+/// [`rows_blocked`] of a view with a gutter `gutter` points wide.
+#[allow(clippy::too_many_arguments)]
+fn rows_guttered(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    padding: (u64, u64, u64),
+    gutter: u64,
+    anchor: usize,
+    blocks: &(Vec<u8>, String),
+) -> Result<Vec<(usize, usize)>, u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
     // SAFETY: both handles are live, the blocks' buffers are alive for the
     // call, and `raw` is writable.
@@ -136,6 +151,7 @@ fn rows_blocked(
             padding.0,
             padding.1,
             padding.2,
+            gutter,
             anchor,
             blocks.0.as_ptr(),
             blocks.0.len(),
@@ -179,6 +195,20 @@ fn moved_padded(
     lines: i64,
     goal: Option<u64>,
 ) -> Result<(usize, u64), u64> {
+    moved_guttered(display, snapshot, width, (across, 0), position, lines, goal)
+}
+
+/// [`moved`] in a view padded `across` points across, with a gutter
+/// `gutter` points wide: `padding` is the two.
+fn moved_guttered(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    (across, gutter): (u64, u64),
+    position: usize,
+    lines: i64,
+    goal: Option<u64>,
+) -> Result<(usize, u64), u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
     // SAFETY: both handles are live, and `raw` is writable.
     let (status, words) = unsafe {
@@ -187,6 +217,7 @@ fn moved_padded(
             snapshot,
             width,
             across,
+            gutter,
             position,
             lines,
             goal.is_some(),
@@ -237,6 +268,25 @@ fn spot_blocked(
     position: usize,
     blocks: &(Vec<u8>, String),
 ) -> Result<Option<(u64, u64, u64)>, u64> {
+    let padding = (padding.0, padding.1, padding.2, 0);
+    spot_guttered(
+        display, snapshot, width, height, padding, anchor, position, blocks,
+    )
+}
+
+/// [`spot_blocked`] of a view whose padding is across, down, top and a
+/// gutter's width.
+#[allow(clippy::too_many_arguments)]
+fn spot_guttered(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    padding: (u64, u64, u64, u64),
+    anchor: usize,
+    position: usize,
+    blocks: &(Vec<u8>, String),
+) -> Result<Option<(u64, u64, u64)>, u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
     // SAFETY: both handles are live, the blocks' buffers are alive for the
     // call, and `raw` is writable.
@@ -249,6 +299,7 @@ fn spot_blocked(
             padding.0,
             padding.1,
             padding.2,
+            padding.3,
             anchor,
             position,
             blocks.0.as_ptr(),
@@ -442,6 +493,103 @@ fn a_published_views_frame_rows_through_c_are_its_text_rows_only() {
         take(raw.assume_init())
     };
     assert_eq!((status, rows), (0, vec![4, 0, 3, 4, 4, 5, 10, 11, 11]));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+#[test]
+fn a_views_gutter_marks_are_left_out_of_its_frame_rows_through_c() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let document = document_new("a\nb\n");
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let mark = |start, stop, text: &str| WireMark {
+        start,
+        stop,
+        text: text.to_owned(),
+        face: "diff.added".to_owned(),
+    };
+    let wire = WireScene {
+        size: [320, 160],
+        views: vec![WireView {
+            id: 3,
+            rect: [0, 0, 320, 160],
+            snapshot: Some(0),
+            padding: Padding {
+                gutter: 8,
+                ..Padding::default()
+            },
+            marks: vec![mark(0, 2, "+"), mark(2, 4, "+")],
+            ..WireView::default()
+        }],
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(publish(display, &words, &strings, &[snapshot]));
+    // The frame has the two mark rows, and the text is past the gutter.
+    assert_eq!(frame_text(display).matches("mark ").count(), 2);
+    assert!(frame_text(display).contains("row x 8 "));
+    let mut raw = MaybeUninit::uninit();
+    // SAFETY: `display` is live, and `raw` filled before it is read.
+    let (status, rows) = unsafe {
+        editor_ffi_display_frame_rows(display, 3, raw.as_mut_ptr());
+        take(raw.assume_init())
+    };
+    // Its three text rows, and no mark row among them.
+    assert_eq!((status, rows), (0, vec![3, 0, 1, 2, 3, 4, 4]));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+#[test]
+fn the_rows_a_spot_and_a_move_take_a_views_gutter_off_through_c() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let text = "abcdefghij\nk\n";
+    let document = document_new(text);
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    let padding = Padding {
+        gutter: 16,
+        ..Padding::new(4, 0, 0)
+    };
+    let expected: Vec<(usize, usize)> = layout
+        .rows_shown(&direct, 64.0, 160.0, padding, 0)
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.start, row.stop))
+        .collect();
+    let none = encode_blocks(&[]);
+    assert_eq!(
+        rows_guttered(display, snapshot, 64, 160, (4, 0, 0), 16, 0, &none),
+        Ok(expected)
+    );
+    let spot = layout
+        .spot(&direct, 64.0, 160.0, padding, 0, 5)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        spot_guttered(display, snapshot, 64, 160, (4, 0, 0, 16), 0, 5, &none),
+        Ok(Some((spot.x as u64, spot.y as u64, 16)))
+    );
+    let moved = layout
+        .lines_from_padded(&direct, 64.0, padding, 1, 1, None)
+        .unwrap();
+    assert_eq!(
+        moved_guttered(display, snapshot, 64, (4, 16), 1, 1, None),
+        Ok((moved.position, moved.goal as u64))
+    );
     // SAFETY: each handle is live and freed once.
     unsafe {
         editor_ffi_snapshot_free(snapshot);
@@ -685,6 +833,7 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
             status_face: None,
             padding: Padding::default(),
             blocks: vec![],
+            marks: vec![],
         }],
         echo_padding: 0,
         faces: None,
@@ -1204,6 +1353,7 @@ fn published_scene() -> (
             status_face: None,
             padding: Padding::default(),
             blocks: vec![],
+            marks: vec![],
         }],
         ..WireScene::default()
     };

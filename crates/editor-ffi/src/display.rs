@@ -124,8 +124,8 @@ use crate::words::Writer;
 mod wire;
 
 pub use wire::{
-    WireBlock, WireFace, WireField, WireScene, WireView, decode_blocks, decode_definitions,
-    encode_blocks, encode_definitions,
+    WireBlock, WireFace, WireField, WireMark, WireScene, WireView, decode_blocks,
+    decode_definitions, encode_blocks, encode_definitions,
 };
 
 /// How a display call ended, as it crosses the boundary.
@@ -220,12 +220,12 @@ trait Lays: Send {
         anchor: usize,
         blocks: &[Block],
     ) -> Result<Vec<RowRange>, QueryError>;
-    /// [`Layout::lines_from`].
+    /// [`Layout::lines_from_padded`].
     fn lines_from(
         &mut self,
         text: &TextRef,
         width: f32,
-        across: u32,
+        padding: Padding,
         position: usize,
         lines: i64,
         goal: Option<f32>,
@@ -276,12 +276,12 @@ where
         &mut self,
         text: &TextRef,
         width: f32,
-        across: u32,
+        padding: Padding,
         position: usize,
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
-        Layout::lines_from(self, text, width, across, position, lines, goal)
+        Layout::lines_from_padded(self, text, width, padding, position, lines, goal)
     }
 
     fn spot(
@@ -518,13 +518,14 @@ impl Display {
     }
 
     /// Where `position` of `snapshot` goes `lines` visual lines away in a
-    /// view `width` pixels wide padded `across` points each side, aiming
-    /// for `goal` ([`Layout::lines_from`]).
+    /// view `width` pixels wide padded `across` points each side and with a
+    /// gutter `gutter` points wide, aiming for `goal`
+    /// ([`Layout::lines_from_padded`]).
     pub fn lines_from(
         &self,
         snapshot: &Snapshot,
         width: u64,
-        across: u32,
+        padding: Padding,
         position: usize,
         lines: i64,
         goal: Option<u64>,
@@ -532,7 +533,7 @@ impl Display {
         self.layout().lines_from(
             &text_ref(snapshot),
             width as f32,
-            across,
+            padding,
             position,
             lines,
             goal.map(|goal| goal as f32),
@@ -881,9 +882,10 @@ pub unsafe extern "C" fn editor_ffi_display_define(
 }
 
 /// Fills `out` with the rows of `snapshot` a view `width` pixels wide and
-/// `height` tall, its content inset `across` and `down` points and its
-/// rows a further `top` points from its top (taken off at the display's
-/// scale; [`Display::rows`]), shows from `anchor`, with the blocks that
+/// `height` tall, its content inset `across` and `down` points, its rows a
+/// further `top` points from its top and its text a further `gutter`
+/// points from its left (taken off at the display's scale;
+/// [`Display::rows`]), shows from `anchor`, with the blocks that
 /// `block_words` and `block_text` spell ([`decode_blocks`]) drawn between
 /// its rows: their count, then a start and a stop for each; or with
 /// [`DisplayStatus::BadPosition`], which also refuses block words that
@@ -905,6 +907,7 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
     across: u64,
     down: u64,
     top: u64,
+    gutter: u64,
     anchor: usize,
     block_words: *const u8,
     block_words_len: usize,
@@ -914,7 +917,10 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
 ) {
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
-    let padding = Padding::new(points(across), points(down), points(top));
+    let padding = Padding {
+        gutter: points(gutter),
+        ..Padding::new(points(across), points(down), points(top))
+    };
     // SAFETY: the caller guarantees the blocks' buffers.
     let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
     let raw = answered(
@@ -933,10 +939,10 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
 
 /// Fills `out` with where `position` of `snapshot` goes `lines` visual
 /// lines down (up when negative) in a view `width` pixels wide whose text
-/// is inset `across` points each side, aiming for `goal` when
-/// `goal_present`: the position reached and the goal to pass on; or with
-/// [`DisplayStatus::BadPosition`]. A move only wraps, so it takes no
-/// padding down.
+/// is inset `across` points each side and a further `gutter` points from
+/// its left, aiming for `goal` when `goal_present`: the position reached
+/// and the goal to pass on; or with [`DisplayStatus::BadPosition`]. A move
+/// only wraps, so it takes no padding down.
 ///
 /// # Safety
 ///
@@ -947,6 +953,7 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     snapshot: *const Snapshot,
     width: u64,
     across: u64,
+    gutter: u64,
     position: usize,
     lines: i64,
     goal_present: bool,
@@ -956,8 +963,12 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
     let goal = goal_present.then_some(goal);
+    let padding = Padding {
+        gutter: points(gutter),
+        ..Padding::new(points(across), 0, 0)
+    };
     let raw = answered(
-        display.lines_from(snapshot, width, points(across), position, lines, goal),
+        display.lines_from(snapshot, width, padding, position, lines, goal),
         |moved, writer| {
             writer.size(moved.position);
             writer.word(moved.goal.max(0.0) as u64);
@@ -993,6 +1004,7 @@ pub unsafe extern "C" fn editor_ffi_display_spot(
     across: u64,
     down: u64,
     top: u64,
+    gutter: u64,
     anchor: usize,
     position: usize,
     block_words: *const u8,
@@ -1003,7 +1015,10 @@ pub unsafe extern "C" fn editor_ffi_display_spot(
 ) {
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
-    let padding = Padding::new(points(across), points(down), points(top));
+    let padding = Padding {
+        gutter: points(gutter),
+        ..Padding::new(points(across), points(down), points(top))
+    };
     // SAFETY: the caller guarantees the blocks' buffers.
     let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
     let raw = answered(
@@ -1081,9 +1096,11 @@ pub unsafe extern "C" fn editor_ffi_display_frame_text(display: *const Display, 
     unsafe { out.write(RawText { text, text_len }) };
 }
 
-/// Fills `out` with the rows the view with the id `view` shows in the
-/// latest frame: their count, then a start and a stop for each; or with the
-/// status 1 when the frame has no such view.
+/// Fills `out` with the rows of its text the view with the id `view` shows
+/// in the latest frame, its block and gutter mark rows left out
+/// ([`FrameRow::is_text`](editor_layout::frame::FrameRow::is_text)): their
+/// count, then a start and a stop for each; or with the status 1 when the
+/// frame has no such view.
 ///
 /// # Safety
 ///
@@ -1099,11 +1116,7 @@ pub unsafe extern "C" fn editor_ffi_display_frame_rows(
     let frame = unsafe { &*display }.latest();
     let raw = match frame.views.iter().find(|shown| shown.id.0 == view) {
         Some(shown) => {
-            let rows: Vec<_> = shown
-                .rows
-                .iter()
-                .filter(|row| row.block.is_none())
-                .collect();
+            let rows: Vec<_> = shown.rows.iter().filter(|row| row.is_text()).collect();
             let mut writer = Writer::with_capacity(1 + 2 * rows.len());
             writer.size(rows.len());
             for row in rows {

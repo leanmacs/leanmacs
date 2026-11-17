@@ -145,6 +145,19 @@ def blockWords (blocks : Array Block) : Array UInt64 × String :=
         (words, strings ++ block.text))
     (#[blocks.size.toUInt64], "")
 
+/-- `marks` as they cross to the library in a scene (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s, a view's marks after its blocks):
+words, their count, then for each its start, its stop, its text's length and
+its face's length; and one string, each mark's text and then its face. -/
+def markWords (marks : Array GutterMark) : Array UInt64 × String :=
+  marks.foldl
+    (fun (words, strings) mark =>
+      (words.push (RealTexts.word mark.start) |>.push (RealTexts.word mark.stop) |>.push
+            mark.text.utf8ByteSize.toUInt64 |>.push
+          mark.face.name.utf8ByteSize.toUInt64,
+        strings ++ mark.text ++ mark.face.name))
+    (#[marks.size.toUInt64], "")
+
 /-- The rows a view shows: `Display.rowsShown`'s answer. -/
 def rows (real : RealDisplay) (query : Display.RowsQuery) :
     IO (Except DisplayError (Array Display.Row)) := do
@@ -153,7 +166,7 @@ def rows (real : RealDisplay) (query : Display.RowsQuery) :
   let answer ←
     real.display.rows snapshot (RealTexts.word query.width) (RealTexts.word query.height)
         (offset query.anchor) (paddingWord query.padding.across) (paddingWord query.padding.down)
-        (paddingWord query.padding.top) words strings
+        (paddingWord query.padding.top) words strings (paddingWord query.padding.gutter)
   match answer with
   | some rows =>
     return .ok (rows.map fun row => { start := row.start.toNat, stop := row.stop.toNat })
@@ -166,7 +179,7 @@ def move (real : RealDisplay) (query : Display.MoveQuery) :
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
   let answer ←
     real.display.move snapshot (RealTexts.word query.width) (offset query.position) query.lines
-        (query.goal.map RealTexts.word) (paddingWord query.across)
+        (query.goal.map RealTexts.word) (paddingWord query.across) (paddingWord query.gutter)
   match answer with
   | some moved =>
     return .ok { position := moved.position.toNat, goal := moved.goal.toNat }
@@ -182,6 +195,7 @@ def spot (real : RealDisplay) (query : Display.SpotQuery) :
     real.display.spot snapshot (RealTexts.word query.width) (RealTexts.word query.height)
         (offset query.anchor) (offset query.position) (paddingWord query.padding.across)
         (paddingWord query.padding.down) (paddingWord query.padding.top) words strings
+        (paddingWord query.padding.gutter)
   match answer with
   | some spot =>
     return .ok
@@ -280,10 +294,13 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
     pushText { encoded with words := encoded.words.push view.statusFace.isSome.toUInt64 }
       ((view.statusFace.map (·.name)).getD "")
   let padding :=
-    #[paddingWord view.padding.across, paddingWord view.padding.down, paddingWord view.padding.top]
+    #[paddingWord view.padding.across, paddingWord view.padding.down, paddingWord view.padding.top,
+      paddingWord view.padding.gutter]
   let (blocks, blockText) := blockWords view.blocks
+  let (marks, markText) := markWords view.marks
   return { encoded with
-      words := encoded.words ++ padding ++ blocks, strings := encoded.strings ++ blockText }
+      words := encoded.words ++ padding ++ blocks ++ marks
+      strings := encoded.strings ++ blockText ++ markText }
 
 /-- The library's tag of a slant. -/
 def slantTag : Slant → UInt64

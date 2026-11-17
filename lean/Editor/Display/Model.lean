@@ -40,10 +40,11 @@ command loop fills from the text model when it runs both ports together.
   all, and the first row shown has its blocks only when they fit with it.
   A spot's `k` counts the block rows shown above its row.
 - A query's padding is in points, and the model lays out at scale 1, where
-  a point is a pixel: a view `width` wide with the padding `across` lays out
-  as one `width - 2 * across` wide, and one `height` tall with the padding
-  `down` and `top` as one `height - 2 * down - top` tall, each at 0 at
-  least.
+  a point is a pixel: a view `width` wide with the padding `across` and a
+  gutter `gutter` wide lays out as one `width - 2 * across - gutter` wide,
+  and one `height` tall with the padding `down` and `top` as one
+  `height - 2 * down - top` tall, each at 0 at least. A spot's x has
+  `across + gutter` added back.
 - A position at a wrap is the start of the later row. Only a line's last row
   holds the position at the line's end, before its break.
 - The x of a position is its character's first cell in its row times
@@ -289,7 +290,7 @@ whole rows fit its height, its blocks' rows counted among them, fewer at the
 end of the text; the view less its padding, as points at scale 1. -/
 def rows (model : DisplayModel) (query : Display.RowsQuery) :
     Except DisplayError (Array Display.Row) := do
-  let width := query.width - 2 * query.padding.across
+  let width := query.width - 2 * query.padding.across - query.padding.gutter
   let height := query.height - 2 * query.padding.down - query.padding.top
   let (laid, shown) ← model.shownRows query.snapshot width height query.anchor query.blocks
   return shown.map fun (index, _) => laid[index]!.row
@@ -302,7 +303,8 @@ row's end on a line's last row and the row's last character on any other.
 The goal passed back is the one aimed for. -/
 def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayError Display.Moved :=
   do
-  let laid ← model.laidOut query.snapshot (query.width - 2 * query.across) query.position
+  let laid ←
+    model.laidOut query.snapshot (query.width - 2 * query.across - query.gutter) query.position
   let here := rowOf laid query.position
   let held := laid[here]!
   let own := held.firsts[(held.chars.filter (· < query.position)).size]?.getD held.reach
@@ -318,11 +320,11 @@ def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayErro
 /-- Where a position is drawn in a view: on its row, when that is among the
 rows `rows` shows, at `y = down + top + k * lineHeight`, where `k` is the
 rows shown above it, block rows included, `lineHeight` tall, and at `x =
-across + cell * advance`, where `cell` is the position's first cell in its
+across + gutter + cell * advance`, where `cell` is the position's first cell in its
 row as a move counts it; none when the rows shown do not hold it. -/
 def spot (model : DisplayModel) (query : Display.SpotQuery) :
     Except DisplayError (Option Display.Spot) := do
-  let width := query.width - 2 * query.padding.across
+  let width := query.width - 2 * query.padding.across - query.padding.gutter
   let height := query.height - 2 * query.padding.down - query.padding.top
   let (laid, shown) ← model.shownRows query.snapshot width height query.anchor query.blocks
   discard <| model.laidOut query.snapshot width query.position
@@ -333,7 +335,7 @@ def spot (model : DisplayModel) (query : Display.SpotQuery) :
   let held := laid[here]!
   let cell := held.firsts[(held.chars.filter (· < query.position)).size]?.getD held.reach
   return some
-      { x := query.padding.across + cell * model.cells.advance
+      { x := query.padding.across + query.padding.gutter + cell * model.cells.advance
         y := query.padding.down + query.padding.top + rowsDown * model.cells.lineHeight
         height := model.cells.lineHeight }
 

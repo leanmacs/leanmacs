@@ -29,7 +29,8 @@ rows of `cells`. A query's padding is in points, which every runner lays out
 at scale 1, where a point is a pixel: the property of the padding holds the
 model, the recorder and the real binding to one rule, that a padded
 question is the unpadded question of the area less the padding: twice
-`across` off the width, and twice `down` and once `top` off the height. At another
+`across` and once `gutter` off the width, and twice `down` and once `top` off
+the height. At another
 scale the real binding takes the points off as that many times the scale,
 which `editor-layout`'s and `editor-ffi`'s tests pin.
 
@@ -53,7 +54,7 @@ character in a line that wraps either.
 The spot query is tied to the other two (`spotAgrees`), so it cannot drift
 from them: for a position among the rows `rowsShown` answers, the spot's y
 is the padding's `down` and `top` plus `k` text rows, where `k` is its
-row's index in that answer; its x is the padding's `across` plus the goal
+row's index in that answer; its x is the padding's `across` and `gutter` plus the goal
 a move of no lines with no goal passes back; and its height is a text
 row's. A position before the anchor, or past the rows shown, has none.
 Which row holds a position is asked of `rowsShown` too, from an anchor at
@@ -132,7 +133,7 @@ from `anchor`, is where `rowsShown` and a move of no lines say it is (the
 module docs, "What the spot query is held to"). -/
 def spotAgrees (cells : Display.Cells) (snapshot : SnapshotId) (columns rows anchor : Nat)
     (padding : Padding) (position : Nat) : DisplayM Bool := do
-  let width := columns * cells.advance + 2 * padding.across
+  let width := columns * cells.advance + 2 * padding.across + padding.gutter
   let height := rows * cells.lineHeight + 2 * padding.down + padding.top
   let shown ← Display.rowsShown { snapshot, width, height, anchor, padding }
   let own ← Display.rowsShown { snapshot, width, height, anchor := position, padding }
@@ -144,10 +145,11 @@ def spotAgrees (cells : Display.Cells) (snapshot : SnapshotId) (columns rows anc
   | some k =>
     let moved ←
       Display.linesFrom
-          { snapshot, width, across := padding.across, position, lines := 0, goal := none }
+          { snapshot, width, across := padding.across, gutter := padding.gutter, position
+            lines := 0, goal := none }
     return spot ==
         some
-          { x := padding.across + moved.goal
+          { x := padding.across + padding.gutter + moved.goal
             y := padding.down + padding.top + k * heights.text
             height := heights.text }
 
@@ -295,12 +297,40 @@ def properties (cells : Display.Cells) : List Property :=
             paddedMove == (← move 4 0) &&
             paddedMove != (← move 6 0) },
     { name :=
+        "the rows, a spot and a move of a view with a gutter are those of a view the gutter's width narrower, its spot's x the gutter's width further right"
+      texts := #["abcdefghijkl
+mn
+op
+qr"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let padding : Padding := { gutter := 2 * cells.advance }
+        let height := 5 * cells.lineHeight
+        let guttered ←
+          Display.rowsShown { snapshot, width := 6 * cells.advance, height, anchor := 0, padding }
+        let narrower ← rows snapshot 4 5 0
+        let spot ←
+          Display.spotOf
+              { snapshot, width := 6 * cells.advance, height, anchor := 0, padding, position := 5 }
+        let bare ←
+          Display.spotOf { snapshot, width := 4 * cells.advance, height, anchor := 0, position := 5 }
+        let move (columns gutter : Nat) : DisplayM Display.Moved :=
+          Display.linesFrom
+            { snapshot, width := columns * cells.advance, gutter, position := 1, lines := 1
+              goal := none }
+        return guttered == narrower && guttered == #[⟨0, 4⟩, ⟨4, 8⟩, ⟨8, 12⟩, ⟨13, 15⟩, ⟨16, 18⟩] &&
+            spot == bare.map (fun spot => { spot with x := spot.x + 2 * cells.advance }) &&
+            spot.isSome &&
+            (← move 6 (2 * cells.advance)) == (← move 4 0) &&
+            (← move 6 (2 * cells.advance)) != (← move 6 0) },
+    { name :=
         "a spot is where the rows and a move say: its y the padding and k rows for the k-th row shown, its x the padding and a move's goal, its height a row's, and none for a position before the anchor or past the rows shown, at every position of a text with wrapped and short lines"
       texts := #["abcdefgh\nij\n\nklmnopqrst\nu"]
       holds := fun snapshots => do
         let snapshot := nth snapshots 0
         let paddings : List Padding :=
-          [{}, { across := cells.advance, down := cells.lineHeight, top := cells.lineHeight }]
+          [{}, { across := cells.advance, down := cells.lineHeight, top := cells.lineHeight },
+            { across := cells.advance, gutter := 2 * cells.advance }]
         let mut holds := true
         for padding in paddings do
           for anchor in [0, 4, 13] do

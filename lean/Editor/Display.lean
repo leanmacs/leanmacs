@@ -180,9 +180,10 @@ structure RowsQuery where
   /-- The scroll anchor's byte offset: the rows start at the one that holds
   it. -/
   anchor : Nat
-  /-- The view's padding, in points: the display takes twice `across` off the
-  width, and twice `down` and once `top` off the height, at the scale it
-  lays out at, as its frame does. Lean subtracts nothing. -/
+  /-- The view's padding, in points: the display takes twice `across` and
+  once `gutter` off the width, and twice `down` and once `top` off the
+  height, at the scale it lays out at, as its frame does. Lean subtracts
+  nothing. -/
   padding : Padding := {}
   /-- The view's blocks: their rows count among the rows that fit, by the
   rule its frame draws them by (the module docs, "Blocks"). None by
@@ -200,6 +201,9 @@ structure MoveQuery where
   sides of the width, at its scale. A move only wraps, so it takes no
   padding down. -/
   across : Nat := 0
+  /-- The width of the view's gutter column, in points: the display takes it
+  off the width once, at its scale, as its frame does. -/
+  gutter : Nat := 0
   /-- The byte offset to move from. -/
   position : Nat
   /-- How many visual rows to move: down when positive, up when negative. -/

@@ -2548,18 +2548,19 @@ def sceneChecks (_ : Unit) : List Check :=
             0, 0, 0, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor; no
         -- status field and no status face; padded 8 across, 4 down and 28
-        -- at the top; no block.
+        -- at the top, with no gutter; no block and no mark.
         let first : Array UInt64 :=
-          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28, 0]
+          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28, 0, 0, 0]
         -- The first handle; its scroll marker and its selection; a bar
         -- cursor; a decoration; a left status field with no padding and a
-        -- right one padded 4; a status face; and no block.
+        -- right one padded 4; a status face; and no block and no mark.
         let second : Array UInt64 :=
           #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 2, 6, 4, 0, 0, 3, 3,
-            1, 4, 1, 3, 0, 0, 0, 0]
+            1, 4, 1, 3, 0, 0, 0, 0, 0, 0]
         -- The second handle; no scroll marker and no selection; an
-        -- underline cursor; no block.
-        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0]
+        -- underline cursor; no block and no mark.
+        let third : Array UInt64 :=
+          #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- One divider: its rectangle and its face's length.
         let dividers : Array UInt64 := #[1, 0, 46, 32, 2, 4]
         -- No faces: as last published.
@@ -2592,15 +2593,48 @@ def sceneChecks (_ : Unit) : List Check :=
           real.rows { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0, blocks }
         let wordsBlocks : Array UInt64 := #[1, 3, 3, 1, 0, 3, 1]
         let held ← fixture.document.read
-        -- The blocks, then the divider and no faces, end the words.
-        let tail := encoded.words.extract (encoded.words.size - 14) encoded.words.size
-        return tail == wordsBlocks ++ #[1, 0, 46, 32, 2, 4, 0] &&
+        -- The blocks, then no mark, the divider and no faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 15) encoded.words.size
+        return tail == wordsBlocks ++ #[0, 1, 0, 46, 32, 2, 4, 0] &&
             encoded.strings.endsWith "héhrule" &&
             back.map (·.1) == some ((← real.encode scene (some #[])).words) &&
             (frame.splitOn "  block 0 row").length == 2 &&
             shown == some #[(0, 2), (3, 5)] &&
             asked.toOption.map (·.map fun row => (row.start, row.stop)) == some #[(0, 2), (3, 5)] &&
             held == "ab\ncd\nef" },
+    { name :=
+        "a view's gutter crosses with its padding and its marks after its blocks, each its range, its text and its face, come back as sent, and are drawn as mark rows beside their rows, which the frame's rows leave out and the rows query, asked with the gutter, agrees with"
+      run := do
+        let fixture ← sceneFixture
+        let real := fixture.real
+        let marks : Array Editor.GutterMark :=
+          #[{ start := 0, stop := 3, text := "+", face := ⟨"diff.added"⟩ },
+            { start := 6, stop := 6, text := "-", face := ⟨"diff.removed"⟩ }]
+        let scene := fixture.mixed
+        let scene :=
+          { scene with
+            views :=
+              scene.views.modify 2 fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, padding := { gutter := 8 }, marks } }
+        let encoded ← real.encode scene none
+        real.publish scene
+        let back ← real.display.scene
+        let frame ← real.display.frameText
+        let shown ← fixture.shown 3
+        let asked ←
+          real.rows
+              { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0
+                padding := { gutter := 8 } }
+        -- The marks, then the divider and no faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 16) encoded.words.size
+        let wordsMarks : Array UInt64 := #[2, 0, 3, 1, 10, 6, 6, 1, 12]
+        return tail == wordsMarks ++ #[1, 0, 46, 32, 2, 4, 0] &&
+            encoded.strings.endsWith "+diff.added-diff.removedrule" &&
+            back.map (·.1) == some ((← real.encode scene (some #[])).words) &&
+            (frame.splitOn "  mark ").length == 3 &&
+            shown == asked.toOption.map (·.map fun row => (row.start, row.stop)) &&
+            shown.isSome },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
       run := do

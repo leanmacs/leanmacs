@@ -8,14 +8,15 @@
 //! | Part | Words |
 //! |---|---|
 //! | The scene | its width and height; the focus's presence and view id; the echo's length; the echo's padding in whole points; the pending prefix's length; the preedit's presence and length; the title's length; the menu bar's presence (0 or 1), and when present its layout (`crate::menu`: the count of menus, each menu's title's length, role and items); the count of views; each view |
-//! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length, face's length, side (0 left, 1 right) and padding in whole points; its status face's presence and length; its padding across, down and top, in whole points; the count of its blocks and each block |
+//! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length, face's length, side (0 left, 1 right) and padding in whole points; its status face's presence and length; its padding across, down and top and its gutter's width, in whole points; the count of its blocks and each block; the count of its gutter marks and each mark |
 //! | A block | the offset of the view's snapshot it is drawn before; its text's length; the count of its decorations and each one's start, stop and face's length, the offsets bytes of its text |
+//! | A gutter mark | the start and the stop of its range, offsets of the view's snapshot; its text's length; its face's length |
 //! | The dividers, after the last view | their count; each one's rectangle's x, y, width and height and its face's length |
 //! | The faces, after the last view | their presence (0: as last published); when present, the count of definitions and each definition |
 //! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a point; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 a length in 64ths of a point) followed by its value; the vertical padding in 64ths of a point |
 //!
-//! A view is at least 19 words, a block 3, a divider 5, and a definition
-//! 24.
+//! A view is at least 21 words, a block 3, a gutter mark 4, a divider 5,
+//! and a definition 24.
 //!
 //! A point is a logical one: a physical pixel at scale 1. A face's three
 //! lengths, a status field's padding, a view's padding and the echo's
@@ -31,7 +32,7 @@
 //! each view its cursor's face, its decorations' faces, its status
 //! fields' texts and faces and its status face if present, then each of
 //! its blocks' text followed by that block's decorations' faces, then each
-//! divider's face, then for each definition its
+//! of its marks' text followed by its face, then each divider's face, then for each definition its
 //! name and its family when present. A length that does not end on a
 //! character boundary, and text left over, are refusals.
 //!
@@ -64,7 +65,7 @@
 //! status field's side that is none of those listed; a weight outside 1 to
 //! 1000; a strike-through that is neither 0 nor 1; and a colour, a size, a
 //! line height, a vertical padding, a status field's padding, a view's
-//! padding or the echo's padding no `u32` holds, which is refused, not cut
+//! padding or gutter, or the echo's padding no `u32` holds, which is refused, not cut
 //! down. The words of an
 //! absent attribute are not looked at. What the attributes mean and how
 //! definitions merge are layout's rules (`editor_layout::face`); this
@@ -83,8 +84,8 @@
 
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Block, Cursor, CursorShape, Decoration, Divider, Padding, Rect, Scene, Side, Size, StatusField,
-    View, ViewId,
+    Block, Cursor, CursorShape, Decoration, Divider, GutterMark, Padding, Rect, Scene, Side, Size,
+    StatusField, View, ViewId,
 };
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
 use editor_platform::Menu;
@@ -117,10 +118,27 @@ pub struct WireView {
     pub status: Vec<WireField>,
     /// The face of its status row, if it has one.
     pub status_face: Option<String>,
-    /// Its padding across, down and top, in whole points.
+    /// Its padding across, down and top and its gutter's width, in whole
+    /// points.
     pub padding: Padding,
     /// Its blocks.
     pub blocks: Vec<WireBlock>,
+    /// Its gutter marks.
+    pub marks: Vec<WireMark>,
+}
+
+/// A gutter mark of a view as it crossed: its range's start and stop, its
+/// text and its face.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WireMark {
+    /// Where its range starts in the view's snapshot.
+    pub start: u64,
+    /// Where it stops.
+    pub stop: u64,
+    /// What it says.
+    pub text: String,
+    /// Its face.
+    pub face: String,
 }
 
 /// A block of a view as it crossed: the offset it is drawn before, its
@@ -534,12 +552,29 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
         Some(len) => Some(texts.take(crate::words::size(len))?),
         None => None,
     };
-    let padding = Padding::new(
+    let (across, down, top) = (
         narrow(words.word()?)?,
         narrow(words.word()?)?,
         narrow(words.word()?)?,
     );
+    let padding = Padding {
+        gutter: narrow(words.word()?)?,
+        ..Padding::new(across, down, top)
+    };
     let blocks = read_blocks(words, texts)?;
+    // A mark is four words.
+    let count = words.count(4)?;
+    let mut marks = Vec::with_capacity(count);
+    for _ in 0..count {
+        let (start, stop) = (words.word()?, words.word()?);
+        let (text, face) = (words.size()?, words.size()?);
+        marks.push(WireMark {
+            start,
+            stop,
+            text: texts.take(text)?,
+            face: texts.take(face)?,
+        });
+    }
     Some(WireView {
         id,
         rect,
@@ -553,6 +588,7 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
         status_face,
         padding,
         blocks,
+        marks,
     })
 }
 
@@ -663,8 +699,8 @@ impl WireScene {
         } else {
             None
         };
-        // A view is at least nineteen words.
-        let count = words.count(19)?;
+        // A view is at least twenty-one words.
+        let count = words.count(21)?;
         let views = (0..count)
             .map(|_| view(&mut words, &mut texts))
             .collect::<Option<_>>()?;
@@ -767,7 +803,17 @@ impl WireScene {
             words.word(u64::from(view.padding.across));
             words.word(u64::from(view.padding.down));
             words.word(u64::from(view.padding.top));
+            words.word(u64::from(view.padding.gutter));
             write_blocks(&mut words, &mut strings, &view.blocks);
+            words.size(view.marks.len());
+            for mark in &view.marks {
+                words.word(mark.start);
+                words.word(mark.stop);
+                words.size(mark.text.len());
+                words.size(mark.face.len());
+                strings.push_str(&mark.text);
+                strings.push_str(&mark.face);
+            }
         }
         words.size(self.dividers.len());
         for divider in &self.dividers {
@@ -847,7 +893,16 @@ impl WireScene {
                     status_face: view.status_face.clone(),
                     padding: view.padding,
                     blocks: layout_blocks(&view.blocks),
-                    marks: vec![],
+                    marks: view
+                        .marks
+                        .iter()
+                        .map(|mark| GutterMark {
+                            start: crate::words::size(mark.start),
+                            stop: crate::words::size(mark.stop),
+                            text: mark.text.clone(),
+                            face: mark.face.clone(),
+                        })
+                        .collect(),
                 }
             })
             .collect();
@@ -896,13 +951,13 @@ mod tests {
     use editor_platform::{Menu, Modifiers};
 
     use super::{
-        WireBlock, WireDivider, WireFace, WireField, WireScene, WireView, decode_blocks,
+        WireBlock, WireDivider, WireFace, WireField, WireMark, WireScene, WireView, decode_blocks,
         decode_definitions, encode_blocks, encode_definitions, pixels,
     };
     use crate::document::Document;
     use crate::snapshot::Snapshot;
     use crate::words::tests::buffer;
-    use editor_layout::scene::{Block, Decoration};
+    use editor_layout::scene::{Block, Decoration, GutterMark};
 
     /// A scene with every part present.
     fn full() -> WireScene {
@@ -932,8 +987,17 @@ mod tests {
                     padding: 8,
                 }],
                 status_face: Some("dim".to_owned()),
-                padding: Padding::new(8, 4, 28),
+                padding: Padding {
+                    gutter: 12,
+                    ..Padding::new(8, 4, 28)
+                },
                 blocks: vec![],
+                marks: vec![WireMark {
+                    start: 2,
+                    stop: 5,
+                    text: "+".to_owned(),
+                    face: "diff.added".to_owned(),
+                }],
             }],
             dividers: vec![WireDivider {
                 rect: [94, 0, 2, 80],
@@ -954,15 +1018,16 @@ mod tests {
                 1, 0, 2, 7, // its decorations
                 1, 6, 4, 1, 8, // its status field: right, padded 8
                 1, 3, // its status face
-                8, 4, 28, // its padding across, down and top
+                8, 4, 28, 12, // its padding across, down and top, and its gutter
                 0,  // no blocks
+                1, 2, 5, 1, 10, // one mark: its start, stop, text's and face's lengths
                 1, 94, 0, 2, 80, 4, // one divider: its rectangle and its face's length
                 0, // no faces
             ])
         );
         assert_eq!(
             strings,
-            "fixturegénotes.txtcursor.normalkeywordNORMALmodedimrule"
+            "fixturegénotes.txtcursor.normalkeywordNORMALmodedim+diff.addedrule"
         );
         assert_eq!(WireScene::decode(&words, &strings), Some(full()));
     }
@@ -1124,15 +1189,15 @@ mod tests {
         let (words, strings) = empty.encode();
         assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         assert_eq!(WireScene::decode(&words, &strings), Some(empty));
-        // A view with nothing in it is its twenty words, its count of
-        // blocks the last, between the scene's twelve and the dividers'
-        // count and the faces' presence.
+        // A view with nothing in it is its twenty-two words, its counts of
+        // blocks and of marks the last, between the scene's twelve and the
+        // dividers' count and the faces' presence.
         let bare = WireScene {
             views: vec![WireView::default()],
             ..WireScene::default()
         };
         let (words, strings) = bare.encode();
-        assert_eq!(words.len(), (12 + 20 + 2) * 8);
+        assert_eq!(words.len(), (12 + 22 + 2) * 8);
         assert_eq!(WireScene::decode(&words, &strings), Some(bare));
     }
 
@@ -1219,7 +1284,7 @@ mod tests {
         let (words, strings) = full.encode();
         assert_eq!(
             strings,
-            "fixturegénotes.txtcursor.normalkeywordNORMALmodedimrulekwmono"
+            "fixturegénotes.txtcursor.normalkeywordNORMALmodedim+diff.addedrulekwmono"
         );
         assert_eq!(WireScene::decode(&words, &strings), Some(full));
     }
@@ -1517,9 +1582,9 @@ mod tests {
             "a padding no u32 holds"
         );
         assert_eq!(with(35, 2), None, "a status face's presence of 2");
-        // A view's padding across, down or top, and the echo's padding, no
-        // u32 holds.
-        for index in [37, 38, 39, 5] {
+        // A view's padding across, down or top, its gutter, and the echo's
+        // padding, no u32 holds.
+        for index in [37, 38, 39, 40, 5] {
             assert!(with(index, u64::from(u32::MAX)).is_some());
             assert_eq!(
                 with(index, u64::from(u32::MAX) + 1),
@@ -1649,12 +1714,79 @@ mod tests {
         // offset, text's length and count of decorations, then each
         // decoration's start, stop and face's length.
         let view = &words[11..];
-        assert_eq!(&view[17..], [0, 0, 0, 2, 0, 7, 1, 0, 7, 12, 5, 2, 0, 0, 0]);
+        assert_eq!(
+            &view[17..],
+            [0, 0, 0, 0, 2, 0, 7, 1, 0, 7, 12, 5, 2, 0, 0, 0, 0]
+        );
         // In the string, after the status face: each block's text, then
         // its decorations' faces.
         assert_eq!(strings, "dimone.txtblock-headeré");
         let (bytes, strings) = scene.encode();
         assert_eq!(WireScene::decode(&bytes, &strings), Some(scene));
+    }
+
+    #[test]
+    fn a_views_marks_cross_after_its_blocks_and_reach_layout() {
+        let scene = WireScene {
+            views: vec![WireView {
+                padding: Padding {
+                    gutter: 12,
+                    ..Padding::default()
+                },
+                blocks: blocks(),
+                marks: vec![
+                    WireMark {
+                        start: 0,
+                        stop: 2,
+                        text: "+".to_owned(),
+                        face: "diff.added".to_owned(),
+                    },
+                    WireMark {
+                        start: 4,
+                        stop: 4,
+                        text: "-".to_owned(),
+                        face: "diff.removed".to_owned(),
+                    },
+                ],
+                ..WireView::default()
+            }],
+            ..WireScene::default()
+        };
+        let (bytes, strings) = scene.encode();
+        let words = crate::words::tests::words_of(&bytes);
+        // After the blocks, the marks: the count, then each one's start,
+        // stop, text's length and face's length.
+        let view = &words[11..];
+        assert_eq!(&view[17..21], [0, 0, 0, 12]);
+        assert_eq!(&view[31..], [2, 0, 2, 1, 10, 4, 4, 1, 12, 0, 0]);
+        // In the string, after the blocks' texts: each mark's text, then
+        // its face.
+        assert!(strings.ends_with("é+diff.added-diff.removed"));
+        assert_eq!(WireScene::decode(&bytes, &strings), Some(scene.clone()));
+        let resolved = scene.resolve(&[]);
+        assert_eq!(resolved.views[0].padding.gutter, 12);
+        assert_eq!(
+            resolved.views[0].marks,
+            vec![
+                GutterMark {
+                    start: 0,
+                    stop: 2,
+                    text: "+".to_owned(),
+                    face: "diff.added".to_owned(),
+                },
+                GutterMark {
+                    start: 4,
+                    stop: 4,
+                    text: "-".to_owned(),
+                    face: "diff.removed".to_owned(),
+                },
+            ]
+        );
+        // A mark's text or face past the string spells no scene.
+        assert_eq!(
+            WireScene::decode(&bytes, &strings[..strings.len() - 3]),
+            None
+        );
     }
 
     #[test]
@@ -1756,7 +1888,13 @@ mod tests {
     #[test]
     fn a_views_padding_and_the_echos_reach_layout_in_points() {
         let scene = full().resolve(&[]);
-        assert_eq!(scene.views[0].padding, Padding::new(8, 4, 28));
+        assert_eq!(
+            scene.views[0].padding,
+            Padding {
+                gutter: 12,
+                ..Padding::new(8, 4, 28)
+            }
+        );
         assert_eq!(scene.echo_padding, 14);
         // None by default.
         let bare = WireScene {
