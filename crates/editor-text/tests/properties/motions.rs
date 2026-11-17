@@ -46,7 +46,7 @@ const FRAGMENTS: &[&str] = &[
 /// A text to move in, and the edits to make to it first: seven in eight
 /// are short, and the eighth is a short text repeated until the rope holds
 /// it in many pieces.
-fn text_and_edits() -> impl Strategy<Value = (String, Vec<Step>)> {
+pub(crate) fn text_and_edits() -> impl Strategy<Value = (String, Vec<Step>)> {
     let short = || vec(select(FRAGMENTS), 0..=24).prop_map(|pieces| pieces.concat());
     let text = prop_oneof![
         7 => short(),
@@ -299,7 +299,7 @@ impl Reference {
 
 /// A count of rows or a column for a row motion: small ones, which land
 /// inside a text, and the largest there is.
-fn count_or_column() -> impl Strategy<Value = usize> {
+pub(crate) fn count_or_column() -> impl Strategy<Value = usize> {
     prop_oneof![
         8 => 0..12_usize,
         1 => Just(usize::MAX),
@@ -307,7 +307,7 @@ fn count_or_column() -> impl Strategy<Value = usize> {
 }
 
 /// The row motions, up and down, with each count and column of `rows`.
-fn row_motions(rows: &[(usize, usize)]) -> Vec<Motion> {
+pub(crate) fn row_motions(rows: &[(usize, usize)]) -> Vec<Motion> {
     rows.iter()
         .flat_map(|&(count, column)| {
             [
@@ -319,7 +319,7 @@ fn row_motions(rows: &[(usize, usize)]) -> Vec<Motion> {
 }
 
 /// Every motion the properties ask that takes no count and no column.
-fn motions() -> Vec<Motion> {
+pub(crate) fn motions() -> Vec<Motion> {
     vec![
         Motion::NextCell,
         Motion::PreviousCell,

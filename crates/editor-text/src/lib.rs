@@ -305,6 +305,31 @@
 //!   text holds no lock: a caller that shares a text between threads puts it
 //!   behind one.
 //!
+//! # Excerpt texts
+//!
+//! An excerpt text is a text made of ranges of other texts, its sources, by
+//! the module [`excerpt`], whose docs have the rules in full:
+//!
+//! - **It is a list and a plain text.** The list ([`excerpt::Excerpts`])
+//!   holds each excerpt as a source and two anchors the source marks, its
+//!   start with [`Bias::Before`] and its end with [`Bias::After`], so text
+//!   inserted at either end is inside it. The assembled text, a [`Text`]
+//!   only the list writes, holds the excerpts' bytes joined by one line
+//!   feed. Its snapshots, revisions, log and markers are a plain text's, so
+//!   every read of a snapshot, motions included, answers over it unchanged,
+//!   and a motion crosses from one excerpt into the next.
+//! - **It is caught up at every request** ([`excerpt::Excerpts::refresh`]):
+//!   each source's patch since the revision last read, cut to each of its
+//!   excerpts, is applied as one transaction, so however many sources moved
+//!   the assembled text gets one revision. An excerpt the cut does not line
+//!   up for, or whose source's log no longer reaches that revision, is
+//!   replaced whole.
+//! - **Replacing the list** ([`excerpt::Excerpts::set`]) is one more
+//!   transaction, which keeps the excerpts the two lists start and end with
+//!   alike, anchors and bytes, and gives up the anchors of those dropped.
+//! - The assembled text keeps no inverse, and the list refuses to go on
+//!   over one written by anything else.
+//!
 //! # Files
 //!
 //! A text is loaded from a file and a snapshot saved as one through the
@@ -375,6 +400,10 @@
 //!   the crash guarantee, and is not built.
 //! - A load that streams into the rope without holding the file's bytes
 //!   whole, and an override of the binary rule.
+//! - An edit made through an excerpt text, turned into its sources'
+//!   transactions; a trace through an excerpt text to the edits of its
+//!   sources; an excerpt text as another's source; and a tree of running
+//!   totals over the list, which waits for a measured need.
 //! - Noticing that a file changed on disk at any time but a save, and a
 //!   change inside the file system's clock granularity that keeps the size.
 //!
@@ -398,12 +427,14 @@
 //! | A change to what a word character or a blank is | The private module `word`, and nowhere else | Its unit tests on named characters, and the reference of `tests/properties/motions.rs`, which states the rule again and changes with it |
 //! | Another motion | A variant of [`Motion`], with its arm in [`Snapshot::motion`] | Its unit tests beside it, on the fixture's table, and the reference of `tests/properties/motions.rs`, which gains the motion |
 //! | Another kind of bracket or quote, or another read of a pair | A variant of [`Bracket`] or [`Quote`], or a method of [`Snapshot`] in the private module `pair` | The unit tests of `pair`, one for each rule |
+//! | Another rule about how an excerpt follows its sources, or about a list that replaces another | The module [`excerpt`] | Its unit tests on two named sources, and the properties in `tests/properties/excerpts.rs`, whose reference keeps each excerpt's ends as anchors mapped by hand |
 //! | Another thing the crate needs of a file system | A method of [`fs::Fs`], as the module docs of [`fs`] say | Its rule in [`fs::contract::check`], with a fake written to break it, which the fake and every real adapter are then held to |
 
 mod anchor;
 mod bytes;
 mod cell;
 mod change;
+pub mod excerpt;
 mod extent;
 pub mod file;
 pub mod fs;
