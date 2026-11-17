@@ -29322,6 +29322,26 @@ def sceneDecorations (driver : TestDriver) (view : ViewId) : Option (Array Decor
   driver.model.display.scenes.back?.bind fun scene =>
     (scene.views.find? (·.id == view)).map (·.decorations)
 
+/-- The editor's models, with the editor state answering the state requests
+and changed by them, and, when `refuseSplits`, every split refused with
+`noSuchWindow` and nothing changed: a fake written for the one check of a
+visit whose split is refused, which no state refuses for a view that shows
+a compilation buffer. -/
+def splitsRefusedIf (refuseSplits : Bool) :
+    (request : EditorRequest) →
+      EditorState × EditorModel → request.Reply × (EditorState × EditorModel)
+  | .state (.split view axis scroll selection), (state, model) =>
+    if refuseSplits then (.error (.noSuchWindow view), (state, model))
+    else
+      let (reply, state) := state.handle (.split view axis scroll selection)
+      (reply, (state, model))
+  | .state request, (state, model) =>
+    let (reply, state) := state.handle request
+    (reply, (state, model))
+  | request, (state, model) =>
+    let (reply, model) := EditorModel.handle request model
+    (reply, (state, model))
+
 /-- The checks of the locations the compile mode finds in its output
 (`Editor/Compile.lean`, "Locations"), on the loop's driver over the
 editor's models, the job model and the process model, in the world of
@@ -29560,7 +29580,72 @@ def compileLocationChecks : List Check :=
               echoOf elsewhere == some "compile-goto-error: a.lean is not a compilation buffer" &&
               currentOf item placeR == some 2 &&
               fileOf item ⟨0⟩ == fileOf activated ⟨0⟩ &&
-              headsOf item ⟨0⟩ == headsOf activated ⟨0⟩ }]
+              headsOf item ⟨0⟩ == headsOf activated ⟨0⟩ },
+    { name :=
+        "with the compilation buffer in the only view, next-error splits that view by rows and visits the location in the new view below, the focus staying in the compilation buffer; activate there visits in the new view and focuses it"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let only := pressedOn ran "C-e c"
+            let stepped := drained (pressedOn only "C-k n")
+            let activated := drained (pressedOn only "C-k g RET")
+            let split : Split := .split .rows (.split .rows (.window ⟨1⟩) (.window ⟨2⟩)) .minibuffer
+            only.loop.state.frame.tree == .split .rows (.window ⟨1⟩) .minibuffer &&
+              only.loop.state.frame.focused == ⟨1⟩ &&
+              stepped.loop.state.frame.tree == split &&
+              (showing stepped ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              fileOf stepped ⟨2⟩ == some "/r/src/main.rs" &&
+              headsOf stepped ⟨2⟩ == some #[135] &&
+              stepped.loop.state.frame.focused == ⟨1⟩ &&
+              currentOf stepped placeR == some 0 &&
+              activated.loop.state.frame.tree == split &&
+              (showing activated ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              fileOf activated ⟨2⟩ == some "/r/src/main.rs" &&
+              headsOf activated ⟨2⟩ == some #[23] &&
+              activated.loop.state.frame.focused == ⟨2⟩ &&
+              currentOf activated placeR == some 2 },
+    { name :=
+        "with the compilation buffer in the only view and a prompt open, next-error from the compilation buffer never visits in the minibuffer's view: it splits the compilation buffer's view and visits below it"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let asking := pressedOn ran "C-e c C-k c C-k o"
+            let stepped := drained (pressedOn asking "C-k n")
+            let minibuffer := asking.loop.state.minibufferView?
+            asking.loop.state.frame.tree == .split .rows (.window ⟨1⟩) .minibuffer &&
+              minibuffer == some ⟨2⟩ &&
+              asking.loop.state.frame.focused == ⟨1⟩ &&
+              stepped.loop.state.minibufferView? == minibuffer &&
+              stepped.loop.state.frame.tree ==
+                .split .rows (.split .rows (.window ⟨1⟩) (.window ⟨3⟩)) .minibuffer &&
+              (showing stepped ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              fileOf stepped ⟨3⟩ == some "/r/src/main.rs" &&
+              headsOf stepped ⟨3⟩ == some #[135] &&
+              currentOf stepped placeR == some 0 },
+    { name :=
+        "the view a location is visited in, asked from the compilation buffer in the only view, is the asking view where the split is refused, and the new view below it where it is not"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let only := pressedOn ran "C-e c"
+            let compilation := only.loop.state.findBuffer "*compilation: r@main*"
+            let visiting (refuseSplits : Bool) : Option ViewId :=
+              (Program.run (port := editorPort) (splitsRefusedIf refuseSplits)
+                  (Compile.visitingView ⟨1⟩ compilation).run
+                  (only.loop.state, only.model)).1.toOption
+            only.loop.state.frame.tree == .split .rows (.window ⟨1⟩) .minibuffer &&
+              compilation.isSome &&
+              visiting true == some ⟨1⟩ &&
+              visiting false == some ⟨2⟩ }]
 
 /-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
 `abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts
