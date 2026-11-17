@@ -2402,6 +2402,12 @@ operation by a case of `lean/Editor/Api/Cases.lean`).
   command says so in the echo area and changes nothing.
 - **A step whose edits carried no selection** hands none back, and the
   cursor rests where the window's marker is.
+- **In an excerpt buffer** `u` and `C-r` take one step in each source buffer
+  the step edited, which hands no selection back, so the cursor rests where
+  the window's marker moved; when a source buffer moved on since, they say
+  `<source> changed since` and change nothing
+  ([text-and-display.md](text-and-display.md), "As built: editing through
+  excerpts").
 - **The window keeps no wanted column** after either.
 - **This is the phase's rule and not Vim's.** Vim leaves the cursor at the
   start of the changed text (`ddu` from the middle of a line leaves it in

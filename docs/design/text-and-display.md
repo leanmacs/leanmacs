@@ -822,8 +822,11 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 | The cases that cross the text port and the job port | `lean/Editor/File/Cases.lean` |
 | An excerpt text: the list, its anchors, catching up, replacing the list, and locating a position | `crates/editor-text/src/excerpt.rs` |
 | The properties of excerpt texts, against the ranges' strings and anchors mapped by hand | `crates/editor-text/tests/properties/excerpts.rs` |
-| An excerpt document as a handle: catching up on lock, the lock order, the refused edits | `crates/editor-ffi/src/excerpts.rs` |
-| Excerpt texts in the Lean port, the model's lending, and the contract over them | "Excerpt texts" in `lean/Editor/Text.lean`, `TextModel.onText` in `lean/Editor/Text/Model.lean`, `excerptOf` and `excerptProperties` in `lean/Editor/Text/Contract.lean` |
+| An edit through an excerpt text: the split into its sources' transactions, its refusals and the edges | `Excerpts::edit` in `crates/editor-text/src/excerpt.rs`, and its property in `tests/properties/excerpts.rs` |
+| An excerpt document as a handle: catching up on lock, the lock order, its edits, locate, and the refused inverse, script and trace | `crates/editor-ffi/src/excerpts.rs` |
+| Excerpt texts in the Lean port, the model's lending, and the contract over them | "Excerpt texts" in `lean/Editor/Text.lean`, `TextModel.onText` and `TextModel.excerptApply` in `lean/Editor/Text/Model.lean`, `excerptOf`, `excerptProperties` and `excerptEditProperties` in `lean/Editor/Text/Contract.lean` |
+| The dispatcher's guard of an edit through an excerpt buffer | "Read-only buffers and excerpt sources" in `lean/Editor/Command/Dispatch.lean`, and `Loop.commitExcerpts` in `lean/Editor/Loop.lean` |
+| An excerpt buffer's steps and its undo | "Excerpt buffers" in `lean/Editor/State.lean`, and "Undo" in `lean/Editor/Api.lean`; pinned by `ModelTest.excerptBufferChecks` |
 
 ## The edit log
 
@@ -1009,7 +1012,8 @@ correct as the sources change. A source can be a file at a past revision
 Phase 1 of the excerpts roadmap built the text an excerpt buffer shows
 (`crates/editor-text/src/excerpt.rs`, the module docs of which have the
 rules; `crates/editor-ffi/src/excerpts.rs`; the text port's "Excerpt texts").
-Edits through it, its headers and its decorations are later phases.
+Phase 2 built edits through it ("As built: editing through excerpts",
+below). Its headers and its decorations are later phases.
 
 - **An assembled text, not a snapshot of pieces.** An excerpt text is a list
   of excerpts and one plain `Text` only the list writes, holding the
@@ -1057,9 +1061,9 @@ Edits through it, its headers and its decorations are later phases.
   and as it will be, so a source dropped from the list gives its anchors up
   even when the caller does not name it, and the document then holds only
   the sources the new list names.
-- **Refused for now**: an edit, an inverse, an edit script and a trace of an
-  excerpt text, before it is caught up, so a refusal changes nothing; an
-  excerpt text as a source.
+- **Refused for now**: an inverse, an edit script and a trace of an excerpt
+  text, before it is caught up, so a refusal changes nothing; an excerpt
+  text as a source.
 - **The lock order** is the excerpt document's list, its text, then its
   sources in ascending key order. An edit to a source takes only the
   source's own lock, so two excerpt documents over the same sources never
@@ -1074,6 +1078,74 @@ Edits through it, its headers and its decorations are later phases.
   `excerpted` by the lookup alone and every theorem about plain texts stands
   (`lean/Editor/Text/Model.lean`). The contract runs every read-only
   property over plain texts and over excerpt texts of the same contents.
+
+### As built: editing through excerpts
+
+Phase 2 of the excerpts roadmap made an edit typed in an excerpt buffer an
+edit of the file (`Excerpts::edit` in `crates/editor-text/src/excerpt.rs`,
+whose module docs have the rules under "Edits"; `Document::edit_excerpts`
+in `crates/editor-ffi/src/excerpts.rs`; the text port's "Excerpt texts";
+"Excerpt buffers" in `lean/Editor/State.lean`).
+
+- **The split, all or nothing by order.** The excerpt text is caught up;
+  the transaction is checked as a plain text's would be, through the one
+  function `Text::apply` checks with (`text::checked`), so the order of the
+  checks cannot drift; each changed range is mapped into the excerpt that
+  holds it, both ends included; the mapped ranges are grouped by source,
+  and each source's change set is checked against it. Only then is each
+  source given one transaction with the caller's origin and no selection,
+  in ascending key order, and the excerpt text catches up once: one
+  revision. Every check comes before any write, so a refusal changes no
+  source and needs no compensating undo.
+- **`outsideExcerpt`, and why.** A byte of a separator belongs to no source,
+  so an edit that would change one is refused, as is any edit of an empty
+  list. So is an edit whose range in its source also meets another excerpt
+  of that source, both ends included: the edit would show twice, and the
+  excerpt text would not read what was asked for, which the selection
+  placed after an edit relies on.
+- **The edges.** An offset at an excerpt's start maps to its source range's
+  start and one at its end to its source range's end; the start anchor is
+  `Before` and the end `After`, so text inserted at either is inside the
+  excerpt. On the separator row of an excerpt that ends in a line feed, the
+  only position is that excerpt's end, so text typed there starts the
+  source's next row and the excerpt grows to hold it.
+- **An emptied excerpt** stays, empty, until Lean replaces the list
+  (`BufferId.setExcerpts`), and an insert at it lands in its source.
+- **Read-only, unheld and changed-on-disk sources** are Lean's policy, not
+  the store's. The command dispatcher (`lean/Editor/Command/Dispatch.lean`,
+  "Read-only buffers and excerpt sources") asks the store where each
+  changed range starts (`TextId.locate`) and maps each source to its
+  buffer before the edit is made: a read-only source gives the command up
+  with `<source> is read-only`, a text no buffer holds with `<buffer> reads
+  a text no buffer holds` (neither the rollback nor an undo could reach
+  it), and a source whose file changed unbeknown is the first edit after a
+  change on disk. A committed text goes through the same lookup
+  (`Loop.commitExcerpts`). The library refuses an edit that reaches a
+  freed source document, which a released source is.
+- **Undo is the sources'.** The excerpt text keeps no inverse; each source
+  keeps the inverse of the transaction it was given, and its buffer's tree
+  is told of it by the loop as of any edit, so `u` in the source buffer
+  takes it back. The excerpt buffer keeps steps of its own: the source
+  buffers an edit through it touched, each with the state its tree was left
+  in. `u` in it undoes one step in each, refused with `<source> changed
+  since` when one moved on. It hands no selection back: the sources'
+  transactions carried none, and a source's selection is in source
+  offsets, so the cursor rests where the window's marker moved.
+- **The rollback check.** The loop's rollback reverts every buffer a
+  command touched, and the sources are ordinary buffers. Checking it found
+  one gap: it also kept the excerpt buffer's own tree, and reverting that
+  would apply an inverse to the excerpt text, which the store refuses. So
+  `Loop.keep` skips excerpt buffers, and a failed command that edited two
+  sources through one is rolled back in both, with nothing more said.
+- **The lock order is unchanged.** An edit through an excerpt document takes
+  the list's lock, the text's, then the sources' in ascending key order, as
+  a catch-up does, and builds the transaction of a replace under them, so
+  the deadlock argument of phase 1 still holds; each source it changed tells
+  the syntax service once the locks are let go.
+- **Not built**: a trace through an excerpt text to its sources' origins,
+  an edit script of an excerpt text, mapping a source selection an undo
+  hands back into excerpt offsets, and carrying the list across a snapshot
+  (`locate` of a snapshot is refused).
 
 ## Decorations
 
