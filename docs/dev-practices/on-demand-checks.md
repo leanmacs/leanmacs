@@ -185,6 +185,41 @@ twice the larger of the two idle medians and whose 99th percentile is under
 100 µs. That is an observation about one run, and the maximum is printed and
 not judged. Run it on a quiet machine.
 
+## The prompt benchmark, on demand
+
+```sh
+mise run prompt-bench
+```
+
+This measures what a key costs in a prompt over many candidates, listed on
+the editor thread and matched off it, in the executable as built, and
+asserts nothing, so it is not part of the gate either; the gate builds the
+subcommand. It runs `config-test bench-prompt <sysroot> <olean dir> 600`.
+Each row is a headless host on the real queue and the library, the
+matcher among it, its candidates paths of about 40 bytes. A sample is one
+key of the six of `src/f1`, committed into the open prompt as typed text,
+and a `run noop` sent right after it: the time from sending the key to the
+editor thread printing that it ran `noop`, read on the editor thread. After
+the sixth key the prompt is cancelled and asked again, untimed. It takes 600
+samples a row and prints the median, the 99th percentile and the maximum of
+each, in microseconds:
+
+| Row | The prompt |
+|---|---|
+| no candidates | A prompt with none: the floor, a key's step and the empty one after it. |
+| 100, 250, 500, 1,000 and 10,000 inline | That many listed on the editor thread, the inline limit lifted. |
+| 100,000 inline (limit lifted) | The path before matching moved off the editor thread. |
+| 100,000 on the worker | Matched by a match job, each key joined: the next key finds no match in flight. Also printed: the listing's latency, from the key to the editor thread having run the match job's command. |
+| 100,000 on the worker, keys 20 ms apart | Matched by a match job, nothing joined: each key arrives while a match runs or while its delivery is handled. |
+
+It says whether the two rows on the worker are within bound: median at most
+twice the no-candidates median and 99th percentile under 1 ms. **A worker row
+out of bound fails completion phase 3's criterion 4**: report it, do not
+only print it. It also names the inline rows whose 99th percentile is under
+1 ms, which is how `Loop.inlineMatches` was set. The recorded run is in
+[`docs/design/concurrency.md`](../design/concurrency.md), "Matching off the
+editor thread, measured". Run it on a quiet machine.
+
 ## The syntax round, measured on demand
 
 ```sh

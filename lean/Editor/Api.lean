@@ -1048,8 +1048,9 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
   let opened ←
     EditorState.ask (.openPrompt label continuation text (← UndoTree.over text) scroll selection)
   -- A prompt with no candidates makes no request for them.
-  if opened.isOk &&
-      !(collected.all.isEmpty && collected.passed.isEmpty && collected.asking.isEmpty) then
+  if
+      opened.isOk &&
+        !(collected.all.isEmpty && collected.passed.isEmpty && collected.asking.isEmpty) then
     discard <| EditorState.ask (.setCandidates collected)
   return opened
 

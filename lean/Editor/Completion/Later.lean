@@ -141,14 +141,14 @@ there is one, runs `answer` with a delivery that posts each batch to
 source done. -/
 def answering (answer : Query → (Array Candidate → JobM Unit) → JobM Unit)
     (arguments : List Argument) : Work := fun _ => do
-  let some order := Order.ofArguments? arguments |
-    throw "a completion source's job was started with no order"
+  let some order :=
+    Order.ofArguments? arguments | throw "a completion source's job was started with no order"
   if order.pause != 0 then
     sleep order.pause
   answer order.query fun batch =>
-    post
-      { command := candidatesCommand
-        arguments := batchArguments order.view order.index order.generation batch }
+      post
+        { command := candidatesCommand
+          arguments := batchArguments order.view order.index order.generation batch }
   return EditorState.ask (.sourceAnswered order.view order.index order.generation)
 
 /-- The model of a source's job: answers each of `batches` in turn, whatever

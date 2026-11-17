@@ -597,8 +597,8 @@ def onStage {σ : Type} (stage : Stage σ) (check : Headless.Host → Stage σ �
 `elaborator` and `source`, with what `compiled` hands it, and stops the
 host. `false` if the check did not hold or the host did not stop. -/
 def staged {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
-    (source : Config.Source) (check : Headless.Host → Stage σ → IO Bool)
-    (compiled : Compiled := {}) (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool := do
+    (source : Config.Source) (check : Headless.Host → Stage σ → IO Bool) (compiled : Compiled := {})
+    (fuzzy : FuzzyHandler := Fuzzy.real) : IO Bool := do
   onStage (← Stage.new context elaborator source compiled (fuzzy := fuzzy)) check
 
 /-- Runs `check` against a host started over `elaborator` and `source`, with
@@ -3460,64 +3460,66 @@ def promptChecks (context : Context) : List Check :=
       run := do
         let gate ← IO.Promise.new
         withHost context []
-          (fun session => do
-            try
-              session.ask [.run "ask-many"]
-              let mut typed := ""
-              let mut handled := true
-              for key in ["f", "i", "l", "e", "7"] do
-                session.host.commit key
-                typed := typed ++ key
-                unless ← session.host.settle patience do
-                  handled := false
-                unless (← session.sceneLines).contains (minibufferLine typed typed.length) do
-                  handled := false
-              let held := matchJobs (← session.output.get) "started"
-              gate.resolve ()
-              unless (← session.host.join patience) == .settled do
-                return false
-              let listed ← session.sceneLines
-              let expected := (← realOrder typed (manyPaths 100000)).take Loop.shownCandidates
-              return handled && held.size == 1 &&
-                  (matchJobs (← session.output.get) "started").size == 2 &&
-                  listsAfter listed "Pick: " expected &&
-                  !(← session.output.get).any (·.startsWith "loop: refused")
-            finally
-              gate.resolve ())
-          (manyCompiled 100000) (heldMatcher gate) },
+            (fun session => do
+              try
+                session.ask [.run "ask-many"]
+                let mut typed := ""
+                let mut handled := true
+                for key in ["f", "i", "l", "e", "7"] do
+                  session.host.commit key
+                  typed := typed ++ key
+                  unless ← session.host.settle patience do
+                    handled := false
+                  unless (← session.sceneLines).contains (minibufferLine typed typed.length) do
+                    handled := false
+                let held := matchJobs (← session.output.get) "started"
+                gate.resolve ()
+                unless (← session.host.join patience) == .settled do
+                  return false
+                let listed ← session.sceneLines
+                let expected := (← realOrder typed (manyPaths 100000)).take Loop.shownCandidates
+                return handled && held.size == 1 &&
+                    (matchJobs (← session.output.get) "started").size == 2 &&
+                    listsAfter listed "Pick: " expected &&
+                    !(← session.output.get).any (·.startsWith "loop: refused")
+              finally
+                gate.resolve ())
+            (manyCompiled 100000) (heldMatcher gate) },
     { name :=
         "a reload that installs while a match of config's style is held cancels that match before the reload is reported, and the scene after the install, with no key typed, starts a match with the new config's style; once the matcher answers, the listing is the new style's, and the first match never delivered"
       run := do
         let gate ← IO.Promise.new
         withHost context [("10-slow.lean", slowStyleChunk "slow")]
-          (fun session => do
-            try
-              session.ask [.reload]
-              session.ask [.run "ask-many"]
-              unless ← eventually (return (matchJobs (← session.output.get) "started").size == 1) do
-                return false
-              session.write "10-slow.lean" (slowStyleChunk "orderless")
-              session.ask [.reload]
-              let reloaded ← session.output.get
-              gate.resolve ()
-              unless (← session.host.join patience) == .settled do
-                return false
-              let listed ← session.sceneLines
-              let output ← session.output.get
-              let started := matchJobs output "started"
-              let cancelledAt := reloaded.findIdx? fun line =>
-                matchJobs #[line] "cancelled" == started.extract 0 1
-              let reportedAt := reloaded.findIdx? (·.startsWith "reload 2: installed")
-              return started.size == 2 && matchJobs reloaded "started" == started &&
-                  (match cancelledAt, reportedAt with
+            (fun session => do
+              try
+                session.ask [.reload]
+                session.ask [.run "ask-many"]
+                unless
+                  ← eventually (return (matchJobs (← session.output.get) "started").size == 1) do
+                  return false
+                session.write "10-slow.lean" (slowStyleChunk "orderless")
+                session.ask [.reload]
+                let reloaded ← session.output.get
+                gate.resolve ()
+                unless (← session.host.join patience) == .settled do
+                  return false
+                let listed ← session.sceneLines
+                let output ← session.output.get
+                let started := matchJobs output "started"
+                let cancelledAt :=
+                  reloaded.findIdx? fun line => matchJobs #[line] "cancelled" == started.extract 0 1
+                let reportedAt := reloaded.findIdx? (·.startsWith "reload 2: installed")
+                return started.size == 2 && matchJobs reloaded "started" == started &&
+                    (match cancelledAt, reportedAt with
                     | some cancelled, some reported => cancelled < reported
                     | _, _ => false) &&
-                  matchJobs output "ok" == started.extract 1 2 &&
-                  listsAfter listed "Pick: " ((manyPaths 2000).toList.take Loop.shownCandidates) &&
-                  !output.any (·.startsWith "loop: refused")
-            finally
-              gate.resolve ())
-          (manyCompiled 2000) (heldMatcher gate) }]
+                    matchJobs output "ok" == started.extract 1 2 &&
+                    listsAfter listed "Pick: "
+                      ((manyPaths 2000).toList.take Loop.shownCandidates) &&
+                    !output.any (·.startsWith "loop: refused")
+              finally
+                gate.resolve ())
+            (manyCompiled 2000) (heldMatcher gate) }]
 
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the ex names that ship (`Ex.commands`, `Ex.bindings`,
@@ -6224,10 +6226,10 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let listedSlot ← IO.mkRef (none : Option (IO.Promise Nat))
   let emit (line : String) : IO Unit := do
     if line == "run noop: ok" then
-      if let some sample ← ranSlot.modifyGet fun slot => (slot, none) then
+      if let some sample← ranSlot.modifyGet fun slot => (slot, none) then
         sample.resolve (← IO.monoNanosNow)
     else if line.endsWith s!" {Loop.matchLabel}: ok" then
-      if let some sample ← listedSlot.modifyGet fun slot => (slot, none) then
+      if let some sample← listedSlot.modifyGet fun slot => (slot, none) then
         sample.resolve (← IO.monoNanosNow)
     else if line.startsWith "loop: refused" then
       refused.modify (· + 1)
@@ -6236,7 +6238,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   -- with `inline` as its inline limit; then the samples. Returns each key's
   -- latency and, when `listing`, each listing's.
   let row (count inline : Nat) (listing : Bool) (joined : Bool := true) :
-      IO (Array Nat × Array Nat) := do
+    IO (Array Nat × Array Nat) := do
     let requests ← ids.modifyGet fun next => (next, next + 5)
     let host ←
       Headless.start (scheme := TestScheme.scheme)
@@ -6271,8 +6273,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
         let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
         keyTimes := keyTimes.push (handled - asked)
         if listing then
-          let some delivered ← IO.wait listed.result? |
-            throw (IO.userError "a listing was lost")
+          let some delivered ← IO.wait listed.result? | throw (IO.userError "a listing was lost")
           listingTimes := listingTimes.push (delivered - asked)
         if joined then
           unless (← host.join patience) == .settled do
@@ -6299,7 +6300,8 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let backToBack :=
     Row.of s!"100,000 on the worker, keys {cadence} ms apart"
       (← row 100000 Loop.inlineMatches false false).1
-  let rows := [idle, hundred, quarter, half, thousand, tenThousand, inline, worker, listed, backToBack]
+  let rows :=
+    [idle, hundred, quarter, half, thousand, tenThousand, inline, worker, listed, backToBack]
   let inlineRows := [(100, hundred), (250, quarter), (500, half), (1000, thousand)]
   IO.println
       s!"pool: {pool} threads; {samples} keys a row, each of `src/f1` committed into the prompt; inline limit {Loop.inlineMatches}"

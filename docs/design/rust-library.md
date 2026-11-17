@@ -1155,8 +1155,9 @@ and `deny.toml` lets no other crate depend on the library.
   is used unmodified. Nothing in the gate checks licences, and whether
   the combination is acceptable is the owner's to confirm.
 - **Set aside**: `nucleo` 0.5.0, the same matcher behind an injector and a
-  worker pool, which answers later through a snapshot that is polled;
-  `frizbee`, which forgives typing errors, so a pattern with a character
+  worker pool, which answers later through a snapshot that is polled:
+  decided against by completion's phase 3, below ("Off the editor
+  thread"); `frizbee`, which forgives typing errors, so a pattern with a character
   the candidate lacks can match; `fuzzy-matcher` and `sublime_fuzzy`, not
   looked into; and a matcher of our own, since the scores are what the
   library is for.
@@ -1170,16 +1171,52 @@ each, and every candidate end to end, borrowed for the call. It makes the
 adapter for the call and keeps nothing: no handle, no static. Candidates
 that cannot be read are one refusal, never a panic.
 
-- **Matching answers in the call, on the thread that asked.** That is the
-  editor thread, inside the publish of a scene. Measured once, in a
-  release build: 100,000 candidates of about 40 bytes scored in 7.4 ms.
-  Each call also copies the candidates' bytes once, in Lean. The lists
-  that ship are the ex names, five of them.
-- **Not built**: a handle that keeps the candidates in the library, with
-  the library's worker pool and a result that arrives as an event. That
-  is what a list of every file in a tree wants, and what the Workers row
-  of `concurrency.md` means. Nor case folding, normalisation, or
-  highlighting the characters that matched.
+- **Matching answers in the call, on the thread that asked.** For a
+  prompt with at most `Loop.inlineMatches` (250) candidates to match that
+  is the editor thread, inside the publish of a scene; for a longer one, a
+  pool thread, in a match job of the loop's own, which asks the same call
+  as a request of the job port (`JobRequest.fuzzy`, answered by
+  `Fuzzy.real`). The call keeps nothing, so either thread is safe.
+  Measured once, in a release build: 100,000 candidates of about 40 bytes
+  scored in 7.4 ms. Each call also copies the candidates' bytes once, in
+  Lean. The prompt benchmark (`concurrency.md`, "Matching off the editor
+  thread, measured") has what a key costs: about 0.1 ms over 100,000 on
+  the worker, the listing arriving about 50 ms after it; and 49 ms with
+  the 100,000 listed inline, as before phase 3.
+- **Off the editor thread** (completion's phase 3's decision): a long list
+  is matched by running the prompt's style in a job on Lean's task pool,
+  over the existing port. nucleo 0.5's worker (`Nucleo` with its injector)
+  was rejected:
+  1. Matching is a style, a Lean program (`Completion.Style`): orderless
+     and config's styles never call the matcher. nucleo's worker could make
+     only the fuzzy style asynchronous; a long prompt under any other
+     style would still be matched on the editor thread. Running the style
+     on the pool covers every style with one mechanism.
+  2. The port's rule would be lost: nucleo's incremental matcher is driven
+     by a pattern string it parses with its own syntax (`reparse`), and it
+     orders by score and index with no "the pattern itself first" rule,
+     which `rank` owns.
+  3. A second store and a second pool: the injector keeps its own copy of
+     the candidates in Rust beside the prompt's, which are editor state
+     rolled back with a command; its results arrive through a snapshot that
+     is polled (`tick`), which needs a handle across the FFI, a polling
+     thread or a timer and an event; its rayon pool competes with Lean's,
+     one thread a core; and it would add `nucleo`, `rayon` and
+     `parking_lot` to `deny.toml`'s graph.
+  4. The pool route reuses the job runner, keys and cancellation, the
+     delivery as a command with a scene after it, the job model and the
+     driver on the models, and the stateless call; it cost one request of
+     the job port.
+  What is given up: nucleo's incremental refinement (a longer pattern
+  rescans only the last matches) and matching across cores. **Revisit
+  when a measured match of the largest list a picker lists (the project
+  file picker, navigation-and-windows phase 3: 100,000 files) takes
+  longer than 50 ms on the worker**; the recorded run is at about 50 ms
+  from the key to the listing, most of it Lean's own work over the
+  candidates.
+- **Not built**: a handle that keeps the candidates in the library. Nor
+  case folding, normalisation, or highlighting the characters that
+  matched.
 
 Tests: the ranking rule on a canned scorer, and the fake and the contract,
 in `editor-fuzzy`; the adapter's own cases, its limit and the port's

@@ -57,7 +57,10 @@ chosen from when it gives completion sources that answer them
 (`prompt … (sources := [.given source, .named "name"])`,
 `Editor/Completion.lean`), or every source of a category
 (`.category "buffer" defaults`); a source is registered by name with
-`defineSource` (`Editor/Setup.lean`). Which candidates the typed text
+`defineSource` (`Editor/Setup.lean`). A source that answers later, from a
+job, is `.answeringLater name category job` (`Editor/Completion/Later.lean`),
+and its job is registered with `sourceJob name answer`, which delivers
+candidates in batches as they come. Which candidates the typed text
 matches is a completion style's (`Editor/Completion/Style.lean`): the
 shipped ones, `fuzzy` and `orderless`, come with `Editor/Setup.lean`
 (`Editor/Completion/Styles.lean`), and config registers one with

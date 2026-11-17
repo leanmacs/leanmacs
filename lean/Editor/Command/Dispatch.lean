@@ -566,7 +566,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           pure (.error error)
   | state, .step (.state (.categorySources category)) next =>
     dispatched registered state (next (registered.categorySources category))
-  | state, .step (.state (.hasJob name)) next => dispatched registered state (next (registered.jobs name))
+  | state, .step (.state (.hasJob name)) next =>
+    dispatched registered state (next (registered.jobs name))
   | state, .step (.state (.matchCandidates category text candidates)) next =>
     dispatched registered state do
       next (← ((registered.matching.styleFor category).hits text candidates).embedFuzzy)

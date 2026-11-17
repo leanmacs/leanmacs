@@ -1317,8 +1317,8 @@ namespace Candidates
 asking source that has not filtered answered, in the asking order. A
 source that answers later comes after those that answered now. -/
 def matchable (candidates : Candidates) : Array Completion.Candidate :=
-  candidates.asking.foldl (fun all source => if source.filtered then all else all ++ source.answered)
-    candidates.all
+  candidates.asking.foldl
+    (fun all source => if source.filtered then all else all ++ source.answered) candidates.all
 
 /-- The candidates listed as given, after the matches: the passed ones, then
 what each filtered asking source answered, in the asking order. -/
@@ -1371,7 +1371,8 @@ def relist (candidates : Candidates) (pattern : String) (revision : Nat)
 
 /-- Whether a match is in flight for `pattern` at `revision`. -/
 def matchingFor (candidates : Candidates) (pattern : String) (revision : Nat) : Bool :=
-  candidates.matching.any fun inFlight => inFlight.pattern == pattern && inFlight.revision == revision
+  candidates.matching.any fun inFlight =>
+    inFlight.pattern == pattern && inFlight.revision == revision
 
 /-- `candidates` with the choice moved by `step`: from nothing chosen to
 the first or the last of the listing, from the last onward and from the
@@ -3453,7 +3454,10 @@ def addCandidates (view : ViewId) (index generation : Nat) (batch : Array Comple
         (true,
           state.replaceCandidates
             { candidates with
-              asking := candidates.asking.set! index { source with answered, fresh := true }
+              asking :=
+                candidates.asking.set! index
+                  { source with
+                    answered, fresh := true }
               revision := candidates.revision + 1 })
 
 /-- Marks the asking source `index` of the prompt open in `view` done, when
@@ -3488,9 +3492,7 @@ def listMatched (view : ViewId) (pattern : String) (revision : Nat)
   match state.candidatesIn? view with
   | some candidates =>
     if candidates.matchingFor pattern revision then
-      state.replaceCandidates
-        { candidates.relist pattern revision listed with
-          matching := none }
+      state.replaceCandidates { candidates.relist pattern revision listed with matching := none }
     else state
   | none => state
 
@@ -3504,9 +3506,10 @@ def matchFailed (view : ViewId) (pattern : String) (revision : Nat) (message : S
   match state.candidatesIn? view with
   | some candidates =>
     if candidates.matchingFor pattern revision then
-      { state.replaceCandidates
-            { candidates with
-              matching := none, unmatched := some (pattern, revision) } with
+      {
+        state.replaceCandidates
+          { candidates with
+            matching := none, unmatched := some (pattern, revision) } with
         echo := s!"completion-match: {message}" }
     else state
   | none => state

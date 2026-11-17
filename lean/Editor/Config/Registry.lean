@@ -514,8 +514,8 @@ where
       (registry.styles.findRev? (·.style.name == name)).map (·.owner)
     let chosen (category : Option String) : Option Owner :=
       (registry.styleChoices.find? (·.1 == category)).bind fun (_, name) => named name
-    ((category.bind fun category => chosen (some category)) <|> chosen none <|>
-          named Completion.Styles.fuzzy.name).getD
+    ((category.bind fun category => chosen (some category)) <|>
+          chosen none <|> named Completion.Styles.fuzzy.name).getD
       .compiled
 
 /-- The names config chose that no style is registered under, in the order

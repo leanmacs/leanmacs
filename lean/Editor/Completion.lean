@@ -76,7 +76,9 @@ inside the asking command, and the names of a category's sources),
 `apiStateChecks` (a category with no source), `setupChecks` and
 `registryChecks` (registration, and a category's sources), and
 `ConfigTest.promptChecks` (a source from config, on the real elaborator,
-asked by name and added to a shipped prompt by its category).
+asked by name and added to a shipped prompt by its category). A source that
+answers later is pinned by `ModelTest.laterChecks`, `completionJobChecks`
+and `laterLoopChecks`, and by `ConfigTest.promptChecks` over the recorder.
 -/
 
 namespace Editor.Completion

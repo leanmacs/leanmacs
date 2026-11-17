@@ -3430,14 +3430,55 @@ asked and what accepting gives).
   name is registered only in another category is not replaced: the
   category's listing decides. The request carries names, never a program,
   as `askSource` does.
-- **A source answers synchronously, inside the asking command**: each is
-  asked once, with the initial text, after the refusals that make nothing
-  and before the minibuffer's text is made. Its state requests are
-  answered from the state the asking command reached, and a refusal
-  refuses the asking command, which is rolled back like any. It is asked
-  here and not as the text changes because asking at each change would run
-  config's code inside the publish, which nothing does yet: what a refusal
-  or an interrupt there means is a later phase's.
+- **A source that answers now answers inside the asking command**: each
+  is asked once, with the initial text, after the refusals that make
+  nothing and before the minibuffer's text is made. Its state requests
+  are answered from the state the asking command reached, and a refusal
+  refuses the asking command, which is rolled back like any. A source is
+  never run in the publish: one that depends on the text answers later,
+  from a job asked again as the text changes (next bullet), so no refusal
+  or interrupt of config's code inside a scene has to mean anything.
+- **A source may answer later** (completion's phase 3,
+  `lean/Editor/Completion/Later.lean`). `Source.later` names the
+  registered job that answers and when it is asked again
+  (`Completion.Reask`: `never`, asked once with the initial text and then
+  matched as the text changes, or `afterPause ms`, asked again whenever
+  the text it was asked with is not the typed text, the previous job
+  cancelled and the new one waiting `ms` first). `Source.answeringLater`
+  builds one; config registers its job with `sourceJob name answer`
+  (`answer` is given the query and a way to deliver a batch) and the
+  source with `defineSource`. `prompt` runs none of it: it records the
+  source as asking (`Completion.Asking`), refuses the prompt with
+  `noSuchJob` when no job is registered under the name, and starts
+  nothing. After the publish the loop's reconciler
+  (`Loop.completionJobs`) starts the job under
+  `completion <view> <source>` with an order (the prompt's view, the
+  source's index, the generation of the ask, the query and the pause). The
+  job posts each batch to `minibuffer-candidates` (`Completion.answering`):
+  batches arrive in order, between events, before the job's end, and a
+  cancelled job's are dropped, as any post is. A batch of an older
+  generation (a stale job's) is dropped by the state. **A later source's
+  candidates are listed after those of sources that answered now**, in the
+  references' order among themselves, and **a text-dependent source keeps
+  its previous answer listed until its new job's first batch** (or its
+  end); a choice survives a batch, kept on its candidate. A reload cancels
+  config's source jobs with config's other jobs, and the listing keeps what
+  came.
+- **The match off the editor thread.** A prompt with more candidates to
+  match than `Loop.inlineMatches` (250, set by the prompt benchmark) is
+  matched by a match job of the loop's own, on Lean's task pool, spawned
+  under `completion-match <view>` **under the owner of the style it runs**
+  (`Completion.Matching.ownerFor`): so an install cancels a match of
+  config's style with config's other jobs, and the first scene after the
+  install, which reconciles too (`Headless.Running.publish`), spawns a new
+  one with the new style, since a match stamped with an older config
+  generation is no longer in flight. At most one match is in flight; its
+  delivery lists for the text it was spawned with, and the delivery's
+  scene spawns the next for the latest text. A key never waits on it, and
+  the listing arrives a moment after the key (concurrency.md, "Prompts").
+- **Closing cancels.** Accepting or cancelling a prompt cancels its
+  sources' jobs and its match, by the keys the loop recorded for it
+  (`EditorState.completionKeys`), at the publish of the closing step.
 - **The shipped prompts ask by category**, with their own sources as the
   defaults. `ex` asks for `ex-line` with `Ex.historySource` (`ex-history`)
   and `Ex.namesSource` (`ex-names`), in that order, so it lists the `:!`
@@ -3458,9 +3499,14 @@ asked and what accepting gives).
   text, as before, so nothing a user sees changed.
 
 - **The scene lists them in the minibuffer's status line.** After the
-  prompt's label comes one field for each candidate the typed text
-  matches, every one, in the order of the prompt's style, then those a
-  filtered source passed, in the face `minibuffer.candidate`; the chosen
+  prompt's label comes one field for each of the first `Loop.shownCandidates`
+  (10) of the listing: the candidates the typed text matches, in the order
+  of the prompt's style, then those a filtered source passed, in the face
+  `minibuffer.candidate`. Ten is what Emacs's vertico (`vertico-count`) and
+  ivy (`ivy-height`) list by default; without a cap a listing of 100,000
+  would be 100,000 fields built at every key. A choice cycled past the
+  tenth is not shown until phase 4's window round the choice and
+  config-set maximum of rows replace the constant. The chosen
   one is in `minibuffer.chosen`
   ([text-and-display.md](text-and-display.md), "Views as built"). Under
   the fuzzy style, the default, a candidate that is the typed text is
@@ -3494,11 +3540,10 @@ asked and what accepting gives).
   candidate `"{n} {label}"` for every tab, in order, so `C-w w`, a number
   and `<Enter>` select that tab; `tab-rename` asks labelled `Rename tab: `
   with the tab's name as the initial text, and no candidates.
-- **Set aside**, each to the phase of completion that builds it: asking
-  again as the text changes, and answers that come later from a
-  job, to phase 3; drawing labels, annotations and groups, a limit on how
-  many candidates the scene lists or a window round the choice, a popup or
-  a view of their own, and highlighting the characters that matched, to
+- **Set aside**, each to the phase of completion that builds it: drawing
+  labels, annotations and groups, a config-set limit on how many
+  candidates the scene lists and a window round the choice, a popup or a
+  view of their own, and highlighting the characters that matched, to
   phase 4; completion at point, in a buffer, to phase 5; and file paths
   for `open-file`, to phase 6. Putting the chosen candidate's text into
   the minibuffer stays set aside.
@@ -3527,7 +3572,21 @@ sources in each shipped category, in the defaults' order), and the fixture
 `tests/headless/candidates`, whose config registers its source with
 `defineSource` and asks for it by name, and which is where `<Tab>` and
 `<Enter>` are pressed under the Vim scheme the executable runs, with the
-library's matcher.
+library's matcher. Sources that answer later and the match off the
+editor thread (phase 3) are pinned by `ModelTest.laterChecks` (an order
+and a batch as arguments, a source's job on the job model,
+`minibuffer-candidates`), `completionJobChecks` (the reconciler: a
+source asked once, asked again after its pause, closing cancels, a match
+spawned under its style's owner, one in flight, none for a failed text,
+one again after an install), `laterLoopChecks` (the phase's four
+criteria through the loop on the models, a match that fails),
+`stateRequestChecks` (batches, a source's end, a match's listing and its
+failure), `apiStateChecks` and `dispatchStateChecks` (a later source
+recorded, never run, `noSuchJob`), `setupChecks` (`sourceJob`),
+`registryChecks` (`ownerFor`), and `ConfigTest.promptChecks` (batches over
+the recorder, a config source asked again after its pause, keys over
+100,000 candidates handled while the match is held, and a reload that
+ends a match of config's style).
 
 **A prompt's matching styles** (completion's phase 2). Which of a
 prompt's candidates the typed text matches, and in what order, is a
@@ -3543,8 +3602,9 @@ and orderless choose it.
   nothing else, so it cannot read the state, be refused or be interrupted.
   That is why the loop may run config's style inside the publish, as it
   runs config's mode-line segments, without the questions of refusal and
-  interruption that keep sources out of it; and why phase 3 can run it on
-  a worker against the real matcher.
+  interruption that keep sources out of it; and why it can run on a pool
+  thread against the real matcher, which it does for a long list (phase 3,
+  below).
 - **A model and a contract.** `Style.keeping name keep` matches the
   candidates `keep` holds of, in their order, with no ranges, and asks the
   matcher nothing. The contract (`lean/Editor/Completion/StyleContract.lean`)
@@ -3565,9 +3625,19 @@ and orderless choose it.
   span. The matching library's own alignment is not asked: it may pick
   other positions for a repeated character, and asking it would need a new
   request of the port, its contract, a new result shape across the FFI
-  and a decoder, while phase 3 decides whether the library's worker
-  replaces the port off the editor thread. Revisit it when a mismatch a
-  user sees is measured, once phase 4 draws the ranges.
+  and a decoder. Revisit it when a mismatch a user sees is measured, once
+  phase 4 draws the ranges. **Off the editor thread** (phase 3's decision):
+  a list longer than `Loop.inlineMatches` is matched by running the
+  prompt's style in a match job on Lean's task pool, its fuzzy requests
+  answered by the same stateless call as a request of the job port
+  (`JobRequest.fuzzy`). nucleo's own worker was rejected: it could make
+  only the fuzzy style asynchronous, while orderless and config's styles
+  are Lean programs that would stay on the editor thread; it parses its
+  pattern with its own syntax and orders without the port's "the pattern
+  itself first" rule; and it would keep a second copy of the candidates
+  in Rust behind a polled snapshot, on a rayon pool beside Lean's
+  (`rust-library.md`, "Fuzzy matching, as built", has the whole case and
+  when to revisit it).
 - **The orderless style** (`Completion.Styles.orderless`) splits the text
   at spaces into components, the empty ones dropped. A candidate matches
   when every component occurs in it as a substring, case kept, in any
@@ -3586,8 +3656,9 @@ and orderless choose it.
   (`Candidates.passed`) and listed after the style's matches, in the order
   it gave, whatever is typed. It answered for the text it was asked with
   and the matches are for the text typed now, so the matches come first;
-  until phase 3 asks a source again as the text changes, its list stays as
-  it first answered. No style is asked when every candidate was passed.
+  a source that answers now keeps the list it first answered, and one that
+  depends on the text answers later and is asked again as it changes. No
+  style is asked when every candidate was passed.
 - **Config chooses** (`lean/Editor/Setup.lean`): `defineStyle style`
   registers one, `useStyleFor category name` chooses a category's, and
   `useStyle name` the default. Every host registers `fuzzy` and
@@ -3611,7 +3682,11 @@ and orderless choose it.
   matching with each step's keys (`Headless.keys`), and the loop asks it
   before each scene, so a reload changes the style from the next listing;
   the state holds only the category string, and a listing already made
-  stays until the text changes.
+  stays until the text changes. Above the inline limit the style runs on a
+  pool thread, config's included: as in the publish it cannot read the
+  state, be refused or be interrupted, and it cannot outlive its config,
+  because the match job is config's when the style is and an install
+  cancels it.
 - **Ranges are carried, not drawn.** Each listed candidate holds its
   ranges (`Completion.Listed`); phase 4 draws them.
 - **A typed answer is resolved as it was listed.** Accepting with nothing

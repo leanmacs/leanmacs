@@ -1586,7 +1586,11 @@ candidates of a long list. -/
 def _root_.Editor.Candidates.listing (candidates : Candidates) (pattern : String)
     (style : Completion.Style) : FuzzyM (Array Completion.Listed) := do
   let matchable := candidates.matchable
-  let hits ← if matchable.isEmpty then pure #[] else style.hits pattern (matchable.map (·.text))
+  let hits ←
+    if matchable.isEmpty then
+      pure #[]
+    else
+      style.hits pattern (matchable.map (·.text))
   let matched := hits.filterMap fun hit => (matchable[hit.index]?).map (.of · hit.ranges)
   return matched ++ candidates.passing.map Completion.Listed.of
 
@@ -1621,8 +1625,7 @@ def listed (state : EditorState) (matching : Completion.Matching := .standard)
       let listing ← candidates.listing pattern (matching.styleFor candidates.category)
       -- A match job that was running is overtaken by this listing.
       return (state.replaceCandidates
-            { candidates.relist pattern candidates.revision listing with
-              matching := none },
+            { candidates.relist pattern candidates.revision listing with matching := none },
           some pattern, none)
     -- A long list is matched by a job: the choice was made in a listing for
     -- another text, and is forgotten.
@@ -2454,30 +2457,28 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
   let state := loop.state
   match state.prompt with
   | none =>
-    ({ loop with
-        state := { state with completionKeys := #[] } },
-      #[], state.completionKeys, #[])
+    ({ loop with state := { state with completionKeys := #[] } }, #[], state.completionKeys, #[])
   | some asked =>
     let view := asked.view
     let candidates := asked.candidates
     -- The sources' jobs.
     let (asking, starts, cancels, wanted) :=
-      (List.range candidates.asking.size).foldl
-        (init := (candidates.asking, (#[] : Array JobStart), (#[] : Array String),
-          (#[] : Array String)))
+      (List.range candidates.asking.size).foldl (init :=
+        (candidates.asking, (#[] : Array JobStart), (#[] : Array String), (#[] : Array String)))
         fun (asking, starts, cancels, wanted) index =>
-          match asking[index]? with
-          | none => (asking, starts, cancels, wanted)
-          | some source =>
+        match asking[index]? with
+        | none => (asking, starts, cancels, wanted)
+        | some source =>
             let key := sourceKey view source.source
             let start (generation : Nat) (text : String) (pause : Nat) : JobStart :=
-              { name := source.later.job
-                arguments :=
-                  Completion.Order.arguments
-                    { view, index, generation, query := { text, view := asked.asker }, pause }
-                key := some key }
+            { name := source.later.job
+              arguments :=
+                Completion.Order.arguments
+                  { view, index, generation, query := { text, view := asked.asker }, pause }
+              key := some key }
             if !keys.registered.jobs source.later.job then (asking, starts, cancels, wanted)
-            else if source.generation == 0 then
+          else
+            if source.generation == 0 then
               (asking.set! index { source with generation := 1 },
                 starts.push (start 1 source.askedFor 0), cancels, wanted.push key)
             else
@@ -2488,8 +2489,8 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
                   (asking.set! index
                       { source with
                         askedFor := typed, generation, fresh := false, done := false },
-                    starts.push (start generation typed source.later.reask.pause),
-                    cancels.push key, wanted.push key)
+                    starts.push (start generation typed source.later.reask.pause), cancels.push key,
+                    wanted.push key)
                 else (asking, starts, cancels, wanted.push key)
               | none => (asking, starts, cancels, wanted.push key)
     let candidates := { candidates with asking }
@@ -2502,10 +2503,11 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
     let (candidates, spawns) : Candidates × Array Spawn :=
       match loop.typed with
       | some typed =>
-        if candidates.matchableSize > keys.inlineMatches &&
-            (candidates.listedFor != some typed || candidates.listedAt != candidates.revision) &&
-            candidates.matching.isNone &&
-            candidates.unmatched != some (typed, candidates.revision) then
+        if
+            candidates.matchableSize > keys.inlineMatches &&
+              (candidates.listedFor != some typed || candidates.listedAt != candidates.revision) &&
+              candidates.matching.isNone &&
+              candidates.unmatched != some (typed, candidates.revision) then
           let revision := candidates.revision
           let style := keys.matching.styleFor candidates.category
           ({ candidates with matching := some { pattern := typed, revision, generation } },
@@ -2516,10 +2518,7 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
       | none => (candidates, #[])
     let wanted := if candidates.matching.isSome then wanted.push (matchKey view) else wanted
     let unwanted := state.completionKeys.filter (!wanted.contains ·)
-    ({ loop with
-        state :=
-          { state.replaceCandidates candidates with
-            completionKeys := wanted } },
+    ({ loop with state := { state.replaceCandidates candidates with completionKeys := wanted } },
       starts, cancels ++ unwanted.filter (!cancels.contains ·), spawns)
 
 /-- `loop` with the menu bar `keys` names (`Keys.menu`) as the one its

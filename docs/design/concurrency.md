@@ -23,7 +23,7 @@ process, its runtime is the only one that schedules editor code.
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
 | **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
 | **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
-| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The syntax worker is built: one thread named `syntax`, started by `editor-ffi` at the first attach, parked while it has nothing to parse, with no deadline when no refresh is scheduled and until the next refresh's deadline on the job clock otherwise, which reparses each attached document from snapshots and the edit log's patches, and parses its injected layers, each whole in its ranges, and holds no editor state. A result is tagged with the revision it parsed and handed out only if no newer revision has been told by then; a stale one is never delivered, and is only the base of the next reparse (`rust-library.md`, "Syntax, as built"). A round takes the session's state lock briefly at its start, to read the injections, and never the other way round, so an edit's touch and a change of injections never wait for a parse; when only the injections changed and they find new layers, the round delivers again at the same revision (`rust-library.md`, "Injections, indentation and text objects, as built"). Once a text has gone the idle interval unchanged after an edit, the worker parses it whole and delivers again at the same revision only when that tree differs from the one delivered; an edit's touch sets the deadline under the worker's queue lock, which no parse holds (`rust-library.md`, "Syntax, as built"). Highlight queries do not run on the worker: they run at frame time, on the thread that lays the frame out (the editor thread, in Lean's publish), over the rows shown only, from the tree delivered last, carried through the edits since; no lock is nested on that path, and none of it waits for a parse (`rust-library.md`, "Highlights, as built"). The diff is built: the diff service, `editor-diff-imara`'s line diff of two snapshots on a thread of its own (`editor-diffs`), answering a job's `diff` request through the completion queue, so a long diff holds up neither a load nor the editor thread, which only applies the script it answers. Fuzzy matching over long lists is not built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
+| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The syntax worker is built: one thread named `syntax`, started by `editor-ffi` at the first attach, parked while it has nothing to parse, with no deadline when no refresh is scheduled and until the next refresh's deadline on the job clock otherwise, which reparses each attached document from snapshots and the edit log's patches, and parses its injected layers, each whole in its ranges, and holds no editor state. A result is tagged with the revision it parsed and handed out only if no newer revision has been told by then; a stale one is never delivered, and is only the base of the next reparse (`rust-library.md`, "Syntax, as built"). A round takes the session's state lock briefly at its start, to read the injections, and never the other way round, so an edit's touch and a change of injections never wait for a parse; when only the injections changed and they find new layers, the round delivers again at the same revision (`rust-library.md`, "Injections, indentation and text objects, as built"). Once a text has gone the idle interval unchanged after an edit, the worker parses it whole and delivers again at the same revision only when that tree differs from the one delivered; an edit's touch sets the deadline under the worker's queue lock, which no parse holds (`rust-library.md`, "Syntax, as built"). Highlight queries do not run on the worker: they run at frame time, on the thread that lays the frame out (the editor thread, in Lean's publish), over the rows shown only, from the tree delivered last, carried through the edits since; no lock is nested on that path, and none of it waits for a parse (`rust-library.md`, "Highlights, as built"). The diff is built: the diff service, `editor-diff-imara`'s line diff of two snapshots on a thread of its own (`editor-diffs`), answering a job's `diff` request through the completion queue, so a long diff holds up neither a load nor the editor thread, which only applies the script it answers. Fuzzy matching over long lists is built, not as a Rust worker but as a job of the loop's own on Lean's task pool: a prompt with more than `Loop.inlineMatches` (250) candidates to match is matched by a match job that runs the prompt's style there, its fuzzy requests answered by the same stateless call as a request of the job port (`JobRequest.fuzzy`); nucleo's own worker was considered and rejected ("Prompts", below; `rust-library.md`, "Fuzzy matching, as built"). The matcher answers in the call, on the thread that asked: the editor thread for a short list, a pool thread for a long one | Hold editor state |
 
 Rust never calls Lean. The main thread and the services push events onto a
 queue, and the editor thread pulls them with a blocking call. Measured in
@@ -791,7 +791,9 @@ and changes on disk:
     strings is read in Lean, outside `Lean.Data.Json`, which config's
     closure leaves out.
   - *The cache* is one entry for each directory in the state every job of a
-    host shares (`JobRequest.environment`, answered at once, as `now` is;
+    host shares (`JobRequest.environment`, answered at once, as `now` is,
+    and as the fuzzy matcher is, `JobRequest.fuzzy`, whose reply is an
+    `Except String` since the runner's service may throw;
     `Job.sharedEnvironments` behind a reference). An entry is kept while the
     stamps of `mise.toml`, `.mise.toml`, `.tool-versions` and
     `mise.local.toml` in the directory and each ancestor, read through the
@@ -876,6 +878,13 @@ revision the job read, as one patch of ranges. What it does not have: the
 log keeps no text, so it cannot supply the change sets to map a stale
 transaction through. Where those come from is open.
 
+- **The loop spawns work of its own beside the starts** (completion's
+  phase 3): a step hands back `Loop.Stepped.spawns`, work it made (a
+  prompt's match job, which no registered name and no plain arguments can
+  carry), each with its key, its label and its owner, and the host starts
+  each after the step's cancels and starts, as a job of that owner under
+  that key (`Headless.Running.launch`). Its result comes back as any job's
+  does.
 - **A job finishes with a command.** What is spawned is a `Work`, a job
   whose value is an `EditorM Unit`: the handler applied to the job's
   result. The handler is applied where the job ends, on the job's thread,
@@ -1042,8 +1051,9 @@ transaction through. Where those come from is open.
 ### Prompts
 
 Status: decided 2026-11-14 and built, by the command loop's phase 10; a
-prompt's candidates by its phase 14 ("Candidates", below), and the
-sources they come from by completion's phase 1.
+prompt's candidates by its phase 14 ("Candidates", below), the
+sources they come from by completion's phase 1, and sources that answer
+later and matching off the editor thread by completion's phase 3.
 
 | Built | Where |
 |---|---|
@@ -1062,6 +1072,9 @@ sources they come from by completion's phase 1.
 | `prompt` with candidates from sources, `setCandidates`, `chooseCandidate`; accepting the chosen candidate | `lean/Editor/Api.lean` ("Prompts") |
 | The listing, made before each scene from what the prompt's style answers, the style chosen by its category from the matching the host hands | `lean/Editor/Loop.lean` ("Prompts": `Loop.listed`, `Loop.Keys.matching`), `lean/Editor/Completion/Style.lean`, `lean/Editor/Fuzzy.lean` |
 | `minibuffer-next`, `minibuffer-previous` and the roles the mode fills with them | `lean/Editor/Minibuffer.lean` |
+| Sources that answer later: `Reask`, `Later`, the asking source a prompt holds, its job's order and batches, `sourceJob`, `minibuffer-candidates` | `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Later.lean`, `lean/Editor/Setup.lean` (`sourceJob`), `lean/Editor/Minibuffer.lean` |
+| The reconciler of a prompt's jobs: a source's job started and started again, the match job spawned, closing cancelling them | `lean/Editor/Loop.lean` ("Prompts": `Loop.completionJobs`, `Loop.matchWork`, `Loop.Spawn`), `lean/Editor/Headless.lean` (`Running.launch`, `Running.publish`) |
+| The match job: the listing made on a pool thread over the job port's matcher, its delivery, a failed match, the cap of the status line | `lean/Editor/Loop.lean` (`Candidates.listing`, `Loop.inlineMatches`, `Loop.shownCandidates`), `lean/Editor/Job.lean` (`JobRequest.fuzzy`, `Job.embedFuzzy`), `lean/Editor/State.lean` (`listMatched`, `matchFailed`) |
 | The `:!` history and the ex names as the ex line's candidates, from two sources | `lean/Editor/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
 | An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `lean/Editor/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
 
@@ -1384,24 +1397,47 @@ accepting hands the continuation the chosen candidate.
   ([lean-runtime.md](lean-runtime.md), "The editor's port is a
   composite"; [keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's
   matching styles").
-  - The style runs on the editor thread, in the publish, as config's
-    mode-line segments do; phase 3 moves it. That is safe for config's
-    style because a style is a program over the fuzzy port alone: it
-    cannot read the state, cannot be refused, since the fuzzy port has no
-    error, and cannot be interrupted. A source, a program over the
-    editor's port, is kept out of the publish for those reasons.
+  - For a short list the style runs on the editor thread, in the publish,
+    as config's mode-line segments do. That is safe for config's style
+    because a style is a program over the fuzzy port alone: it cannot read
+    the state, cannot be refused, since the fuzzy port has no error, and
+    cannot be interrupted. A source, a program over the editor's port, is
+    kept out of the publish for those reasons.
+  - **A list longer than `Loop.inlineMatches` (250) is matched off the
+    editor thread** (completion's phase 3): the publish only reads the
+    text, and the step spawns a match job, on Lean's task pool, under
+    `completion-match <view>` and the owner of the style, that makes the
+    listing with the same program a short list's is made with
+    (`Candidates.listing`), asking the matcher as a request of the job port,
+    and finishes with the command that lists it if it is still the match
+    in flight. At most one is in flight: a key or a batch meanwhile spawns
+    nothing, and the delivery's scene spawns the next for the latest text,
+    so batches cannot starve the listing. A matcher that throws ends the
+    match with `completion-match: ` and why in the echo area, and that text
+    is not matched again until it or the candidates change. So a key never
+    waits on the match; the listing arrives a moment after it, and while
+    typing fast it can be an earlier text's (owner decision of the phase's
+    plan). Config's style runs on the pool too: there it cannot outlive its
+    config, since the match job is config's when the style is ("Reload").
+  - **The status line shows the first ten of the listing**
+    (`Loop.shownCandidates`), as vertico and ivy list ten: 100,000 fields
+    built at every key would break the bound above. Phase 4's display
+    replaces the constant with config's maximum of rows and a window round
+    the choice.
   - The style is looked up from the step's keys each time and never kept
     in the state, which holds only the prompt's category: a reload
     changes it from the next listing.
   - The first listing is made by the scene of the asking step, for the
     initial text. Every event ends in a scene, so a command always finds
     the listing of the text the last scene showed.
-  - A text that did not change costs one read and no ranking. A prompt
-    with no candidates costs what it cost before, and one whose every
-    candidate was passed asks no style.
+  - A text that did not change costs one read and no ranking, unless a
+    batch came in since, which is listed for the same text with the choice
+    kept on its candidate. A prompt with no candidates costs what it cost
+    before, and one whose every candidate was passed asks no style.
   - It is the loop's own request: it is not guarded, so the interrupt flag
-    never stops a scene. The ranking runs on the editor thread, in the
-    call ([rust-library.md](rust-library.md), "Fuzzy matching, as built").
+    never stops a scene. The ranking runs in the call, on the editor
+    thread for a short list and on a pool thread for a long one
+    ([rust-library.md](rust-library.md), "Fuzzy matching, as built").
   - Set aside: listing in the command that typed. That command is the
     scheme's self-insert, which knows no prompt, and an undo, a put and a
     committed text change the text too. Set aside too: asking again at
@@ -1423,14 +1459,72 @@ accepting hands the continuation the chosen candidate.
   user who types and accepts gets what was typed. Set aside: the first
   match when nothing is chosen. `:r` and the accept key would then run
   `reload`.
-- **Sources are registered by name, and asked once.** Completion's phase
-  1 built the registration by owner and the asking inside the asking
-  command. **Set aside until its phase 3: asking a source again at each
-  change** of the text. It needs a rule for running config's code inside
-  the publish, what a refusal or an interrupt there means, and answers that
-  come later from a job. Nothing built needs a list that changes with the
-  text. File names do, since they depend on the directory typed so far:
-  `open-file` has no candidates until phase 6.
+- **Sources are registered by name; one that answers now is asked once,
+  one that answers later from a job.** Completion's phase 1 built the
+  registration by owner and the asking inside the asking command, and its
+  phase 3 sources that answer later
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's sources"): a
+  source names a registered job and when it is asked again; `prompt`
+  records it and runs none of it; the loop's reconciler, after each
+  publish, starts its job under `completion <view> <source>`, and starts it
+  again, the previous one cancelled, at the next generation and after the
+  source's pause, when it depends on the text and the text changed. Its
+  batches are posts, taken into the prompt by `minibuffer-candidates`, a
+  stale generation's dropped, and listed by the scene after each; a later
+  source's candidates come after those that answered now, and a
+  text-dependent source keeps its previous answer until its new job's
+  first batch. **No source is run in the publish**: what asks again is a
+  job, so no rule for config's code inside a scene is needed. **Closing a
+  prompt cancels its jobs**, its sources' and its match, by the keys the
+  loop recorded, at the publish of the closing step. File names, which
+  depend on the directory typed so far, are phase 6's: a `Reask`
+  constructor and its case.
+
+**Matching off the editor thread, measured.** `mise run prompt-bench`
+(`config-test bench-prompt`, [on-demand-checks.md](../dev-practices/on-demand-checks.md))
+times a key typed into an open prompt, one of the six of `src/f1`,
+committed as typed text, from sending it to the editor thread having
+handled it, published its scene and run an empty `noop` sent right after
+it, read on the editor thread: each row is a headless host on the real
+queue and the library, the candidates paths of about 40 bytes. One run,
+2026-11-17, at `fb583c1`, on an Apple M5 Max (18 cores, a pool of 18
+threads), 600 keys a row, in µs, median / 99th percentile / maximum:
+
+| Row | Key |
+|---|---|
+| no candidates | 96.6 / 224.8 / 326.4 |
+| 100 inline | 113.4 / 255.5 / 338.1 |
+| 250 inline | 187.1 / 339.1 / 424.0 |
+| 500 inline | 313.0 / 475.2 / 569.8 |
+| 1,000 inline | 675.2 / 2572.5 / 2923.0 |
+| 10,000 inline | 4873.3 / 8001.6 / 13517.8 |
+| 100,000 inline (the limit lifted, the path before phase 3) | 49454.3 / 71940.7 / 72544.5 |
+| 100,000 on the worker, each key joined | 117.0 / 211.0 / 316.1 |
+| the listing of that row, key to delivery | 51744.8 / 72610.8 / 73327.8 |
+| 100,000 on the worker, keys 20 ms apart, nothing joined | 139.9 / 639.2 / 896.1 |
+
+- **Within bound**: both rows on the worker, the joined one and the one at
+  typing cadence, where a key arrives while a match runs or while its
+  delivery is handled; each has its median within twice the no-candidates
+  row's and its 99th percentile under 1 ms. The bound is judged on those
+  two rows; an out-of-bound worker row would fail the phase's criterion 4.
+  An earlier run of the cadence row was out of bound (99th percentile
+  2.4 ms): the delivery replaced a listing of 100,000 candidates, and
+  freeing the old one on the editor thread took about 3 ms, so a key that
+  arrived meanwhile waited. The host now lets go of the frame a step
+  replaced on a pool task (`Headless.Running.release`), and the row has been
+  within bound in each run since.
+- **The inline limit is 250**: the largest size whose 99th percentile was
+  under 1 ms in each of the four runs taken on this machine. 500 was under
+  in this run and in one other and over (1.6 ms) in two; 1,000 was over in
+  four of five. A key listed inline costs Lean's work over the candidates
+  (their texts gathered for the matcher and each hit's ranges, which
+  `Styles.inOrderSpans` computes) much more than the matcher's own,
+  7.4 ms for 100,000 in Rust.
+- **The listing of 100,000** arrives about 50 ms after the key (the
+  matcher's call, the candidates' texts copied to it, and each hit's
+  ranges), which the owner accepted: while typing fast the listing can be
+  an earlier text's.
 
 How the scene shows the candidates is in
 [text-and-display.md](text-and-display.md), "Views as built", and the keys
@@ -1742,7 +1836,13 @@ elaborate, or whose setup throws, is rejected and the old one stays.
   Lean state and is untouched by a reload.
 - Jobs and pending handlers that came from the old config are cancelled.
   Their closures keep the old environment alive until the last one returns
-  (about 2 MB each for a small config, reused afterwards).
+  (about 2 MB each for a small config, reused afterwards). A prompt's match
+  job that runs config's style is among them: it is spawned under the owner
+  of its style, so the install cancels it with config's other jobs, and
+  its listing never runs; the scene after the install finds the match
+  stamped with the old config generation and spawns one with the new
+  config's style, with no key typed (completion's phase 3,
+  `Headless.Running.publish`).
 - Subscriptions and key bindings from config are replaced by owner, never
   accumulated. (`edmacs` repeatedly hit reloads that double-added hooks.)
 - Reloads are serialised, so two in flight cannot install out of order.
@@ -1843,6 +1943,10 @@ reload leaves the old config's watch delivering.
 | An interrupted command can leave half its edits behind | An interrupted command's edits roll back as one group |
 
 ## Still to verify
+
+- The prompt benchmark's maximum: the maximum of a key in a prompt matched
+  off the editor thread is printed and not judged ("Prompts", "Matching
+  off the editor thread, measured"); one run is recorded, on one machine.
 
 - Files from Finder and the Dock have not been seen arriving: an "Open
   With" cold start, a drop on the Dock icon while the app runs, a two-file

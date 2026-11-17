@@ -1376,10 +1376,10 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
   release running.frame
   let mut running ←
     ({ running with
-          frame := some stepped.loop, stepped := true
-          config := running.config.written stepped.write
-          stopped := running.stopped || stepped.next == Loop.Next.stop }).launch
-      collaborators stepped.starts stepped.cancels stepped.spawns
+            frame := some stepped.loop, stepped := true
+            config := running.config.written stepped.write
+            stopped := running.stopped || stepped.next == Loop.Next.stop }).launch
+        collaborators stepped.starts stepped.cancels stepped.spawns
   if stepped.reload then
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested

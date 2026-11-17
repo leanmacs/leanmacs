@@ -31,7 +31,16 @@ editor-fuzzy = { path = "../editor-fuzzy" }
 # - `nucleo` 0.5.0, the same matcher behind an injector and a pool of
 #   worker threads (with `rayon` and `parking_lot`). It answers later,
 #   through a snapshot that is polled; the port asks a question and is
-#   answered in the call.
+#   answered in the call. Decided against by completion phase 3, which
+#   matches a long list off the editor thread by running the prompt's
+#   style in a job on Lean's task pool over this port instead: nucleo's
+#   worker could make only the fuzzy style asynchronous (orderless and
+#   config's styles are Lean programs), parses its pattern with its own
+#   syntax and orders without the pattern-first rule `rank` owns, and
+#   would keep a second copy of the candidates behind a polled snapshot
+#   on a rayon pool beside Lean's. Revisit when a measured match of
+#   100,000 files takes longer than 50 ms on the worker
+#   (`docs/design/rust-library.md`, "Fuzzy matching, as built").
 # - `frizbee` 0.13.0, by its description: it forgives typing errors, so a
 #   pattern with a character the candidate lacks can match, which the
 #   port's contract refuses.

@@ -356,7 +356,8 @@ inductive StateRequest where
   | sourceAnswered (view : ViewId) (index generation : Nat)
   /-- List `listed`, which a match job made for `pattern` at `revision`, in
   the prompt open in `view`, if that is the match in flight. -/
-  | listMatched (view : ViewId) (pattern : String) (revision : Nat) (listed : Array Completion.Listed)
+  |
+  listMatched (view : ViewId) (pattern : String) (revision : Nat) (listed : Array Completion.Listed)
   /-- The match in flight for `pattern` at `revision` in the prompt open in
   `view` could not list, for `message`. -/
   | matchFailed (view : ViewId) (pattern : String) (revision : Nat) (message : String)
