@@ -27840,6 +27840,20 @@ def pressedOn (driver : TestDriver) (keys : String) : TestDriver :=
 def compileBuffer (driver : TestDriver) (name : String) : Option Buffer := do
   driver.loop.state.buffer? (← driver.loop.state.findBuffer name)
 
+/-- `driver` with the streaming children of `streams` scripted besides its
+own. -/
+def withStreams (driver : TestDriver) (streams : Array Process.StreamScript) : TestDriver :=
+  { driver with
+    jobs :=
+      { driver.jobs with
+        processes :=
+          { driver.jobs.processes with streams := streams ++ driver.jobs.processes.streams } } }
+
+/-- The last line of the buffer `*compilation: r@main*` in `driver`. -/
+def compiledLastLine (driver : TestDriver) : Option String :=
+  ((compiledText driver "*compilation: r@main*").map fun text =>
+      ((text.splitOn "\n").filter (!·.isEmpty)).getLast?).join
+
 /-- The compile checks (`Editor/Compile.lean`), on the loop's driver over the
 editor's models, the job model and the process model, in the world of
 `compileWorld`. -/
@@ -28021,6 +28035,61 @@ def compileChecks : List Check :=
               lastLineOf killed == some "Compilation killed after 1.5 s" &&
               echoOf killed == some "r@main: Compilation killed after 1.5 s"
           | _, _ => false },
+    { name :=
+        "the last line reads killed by signal 9 for a child a signal ended, stopped with the stream named for a line of standard output or of standard error longer than the bound, and could not start with the refusal for a child that cannot be started; the echo area says the same with r@main"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let long := ByteArray.mk (Array.replicate (Compile.lineBound + 1) 97)
+            let scripted :=
+              withStreams (settledAfter driver "C-o a")
+                #[{ command := shellCommand "/r" "signalled"
+                    steps := #[.write .out "one\n".toUTF8]
+                    exit := .signal 9 },
+                  { command := shellCommand "/r" "long-out", steps := #[.write .out long] },
+                  { command := shellCommand "/r" "long-err", steps := #[.write .err long] }]
+            let run (line : String) := drained (compiledLine scripted line)
+            -- The process model's own words for a command it has no script
+            -- for: the compile says them, whatever they are.
+            let refusal : Option String :=
+              match
+                (ProcessModel.handle {} 0 none
+                    (.start (shellCommand "/r" "absent") { bound := Compile.lineBound })).1 with
+              | .error error => some error.describe
+              | .ok _ => none
+            let says (driver : TestDriver) (text : String) :=
+              compiledLastLine driver == some text && echoOf driver == some s!"r@main: {text}"
+            says (run "signalled") "Compilation killed by signal 9 after 0.0 s" &&
+              says (run "long-out")
+                s!"Compilation stopped: a line of standard output was longer than {Compile.lineBound} bytes after 0.0 s" &&
+              says (run "long-err")
+                s!"Compilation stopped: a line of standard error was longer than {Compile.lineBound} bytes after 0.0 s" &&
+              refusal.any fun detail =>
+                says (run "absent") s!"Compilation could not start: {detail} after 0.0 s" &&
+                  (run "absent").jobs.processes.started == scripted.jobs.processes.started },
+    { name :=
+        "a line a child ends with a carriage return before its line feed is shown without it, on standard output and on standard error, and only one carriage return is dropped"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let scripted :=
+              withStreams (settledAfter driver "C-o a")
+                #[{ command := shellCommand "/r" "crlf"
+                    steps := #[.write .out "a\r\nb\r\r\n".toUTF8, .write .err "e\r\n".toUTF8] }]
+            compiledText (drained (compiledLine scripted "crlf")) "*compilation: r@main*" ==
+              some "r@main in /r: crlf\na\nb\r\ne\nCompilation finished after 0.0 s\n" },
+    { name :=
+        "a child whose read of its streams failed ends the run as stopped with the failure's words, and a delivery of bytes gives no lines"
+      run :=
+        pure
+          (Compile.How.ofEnd (.failed "the pipe broke") == .stopped "the pipe broke" &&
+            Compile.lastLine (Compile.How.ofEnd (.failed "the pipe broke")) 1500 ==
+              "Compilation stopped: the pipe broke after 1.5 s" &&
+            Compile.linesOf (.bytes "a\r\n".toUTF8) == #[]) },
     -- Ordered as the plan review asked (review 2026-11-16-2327-c551): a
     -- first post makes the text `header\none\n` with both views following;
     -- only then is one view's cursor moved up, to a row before the last
