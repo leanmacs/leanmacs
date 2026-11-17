@@ -196,6 +196,7 @@ pub(crate) fn sentence() -> (Frame, Target) {
         views: vec![view],
         generation: 0,
         fonts: Arc::from(vec![font()]),
+        dividers: Vec::new(),
     };
     let target = Target {
         width,

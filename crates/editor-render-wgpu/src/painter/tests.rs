@@ -174,6 +174,7 @@ fn frame(views: Vec<ViewFrame>) -> Frame {
         views,
         generation: 0,
         fonts: Arc::from(vec![font(16.0)]),
+        dividers: Vec::new(),
     }
 }
 

@@ -8,6 +8,15 @@
 //! geometry of its cursors and of its selections. Geometry is in pixels
 //! from the view's top left.
 //!
+//! **The dividers.** Each of the scene's dividers ([`Scene::dividers`]) is a
+//! [`Fill`] of its rectangle in its face's foreground over the default
+//! face, as Emacs colours `window-divider` and `vertical-border` with
+//! `:foreground`: a face nothing defines is the default face's ink, which
+//! is seen on the paper. Layout reads no face name of its own for them:
+//! which strips are dividers, and their face, are Lean's. The frame keeps
+//! them apart from the views ([`Frame::dividers`]), and the renderer fills
+//! them first.
+//!
 //! The rows that fit are the rows query's ([`query`](crate::query), "The
 //! rows that fit"): each counts as at least one pixel, so a frame holds at
 //! most a row for each pixel of its view's height, whatever height a font
@@ -17,8 +26,9 @@
 //! **The mode line.** A view with at least one status field has a status
 //! row ([`StatusRow`]) at the bottom of its rectangle. Each field is
 //! shaped through the `Shaper` port as a line of its own, in its face over
-//! the view's status face ([`View::status_face`], an unselected window's
-//! `mode-line.inactive`) over the face `mode-line` over the default face.
+//! the view's status face ([`View::status_face`], Lean's
+//! `mode-line.active` for the selected window and `mode-line.inactive` for
+//! the others) over the face `mode-line` over the default face.
 //! A tab, a carriage return or a line feed in a field is shaped as a
 //! space. There is no separator glyph: fields are told apart by their
 //! padding and their background.
@@ -222,6 +232,16 @@ pub struct Area {
     pub height: f32,
 }
 
+/// A rectangle of the frame filled in one colour: a divider between two
+/// views (module docs, "The dividers").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fill {
+    /// Where it is, in the frame's physical pixels from its top left.
+    pub rect: Rect,
+    /// Its colour.
+    pub color: Color,
+}
+
 /// One visual row of a view's frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameRow {
@@ -350,16 +370,19 @@ pub struct ViewFrame {
     pub selection: Color,
 }
 
-/// What to draw: every view, in drawing order, and the fonts their glyphs
-/// are drawn in.
+/// What to draw: the dividers, every view, in drawing order, and the fonts
+/// their glyphs are drawn in.
 ///
-/// Two frames are equal when their views, their generations and their
-/// tables of fonts are: a font is compared by what it names and never by
-/// its bytes ([`ResolvedFont`]).
+/// Two frames are equal when their views, their dividers, their
+/// generations and their tables of fonts are: a font is compared by what
+/// it names and never by its bytes ([`ResolvedFont`]).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Frame {
     /// The views.
     pub views: Vec<ViewFrame>,
+    /// The dividers between the views, each a fill of its rectangle,
+    /// drawn before every view (module docs, "The dividers").
+    pub dividers: Vec<Fill>,
     /// The shaper's generation the frame was laid out under
     /// ([`Shaper::generation`]). A glyph's font id means one font for one
     /// generation, so whatever is kept by font id and glyph id from the
@@ -601,8 +624,20 @@ impl<S: Shaper> Layout<S> {
         views.extend(echo);
         // Read once the views are laid out, so the table holds every font
         // a glyph of theirs names.
+        let dividers = scene
+            .dividers
+            .iter()
+            .map(|divider| {
+                let face = self.styles.intern(&divider.face);
+                Fill {
+                    rect: divider.rect,
+                    color: self.styles.style(&self.shaper, &[face]).paint.foreground,
+                }
+            })
+            .collect();
         let frame = Frame {
             views,
+            dividers,
             generation: self.shaper.generation(),
             fonts: self.shaper.resolved(),
         };
@@ -1175,14 +1210,14 @@ mod tests {
 
     use editor_text::{Selection, SelectionRange, Shape, Snapshot, Text};
 
-    use super::{Area, Frame, FrameRow, StatusRow, ViewFrame};
+    use super::{Area, Fill, Frame, FrameRow, StatusRow, ViewFrame};
     use crate::Layout;
     use crate::decoration::{DecorationSource, Span};
     use crate::face::{
         BASE_BACKGROUND, BASE_FOREGROUND, Color, Face, FaceDef, Paint, Underline, UnderlineStyle,
     };
     use crate::scene::{
-        Cursor, CursorShape, Decoration, FixedSpans, Padding, Rect, Scene, Side, SpansAt,
+        Cursor, CursorShape, Decoration, Divider, FixedSpans, Padding, Rect, Scene, Side, SpansAt,
         StatusField, TextKey, TextRef, TextSpans, View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
@@ -3408,5 +3443,74 @@ mod tests {
     fn a_frame_is_shared_between_threads_as_it_is() {
         fn shared<T: Send + Sync>() {}
         shared::<Frame>();
+    }
+
+    /// A scene of no view whose dividers are `dividers`, each a rectangle
+    /// and a face's name.
+    fn divided(dividers: &[(Rect, &str)]) -> Scene {
+        Scene {
+            dividers: dividers
+                .iter()
+                .map(|(rect, face)| Divider {
+                    rect: *rect,
+                    face: (*face).to_owned(),
+                })
+                .collect(),
+            ..Scene::default()
+        }
+    }
+
+    #[test]
+    fn a_divider_is_a_fill_of_its_rectangle_in_its_faces_foreground() {
+        let rect = Rect {
+            x: 318,
+            y: 0,
+            width: 2,
+            height: 464,
+        };
+        let frame = layout().frame(&divided(&[(rect, "tab")]));
+        assert_eq!(frame.dividers, vec![Fill { rect, color: RED }]);
+    }
+
+    #[test]
+    fn a_divider_in_a_face_nothing_defines_is_filled_in_the_default_faces_foreground() {
+        let rect = Rect {
+            x: 0,
+            y: 230,
+            width: 318,
+            height: 2,
+        };
+        let mut layout = layout();
+        let base = layout.frame(&divided(&[(rect, "nothing")]));
+        assert_eq!(
+            base.dividers,
+            vec![Fill {
+                rect,
+                color: BASE_FOREGROUND
+            }]
+        );
+        layout.define(&[def("default", fg(GREY)), def("default", bg(GREEN))]);
+        let defaulted = layout.frame(&divided(&[(rect, "nothing")]));
+        assert_eq!(defaulted.dividers, vec![Fill { rect, color: GREY }]);
+        // A divider's face's background is not its colour.
+        layout.define(&[def("default", fg(GREY)), def("ground", bg(RED))]);
+        let grounded = layout.frame(&divided(&[(rect, "ground")]));
+        assert_eq!(grounded.dividers, vec![Fill { rect, color: GREY }]);
+    }
+
+    #[test]
+    fn a_scene_with_no_divider_gives_no_fill_and_frames_differ_by_their_fills() {
+        let rect = Rect {
+            x: 318,
+            y: 0,
+            width: 2,
+            height: 464,
+        };
+        let mut layout = layout();
+        let plain = layout.frame(&Scene::default());
+        assert!(plain.dividers.is_empty());
+        let filled = layout.frame(&divided(&[(rect, "tab")]));
+        assert_eq!(filled.views, plain.views);
+        assert_ne!(filled, plain);
     }
 }

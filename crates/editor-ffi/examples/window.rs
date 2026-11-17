@@ -2773,6 +2773,7 @@ mod tests {
             }],
             generation: 0,
             fonts,
+            dividers: Vec::new(),
         }
     }
 
