@@ -576,21 +576,31 @@ A prompt is a request for one string, with a text to show beside the input
   records the answer may be chosen from (`Completion.Candidate`,
   `Editor/Completion/Candidate.lean`), each with the text accepting it
   gives and what a display may show beside it. They are plain data, as the
-  rest of a prompt is, whichever sources answered them. With them the prompt holds what it has shown of them:
+  rest of a prompt is, whichever sources answered them. They come in two
+  kinds: those a style matches (`all`), and those a filtered source
+  passed through (`passed`), which are listed as given. The prompt also
+  holds its category (`category`), its first source's, which chooses the
+  style it is matched with (`Loop.listed`). With them the prompt holds
+  what it has shown of them:
   - **the listing**: the candidates the text typed so far matches, in the
-    matcher's order, and the text the listing was made for (`listed`,
+    style's order, each with the ranges of its text that matched
+    (`Completion.Listed`), then every passed candidate in the order given,
+    whatever the text, and the text the listing was made for (`listed`,
     `listedFor`). The state does not match: `listCandidates` is handed the
-    pattern and the indices a matcher answered for it, and keeps the
-    candidates at those indices, in that order. An index that is none of
-    the candidates' is dropped;
+    pattern and the hits a style answered for it (`Completion.Hit`), and
+    keeps the candidates at those indices, in that order, with their
+    ranges. An index that is none of the candidates' is dropped. A filtered
+    source answered for the text it was asked with, and the style's
+    matches are for the text typed now, so the matches come first;
   - **the choice**: an index of the listing, or none (`chosen`).
     `chooseCandidate` moves it by one step, `next` or `previous`. From
     nothing chosen, `next` chooses the first and `previous` the last;
     `next` from the last and `previous` from the first choose nothing. So
     the text as typed is one stop of the round, between the last candidate
     and the first. With nothing listed neither changes anything.
-  - `setCandidates` replaces the candidates and forgets the listing and
-    the choice; `listCandidates` forgets the choice, which was an index of
+  - `setCandidates` replaces the candidates, the passed ones and the
+    category (`Completion.Collected`) and forgets the listing and the
+    choice; `listCandidates` forgets the choice, which was an index of
     the listing it replaces.
   - **What the prompt answers with** is `Candidates.answer`, of the text in
     the minibuffer: the chosen candidate's text, when one is chosen and
@@ -1268,14 +1278,21 @@ def Following.keyOf (buffer : BufferId) : String :=
 /-- The candidates of an open prompt, and what the prompt has shown of
 them ("Prompts", in the module docs). It is plain data. -/
 structure Candidates where
-  /-- The candidates the prompt was asked with, in the order they came
-  in. -/
+  /-- The candidates the prompt was asked with that a style matches, in the
+  order they came in. -/
   all : Array Completion.Candidate := #[]
+  /-- The candidates filtered sources answered, in the order they came in:
+  listed after the matches, whatever the text. -/
+  passed : Array Completion.Candidate := #[]
+  /-- The prompt's category, which chooses its style: its first source's,
+  or none. -/
+  category : Option String := none
   /-- The text `listed` was made for; `none` when no listing has been made
   since the candidates were set. -/
   listedFor : Option String := none
-  /-- The listing: the candidates that text matches, best first. -/
-  listed : Array Completion.Candidate := #[]
+  /-- The listing: the candidates that text matches, in the style's order,
+  each with the ranges that matched, then the passed ones. -/
+  listed : Array Completion.Listed := #[]
   /-- The choice: an index of `listed`, or none. -/
   chosen : Option Nat := none
   deriving DecidableEq, Repr
@@ -1290,12 +1307,17 @@ inductive Step where
   | previous
   deriving DecidableEq, Repr
 
-/-- `candidates` with a listing for `pattern`: the candidates at the indices
-`ranked`, in that order, with an index that is none of theirs dropped, and
-nothing chosen. -/
-def list (candidates : Candidates) (pattern : String) (ranked : Array Nat) : Candidates :=
+/-- `candidates` with a listing for `pattern`: the candidates of `all` at
+the hits' indices, in that order, each with its hit's ranges, an index that
+is none of theirs dropped; then every passed candidate, in the order given,
+with no ranges; and nothing chosen. -/
+def list (candidates : Candidates) (pattern : String) (hits : Array Completion.Hit) :
+    Candidates :=
+  let matched :=
+    hits.filterMap fun hit => (candidates.all[hit.index]?).map (Completion.Listed.of · hit.ranges)
   { candidates with
-    listedFor := some pattern, listed := ranked.filterMap (candidates.all[·]?), chosen := none }
+    listedFor := some pattern, listed := matched ++ candidates.passed.map Completion.Listed.of
+    chosen := none }
 
 /-- `candidates` with the choice moved by `step`: from nothing chosen to
 the first or the last of the listing, from the last onward and from the
@@ -1318,7 +1340,8 @@ listing is for `text`, and otherwise `text`. -/
 def answer (candidates : Candidates) (text : String) : String :=
   match candidates.chosen with
   | some index =>
-    if candidates.listedFor == some text then (candidates.listed[index]?.map (·.text)).getD text
+    if candidates.listedFor == some text then
+      (candidates.listed[index]?.map (·.candidate.text)).getD text
     else text
   | none => text
 
@@ -3327,19 +3350,23 @@ def changeCandidates (change : Candidates → Candidates) (state : EditorState) 
   | some asked =>
     (.ok (), { state with prompt := some { asked with candidates := change asked.candidates } })
 
-/-- Replaces the open prompt's candidates with `all`, and forgets the
-listing and the choice. Refused, with the state unchanged, with `notOpen`
-when no prompt is open. -/
-def setCandidates (all : Array Completion.Candidate) (state : EditorState) :
+/-- Replaces the open prompt's candidates with what its sources answered,
+`collected`: the candidates a style matches, those filtered sources passed
+through and the prompt's category. It forgets the listing and the choice.
+Refused, with the state unchanged, with `notOpen` when no prompt is
+open. -/
+def setCandidates (collected : Completion.Collected) (state : EditorState) :
     Except PromptRefusal Unit × EditorState :=
-  state.changeCandidates fun _ => { all }
+  state.changeCandidates fun _ =>
+    { all := collected.all, passed := collected.passed, category := collected.category }
 
 /-- Makes the open prompt's listing the one for `pattern`: the candidates at
-the indices `ranked`, in that order, with nothing chosen (`Candidates.list`).
-Refused, with the state unchanged, with `notOpen` when no prompt is open. -/
-def listCandidates (pattern : String) (ranked : Array Nat) (state : EditorState) :
+the hits' indices, in that order, with their ranges, then the passed ones,
+with nothing chosen (`Candidates.list`). Refused, with the state unchanged,
+with `notOpen` when no prompt is open. -/
+def listCandidates (pattern : String) (hits : Array Completion.Hit) (state : EditorState) :
     Except PromptRefusal Unit × EditorState :=
-  state.changeCandidates (·.list pattern ranked)
+  state.changeCandidates (·.list pattern hits)
 
 /-- Moves the open prompt's choice by `step` through its listing
 (`Candidates.choose`). Refused, with the state unchanged, with `notOpen`

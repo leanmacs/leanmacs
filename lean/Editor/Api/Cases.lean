@@ -674,8 +674,8 @@ def choosing (text : String) (all : Array String) (listedFor : String) (ranked :
   let selection ← minibuffer.mark (.selection { ranges := #[⟨0, 0⟩], shape := .exclusive })
   let (_, state) :=
     state.openPrompt "Pick: " greeting minibuffer (← UndoTree.over minibuffer) scroll selection
-  let (_, state) := state.setCandidates (all.map Completion.Candidate.ofText)
-  let (_, state) := state.listCandidates listedFor ranked
+  let (_, state) := state.setCandidates { all := all.map Completion.Candidate.ofText }
+  let (_, state) := state.listCandidates listedFor (ranked.map Completion.Hit.ofIndex)
   return steps.foldl (fun state step => (state.chooseCandidate step).2) state
 
 /-- The cases of prompts: asking for one, and what the layout operations do

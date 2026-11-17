@@ -956,14 +956,14 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
     EditorState.ask (.openPrompt label continuation text (← UndoTree.over text) scroll selection)
   -- A prompt with no candidates makes no request for them.
   if opened.isOk && !all.isEmpty then
-    discard <| EditorState.ask (.setCandidates all)
+    discard <| EditorState.ask (.setCandidates { all })
   return opened
 
-/-- Replaces the open prompt's candidates with `all`, and forgets what it
-has listed and chosen ("Prompts", in the module docs). Refused with
-`notOpen` when no prompt is open. -/
-def setCandidates (all : Array Completion.Candidate) : EditorM (Except PromptRefusal Unit) :=
-  EditorState.ask (.setCandidates all)
+/-- Replaces the open prompt's candidates, the passed ones and its category
+with `collected`, and forgets what it has listed and chosen ("Prompts", in
+the module docs). Refused with `notOpen` when no prompt is open. -/
+def setCandidates (collected : Completion.Collected) : EditorM (Except PromptRefusal Unit) :=
+  EditorState.ask (.setCandidates collected)
 
 /-- Moves the open prompt's choice by `step` through the candidates it has
 listed ("Prompts", in the module docs): from nothing chosen to the first or

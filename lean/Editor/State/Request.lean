@@ -92,12 +92,13 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   nothing: the loop gives up the minibuffer's markers and text once the
   command has run to its end.
 - **An open prompt's candidates are set by one request, and its choice is
-  moved by another**: `setCandidates`, with the candidates, and
+  moved by another**: `setCandidates`, with what the prompt's sources
+  answered (`Completion.Collected`), and
   `chooseCandidate`, with a step (`Editor/State.lean`, "Prompts"). Each is
   refused with a `PromptRefusal`, `notOpen`, when no prompt is open. The
   listing has no request: the loop makes it, between a command and the
-  scene, from what the matcher answers (`Editor/Loop.lean`), so no command
-  can list what the matcher did not answer.
+  scene, from what the prompt's style answers (`Editor/Loop.lean`), so no
+  command can list what the style did not answer.
 - **An invocation to run next is recorded by one request**, `invoke`: it
   is put after the invocations already recorded
   (`EditorState.answered`), a prompt's answer among them, and the loop
@@ -314,8 +315,9 @@ inductive StateRequest where
   /-- Close the open prompt: with `answer`, which its continuation's command
   receives, or with `none` for a prompt that is cancelled. -/
   | closePrompt (answer : Option String)
-  /-- Replace the open prompt's candidates with `all`. -/
-  | setCandidates (all : Array Completion.Candidate)
+  /-- Replace the open prompt's candidates, the passed ones and its category
+  with what its sources answered, `collected`. -/
+  | setCandidates (collected : Completion.Collected)
   /-- Move the open prompt's choice by `step` through its listing. -/
   | chooseCandidate (step : Candidates.Step)
   /-- Have the window `view` keep `wanted` as its wanted column, or none. -/
@@ -536,7 +538,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .openPrompt label continuation text history scroll selection, state =>
     state.openPrompt label continuation text history scroll selection
   | .closePrompt answer, state => state.closePrompt answer
-  | .setCandidates all, state => state.setCandidates all
+  | .setCandidates collected, state => state.setCandidates collected
   | .chooseCandidate step, state => state.chooseCandidate step
   | .setWanted view wanted, state => state.setWanted view wanted
   | .ex _, state => (none, state)

@@ -5826,8 +5826,8 @@ def drawnFaces : Array FaceName :=
   let asked : Prompt :=
     { label := "Theme: ", view := ⟨1⟩, asker := ⟨0⟩, continuation := { command := "load-theme" }
       candidates :=
-        { all := offered #["a", "b"], listedFor := some "", listed := offered #["a", "b"]
-          chosen := some 0 } }
+        { all := offered #["a", "b"], listedFor := some ""
+          listed := (offered #["a", "b"]).map Completion.Listed.of, chosen := some 0 } }
   reports.map (·.cursor.face) ++ reports.flatMap (·.status.map (·.face)) ++
     states.toArray.map (Vim.cursorFace ·.name) ++
     #[({} : InputScheme.Report).cursor.face] ++
@@ -8200,8 +8200,8 @@ def spoilings : List (String × (EditorState → EditorState)) :=
           asking.prompt.map
             ({ · with
               candidates :=
-                { all := offered #["a"], listedFor := some "", listed := offered #["a"]
-                  chosen := some 1 } }) }),
+                { all := offered #["a"], listedFor := some ""
+                  listed := (offered #["a"]).map Completion.Listed.of, chosen := some 1 } }) }),
     ("with an order of use that names a buffer there is none of", fun state =>
       { state with recent := state.recent.push ⟨5⟩ }),
     ("with an order of use that names one buffer twice", fun state =>
@@ -8305,8 +8305,8 @@ def withCandidates (state : EditorState) (candidates : Candidates) : EditorState
 `w` and a listing of all three for the empty text, in that order, made with
 the state's own operations. -/
 def picking (state : EditorState) : EditorState :=
-  let (_, set) := state.setCandidates (offered #["wq", "edit", "w"])
-  (set.listCandidates "" #[0, 1, 2]).2
+  let (_, set) := state.setCandidates { all := offered #["wq", "edit", "w"] }
+  (set.listCandidates "" (#[0, 1, 2].map Completion.Hit.ofIndex)).2
 
 /-- States of the quit checks, each `twoBuffers` with its histories set by
 hand. -/
@@ -10321,7 +10321,7 @@ def stateChecks : List Check :=
               | some state =>
                 let (_, asking) := prompted state
                 let (_, chosen) := (picking asking).chooseCandidate .next
-                let (set, replaced) := chosen.setCandidates (offered #["x", "y"])
+                let (set, replaced) := chosen.setCandidates { all := offered #["x", "y"] }
                 replied set == .inr () &&
                   replaced.prompt.map (·.candidates) == some { all := offered #["x", "y"] } &&
                   withCandidates replaced {} == asking &&
@@ -10335,16 +10335,49 @@ def stateChecks : List Check :=
               | some state =>
                 let (_, asking) := prompted state
                 let (_, chosen) := (picking asking).chooseCandidate .next
-                let (listed, after) := chosen.listCandidates "w" #[2, 9, 0, 3]
+                let (listed, after) :=
+                  chosen.listCandidates "w" (#[2, 9, 0, 3].map Completion.Hit.ofIndex)
                 let (emptied, unmatched) := after.listCandidates "z" #[]
                 replied listed == .inr () &&
                   after.prompt.map (·.candidates) ==
                     some
                       { all := offered #["wq", "edit", "w"], listedFor := some "w",
-                        listed := offered #["w", "wq"] } &&
+                        listed := (offered #["w", "wq"]).map Completion.Listed.of } &&
                   replied emptied == .inr () &&
                   unmatched.prompt.map (·.candidates) ==
                     some { all := offered #["wq", "edit", "w"], listedFor := some "z" } &&
+                  withCandidates after {} == asking &&
+                  after.wellFormed },
+        { name :=
+            "listing a prompt whose candidates include ones a filtered source passed keeps the hits' candidates, with their ranges, in the hits' order, then every passed candidate in the order given, whatever the pattern; a pattern with no hit lists the passed ones alone, and the choice is forgotten"
+          run :=
+            pure <|
+              match onTextModel (EditorState.initial ⟨640, 480⟩) with
+              | none => false
+              | some state =>
+                let (_, asking) := prompted state
+                let all := offered #["wq", "edit", "w"]
+                let passed := offered #["zz", "a"]
+                let (set, collected) := asking.setCandidates { all, passed, category := some "pick" }
+                let (_, first) := collected.listCandidates "" #[⟨0, #[]⟩, ⟨1, #[]⟩, ⟨2, #[]⟩]
+                let (_, chosen) := first.chooseCandidate .next
+                let (listed, after) :=
+                  chosen.listCandidates "w" #[⟨2, #[⟨0, 1⟩]⟩, ⟨9, #[]⟩, ⟨0, #[⟨0, 1⟩]⟩]
+                let (emptied, unmatched) := after.listCandidates "q" #[]
+                let passedListed := passed.map Completion.Listed.of
+                replied set == .inr () && replied listed == .inr () &&
+                  after.prompt.map (·.candidates) ==
+                    some
+                      { all, passed, category := some "pick", listedFor := some "w"
+                        listed :=
+                          #[{ candidate := .ofText "w", ranges := #[⟨0, 1⟩] },
+                              { candidate := .ofText "wq", ranges := #[⟨0, 1⟩] }] ++
+                            passedListed } &&
+                  replied emptied == .inr () &&
+                  unmatched.prompt.map (·.candidates) ==
+                    some
+                      { all, passed, category := some "pick", listedFor := some "q"
+                        listed := passedListed } &&
                   withCandidates after {} == asking &&
                   after.wellFormed },
         { name :=
@@ -10361,7 +10394,7 @@ def stateChecks : List Check :=
                   (steps.foldl (fun state step => (state.chooseCandidate step).2) start).prompt.map
                     (·.candidates.chosen)
                 let (stepped, after) := listed.chooseCandidate .next
-                let (_, bare) := asking.setCandidates (offered #["a"])
+                let (_, bare) := asking.setCandidates { all := offered #["a"] }
                 replied stepped == .inr () && withCandidates after {} == asking &&
                   after.wellFormed &&
                   steps [.next] listed == some (some 0) &&
@@ -10382,7 +10415,7 @@ def stateChecks : List Check :=
             pure <|
               let listed : Candidates :=
                 { all := offered #["wq", "edit", "w"], listedFor := some "w",
-                  listed := offered #["w", "wq"] }
+                  listed := (offered #["w", "wq"]).map Completion.Listed.of }
               ({ listed with chosen := some 1 } : Candidates).answer "w" == "wq" &&
                 ({ listed with chosen := some 0 } : Candidates).answer "w" == "w" &&
                 listed.answer "w" == "w" &&
@@ -10400,8 +10433,8 @@ def stateChecks : List Check :=
                 let refused : Except PromptRefusal Unit × EditorState → Bool
                   | (.error .notOpen, after) => after == state
                   | _ => false
-                refused (state.setCandidates (offered #["a"])) &&
-                  refused (state.listCandidates "a" #[0]) &&
+                refused (state.setCandidates { all := offered #["a"] }) &&
+                  refused (state.listCandidates "a" #[.ofIndex 0]) &&
                   refused (state.chooseCandidate .next) &&
                   refused (state.chooseCandidate .previous) },
         { name :=
@@ -10751,7 +10784,7 @@ def stateRequests : List StateRequest :=
     .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
-    .closePrompt none, .closePrompt (some "typed"), .setCandidates (offered #["one", "two"]),
+    .closePrompt none, .closePrompt (some "typed"), .setCandidates { all := offered #["one", "two"] },
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
@@ -11345,12 +11378,12 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (_, asking) := prompted state
             let listed := picking asking
-            let (set, replaced) := listed.handle (.setCandidates (offered #["x"]))
+            let (set, replaced) := listed.handle (.setCandidates { all := offered #["x"] })
             let (next, first) := listed.handle (.chooseCandidate .next)
             let (previous, last) := listed.handle (.chooseCandidate .previous)
-            let (noSet, sameSet) := state.handle (.setCandidates (offered #["x"]))
+            let (noSet, sameSet) := state.handle (.setCandidates { all := offered #["x"] })
             let (noChoice, sameChoice) := state.handle (.chooseCandidate .next)
-            replied set == .inr () && replaced == (listed.setCandidates (offered #["x"])).2 &&
+            replied set == .inr () && replaced == (listed.setCandidates { all := offered #["x"] }).2 &&
               replaced.prompt.map (·.candidates) == some { all := offered #["x"] } &&
               replied next == .inr () &&
               first == (listed.chooseCandidate .next).2 &&
@@ -19166,10 +19199,10 @@ def apiStateChecks : List Check :=
         pure <|
           match
             dispatchedOn do
-              let closed ← setCandidates (offered #["a"])
+              let closed ← setCandidates { all := offered #["a"] }
               discard <| prompt "Pick: " asked "" [.given (.ofTexts "xy" "test" #["x", "y"])]
               let before := (← editorState).prompt.map (·.candidates)
-              return (closed, before, ← setCandidates (offered #["a", "b"])) with
+              return (closed, before, ← setCandidates { all := offered #["a", "b"] }) with
           | some (.finished (.error .notOpen, before, .ok ()), state, _) =>
             before.map (·.all.map (·.text)) == some #["x", "y"] &&
               state.prompt.map (·.candidates) == some { all := offered #["a", "b"] }
@@ -20489,7 +20522,10 @@ for `pattern`, with `chosen` as its choice: the listing is what the fuzzy
 model answers for the pattern, so no order is written out here. -/
 def pickListed (pattern : String) (chosen : Option Nat := none) : Candidates :=
   { all := pickOffered, listedFor := some pattern
-    listed := (FuzzyModel.rank pattern pickCandidates).filterMap (pickOffered[·]?), chosen }
+    listed :=
+      (FuzzyModel.rank pattern pickCandidates).filterMap fun index =>
+        (pickOffered[index]?).map Completion.Listed.of
+    chosen }
 
 /-- `driver` with the choice of its open prompt moved by `steps`, through
 the state and not by a command. -/
@@ -20849,7 +20885,7 @@ def candidateChecks : List Check :=
               #[("wq", some "a"), ("edit", some "a"), ("rewrite", some "b"), ("w", some "b")]
             let ranked := (FuzzyModel.rank "" (both.map (·.1))).filterMap (both[·]?)
             (candidatesOf two).map (pairs ·.all) == some both &&
-              (candidatesOf two).map (pairs ·.listed) == some ranked &&
+              (candidatesOf two).map (pairs <| ·.listed.map (·.candidate)) == some ranked &&
               (candidatesOf two).map (·.listedFor) == some (some "") &&
               (candidatesOf grouped).map (pairs ·.all) ==
                 some #[("x", some "own"), ("y", some "c")] },
@@ -22878,7 +22914,8 @@ def exListed (pattern : String) (chosen : Option Nat := none)
     (bindings : Array Ex.Binding := exTestBindings) : Candidates :=
   let names := exNamesOf bindings
   let all := (offered names).map (·.inGroup Ex.namesSource.name)
-  { all, listedFor := some pattern, listed := (FuzzyModel.rank pattern names).filterMap (all[·]?)
+  { all, listedFor := some pattern
+    listed := (FuzzyModel.rank pattern names).filterMap fun index => (all[index]?).map .of
     chosen }
 
 /-- What a step of the ex checks is handed. The commands are the ones

@@ -1474,7 +1474,7 @@ def listed (state : EditorState) : EditorM (EditorState × Option TextError) := 
     if asked.candidates.listedFor == some pattern then
       return (state, none)
     let ranked ← Fuzzy.rank pattern (asked.candidates.all.map (·.text))
-    return ((state.listCandidates pattern ranked).2, none)
+    return ((state.listCandidates pattern (ranked.map Completion.Hit.ofIndex)).2, none)
 
 /-- Has `view`, a view of the scene about to be published, follow its cursor
 ("Following the cursor", in the module docs): where the row of the cursor,
