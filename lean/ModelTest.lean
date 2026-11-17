@@ -28573,6 +28573,31 @@ def makeSteps : Array Process.Step :=
   #[.write .out "one\n".toUTF8, .pause 100, .write .out "two\n".toUTF8, .pause 100,
     .write .err "three\n".toUTF8]
 
+/-- Steps that write each of `lines` with a line feed on standard output,
+pausing 100 ms between writes, so each is delivered, and posted, alone. -/
+def linesSteps (lines : List String) : Array Process.Step :=
+  (lines.toArray.map fun line => Process.Step.write .out (line ++ "\n").toUTF8).foldl
+    (fun steps write => if steps.isEmpty then #[write] else steps ++ #[.pause 100, write]) #[]
+
+/-- What `check` in `/r` writes: four locations of the general format, an
+error with a column, a warning without, a note and an error whose path starts
+`./`, with a help line after the first. -/
+def checkLines : List String :=
+  ["src/main.rs:12:5: error: expected one of", "  = help: add a semicolon",
+    "src/lib.lean:3: warning: unused", "src/main.rs:2:7: note: defined here",
+    "./src/b.lean:1:3: error: unknown identifier"]
+
+/-- What `stream` in `/r` writes: a location, a help line, a location and a
+plain line. -/
+def streamLines : List String :=
+  ["src/main.rs:12:5: error: expected one of", "  = help: add a semicolon",
+    "src/lib.lean:3: warning: unused", "done"]
+
+/-- The byte offset where the row `row` (from 1) of a compilation buffer
+starts, whose header is `header` and whose rows after it are `lines`. -/
+def rowStart (header : String) (lines : List String) (row : Nat) : Nat :=
+  header.utf8ByteSize + 1 + ((lines.take (row - 1)).map (·.utf8ByteSize + 1)).sum
+
 /-- The streaming children of the compile checks, `make` in `/r` exiting as
 `exit`. -/
 def compileStreams (exit : Process.Exit := .code 0) : Array Process.StreamScript :=
@@ -28583,11 +28608,21 @@ def compileStreams (exit : Process.Exit := .code 0) : Array Process.StreamScript
           .write .out "w3\n".toUTF8] },
     { command := shellCommand "/w" "build", steps := #[.write .out "b1\n".toUTF8] },
     { command := shellCommand "/clone/r" "make", steps := #[.write .out "c1\n".toUTF8] },
-    { command := shellCommand "/x" "make", steps := #[.write .out "x1\n".toUTF8] }]
+    { command := shellCommand "/x" "make", steps := #[.write .out "x1\n".toUTF8] },
+    { command := shellCommand "/r" "check", steps := linesSteps checkLines, exit := .code 1 },
+    { command := shellCommand "/w" "check", steps := linesSteps ["src/main.rs:1:3: error: in w"] },
+    { command := shellCommand "/x" "check", steps := linesSteps ["a.txt:1:1: error: here"] },
+    { command := shellCommand "/r" "stream", steps := linesSteps streamLines },
+    { command := shellCommand "/r" "gone",
+      steps := linesSteps ["src/gone.rs:4:2: error: missing"] }]
 
 /-- The place of the workspace `/r`. -/
 def placeR : Compile.Place :=
   .workspace (.local "/r")
+
+/-- The place of the workspace `/w`. -/
+def placeW : Compile.Place :=
+  .workspace (.local "/w")
 
 /-- The bindings of the compile checks: the shell checks', and `C-k c`
 (`compile`), `C-k m` (`compile` with `make`), `C-k r` (`recompile`), `C-k k`
@@ -28597,7 +28632,9 @@ cursors), `C-k 0` (`to-start`, which puts the window's cursor at offset 0),
 compilation buffer), `C-k s` (`squat`, which makes a buffer
 `*compilation: r@main (clone)*` the compile did not make), `C-k z` (a stale
 `compilation-output` of `/r`'s first run), `C-k q`, which cancels the open
-prompt, and `C-o q`, which opens `/clone/r/src/a.lean`. -/
+prompt, `C-o q`, which opens `/clone/r/src/a.lean`, and `C-k h` (`compile`
+with `check`, asking nothing, so a new compilation buffer is in view 1,
+below view 0). -/
 def compileBindings : List (String × Invocation) :=
   shellBindings ++
     [("C-k c", invoke Compile.compileName),
@@ -28608,7 +28645,8 @@ def compileBindings : List (String × Invocation) :=
       ("C-k z",
         { command := Compile.outputName
           arguments := placeR.arguments ++ [.nat 1, .str "stale"] }),
-      ("C-k q", invoke Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean")]
+      ("C-k q", invoke Minibuffer.cancelName), ("C-o q", opens "/clone/r/src/a.lean"),
+      ("C-k h", { command := Compile.compileName, arguments := [.str "check"] })]
 
 /-- The commands of the compile checks (`compileBindings`). -/
 def compileCommands : List (String × Dispatched) :=
@@ -28643,6 +28681,13 @@ def compileKeys : Loop.Keys TestScheme.scheme :=
         ex := fun name => Ex.bindings.find? (·.name == name)
         exNames := Ex.bindings.map (·.name) } }
 
+/-- The text of `/r/src/main.rs` in the compile checks: twelve lines, each
+of ten characters, the second of two-byte ones, so a column counts
+characters: row 11 starts at byte 131, and `12:5` is byte 135; `2:7` is
+byte 23. -/
+def mainText : String :=
+  String.join ((List.range 12).map fun row => if row == 1 then "αβγδεζηθικ\n" else "abcdefghij\n")
+
 /-- A driver of the compile checks: the world of `compileWorld`, with the
 compile checks' keys and jobs, the files the keys open, and the children of
 `compileStreams`, `make` in `/r` exiting as `exit`; `none` if making the
@@ -28652,7 +28697,9 @@ def compileDriver (exit : Process.Exit := .code 0)
   let model := compileWorld.jobModel "git" #["/r/src", "/w/src", "/x", "/clone/r/src"]
   let files :=
     [("/r/src/a.lean", "a"), ("/w/src/b.lean", "w"), ("/x/a.txt", "x"),
-          ("/clone/r/src/a.lean", "c")].foldl
+          ("/clone/r/src/a.lean", "c"), ("/r/src/main.rs", mainText),
+          ("/r/src/lib.lean", "one\ntwo\nthree\n"), ("/r/src/b.lean", "xyz123\n"),
+          ("/w/src/main.rs", "wwwwww\n")].foldl
       (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
   (Loop.Driver.over compileKeys registered (EditorState.initial ⟨640, 480⟩)
         editorModel).toOption.map
@@ -29218,7 +29265,110 @@ def compileErrorChecks : List Check :=
           (Compile.Site.decode site.encode == some site &&
             Compile.Site.decode { site with column := none }.encode ==
               some { site with column := none } &&
-            Compile.Site.decode (.str "a.rs") == none) }]
+            Compile.Site.decode (.str "a.rs") == none) },
+    { name :=
+        "a scope's record crosses as a tree and back with its locations and its current one, and a tree of the record's old shape, with neither, is none"
+      run :=
+        let site : Compile.Site :=
+          { file := "/r/a.rs", line := 4, column := some 2, columnBase := 1, severity := .error
+            format := "general", first := 1, last := 1, start := 20, stop := 28 }
+        let record : Compile.Record :=
+          { buffer := some 2, last := some ("make", "/r"), runs := 3
+            locations :=
+              #[site,
+                { site with
+                  first := 2, last := 2 }],
+            current := some 1 }
+        pure
+          (Compile.Record.decode record.encode == some record &&
+            Compile.Record.decode
+                { record with
+                    current := none, locations := #[] }.encode ==
+              some
+                { record with
+                  current := none, locations := #[] } &&
+            Compile.Record.decode
+                (.record
+                  [("buffer", .null), ("last", .null), ("runs", .nat 0), ("running", .null)]) ==
+              none &&
+            Compile.store.version == 2 &&
+            Compile.directoryStore.version == 2) }]
+
+/-- The decorations of the view `view` in the last scene `driver`
+published. -/
+def sceneDecorations (driver : TestDriver) (view : ViewId) : Option (Array Decoration) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map (·.decorations)
+
+/-- The checks of the locations the compile mode finds in its output
+(`Editor/Compile.lean`, "Locations"), on the loop's driver over the
+editor's models, the job model and the process model, in the world of
+`compileWorld`. -/
+def compileLocationChecks : List Check :=
+  let header := "r@main in /r: check"
+  let rowAt := rowStart header checkLines
+  let files (driver : TestDriver) (place : Compile.Place) : Array String :=
+    (Compile.recordOf driver.loop.state place).locations.map (·.file.toString)
+  [{  name :=
+        "locations criterion 3: locations are found as lines arrive: after the first two of four output lines the first location exists while the run is in flight, and the second once the next arrives"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let asked := compiledLine (settledAfter driver "C-o a") "stream"
+            let two := postedNext (postedNext asked)
+            let done := drained two
+            let name := "*compilation: r@main*"
+            let streamHeader := "r@main in /r: stream"
+            let first : Compile.Site :=
+              { file := "/r/src/main.rs", line := 12, column := some 5, columnBase := 1
+                severity := .error, format := "general", first := 1, last := 1
+                start := streamHeader.utf8ByteSize + 1, stop := streamHeader.utf8ByteSize + 17 }
+            let record := Compile.recordOf two.loop.state placeR
+            let after := (Compile.recordOf done.loop.state placeR).locations
+            compiledText two name ==
+                some
+                  (streamHeader ++
+                    "\nsrc/main.rs:12:5: error: expected one of\n  = help: add a semicolon\n") &&
+              record.locations == #[first] &&
+              record.running.isSome &&
+              -- The job holds its next post: the third line.
+              two.posting.map (·.key) == #[some "compile local /r"] &&
+              after.size == 2 &&
+              after[0]? == some first &&
+              (after[1]?.map fun site =>
+                  (site.file.toString, site.line, site.column, site.severity, site.first)) ==
+                some ("/r/src/lib.lean", 3, none, .warning, 3) },
+    { name :=
+        "locations criterion 6: a location's relative file resolves against the directory its compilation ran in: /r's against /r, ./ dropped, and a directory scope's against its directory"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let inR := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let inX := drained (pressedOn (settledAfter driver "C-o x") "C-k h")
+            files inR placeR ==
+                #["/r/src/main.rs", "/r/src/lib.lean", "/r/src/main.rs", "/r/src/b.lean"] &&
+              files inX (.directory "/x") == #["/x/a.txt"] },
+    { name :=
+        "the compilation buffer's spans are its locations' text in their severities' faces, and the view showing it draws them"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+            let span (row length : Nat) (face : String) : Decoration :=
+              { start := rowAt row, stop := rowAt row + length, face := ⟨face⟩ }
+            let expected :=
+              #[span 1 16 "compilation.error", span 3 14 "compilation.warning",
+                span 4 15 "compilation.note", span 5 16 "compilation.error"]
+            (compileBuffer ran "*compilation: r@main*").map (·.spans) == some expected &&
+              expected[0]?.map (fun span => (span.start, span.stop)) == some (20, 36) &&
+              (showing ran ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
+              sceneDecorations ran ⟨1⟩ == some expected }]
 
 /-- The keys of the read-only checks: `C-r m` makes a buffer `ro` holding
 `abc`, read-only, and shows it in the window; `C-r i` (`insert-x`) inserts
@@ -29454,7 +29604,8 @@ def checks : List Check :=
     shellChecks ++
     readOnlyChecks ++
     compileChecks ++
-    compileErrorChecks
+    compileErrorChecks ++
+    compileLocationChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

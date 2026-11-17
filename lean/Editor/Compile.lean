@@ -36,10 +36,15 @@ compiles in two workspaces run at once and never touch each other.
 
 Each scope keeps a `Record`: the number of its compilation buffer, found by
 it and never by its name; the last line it ran and the directory it ran in;
-how many runs it has started; and the run in flight, with its line and the
-clock's reading when it started (`Watch.now`). A workspace's is in its store
-(`store`), a directory's in the unscoped store, by directory
-(`directoryStore`). The lines compiled are a history, newest first, each
+how many runs it has started; the run in flight, with its line and the
+clock's reading when it started (`Watch.now`); the locations its last run's
+output gave ("Locations"); and the current location ("Stepping"). A
+workspace's is in its store (`store`), a directory's in the unscoped store,
+by directory (`directoryStore`), so each workspace has its own error list
+and current location. Both stores are at version 2, the version that added
+the locations; they live for the session. Each post decodes and re-encodes
+the record with every location so far: fine for hundreds of locations, and
+revisited if a measured build says otherwise. The lines compiled are a history, newest first, each
 once (`Shell.remember`): the project's (`historyStore`), so every worktree of
 a codebase offers the same lines, or for a directory scope the unscoped
 store's, which every directory shares. A line is recorded when its run
@@ -107,10 +112,36 @@ on the header line, so all follow.
 `compilation-output` and `finished` act only while the scope's run in
 flight is theirs, so a killed or replaced run's late output is dropped.
 Each appends its lines to the kept buffer inside `BufferId.writing`, each
-ended with a line feed. `finished` then appends the last line, `Compilation
-<how> after <elapsed>` (`lastLine`), clears the run and says
-`<label>: <last line>` in the echo area. A compilation buffer closed while
-its run ran gets no output; the end is still said.
+ended with a line feed, and finds the locations in them ("Locations").
+`finished` then appends the last line, `Compilation <how> after <elapsed>`
+(`lastLine`), clears the run and says `<label>: <last line>` in the echo
+area. A compilation buffer closed while its run ran gets no output; the end
+is still said.
+
+## Locations
+
+The error formats (`Editor/Compile/Errors.lean`) find the locations of a
+run's output as its lines arrive, not at its end: `compilation-output` and
+`finished` scan the lines they have just appended (`noteSites`, `scan`),
+from the row and byte offset where they start (`append`'s answer), and keep
+the locations in the scope's record. The header line and the last line are
+never scanned, and a run whose compilation buffer was closed finds none.
+
+- **The formats** a scope uses are `formatsOf`'s: the general format alone.
+  Phase 5's hook adds the buffer's minor modes' formats there.
+- **A relative file** resolves against the directory the run ran in (the
+  record's last directory, which `start` set for this run), lexically
+  (`resolve`). Make's `Entering directory` lines are not tracked.
+- **Faces.** Each new location's text, from its file through its line or
+  column, is a span of the compilation buffer (`Buffer.spans`) in its
+  severity's face (`Severity.face`): `compilation.error`,
+  `compilation.warning` or `compilation.note`. A joined continuation line
+  gets none. The loop draws the spans under the last search's matches
+  (`Editor/Loop.lean`, "Decorations").
+- **A rerun resets them.** `start` writes the scope's record with no
+  locations and no current one, and `prepare` empties the kept buffer's
+  spans with its text. Only that scope's record is written, so a rerun in
+  one workspace leaves every other workspace's list as it was.
 
 ## The mode
 
@@ -258,6 +289,12 @@ structure Record where
   runs : Nat := 0
   /-- The run in flight. -/
   running : Option Running := none
+  /-- The locations its last run's output has given so far ("Locations", in
+  the module docs). -/
+  locations : Array Site := #[]
+  /-- The index in `locations` of the current location, the one last
+  visited ("Stepping", in the module docs); none at first. -/
+  current : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- A record as a tree. -/
@@ -268,7 +305,9 @@ def Record.encode (record : Record) : Value :=
       ("runs", .nat record.runs),
       ("running",
         optional (fun running => .list [.nat running.run, .str running.line, .nat running.started])
-          record.running)]
+          record.running),
+      ("locations", .list (record.locations.toList.map Site.encode)),
+      ("current", optional .nat record.current)]
 
 /-- The record a tree is (`Record.encode`), if it is one. -/
 def Record.decode : Value → Option Record
@@ -298,18 +337,28 @@ def Record.decode : Value → Option Record
         some none
       | _ =>
         none
-    return { buffer, last, runs, running }
+    let .list sites := field fields "locations" | none
+    let locations ← sites.toArray.mapM Site.decode
+    let current ←
+      match field fields "current" with
+      | .nat n =>
+        some (some n)
+      | .null =>
+        some none
+      | _ =>
+        none
+    return { buffer, last, runs, running, locations, current }
   | _ => none
 
 /-- A workspace's record. -/
 def store : Store Record :=
-  { name := "compile", version := 1, initial := {}, encode := Record.encode
+  { name := "compile", version := 2, initial := {}, encode := Record.encode
     decode := Record.decode }
 
 /-- The records of the directory scopes, by directory, in the unscoped
 store. -/
 def directoryStore : Store (Array (String × Record)) :=
-  { name := "compile-directories", version := 1, initial := #[]
+  { name := "compile-directories", version := 2, initial := #[]
     encode := fun all =>
       .list (all.toList.map fun (directory, record) => .list [.str directory, record.encode])
     decode := fun
@@ -497,14 +546,16 @@ def kept (state : EditorState) (record : Record) : Option BufferId :=
   (record.buffer.filter fun index => (state.buffer? ⟨index⟩).isSome).map (⟨·⟩)
 
 /-- Appends `lines`, each ended with a line feed, to the buffer `id`, inside
-`writing`. Each view showing it whose cursor is on the last line, or the
-empty row after it, follows: its cursor is put at the start of the new last
-line ("Following", in the module docs). Others are left where they are. -/
-def append (id : BufferId) (lines : Array String) : EditorM Unit := do
+`writing`, and answers the row and the byte offset where the first of them
+starts. Each view showing it whose cursor is on the last line, or the empty
+row after it, follows: its cursor is put at the start of the new last line
+("Following", in the module docs). Others are left where they are. -/
+def append (id : BufferId) (lines : Array String) : EditorM (Option (Nat × Nat)) := do
   if lines.isEmpty then
-    return
-  let .ok text ← id.text | return
+    return none
+  let .ok text ← id.text | return none
   let count ← text.lineCount
+  let length ← text.byteLength
   let mut followers := #[]
   for view in viewsOf (← editorState) id do
     if let .ok selection← view.selection then
@@ -512,10 +563,13 @@ def append (id : BufferId) (lines : Array String) : EditorM Unit := do
       if (← text.pointOf head).row + 1 ≥ count then
         followers := followers.push view
   id.writing do
-      text.insert (← text.byteLength) (String.join (lines.map (· ++ "\n")).toList)
+      text.insert length (String.join (lines.map (· ++ "\n")).toList)
   let last ← text.offsetOf { row := (← text.lineCount) - 1, column := 0 }
   for view in followers do
     Files.placeCursor view last
+  -- The text always ends in a line feed, so its lines before the insert are
+  -- the row the first appended line starts.
+  return some (count, length)
 
 /-- Shows the buffer `id` for a run asked from `view` ("The run", in the
 module docs): in a new view below the asking one when no view shows it, the
@@ -547,6 +601,7 @@ def prepare (scope : Scope) (record : Record) (content : String) :
     let .ok text ← id.text | return none
     id.writing do
         text.replaceRange 0 (← text.byteLength) content
+    discard <| id.setSpans #[]
     -- Every view of it starts the new run on the header line, so it follows.
     for view in viewsOf state id do
       Files.placeCursor view 0
@@ -582,6 +637,7 @@ def start (name : String) (view : ViewId) (scope : Scope) (line : String)
         { record with
           runs := run, last := some (line, directory.toString)
           running := some { run, line, started }
+          locations := #[], current := none
           buffer := (prepared.map (·.1.index)).orElse fun _ => record.buffer }
     if let some (id, made) := prepared then
       showFrom view id made
@@ -679,7 +735,7 @@ def killCommand (call : Call) : EditorM Unit := do
     let text := lastLine .killed ((← Watch.now) - running.started)
     setRecord scope.place { record with running := none }
     if let some id := kept state record then
-      append id #[text]
+      discard <| append id #[text]
     message s!"{scope.label}: {text}"
 
 /-- The record of `place` and its kept buffer, while `run` is its run in
@@ -692,6 +748,39 @@ def current (place : Place) (run : Nat) : EditorM (Option (Record × Running)) :
   | none =>
     return none
 
+/-- The error formats the scope at `place` finds locations with in `state`:
+the general format. Phase 5's hook adds the buffer's minor modes' formats
+here; nothing else names `Format.general`. -/
+def formatsOf (_state : EditorState) (_place : Place) : Array Compile.Format :=
+  #[Format.general]
+
+/-- The face a location of `severity` is drawn in ("Locations", in the
+module docs). -/
+def Severity.face : Severity → FaceName
+  | .error => ⟨"compilation.error"⟩
+  | .warning => ⟨"compilation.warning"⟩
+  | .note => ⟨"compilation.note"⟩
+
+/-- The span a site's location text is drawn as: its byte range in the
+compilation buffer, in its severity's face. -/
+def Site.span (site : Site) : Decoration :=
+  { start := site.start, stop := site.stop, face := site.severity.face }
+
+/-- `record` with the locations `lines` give, appended to the buffer `id` at
+`start`, its row and byte offset ("Locations", in the module docs); each new
+location's span is added to the buffer's, and a joined continuation adds
+none. Relative files resolve against the run's directory. -/
+def noteSites (place : Place) (record : Record) (id : BufferId) (start : Nat × Nat)
+    (lines : Array String) : EditorM Record := do
+  let state ← editorState
+  let directory : System.FilePath := (record.last.map (·.2)).getD state.workingDirectory
+  let locations := scan (formatsOf state place) directory record.locations start.1 start.2 lines
+  let added := (locations.extract record.locations.size locations.size).map Site.span
+  unless added.isEmpty do
+    let old := ((state.buffer? id).map (·.spans)).getD #[]
+    discard <| id.setSpans (old ++ added)
+  return { record with locations }
+
 /-- `compilation-output`: appends the lines its arguments carry after the
 place and the run to the scope's kept buffer, while that run is in flight
 ("The run", in the module docs). -/
@@ -699,10 +788,12 @@ def outputCommand (call : Call) : EditorM Unit := do
   let some (place, .nat run :: lines) := Place.of? call.arguments | return
   let some (record, _) ← current place run | return
   let some id := kept (← editorState) record | return
-  append id
-      (lines.toArray.filterMap fun
-        | .str line => some line
-        | _ => none)
+  let lines :=
+    lines.toArray.filterMap fun
+      | .str line => some line
+      | _ => none
+  let some start ← append id lines | return
+  setRecord place (← noteSites place record id start lines)
 
 /-- The command a finished run hands the loop ("The run", in the module
 docs): while the run is in flight, its last lines and its last line are
@@ -711,9 +802,12 @@ def finished (order : Order) (lines : Array String) (how : How) : EditorM Unit :
   let some (record, running) ← current order.place order.run | return
   let state ← editorState
   let text := lastLine how ((← Watch.now) - running.started)
-  setRecord order.place { record with running := none }
+  let mut record := { record with running := none }
   if let some id := kept state record then
-    append id (lines.push text)
+    -- The last line is no output of the child's, and is never scanned.
+    if let some start← append id (lines.push text) then
+      record ← noteSites order.place record id start lines
+  setRecord order.place record
   let label :=
     match order.place with
     | .workspace location =>
