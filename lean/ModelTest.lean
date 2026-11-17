@@ -25335,7 +25335,51 @@ def evilIndentChecks : List Check :=
         pure
           ((indentEdited "[\n[\n|1\n]\n]" "= =" (config := #[{ modelJsonIndented with indentUnit := .tab }])).map
               (·.shown) ==
-            some "[\n[\n\t\t|1\n]\n]") }]
+            some "[\n[\n\t\t|1\n]\n]") },
+    { name :=
+        "RET after an opening bracket starts the new line one level deeper than its row; o inside an object and O on its closing row start at the object's level"
+      run :=
+        operatorRows
+          [{ OperatorRow.indents "{\n  \"a\": |[\n  ]\n}" "A RET" "{\n  \"a\": [\n    |\n  ]\n}" with
+              insert := true },
+            { OperatorRow.indents "{\n  |\"a\": 1\n}" "o" "{\n  \"a\": 1\n  |\n}" with insert := true },
+            { OperatorRow.indents "{\n  \"a\": 1\n|}" "O" "{\n  \"a\": 1\n  |\n}" with insert := true },
+            { OperatorRow.indents "{\n  \"a\": [\n|  ]\n}" "O" "{\n  \"a\": [\n    |\n  ]\n}" with
+              insert := true }] },
+    { name :=
+        "RET before a closing bracket leads the new row out at the bracket's level; RET between blanks replaces the blanks on both sides, so the row left keeps none and the rest starts at its level; RET RET leaves the first new row empty"
+      run :=
+        operatorRows
+          [{ OperatorRow.indents "{\n  \"a\": [|]\n}" "i RET" "{\n  \"a\": [\n  |]\n}" with
+              insert := true },
+            { OperatorRow.indents "[\n  1,   |   2\n]" "i RET" "[\n  1,\n  |2\n]" with insert := true },
+            { OperatorRow.indents "[\n  |1\n]" "a RET RET" "[\n  1\n\n  |\n]" with insert := true }] },
+    { name :=
+        ". replays an insert session's RET with its new line indented, and o replayed indents itself"
+      run :=
+        pure <|
+          (indentDriver "[\n  |1,\n  2\n]").bind (fun driver => evilText (evilFed driver "o RET <Escape> j .")) ==
+              some "[\n  1,\n\n  \n  2\n\n  \n]" &&
+            (indentDriver "[\n  |1,\n  2\n]").bind
+                (fun driver => evilText (evilFed driver "A RET <Escape> j .")) ==
+              some "[\n  1,\n  \n  2\n  \n]" },
+    { name := "a config entry's tab unit indents new lines with tabs"
+      run :=
+        pure
+          ((indentEdited "[\n[\n|1\n]\n]" "o" (config := #[{ modelJsonIndented with indentUnit := .tab }])).map
+              (·.shown) ==
+            some "[\n[\n1\n\t\t|\n]\n]") },
+    { name :=
+        "in a buffer with no language, and in one whose tree keeps no indents query, A RET, o and O insert the bare line break, copying no indent"
+      run :=
+        pure <|
+          let noQuery := { modelJsonIndented with syntaxTree := { grammar := "json" } }
+          (evilEdited "    a|b" "A RET").map (·.shown) == some "    ab\n|" &&
+            (evilEdited "    a|b" "o").map (·.shown) == some "    ab\n|" &&
+            (evilEdited "    a|b" "O").map (·.shown) == some "|\n    ab" &&
+            (indentEdited "[\n  |1\n]" "A RET" noQuery).map (·.shown) == some "[\n  1\n|\n]" &&
+            (indentEdited "[\n  |1\n]" "o" noQuery).map (·.shown) == some "[\n  1\n|\n]" &&
+            (indentEdited "[\n  |1\n]" "O" noQuery).map (·.shown) == some "[\n|\n  1\n]" }]
 
 /-- The checks of the two commands that open a line (`Evil.openBelow`,
 `Evil.openAbove`), by key, as `evilOperatorChecks` are. -/
