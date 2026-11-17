@@ -40,6 +40,12 @@
 //! ([`Snapshot::loaded`]). Keys are given out once in the process, to
 //! documents and to such snapshots alike.
 //!
+//! **A snapshot of an excerpt document carries its list** as it was when the
+//! snapshot was taken ([`Snapshot::placed`]), read under the same locks as
+//! its text ([`crate::excerpts`], "A snapshot carries its list"): so the
+//! display places the headers and translates the sources' highlights by the
+//! list of the text it draws, whatever the sources did since.
+//!
 //! What a row, a point, a position, a cell and a word are is the text's
 //! rule, pinned by `editor-text`'s own tests. This module converts numbers
 //! and forwards.
