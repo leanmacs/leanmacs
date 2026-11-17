@@ -17,6 +17,7 @@ use editor_layout::query::{RowRange, Spot};
 use editor_layout::scene::{
     Block, Cursor, Decoration, Padding, Rect, Scene, TextKey, TextRef, View, ViewId,
 };
+use editor_layout::shaper::Length;
 use editor_layout::shaper::fake::CellShaper;
 use editor_text::{Selection, SelectionRange, Text};
 
@@ -325,6 +326,61 @@ fn a_spot_below_a_block_is_lower_by_the_blocks_rows() {
         layout.spot(&text, 400.0, 160.0, Padding::default(), 0, 7),
         Ok(Some(bare))
     );
+}
+
+#[test]
+fn a_block_in_a_taller_face_is_a_taller_row_and_the_queries_count_its_height() {
+    let mut layout = layout();
+    layout.define(&[FaceDef {
+        name: "block-big".to_owned(),
+        face: Face {
+            size: Some(Length::pixels(32)),
+            ..Face::default()
+        },
+    }]);
+    let big = Block {
+        before: 0,
+        text: "one.txt".to_owned(),
+        decorations: vec![Decoration {
+            start: 0,
+            stop: 7,
+            face: "block-big".to_owned(),
+        }],
+    };
+    let blocks = vec![big];
+    let laid = frame(&mut layout, view(EXCERPTS, 40, 10, 0, blocks.clone()));
+    assert_eq!(laid.rows[0].block, Some(0));
+    assert_eq!(laid.rows[0].height, 32.0);
+    // The text rows are lower by the block's 32 pixels.
+    let bare = frame(&mut layout, view(EXCERPTS, 40, 10, 0, vec![]));
+    let tops = |rows: &[FrameRow]| -> Vec<f32> {
+        rows.iter()
+            .filter(|row| row.block.is_none())
+            .map(|row| row.y)
+            .collect()
+    };
+    let lowered: Vec<f32> = tops(&bare.rows).iter().map(|y| y + 32.0).collect();
+    assert_eq!(tops(&laid.rows), lowered);
+    // A view 48 pixels tall holds the block and `two`, and not the
+    // separator: the frame and the queries agree.
+    let short = frame(&mut layout, view(EXCERPTS, 40, 3, 0, blocks.clone()));
+    assert_eq!(
+        described(&short.rows),
+        vec![(Some(0), 0.0, (0, 7)), (None, 32.0, (0, 3))]
+    );
+    let text = text_of(EXCERPTS);
+    let asked = layout
+        .rows_shown_with_blocks(&text, 400.0, 48.0, Padding::default(), 0, &blocks)
+        .unwrap();
+    assert_eq!(asked, vec![RowRange { start: 0, stop: 3 }]);
+    let spot = |layout: &mut Layout<CellShaper>, position: usize| {
+        layout
+            .spot_with_blocks(&text, 400.0, 48.0, Padding::default(), 0, position, &blocks)
+            .unwrap()
+    };
+    let two = spot(&mut layout, 1).unwrap();
+    assert_eq!((two.y, two.height), (32.0, 16.0));
+    assert_eq!(spot(&mut layout, 4), None);
 }
 
 #[test]
