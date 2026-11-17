@@ -8970,6 +8970,152 @@ def picking (state : EditorState) : EditorState :=
   let (_, set) := state.setCandidates { all := offered #["wq", "edit", "w"] }
   (set.listCandidates "" (#[0, 1, 2].map Completion.Hit.ofIndex)).2
 
+/-- `state`, which has a prompt open, with the candidates of `texts` and a
+listing for `pattern` of those at `indices`, in that order, made with the
+state's own operations. -/
+def listingIn (state : EditorState) (texts : Array String) (indices : Array Nat)
+    (pattern : String := "") : EditorState :=
+  let (_, set) := state.setCandidates { all := offered texts }
+  (set.listCandidates pattern (indices.map Completion.Hit.ofIndex)).2
+
+/-- `state` with its open prompt's choice moved by each of `steps`, and the
+display asked after each, as the loop's publishes would. -/
+def choseShown (state : EditorState) (steps : List Candidates.Step)
+    (displaying : Completion.Displaying := .standard) : EditorState :=
+  steps.foldl (fun state step => (state.chooseCandidate step).2.displayed displaying) state
+
+/-- The texts of the rows of the sheet the open prompt of `state` keeps. -/
+def sheetTexts (state : EditorState) : Array String :=
+  (state.prompt.map fun asked => asked.sheet.rows.map (·.text)).getD #[]
+
+/-- The checks of the candidate list in the state (`Editor/State.lean`,
+"The minibuffer's place" and "Prompts"): what the display answered kept on
+the prompt, the window round the choice, the place that grows and never
+shrinks while the prompt is open, its strip cut into the list's part and
+the minibuffer view's, and the list's view's rectangle and padding. -/
+def displayStateChecks : List Check :=
+  let rect (x y width height : Nat) : Rect := { x, y, width, height }
+  let texts := (Array.range 15).map (s!"c{·}")
+  let drawn : Completion.Drawn :=
+    { view := ⟨90⟩, text := ⟨90⟩, scroll := ⟨⟨90⟩, 0⟩, content := "" }
+  [{  name :=
+        "moving the choice past the last row shown scrolls the list so the chosen candidate stays shown"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let listing := (listingIn (prompted state).2 texts (Array.range 15)).displayed .standard
+            let down := choseShown listing (List.replicate 11 .next)
+            let up := choseShown down (List.replicate 10 .previous)
+            let last := choseShown listing [.previous]
+            let first (state : EditorState) : Option Nat := state.prompt.map (·.candidates.first)
+            first listing == some 0 && sheetTexts listing == texts.extract 0 10 &&
+              first down == some 1 && sheetTexts down == texts.extract 1 11 &&
+              (down.prompt.bind (·.sheet.rows.back?)).bind (·.decorations[0]?) ==
+                some { start := 0, stop := 3, face := Completion.Displays.chosenFace } &&
+              first up == some 0 && sheetTexts up == texts.extract 0 10 &&
+              last.prompt.bind (·.candidates.chosen) == some 14 && first last == some 5 },
+    { name :=
+        "the place grows and never shrinks while the prompt is open"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let five := (listingIn (prompted state).2 texts (Array.range 5)).displayed .standard
+            let two := ((five.listCandidates "c1" #[.ofIndex 1, .ofIndex 10]).2).displayed .standard
+            let seven :=
+              ((two.listCandidates "c" ((Array.range 7).map .ofIndex)).2).displayed .standard
+            let twelve :=
+              ((seven.listCandidates "" ((Array.range 12).map .ofIndex)).2).displayed .standard
+            let (_, closed) := twelve.closePrompt none
+            let (_, again) := prompted closed 8
+            let tallest (state : EditorState) : Option Nat := state.prompt.map (·.tallest)
+            let heights := five.heights
+            tallest five == some 5 &&
+              five.minibufferPlace == 5 * heights.text + heights.text + heights.message &&
+              sheetTexts two == #["c1", "c10"] && tallest two == some 5 &&
+              two.minibufferPlace == five.minibufferPlace &&
+              two.candidateListRect? == five.candidateListRect? && two.tiled == five.tiled &&
+              tallest seven == some 7 && tallest twelve == some Completion.Displays.rows &&
+              closed.minibufferPlace == heights.message && closed.candidateListRect? == none &&
+              tallest again == some 0 && again.candidateListRect? == none },
+    { name :=
+        "with three rows listed at 640 by 480 the place is the rows, the input and the bottom row; the tiled area is shorter by the rows; the minibuffer's view is at the strip's bottom, the input and the bottom row tall, and the list's directly above it, with the list view's rectangle and padding"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let three :=
+              { (listingIn asking texts (Array.range 3)).displayed .standard with
+                candidateList := some drawn }
+            let heights := three.heights
+            let strip := 3 * heights.text + heights.text + heights.message
+            let below := heights.text + heights.message
+            let minibuffer := (three.minibufferView?.bind three.rect?)
+            three.listRows == 3 && three.minibufferPlace == strip &&
+              three.tiled == rect 0 0 640 (480 - strip) &&
+              asking.tiled == rect 0 0 640 (480 - below) &&
+              minibuffer == some (rect 0 (480 - below) 640 below) &&
+              three.candidateListRect? == some (rect 0 (480 - strip) 640 (3 * heights.text)) &&
+              three.cutStrip == (rect 0 (480 - strip) 640 (3 * heights.text), rect 0 (480 - below) 640 below) &&
+              three.rect? drawn.view == three.candidateListRect? &&
+              three.isCandidateList drawn.view && !three.isCandidateList ⟨0⟩ &&
+              three.paddingOf drawn.view == { across := three.bottomInset, down := 0 } &&
+              asking.listRows == 0 && asking.candidateListRect? == none },
+    { name :=
+        "a frame shorter than the strip cuts the list before the input: at 640 by 40 the list keeps what the input and the bottom row leave, and at 640 by 20 it is 0 tall"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 40⟩),
+            onTextModel (EditorState.initial ⟨640, 20⟩) with
+          | some tall, some short =>
+            let listed (state : EditorState) : EditorState :=
+              (listingIn (prompted state).2 texts (Array.range 5)).displayed .standard
+            let tall := listed tall
+            let short := listed short
+            let below := tall.heights.text + tall.heights.message
+            tall.tiled.height == 0 &&
+              tall.candidateListRect? == some (rect 0 0 640 (40 - below)) &&
+              (tall.minibufferView?.bind tall.rect?) == some (rect 0 (40 - below) 640 below) &&
+              short.candidateListRect? == some (rect 0 0 640 0) &&
+              (short.minibufferView?.bind short.rect?) == some (rect 0 0 640 20)
+          | _, _ => false },
+    { name :=
+        "relisting keeps where the window starts for the same text and starts it at 0 for another, and a listing says whether it holds two groups"
+      run :=
+        pure <|
+          let candidates : Candidates :=
+            { all :=
+                #[{ text := "a", group := some "A" }, { text := "b", group := some "B" }]
+              listedFor := some "", first := 3 }
+          let listed := #[Completion.Listed.of { text := "a", group := some "A" }]
+          (candidates.relist "" 1 listed).first == 3 && (candidates.relist "x" 1 listed).first == 0 &&
+            !(candidates.relist "" 1 listed).grouped &&
+            (candidates.list "" #[.ofIndex 0, .ofIndex 1]).grouped &&
+            (candidates.list "" #[.ofIndex 0, .ofIndex 1]).first == 0 &&
+            !(candidates.list "" #[.ofIndex 0]).grouped },
+    { name :=
+        "the state is well formed with the candidate list drawn, and not once the list's view is a window's"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let listing := (listingIn (prompted state).2 texts (Array.range 3)).displayed .standard
+            { listing with candidateList := some drawn }.wellFormed &&
+              !{ listing with candidateList := some { drawn with view := ⟨0⟩ } }.wellFormed },
+    { name :=
+        "displaying with no prompt open leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state => state.displayed .standard == state }]
+
 /-- States of the quit checks, each `twoBuffers` with its histories set by
 hand. -/
 structure QuitStates where
@@ -21709,7 +21855,8 @@ def candidateChecks : List Check :=
             let passedListed := passed.map Completion.Listed.of
             let withPassed (listed : Candidates) : Candidates :=
               { listed with
-                passed, listed := listed.listed ++ passedListed }
+                passed, listed := listed.listed ++ passedListed
+                grouped := Completion.grouped (listed.listed ++ passedListed) }
             candidatesOf asking == some (withPassed (pickListed "")) &&
               (candidatesOf asking).map (·.all) == some pickOffered &&
               (candidatesOf asking).map (·.category) == some (some "pick") &&
@@ -38860,6 +39007,7 @@ def checks : List Check :=
     styleContractChecks ++
     displayContractChecks ++
     completionDisplayChecks ++
+    displayStateChecks ++
     syntaxTreeChecks ++
     guardChecks ++
     scrollChecks ++

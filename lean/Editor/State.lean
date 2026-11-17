@@ -1,4 +1,5 @@
 import Editor.Completion.Candidate
+import Editor.Completion.Display
 import Editor.Display
 import Editor.DisplayRules
 import Editor.Face
@@ -91,10 +92,37 @@ while zoomed is in the tree zoom returns to.
 the area a layout tiles (`EditorState.tiled`). With no prompt open the
 strip is the frame's bottom row, `heights.message` tall
 (`EditorState.minibufferPlace`), where the display draws the echo, and
-holds no view. With a prompt open it is a text row and that bottom row,
-`heights.text + heights.message`: the input, then the prompt, and the
-minibuffer's view is the strip's rectangle. A frame shorter than the strip
-is all strip, and the tiled area has no height.
+holds no view. With a prompt open it is the candidate list's rows, a text
+row and that bottom row, `listRows * heights.text + heights.text +
+heights.message`: the list, then the input, then the prompt.
+`EditorState.cutStrip` cuts it in two: the minibuffer's view is the lower
+part, `heights.text + heights.message` tall, and the candidate list's view
+(`candidateListRect?`) the upper part, directly above it. A frame shorter
+than the strip is all strip, and the tiled area has no height; a strip
+shorter than the input and the bottom row is all the minibuffer's view, so
+the list is cut before the input.
+
+**The list's part grows and never shrinks while the prompt is open**, as
+vertico's default `vertico-resize` (grow-only) does: `listRows` is the
+prompt's high-water mark (`Prompt.tallest`), the most rows any sheet the
+display answered has shown since the prompt opened, not the current
+sheet's. So typing that cuts the matches leaves the strip as tall as it
+has been, with blank rows under the list. Each sheet holds at most its
+display's rows, so the mark is capped there; a reload that installs a
+display with fewer rows does not lower it. The mark goes with the prompt,
+so closing the prompt gives the windows the height back with no rule of
+its own: `minibufferPlace` is the bottom row again at the closing step's
+publish.
+
+**The candidate list's view** (`EditorState.candidateList`,
+`Completion.Drawn`) is a text view over generated text, as the tab bar's
+is: its text, anchor and view id are made the first time a publish draws
+it and kept for the editor's life. It is no window: it has no target, no
+key reaches it, it is never focused or followed; its rectangle and padding
+are read through `rect?` and `paddingOf` as a window's are. Its rows are
+not written into the minibuffer's buffer, because the whole text of that
+buffer is the input. A command that asks `rect?` while a prompt is open is
+answered with the rows the last publish displayed.
 
 **The tab bar's strip** (`EditorState.tabBarRect?`, `Editor/TabBar.lean`)
 is cut off the bottom of the tiled area, directly above the minibuffer's,
@@ -592,6 +620,15 @@ A prompt is a request for one string, with a text to show beside the input
     ranges. An index that is none of the candidates' is dropped. A filtered
     source answered for the text it was asked with, and the style's
     matches are for the text typed now, so the matches come first;
+  - **what the display showed of it** (`displayed`): the display the
+    loop is handed for the prompt's category is handed the listing, the
+    choice, where its window started last (`first`) and whether the
+    listing holds two groups (`grouped`, computed when the listing is
+    made). What it answers is kept on the prompt (`Prompt.sheet`), where
+    its window starts now as `first`, and the high-water mark of its rows
+    (`Prompt.tallest`). The state keeps the sheet, which is data, and
+    never a display. A relisting for the same text keeps `first`, and one
+    for another text starts it at 0;
   - **the choice**: an index of the listing, or none (`chosen`).
     `chooseCandidate` moves it by one step, `next` or `previous`. From
     nothing chosen, `next` chooses the first and `previous` the last;
@@ -1309,6 +1346,12 @@ structure Candidates where
   /-- The text and the revision a match failed for: not matched again until
   one of them changes. -/
   unmatched : Option (String × Nat) := none
+  /-- The index of the listing the display's window started at in the last
+  scene (`EditorState.displayed`). -/
+  first : Nat := 0
+  /-- Whether the listing holds two groups or more (`Completion.grouped`),
+  computed when it was made. -/
+  grouped : Bool := false
   deriving DecidableEq, Repr
 
 namespace Candidates
@@ -1345,29 +1388,35 @@ inductive Step where
 /-- `candidates` with a listing for `pattern`: the candidates of `all` at
 the hits' indices, in that order, each with its hit's ranges, an index that
 is none of theirs dropped; then every passed candidate, in the order given,
-with no ranges; and nothing chosen. -/
+with no ranges; and nothing chosen, the window at its start, and whether
+it holds two groups. -/
 def list (candidates : Candidates) (pattern : String) (hits : Array Completion.Hit) : Candidates :=
   let matchable := candidates.matchable
   let matched :=
     hits.filterMap fun hit => (matchable[hit.index]?).map (Completion.Listed.of · hit.ranges)
+  let listed := matched ++ candidates.passing.map Completion.Listed.of
   { candidates with
-    listedFor := some pattern, listed := matched ++ candidates.passing.map Completion.Listed.of
-    chosen := none, listedAt := candidates.revision }
+    listedFor := some pattern, listed, chosen := none, listedAt := candidates.revision, first := 0
+    grouped := Completion.grouped listed }
 
 /-- `candidates` with `listed` as the listing for `pattern`, made at
 `revision`. The choice is kept on the same candidate, the first listed that
 is equal to it, when `pattern` is the text the old listing was for, so a
 batch that arrives does not throw away a choice; otherwise, or when that
-candidate is not listed, nothing is chosen. -/
+candidate is not listed, nothing is chosen. The display's window keeps its
+start for the same text, and starts at 0 for another; whether the listing
+holds two groups is computed again. -/
 def relist (candidates : Candidates) (pattern : String) (revision : Nat)
     (listed : Array Completion.Listed) : Candidates :=
+  let same := candidates.listedFor == some pattern
   let chosen :=
-    if candidates.listedFor == some pattern then
+    if same then
       candidates.chosen.bind fun index =>
         (candidates.listed[index]?).bind fun old => listed.findIdx? (·.candidate == old.candidate)
     else none
   { candidates with
-    listedFor := some pattern, listed, chosen, listedAt := revision }
+    listedFor := some pattern, listed, chosen, listedAt := revision
+    first := if same then candidates.first else 0, grouped := Completion.grouped listed }
 
 /-- Whether a match is in flight for `pattern` at `revision`. -/
 def matchingFor (candidates : Candidates) (pattern : String) (revision : Nat) : Bool :=
@@ -1420,6 +1469,14 @@ structure Prompt where
   the choice; none of any, unless the prompt was asked with sources that
   answered some. -/
   candidates : Candidates := {}
+  /-- What the display answered at the last publish
+  (`EditorState.displayed`): the rows of the candidate list. -/
+  sheet : Completion.Sheet := {}
+  /-- The most rows any sheet has shown since the prompt opened: how tall
+  the candidate list's part of the minibuffer's place is, which grows and
+  never shrinks while the prompt is open (`EditorState.listRows`). It is
+  data only, and goes with the prompt. -/
+  tallest : Nat := 0
   deriving DecidableEq, Repr
 
 /-- The name of the major mode the minibuffer's buffer is made with. A mode
@@ -1558,6 +1615,10 @@ structure EditorState where
   /-- The tab bar's view, text and line, once a publish has drawn it; kept
   for the editor's life (`Editor/TabBar.lean`, "What it is"). -/
   tabBar : Option TabBar.Drawn := none
+  /-- The candidate list's view, text and content, once a publish has drawn
+  it; kept for the editor's life, as `tabBar` is ("The minibuffer's place",
+  in the module docs). -/
+  candidateList : Option Completion.Drawn := none
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -1852,12 +1913,21 @@ is open. -/
 def views (state : EditorState) : Array ViewId :=
   state.frame.all ++ state.minibufferView?.toArray
 
+/-- How many text rows the candidate list's part of the minibuffer's place
+is: the open prompt's high-water mark (`Prompt.tallest`), the most rows any
+sheet has shown since it opened, so it grows and never shrinks while the
+prompt is open; 0 with no prompt. -/
+def listRows (state : EditorState) : Nat :=
+  (state.prompt.map (·.tallest)).getD 0
+
 /-- How tall the minibuffer's strip at the frame's bottom is: the frame's
-bottom row while no prompt is open, where the echo is drawn, and a text row
-above it while one is, for the input, with the prompt in the bottom row
-(`heights`). -/
+bottom row while no prompt is open, where the echo is drawn; and while one
+is, the candidate list's rows (`listRows`), then a text row for the input,
+then the bottom row, which holds the prompt (`heights`). -/
 def minibufferPlace (state : EditorState) : Nat :=
-  if state.prompt.isSome then state.heights.text + state.heights.message else state.heights.message
+  if state.prompt.isSome then
+    state.listRows * state.heights.text + state.heights.text + state.heights.message
+  else state.heights.message
 
 /-- How tall the tab bar's strip is: a text row while the bar is shown over
 the frame's tabs (`TabBar.Shown.shows`), clamped to what the minibuffer's
@@ -1880,6 +1950,16 @@ def cutFrame (state : EditorState) : Rect × Rect :=
     Layout.cut .rows { x := 0, y := 0, width := frame.size.width, height }
       (height - min state.minibufferPlace height)
   ({ above with height := above.height - state.tabBarHeight }, strip)
+
+/-- The minibuffer's strip (`cutFrame`) cut in two: the candidate list's
+part on top, and below it the minibuffer's view's, the input and the bottom
+row, `heights.text + heights.message` tall, or the whole strip when that is
+shorter. So a frame too short for the strip cuts the list before the
+input. -/
+def cutStrip (state : EditorState) : Rect × Rect :=
+  let strip := state.cutFrame.2
+  let below := min (state.heights.text + state.heights.message) strip.height
+  Layout.cut .rows strip (strip.height - below)
 
 /-- The area of the frame a layout tiles: the frame above the tab bar's
 strip and the minibuffer's (`cutFrame`). -/
@@ -1914,14 +1994,14 @@ monocle showing the selected view, or a float's anchor window
 (`monocleView`); then each float
 in stacking order, placed in the tiled area against its anchor
 (`Floating.placed`); and then, while a prompt is open, the minibuffer's view
-in the strip below it. A window the
+in the lower part of the strip below it (`cutStrip`). A window the
 layout does not show has none. It is what a scene's views are laid out in
 (`Loop.views`, `Editor/Loop.lean`). -/
 def rects (state : EditorState) : Array (ViewId × Rect) :=
   let frame := state.frame
   let laid := frame.layout.place frame.windows state.monocleView state.tiled frame.docked
   laid ++ frame.floats.map (fun float => (float.view, float.placed state.tiled laid)) ++
-    (state.minibufferView?.map (·, state.cutFrame.2)).toArray
+    (state.minibufferView?.map (·, state.cutStrip.2)).toArray
 
 /-- How far the frame's bottom row, where the echo and a prompt are drawn,
 is inset from the frame's left and right edges, in points: the frame
@@ -1945,18 +2025,33 @@ this (`Scroll.Area.ofRect`), which is what the display's frame shows. -/
 def bottomRow (state : EditorState) (id : ViewId) : Nat :=
   if state.minibufferView? == some id then state.heights.message else state.heights.status
 
+/-- The candidate list's strip: the upper part of the minibuffer's
+(`cutStrip`), `listRows` text rows tall or what the frame leaves of it,
+directly above the minibuffer's view, while a prompt is open and its list
+has shown a row (even when the current sheet has fewer rows, or none, and
+when it is 0 pixels tall); none otherwise. -/
+def candidateListRect? (state : EditorState) : Option Rect :=
+  if state.prompt.isSome && 0 < state.listRows then some state.cutStrip.1 else none
+
 /-- Whether `id` is the tab bar's view (`tabBar`). -/
 def isTabBar (state : EditorState) (id : ViewId) : Bool :=
   state.tabBar.any (·.view == id)
 
-/-- The rectangle of the view `id` in the frame (`rects`), or the tab bar's
-strip for its view (`tabBarRect?`); none for a view that is not laid out:
-one with no window in the list, a window the layout does not show, the
-minibuffer's when no prompt is open, and the tab bar's while it is not
-shown. -/
+/-- Whether `id` is the candidate list's view (`candidateList`). -/
+def isCandidateList (state : EditorState) (id : ViewId) : Bool :=
+  state.candidateList.any (·.view == id)
+
+/-- The rectangle of the view `id` in the frame (`rects`), the tab bar's
+strip for its view (`tabBarRect?`), or the candidate list's for its view
+(`candidateListRect?`); none for a view that is not laid out: one with no
+window in the list, a window the layout does not show, the minibuffer's
+when no prompt is open, the tab bar's while it is not shown, and the
+candidate list's while no prompt has listed a row. -/
 def rect? (state : EditorState) (id : ViewId) : Option Rect :=
   (state.rects.find? (·.1 == id)).map (·.2) <|>
-    if state.isTabBar id then state.tabBarRect? else none
+    if state.isTabBar id then state.tabBarRect?
+    else if state.isCandidateList id then state.candidateListRect?
+    else none
 
 /-- The padding of the view `id`, in points ("The padding of the views", in
 the module docs): the frame padding across and down for a window, with the
@@ -1965,11 +2060,14 @@ and for the minibuffer's view the bottom row's inset across
 (`bottomInset`) and none down, since its place is exactly a text row and
 the bottom row (`minibufferPlace`) and must stay that tall; and for the
 tab bar's view the frame padding across and none down, since its strip is
-exactly one text row. Each window has
+exactly one text row; and for the candidate list's view the bottom row's
+inset across, as the minibuffer's, and none down, since its strip is
+exactly its rows. Each window has
 its own: two windows side by side are each padded, with no gap of their own
 between them. -/
 def paddingOf (state : EditorState) (id : ViewId) : Padding :=
-  if state.minibufferView? == some id then { across := state.bottomInset, down := 0 }
+  if state.minibufferView? == some id || state.isCandidateList id then
+    { across := state.bottomInset, down := 0 }
   else
     if state.isTabBar id then { across := state.padding, down := 0 }
     else
@@ -1990,7 +2088,8 @@ windows (`Tab.contains`). The ids of every window of every tab
 exactly the windows' ids, and each window's buffer exists. And whether an
 open prompt's choice, if it has one, is an index of its listing, whether
 every buffer of the order they were used in (`recent`) is open and is there
-once, and whether the tab bar's view, once drawn, is no window's. -/
+once, and whether the tab bar's view and the candidate list's, once drawn,
+are no window's. -/
 def wellFormed (state : EditorState) : Bool :=
   let ids := state.frame.everyWindow ++ state.minibufferView?.toArray
   let fits (tab : Tab) : Bool :=
@@ -2013,7 +2112,8 @@ def wellFormed (state : EditorState) : Bool :=
       asked.candidates.chosen.all (· < asked.candidates.listed.size)) &&
     state.recent.all (fun id => (state.buffer? id).isSome) &&
     state.recent.toList.eraseDups.length == state.recent.size &&
-    state.tabBar.all fun drawn => (state.window? drawn.view).isNone
+    state.tabBar.all (fun drawn => (state.window? drawn.view).isNone) &&
+    state.candidateList.all fun drawn => (state.window? drawn.view).isNone
 
 /-- The name the editor gives its empty buffer with no file: the initial
 state's buffer's, and the one left after the last buffer is closed
@@ -3521,6 +3621,30 @@ with `notOpen` when no prompt is open. -/
 def listCandidates (pattern : String) (hits : Array Completion.Hit) (state : EditorState) :
     Except PromptRefusal Unit × EditorState :=
   state.changeCandidates (·.list pattern hits)
+
+/-- `state` with the open prompt's listing shown by the display
+`displaying` chooses for its category (`Completion.Displaying.displayFor`):
+the display is handed the listing, the choice, where its window started
+last and whether the listing is grouped, and what it answers is kept on
+the prompt (`Prompt.sheet`), where its window starts now as the
+candidates' `first`, and the high-water mark raised to its rows
+(`Prompt.tallest`). With no prompt open it is as it was. It is pure: a
+display reads no state and asks no port. -/
+def displayed (state : EditorState) (displaying : Completion.Displaying) : EditorState :=
+  match state.prompt with
+  | none => state
+  | some asked =>
+    let candidates := asked.candidates
+    let sheet :=
+      (displaying.displayFor candidates.category).sheet
+        { listed := candidates.listed, chosen := candidates.chosen, first := candidates.first
+          grouped := candidates.grouped, category := candidates.category }
+    { state with
+      prompt :=
+        some
+          { asked with
+            sheet, tallest := max asked.tallest sheet.rows.size
+            candidates := { candidates with first := sheet.first } } }
 
 /-- Moves the open prompt's choice by `step` through its listing
 (`Candidates.choose`). Refused, with the state unchanged, with `notOpen`
