@@ -190,12 +190,26 @@ structure View where
   padding : Padding := {}
   deriving DecidableEq, Repr
 
+/-- A divider: a strip of the frame between two tiled views, filled in the
+foreground of its face. Which strips are dividers is the editor state's
+(`EditorState.dividers`), and their face the command loop's
+(`Loop.dividerFace`). -/
+structure Divider where
+  /-- Where it is in the frame. -/
+  rect : Rect
+  /-- The face whose foreground it is filled in. -/
+  face : FaceName
+  deriving DecidableEq, Repr
+
 /-- Everything the display shows, as published after a command. -/
 structure Scene where
   /-- The frame's size. -/
   size : Size
   /-- The views, in the order they are drawn. -/
   views : Array View
+  /-- The dividers between the tiled views, drawn before every view, so a
+  float over one covers it. None in a scene no command loop made. -/
+  dividers : Array Divider := #[]
   /-- The view that has the keyboard focus, if one has. -/
   focused : Option ViewId
   /-- The echo area's text. -/

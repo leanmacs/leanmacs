@@ -1424,14 +1424,23 @@ scroll anchor where the follow left it. -/
 def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
   views.mapM fun view => return { view with decorations := ← decorationsOf state view }
 
+/-- The face the dividers between tiled windows are drawn in, Emacs's
+`window-divider`: the divider is filled in its foreground. -/
+def dividerFace : FaceName :=
+  ⟨"window-divider"⟩
+
 /-- The scene of `state` over `views`: what the state says of the frame, the
-echo area, inset by the bottom row's inset (`EditorState.bottomInset`), and
-the preedit, around the views made of its windows, with `pending` as the
-keys typed of a sequence not yet completed and `menu` as the menu bar. -/
+dividers between its tiled windows (`EditorState.dividers`) in
+`dividerFace`, the echo area, inset by the bottom row's inset
+(`EditorState.bottomInset`), and the preedit, around the views made of its
+windows, with `pending` as the keys typed of a sequence not yet completed
+and `menu` as the menu bar. -/
 def scene (state : EditorState) (views : Array View) (pending : String)
     (menu : Option Menu := none) : Scene :=
   let frame := state.frame
-  { size := frame.size, views, focused := if frame.hasFocus then some frame.focused else none
+  { size := frame.size, views
+    dividers := state.dividers.map ({ rect := ·, face := dividerFace })
+    focused := if frame.hasFocus then some frame.focused else none
     echo := state.echo, echoPadding := state.bottomInset, pending, preedit := state.preedit
     title := state.title, menu }
 

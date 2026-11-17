@@ -1813,20 +1813,41 @@ def monocleView (state : EditorState) : ViewId :=
   | some float => (float.anchor.view? <|> frame.lastFocused).getD selected
   | none => selected
 
+/-- How wide the divider between two tiled windows is, in physical pixels:
+one point on a display of scale 2. Lean handles no scale, and a scene's
+rectangles are physical pixels, so it is a width in pixels
+(`Layout.carve`). -/
+def dividerWidth : Nat := 2
+
+/-- The frame's tiled windows laid out by its layout in the tiled area
+(`tiled`), monocle showing `monocleView`, with the dividers between them
+taken out (`Layout.carve`): the carved tiles, and the dividers. -/
+private def carved (state : EditorState) : Array (ViewId × Rect) × Array Rect :=
+  let frame := state.frame
+  Layout.carve state.tiled dividerWidth
+    (frame.layout.place frame.windows state.monocleView state.tiled frame.docked)
+
 /-- The rectangle of each view of the state in its frame, in drawing order:
 the frame's windows laid out by its layout in the tiled area (`tiled`),
 monocle showing the selected view, or a float's anchor window
-(`monocleView`); then each float
-in stacking order, placed in the tiled area against its anchor
-(`Floating.placed`); and then, while a prompt is open, the minibuffer's view
-in the strip below it. A window the
+(`monocleView`), each with the divider beyond it taken out (`carved`); then
+each float in stacking order, placed in the tiled area against its anchor's
+carved rectangle (`Floating.placed`) and not carved itself; and then, while
+a prompt is open, the minibuffer's view in the strip below it. A window the
 layout does not show has none. It is what a scene's views are laid out in
 (`Loop.views`, `Editor/Loop.lean`). -/
 def rects (state : EditorState) : Array (ViewId × Rect) :=
   let frame := state.frame
-  let laid := frame.layout.place frame.windows state.monocleView state.tiled frame.docked
+  let laid := state.carved.1
   laid ++ frame.floats.map (fun float => (float.view, float.placed state.tiled laid)) ++
     (state.minibufferView?.map (·, state.cutFrame.2)).toArray
+
+/-- The dividers between the frame's tiled windows (`carved`), in the
+frame's physical pixels: a strip `dividerWidth` wide beyond each tile whose
+right edge or foot is short of the tiled area's. Floats and the
+minibuffer's view have none. -/
+def dividers (state : EditorState) : Array Rect :=
+  state.carved.2
 
 /-- How far the frame's bottom row, where the echo and a prompt are drawn,
 is inset from the frame's left and right edges, in points: the frame

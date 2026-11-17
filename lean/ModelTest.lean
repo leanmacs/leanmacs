@@ -5562,7 +5562,17 @@ def sceneChecks : List Check :=
               field != right &&
               view.statusFace == none &&
               { view with statusFace := some ⟨"mode-line.inactive"⟩ } != view)
-        | none => pure false }]
+        | none => pure false },
+    { name :=
+        "a scene has no divider unless it says so, and one with a divider reads back its rectangle and its face"
+      run :=
+        let divider : Divider :=
+          { rect := { x := 798, y := 0, width := 2, height := 1200 }, face := ⟨"window-divider"⟩ }
+        let divided := { twoViews with dividers := #[divider] }
+        pure
+          (twoViews.dividers.isEmpty && divided != twoViews &&
+            divided.dividers.map (·.rect.x) == #[798] &&
+            divided.dividers.map (·.face) == #[⟨"window-divider"⟩]) }]
 
 /-- The texts of `fields`, each with its face's name. -/
 def textsAndFaces (fields : Array StatusField) : Array (String × String) :=
@@ -8522,14 +8532,14 @@ def windowOperationChecks : List Check :=
                 made == ⟨1⟩ && after.frame.windows == ids [1, 0] &&
                   after.frame.layout == .splits (.split .rows 1 1 .tile .tile) &&
                   after.frame.focused == ⟨0⟩ &&
-                  after.rects == #[(⟨1⟩, rect 0 0 640 232), (⟨0⟩, rect 0 232 640 232)] &&
+                  after.rects == #[(⟨1⟩, rect 0 0 640 230), (⟨0⟩, rect 0 232 640 232)] &&
                   after.wellFormed
               | _ => false) &&
               (match one.splitWindow ⟨0⟩ (marker 8) (marker 9) { axis := .columns } with
               | (.ok _, after) =>
                 after.frame.windows == ids [0, 1] &&
                   after.frame.layout == .splits (.split .columns 1 1 .tile .tile) &&
-                  after.rects == #[(⟨0⟩, rect 0 0 320 464), (⟨1⟩, rect 320 0 320 464)]
+                  after.rects == #[(⟨0⟩, rect 0 0 318 464), (⟨1⟩, rect 320 0 320 464)]
               | _ => false) &&
               match
                 two.splitWindow ⟨0⟩ (marker 8) (marker 9) { axis := .columns, before := true } with
@@ -8859,8 +8869,8 @@ def windowOperationChecks : List Check :=
               arranged 1 (.edge .left) ==
                   some
                     (edged .tile,
-                      #[(⟨0⟩, rect 160 0 480 464), (⟨2⟩, rect 0 0 160 232),
-                        (⟨1⟩, rect 0 232 160 232)]) &&
+                      #[(⟨0⟩, rect 160 0 480 464), (⟨2⟩, rect 0 0 158 230),
+                        (⟨1⟩, rect 0 232 158 232)]) &&
                 oneTile.frame.docked == #[(⟨2⟩, .left), (⟨1⟩, .left)] &&
                 -- The docked window back into the tiles, at the end: the
                 -- last tile is split along rows, and the strip, empty, takes
@@ -8868,18 +8878,18 @@ def windowOperationChecks : List Check :=
                 arranged 2 (.edge .left) ==
                   some
                     (edged (.split .rows 1 2 .tile row),
-                      #[(⟨0⟩, rect 0 0 640 154), (⟨1⟩, rect 0 154 640 155),
+                      #[(⟨0⟩, rect 0 0 640 152), (⟨1⟩, rect 0 154 640 153),
                         (⟨2⟩, rect 0 309 640 155)]) &&
                 arranged 2 (.resize .columns true 1) ==
                   some
                     (edged row 30,
-                      #[(⟨0⟩, rect 192 0 448 232), (⟨1⟩, rect 192 232 448 232),
-                        (⟨2⟩, rect 0 0 192 464)]) &&
+                      #[(⟨0⟩, rect 192 0 448 230), (⟨1⟩, rect 192 232 448 232),
+                        (⟨2⟩, rect 0 0 190 464)]) &&
                 opened ==
                   some
                     (edged row,
-                      #[(⟨0⟩, rect 160 0 480 232), (⟨1⟩, rect 160 232 480 232),
-                        (⟨2⟩, rect 0 0 160 232), (⟨3⟩, rect 0 232 160 232)]) &&
+                      #[(⟨0⟩, rect 160 0 480 230), (⟨1⟩, rect 160 232 480 232),
+                        (⟨2⟩, rect 0 0 158 230), (⟨3⟩, rect 0 232 158 232)]) &&
                 refused 2 (.resize .rows true 1) (.notResizable .rows) &&
                 refused 0 (.edge .right) (.noSuchEdge .right) &&
                 refused 2 (.edge .top) (.noSuchEdge .top) &&
@@ -9011,7 +9021,7 @@ def windowOperationChecks : List Check :=
               !state.frame.contains ⟨7⟩ &&
               state.views == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
               state.rects ==
-                #[(⟨0⟩, rect 160 0 240 464), (⟨1⟩, rect 400 0 240 464), (⟨2⟩, rect 0 0 160 464)] },
+                #[(⟨0⟩, rect 160 0 238 464), (⟨1⟩, rect 400 0 240 464), (⟨2⟩, rect 0 0 158 464)] },
     { name :=
         "criterion 3: a window docked at the left edge is reached by direction from main, and main from it; closing it empties the edge and the focus goes back to the window focused before it, or to main; the last tile cannot be closed while it is docked"
       run :=
@@ -9260,7 +9270,7 @@ def windowOperationChecks : List Check :=
                 else none
               | _ => none
           (opened 1 Layout.default).map (·.rects) ==
-              some #[(⟨0⟩, rect 0 0 320 464), (⟨1⟩, rect 320 0 320 464)] &&
+              some #[(⟨0⟩, rect 0 0 318 464), (⟨1⟩, rect 320 0 320 464)] &&
             (opened 2 Layout.default).map (·.frame.layout) == some Layout.default &&
             (opened 2 .monocle).map (·.frame.layout) == some .monocle &&
             (opened 2 Layout.manual).map (·.frame.layout) ==
@@ -9380,6 +9390,22 @@ def floatingWindowChecks : List Check :=
               | _ => false
           | _, _, _, _, _ => false },
     { name :=
+        "two tiled windows side by side are carved: the left one gives up the divider's width at its right and the state's dividers are that strip; a float over both is not carved and leaves the dividers as they are without it; the minibuffer's view keeps the strip below the tiled area"
+      run :=
+        pure <|
+          match onTextModel (windowsUnder 2 Layout.default), floating 2 [(.frame, true)] with
+          | some two, some floated =>
+            let (_, asking) := prompted two
+            EditorState.dividerWidth == 2 &&
+              two.rects == #[(⟨0⟩, rect 0 0 318 464), (⟨1⟩, rect 320 0 320 464)] &&
+              two.dividers == #[rect 318 0 2 464] &&
+              floated.dividers == two.dividers &&
+              floated.rect? ⟨2⟩ == some (rect 128 116 384 232) &&
+              floated.rect? ⟨0⟩ == two.rect? ⟨0⟩ &&
+              (asking.minibufferView?.bind asking.rect?) == some asking.cutFrame.2 &&
+              asking.dividers == #[rect 318 0 2 asking.tiled.height]
+          | _, _ => false },
+    { name :=
         "a float is refused a split, a demote, a rotate and an exchange with floating, the state as it was; promote makes it main, the edge command docks it, refused with noSuchEdge where the layout has no edge, and resize steps its share by 5 percent on the axis; zoom from a float anchored to the frame shows the window focused before it under it"
       run :=
         pure <|
@@ -9434,8 +9460,8 @@ def floatingWindowChecks : List Check :=
               edged.cycled ⟨0⟩ false 0 == some ⟨3⟩ &&
               edged.cycled ⟨0⟩ true 9 == some ⟨3⟩ &&
               -- A float nearer than any tile, which focus by direction
-              -- passes over: view 3 is 8 pixels right of view 2, and the
-              -- tile view 1 is 128.
+              -- passes over: view 3 is 10 pixels right of view 2, and the
+              -- tile view 1 is 130.
               match floating 2 [(.window ⟨0⟩, true), (.position ⟨0⟩ (marker 0 1), true)] with
               | none => false
               | some near =>
@@ -9446,7 +9472,7 @@ def floatingWindowChecks : List Check :=
                         ({ · with
                           share := { width := 10 }
                           spot := some { x := 200, y := 100, height := 16 } }) }
-                near.rect? ⟨2⟩ == some (rect 128 116 64 232) &&
+                near.rect? ⟨2⟩ == some (rect 127 116 63 232) &&
                   near.rect? ⟨3⟩ == some (rect 200 116 64 232) &&
                   near.toward? ⟨2⟩ .right 1 == some ⟨1⟩
           | _, _ => false },
@@ -9548,7 +9574,7 @@ def floatingWindowChecks : List Check :=
                     ({ · with spot := some { x := 200, y := 40, height := 16 } }) }
             let asking := (prompted spotted).2
             spotted.rects ==
-                #[(⟨0⟩, rect 160 0 240 464), (⟨1⟩, rect 400 0 240 464), (⟨2⟩, rect 0 0 160 464),
+                #[(⟨0⟩, rect 160 0 238 464), (⟨1⟩, rect 400 0 240 464), (⟨2⟩, rect 0 0 158 464),
                   (⟨3⟩, rect 128 116 384 232), (⟨4⟩, rect 448 116 144 232),
                   (⟨5⟩, rect 200 56 384 232), (⟨6⟩, rect 448 116 144 232)] &&
               asking.rects.map (·.1) ==
@@ -9772,7 +9798,7 @@ def stateChecks : List Check :=
             return state.wellFormed && chosen.wellFormed &&
                 chosen.prompt.map (·.candidates.chosen) == some (some 2) },
         { name :=
-            "the rectangles of a state's views: the windows laid out by the frame's layout in the tiled area, the frame above the minibuffer's strip, which is the bottom message height with no prompt open, a text row and that with one, and the whole height where the frame is shorter; the minibuffer's view in that strip while a prompt is open; under monocle only the selected window, the asker while a prompt is open"
+            "the rectangles of a state's views: the windows laid out by the frame's layout in the tiled area and carved, the frame above the minibuffer's strip, which is the bottom message height with no prompt open, a text row and that with one, and the whole height where the frame is shorter; the minibuffer's view in that strip while a prompt is open; under monocle only the selected window, the asker while a prompt is open"
           run :=
             pure <|
               match onTextModel threeWindows with
@@ -9793,10 +9819,11 @@ def stateChecks : List Check :=
                 let alone := sized ⟨640, 480⟩ (monocle onOne)
                 let aloneAsking := sized ⟨640, 480⟩ (prompted (monocle onOne)).2
                 plain.tiled == rect 0 0 640 468 &&
-                  plain.rects == Layout.default.place windows ⟨0⟩ (rect 0 0 640 468) &&
+                  plain.rects ==
+                    (Layout.carve plain.tiled 2 (Layout.default.place windows ⟨0⟩ plain.tiled)).1 &&
                   asking.tiled == rect 0 0 640 448 &&
                   asking.rects ==
-                    Layout.default.place windows ⟨0⟩ (rect 0 0 640 448) ++
+                    (Layout.carve asking.tiled 2 (Layout.default.place windows ⟨0⟩ asking.tiled)).1 ++
                       #[(⟨3⟩, rect 0 448 640 32)] &&
                   short.tiled == rect 0 0 640 0 &&
                   short.rects.back? == some (⟨3⟩, rect 0 0 640 10) &&
@@ -9805,7 +9832,7 @@ def stateChecks : List Check :=
                   aloneAsking.rects == #[(⟨1⟩, rect 0 0 640 448), (⟨3⟩, rect 0 448 640 32)] &&
                   [plain, asking, short, alone, aloneAsking].all (·.wellFormed) },
         { name :=
-            "with a prompt open the views tile the frame, the windows in list order and the minibuffer's view last, and with none the windows tile the frame above the bottom row, at even, odd and zero sizes and under every layout"
+            "with a prompt open the views and the dividers tile the frame, the windows in list order and the minibuffer's view last, and with none the windows and the dividers tile the frame above the bottom row, at even, odd and zero sizes and under every layout"
           run :=
             pure <|
               match onTextModel threeWindows with
@@ -9821,8 +9848,8 @@ def stateChecks : List Check :=
                             size, layout } }
                     let plain := shaped state
                     let asking := shaped (prompted state).2
-                    tiles plain.tiled (plain.rects.map (·.2)) &&
-                      tiles (frameRect size) (asking.rects.map (·.2)) &&
+                    tiles plain.tiled (plain.rects.map (·.2) ++ plain.dividers) &&
+                      tiles (frameRect size) (asking.rects.map (·.2) ++ asking.dividers) &&
                       (asking.rects.map (·.1)).back? == asking.minibufferView? &&
                       (layout == .monocle || plain.rects.map (·.1) == plain.frame.windows) },
         { name := "removing the only window is refused with onlyWindow, and the state is as it was"
@@ -9854,7 +9881,7 @@ def stateChecks : List Check :=
               match onTextModel threeWindows with
               | none => false
               | some state =>
-                let left := { x := 0, y := 0, width := 320, height := 464 }
+                let left := { x := 0, y := 0, width := 318, height := 464 }
                 let right := { x := 320, y := 0, width := 320, height := 464 }
                 let (_, onOne) := state.focusWindow ⟨1⟩
                 let (_, onTwo) := state.focusWindow ⟨2⟩
@@ -11738,7 +11765,7 @@ def switched (start : TextM EditorState) (text : String) (events : List Event :=
 each event does to the state, and the scene it publishes. -/
 def loopChecks : List Check :=
   [{  name :=
-        "a resize to 641 by 479 of a frame of three windows publishes a scene whose views' rectangles tile 641 by 479 above its bottom row"
+        "a resize to 641 by 479 of a frame of three windows publishes a scene whose views' rectangles and dividers tile 641 by 479 above its bottom row"
       run :=
         pure <|
           match looped threeWindows [.resize { width := 641, height := 479, scale := 2.0 }] with
@@ -11748,9 +11775,40 @@ def loopChecks : List Check :=
               | #[scene] =>
                 -- The display model's bottom row is a pixel tall.
                 scene.size == ⟨641, 479⟩ && scene.views.map (·.id) == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
-                  tiles (frameRect ⟨641, 478⟩) (scene.views.map (·.rect))
+                  scene.dividers.size == 2 &&
+                  tiles (frameRect ⟨641, 478⟩)
+                    (scene.views.map (·.rect) ++ scene.dividers.map (·.rect))
               | _ => false
           | none => false },
+    { name :=
+        "the scene of two tiled windows side by side has one divider, in window-divider, between the two views; of two stacked windows one divider between them"
+      run :=
+        pure <|
+          let rect (x y width height : Nat) : Rect := { x, y, width, height }
+          let stacked := Layout.splits (.split .rows 1 1 .tile .tile)
+          match looped (windowsUnder 2 Layout.default) [pressF5],
+            looped (windowsUnder 2 stacked) [pressF5] with
+          | some ((beside, _), #[across], _), some ((above, _), #[down], _) =>
+            let height := beside.state.tiled.height
+            let half := above.state.tiled.height / 2
+            Loop.dividerFace == ⟨"window-divider"⟩ &&
+              across.views.map (·.rect) ==
+                #[rect 0 0 318 height, rect 320 0 320 height] &&
+              across.dividers == #[{ rect := rect 318 0 2 height, face := Loop.dividerFace }] &&
+              down.views.map (·.rect) ==
+                #[rect 0 0 640 (half - 2), rect 0 half 640 (above.state.tiled.height - half)] &&
+              down.dividers == #[{ rect := rect 0 (half - 2) 640 2, face := Loop.dividerFace }]
+          | _, _ => false },
+    { name :=
+        "a scene with one window, with monocle's one view, or with a float over a single tile has no divider: none along the frame's edges and none around a float"
+      run :=
+        pure <|
+          let monocle : TextM EditorState := windowsUnder 3 .monocle
+          let floated : TextM EditorState := do withFloats (← windowsUnder 1 Layout.default) [(.frame, true)]
+          [EditorState.initial ⟨640, 480⟩, monocle, floated].all fun start =>
+            match looped start [pressF5] with
+            | some (_, #[scene], _) => !scene.views.isEmpty && scene.dividers.isEmpty
+            | _ => false },
     { name :=
         "a preedit publishes a scene that carries it for the focused view, and leaves the buffer's text and revision as they were"
       run :=
@@ -24375,7 +24433,7 @@ def displayRuleChecks : List Check :=
               main == ⟨0⟩ && shownName listed main == some "lf.txt" &&
                 state.frame.focused == list &&
                 shownName listed list == some Buffers.listBuffer &&
-                (state.rect? main).map (·.width) == some 320 &&
+                (state.rect? main).map (·.width) == some 318 &&
                 (state.rect? list).map (fun rect => (rect.x, rect.width)) == some (320, 320) &&
                 again.loop.state.frame.windows == state.frame.windows &&
                 again.loop.state.frame.focused == list &&
@@ -24410,7 +24468,7 @@ def displayRuleChecks : List Check :=
                 shownName noted notes == some "notes" &&
                 shownName noted ⟨0⟩ == some "lf.txt" &&
                 (state.rect? notes).map (fun rect => (rect.x, rect.y, rect.width)) ==
-                  some (0, 0, 160) &&
+                  some (0, 0, 158) &&
                 (state.rect? ⟨0⟩).map (fun rect => (rect.x, rect.width)) == some (160, 480) &&
                 state.wellFormed
             | _ => false },
@@ -29935,11 +29993,12 @@ def viewChecks : List Check :=
             return none
           let idle : Dispatched := fun _ => pure none
           let handed := evilHanded (commands := [("grow", grow), ("idle", idle)])
-          -- Rows of a pixel: a frame of twelve is eleven above its bottom
-          -- row, a window of five and one of six, whose texts have four rows
-          -- and five above their status rows.
+          -- Rows of a pixel: a frame of fifteen is fourteen above its bottom
+          -- row, a window of seven less the divider's two below it, and one
+          -- of seven, whose texts have four rows and six above their status
+          -- rows.
           match
-            (Loop.Driver.over handed (fun _ => none) (splitViews contents ⟨10, 12⟩ (startOf rows 3))
+            (Loop.Driver.over handed (fun _ => none) (splitViews contents ⟨10, 15⟩ (startOf rows 3))
                 editorModel).toOption with
           | none => false
           | some driver =>
@@ -29947,10 +30006,10 @@ def viewChecks : List Check :=
             let grown := viewRan driver "grow"
             match viewSeen still ⟨1⟩, viewSeen grown ⟨1⟩, viewSeen grown ⟨0⟩ with
             | some was, some other, some own =>
-              was.anchor == 0 && was.shown.size == 5 && was.index == some 3 &&
+              was.anchor == 0 && was.shown.size == 6 && was.index == some 3 &&
                 other.head != was.head &&
                 other.anchor != 0 &&
-                other.index == some 4 &&
+                other.index == some 5 &&
                 own.anchor == 0 &&
                 own.index.isSome
             | _, _, _ => false },
@@ -31273,7 +31332,7 @@ def windowCommandChecks : List Check :=
             after "C-w H C-w C-c", after "C-w H C-w m", after "C-w H C-w H" with
           | some docked, some right, some left, some closed, some promoted, some back =>
             windowOrder docked == ([0], 1) && docked.frame.docked == #[(⟨1⟩, .left)] &&
-              windowRects docked == [(0, 160, 0, 480, 464), (1, 0, 0, 160, 464)] &&
+              windowRects docked == [(0, 160, 0, 480, 464), (1, 0, 0, 158, 464)] &&
               docked.wellFormed &&
               right.frame.focused == ⟨0⟩ &&
               left.frame.focused == ⟨1⟩ &&
@@ -31284,7 +31343,7 @@ def windowCommandChecks : List Check :=
               promoted.frame.docked == #[] &&
               windowOrder back == ([0, 1], 1) &&
               back.frame.docked == #[] &&
-              windowRects back == [(0, 0, 0, 320, 464), (1, 320, 0, 320, 464)]
+              windowRects back == [(0, 0, 0, 318, 464), (1, 320, 0, 320, 464)]
           | _, _, _, _, _, _ => false },
     { name :=
         "C-w L under a layout with no right edge is refused, and the echo area says so with the command's name; C-w H on the last tile is refused with lastTile"
@@ -31317,7 +31376,7 @@ def windowCommandChecks : List Check :=
               back.frame.focused == ⟨2⟩
           | _, _, _, _, _ => false },
     { name :=
-        "criterion 1, C-w s: two windows on the same buffer with equal markers at first, the new one above and focused, and the windows of the column equal in height; three from one window at 640 by 464 give four rows of 116"
+        "criterion 1, C-w s: two windows on the same buffer with equal markers at first, the new one above and focused, and the windows of the column equal in height; three from one window at 640 by 464 give four rows of 116, the upper three less the divider below them"
       run :=
         pure <|
           let split := (windowDriver 1 Layout.manual).map (evilFed · "C-w s")
@@ -31325,11 +31384,11 @@ def windowCommandChecks : List Check :=
           | some split, some thrice =>
             let state := split.loop.state
             windowOrder state == ([1, 0], 1) &&
-              windowRects state == [(1, 0, 0, 640, 232), (0, 0, 232, 640, 232)] &&
+              windowRects state == [(1, 0, 0, 640, 230), (0, 0, 232, 640, 232)] &&
               state.windows.all (·.buffer == ⟨0⟩) &&
               evilSelection split ⟨1⟩ == evilSelection split ⟨0⟩ &&
               (evilSelection split ⟨1⟩).isSome &&
-              (windowRects thrice).map (·.2.2.2.2) == [116, 116, 116, 116] &&
+              (windowRects thrice).map (·.2.2.2.2) == [114, 114, 114, 116] &&
               thrice.wellFormed
           | _, _ => false },
     { name :=
@@ -31339,11 +31398,11 @@ def windowCommandChecks : List Check :=
           match manual 1 "C-w v", manual 1 "C-w v C-w v", manual 1 "C-w s C-w v" with
           | some once, some twice, some under =>
             windowOrder once == ([1, 0], 1) &&
-              windowRects once == [(1, 0, 0, 320, 464), (0, 320, 0, 320, 464)] &&
+              windowRects once == [(1, 0, 0, 318, 464), (0, 320, 0, 320, 464)] &&
               windowRects twice ==
-                [(2, 0, 0, 213, 464), (1, 213, 0, 213, 464), (0, 426, 0, 214, 464)] &&
+                [(2, 0, 0, 211, 464), (1, 213, 0, 211, 464), (0, 426, 0, 214, 464)] &&
               windowRects under ==
-                [(2, 0, 0, 320, 232), (1, 320, 0, 320, 232), (0, 0, 232, 640, 232)]
+                [(2, 0, 0, 318, 230), (1, 320, 0, 320, 230), (0, 0, 232, 640, 232)]
           | _, _, _ => false },
     { name :=
         "criterion 1, C-w C-n (Vim's CTRL-W n): a new window above, focused, on a new empty buffer with no file; the old window keeps its buffer"
@@ -31355,7 +31414,7 @@ def windowCommandChecks : List Check :=
             let state := driver.loop.state
             let made := state.window? ⟨1⟩
             windowOrder state == ([1, 0], 1) &&
-              windowRects state == [(1, 0, 0, 640, 232), (0, 0, 232, 640, 232)] &&
+              windowRects state == [(1, 0, 0, 640, 230), (0, 0, 232, 640, 232)] &&
               (state.window? ⟨0⟩).map (·.buffer) == some ⟨0⟩ &&
               made.any (·.buffer != ⟨0⟩) &&
               (made.bind fun window => state.buffer? window.buffer).any fun buffer =>
@@ -31368,7 +31427,7 @@ def windowCommandChecks : List Check :=
           match manual 1 "C-w s C-w s C-w C-c", manual 1 "C-w C-c" with
           | some closed, some last =>
             windowOrder closed == ([1, 0], 1) &&
-              windowRects closed == [(1, 0, 0, 640, 232), (0, 0, 232, 640, 232)] &&
+              windowRects closed == [(1, 0, 0, 640, 230), (0, 0, 232, 640, 232)] &&
               closed.wellFormed &&
               windowOrder last == ([0], 0) &&
               last.echo == s!"{WindowCommands.closeName}: {LayoutRefusal.onlyWindow.describe}"
@@ -31444,7 +31503,7 @@ def windowCommandChecks : List Check :=
             Splits.split .columns 7 3 (.split .rows 1 4 .tile .tile) (.split .rows 2 1 .tile .tile)
           (windowsAfter 4 (.splits tree) "C-w =").map windowRects ==
             some
-              [(0, 0, 0, 320, 232), (1, 0, 232, 320, 232), (2, 320, 0, 320, 232),
+              [(0, 0, 0, 318, 230), (1, 0, 232, 318, 232), (2, 320, 0, 320, 230),
                 (3, 320, 232, 320, 232)] },
     { name :=
         "C-w x exchanges the window with the next and puts the focus in the other window; C-w r and C-w R rotate a row of windows, the focus staying in its window"
@@ -31494,11 +31553,11 @@ def windowCommandChecks : List Check :=
             (windowsAfter count layout typed).map windowRects
           rects Layout.default 3 "C-w z C-w ," == some [(0, 0, 0, 640, 464)] &&
             rects Layout.default 3 "C-w z C-w , C-w z" ==
-              some [(0, 0, 0, 320, 232), (1, 0, 232, 320, 232), (2, 320, 0, 320, 464)] &&
+              some [(0, 0, 0, 318, 230), (1, 0, 232, 318, 232), (2, 320, 0, 320, 464)] &&
             rects Layout.default 2 "C-w z C-w > C-w z" ==
-              some [(0, 0, 0, 352, 464), (1, 352, 0, 288, 464)] &&
+              some [(0, 0, 0, 350, 464), (1, 352, 0, 288, 464)] &&
             rects (.splits (.split .rows 7 3 .tile .tile)) 2 "C-w z C-w = C-w z" ==
-              some [(0, 0, 0, 640, 232), (1, 0, 232, 640, 232)] },
+              some [(0, 0, 0, 640, 230), (1, 0, 232, 640, 232)] },
     { name :=
         "resize by key under manual splits, after C-w s at 640 by 464: C-w + makes the focused top row 5 percent of the extent taller and C-w - shorter, with a count 10 percent; on the bottom row C-w + grows it and shrinks the top; C-w > in a tree of rows only, and C-w + and C-w - under master-and-stack on the left, are refused, and the echo area says why"
       run :=
@@ -31506,10 +31565,10 @@ def windowCommandChecks : List Check :=
           let heights (typed : String) : Option (List Nat) :=
             (manual 1 typed).map fun state => (windowRects state).map (·.2.2.2.2)
           let rowsRefused := (LayoutRefusal.notResizable .rows).describe
-          heights "C-w s C-w +" == some [255, 209] && heights "C-w s C-w -" == some [208, 256] &&
-            heights "C-w s 2 C-w +" == some [278, 186] &&
-            heights "C-w s C-w j C-w +" == some [208, 256] &&
-            heights "C-w s C-w j C-w -" == some [255, 209] &&
+          heights "C-w s C-w +" == some [253, 209] && heights "C-w s C-w -" == some [206, 256] &&
+            heights "C-w s 2 C-w +" == some [276, 186] &&
+            heights "C-w s C-w j C-w +" == some [206, 256] &&
+            heights "C-w s C-w j C-w -" == some [253, 209] &&
             (windowsAfter 2 Layout.default "C-w +").map (·.echo) ==
               some s!"{WindowCommands.tallerName}: {rowsRefused}" &&
             (windowsAfter 2 Layout.default "C-w -").map (·.echo) ==
@@ -31517,7 +31576,7 @@ def windowCommandChecks : List Check :=
             match manual 1 "C-w s C-w >" with
             | none => false
             | some wider =>
-              (windowRects wider).map (·.2.2.2.2) == [232, 232] &&
+              (windowRects wider).map (·.2.2.2.2) == [230, 232] &&
                 wider.echo ==
                   s!"{WindowCommands.widerName}: {(LayoutRefusal.notResizable .columns).describe}" },
     { name :=
