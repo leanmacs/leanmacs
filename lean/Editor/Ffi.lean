@@ -536,14 +536,48 @@ instance : Nonempty Document :=
 @[extern "editor_glue_document_new"]
 opaque Document.new (text : @& String) : IO Document
 
-/-- Replaces the bytes of the document from `start` up to, not including,
-`stop` with `text`, and returns whether the library did. An empty range
-inserts, and an empty `text` deletes.
+/-- How the library ended a replace (`Document.replace`). Anything but `done`
+changed nothing. -/
+inductive ReplaceStatus where
+  /-- Replaced. -/
+  | done
+  /-- An offset is not a character boundary of the text within it, or the
+  start is after the stop. -/
+  | badRange
+  /-- The document is an excerpt document, and the range is not inside one
+  excerpt, or meets two excerpts of one source. -/
+  | outsideExcerpt
+  /-- The document is an excerpt document, and the range is in an excerpt of
+  a source that was freed. -/
+  | noSuchSource
+  deriving DecidableEq, Repr
 
-`false`, with nothing changed, unless both offsets are character boundaries
-of the document's text, within it, and `start ≤ stop`. -/
+/-- `Document.replace` as it crosses: the status as its number. -/
 @[extern "editor_glue_document_replace"]
-opaque Document.replace (document : @& Document) (start stop : USize) (text : @& String) : IO Bool
+private opaque Document.replaceRaw (document : @& Document) (start stop : USize)
+    (text : @& String) : IO UInt64
+
+/-- Replaces the bytes of the document from `start` up to, not including,
+`stop` with `text`, and says how it ended. An empty range inserts, and an
+empty `text` deletes.
+
+`badRange`, with nothing changed, unless both offsets are character
+boundaries of the document's text, within it, and `start ≤ stop`. An excerpt
+document's replace is its sources' edit (`crates/editor-ffi/src/excerpts.rs`),
+refused after that with `outsideExcerpt` or `noSuchSource`. -/
+def Document.replace (document : Document) (start stop : USize) (text : String) :
+    IO ReplaceStatus := do
+  match ← document.replaceRaw start stop text with
+  | 0 =>
+    return .done
+  | 1 =>
+    return .badRange
+  | 2 =>
+    return .outsideExcerpt
+  | 3 =>
+    return .noSuchSource
+  | status =>
+    throw (IO.userError s!"the library answered a replace with an unknown status {status}")
 
 /-- A copy of the whole text of the document. -/
 @[extern "editor_glue_document_read"]
@@ -795,8 +829,14 @@ inductive ApplyRefusal where
   /-- A selection has no range, its primary names none, or an end of one of
   its ranges is not a position of its text. -/
   | badSelection
-  /-- The document is an excerpt document, whose edits are refused. -/
+  /-- The document is an excerpt document, whose edit scripts are refused. -/
   | excerpted
+  /-- The document is an excerpt document, and a range the transaction changes
+  is not inside one excerpt, or meets two excerpts of one source. -/
+  | outsideExcerpt
+  /-- The document is an excerpt document, and the transaction reaches an
+  excerpt of a source that was freed. -/
+  | noSuchSource
   deriving DecidableEq, Repr
 
 /-- `words` with `word` added: its eight bytes, least significant first. -/
@@ -859,7 +899,8 @@ private def Transaction.inserted (transaction : Transaction) : String :=
 private structure RawApplied where
   /-- 0 applied, 1 the changes do not fit, 2 a selection does not fit, 3 the
   words could not be read, 4 the text moved past an edit script's revision,
-  5 an excerpt document. -/
+  5 an excerpt document's edit script, 6 an edit outside one excerpt, 7 an
+  edit of a freed source. -/
   status : UInt64
   /-- The revision the transaction produced, when it was applied. -/
   revision : UInt64
@@ -875,11 +916,15 @@ edit, and returns the revision it produced: one more than before, however
 many changes it has. `origin` is a number the library stores and gives back
 (`Document.trace`) and never reads.
 
-A refused transaction changes nothing. An excerpt document is refused first,
-then a selection that is none (no range, or a primary that names none), then
-changes that do not fit, then a selection with an end that is not a position
-of its text. A length or an offset given as the largest `UInt64` is one no
-text accepts. -/
+A refused transaction changes nothing. A selection that is none (no range, or
+a primary that names none) is refused first, then changes that do not fit,
+then a selection with an end that is not a position of its text. A length or
+an offset given as the largest `UInt64` is one no text accepts.
+
+An excerpt document's transaction is its sources' edit, and the revision is
+the excerpt document's (`crates/editor-ffi/src/excerpts.rs`): after those
+refusals, an edit outside one excerpt is `outsideExcerpt`, and one that
+reaches a freed source `noSuchSource`. -/
 def Document.apply (document : Document) (transaction : Transaction) (origin : UInt64) :
     IO (Except ApplyRefusal UInt64) := do
   let raw ← document.applyRaw transaction.words transaction.inserted origin
@@ -892,6 +937,10 @@ def Document.apply (document : Document) (transaction : Transaction) (origin : U
     return .error .badSelection
   | 5 =>
     return .error .excerpted
+  | 6 =>
+    return .error .outsideExcerpt
+  | 7 =>
+    return .error .noSuchSource
   | status =>
     throw (IO.userError s!"the library could not read a transaction's words (status {status})")
 
@@ -1691,8 +1740,9 @@ opaque Document.ofSnapshot (snapshot : @& Snapshot) : IO Document
 ranges of other documents, its sources, joined by one line feed
 (`crates/editor-ffi/src/excerpts.rs`). Its text is caught up with its
 sources whenever it is read, so a snapshot of it, its edit log and its
-markers follow them; its edits are refused. It holds its sources' texts, so
-a source freed is read as it was. -/
+markers follow them; its edits are its sources' edits, and its inverse, edit
+script and trace are refused. It holds its sources' texts, so a source freed
+is read as it was, and no longer edited through it. -/
 @[extern "editor_glue_excerpts_new"]
 opaque Document.excerptsNew : IO Document
 
@@ -1741,6 +1791,48 @@ def Document.excerptsSet (document : Document) (sources : Array Document)
 /-- Whether the document is an excerpt document. -/
 @[extern "editor_glue_document_is_excerpts"]
 opaque Document.isExcerpts (document : @& Document) : IO Bool
+
+/-- Where an offset of an excerpt document is, as the glue builds it in one
+call: `UInt64` fields only, so the order here is the layout the glue
+writes. -/
+private structure RawLocated where
+  /-- 0 found, 1 not an excerpt document, 2 not a position, 3 an empty
+  list. -/
+  status : UInt64
+  /-- The index of the excerpt, when found. -/
+  excerpt : UInt64
+  /-- The offset in its source, when found. -/
+  offset : UInt64
+
+/-- `Document.excerptsLocate` as it crosses. -/
+@[extern "editor_glue_excerpts_locate"]
+private opaque Document.excerptsLocateRaw (document : @& Document) (offset : USize) : IO RawLocated
+
+/-- Why the library did not locate an offset of an excerpt document. -/
+inductive LocateRefusal where
+  /-- The document is not an excerpt document. -/
+  | notExcerpts
+  /-- The offset is not a position of the document's text. -/
+  | badPosition
+  deriving DecidableEq, Repr
+
+/-- Which excerpt of the excerpt document holds the position `offset` of its
+text, caught up first, and the offset in that excerpt's source as the source
+is now: `none` for an empty list. An excerpt holds both its ends. -/
+def Document.excerptsLocate (document : Document) (offset : USize) :
+    IO (Except LocateRefusal (Option (Nat × Nat))) := do
+  let raw ← document.excerptsLocateRaw offset
+  match raw.status with
+  | 0 =>
+    return .ok (some (raw.excerpt.toNat, raw.offset.toNat))
+  | 1 =>
+    return .error .notExcerpts
+  | 2 =>
+    return .error .badPosition
+  | 3 =>
+    return .ok none
+  | status =>
+    throw (IO.userError s!"the library answered a locate with an unknown status {status}")
 
 /-- What the file service compares to tell whether a file changed: when it
 was last modified and how long it is. Two stamps are compared for equality

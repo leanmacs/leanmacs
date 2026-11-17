@@ -191,9 +191,16 @@ pub enum ApplyStatus {
     /// Refused: an edit script was made for a revision the text has moved
     /// past ([`Document::apply_script`]).
     Moved = 4,
-    /// Refused: the document is an excerpt document, whose edits are
-    /// refused ([`crate::excerpts`]). Looked for before anything else.
+    /// Refused: the document is an excerpt document, whose edit scripts
+    /// are refused ([`crate::excerpts`]). Looked for before anything else.
     Excerpted = 5,
+    /// Refused: the document is an excerpt document, and a range the
+    /// transaction changes is not inside one excerpt, or meets two
+    /// excerpts of one source ([`crate::excerpts`]).
+    OutsideExcerpt = 6,
+    /// Refused: the document is an excerpt document, and the transaction
+    /// reaches an excerpt of a source that was freed.
+    NoSuchSource = 7,
 }
 
 impl ApplyStatus {
@@ -222,9 +229,9 @@ impl Document {
     /// ([`decode`]), recording `origin` as who made the edit, and says how
     /// it ended. Anything but [`ApplyStatus::Applied`] changed nothing.
     ///
-    /// An excerpt document is refused first, then a selection that is not
-    /// one, before the change set is looked at; after that the order is
-    /// the text's ([`editor_text::Text::apply`]).
+    /// Words that cannot be read are refused first, then a selection that
+    /// is not one, before the change set is looked at; after that the order
+    /// is [`apply`](Self::apply)'s.
     pub fn apply_words(&self, words: &[u8], inserted: &[u8], origin: u64) -> RawApplied {
         let applied = decode(words, inserted)
             .map_err(|undecoded| match undecoded {
@@ -232,11 +239,6 @@ impl Document {
                 Undecoded::NotASelection => ApplyStatus::BadSelection,
             })
             .and_then(|transaction| self.apply(&transaction, Origin::new(origin)));
-        let applied = if self.is_excerpts() {
-            Err(ApplyStatus::Excerpted)
-        } else {
-            applied
-        };
         match applied {
             Ok(revision) => RawApplied {
                 status: ApplyStatus::Applied as u64,
@@ -251,15 +253,20 @@ impl Document {
 
     /// Applies `transaction`, recording `origin` as who made the edit, and
     /// returns the revision it produced ([`editor_text::Text::apply`]). A
-    /// refused transaction changes nothing. An excerpt document's is
-    /// refused with [`ApplyStatus::Excerpted`] before it is locked.
+    /// refused transaction changes nothing.
+    ///
+    /// An excerpt document's is its sources' edit
+    /// ([`editor_text::excerpt::Excerpts::edit`]), and the revision is the
+    /// excerpt document's: refused as a plain text's would be, then with
+    /// [`ApplyStatus::OutsideExcerpt`], then with
+    /// [`ApplyStatus::NoSuchSource`] ([`crate::excerpts`]).
     pub fn apply(
         &self,
         transaction: &Transaction,
         origin: Origin,
     ) -> Result<Revision, ApplyStatus> {
         if self.is_excerpts() {
-            return Err(ApplyStatus::Excerpted);
+            return self.edit_excerpts(transaction, origin);
         }
         let applied = self
             .lock()

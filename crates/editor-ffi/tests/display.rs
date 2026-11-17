@@ -25,7 +25,7 @@ use editor_ffi::display::{
     encode_definitions,
 };
 use editor_ffi::document::{
-    Document, RawText, editor_ffi_document_free, editor_ffi_document_new,
+    Document, RawText, ReplaceStatus, editor_ffi_document_free, editor_ffi_document_new,
     editor_ffi_document_replace,
 };
 use editor_ffi::log::{RawWords, editor_ffi_document_forget};
@@ -329,13 +329,10 @@ fn a_document_whose_log_was_forgotten_is_laid_out_again_from_its_snapshot() {
     let inserted = "0123\n";
     // SAFETY: `document` is live, and `inserted` alive for the call.
     let second = unsafe {
-        assert!(editor_ffi_document_replace(
-            document,
-            0,
-            0,
-            inserted.as_ptr(),
-            inserted.len()
-        ));
+        assert_eq!(
+            editor_ffi_document_replace(document, 0, 0, inserted.as_ptr(), inserted.len()),
+            ReplaceStatus::Done as u64
+        );
         let mut info = MaybeUninit::uninit();
         let latest = editor_ffi_document_snapshot(document);
         editor_ffi_snapshot_info(latest, info.as_mut_ptr());

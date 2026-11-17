@@ -53,8 +53,11 @@
 //! `Document::lock` brings it up to date with its sources before it hands
 //! the text out, so every path that reads it, its log or its markers sees
 //! what its sources hold now. A catch-up tells the syntax service nothing:
-//! an excerpt text is not parsed. Its edits are refused, before the lock is
-//! taken, so a refusal catches nothing up; [`crate::excerpts`] has the
+//! an excerpt text is not parsed. Its edits are its sources' edits: a
+//! replace or a transaction of it is one transaction on each source it
+//! changes, and each source it changed tells the syntax service, while the
+//! excerpt document itself does not. Its inverse, edit script and trace
+//! are refused before the lock is taken; [`crate::excerpts`] has the
 //! rules.
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -81,6 +84,28 @@ pub struct Document {
     /// For an excerpt document, its list and its sources; `None` for any
     /// other. Its lock is taken before the text's.
     excerpts: Option<Mutex<Excerpted>>,
+    /// Lives as long as the document: an excerpt document that holds this
+    /// document's text as a source edits it only while this upgrades
+    /// ([`alive`](Self::alive)).
+    alive: Arc<()>,
+}
+
+/// How a replace ended ([`Document::replace_status`]), as it crosses the
+/// boundary. Anything but [`ReplaceStatus::Done`] changed nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplaceStatus {
+    /// Replaced.
+    Done = 0,
+    /// Refused: an offset is not a position of the text, or the start is
+    /// after the end.
+    BadRange = 1,
+    /// Refused: the document is an excerpt document, and the range is not
+    /// inside one excerpt, or meets two excerpts of one source
+    /// ([`editor_text::excerpt::ExcerptError::OutsideExcerpt`]).
+    OutsideExcerpt = 2,
+    /// Refused: the document is an excerpt document, and the range is in an
+    /// excerpt of a source that was freed.
+    NoSuchSource = 3,
 }
 
 /// The next key of a text: a number given out once in the process, to a
@@ -104,6 +129,7 @@ impl Document {
             text: Arc::new(Mutex::new(text)),
             key: next_key(),
             excerpts: None,
+            alive: Arc::new(()),
         }
     }
 
@@ -114,6 +140,7 @@ impl Document {
             text: Arc::new(Mutex::new(Text::new())),
             key: next_key(),
             excerpts: Some(Mutex::new(Excerpted::default())),
+            alive: Arc::new(()),
         }
     }
 
@@ -136,6 +163,13 @@ impl Document {
         Arc::clone(&self.text)
     }
 
+    /// Whether the document still lives, to be asked later without keeping
+    /// it alive: an excerpt document that reads this one's text edits it
+    /// only while this upgrades.
+    pub(crate) fn alive(&self) -> Weak<()> {
+        Arc::downgrade(&self.alive)
+    }
+
     /// The document's key: no other document's, and no snapshot's but those
     /// taken of it.
     pub fn key(&self) -> u64 {
@@ -149,19 +183,28 @@ impl Document {
     }
 
     /// Replaces the bytes from `start` up to, not including, `end` with
-    /// `text`, and returns whether it did. An empty range inserts, and an
-    /// empty `text` deletes.
-    ///
-    /// Returns false, changing nothing: always for an excerpt document,
-    /// whose edits are refused before it is locked, so the refusal catches
-    /// nothing up ([`crate::excerpts`]); then when the text refuses the
-    /// edit ([`Text::replace`]): unless both offsets are character
-    /// boundaries of the document's text, within it, and `start <= end`.
+    /// `text`, and returns whether it did:
+    /// [`replace_status`](Self::replace_status) for a Rust caller that
+    /// wants only that.
     pub fn replace(&self, start: usize, end: usize, text: &str) -> bool {
-        // An excerpt document is refused before it is locked, so a refusal
-        // catches nothing up.
+        self.replace_status(start, end, text) == ReplaceStatus::Done
+    }
+
+    /// Replaces the bytes from `start` up to, not including, `end` with
+    /// `text`, and says how it ended. An empty range inserts, and an empty
+    /// `text` deletes. Anything but [`ReplaceStatus::Done`] changed
+    /// nothing.
+    ///
+    /// It is the text's replace ([`Text::replace`]), refused with
+    /// [`ReplaceStatus::BadRange`] unless both offsets are character
+    /// boundaries of the document's text, within it, and `start <= end`.
+    /// An excerpt document's is its sources' edit, recorded with the
+    /// default origin as a plain replace is ([`crate::excerpts`]): after
+    /// those checks, made of the text caught up, it is refused with
+    /// [`ReplaceStatus::OutsideExcerpt`] or [`ReplaceStatus::NoSuchSource`].
+    pub fn replace_status(&self, start: usize, end: usize, text: &str) -> ReplaceStatus {
         if self.is_excerpts() {
-            return false;
+            return self.replace_excerpts(start, end, text);
         }
         let mut locked = self.lock();
         let replaced = locked.replace(start..end, text).is_ok();
@@ -169,8 +212,10 @@ impl Document {
         drop(locked);
         if replaced {
             crate::syntax::touched(self.key, revision);
+            ReplaceStatus::Done
+        } else {
+            ReplaceStatus::BadRange
         }
-        replaced
     }
 
     /// A copy of the whole text.
@@ -274,9 +319,10 @@ pub unsafe extern "C" fn editor_ffi_document_from_snapshot(
     hand_out(Document::over(text))
 }
 
-/// [`Document::replace`] for C: replaces the bytes of `document` from
+/// [`Document::replace_status`] for C: replaces the bytes of `document` from
 /// `start` up to, not including, `end` with the `len` bytes at `text`, and
-/// returns whether it did. False, with nothing changed, is the refusal.
+/// returns a [`ReplaceStatus`] as its number. Anything but
+/// [`ReplaceStatus::Done`] changed nothing.
 ///
 /// `text` that is not UTF-8 is read as [`editor_ffi_document_new`] reads it.
 ///
@@ -291,11 +337,11 @@ pub unsafe extern "C" fn editor_ffi_document_replace(
     end: usize,
     text: *const u8,
     len: usize,
-) -> bool {
+) -> u64 {
     // SAFETY: the caller guarantees the pointer and the length.
     let text = unsafe { text::borrow(text, len) };
     // SAFETY: the caller guarantees `document` points to a live document.
-    unsafe { &*document }.replace(start, end, &text)
+    unsafe { &*document }.replace_status(start, end, &text) as u64
 }
 
 /// A document's text as it crosses the boundary: one record, filled in one

@@ -14,14 +14,31 @@
 //! - **It holds its sources strongly** ([`Excerpted`]): a source document
 //!   that is freed leaves its text to the excerpt documents that read it,
 //!   read as it was when it was freed, since nothing can edit it any more.
-//! - **Its edits are refused** in this phase, before it is locked, so a
-//!   refusal catches nothing up: [`Document::replace`] returns false,
-//!   applying a transaction or an edit script answers
-//!   [`ApplyStatus::Excerpted`](crate::transaction::ApplyStatus::Excerpted),
+//! - **Its edits are its sources'.** A replace ([`Document::replace_status`])
+//!   or a transaction ([`Document::apply`]) of an excerpt document is made
+//!   of its sources by [`Excerpts::edit`]: one transaction on each source
+//!   it changes, with the caller's origin, all or nothing, and one catch-up
+//!   of the excerpt document. It takes the locks a catch-up takes, in the
+//!   same order, so the argument above still holds. Each source it changed
+//!   tells the syntax service, once every lock is let go. An edit that
+//!   reaches an excerpt of a freed source is refused
+//!   ([`ReplaceStatus::NoSuchSource`],
+//!   [`ApplyStatus::NoSuchSource`]):
+//!   nothing could undo it. An edit outside one excerpt is refused as
+//!   [`ReplaceStatus::OutsideExcerpt`] or
+//!   [`ApplyStatus::OutsideExcerpt`].
+//! - **Its inverse, edit script and trace are refused**, before it is
+//!   locked, so a refusal catches nothing up: applying an edit script
+//!   answers
+//!   [`ApplyStatus::Excerpted`],
 //!   applying an inverse
 //!   [`InverseStatus::Excerpted`](crate::inverse::InverseStatus::Excerpted),
 //!   and a trace nothing. Marking, reading the log, forgetting it and
 //!   dropping kept inverses work as on any document.
+//! - **Where an offset is** ([`Document::locate`],
+//!   [`editor_ffi_excerpts_locate`]): which excerpt holds it and the offset
+//!   in its source, so the editor can tell which source an edit reaches
+//!   before it makes it.
 //!
 //! **What hands an excerpt document out**: [`editor_ffi_excerpts_new`], a
 //! document handle like those [`crate::document`] lists, freed by
@@ -34,24 +51,30 @@
 //! the index of its source in that array, its start and its end. It
 //! answers with a status ([`ExcerptStatus`]).
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
-use editor_text::Text;
-use editor_text::excerpt::{ExcerptError, Excerpts, SourceKey, Wanted};
+use editor_text::excerpt::{Edited, ExcerptError, Excerpts, SourceKey, Wanted};
+use editor_text::{Origin, Revision, Text, Transaction};
 
-use crate::document::{Document, hand_out};
+use crate::document::{Document, ReplaceStatus, hand_out};
+use crate::transaction::ApplyStatus;
 use crate::words::Reader;
+
+/// One source of an excerpt document: its document's key, its text, held
+/// strongly, and whether its document still lives
+/// ([`Document::alive`]).
+type Source = (u64, Arc<Mutex<Text>>, Weak<()>);
 
 /// The list of an excerpt document and the texts of its sources, each by
 /// its document's key, sorted by key with no key twice. The texts are held
 /// strongly: an excerpt document keeps reading a source whose document was
-/// freed.
+/// freed, and edits only those whose document lives.
 #[derive(Default)]
 pub struct Excerpted {
     /// The list.
     list: Excerpts,
-    /// The texts of the sources the list names.
-    sources: Vec<(u64, Arc<Mutex<Text>>)>,
+    /// The sources the list names.
+    sources: Vec<Source>,
 }
 
 /// `text`, locked; a poisoned lock is used as it is, as a document does.
@@ -61,13 +84,10 @@ fn lock(text: &Mutex<Text>) -> MutexGuard<'_, Text> {
 
 /// What `work` returns of `sources`, each locked in the order given, which
 /// is ascending key order, and handed over with its key.
-fn locked<T>(
-    sources: &[(u64, Arc<Mutex<Text>>)],
-    work: impl FnOnce(&mut [(SourceKey, &mut Text)]) -> T,
-) -> T {
+fn locked<T>(sources: &[Source], work: impl FnOnce(&mut [(SourceKey, &mut Text)]) -> T) -> T {
     let mut guards: Vec<(u64, MutexGuard<'_, Text>)> = sources
         .iter()
-        .map(|(key, text)| (*key, lock(text)))
+        .map(|(key, text, _)| (*key, lock(text)))
         .collect();
     let mut texts: Vec<(SourceKey, &mut Text)> = guards
         .iter_mut()
@@ -77,9 +97,9 @@ fn locked<T>(
 }
 
 /// `sources` sorted by key with no key twice.
-fn sorted(mut sources: Vec<(u64, Arc<Mutex<Text>>)>) -> Vec<(u64, Arc<Mutex<Text>>)> {
-    sources.sort_by_key(|(key, _)| *key);
-    sources.dedup_by_key(|(key, _)| *key);
+fn sorted(mut sources: Vec<Source>) -> Vec<Source> {
+    sources.sort_by_key(|(key, _, _)| *key);
+    sources.dedup_by_key(|(key, _, _)| *key);
     sources
 }
 
@@ -89,9 +109,44 @@ impl Excerpted {
     /// text's; the sources' are taken here, in ascending key order.
     pub(crate) fn refresh(&mut self, assembled: &mut Text) {
         let Self { list, sources } = self;
-        // Only the list writes the text, every edit of it being refused,
-        // so the list is never refused here.
+        // Only the list writes the text, an edit of it being the list's
+        // too, so the list is never refused here.
         let _ = locked(sources, |texts| list.refresh(assembled, texts));
+    }
+
+    /// Makes the transaction `make` builds of `assembled`, the document's
+    /// text, caught up, an edit of the sources ([`Excerpts::edit`]). Its
+    /// caller holds this list's lock and the text's; the sources' are taken
+    /// here, in ascending key order, and held from the catch-up to the
+    /// edit, so the transaction is built of the text the edit is checked
+    /// against. `make` refuses with `None`, which is
+    /// [`ExcerptError::BadRange`].
+    ///
+    /// The text is caught up with every source, and the edit is then given
+    /// only those whose document lives: one that reaches a freed source is
+    /// refused with [`ExcerptError::NoSuchSource`].
+    pub(crate) fn edit(
+        &mut self,
+        assembled: &mut Text,
+        origin: Origin,
+        make: impl FnOnce(&editor_text::Snapshot) -> Option<Transaction>,
+    ) -> Result<Edited, ExcerptError> {
+        let Self { list, sources } = self;
+        let alive: Vec<bool> = sources
+            .iter()
+            .map(|(_, _, alive)| alive.upgrade().is_some())
+            .collect();
+        locked(sources, |texts| {
+            list.refresh(assembled, texts)?;
+            let transaction = make(assembled.current()).ok_or(ExcerptError::BadRange)?;
+            let mut living: Vec<(SourceKey, &mut Text)> = texts
+                .iter_mut()
+                .zip(alive)
+                .filter(|(_, alive)| *alive)
+                .map(|((key, text), _)| (*key, &mut **text))
+                .collect();
+            list.edit(assembled, &transaction, origin, &mut living)
+        })
     }
 
     /// Gives up every anchor the list holds in its sources and empties it.
@@ -168,14 +223,166 @@ impl Document {
     }
 }
 
+/// How asking where an offset of an excerpt document is ended, as it
+/// crosses the boundary ([`Document::locate`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocateStatus {
+    /// Found: the record holds the excerpt and the offset in its source.
+    Found = 0,
+    /// The document is not an excerpt document.
+    NotExcerpts = 1,
+    /// The offset is not a position of the excerpt text.
+    BadPosition = 2,
+    /// The list is empty, so no excerpt holds the offset.
+    Empty = 3,
+}
+
+/// Where an offset of an excerpt document is: one record, filled in one
+/// call ([`editor_ffi_excerpts_locate`]).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawLocated {
+    /// The index of the excerpt in the list.
+    pub excerpt: usize,
+    /// The offset in the excerpt's source, as the source is now.
+    pub offset: usize,
+}
+
+impl Document {
+    /// Makes `transaction`, an edit of this excerpt document, of its
+    /// sources, recording `origin` as who made each source's edit, and
+    /// returns the excerpt document's revision after it. Anything but `Ok`
+    /// changed no source.
+    ///
+    /// The list's lock is taken, then the text's, then the sources', in
+    /// ascending key order: a catch-up's order. Each source the edit
+    /// changed tells the syntax service once they are let go; the excerpt
+    /// document itself is not parsed.
+    pub(crate) fn edit_excerpts(
+        &self,
+        transaction: &Transaction,
+        origin: Origin,
+    ) -> Result<Revision, ApplyStatus> {
+        self.edit_excerpts_with(origin, |_| Some(transaction.clone()))
+    }
+
+    /// [`edit_excerpts`](Self::edit_excerpts) of the transaction `make`
+    /// builds of the excerpt text caught up, under the same locks
+    /// ([`Excerpted::edit`]). `make` refuses with `None`, which is
+    /// [`ApplyStatus::BadChange`].
+    fn edit_excerpts_with(
+        &self,
+        origin: Origin,
+        make: impl FnOnce(&editor_text::Snapshot) -> Option<Transaction>,
+    ) -> Result<Revision, ApplyStatus> {
+        let Some(mut excerpted) = self.excerpted() else {
+            // Only an excerpt document comes here.
+            return Err(ApplyStatus::BadChange);
+        };
+        let mut text = self.text_locked();
+        let edited = excerpted.edit(&mut text, origin, make);
+        drop(text);
+        drop(excerpted);
+        let edited = edited.map_err(|error| match error {
+            ExcerptError::BadChange => ApplyStatus::BadChange,
+            ExcerptError::BadSelection => ApplyStatus::BadSelection,
+            ExcerptError::OutsideExcerpt => ApplyStatus::OutsideExcerpt,
+            ExcerptError::NoSuchSource => ApplyStatus::NoSuchSource,
+            // A transaction that could not be built is one that does not
+            // fit. Only the list writes the text and a source is never an
+            // excerpt document, so neither of the others is expected.
+            ExcerptError::BadRange | ExcerptError::Moved | ExcerptError::Excerpted => {
+                ApplyStatus::BadChange
+            }
+        })?;
+        for (key, revision) in edited.sources {
+            crate::syntax::touched(key.0, revision);
+        }
+        Ok(edited.revision)
+    }
+
+    /// [`Document::replace_status`] of an excerpt document: the replace is
+    /// checked as a plain text's would be, against the text caught up, and
+    /// then made of the sources with the default origin.
+    pub(crate) fn replace_excerpts(&self, start: usize, end: usize, text: &str) -> ReplaceStatus {
+        let replaced = self.edit_excerpts_with(Origin::default(), |current| {
+            // As a plain text's replace: an identity change set has no
+            // boundary at the range for the fit to refuse.
+            if !current.is_char_boundary(start) || !current.is_char_boundary(end) {
+                return None;
+            }
+            editor_text::ChangeSet::replacing(current.len(), start..end, text).map(Transaction::new)
+        });
+        match replaced {
+            Ok(_) => ReplaceStatus::Done,
+            Err(ApplyStatus::OutsideExcerpt) => ReplaceStatus::OutsideExcerpt,
+            Err(ApplyStatus::NoSuchSource) => ReplaceStatus::NoSuchSource,
+            // A range that is not two positions in order is refused as a
+            // change set that does not fit, or a selection, which a replace
+            // has none of: both are a bad range here. The rest are not
+            // expected of a replace.
+            Err(
+                ApplyStatus::BadChange
+                | ApplyStatus::BadSelection
+                | ApplyStatus::Unreadable
+                | ApplyStatus::Moved
+                | ApplyStatus::Excerpted
+                | ApplyStatus::Applied,
+            ) => ReplaceStatus::BadRange,
+        }
+    }
+
+    /// Which excerpt of this excerpt document holds the position `offset`
+    /// of its text, caught up first, and the offset in that excerpt's
+    /// source as the source is now ([`Excerpts::locate`]). An excerpt holds
+    /// both its ends.
+    pub fn locate(&self, offset: usize) -> Result<(usize, usize), LocateStatus> {
+        let Some(mut excerpted) = self.excerpted() else {
+            return Err(LocateStatus::NotExcerpts);
+        };
+        let mut text = self.text_locked();
+        excerpted.refresh(&mut text);
+        if !text.current().is_char_boundary(offset) {
+            return Err(LocateStatus::BadPosition);
+        }
+        excerpted
+            .list
+            .locate(offset)
+            .map(|(excerpt, _, offset)| (excerpt, offset))
+            .ok_or(LocateStatus::Empty)
+    }
+}
+
+/// [`Document::locate`] for C: fills `out` with the excerpt of `document`
+/// that holds `offset` and the offset in its source, and returns a
+/// [`LocateStatus`] as its number. `out` is written only for
+/// [`LocateStatus::Found`].
+///
+/// # Safety
+///
+/// `document` is a document handle this library handed out and has not
+/// taken back, and `out` points to a writable [`RawLocated`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_excerpts_locate(
+    document: *const Document,
+    offset: usize,
+    out: *mut RawLocated,
+) -> u64 {
+    // SAFETY: the caller guarantees `document` points to a live document.
+    match unsafe { &*document }.locate(offset) {
+        Ok((excerpt, offset)) => {
+            // SAFETY: the caller guarantees `out` is writable.
+            unsafe { out.write(RawLocated { excerpt, offset }) };
+            LocateStatus::Found as u64
+        }
+        Err(status) => status as u64,
+    }
+}
+
 /// The excerpts `words` spell over `sources`, in the layout the module docs
 /// give, and the texts of the sources they name, sorted by key with no key
 /// twice. `None` when the words cannot be read or an index names no source.
-#[allow(clippy::type_complexity)]
-fn read(
-    sources: &[&Document],
-    words: &[u8],
-) -> Option<(Vec<Wanted>, Vec<(u64, Arc<Mutex<Text>>)>)> {
+fn read(sources: &[&Document], words: &[u8]) -> Option<(Vec<Wanted>, Vec<Source>)> {
     let mut reader = Reader::new(words)?;
     let count = reader.count(3)?;
     let mut wanted = Vec::with_capacity(count);
@@ -187,7 +394,7 @@ fn read(
             source: SourceKey(source.key()),
             range,
         });
-        named.push((source.key(), source.text()));
+        named.push((source.key(), source.text(), source.alive()));
     }
     reader.finish()?;
     Some((wanted, sorted(named)))
@@ -319,26 +526,124 @@ mod tests {
         assert_eq!((patch.edits[0].new.start, patch.edits[0].new.end), (1, 2));
     }
 
+    /// The transaction that replaces `range` of a text of `len` bytes with
+    /// `text`.
+    fn replacing(len: usize, range: std::ops::Range<usize>, text: &str) -> Transaction {
+        Transaction::new(ChangeSet::replacing(len, range, text).expect("a range within the length"))
+    }
+
+    /// The transaction over the fixture's excerpt text that inserts "X" in
+    /// the first excerpt, at 1, and replaces the first byte of the second,
+    /// at 5, with "A".
+    fn both() -> Transaction {
+        let mut changes = ChangeSet::new();
+        changes.retain(1);
+        changes.insert("X");
+        changes.retain(4);
+        changes.insert("A");
+        changes.delete(1);
+        changes.retain(5);
+        Transaction::new(changes)
+    }
+
     #[test]
-    fn edits_to_an_excerpt_document_are_refused_and_change_nothing() {
+    fn a_replace_and_an_apply_on_an_excerpt_document_edit_its_sources() {
         let (one, two) = (Document::new(ONE), Document::new(TWO));
         let excerpts = rows_of(&one, &two);
         let revision = excerpts.snapshot().revision();
-        let insert = Transaction::new(
-            ChangeSet::replacing(11, 0..0, "!").expect("a range within the length"),
-        );
 
-        assert!(!excerpts.replace(0, 0, "!"));
+        assert_eq!(excerpts.replace_status(1, 1, "X"), ReplaceStatus::Done);
+        assert_eq!(one.read(), "one\ntXwo\nthree\n");
+        assert_eq!(excerpts.read(), "tXwo\n\nalpha\n");
+        assert_eq!(excerpts.snapshot().revision().get(), revision.get() + 1);
+
+        let applied = excerpts.apply(&replacing(12, 6..7, "A"), Origin::new(5));
+        assert_eq!(applied, Ok(excerpts.snapshot().revision()));
+        assert_eq!(two.read(), "Alpha\nbeta\n");
+        let entry = two
+            .changes_since(Revision::new(0))
+            .expect("the log holds it");
+        assert_eq!(entry.edits.len(), 1);
+        assert_eq!(excerpts.read(), "tXwo\n\nAlpha\n");
+        // The bool of a replace is whether it was done.
+        assert!(excerpts.replace(0, 0, "!"));
+        assert_eq!(one.read(), "one\n!tXwo\nthree\n");
+    }
+
+    #[test]
+    fn a_transaction_across_both_excerpts_edits_both_sources() {
+        let (one, two) = (Document::new(ONE), Document::new(TWO));
+        let excerpts = rows_of(&one, &two);
+
+        // The changes of `both`, as words, and no selection before or
+        // after.
+        let words = buffer(&[6, 0, 1, 2, 1, 0, 4, 2, 1, 1, 1, 0, 5, 0, 0]);
+
+        let applied = excerpts.apply_words(&words, b"XA", 9);
+
+        assert_eq!(applied.status, ApplyStatus::Applied as u64);
+        assert_eq!(one.read(), "one\ntXwo\nthree\n");
+        assert_eq!(two.read(), "Alpha\nbeta\n");
+        assert_eq!(excerpts.read(), "tXwo\n\nAlpha\n");
+        assert_eq!(applied.revision, excerpts.snapshot().revision().get());
+    }
+
+    #[test]
+    fn an_excerpt_documents_refused_edits_say_why_and_change_nothing() {
+        let (one, two) = (Document::new("héllo\n"), Document::new(TWO));
+        let excerpts = Document::excerpts();
         assert_eq!(
-            excerpts.apply(&insert, Origin::new(1)),
-            Err(ApplyStatus::Excerpted)
+            excerpts.set_excerpts(&[&one, &two], &buffer(&[2, 0, 0, 7, 1, 0, 6])),
+            ExcerptStatus::Done
         );
-        // A transaction whose words cannot be read is still refused as an
-        // excerpt document's edit.
-        assert_eq!(
-            excerpts.apply_words(&[], b"", 1).status,
-            ApplyStatus::Excerpted as u64
-        );
+        assert_eq!(excerpts.read(), "héllo\n\nalpha\n");
+        let revision = excerpts.snapshot().revision();
+        let selection = |at| {
+            editor_text::Selection::new(vec![editor_text::SelectionRange::new(at, at)], 0)
+                .expect("one range")
+        };
+
+        // The separator, a range past the end and one backwards, and an
+        // offset inside "é", inserting and inserting nothing.
+        for (start, end, text, status) in [
+            (7, 8, "", ReplaceStatus::OutsideExcerpt),
+            (0, 99, "", ReplaceStatus::BadRange),
+            (3, 1, "", ReplaceStatus::BadRange),
+            (2, 2, "x", ReplaceStatus::BadRange),
+            (2, 2, "", ReplaceStatus::BadRange),
+            (2, 3, "", ReplaceStatus::BadRange),
+        ] {
+            assert_eq!(
+                excerpts.replace_status(start, end, text),
+                status,
+                "{start}..{end} {text:?}"
+            );
+        }
+        assert!(!excerpts.replace(7, 8, ""));
+        for (transaction, status) in [
+            (replacing(14, 7..8, ""), ApplyStatus::OutsideExcerpt),
+            (
+                replacing(14, 1..1, "X").with_after(selection(99)),
+                ApplyStatus::BadSelection,
+            ),
+            (replacing(13, 1..1, "X"), ApplyStatus::BadChange),
+            (replacing(14, 2..2, "X"), ApplyStatus::BadChange),
+        ] {
+            assert_eq!(excerpts.apply(&transaction, Origin::new(1)), Err(status));
+        }
+
+        assert_eq!(one.read(), "héllo\n");
+        assert_eq!(two.read(), TWO);
+        assert_eq!(excerpts.read(), "héllo\n\nalpha\n");
+        assert_eq!(excerpts.snapshot().revision(), revision);
+    }
+
+    #[test]
+    fn an_excerpt_documents_inverse_edit_script_and_trace_are_still_refused() {
+        let (one, two) = (Document::new(ONE), Document::new(TWO));
+        let excerpts = rows_of(&one, &two);
+        let revision = excerpts.snapshot().revision();
+
         assert_eq!(
             excerpts.apply_script(
                 revision.get(),
@@ -355,9 +660,61 @@ mod tests {
             Err(InverseStatus::Excerpted)
         );
         assert_eq!(excerpts.trace(0..3), None);
+        // Words that cannot be read are that, on an excerpt document too.
+        assert_eq!(
+            excerpts.apply_words(&[], b"", 1).status,
+            ApplyStatus::Unreadable as u64
+        );
 
         assert_eq!(excerpts.read(), "two\n\nalpha\n");
         assert_eq!(excerpts.snapshot().revision(), revision);
+    }
+
+    #[test]
+    fn an_edit_that_reaches_a_freed_source_is_refused_and_changes_neither() {
+        let (one, two) = (Document::new(ONE), Document::new(TWO));
+        let excerpts = rows_of(&one, &two);
+        assert!(one.replace(0, 0, "zero\n"));
+        let two_revision = two.snapshot().revision();
+        drop(one);
+
+        assert_eq!(
+            excerpts.apply(&both(), Origin::new(1)),
+            Err(ApplyStatus::NoSuchSource)
+        );
+        assert_eq!(
+            excerpts.replace_status(1, 1, "X"),
+            ReplaceStatus::NoSuchSource
+        );
+
+        assert_eq!(two.read(), TWO);
+        assert_eq!(two.snapshot().revision(), two_revision);
+        assert_eq!(excerpts.read(), "two\n\nalpha\n");
+        // The other source is still edited through it.
+        assert_eq!(excerpts.replace_status(5, 5, "A"), ReplaceStatus::Done);
+        assert_eq!(two.read(), "Aalpha\nbeta\n");
+    }
+
+    #[test]
+    fn locate_answers_an_excerpt_and_a_source_offset_or_why_not() {
+        let (one, two) = (Document::new(ONE), Document::new(TWO));
+        let excerpts = rows_of(&one, &two);
+        assert!(one.replace(0, 0, "zero\n"));
+
+        assert_eq!(excerpts.locate(0), Ok((0, 9)));
+        assert_eq!(excerpts.locate(4), Ok((0, 13)));
+        assert_eq!(excerpts.locate(5), Ok((1, 0)));
+        assert_eq!(excerpts.locate(11), Ok((1, 6)));
+        assert_eq!(excerpts.locate(12), Err(LocateStatus::BadPosition));
+        assert_eq!(one.locate(0), Err(LocateStatus::NotExcerpts));
+        assert_eq!(Document::excerpts().locate(0), Err(LocateStatus::Empty));
+        let wide = Document::new("é");
+        let over = Document::excerpts();
+        assert_eq!(
+            over.set_excerpts(&[&wide], &buffer(&[1, 0, 0, 2])),
+            ExcerptStatus::Done
+        );
+        assert_eq!(over.locate(1), Err(LocateStatus::BadPosition));
     }
 
     #[test]
@@ -501,5 +858,45 @@ mod tests {
         let expected = format!("t{}wo\n", "x".repeat(ROUNDS));
         assert_eq!(forward.read(), format!("{expected}\nalpha\n"));
         assert_eq!(backward.read(), format!("alpha\n\n{expected}"));
+    }
+
+    #[test]
+    fn a_source_edited_through_an_excerpt_document_and_directly_while_another_reads_it_finishes() {
+        /// How many reads and edits each thread makes.
+        const ROUNDS: usize = 300;
+        let (one, two) = (Document::new(ONE), Document::new(TWO));
+        let forward = rows_of(&one, &two);
+        let backward = Document::excerpts();
+        assert_eq!(
+            backward.set_excerpts(&[&two, &one], &buffer(&[2, 0, 0, 6, 1, 4, 8])),
+            ExcerptStatus::Done
+        );
+
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..ROUNDS {
+                    assert_eq!(forward.replace_status(1, 1, "x"), ReplaceStatus::Done);
+                }
+            });
+            scope.spawn(|| {
+                for _ in 0..ROUNDS {
+                    assert!(one.replace(5, 5, "y"));
+                }
+            });
+            scope.spawn(|| {
+                for _ in 0..ROUNDS {
+                    assert!(backward.read().starts_with("alpha\n\nt"));
+                }
+            });
+        });
+
+        let row = one.read()[4..].to_owned();
+        assert_eq!(row.len(), "two\nthree\n".len() + 2 * ROUNDS);
+        assert_eq!(row.matches('x').count(), ROUNDS);
+        assert_eq!(row.matches('y').count(), ROUNDS);
+        assert_eq!(
+            forward.read(),
+            format!("{}\nalpha\n", &row[..row.len() - 6])
+        );
     }
 }

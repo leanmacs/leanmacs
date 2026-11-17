@@ -19,8 +19,8 @@ use editor_ffi::counter::{
     editor_ffi_counter_new,
 };
 use editor_ffi::document::{
-    Document, RawText, editor_ffi_document_free, editor_ffi_document_live, editor_ffi_document_new,
-    editor_ffi_document_read, editor_ffi_document_replace,
+    Document, RawText, ReplaceStatus, editor_ffi_document_free, editor_ffi_document_live,
+    editor_ffi_document_new, editor_ffi_document_read, editor_ffi_document_replace,
 };
 use editor_ffi::events::{
     Event, EventKind, QueueId, RawEvent, Source, SourceKind, editor_ffi_events_next,
@@ -186,7 +186,8 @@ fn document_new(text: &[u8]) -> *mut Document {
 }
 
 /// Replaces the bytes `start..end` of `document` with `text`, given as
-/// bytes, which need not be UTF-8. Returns whether the library did.
+/// bytes, which need not be UTF-8. Returns the status the library returned,
+/// as its number.
 ///
 /// # Safety
 ///
@@ -196,7 +197,7 @@ unsafe fn document_replace(
     start: usize,
     end: usize,
     text: &[u8],
-) -> bool {
+) -> u64 {
     // SAFETY: the caller guarantees `document`; the pointer and length are
     // those of `text`, alive for the call.
     unsafe { editor_ffi_document_replace(document, start, end, text.as_ptr(), text.len()) }
@@ -237,17 +238,35 @@ fn a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free() {
         assert_eq!(document_read(document), "héllo\0wörld");
 
         // A replace changes the text at its byte offsets and returns true.
-        assert!(document_replace(document, 6, 7, b" "));
+        assert_eq!(
+            document_replace(document, 6, 7, b" "),
+            ReplaceStatus::Done as u64
+        );
         assert_eq!(document_read(document), "héllo wörld");
-        assert!(document_replace(document, 13, 13, "!".as_bytes()));
-        assert!(document_replace(document, 0, 1, b""));
+        assert_eq!(
+            document_replace(document, 13, 13, "!".as_bytes()),
+            ReplaceStatus::Done as u64
+        );
+        assert_eq!(
+            document_replace(document, 0, 1, b""),
+            ReplaceStatus::Done as u64
+        );
         assert_eq!(document_read(document), "éllo wörld!");
 
         // A refused replace returns false and changes nothing: an offset
         // inside a character, a backwards range, an offset past the end.
-        assert!(!document_replace(document, 1, 1, b"x"));
-        assert!(!document_replace(document, 4, 2, b"x"));
-        assert!(!document_replace(document, 0, usize::MAX, b""));
+        assert_eq!(
+            document_replace(document, 1, 1, b"x"),
+            ReplaceStatus::BadRange as u64
+        );
+        assert_eq!(
+            document_replace(document, 4, 2, b"x"),
+            ReplaceStatus::BadRange as u64
+        );
+        assert_eq!(
+            document_replace(document, 0, usize::MAX, b""),
+            ReplaceStatus::BadRange as u64
+        );
         assert_eq!(document_read(document), "éllo wörld!");
     }
 
@@ -263,8 +282,14 @@ fn a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free() {
         // Offsets are those of the text the document holds, where the
         // replacement character is three bytes long and "b" is at 4, not of
         // the bytes passed in, where it was at 2.
-        assert!(!document_replace(other, 2, 3, b""));
-        assert!(document_replace(other, 4, 5, &[0xFF, b'c']));
+        assert_eq!(
+            document_replace(other, 2, 3, b""),
+            ReplaceStatus::BadRange as u64
+        );
+        assert_eq!(
+            document_replace(other, 4, 5, &[0xFF, b'c']),
+            ReplaceStatus::Done as u64
+        );
         assert_eq!(document_read(other), "a\u{FFFD}\u{FFFD}c");
     }
 

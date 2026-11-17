@@ -1977,7 +1977,7 @@ def syntaxTreeChecks : List Check :=
         onRealSyntaxTree #["fn one() {}\n"] fun documents table ids handler => do
           let some document := documents[0]? | return false
           let attached ← (SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust").runWith handler
-          unless ← document.replace 0 0 "fn zero() {}\n" do
+          unless (← document.replace 0 0 "fn zero() {}\n") == .done do
             return false
           -- The snapshot of the edited text enters the table, as the
           -- editor's would after the edit.

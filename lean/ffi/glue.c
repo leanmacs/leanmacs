@@ -175,9 +175,9 @@ typedef struct {
   size_t text_len;
 } editor_ffi_raw_text;
 editor_ffi_document *editor_ffi_document_new(const uint8_t *text, size_t len);
-bool editor_ffi_document_replace(const editor_ffi_document *document,
-                                 size_t start, size_t end, const uint8_t *text,
-                                 size_t len);
+uint64_t editor_ffi_document_replace(const editor_ffi_document *document,
+                                     size_t start, size_t end,
+                                     const uint8_t *text, size_t len);
 void editor_ffi_document_read(const editor_ffi_document *document,
                               editor_ffi_raw_text *out);
 void editor_ffi_document_free(editor_ffi_document *document);
@@ -211,11 +211,11 @@ lean_obj_res editor_glue_document_new(b_lean_obj_arg text) {
       editor_ffi_document_new(string_bytes(text), string_len(text))));
 }
 
-// `Editor.Ffi.Document.replace : @& Document → USize → USize → @& String →
-// IO Bool`
+// `Editor.Ffi.Document.replaceRaw : @& Document → USize → USize → @& String →
+// IO UInt64`: the library's `ReplaceStatus`, as its number.
 lean_obj_res editor_glue_document_replace(b_lean_obj_arg document, size_t start,
                                           size_t stop, b_lean_obj_arg text) {
-  return lean_io_result_mk_ok(lean_box(
+  return lean_io_result_mk_ok(lean_box_uint64(
       editor_ffi_document_replace(lean_get_external_data(document), start, stop,
                                   string_bytes(text), string_len(text))));
 }
@@ -438,6 +438,13 @@ uint64_t editor_ffi_excerpts_set(const editor_ffi_document *document,
                                  size_t source_count, const uint8_t *words,
                                  size_t words_len);
 bool editor_ffi_document_is_excerpts(const editor_ffi_document *document);
+// The library's `RawLocated`.
+typedef struct {
+  size_t excerpt;
+  size_t offset;
+} editor_ffi_raw_located;
+uint64_t editor_ffi_excerpts_locate(const editor_ffi_document *document,
+                                    size_t offset, editor_ffi_raw_located *out);
 
 // `Editor.Ffi.Document.excerptsNew : IO Document`. The third way a document
 // is made.
@@ -476,6 +483,21 @@ lean_obj_res editor_glue_excerpts_set(b_lean_obj_arg document,
 lean_obj_res editor_glue_document_is_excerpts(b_lean_obj_arg document) {
   return lean_io_result_mk_ok(lean_box(
       editor_ffi_document_is_excerpts(lean_get_external_data(document))));
+}
+
+// `Editor.Ffi.Document.excerptsLocateRaw : @& Document → USize →
+// IO RawLocated`
+lean_obj_res editor_glue_excerpts_locate(b_lean_obj_arg document,
+                                         size_t offset) {
+  editor_ffi_raw_located raw = {0, 0};
+  uint64_t status = editor_ffi_excerpts_locate(lean_get_external_data(document),
+                                               offset, &raw);
+  // `RawLocated`: no object fields, then `status`, `excerpt` and `offset`.
+  lean_object *located = lean_alloc_ctor(0, 0, 3 * sizeof(uint64_t));
+  lean_ctor_set_uint64(located, uint64_field(0, 0), status);
+  lean_ctor_set_uint64(located, uint64_field(0, 1), raw.excerpt);
+  lean_ctor_set_uint64(located, uint64_field(0, 2), raw.offset);
+  return lean_io_result_mk_ok(located);
 }
 
 // `Editor.Ffi.Snapshot.info : @& Snapshot → IO SnapshotInfo`

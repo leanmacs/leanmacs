@@ -227,9 +227,11 @@ def edit (id : TextId) (start stop : Nat) (s : String) :
   let some document ← document? id | return .error .noSuchText
   unless start < USize.size ∧ stop < USize.size do
     return .error (← badRangeOf document)
-  if ← document.replace start.toUSize stop.toUSize s then
+  match ← document.replace start.toUSize stop.toUSize s with
+  | .done =>
     return .ok ()
-  return .error (← badRangeOf document)
+  | .badRange | .outsideExcerpt | .noSuchSource =>
+    return .error (← badRangeOf document)
 
 /-- The library's word for a count, an offset or an index of the port.
 
@@ -388,7 +390,7 @@ def apply (id : TextId) (changes : Transaction) (origin : Origin) :
     return .error .badChange
   | .error .badSelection =>
     return .error .badSelection
-  | .error .excerpted =>
+  | .error .excerpted | .error .outsideExcerpt | .error .noSuchSource =>
     return .error .excerpted
 
 /-- The port's form of a span of the library. -/

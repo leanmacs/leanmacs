@@ -778,7 +778,7 @@ def documentChecks (_ : Unit) : List Check :=
         let document ← Editor.Ffi.Document.new "héllo\x00wörld"
         let empty ← Editor.Ffi.Document.new ""
         return (← document.read) == "héllo\x00wörld" && (← empty.read) == "" },
-    { name := "a replace changes a document's text at its byte offsets and returns true"
+    { name := "a replace changes a document's text at its byte offsets and says it is done"
       run := do
         let document ← Editor.Ffi.Document.new "héllo wörld"
         -- The start and the stop differ, so swapping them is seen, and so
@@ -787,15 +787,17 @@ def documentChecks (_ : Unit) : List Check :=
         let afterReplace ← document.read
         let inserted ← document.replace 3 3 "XY"
         let deleted ← document.replace 0 1 ""
-        return replaced && afterReplace == "héllo there!" && inserted && deleted &&
+        return replaced == .done && afterReplace == "héllo there!" && inserted == .done &&
+            deleted == .done &&
             (← document.read) == "éXYllo there!" },
-    { name := "a refused replace returns false and leaves a document's text as it was"
+    { name := "a refused replace says badRange and leaves a document's text as it was"
       run := do
         let document ← Editor.Ffi.Document.new "héllo"
         let insideCharacter ← document.replace 2 2 "x"
         let backwards ← document.replace 3 1 "x"
         let pastEnd ← document.replace 7 7 "x"
-        return !insideCharacter && !backwards && !pastEnd && (← document.read) == "héllo" },
+        return [insideCharacter, backwards, pastEnd].all (· == .badRange) &&
+            (← document.read) == "héllo" },
     { name := "a document is freed when Lean drops the last reference"
       run := do
         let before ← Editor.Ffi.Document.live
@@ -882,7 +884,7 @@ def snapshotChecks (_ : Unit) : List Check :=
         let document ← Editor.Ffi.Document.new rows
         let snapshot ← document.snapshot
         let edited ← document.replace 0 1 "J"
-        return edited && (← snapshot.read) == rows && (← document.read) == "Jéllo\r\nwörld\n😀x" },
+        return edited == .done && (← snapshot.read) == rows && (← document.read) == "Jéllo\r\nwörld\n😀x" },
     { name := "a snapshot's info is its revision, its length in bytes and its row count"
       run := do
         let document ← Editor.Ffi.Document.new rows
@@ -3398,7 +3400,7 @@ def syntaxChecks (_ : Unit) : List Check :=
         let pastTheEnd ← Editor.Ffi.syntaxCaptures snapshot rust 0 100
         -- An edit the snapshot taken before it is not of: once the tree of
         -- the edit is delivered, the earlier snapshot has none.
-        unless ← document.replace 0 0 "fn zero() {}\n" do
+        unless (← document.replace 0 0 "fn zero() {}\n") == .done do
           return false
         unless ← Editor.Ffi.syntaxSettle (← document.snapshot) 5000 do
           return false
@@ -3496,7 +3498,7 @@ def syntaxChecks (_ : Unit) : List Check :=
             pure false
           catch _ =>
             pure true
-        unless ← document.replace 0 0 "fn zero() {}\n" do
+        unless (← document.replace 0 0 "fn zero() {}\n") == .done do
           return false
         unless ← Editor.Ffi.syntaxSettle (← document.snapshot) 5000 do
           return false

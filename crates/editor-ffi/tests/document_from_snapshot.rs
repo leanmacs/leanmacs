@@ -14,7 +14,7 @@ use std::mem::MaybeUninit;
 use std::slice;
 
 use editor_ffi::document::{
-    Document, RawText, editor_ffi_document_free, editor_ffi_document_from_snapshot,
+    Document, RawText, ReplaceStatus, editor_ffi_document_free, editor_ffi_document_from_snapshot,
     editor_ffi_document_live, editor_ffi_document_new, editor_ffi_document_read,
     editor_ffi_document_replace,
 };
@@ -94,7 +94,7 @@ unsafe fn document_replace(document: *const Document, start: usize, end: usize, 
     // those of `text`, alive for the call.
     let replaced =
         unsafe { editor_ffi_document_replace(document, start, end, text.as_ptr(), text.len()) };
-    assert!(replaced);
+    assert_eq!(replaced, ReplaceStatus::Done as u64);
 }
 
 #[test]
