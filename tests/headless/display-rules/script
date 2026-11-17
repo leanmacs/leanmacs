@@ -1,0 +1,46 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which keeps the default layout, binds `C-c n` to
+# a command that makes a buffer called `notes` and displays it, and makes
+# one display rule, whose target, a float, does not exist yet. It shows the
+# rule left out at install and said, and a buffer a command opens that is
+# not the one being edited, the buffer list and the command's, going to the
+# stack while main keeps the buffer being edited. What it prints must be
+# exactly `expected`. It touches no file.
+
+# The report has a `rule:` line for the rule left out.
+reload
+settle
+
+# A frame of 640 by 480: the tiled area is 640 by 464, above the bottom row.
+# The echo area says the rule left out after `reload: `, and view 0 is
+# alone.
+resize 640 480
+scene
+
+# `draft` typed in insert state: the buffer being edited, `scratch`.
+key i KeyI -
+commit draft
+key <Escape> Escape -
+
+# `:ls` shows the buffer list in a new window at the end of the list, the
+# stack, on the right, focused; main keeps `scratch`, showing `draft`.
+key : Semicolon shift
+commit ls
+key <Enter> Enter -
+scene
+
+# `C-w h` focuses main, and `C-c n` puts `notes` in another new window at
+# the end of the stack, below the list, focused; main is as it was.
+key w KeyW control
+key h KeyH -
+key c KeyC control
+key n KeyN -
+scene
+
+# `:ls` again, from `notes`: the list's window shows the list already, so it
+# is focused, with the list brought up to date, naming `notes`; no window is
+# made.
+key : Semicolon shift
+commit ls
+key <Enter> Enter -
+scene

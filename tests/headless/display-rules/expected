@@ -1,0 +1,34 @@
+reload 1: installed, 1 chunks, 1 commands
+rule: display rule 1 is left out: there are no floating windows yet
+scene 640x480, focused 0, echo "reload: display rule 1 is left out: there are no floating windows yet", echo padding 8, preedit -, published 1, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: i KeyI -
+key arrived: <Escape> Escape -
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 10, theme "default"
+view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
+view 2 320,0 320x464: "  scratch\n", scroll 0, selections 0..0, padding 8 8
+status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: h KeyH -
+key arrived: c KeyC control
+key arrived: n KeyN -
+scene 640x480, focused 3, echo "", echo padding 8, preedit -, published 15, theme "default"
+view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
+view 2 320,0 320x232: "  scratch\n", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.inactive: mode-line.inactive "buffer-list" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 3 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
+status 3: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 21, theme "default"
+view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
+view 2 320,0 320x232: "  notes\n  scratch\n", scroll 0, selections 18..18, padding 8 8
+status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4, mode-line.modified "●" +4 | mode-line.secondary "3:1" +4, mode-line.secondary "Bot" +4
+view 3 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
+status 3 in mode-line.inactive: mode-line.inactive "notes" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4

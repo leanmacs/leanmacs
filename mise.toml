@@ -277,6 +277,21 @@ run = [
   # before the bar and the `l` after it is text (`insert-word-delete/expected`).
   # It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-word-delete/expected -",
+  # Display rules (tests/headless/display-rules): a config whose one rule
+  # names a float is installed with the rule left out, and says so in its
+  # report's `rule:` line and in the echo area; `:ls` and a command of
+  # config's that makes a buffer each show it in a new window at the end of
+  # the stack, focused, while main keeps the buffer being edited, and `:ls`
+  # again focuses the list's window (`display-rules/expected`). It touches
+  # no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/display-rules/config ../tests/headless/display-rules/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/display-rules/expected -",
+  # A sidebar (tests/headless/edge-sidebar): a config that chooses a left
+  # edge of 25 percent and a rule that sends a mode's buffers there; the
+  # buffer a command makes is docked in the strip, focused by direction,
+  # moved into the tiles and back with `C-w H`, made main with `C-w m` and
+  # closed with `C-w C-c`, and `C-w H` on the last tile is refused with the
+  # reason in the echo area (`edge-sidebar/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/edge-sidebar/config ../tests/headless/edge-sidebar/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/edge-sidebar/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed

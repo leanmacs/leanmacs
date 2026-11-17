@@ -396,12 +396,12 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer load-theme workspace-current greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right load-theme workspace-current greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer load-theme workspace-current greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right load-theme workspace-current greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -1046,6 +1046,130 @@ view 0 0,0 640x464: "hello l", scroll 0, selections 7..7, padding 8 8
 status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:8" +4, mode-line.secondary "All" +4
 ```
 
+A nineteenth, `tests/headless/display-rules/script`, runs on the config in
+`tests/headless/display-rules/config`, which keeps the default layout,
+binds `C-c n` to a command that makes a buffer called `notes` and displays
+it (`BufferId.display`), and makes one display rule, whose target, a
+float, does not exist yet. The reload is installed, with a `rule:` line
+for the rule left out, and the echo area says the same sentence after
+`reload: `. `:ls` shows the buffer list in a new window at the end of the
+tiled list, the stack, on the right, focused, while main keeps `scratch`,
+the buffer being edited; `C-w h` then `C-c n` puts `notes` in another new
+window below the list; and `:ls` again focuses the list's window, with the
+list brought up to date, and makes no window. The views' ids skip the
+minibuffer's, which the `:` prompt took. Its output must be exactly
+`tests/headless/display-rules/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/display-rules/config ../tests/headless/display-rules/script
+reload 1: installed, 1 chunks, 1 commands
+rule: display rule 1 is left out: there are no floating windows yet
+scene 640x480, focused 0, echo "reload: display rule 1 is left out: there are no floating windows yet", echo padding 8, preedit -, published 1, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: i KeyI -
+key arrived: <Escape> Escape -
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 10, theme "default"
+view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
+view 2 320,0 320x464: "  scratch\n", scroll 0, selections 0..0, padding 8 8
+status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: h KeyH -
+key arrived: c KeyC control
+key arrived: n KeyN -
+scene 640x480, focused 3, echo "", echo padding 8, preedit -, published 15, theme "default"
+view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
+view 2 320,0 320x232: "  scratch\n", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.inactive: mode-line.inactive "buffer-list" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 3 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
+status 3: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 640x480, focused 2, echo "", echo padding 8, preedit -, published 21, theme "default"
+view 0 0,0 320x464: "draft", scroll 0, selections 4..4, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:5" +4, mode-line.inactive "All" +4
+view 2 320,0 320x232: "  notes\n  scratch\n", scroll 0, selections 18..18, padding 8 8
+status 2: mode-line.state.normal "NORMAL" +8, mode-line.buffer "buffer-list" +4, mode-line.modified "●" +4 | mode-line.secondary "3:1" +4, mode-line.secondary "Bot" +4
+view 3 320,232 320x232: "a note", scroll 0, selections 0..0, padding 8 8
+status 3 in mode-line.inactive: mode-line.inactive "notes" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+```
+
+A twentieth, `tests/headless/edge-sidebar/script`, runs on the config in
+`tests/headless/edge-sidebar/config`, which chooses
+`layout (.edge .left 25 Layout.default)`, sends the buffers of the minor
+mode `notes` to the left edge with a display rule, and binds `C-c n` to a
+command that makes such a buffer and displays it. The buffer is docked in
+the left strip, 160 pixels of the 640, and main has the rest; `C-w l` and
+`C-w h` move between them; `C-w H` moves the docked window back to the end
+of the tiled list, where no window is docked and so no strip is kept, and
+again docks it; `C-w m` makes it main; `C-w H` and `C-w C-c` dock and close
+it, and the strip goes; and `C-w H` on the last tile is refused, with the
+reason in the echo area. Its output must be exactly
+`tests/headless/edge-sidebar/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/edge-sidebar/config ../tests/headless/edge-sidebar/script
+reload 1: installed, 1 chunks, 1 commands
+key arrived: c KeyC control
+key arrived: n KeyN -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
+view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 0,0 160x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: l KeyL -
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 6, theme "default"
+view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 160x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "notes" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+key arrived: w KeyW control
+key arrived: h KeyH -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 9, theme "default"
+view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 0,0 160x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: H KeyH shift
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 12, theme "default"
+view 0 0,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 320,0 320x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: H KeyH shift
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 15, theme "default"
+view 0 160,0 480x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 1 0,0 160x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: m KeyM -
+scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 18, theme "default"
+view 1 0,0 320x464: "a note", scroll 0, selections 0..0, padding 8 8
+status 1: mode-line.state.normal "NORMAL" +8, mode-line.buffer "notes" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 0 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+key arrived: w KeyW control
+key arrived: H KeyH shift
+key arrived: w KeyW control
+key arrived: c KeyC control
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 23, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: w KeyW control
+key arrived: H KeyH shift
+scene 640x480, focused 0, echo "window-edge-left: the last tiled window cannot move to an edge", echo padding 8, preedit -, published 26, theme "default"
+view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+```
+
 Two more runs of the gate are on a real file, and so on a script that
 cannot be checked in whole: the file port takes absolute paths only. Each
 is one entry of the `ffi-test` task, a shell of its own that makes a
@@ -1176,6 +1300,9 @@ The lines it can print:
 reload <n>: installed, <c> chunks, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
+theme: no theme is registered as `<name>`
+segment: no segment is registered as `<name>`
+rule: display rule <n> is left out: <reason>
 run <name>: ok            (or "refused: <error>", "interrupted",
                            "gave up: <reason>", "broke off: <reason>",
                            "no such command", "no window", or "no frame"
@@ -1241,7 +1368,12 @@ reload whose config lists a segment nobody registered (`modeLine`) is
 installed too, the segment left out: its report has a line
 ``segment: no segment is registered as `<name>` `` for each, after the
 theme's, and the echo area says each sentence after `reload: `, joined by
-`; ` (`tests/headless/mode-line`).
+`; ` (`tests/headless/mode-line`). A reload whose config makes a display
+rule whose target does not exist under the layout it chose (`displayRule`)
+is installed too, the rule left out: its report has a line
+`rule: display rule <n> is left out: <reason>` for each, `<n>` its place
+in the `setup` from 1, after the segments', and the echo area says each
+sentence after the segments' (`tests/headless/display-rules`).
 
 What the editor loop is refused is in the scene's echo area, as
 `refused: <error>`: a commit the library refused, and a text or a snapshot

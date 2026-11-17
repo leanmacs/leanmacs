@@ -1,0 +1,59 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which chooses a left edge of 25 percent round
+# master-and-stack, sends the buffers of the minor mode `notes` to that
+# edge, and binds `C-c n` to a command that makes such a buffer and
+# displays it. It shows the docked window in its strip, focused by
+# direction, moved into the tiles and back with `C-w H`, promoted to main
+# with `C-w m` and closed with `C-w C-c`, as any window is, and the last
+# tile refused at an edge with the reason in the echo area. What it prints
+# must be exactly `expected`. It touches no file.
+
+reload
+settle
+
+# A frame of 640 by 480: the tiled area is 640 by 464, above the bottom row.
+resize 640 480
+
+# `C-c n` docks `notes` at the left edge: its strip is 160 pixels wide,
+# main has the rest, and the new window is focused.
+key c KeyC control
+key n KeyN -
+scene
+
+# `C-w l` focuses main, beside the strip, and `C-w h` the docked window
+# again.
+key w KeyW control
+key l KeyL -
+scene
+key w KeyW control
+key h KeyH -
+scene
+
+# `C-w H` on the docked window moves it back to the end of the tiled list:
+# no window is docked, so there is no strip, and the two windows are main
+# and the stack. `C-w H` again docks it.
+key w KeyW control
+key H KeyH shift
+scene
+key w KeyW control
+key H KeyH shift
+scene
+
+# `C-w m` makes the docked window main: main's old window is the stack,
+# and there is no strip.
+key w KeyW control
+key m KeyM -
+scene
+
+# `C-w H` docks it again, and `C-w C-c` closes it: the strip goes, and
+# view 0 has the tiled area, focused.
+key w KeyW control
+key H KeyH shift
+key w KeyW control
+key c KeyC control
+scene
+
+# `C-w H` on the last tile is refused, and the echo area says why.
+key w KeyW control
+key H KeyH shift
+scene
