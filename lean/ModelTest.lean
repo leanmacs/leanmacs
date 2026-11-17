@@ -38328,6 +38328,52 @@ def statusBufferChecks : List Check :=
             echoOf asked == some "vc-status: exited with status 128: fatal: not a git repository" &&
               asked.loop.state.findBuffer statusBufferName == none },
     { name :=
+        "a stage git refuses says so in the echo area, starts no second status read, and leaves the buffer's text as it was"
+      run :=
+        pure <|
+          match statusDriver with
+          | none => false
+          | some driver =>
+            let add := gitRun #["add", "--all", "--", "unstaged.txt"]
+            let shown := settledAfter (settledAfter driver "C-o a") "C-v s"
+            let refusing :=
+              withScript shown
+                { command := add
+                  reply :=
+                    .ok {
+                        exit := .code 128, stdout := .empty
+                        stderr :=
+                          "fatal: Unable to create '/r/.git/index.lock': File exists.\n".toUTF8 } }
+            let toggled := settledAfter refusing "C-v 4 C-v t"
+            echoOf toggled ==
+                some
+                  "vc-status: exited with status 128: fatal: Unable to create '/r/.git/index.lock': File exists." &&
+              gitStarted toggled == #[statusRead, add] &&
+              toggled.pending.isEmpty &&
+              namedText toggled statusBufferName == some criterionText },
+    { name :=
+        "a refresh git refuses once the buffer is shown says so in the echo area, and the buffer keeps its text"
+      run :=
+        pure <|
+          match statusDriver with
+          | none => false
+          | some driver =>
+            let shown := settledAfter (settledAfter driver "C-o a") "C-v s"
+            let refusing :=
+              withScript shown
+                { command := statusRead
+                  reply :=
+                    .ok {
+                        exit := .code 128, stdout := .empty
+                        stderr := "fatal: not a git repository\n".toUTF8 } }
+            let refreshed := settledAfter refusing "C-v r"
+            echoOf refreshed ==
+                some "vc-status: exited with status 128: fatal: not a git repository" &&
+              gitStarted refreshed == #[statusRead, statusRead] &&
+              namedText refreshed statusBufferName == some criterionText &&
+              refreshed.loop.state.findBuffer statusBufferName ==
+                shown.loop.state.findBuffer statusBufferName },
+    { name :=
         "the mode vc-status fills refresh, activate and toggle with the status buffer's commands, and has s and u as its leader suffixes, with nothing wrong"
       run :=
         pure <|
