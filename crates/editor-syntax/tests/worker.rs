@@ -2,7 +2,9 @@
 //! and touches the session: what is delivered only moves forward, and the
 //! last edit's revision is delivered, its tree equal to a fresh parse; and
 //! once the clock has passed the idle interval and the loop is woken, the
-//! text is refreshed.
+//! text is refreshed; and on a clock that moves by itself, the loop, parked
+//! until a refresh's deadline and woken by nothing, refreshes the text
+//! once the deadline passes.
 //!
 //! Nothing sleeps. The consumer sends each revision it is handed on a
 //! channel, and the test waits on it, or on the session, with a bound.
@@ -10,9 +12,9 @@
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use editor_syntax::clock::ManualClock;
+use editor_syntax::clock::{Clock, ManualClock};
 use editor_syntax::fake::{GRAMMAR, Parens, ParensParser};
 use editor_syntax::{
     Consumer, GrammarName, Handle, Latest, Parsed, Session, Source, Syntax, Worker,
@@ -155,6 +157,60 @@ fn the_loop_refreshes_a_quiet_text_once_the_clock_passes_the_interval_and_it_is_
                 .map(|parsed| parsed.revision),
             Some(revision),
             "the quiet text was not refreshed"
+        );
+    });
+}
+
+/// A clock that moves by itself: the milliseconds since it was made, on
+/// the platform's monotonic clock, as the job clock is.
+struct Monotonic(Instant);
+
+impl Clock for Monotonic {
+    fn now_ms(&self) -> u64 {
+        u64::try_from(self.0.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+}
+
+/// The idle interval of the test on [`Monotonic`]: long enough that a
+/// round of the fake ends well before it, so the loop parks with the
+/// deadline still ahead, and short enough to keep the test quick.
+const REAL_REFRESH_AFTER: Duration = Duration::from_millis(20);
+
+#[test]
+fn the_loop_parked_until_a_deadline_refreshes_the_text_when_it_passes_with_no_wake() {
+    let text = Arc::new(Mutex::new(Text::from("(a b)\n")));
+    let source = Box::new(TextSource(Arc::downgrade(&text)));
+    let session = Arc::new(Session::new(&Parens, GrammarName::new(GRAMMAR), source).unwrap());
+    let worker = Worker::new(
+        Arc::new(Parens),
+        Arc::new(Monotonic(Instant::now())),
+        REAL_REFRESH_AFTER,
+    );
+    let handle = worker.handle();
+
+    thread::scope(|scope| {
+        scope.spawn(|| worker.run());
+        let _stop = Stop(&handle);
+        handle.touch(&session, Revision::new(0));
+        assert!(
+            session.wait_for(Revision::new(0), BOUND).is_some(),
+            "the text was not parsed"
+        );
+        let revision = {
+            let mut text = text.lock().unwrap();
+            text.replace(0..0, "(").unwrap();
+            text.current().revision()
+        };
+        handle.touch(&session, revision);
+        // Nothing wakes the loop after the edit's round: it parks until
+        // the refresh's deadline, and the deadline's passing alone ends
+        // the park.
+        assert_eq!(
+            session
+                .wait_exact(revision, BOUND)
+                .map(|parsed| parsed.revision),
+            Some(revision),
+            "the loop did not wake by itself for the refresh's deadline"
         );
     });
 }

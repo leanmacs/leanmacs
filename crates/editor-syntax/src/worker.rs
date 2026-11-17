@@ -46,7 +46,9 @@
 //! the library together runs it on a thread of its own, as `editor-ffi`
 //! does. A touch, a stop, and [`Handle::wake`] wake it; `wake` is for a
 //! test that has moved a [`ManualClock`](crate::clock::ManualClock). Tests
-//! step it on their own thread ([`Worker::step`]).
+//! step it on their own thread ([`Worker::step`]); `tests/worker.rs` runs
+//! the loop on a thread, and on a clock that moves by itself shows a park
+//! ended by its deadline alone, with nothing waking it.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};

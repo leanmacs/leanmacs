@@ -37,14 +37,20 @@ use editor_text::{ChangeSet, Origin, Transaction};
 /// The longest a test waits for a delivery.
 const BOUND: Duration = Duration::from_secs(10);
 
-/// Waits, with a bound, for the tree delivered of `document` to be exact
-/// for its text as it is now, with the process's service set, through C,
-/// to refresh a text as soon as it is quiet: an edit's incremental reparse
-/// equals a fresh parse only once the text is quiet. Every test of this
-/// binary that sets the interval sets the same value, so tests in
-/// parallel agree.
-fn settled_quiet(document: &Document) -> bool {
+/// Has the process's service refresh a text as soon as it is quiet, through
+/// C: what a test that waits for [`settled_quiet`] sets before its first
+/// edit, since an edit's incremental reparse equals a fresh parse only
+/// once the text is quiet, and an edit's deadline is set with the interval
+/// at the time of the edit. Every test of this binary that sets the
+/// interval sets the same value, so tests in parallel agree.
+fn refresh_at_once() {
     editor_ffi_syntax_refresh_after(0);
+}
+
+/// Waits, with a bound, for the tree delivered of `document` to be exact
+/// for its text as it is now. The test sets the interval first
+/// ([`refresh_at_once`]).
+fn settled_quiet(document: &Document) -> bool {
     syntaxes().settle_exact(&Snapshot::of(document), BOUND)
 }
 
@@ -207,6 +213,7 @@ fn highlighted_items() -> (Document, String, Vec<String>) {
 
 #[test]
 fn highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    refresh_at_once();
     let (document, source, faces) = highlighted_items();
     assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
     assert_eq!(
@@ -616,6 +623,7 @@ fn a_fenced_rust_block_in_markdown_is_drawn_with_rusts_captures() {
 
 #[test]
 fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    refresh_at_once();
     let document = injected_markdown(FENCED);
     assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
 
