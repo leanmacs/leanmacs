@@ -29247,6 +29247,22 @@ def compileErrorChecks : List Check :=
                   ""].all
               (general.read? · == none)) },
     { name :=
+        "a location's start and stop are byte offsets: αβ.rs:3:4: error: x reads its location text as bytes 0 to 11, the bytes of its nine characters"
+      run :=
+        pure
+          (general.read? "αβ.rs:3:4: error: x" ==
+            some
+              { file := "αβ.rs", line := 3, column := some 4, severity := .error, start := 0
+                stop := 11 }) },
+    { name :=
+        "scan steps each line on by its bytes: after a line of two-byte characters the next location starts and stops at its bytes, and a location in a line of them stops at its bytes"
+      run :=
+        let lines := #["größe wär", "a.rs:1:2: error: x", "αβ.rs:3: warning: y"]
+        pure
+          ((Compile.scan #[Compile.Format.general] "/r" #[] 1 100 lines).map
+              (fun site => (site.file.toString, site.first, site.start, site.stop)) ==
+            #[("/r/a.rs", 2, 113, 121), ("/r/αβ.rs", 3, 132, 141)]) },
+    { name :=
         "locations criterion 2: a format with a continuation joins a location line and its following indented line into one location, in one scan or across two; with the general format they stay apart, and a line that matches nothing stops the join"
       run :=
         let lines := #["a.rs:1:2: error: x", "    more", "b.rs:3: warning: y"]
