@@ -880,8 +880,9 @@ def severityName : Config.Severity → String
 
 /-- The lines a reload's report is printed as: what it came to, then its
 diagnostics, then, when its config named a theme nobody registered, a line
-that says so, and a `segment:` line for each segment its mode line listed
-that nobody registered. -/
+that says so, a `segment:` line for each segment its mode line listed
+that nobody registered, and a `rule:` line for each display rule left out
+because its target does not exist (`Config.Report.unusableRules`). -/
 def reportLines (report : Config.Report) : Array String :=
   let outcome :=
     if report.installed then
@@ -892,7 +893,8 @@ def reportLines (report : Config.Report) : Array String :=
       s!"diagnostic: {diagnostic.source}:{diagnostic.line}:{diagnostic.column}: {severityName diagnostic.severity}: {(diagnostic.message.splitOn "\n").headD ""}"
   #[outcome] ++ diagnostics ++
     report.unknownTheme.toArray.map (fun name => s!"theme: {Theme.unknown name}") ++
-    report.unknownSegments.map fun name => s!"segment: {ModeLine.unknown name}"
+    report.unknownSegments.map (fun name => s!"segment: {ModeLine.unknown name}") ++
+    report.unusableRules.map fun sentence => s!"rule: {sentence}"
 
 /-- How a job that has ended is reported, after `job <id> <name>: `. -/
 def firstLine (message : String) : String :=

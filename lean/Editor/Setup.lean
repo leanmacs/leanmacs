@@ -1,4 +1,5 @@
 import Editor.Command.Call
+import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.Face
 import Editor.Job
@@ -320,6 +321,9 @@ inductive SetupRequest where
   /-- Declare `root`, an absolute path, a workspace root, of the project
   called `project` when one is given (`Editor/Workspace.lean`). -/
   | workspace (root : System.FilePath) (project : Option String)
+  /-- Add `rule` to the display rules, after the ones made before it
+  (`Editor/DisplayRules.lean`). -/
+  | displayRule (rule : DisplayRule)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -342,6 +346,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .processEnvironment _ => Unit
   | .autoReload _ => Unit
   | .workspace .. => Unit
+  | .displayRule _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -503,14 +508,26 @@ main's count (`layout (.masterStack { share := 60, side := .right })`),
 monocle, which shows only the selected window (`layout .monocle`), or the
 manual split layout (`layout Layout.manual`), fitted to the windows. A config that chooses
 none has master-and-stack with main taking half on the left
-(`Layout.default`). A reload changes it with no restart. The editor refuses
-the `setup` for a share above 100 (`Layout.shareTooLarge`) and for
-choosing the layout twice. -/
+(`Layout.default`). Any of them may be wrapped in edges, each giving the
+windows docked at its side a strip of its size in percent
+(`layout (.edge .left 25 Layout.default)`, the outermost cutting first). A
+reload changes it with no restart. The editor refuses the `setup` for what
+`Layout.problem?` finds, at any depth: a share above 100
+(`Layout.shareTooLarge`), an edge above 100 (`Layout.edgeTooLarge`) and a
+side given twice (`Layout.edgeTwice`); and for choosing the layout twice. -/
 def layout (chosen : Layout) : SetupM Unit := do
-  if let .masterStack parameters := chosen then
-    if parameters.share > 100 then
-      throw (Layout.shareTooLarge parameters.share)
+  if let some problem := chosen.problem? then
+    throw problem
   ExceptT.lift (Program.request (port := setupPort) (.layout chosen))
+
+/-- Adds `rule` to the display rules, after the ones made before it: where a
+buffer a command shows goes, matched in order on its modes, its name and
+the command that asked (`Editor/DisplayRules.lean`), for example
+`displayRule { mode := some "notes", target := .edge .left }`. Nothing
+about a rule is refused here: at install, a rule whose target the chosen
+layout lacks is left out, and the echo area says so. -/
+def displayRule (rule : DisplayRule) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.displayRule rule))
 
 /-- Chooses the title bar the window opens with: `titleBar .standard` keeps
 the system's standard title bar, above the content, in place of the themed

@@ -2676,6 +2676,32 @@ def setupChecks : List Check :=
               refusal (layout .monocle) == none)
         | _, _ => pure false },
     { name :=
+        "a setup's edge layout is collected; an edge above 100 percent, a side given twice and a share above 100 inside an edge are each refused with their message"
+      run :=
+        let edged := Layout.edge .left 25 (.edge .bottom 30 Layout.manual)
+        match Config.Registrations.ofSetup (layout edged) with
+        | .ok collected =>
+          pure
+            (collected.layout == some edged &&
+              refusal (layout (.edge .left 101 Layout.default)) == some (Layout.edgeTooLarge 101) &&
+              refusal (layout (.edge .left 20 (.edge .left 30 Layout.default))) ==
+                some (Layout.edgeTwice .left) &&
+              refusal (layout (.edge .top 20 (.masterStack { share := 150 }))) ==
+                some (Layout.shareTooLarge 150) &&
+              refusal (layout (.edge .left 100 Layout.default)) == none)
+        | _ => pure false },
+    { name :=
+        "a setup's display rules are collected in the order it made them, and a setup that makes none has none; a rule is refused nothing, whatever its target"
+      run :=
+        let rules : Array DisplayRule :=
+          #[{ opener := some "a", target := .float }, { name := some "b", target := .edge .left },
+            { target := .newTab, focus := false }]
+        match Config.Registrations.ofSetup (rules.forM displayRule),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure (collected.displayRules == rules && plain.displayRules == #[])
+        | _, _ => pure false },
+    { name :=
         "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
       run :=
         let twice : SetupM Unit := do
@@ -2963,6 +2989,9 @@ def registryChecks : List Check :=
             registry.theme? "nope" == none &&
             registry.themeNames == #["default", "second", "mine"] &&
             registry.registered.themeNames == registry.themeNames &&
+            { registry with displayRules := #[{ target := .main }] }.registered.displayRules ==
+              #[{ target := .main }] &&
+            registry.registered.displayRules == #[] &&
             replaced.theme? "second" == some (namedTheme "second" 2) &&
             replaced.theme? "mine" == none &&
             replaced.themeNames == #["default", "second", "other"] &&
@@ -3518,6 +3547,44 @@ def reloadChecks : List Check :=
         pure
           (themed.layout == none && state.layout == some .monocle && dropped.layout == none &&
             kept.layout == some .monocle) },
+    { name :=
+        "criterion 4, in the model: an install whose display rules name a float, a left edge the default layout lacks and a new tab is installed and keeps none of them, its report says each rule left out, by its place in the setup, and the echo area says them; under a layout with a left edge the left edge's rule alone is kept; a later install with no rule clears them, and a rejected one changes nothing"
+      run :=
+        let rules : Array DisplayRule :=
+          #[{ opener := some "a", target := .float }, { name := some "b", target := .edge .left },
+            { target := .newTab }]
+        let ruled : SetupM Unit := rules.forM displayRule
+        let edged : SetupM Unit := do
+          layout (.edge .left 25 Layout.default)
+          ruled
+        let report := reportFrom themed (accepted ["a"] ruled)
+        let (state, _) := reduceFrom themed [.requested, .finished (accepted ["a"] ruled)]
+        let (left, _) := reduceFrom themed [.requested, .finished (accepted ["a"] edged)]
+        let (dropped, _) := reduceFrom left [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom left [.requested, .finished (rejected "a")]
+        let both : SetupM Unit := do
+          useTheme "gone"
+          displayRule { target := .float }
+        pure
+          (report.installed && state.registry.displayRules == #[] &&
+            report.unusableRules ==
+              #[Config.Report.leftOut 1 DisplayTarget.noFloats,
+                Config.Report.leftOut 2 (Layout.noEdge .left),
+                Config.Report.leftOut 3 DisplayTarget.noTabs] &&
+            report.echo ==
+              some
+                "reload: display rule 1 is left out: there are no floating windows yet; display rule 2 is left out: the layout has no left edge; display rule 3 is left out: there are no tabs yet" &&
+            left.registry.displayRules == #[{ name := some "b", target := .edge .left }] &&
+            (reportFrom themed (accepted ["a"] edged)).unusableRules ==
+              #[Config.Report.leftOut 1 DisplayTarget.noFloats,
+                Config.Report.leftOut 3 DisplayTarget.noTabs] &&
+            left.registry.registered.displayRules == left.registry.displayRules &&
+            dropped.registry.displayRules == #[] &&
+            kept.registry.displayRules == left.registry.displayRules &&
+            (reportFrom themed (accepted ["a"] both)).echo ==
+              some
+                "reload: no theme is registered as `gone`; display rule 1 is left out: there are no floating windows yet" &&
+            (reportFrom themed (accepted ["a"] (displayRule { target := .stack }))).echo == none) },
     { name :=
         "an install sets the mode line config lists, and its report names each segment nobody registered, which the echo area says after the unknown theme's sentence; a later install that lists none goes back to the default, and a rejected one changes nothing"
       run :=

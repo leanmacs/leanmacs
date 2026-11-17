@@ -307,6 +307,10 @@ it did not, which a host reads as `auto`. -/
   directory's cached workspace was found under (`Editor/Workspace.lean`).
   0 while only compiled code is registered. -/
   generation : Nat := 0
+  /-- Config's display rules, in the order its `setup` made them, less the
+  ones whose target the layout it chose lacks (`Editor/Config/Reload.lean`):
+  set at every install. -/
+  displayRules : Array DisplayRule := #[]
 
 namespace Registry
 
@@ -512,8 +516,9 @@ its lineage, root first, whose on-enter actions run when the mode becomes a
 buffer's major mode; whether a job is registered under a name, for a
 command to start; and the ex binding of an ex name (`ex?`) and the ex
 names that are bound (`exNames`), for the ex line; and the names themes
-are registered under (`themeNames`), for the command that loads one; and
-config's workspace roots and the config generation, for the finder. Which command a name stands for, for a command run inside another,
+are registered under (`themeNames`), for the command that loads one;
+config's workspace roots and the config generation, for the finder; and
+config's display rules, for a command that displays a buffer. Which command a name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
 another"). -/
@@ -522,7 +527,7 @@ def registered (registry : Registry) : Loop.Registered :=
     jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex?
     exNames := registry.exNames, themeNames := registry.themeNames
     autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
-    generation := registry.generation }
+    generation := registry.generation, displayRules := registry.displayRules }
 
 end Registry
 
@@ -572,6 +577,8 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The workspace roots the `setup` declared, in order: a root once at
   most, in a `setup` that is not refused. -/
   workspaceRoots : Array Workspace.ConfigRoot := #[]
+  /-- The display rules the `setup` made (`displayRule`), in order. -/
+  displayRules : Array DisplayRule := #[]
 
 namespace Registrations
 
@@ -633,6 +640,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .autoReload on, collected => ((), { collected with autoReload := collected.autoReload.push on })
   | .workspace root project, collected =>
     ((), { collected with workspaceRoots := collected.workspaceRoots.push { root, project } })
+  | .displayRule rule, collected =>
+    ((), { collected with displayRules := collected.displayRules.push rule })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/

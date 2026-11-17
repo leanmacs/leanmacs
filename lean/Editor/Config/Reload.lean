@@ -143,19 +143,32 @@ structure Report where
   segment is registered under, in order, each once: they are left out, and
   the rest are drawn. -/
   unknownSegments : Array String := #[]
+  /-- What is said of each display rule of the installed config whose target
+  the layout it chose lacks, in order (`Report.leftOut`): those rules are
+  left out, and the rest are kept. -/
+  unusableRules : Array String := #[]
+
+/-- What is said of the display rule at `place` of a `setup`, 1-based, left
+out at install for `reason`, its target's `DisplayTarget.missing?`. -/
+def Report.leftOut (place : Nat) (reason : String) : String :=
+  s!"display rule {place} is left out: {reason}"
 
 /-- What a reload says in the echo area: for a rejected one, its first
 error, `reload: <source>:<line>:<column>: error: ` and the first line of its
 message, then ` (and <n> more)` when it has more errors; for one rejected
 with no error to name, `reload: rejected`. A reload that installs says
 nothing, so a working config does not cover what a command said, unless its
-config named a theme or listed segments nobody registered: then `reload: `
-and the sentences, `Theme.unknown`'s and then each `ModeLine.unknown`,
-joined by `; `. The whole report is the host's to print. -/
+config named a theme or listed segments nobody registered, or made display
+rules whose targets do not exist: then `reload: ` and the sentences,
+`Theme.unknown`'s, then each `ModeLine.unknown` and then each rule left out
+(`unusableRules`), joined by `; `. The whole report is the host's to
+print. -/
 def Report.echo (report : Report) : Option String :=
   if report.installed then
     let sentences :=
-      report.unknownTheme.toArray.map Theme.unknown ++ report.unknownSegments.map ModeLine.unknown
+      report.unknownTheme.toArray.map Theme.unknown ++
+        report.unknownSegments.map ModeLine.unknown ++
+        report.unusableRules
     if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"
   else
     let errors := report.diagnostics.filter (·.severity == .error)
@@ -287,6 +300,13 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { number := state.finished, installed := false, diagnostics := outcome.diagnostics,
         chunks := state.chunks.size, commands := state.commands })
   | some built =>
+    -- A rule whose target the chosen layout lacks is left out, and said.
+    let chosen := built.registrations.layout.getD Layout.default
+    let checked :=
+      built.registrations.displayRules.mapIdx fun index rule =>
+        (rule, (rule.target.missing? chosen).map (Report.leftOut (index + 1)))
+    let displayRules := (checked.filter (·.2.isNone)).map (·.1)
+    let unusableRules := checked.filterMap (·.2)
     let (cells, lost) := state.cells.install .config built.registrations.stores
     let state :=
       { state with
@@ -305,7 +325,8 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
             environment := built.registrations.environment
             autoReload := built.registrations.autoReload.back?.getD false
             workspaceRoots := built.registrations.workspaceRoots
-            generation := state.registry.generation + 1 },
+            generation := state.registry.generation + 1
+            displayRules },
         cells }
     let (themeName, unknownTheme) :=
       chooseAt state.registry state.themeName built.registrations.theme
@@ -316,7 +337,8 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         layout := built.registrations.layout
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
-        chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments })
+        chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments
+        unusableRules })
 
 /-- The appearance the window is to be asked for, and the state that
 remembers it: when the window is open and the paper of the theme now in
