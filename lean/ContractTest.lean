@@ -1635,8 +1635,10 @@ structure ObjectRow where
 written by hand: all six objects; a count of 2, the method round a
 closure; a visual selection of the closure widened to the method; the
 inside of a unit struct, which is none; an argument first, last, alone and
-on lines of its own; and the inside of a closure whose body is an
-expression. -/
+on lines of its own; the inside of a closure whose body is an expression;
+and the inside of a function, a struct, an impl and a closure from a cursor
+in the node but outside the inside, on its `fn`, `struct`, `impl` or
+parameters. -/
 def objectRows : List ObjectRow :=
   [{  needle := "a + b", object := Evil.aFunction
       covers := some ("fn free(a: u8, b: u8) -> u8 {\n    a + b\n}", .exclusive) },
@@ -1675,7 +1677,17 @@ def objectRows : List ObjectRow :=
     { needle := "self.y", object := Evil.anArgument
       covers := some ("self.y,\n            ", .exclusive) },
     { needle := "one: u8", object := Evil.anArgument, covers := some ("one: u8, ", .exclusive) },
-    { needle := "fn free", object := Evil.anArgument, covers := none }]
+    { needle := "fn free", object := Evil.anArgument, covers := none },
+    { needle := "fn free", object := Evil.innerFunction,
+      covers := some ("    a + b\n", .exclusive) },
+    { needle := "struct Fields", object := Evil.innerClass
+      covers := some ("    x: u8,\n    y: u8,\n", .exclusive) },
+    { needle := "impl Fields", object := Evil.innerClass
+      covers :=
+        some
+          ("    fn sum(&self, extra: u8) -> u8 {\n        let add = |v| v + extra;\n        add(self.x) + call(\n            self.y,\n            extra,\n        )\n    }\n",
+            .exclusive) },
+    { needle := "|v|", object := Evil.innerFunction, covers := some ("v + extra", .exclusive) }]
 
 /-- The byte offset of the first occurrence of `needle` in `text`, or of
 its end when `atEnd`; none when `text` does not hold it. -/

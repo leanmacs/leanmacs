@@ -21558,17 +21558,27 @@ and an array's item an argument. -/
 def jsonTextObjects : String :=
   "(object) @function.outer\n(object) @function.inner\n(array) @class.outer\n(array) @class.inner\n(pair) @parameter.inner\n(array (_) @parameter.inner)"
 
+/-- The text objects source of a second test mode, in the model's query
+subset over its JSON grammar, whose insides are smaller than their nodes: a
+pair is a function, and inside one the object it holds, and a class, and
+inside one the array it holds. A cursor on a pair's key is in the node and
+outside its inside. -/
+def jsonPairObjects : String :=
+  "(pair) @function.outer\n(pair (object) @function.inner)\n(pair) @class.outer\n(pair (array) @class.inner)"
+
 /-- A driver of the evil checks over the state the fixture `fixture` says,
 with the unnamed register holding `evilSentinel`, whose buffer's text is
-entered in a test mode of the model's JSON grammar that keeps
-`jsonTextObjects`, on the editor's models. -/
-def treeRegistered (fixture : String) : Option EvilDriver :=
+entered in a test mode of the model's JSON grammar that keeps the text
+objects source `textObjects`, `jsonTextObjects` unless another is given, on
+the editor's models. -/
+def treeRegistered (fixture : String) (textObjects : String := jsonTextObjects) :
+    Option EvilDriver :=
   let (contents, head) := barred fixture
   let prepared : EditorM EditorState := do
     let state ← evilState contents head
     if let some (some buffer) := state.buffers[0]? then
       Highlight.enter "json-objects" buffer.text
-          { grammar := "json", textObjects := some jsonTextObjects }
+          { grammar := "json", textObjects := some textObjects }
     return state.setRegister Evil.unnamed evilSentinel
   match prepared.runModel editorModel with
   | (.ok state, model) => (Loop.Driver.over evilHanded (fun _ => none) (pure state) model).toOption
@@ -21602,10 +21612,10 @@ structure OperatorRow where
   /-- What the echo area says when the command did not give up: nothing,
   unless a motion said something, as a search says its warning. -/
   echo : String := ""
-  /-- Whether the row's buffer is set to the test mode of the model's JSON
-  grammar whose text keeps `jsonTextObjects` (`treeRegistered`), so the
-  syntax tree's text objects are there. -/
-  tree : Bool := false
+  /-- The text objects source of the test mode of the model's JSON grammar
+  the row's buffer is set to (`treeRegistered`), so the syntax tree's text
+  objects are there; none for a buffer with no syntax tree. -/
+  tree : Option String := none
 
 namespace OperatorRow
 
@@ -21634,9 +21644,10 @@ def wrong (row : OperatorRow) : Option String :=
   if (ModelTest.keys row.keys).isEmpty then some s!"{repr row.keys} names no keys"
   else
     let edited :=
-      if row.tree then
-        (treeRegistered row.before).map fun driver => evilLeft (evilFed driver row.keys)
-      else evilEdited row.before row.keys
+      match row.tree with
+      | some textObjects =>
+        (treeRegistered row.before textObjects).map fun driver => evilLeft (evilFed driver row.keys)
+      | none => evilEdited row.before row.keys
     match edited with
     | none => some s!"no driver for {repr row.before}"
     | some left =>
@@ -23295,9 +23306,12 @@ mode of the model's JSON grammar (`jsonTextObjects`), written by hand: each
 default operator over each of the six objects, a count, an argument with a
 comma after, before and neither, a pair as an argument, dot repeat over
 `a a`, and the objects that are not there on a buffer with no syntax
-tree. -/
+tree; and, on the test mode of `jsonPairObjects`, the inside of a function
+and of a class from a cursor on the key, in the node but outside its
+inside. -/
 def treeObjectOperatorRows : List OperatorRow :=
-  let onTree (row : OperatorRow) : OperatorRow := { row with tree := true }
+  let onTree (row : OperatorRow) : OperatorRow := { row with tree := some jsonTextObjects }
+  let onPairs (row : OperatorRow) : OperatorRow := { row with tree := some jsonPairObjects }
   let three := treeAt 25
   let two := treeAt 10
   (([.rests three "d a f" "{\"a\": [1, 2], \"b\": |}" (charwise "{\"c\": 3}"),
@@ -23328,7 +23342,13 @@ def treeObjectOperatorRows : List OperatorRow :=
           List OperatorRow).map
       onTree) ++
     [.givesUp three "d a f", .givesUp three "d i f", .givesUp two "d a c", .givesUp two "d i c",
-      .givesUp two "d a a", .givesUp two "d i a"]
+      .givesUp two "d a a", .givesUp two "d i a"] ++
+    ([.rests (treeAt 15) "d i f" "{\"a\": [1, 2], \"b\": {|}}" (charwise "\"c\": 3"),
+            .rests (treeAt 2) "d i c" "{\"a\": [|], \"b\": {\"c\": 3}}" (charwise "1, 2"),
+            .rests (treeAt 15) "d a f" "{\"a\": [1, 2], |}" (charwise "\"b\": {\"c\": 3}"),
+            .givesUp (treeAt 21) "d i f"] :
+          List OperatorRow).map
+      onPairs
 
 /-- The rows of the syntax tree's text objects in a visual state, on the
 test mode of `treeObjectOperatorRows`, written by hand: the text and the
@@ -23491,15 +23511,22 @@ def objectRow (name : String) (start stop : Nat) : Evil.TreeObjects.Row :=
 
 /-- The checks of the syntax tree's text-object rule
 (`Evil.TreeObjects.choose`, `Editor/Evil/TreeObjects.lean`), pure, over
-hand-built rows. -/
+hand-built rows, answered for a range as the syntax tree port answers: the
+rows that overlap it (`SyntaxTree.overlaps`), each range asked recorded. -/
 def treeObjectRuleChecks : List Check :=
   let rows :=
     #[objectRow "function.outer" 0 100, objectRow "function.inner" 10 99,
       objectRow "function.outer" 20 60, objectRow "function.inner" 30 59,
       objectRow "function.inner" 31 40, objectRow "function.outer" 20 60,
       objectRow "class.outer" 70 80, objectRow "parameter.inner" 22 25, objectRow "comment" 21 26]
+  let ask (first last : Nat) : StateM (List (Nat × Nat)) (Array Evil.TreeObjects.Row) := do
+    modify (·.concat (first, last))
+    return rows.filter fun row => SyntaxTree.overlaps row.start row.stop first last
+  let asked (kind : Evil.TreeObjects.Kind) (inner : Bool) (low high : Nat) (wider : Bool := false)
+    (count : Nat := 1) : Option (Nat × Nat) × List (Nat × Nat) :=
+    (Evil.TreeObjects.choose ask kind inner low high (high + 1) wider count).run [] |>.run
   let choose (kind : Evil.TreeObjects.Kind) (inner : Bool) (low high : Nat) (wider : Bool := false)
-    (count : Nat := 1) := Evil.TreeObjects.choose rows kind inner low high wider count
+    (count : Nat := 1) := (asked kind inner low high wider count).1
   [{  name := "the smallest node round the cursor comes first, a range captured twice once"
       run :=
         pure
@@ -23521,6 +23548,15 @@ def treeObjectRuleChecks : List Check :=
         pure
           (choose .function true 35 35 == some (30, 59) &&
             choose .function true 5 5 == some (10, 99)) },
+    { name :=
+        "the inside is asked over the chosen node's range, so a cursor in the node outside its inner row has the inside: the selection's cells are asked first, and the node's range only for an inside"
+      run :=
+        pure
+          (asked .function true 5 5 == (some (10, 99), [(5, 6), (0, 100)]) &&
+            asked .function true 21 21 == (some (30, 59), [(21, 22), (20, 60)]) &&
+            asked .function false 5 5 == (some (0, 100), [(5, 6)]) &&
+            asked .argument true 23 23 == (some (22, 25), [(23, 24)]) &&
+            asked .class true 35 35 == (none, [(35, 36)])) },
     { name := "a node with no inner row has no inside"
       run :=
         pure (choose .class true 75 75 == none && choose .class false 75 75 == some (70, 80)) },
@@ -23541,7 +23577,7 @@ def evilObjectChecks : List Check :=
         "an operator over each text object takes the range Vim 9.1 documents: the words and WORDs with their blanks and counts, the quoted strings and their blanks, the blocks with an escaped bracket passed over, a block found forward with none round the cursor, an empty block, and i{ over lines as whole lines; the text, the cursor, the register and the insert state are Vim's"
       run := operatorRows objectOperatorRows },
     { name :=
-        "an operator over each of the syntax tree's text objects, on a test mode of the model's JSON grammar, takes the node the tree's rule chooses: a function, a class and an argument, inside each, with a count, an argument's separator after it, before it or none, dot repeat, and no object where the tree has none or the buffer no syntax tree"
+        "an operator over each of the syntax tree's text objects, on a test mode of the model's JSON grammar, takes the node the tree's rule chooses: a function, a class and an argument, inside each, with a count, an argument's separator after it, before it or none, dot repeat, the inside from a cursor in the node outside it, and no object where the tree has none or the buffer no syntax tree"
       run := operatorRows treeObjectOperatorRows },
     { name :=
         "in v each of the syntax tree's text objects sets the selection to its node, inclusive, in visual: a wider selection is extended to the next node out, a count takes the node that many out, and an object that is not there leaves the selection as it was"

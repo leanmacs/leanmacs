@@ -25,11 +25,12 @@ them; the rule is ours.
 
 ## The rule (`TreeObjects.choose`)
 
-Over rows of a capture's name, start and stop:
+Over rows of a capture's name, start and stop, asked of the syntax tree
+port for a range (its captures overlapping it), twice at most:
 
 1. **The object nodes** are the rows named `function.outer`, `class.outer`
-   or `parameter.inner`, for a function, a class and an argument; each
-   range once.
+   or `parameter.inner`, for a function, a class and an argument, among the
+   rows asked over the selection's cells; each range once.
 2. **The enclosing ones** are those with `start ≤ low` and `high < stop`,
    smallest first, where `low` and `high` are the selection's ends: both the
    head under an operator, or with a one-cell selection.
@@ -40,8 +41,10 @@ Over rows of a capture's name, start and stop:
    is no object. With no node round the cursor there is no object: a search
    forward is an open question.
 5. **`inner-function` and `inner-class`** take the longest `function.inner`
-   or `class.inner` row within the chosen node; with none (a unit struct, a
-   function signature with no body) there is no object.
+   or `class.inner` row within the chosen node, among the rows asked again
+   over the node's own range, so a cursor in the node and outside its inside
+   (on a `fn`, a `struct` or a closure's parameters) has it; with none (a
+   unit struct, a function signature with no body) there is no object.
 
 ## What the text adds (`span`)
 
@@ -73,7 +76,8 @@ Pinned by `ModelTest.treeObjectRuleChecks` (the rule, pure),
 `ModelTest.evilObjectChecks` (by key, under the shipped Vim scheme, on a
 test mode of the model's JSON grammar), and, real-only, by `ContractTest`'s
 rows over the Rust fixture `tests/syntax/rust/objects.rs` and
-`ConfigTest`'s `v a f` through the host's loop.
+`ConfigTest`'s `v a f`, and `v i f` from a `fn` line, through the host's
+loop.
 -/
 
 namespace Editor.Evil.TreeObjects
@@ -117,12 +121,15 @@ def names : List String :=
   ["function.outer", "function.inner", "class.outer", "class.inner", "parameter.inner"]
 
 /-- What the object `kind`, its inside when `inner`, covers, by the rule of
-the module docs, from `rows`: asked of the selection from `low` through the
-cell at `high`, `wider` when it is a visual selection wider than one cell,
-taking the `count`-th node out. The range of its node, from its start up to
-its stop; `none` when there is no object. -/
-def choose (rows : Array Row) (kind : Kind) (inner : Bool) (low high : Nat) (wider : Bool)
-    (count : Nat) : Option (Nat × Nat) := do
+the module docs, from the rows `ask` answers for a range, as the syntax
+tree port does: the captures over it. Asked of the selection from `low`
+through the cell at `high`, which ends at `past`, `wider` when it is a
+visual selection wider than one cell, taking the `count`-th node out. The
+range of its node, from its start up to its stop; `none` when there is no
+object. -/
+def choose {m : Type → Type} [Monad m] (ask : Nat → Nat → m (Array Row)) (kind : Kind)
+    (inner : Bool) (low high past : Nat) (wider : Bool) (count : Nat) : m (Option (Nat × Nat)) := do
+  let rows ← ask low past
   let nodes :=
     (rows.filter (·.name == kind.outer)).foldl
       (fun kept row =>
@@ -133,19 +140,18 @@ def choose (rows : Array Row) (kind : Kind) (inner : Bool) (low high : Nat) (wid
     (nodes.filter fun (start, stop) =>
           start ≤ low && high < stop && !(wider && stop - start ≤ high + 1 - low)).qsort
       fun (a, b) (c, d) => b - a < d - c
-  let (start, stop) ← enclosing[count - 1]?
+  let some (start, stop) := enclosing[count - 1]? | return none
   if !inner then
-    return (start, stop)
-  let some name := kind.inner | return (start, stop)
-  let within := rows.filter fun row => row.name == name && start ≤ row.start && row.stop ≤ stop
-  let longest ←
-    within.foldl
-        (fun best row =>
-          match best with
-          | some (s, e) => if row.stop - row.start > e - s then some (row.start, row.stop) else best
-          | none => some (row.start, row.stop))
-        none
-  return longest
+    return some (start, stop)
+  let some name := kind.inner | return some (start, stop)
+  let within :=
+    (← ask start stop).filter fun row => row.name == name && start ≤ row.start && row.stop ≤ stop
+  return within.foldl
+      (fun best row =>
+        match best with
+        | some (s, e) => if row.stop - row.start > e - s then some (row.start, row.stop) else best
+        | none => some (row.start, row.stop))
+      none
 
 /-- The bracket a pair of `{}`, `()` or `[]` closes with, for the opening
 one `opening`. -/
@@ -210,15 +216,16 @@ def span (text : TextId) (kind : Kind) (inner : Bool) (within : Vocabulary.Withi
         text.motion .nextCell high
       else
         pure high
-    let .ok kept ←
-      SyntaxTree.lift (SyntaxTree.capturesOf snapshot .textObjects low asked) | return none
-    let rows :=
-      kept.captures.filterMap fun capture =>
-        (kept.names[capture.capture]?).map fun name =>
-          { name, start := capture.start, stop := capture.stop : Row }
+    let rows (first last : Nat) : OptionT EditorM (Array Row) := do
+      let .ok kept ←
+        (SyntaxTree.lift (SyntaxTree.capturesOf snapshot .textObjects first last) :
+            EditorM _) | failure
+      return kept.captures.filterMap fun capture =>
+          (kept.names[capture.capture]?).map fun name =>
+            { name, start := capture.start, stop := capture.stop : Row }
     let wider := within.anchor.isSome && anchor != within.head
-    let some (start, stop) := choose rows kind inner low high wider (within.count.getD 1)
-      | return none
+    let some (some (start, stop)) ←
+      (choose rows kind inner low high asked wider (within.count.getD 1)).run | return none
     if kind == .argument then
       if inner then
         return some { start, stop }

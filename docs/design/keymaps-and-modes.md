@@ -1983,7 +1983,8 @@ literal port of Vim 9.1's `textobject.c`:
 Status: built, by the syntax-tree-sitter roadmap's phase 3
 (`lean/Editor/Evil/TreeObjects.lean`; pinned by `treeObjectRuleChecks`,
 `evilObjectChecks`, `ContractTest`'s rows over `tests/syntax/rust/objects.rs`
-and `ConfigTest`'s `v a f` through a host of the Vim scheme).
+and `ConfigTest`'s `v a f`, and `v i f` from a `fn` line, through a host of
+the Vim scheme).
 
 Six more entries of `Evil.objects` (which is `Evil.vimObjects`, the sixteen
 above, and these) take their ranges from the syntax tree of a buffer's
@@ -2003,7 +2004,9 @@ library as plain rows (`SyntaxTree.capturesOf`), the rule Lean's:
   than one cell, a node no bigger than the selection passed over for the
   next one out, as block objects do; the `count`th (1 with none typed),
   too few being no object; and for `if` and `ic` the longest inner row
-  within the chosen node, none being no object (a unit struct, a signature
+  within the chosen node, asked again over the node's own range so that a
+  cursor on a `fn`, a `struct` or a closure's parameters, outside the
+  inside, still has it, none being no object (a unit struct, a signature
   with no body).
 - **Inside brackets**: an inner range that starts with an opening bracket
   and ends with its partner is Vim's inner block between them

@@ -3350,7 +3350,20 @@ def treeObjectChecks (context : Context) : List Check :=
           let without := "struct S;\n\nimpl S {\n}\n"
           return (before.splitOn s!"selections {letAt}..{letAt},").length == 2 &&
               (selected.splitOn s!"selections {fnAt}..{closing},").length == 2 &&
-              (deleted.splitOn s!"{without.quote}, scroll").length == 2 }]
+              (deleted.splitOn s!"{without.quote}, scroll").length == 2 },
+    { name :=
+        "in a Rust buffer v i f from a method's fn line, in the function and outside its body, selects inside the body's braces, its lines whole, through the host's loop and the library's syntax tree"
+      run :=
+        withVimHost context [("10-objects.lean", rustObjectsChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "rust-buffer"]
+          session.typed "k v i f"
+          let selected := lastViewLine (← session.sceneLines)
+          let some letAt := offsetOf rustObjectsText "        let x" | return false
+          let some closing := offsetOf rustObjectsText "\n    }\n}" | return false
+          unless (selected.splitOn s!"selections {letAt}..{closing},").length == 2 do
+            throw (IO.userError selected)
+          return true }]
 
 /-- A chunk whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in
