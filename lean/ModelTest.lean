@@ -144,6 +144,16 @@ docked, tiles the area under compositions of up to two edges round each
 layout, and passes the list's operations through to the layout inside
 it.
 
+The placement of a float (`Editor/Floating.lean`) is checked by
+`floatChecks`: beside a position, as a property over the sample areas,
+the rectangles master-and-stack gives one to three windows in each, spots
+at the left, middle and last pixel and at the top, middle and last row of
+each, rows of 1, 16 and the window's height, and every share of a sweep on
+each axis, that the float is inside the area, against the row and clear of
+it, at the position or shifted left just enough, the share wide, and the
+share tall below when it fits there and above when it fits there; and by
+examples of each case, centred, and a share resized.
+
 The syntax tree interface's contract (`Editor/SyntaxTree/Contract.lean`)
 is run against its model here (`syntaxTreeFailures`), with each property's
 texts as the snapshots `0`, `1` and so on, and `contract-test` runs the
@@ -166,14 +176,21 @@ each change of `EditorState.arrange`, focus by direction against a property
 over sample states of the three layouts, with and without docked windows,
 and focus in list order; and a docked window focused, closed, split,
 promoted, moved between an edge and the tiles, a layout chosen without its
-edge, and a window opened at a spot.
+edge, and a window opened at a spot. The floating windows
+(`floatingWindowChecks`, part of `stateChecks`): the focus rule, a float
+moved into the tiles and out of them, each operation's rule for a float,
+what happens when an anchor goes, a float opened at each anchor and its
+refusals, the floats' rectangles, and the spots a publish sets; the
+direction property runs over states with none to two floats. The loop's
+placing of floats (`floatViewChecks`) is checked on its driver.
 
 Display rules (`Editor/DisplayRules.lean`) are checked by
 `displayRuleChecks`: which rule a buffer's facts choose, which targets a
 layout lacks, where `EditorState.displaying` puts a buffer, and, on the
 loop's driver over the editor's models, `ls` and a command's buffer going
-to the stack while main keeps the file, and a mode's buffer docked at the
-left edge by a rule.
+to the stack while main keeps the file, a mode's buffer docked at the
+left edge by a rule, and a command's buffer opened in a float centred in
+the tiled area by a float rule.
 
 The window commands (`Editor/WindowCommands.lean`) are checked by key on
 the loop's driver over the editor's models, under the Vim scheme that ships

@@ -1298,7 +1298,8 @@ text layout places:
 - **Columns are aligned with align-to stops** in text layout, the one
   primitive this adds. Tab stops are the same mechanism.
 - **A popup** (completion, hover, a picker) is a text view in a floating
-  rectangle that Lean places against a position it asks layout for.
+  rectangle that Lean places against a position it asks layout for
+  ("Views as built", the floating layer).
 - **Anything that is not text is a box.**
 
 ### Boxes
@@ -1411,14 +1412,17 @@ rectangle per window shown. Master-and-stack is the default, monocle the
 second and manual splits, a tree of anonymous tiles the windows take in
 list order, the third. An edge layout wraps any of them and gives the
 windows docked at one edge a strip, so a sidebar is an ordinary window
-that happens to be docked. The window commands split, close, focus,
-reorder, zoom and resize the windows as the layout defines, dock them at an
-edge and back, and the Vim scheme binds them under `C-w`
+that happens to be docked. Floating windows are kept apart from both, in
+a stacking order above the tiles, each placed against a position of a
+buffer, a window or the frame, transient or pinned. The window commands
+split, close, focus, reorder, zoom and resize the windows as the layout
+defines, dock them at an edge and back, float them and back, and the Vim
+scheme binds them under `C-w`
 ([keymaps-and-modes.md](keymaps-and-modes.md), "Window commands as
 built"). Where a buffer a command makes is shown is config's: display
 rules, matched in order on the buffer's modes, its name and the command
-that opened it, send it to the focused window, main, the stack or an
-edge, and by default to the stack, so main keeps the buffer being
+that opened it, send it to the focused window, main, the stack, an edge
+or a float, and by default to the stack, so main keeps the buffer being
 edited. A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
 exists) are part of the data model, and operations that would break one
 return a typed refusal.
@@ -1614,8 +1618,8 @@ echo area, the preedit, and the prompt that is open, if one is.
   put an index translation at every edge. Kept apart, the layout's
   operations and the tree's invariant are untouched, and "which windows
   exist" has one reader, `Frame.all`, the tiled list then the docked
-  windows; `Frame.contains` asks of either. The state's views are
-  `Frame.all` then the minibuffer's.
+  windows, and since phase 4 the floats; `Frame.contains` asks of any.
+  The state's views are `Frame.all` then the minibuffer's.
 - **Config choosing a layout without an edge moves the windows docked
   there** to the end of the tiled list, in order, before the layout is
   fitted (`Frame.choose`), so a reload that drops an edge rearranges the
@@ -1624,8 +1628,8 @@ echo area, the preedit, and the prompt that is open, if one is.
 - **A docked window is not special** (window management's phase 3). It is
   focused, split, closed, shown another buffer and arranged with the same
   operations as a tile:
-  - focus by direction takes candidates from every window of the frame,
-    so `C-w h` from main reaches a left sidebar; cycling, top and bottom
+  - focus by direction takes candidates from every tiled and docked
+    window of the frame, so `C-w h` from main reaches a left sidebar; cycling, top and bottom
     walk `Frame.all`, the tiles then the docked windows; the last window
     focused is kept across a docked window;
   - splitting a docked window docks the new one at the same side, right
@@ -1650,8 +1654,9 @@ echo area, the preedit, and the prompt that is open, if one is.
   `WindowSpot`): `stack` puts it after the last of the tiled list, as a
   split of that window would, so under master-and-stack the stack grows and
   main is untouched and under manual splits the last tile is split along
-  rows; `edge side` docks it after that side's windows. The focus stays.
-  Phases 4 and 5 add a float and a new tab as spots.
+  rows; `edge side` docks it after that side's windows; `float anchor
+  share pinned` puts it on top of the floats (below). The focus stays.
+  Phase 5 adds a new tab as a spot.
 - **Display rules say where a buffer a command makes is shown**
   (`lean/Editor/DisplayRules.lean`, `EditorState.displaying`,
   `BufferId.display`; window management's phase 3, decided 2026-11-16).
@@ -1670,10 +1675,13 @@ echo area, the preedit, and the prompt that is open, if one is.
     moves. A rule's `focus`, true by default, says whether that window is
     focused.
   - The focused window, asked from the minibuffer's view, is the window
-    the prompt was asked from, tiled or docked (`EditorState.shownIn`). An
-    edge the layout lacks goes to the stack, and so do floats and tabs
-    until phases 4 and 5, though install keeps config from naming any of
-    them.
+    the prompt was asked from, tiled, docked or floating
+    (`EditorState.shownIn`). An edge the layout lacks goes to the stack,
+    and so do tabs until phase 5, though install keeps config from naming
+    either. A float target opens a float anchored to the frame, centred in
+    the tiled area, of the rule's share, transient unless the rule pins
+    it (`.float`, `.float { width := 80, height := 70 }`,
+    `.float (pinned := true)`; window management's phase 4).
   - **What routes through them**: `list-buffers`'s list, `:!`'s output
     buffer (opener `shell-command`, so by default it opens in the stack and
     the window the line was asked from keeps its buffer; `Editor/Shell.lean`),
@@ -1690,7 +1698,91 @@ echo area, the preedit, and the prompt that is open, if one is.
   (`EditorState.tiled`): the strip is the frame's bottom `message` height,
   `text + message` while a prompt is open, or the whole frame when that is
   shorter. `EditorState.rects` is the layout's rectangles in the tiled
-  area, then the minibuffer's view in the strip while a prompt is open.
+  area, then the floats' in stacking order, then the minibuffer's view in
+  the strip while a prompt is open.
+- **The floating layer** (window management's phase 4, decided
+  2026-11-17; `lean/Editor/Floating.lean`, `lean/Editor/State.lean`, "A
+  floating window").
+  - **Floats are kept apart from the tiled list and the edges**
+    (`Frame.floats`), for the reason the docked windows are: every layout
+    operation indexes the tiled list. The list is in stacking order, the
+    first lowest and the last on top, and `Frame.all` is the tiles, the
+    docked windows, then the floats, so cycling and `C-w b` reach them.
+    Phase 5 moves `floats` into a tab with `windows` and `docked`.
+  - **An anchor and a share.** A float is placed against the frame, a
+    window, or a position of a window's buffer, an anchor marker of its
+    text (`Floating.Anchor`). An anchor window is a tiled or docked window,
+    never a float, so placement never recurses. Its size is a share in
+    percent (`Floating.Share`, 60 by 50 by default): of the tiled area for
+    the frame and a position, of the window's rectangle for a window. It
+    is the unit of an edge's size and main's share, since Lean knows no
+    column width and handles no scale; a resize steps it by 5 percent,
+    clamped to 5..100. A share in text rows, or a float sized to its
+    content, waits for the completion floats that need it.
+  - **The placement** (`Floating.centred`, `Floating.beside`): centred in
+    the tiled area for the frame, centred in its window's rectangle for a
+    window (or in the area when monocle hides it), and beside a position:
+    the share of the area wide and tall, at the position's x or shifted
+    left just enough to stay inside, below the row when it fits there,
+    else flipped above it, else on the side with more room, below on a
+    tie, its height clamped to that room (corfu's and Vim's popup rule). A
+    spot outside the area is clamped into it, so placement is total. The
+    area is the tiled one, not the whole frame, so a float never covers the
+    echo row, the minibuffer's view or a tab bar cut off the frame.
+  - **Where a position is drawn is a display query of its own**
+    (`Display.spotOf`; below, "The scene"), because the two answers the
+    phase's approach hoped to use are not enough: the padding is in
+    points, taken off at a scale Lean never sees, and rows are not one
+    height. Each float keeps the spot the last publish found, in frame
+    pixels, so `EditorState.rects` stays pure and is still the one
+    definition the scene and a command's `rect?` read.
+  - **The publish places them** (`Loop.spots`, `EditorState.located`;
+    [lean-runtime.md](lean-runtime.md) and `lean/Editor/Loop.lean`, "After
+    each event"): once the tiles, the docked windows and the minibuffer
+    have followed their cursors, the display is asked where each position
+    anchor is drawn in its window's view as it will be published, and the
+    floats follow their cursors once placed. Each position float costs two
+    text requests and one display request a scene.
+  - **Transient and pinned.** When the focus moves from one window of the
+    frame to another, every transient float that is not the window now
+    focused closes (`EditorState.focusedOn`), so a focused popup closes
+    when the focus goes elsewhere and one opened without the focus closes
+    when its window loses it; opening and closing a prompt is no move. A
+    transient float whose anchor is not drawn at a publish, scrolled away
+    or its window without a rectangle, closes there, and the publish gives
+    up its markers and tells the scheme its view closed, as a command's
+    close would. When a window floats are anchored to closes or floats,
+    or shows another buffer (for a position), the transient ones close and
+    the pinned ones are anchored to the frame. A pinned float otherwise
+    stays until it is closed or moved into the layout, and keeps its last
+    spot while its anchor is off screen.
+  - **The operations** take a float as any window but for these rules:
+    closing one never counts as the last window, and a focused float's
+    focus goes to the window focused before it, else main; split, demote,
+    rotate and exchange refuse it (`floating`, "a floating window is not in
+    the layout"), since the stacking order is not changed by any operation
+    yet; promote makes it main, the edge commands dock it, resize steps its
+    share, and zoom from it shows the first tile under it; focus by
+    direction never lands on a float, which overlaps the tiles, and from a
+    float starts from its rectangle. `Arrange.float` moves a window between
+    the tiles and the floats: a tile or a docked window floats, pinned,
+    anchored to the frame, on top (the last tile is refused, `lastTile`,
+    "the last tiled window cannot leave the tiles"), and a float joins the
+    stack, appended to the tiled list.
+  - **Opening one.** `EditorState.openWindow`'s `float` spot pushes a
+    float on top, refusing an anchor window that is a float (`floating`),
+    one that is no tiled or docked window (`noSuchWindow`) and a position
+    marker of another text (`markersOfAnotherText`). A command opens one
+    with `BufferId.float buffer at share pinned focus`, `at` the frame, a
+    window or a byte offset of a window's buffer, which checks its
+    refusals before it marks anything; the display rules' float target is
+    one too. Completion in a float is to be built on it.
+  - **Drawn above.** The scene lists the floats after every tile and docked
+    window, and the painter draws views in scene order, each over its own
+    background, so a float is drawn above what it floats over, a later one
+    over an earlier one (`editor-render-wgpu`'s `tests/overlap.rs`). A float
+    is a view like any other: its own background, status row, padding and
+    cursor. A border, a shadow or a face of its own is not built.
 - **Config chooses the layout** with `layout`, a value with its
   parameters (`layout (.masterStack { share := 60, side := .right })`,
   `layout .monocle`), as it sets the frame padding; a reload changes it,
@@ -1736,8 +1828,10 @@ echo area, the preedit, and the prompt that is open, if one is.
 - **The invariants** are over the state's views, the frame's windows and
   then the open prompt's view: the focused window is one of them; the
   views' ids are distinct and are the windows'; each window's buffer
-  exists; and every docked window's side is an edge of the layout out of
-  a zoom. The operations that can break one refuse with a `LayoutRefusal`
+  exists; every docked window's side is an edge of the layout out of
+  a zoom; every float's anchor window is a tiled or docked window of the
+  frame; and a position anchor's marker is of the text of its window's
+  buffer. The operations that can break one refuse with a `LayoutRefusal`
   and the state unchanged: removing a window (`onlyWindow` for the last
   window, `noSuchWindow` for one not in the list), focusing one, splitting
   one, and showing another buffer in one (`noSuchBuffer` for a buffer
@@ -1818,8 +1912,9 @@ echo area, the preedit, and the prompt that is open, if one is.
     `noSuchWindow`, `noSuchBuffer`, `markersOfAnotherText`,
     `ofMinibuffer`, since window management's phase 2
     `noPreviousWindow`, `notResizable` with its axis, `noMain` and
-    `monocleChosen`, and since phase 3 `noSuchEdge` with its side ("the
-    layout has no left edge"), `lastTile` and `atEdge`.
+    `monocleChosen`, since phase 3 `noSuchEdge` with its side ("the
+    layout has no left edge"), `lastTile` and `atEdge`, and since phase 4
+    `floating`.
 - A view's id is never used again,
   and a buffer's is not either: buffers are kept in slots, and a removed
   buffer leaves its slot empty.
@@ -1928,10 +2023,14 @@ definitions again as no change. `ConfigTest.faceChecks` checks it: after
 a reload that makes `mode-line` taller, `agree`, with no event between,
 finds the rows query and the frame agree.
 
-Lean publishes the scene and asks layout's two questions through the
+Lean publishes the scene and asks layout's three questions through the
 display interface (`lean/Editor/Display.lean`): the rows a view shows from
-its scroll anchor, and the position some visual lines above or below a
-position, with the x it aimed for passed back for the next move. Its model
+its scroll anchor, the position some visual lines above or below a
+position, with the x it aimed for passed back for the next move, and
+where a position is drawn in a view (the spot query, `Display.spotOf`:
+the x of its left edge and the top of its row from the view's top left,
+padding included, and the row's height, or none when the view does not
+show it; window management's phase 4). Its model
 (`lean/Editor/Display/Model.lean`) lays text out in fixed-size cells, for
 tests. Its contract (`lean/Editor/Display/Contract.lean`) holds the
 model and the real binding to the same properties, the real binding over a
@@ -1940,7 +2039,7 @@ fake shaper whose glyphs all have the cells' size.
 The one place the model's layout rule runs outside a test is a host with no
 window, which has no layout to ask: the headless host's display is a
 recorder (`lean/Editor/Display/Recorder.lean`) that keeps the last scene
-published and answers the two queries with the model's rule over the
+published and answers the queries with the model's rule over the
 library's snapshot. The contract holds it too, over real snapshots. An
 editor with a window asks the real binding every time.
 
@@ -1973,6 +2072,22 @@ command loop's phase 16, for evil's `j` and `k`).
   character does at a wrap.
 - **The property of the tab names a tab stop of 8.** When a view has a
   setting for its tab width, the property names the default.
+- **The spot query is held to the other two.** It was added because they
+  are not enough to place a float: the rows a view shows start
+  `first_row(padding)` pixels below its top and `padding_pixels(across)`
+  in from its left, a padding in points times a scale only Rust knows, so
+  at scale 2 a float placed from them would be 16 pixels off across, and
+  more down along the title bar; and each visual line has its own height,
+  so the k-th row shown is not `k` text rows down where a face sets a size
+  or a line height. Layout answers it on the walker the rows query walks
+  (`Layout::spot`), and it crosses as whole pixels, x and y rounded down
+  and the height up. The contract ties it to the other two, so it cannot
+  drift: in cells, a spot's y is the padding and `k` rows for the `k`-th
+  row `rowsShown` answers, its x the padding and the goal a move of no
+  lines passes back, at every position of a text with wrapped and short
+  lines, padded and not; and a position before the anchor or past the
+  rows shown has none. At a scale and with a taller row,
+  `editor-layout`'s and `editor-ffi`'s tests pin it.
 
 **Who asks the two questions** (the command loop's phase 15). Until then
 nothing did. Now the loop asks them before each scene, to have each view

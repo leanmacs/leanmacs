@@ -2414,11 +2414,11 @@ and `gk`; the mouse wheel; smooth scrolling; `scrolljump` and `sidescroll`.
 
 ### Window commands as built
 
-Status: built, by window management's phases 2 and 3
+Status: built, by window management's phases 2, 3 and 4
 (`lean/Editor/WindowCommands.lean`, `lean/Editor/WindowCommands/Compiled.lean`;
 pinned by `windowCommandChecks`, and over the recorder by
 `tests/headless/manual-splits`, `insert-window-keys`,
-`insert-word-delete` and `edge-sidebar`).
+`insert-word-delete`, `edge-sidebar` and `float-rule`).
 
 The window commands split, close, focus and arrange the frame's windows
 over the editor API's window requests ([text-and-display.md](text-and-display.md),
@@ -2459,6 +2459,7 @@ table `windowCommands`):
 | `C-w m`, `C-w M` | `window-promote`, `window-demote` | None: Vim binds no `CTRL-W m` or `M` |
 | `C-w ,`, `C-w .` | `window-main-more`, `window-main-fewer` | None: xmonad's `M-,` and `M-.` |
 | `C-w H`, `C-w J`, `C-w K`, `C-w L` | `window-edge-left`, `window-edge-bottom`, `window-edge-top`, `window-edge-right` | `CTRL-W H`: "Move the current window to be at the far left, using the full height of the screen", and `J`, `K`, `L` the same at the bottom, the top and the right. Here the window is docked at that edge of an edge layout, which is the far side at the full extent of the tiled area (window management's phase 3) |
+| `C-w F` | `window-float` | Displaces `CTRL-W F` (split and edit the file under the cursor at its line number), which is not built. The capital of the family that moves a window (`H J K L`), and the letter is a mnemonic; xmonad's `sink` (`mod-t`) is the prior art for moving a float back into the tiles (window management's phase 4) |
 
 - **`C-w n`, `C-w p`, `C-w c` and `C-w w` are left unbound**, so tab pages
   (window management's phase 5) only add rows: until then each resets and
@@ -2502,6 +2503,27 @@ table `windowCommands`):
   at that edge the key moves it back into the tiles, where Vim does
   nothing. The last tile is refused (`lastTile`). Vim's `CTRL-W H` as tree
   surgery under manual splits with no edge is not built.
+- **`C-w F` moves a window between the tiles and the floating layer**
+  (`Arrange.float`, window management's phase 4): a tile or a docked
+  window floats, pinned, anchored to the frame, centred in the tiled area
+  at 60 by 50 percent, on top of the floats, and keeps the focus; a float
+  goes back to the end of the tiled list, the stack, as a window opened in
+  the stack is placed. The last tile is refused, the echo area saying
+  `window-float: the last tiled window cannot leave the tiles`.
+- **A float is a window too** (phase 4). `C-w C-w`, `W`, `t` and `b` walk
+  the tiles, the docked windows, then the floats, so `C-w b` reaches the
+  top float; `C-w h/j/k/l` never land on a float, which overlaps the
+  tiles, and from a float step from its rectangle; `C-w C-c` and `C-w q`
+  close it, and the focus goes to the window focused before it, else main;
+  `C-w m` makes it main and `C-w H` docks it; `C-w <`, `>`, `+` and `-`
+  step its share. `C-w s`, `v`, `x`, `r`, `R`, `M` and `C-w o` from a
+  float are refused (`floating`: "a floating window is not in the layout").
+  `C-w o` from a tile closes every other window, the floats first, so a
+  transient float that closes with the tile it is anchored to does not
+  stop it. A transient float also closes when the focus moves from it, or
+  from the window it was opened from, to another window. No key closes a
+  transient float by itself yet (`<Escape>`, `q`), and none changes the
+  stacking order.
 
 The Vim 9.1 behaviours pinned (`:help windows`, with the defaults
 `nosplitbelow`, `nosplitright`, `equalalways`, `eadirection=both`), each by
@@ -2561,7 +2583,7 @@ Which names have something behind them:
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
 | `keyboard-quit` | Built and registered (`Shell.commands`): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
-| The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
+| The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
 | `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (`Evil.commands`, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
@@ -2575,7 +2597,7 @@ Which names have something behind them:
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
 | `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
 | `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
-| `windowCommands` | `windowKeys` as normal state's table, each key running its window command, which changes no text and enters no state: the table under "Window commands as built", `C-w H`, `J`, `K` and `L` among them (window management's phase 3). It is not in normal state's pending keymaps, so `d C-w s` resets |
+| `windowCommands` | `windowKeys` as normal state's table, each key running its window command, which changes no text and enters no state: the table under "Window commands as built", `C-w H`, `J`, `K` and `L` among them (window management's phase 3), and `C-w F` (phase 4). It is not in normal state's pending keymaps, so `d C-w s` resets |
 
 The run tables (`StateRecord.runs`), which say what a command name is
 completed as in a state, for a key bound to the name and a menu item that
@@ -3531,10 +3553,21 @@ which run the executable on a real file.
   `BufferId.display buffer view "its-name"`, adding `(focus := false)` to
   leave the focus where it is when no rule matches, as compile does. A
   rule whose target does not
-  exist under the layout config chose, a float, a new tab or an edge the
-  layout lacks, is left out at install, and the echo area says so,
-  `reload: display rule 1 is left out: there are no floating windows yet`,
-  as an unknown theme is said; the rest of the config is installed.
+  exist under the layout config chose, a new tab or an edge the layout
+  lacks, is left out at install, and the echo area says so,
+  `reload: display rule 1 is left out: there are no tabs yet`, as an
+  unknown theme is said; the rest of the config is installed.
+- Built: the float target (window management's phase 4). A rule may send
+  a buffer to a new float centred in the frame, with `target := .float`,
+  of 60 by 50 percent of the tiled area; `.float { width := 80, height :=
+  70 }` sets its share, and `.float (pinned := true)` pins it. A rule's
+  float is transient unless it is pinned: with the rule's `focus`, true by
+  default, the buffer opens focused in a popup that closes when the focus
+  leaves it. A config command opens a float itself with
+  `BufferId.float buffer at share pinned focus`, `at` being `.frame`,
+  `.window view` or `.position view offset`, beside a byte offset of that
+  window's buffer ([text-and-display.md](text-and-display.md), "Views as
+  built").
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
   a mistyped key is an error in config before it runs. It is not built. See
   the open questions for its cost.

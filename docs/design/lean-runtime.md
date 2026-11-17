@@ -506,8 +506,8 @@ elaborator.
   a command makes is shown (window management's phase 3,
   `lean/Editor/DisplayRules.lean`). At install each rule is checked against
   the layout config chose (`DisplayTarget.missing?`): a rule whose target
-  does not exist, a float or a new tab, which are not built yet, or an
-  edge the layout lacks, is left out, its sentence is in the report
+  does not exist, a new tab, which is not built yet, or an edge the
+  layout lacks, is left out, its sentence is in the report
   (`Report.unusableRules`, a headless `rule:` line) and the echo area says
   it after an unknown theme's and the segments', as an unknown theme is
   reported; the config is installed without it. The rest are kept in the
