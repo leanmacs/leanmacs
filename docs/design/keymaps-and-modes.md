@@ -3268,7 +3268,7 @@ own, and that window has the focus.
   (`Minibuffer.mode`), which fills four roles: `activate` with the command
   `minibuffer-accept`, `quit` with `minibuffer-cancel`, and `next-item`
   and `previous-item` with the two commands that move through a prompt's
-  candidates ("A prompt's candidates", below). So any scheme
+  candidates ("A prompt's sources", below). So any scheme
   has an accept key and a cancel key from its role table, with no binding
   written for the scheme, which is what roles are for. Under the test
   scheme they are the keys of those two roles. With no prompt open each
@@ -3371,10 +3371,67 @@ written for the checks and on the defaults), `ConfigTest.promptChecks`
 and `<Enter>` and `<Escape>` are pressed, under the Vim scheme the
 executable runs.
 
-**A prompt's candidates** (built by the command loop's phase 14). A prompt
-may be asked with candidates, strings the answer may be chosen from
-([concurrency.md](concurrency.md), "Prompts", has where they come from and
-what accepting gives).
+**A prompt's sources** (candidates built by the command loop's phase 14;
+sources by completion's phase 1). A prompt may be asked with candidates,
+records the answer may be chosen from, and they come from completion
+sources ([concurrency.md](concurrency.md), "Prompts", has when they are
+asked and what accepting gives).
+
+- **A source** (`lean/Editor/Completion.lean`) is a name, a category and a
+  function from a query to candidates. The query
+  (`lean/Editor/Completion/Candidate.lean`) is the text typed so far and
+  the view the prompt was asked from; a later field, such as the point, is
+  added to it, never a new type. A candidate is the text accepting it
+  gives, and an optional label, annotation, kind and group. The function
+  is a program over the editor's port: it may read the state and a text,
+  and has no `IO`. It reads and does not write, which the sources'
+  contract holds every source to (`lean/Editor/Completion/Contract.lean`).
+  The interface has a pure model (`Source.fixed`, `Source.ofTexts`) and a
+  fake (`lean/Editor/Completion/Fake.lean`).
+- **Sources are registered by name**, in the registry config and compiled
+  code share, by owner and replaced as a set, as themes are
+  (`lean/Editor/Config/Registry.lean`, "Sources"). The latest entry of a
+  name is the one found, so config's source of a compiled source's name is
+  used in its place until a reload drops it. Config registers one with
+  `defineSource` (`lean/Editor/Setup.lean`); a `setup` that defines a name
+  twice is refused with `the completion source <name> is registered twice`
+  (`Registrations.sourceTwice`), as a second registration of any name is.
+- **A prompt is asked with a list of sources**, each given as a value
+  (`.given source`) or by name (`.named name`):
+  `prompt label continuation initial (sources := …)`. A source given is
+  run by `prompt`; a named one is run by the loop that runs the asking
+  command, which looks the name up (`StateRequest.askSource`), since a
+  request cannot carry a program over the port it is part of. A name no
+  source is registered under refuses the prompt, as a value,
+  `noSuchSource`, with no text made.
+- **The prompt holds the candidates of every source, in the sources'
+  order, each in its source's group**: a candidate with no group of its
+  own takes its source's name (`Candidate.inGroup`). Matching is the
+  loop's, over the candidates' texts, as before.
+- **A source answers synchronously, inside the asking command**: each is
+  asked once, with the initial text, after the refusals that make nothing
+  and before the minibuffer's text is made. Its state requests are
+  answered from the state the asking command reached, and a refusal
+  refuses the asking command, which is rolled back like any. It is asked
+  here and not as the text changes because asking at each change would run
+  config's code inside the publish, which nothing does yet: what a refusal
+  or an interrupt there means is a later phase's.
+- **The shipped sources are asked by value.** `ex` asks with
+  `Ex.historySource` (`ex-history`) and `Ex.namesSource` (`ex-names`), of
+  the category `ex-line`, in that order, so it lists the `:!` history and
+  then the bound names as before; `switch-buffer` with `Buffers.source`
+  (`buffers`, `buffer`); `tab-switch` with `TabCommands.source` (`tabs`,
+  `tab`); `load-theme` with `Themes.source` (`themes`, `theme`). Each is
+  registered compiled under its name too, so config can name it. They are
+  given as values so that every host lists them, the model drivers handed
+  no compiled sources among them. Letting config replace what a shipped
+  prompt lists is a lookup by category, which is phase 2's. The compile
+  prompts ask with model sources of the lists they made
+  (`compile-history`, `compile-commands`), not registered: what they list
+  is the asking command's scope.
+- **Carried, not drawn.** A candidate's label, annotation, kind and group
+  are held by the prompt and not drawn: the scene shows each candidate's
+  text, as before, so nothing a user sees changed.
 
 - **The scene lists them in the minibuffer's status line.** After the
   prompt's label comes one field for each candidate the typed text
@@ -3410,15 +3467,30 @@ what accepting gives).
   candidate `"{n} {label}"` for every tab, in order, so `C-w w`, a number
   and `<Enter>` select that tab; `tab-rename` asks labelled `Rename tab: `
   with the tab's name as the initial text, and no candidates.
-- **Set aside**: putting the chosen candidate's text into the minibuffer;
-  a limit on how many candidates the scene lists, or a window of them
-  round the choice, which a long list wants; a popup or a view of their
-  own for them; and highlighting the characters that matched.
+- **Set aside**, each to the phase of completion that builds it: matching
+  styles, and a prompt that asks for the sources of a category, to phase 2;
+  asking again as the text changes, and answers that come later from a
+  job, to phase 3; drawing labels, annotations and groups, a limit on how
+  many candidates the scene lists or a window round the choice, a popup or
+  a view of their own, and highlighting the characters that matched, to
+  phase 4; completion at point, in a buffer, to phase 5; and file paths
+  for `open-file`, to phase 6. Putting the chosen candidate's text into
+  the minibuffer stays set aside.
 
 Pinned by `ModelTest.candidateChecks` (the listing, the scene's fields and
 the two commands, on the models and the test scheme, with the keys read
-from its role table), `vimDefaultChecks` (the four keys of the Vim state),
-and the fixture `tests/headless/candidates`, which is where `<Tab>` and
+from its role table; and the sources: two sources' candidates in their
+groups, a named source as a given one, `noSuchSource`, a refused source and
+the query a source is asked), `apiStateChecks` (a source run once, refused,
+and not run while a prompt is open), `dispatchStateChecks` (a named source
+run inside the asking command), `setupChecks` and `registryChecks`
+(registration, `sourceTwice`, latest wins), `sourceContractChecks` (the
+contract, on the model, the fake and each shipped source),
+`vimDefaultChecks` (the four keys of the Vim state),
+`ConfigTest.promptChecks` (a source config registers, asked by name,
+through the headless host and the real elaborator), and the fixture
+`tests/headless/candidates`, whose config registers its source with
+`defineSource` and asks for it by name, and which is where `<Tab>` and
 `<Enter>` are pressed under the Vim scheme the executable runs, with the
 library's matcher.
 
@@ -4169,7 +4241,11 @@ candidates that are the pattern the model's order and the library's are
 not held to agree. On the executable, with the library's matcher, they
 are checked by the fixture `tests/headless/candidates`, whose one ordered
 pair is one the rule for an exact match fixes. The ex line's candidates
-are in `exChecks` and in the fixture `tests/headless/ex`.
+are in `exChecks` and in the fixture `tests/headless/ex`. The sources the
+candidates come from are checked in `candidateChecks` too, in
+`sourceContractChecks` (every source reads and does not write) and, from
+config through the real elaborator, in `ConfigTest.promptChecks`
+("A prompt's sources").
 
 The ex command line is checked by one pure list, one list on the models
 and two through the host:
@@ -4375,7 +4451,7 @@ every build). The second is proved on the text model
   each scheme is the alternative, and under the Vim scheme whether `C-c`
   should cancel as well as `<Escape>`.
 - **How many candidates the scene lists.** Every one the text matches, in
-  the minibuffer's status line ("A prompt's candidates"). The lists that
+  the minibuffer's status line ("A prompt's sources"). The lists that
   ship are five names. A list of thousands would put thousands of fields
   in the scene at each key: a limit, or a window of about ten round the
   choice, is the better design for it, and a view of their own for the

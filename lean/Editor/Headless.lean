@@ -1670,14 +1670,14 @@ config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
   (((((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
-                                collaborators.compiledJobs).replaceBindings
-                            .compiled collaborators.bindings).replaceModes
-                        .compiled collaborators.modes).replaceEx
-                    .compiled collaborators.ex).replaceThemes
-                .compiled collaborators.themes).replaceSegments
-            .compiled collaborators.segments).replaceLanguages
-        .compiled collaborators.languages).replaceContributions
-      .compiled collaborators.contributions).replaceSources
+                                    collaborators.compiledJobs).replaceBindings
+                                .compiled collaborators.bindings).replaceModes
+                            .compiled collaborators.modes).replaceEx
+                        .compiled collaborators.ex).replaceThemes
+                    .compiled collaborators.themes).replaceSegments
+                .compiled collaborators.segments).replaceLanguages
+            .compiled collaborators.languages).replaceContributions
+        .compiled collaborators.contributions).replaceSources
     .compiled collaborators.sources
 
 /-- What the editor thread holds as its loop starts: the compiled registry

@@ -571,23 +571,33 @@ A command asks for a string without waiting for it
   value, with `alreadyOpen` and the open prompt's view. The state is read
   first, so the refusal makes no text. A command run where no window is
   focused is refused with `noWindow`.
-- **A prompt may be asked with candidates**, strings the answer may be
-  chosen from: `prompt label continuation initial (candidates := …)`.
-  - **They come from a function**: a program over the editor's port that
-    answers the strings. It may ask what a command may: the state, a text.
-    It has no `IO` and cannot wait. A list that needs the file system is
-    made by a job, whose command asks with the result
-    (`candidates := pure names`).
-  - **It is run once, by `prompt`**, inside the asking command: after the
-    two refusals above, which run nothing, and before the minibuffer's
-    text is made. What it answers is kept by the open prompt, as plain
-    data (`Editor/State.lean`, "Prompts"). If it is refused, the asking
-    command is refused, like any command, and no prompt opens.
+- **A prompt may be asked with candidates**, records the answer may be
+  chosen from, from completion sources:
+  `prompt label continuation initial (sources := …)`.
+  - **A source is a name, a category and a function from a query to
+    candidates** (`Editor/Completion.lean`): a program over the editor's
+    port, which may ask what a command may, the state, a text, has no
+    `IO` and cannot wait. A list that needs the file system is made by a
+    job, whose command asks with a source of the result
+    (`.given (.ofTexts name category names)`).
+  - **It is given as a value or named.** `.given source` is run by
+    `prompt`; `.named name` is run by the loop, which looks the name up
+    among the registered sources (`StateRequest.askSource`), and a name no
+    source is registered under refuses the prompt with `noSuchSource`,
+    with no text made.
+  - **Each source is asked once, by `prompt`**, in order, inside the
+    asking command: after the two refusals above, which run nothing, and
+    before the minibuffer's text is made, with the initial text and the
+    asking view. What they answer is kept by the open prompt, as plain
+    data, each source's candidates in its group unless a candidate names
+    its own (`Completion.Candidate.inGroup`; `Editor/State.lean`,
+    "Prompts"). If a source is refused, the asking command is refused, like
+    any command, and no prompt opens.
   - **The list is then fixed**, but for `setCandidates`, which replaces an
     open prompt's candidates and forgets what it has listed and chosen. It
     is refused, as a value, with `notOpen` when no prompt is open.
-  - A prompt asked with none, the default, makes the requests it made
-    before there were candidates.
+  - A prompt asked with no source, the default, or with sources that
+    answer none, makes the requests it made before there were candidates.
   - **The loop lists them**, before each scene: the candidates the
     minibuffer's text matches, in the fuzzy matcher's order
     (`Editor/Loop.lean`, "Prompts"). `chooseCandidate step` moves a choice
@@ -606,7 +616,7 @@ A command asks for a string without waiting for it
 - **The answer** is `Candidates.answer` of the text read
   (`Editor/State.lean`, "Prompts"):
   - **a candidate is chosen**, and the prompt's listing is for the text
-    read: that candidate;
+    read: that candidate's text;
   - **nothing is chosen**, whatever is listed: the text. So a user who
     types and accepts gets what was typed, with or without candidates;
   - **nothing matches**: nothing can be chosen, so the text;
@@ -935,8 +945,8 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
     | .given source =>
       all := all ++ (← source.candidates query).map (·.inGroup source.name)
     | .named name =>
-      let some answered ← EditorState.ask (.askSource name query)
-        | return .error (.noSuchSource name)
+      let some answered ←
+        EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
       all := all ++ answered.map (·.inGroup name)
   let text ← createText initial
   let scroll ← text.mark (.anchor { offset := 0, bias := .before })

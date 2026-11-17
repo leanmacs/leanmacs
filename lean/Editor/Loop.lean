@@ -269,8 +269,8 @@ loop has little of its own to do.
 - **The loop lists a prompt's candidates, before each scene**
   (`Loop.listed`, in `Loop.publish`). While a prompt is open and has
   candidates, the minibuffer's text is read; when it is not the text the
-  listing is for, the fuzzy matcher is asked which candidates it matches
-  and in what order (`Fuzzy.rank`, `Editor/Fuzzy.lean`), and the state
+  listing is for, the fuzzy matcher is asked which candidates' texts it
+  matches and in what order (`Fuzzy.rank`, `Editor/Fuzzy.lean`), and the state
   keeps the answer (`EditorState.listCandidates`, `Editor/State.lean`,
   "Prompts"). Nothing else asks the matcher for a prompt.
   - So the first listing is made by the scene of the asking step, for the

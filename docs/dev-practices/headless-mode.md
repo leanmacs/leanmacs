@@ -207,8 +207,9 @@ puts the four commands on the keys the input scheme has for the roles
 where typing in the minibuffer is text, they are on `<Enter>`, `<Escape>`,
 `<Tab>` and `C-n`, and Shift with `<Tab>` and `C-p`.
 
-A prompt may be asked with candidates
-(`prompt label continuation initial (candidates := function)`). The
+A prompt may be asked with candidates, from completion sources given as
+values or registered by name with `defineSource`
+(`prompt label continuation initial (sources := [.named "picks"])`). The
 scene's `status` line of the minibuffer's view then has, after the
 prompt's label in the face `minibuffer.prompt`, one field for each
 candidate the typed text matches, best first, in the face

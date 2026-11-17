@@ -547,7 +547,11 @@ checks:
   matcher that ignores case and one that does not put an exact match
   first. **The model and the binding are not held to agree on the order
   past the exact matches**, so every check above the port computes what
-  it expects with the model.
+  it expects with the model. The completion sources' contract
+  (`lean/Editor/Completion/Contract.lean`), that a source reads and does
+  not write, runs here on the sources' model, their fake and every
+  shipped source (`sourceContractChecks`), and is seen to report a source
+  that makes a text and one that is refused.
   The syntax tree interface's contract
   (`lean/Editor/SyntaxTree/Contract.lean`) runs on its model here
   (`syntaxTreeFailures`), and `contract-test` runs it on its real binding:

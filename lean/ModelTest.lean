@@ -5,10 +5,10 @@ import Editor.Clipboard.Model
 import Editor.Command.Append
 import Editor.Command.Dispatch
 import Editor.Command.Model
-import Editor.Completion.Contract
-import Editor.Completion.Fake
 import Editor.Compile.Compiled
 import Editor.Compile.Shipped
+import Editor.Completion.Contract
+import Editor.Completion.Fake
 import Editor.Config.Display
 import Editor.Config.Reload
 import Editor.Display.Contract
@@ -3436,11 +3436,11 @@ def registryChecks : List Check :=
       run :=
         let registry : Config.Registry :=
           (({} : Config.Registry).replaceSources .compiled
-                #[.ofTexts "buffers" "compiled-buffer" #["a"], .ofTexts "kept" "kept" #[]]).replaceSources
+                #[.ofTexts "buffers" "compiled-buffer" #["a"],
+                  .ofTexts "kept" "kept" #[]]).replaceSources
             .config #[.ofTexts "buffers" "config-buffer" #["b"], .ofTexts "mine" "mine" #[]]
         let replaced := registry.replaceSources .config #[]
-        let category (found : Option Completion.Source) : Option String :=
-          found.map (·.category)
+        let category (found : Option Completion.Source) : Option String := found.map (·.category)
         let names := ["buffers", "kept", "mine", "nope"]
         pure
           (category (registry.source? "buffers") == some "config-buffer" &&
@@ -10191,12 +10191,13 @@ def stateChecks : List Check :=
         { name := "why a prompt was refused is a sentence for the echo area, one for each refusal"
           run :=
             pure <|
-              (([PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow, .noSuchSource "a"].map
-                      PromptRefusal.describe).eraseDups.length ==
-                  5 &&
-                [PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow,
-                      .noSuchSource "a"].all
-                  fun refusal => !refusal.describe.isEmpty) &&
+              (([PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow,
+                            .noSuchSource "a"].map
+                        PromptRefusal.describe).eraseDups.length ==
+                    5 &&
+                  [PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow,
+                        .noSuchSource "a"].all
+                    fun refusal => !refusal.describe.isEmpty) &&
                 PromptRefusal.describe (.noSuchSource "picks") ==
                   "no completion source is registered under `picks`" },
         { name :=
@@ -10380,7 +10381,8 @@ def stateChecks : List Check :=
           run :=
             pure <|
               let listed : Candidates :=
-                { all := offered #["wq", "edit", "w"], listedFor := some "w", listed := offered #["w", "wq"] }
+                { all := offered #["wq", "edit", "w"], listedFor := some "w",
+                  listed := offered #["w", "wq"] }
               ({ listed with chosen := some 1 } : Candidates).answer "w" == "wq" &&
                 ({ listed with chosen := some 0 } : Candidates).answer "w" == "w" &&
                 listed.answer "w" == "w" &&
@@ -10398,7 +10400,8 @@ def stateChecks : List Check :=
                 let refused : Except PromptRefusal Unit × EditorState → Bool
                   | (.error .notOpen, after) => after == state
                   | _ => false
-                refused (state.setCandidates (offered #["a"])) && refused (state.listCandidates "a" #[0]) &&
+                refused (state.setCandidates (offered #["a"])) &&
+                  refused (state.listCandidates "a" #[0]) &&
                   refused (state.chooseCandidate .next) &&
                   refused (state.chooseCandidate .previous) },
         { name :=
@@ -14159,15 +14162,17 @@ def dispatchStateChecks : List Check :=
               candidates := fun _ => do
                 return #[.ofText (← editorState).echo] }
           let registered : Loop.Registered :=
-            { sources := fun name =>
+            {
+              sources := fun name =>
                 match name with
                 | "echo" => some (Completion.Fake.echo "echo" "test")
                 | "said" => some said
                 | _ => none }
           let command :
             EditorM
-              (Option (Array Completion.Candidate) × Bool × Option (Array Completion.Candidate) ×
-                Option (Array Completion.Candidate)) := do
+              (Option (Array Completion.Candidate) ×
+                Bool × Option (Array Completion.Candidate) × Option (Array Completion.Candidate)) :=
+            do
             let start ← editorState
             let missing ← EditorState.ask (.askSource "nope" { text := "w", view := ⟨0⟩ })
             let unchanged := (← editorState) == start
@@ -14189,7 +14194,8 @@ def dispatchStateChecks : List Check :=
       run :=
         pure <|
           let registered : Loop.Registered :=
-            { sources := fun name =>
+            {
+              sources := fun name =>
                 if name == "refusing" then some (Completion.Fake.refusing "refusing" "test")
                 else none }
           let asking : EditorM Unit := do
@@ -20392,7 +20398,7 @@ def candidateCommands : List (String × Dispatched) :=
     ("ask-refusing", asks "" [.given (Completion.Fake.refusing "no" "pick")]),
     ("ask-echo", asks "w" [.given (Completion.Fake.echo "echo" "pick")]),
     ("ask-named", fun _ => do
-      if let .error refusal ← prompt pickLabel pickContinuation "" [.named pickSource.name] then
+      if let .error refusal← prompt pickLabel pickContinuation "" [.named pickSource.name] then
         message refusal.describe
       return none),
     ("picked", fun call => do
@@ -20839,12 +20845,14 @@ def candidateChecks : List Check :=
             let (grouped, _) := fedTo driver (presses "C-c g")
             let pairs (all : Array Completion.Candidate) : Array (String × Option String) :=
               all.map fun candidate => (candidate.text, candidate.group)
-            let both := #[("wq", some "a"), ("edit", some "a"), ("rewrite", some "b"), ("w", some "b")]
+            let both :=
+              #[("wq", some "a"), ("edit", some "a"), ("rewrite", some "b"), ("w", some "b")]
             let ranked := (FuzzyModel.rank "" (both.map (·.1))).filterMap (both[·]?)
             (candidatesOf two).map (pairs ·.all) == some both &&
               (candidatesOf two).map (pairs ·.listed) == some ranked &&
               (candidatesOf two).map (·.listedFor) == some (some "") &&
-              (candidatesOf grouped).map (pairs ·.all) == some #[("x", some "own"), ("y", some "c")] },
+              (candidatesOf grouped).map (pairs ·.all) ==
+                some #[("x", some "own"), ("y", some "c")] },
     { name :=
         "a prompt asked with a source by name holds what the source registered under that name answers, the same as the prompt asked with that source as a value; where no source is registered under the name it is refused with noSuchSource, no prompt opens and no text is made"
       run :=
@@ -24815,7 +24823,8 @@ def themeChecks : List Check :=
             let (asking, steps) := fedTo driver (presses "C-t t")
             asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
                 some (Themes.label, { command := Themes.loadName }) &&
-              (candidatesOf asking).map (·.all.map (·.text)) == some #[Theme.defaultName, "second"] &&
+              (candidatesOf asking).map (·.all.map (·.text)) ==
+                some #[Theme.defaultName, "second"] &&
               steps.map (·.map (·.theme)) == #[some none, some none] },
     { name :=
         "the theme command with a registered name hands the name back with its step and says nothing; accepting its prompt with a name loads that one"
@@ -31119,7 +31128,8 @@ def tabCommandChecks : List Check :=
             state (tabsAfter "C-w c C-w p C-w w z q RET") with
           | some asking, some chosen, some missed =>
             asking.loop.state.prompt.map (·.label) == some TabCommands.switchPrompt &&
-              asking.loop.state.prompt.map (·.candidates.all.map (·.text)) == some #["1 scratch", "2 scratch"] &&
+              asking.loop.state.prompt.map (·.candidates.all.map (·.text)) ==
+                some #["1 scratch", "2 scratch"] &&
               chosen.frame.tabIndex == 1 &&
               chosen.prompt.isNone &&
               missed.frame.tabIndex == 0 &&
@@ -34015,7 +34025,8 @@ def shellChecks : List Check :=
             let ran := shellRan (shellRan (settledAfter driver "C-o a") "!make") "!echo hi"
             let again := shellRan ran "!make"
             let asked := (fedTo (settledAfter again "C-o w") (presses "C-e e")).1
-            (candidatesOf asked).map (·.all.toList.take 2 |>.map (·.text)) == some ["!make", "!echo hi"] &&
+            (candidatesOf asked).map (·.all.toList.take 2 |>.map (·.text)) ==
+                some ["!make", "!echo hi"] &&
               again.loop.state.workspaces.getOfProject Shell.historyStore
                   (.remote "github.com/o/r") ==
                 #["!make", "!echo hi"] },
@@ -36047,7 +36058,8 @@ def compileHookChecks : List Check :=
             (candidatesOf inR).map (·.all.map (·.text)) == some (cargo.push "lint (cargo-mode)") &&
               (shownWorkspace worktree).map (·.1.location) == some (.local "/w") &&
               shownOnModes worktree == some #[{ mode := "cargo-mode", root := "/w/crate" }] &&
-              (candidatesOf inW).map (·.all.map (·.text)) == some (cargo.push "lint (cargo-mode)") &&
+              (candidatesOf inW).map (·.all.map (·.text)) ==
+                some (cargo.push "lint (cargo-mode)") &&
               (candidatesOf inO).map (·.all.map (·.text)) == some cargo &&
               linted.jobs.processes.started.back? ==
                 some (shellCommand "/r/crate" "cargo clippy") &&
@@ -36108,7 +36120,8 @@ def compileHookChecks : List Check :=
             let askedAgain := pressedOn dropped "C-k i"
             let cargo := #["build (cargo-mode)", "test (cargo-mode)"]
             linted.jobs.processes.started.back? == some (shellCommand "/r/crate" "cargo clippy") &&
-              (candidatesOf asked).map (·.all.map (·.text)) == some (cargo.push "lint (cargo-mode)") &&
+              (candidatesOf asked).map (·.all.map (·.text)) ==
+                some (cargo.push "lint (cargo-mode)") &&
               relinted.jobs.processes.started.back? ==
                 some (shellCommand "/r/crate" "cargo clippy -D warnings") &&
               (candidatesOf askedAgain).map (·.all.map (·.text)) == some cargo },
@@ -36490,7 +36503,8 @@ def listingChecks : List Check :=
             let opened := settledAfter driver "C-p 3"
             let asked := settledAfter opened "C-k i"
             echoOf opened == some "t-mode in /t2: t-list exited with status 3: t-list: broken" &&
-              (candidatesOf asked).map (·.all.map (·.text)) == some #["build (t-mode)", "check (t-mode)"] &&
+              (candidatesOf asked).map (·.all.map (·.text)) ==
+                some #["build (t-mode)", "check (t-mode)"] &&
               startedCount asked (tList "/t2") == 1 },
     { name :=
         "a listing that could not be run, as mise is not found by an editor started from the Finder, offers none of its commands and says why once"
@@ -36513,7 +36527,8 @@ def listingChecks : List Check :=
             echoOf opened ==
                 some
                   "t-mode in /t2: t-list could not be run: the program or the directory is not there: t-list" &&
-              (candidatesOf asked).map (·.all.map (·.text)) == some #["build (t-mode)", "check (t-mode)"] &&
+              (candidatesOf asked).map (·.all.map (·.text)) ==
+                some #["build (t-mode)", "check (t-mode)"] &&
               startedCount asked (tList "/t2") == 1 },
     { name :=
         "each end of a listing's run has its own words: a status with its first line of standard error, a status whose first line is empty, a signal, output its read refuses, a run that ran out of time, and one that could not be run"

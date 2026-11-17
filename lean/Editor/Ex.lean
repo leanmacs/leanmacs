@@ -292,8 +292,8 @@ def exCommand (call : Call) : EditorM Unit := do
     run call.target line
   | _ =>
     if let .error refusal←
-        prompt label { command := name } (sources := [.given historySource, .given namesSource])
-    then
+        prompt label { command := name } (sources :=
+          [.given historySource, .given namesSource]) then
       message (notAsking refusal)
 
 /-- The name the quit command is registered under. -/

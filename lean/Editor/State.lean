@@ -1,5 +1,5 @@
-import Editor.Display
 import Editor.Completion.Candidate
+import Editor.Display
 import Editor.DisplayRules
 import Editor.Face
 import Editor.File
@@ -593,9 +593,9 @@ A prompt is a request for one string, with a text to show beside the input
     the choice; `listCandidates` forgets the choice, which was an index of
     the listing it replaces.
   - **What the prompt answers with** is `Candidates.answer`, of the text in
-    the minibuffer: the chosen candidate, when one is chosen and the
-    listing is for that text, its text; otherwise the text typed. So a prompt with no
-    candidates, or with nothing chosen, answers what was typed.
+    the minibuffer: the chosen candidate's text, when one is chosen and
+    the listing is for that text; otherwise the text typed. So a prompt
+    with no candidates, or with nothing chosen, answers what was typed.
   - Each of the three operations refuses `notOpen`, with the state as it
     was, when no prompt is open. A prompt opened with none has no
     candidates, no listing and no choice, and is in every way the prompt
@@ -1318,8 +1318,7 @@ listing is for `text`, and otherwise `text`. -/
 def answer (candidates : Candidates) (text : String) : String :=
   match candidates.chosen with
   | some index =>
-    if candidates.listedFor == some text then
-      (candidates.listed[index]?.map (·.text)).getD text
+    if candidates.listedFor == some text then (candidates.listed[index]?.map (·.text)).getD text
     else text
   | none => text
 

@@ -53,8 +53,10 @@ writes it. Their registrations as compiled commands and jobs
 (`Editor/Files/Compiled.lean`) name the registry, which is the config
 session's, and are not imported. A command of config's asks for a string
 with `prompt` (`Editor/Api.lean`), with candidates the answer may be
-chosen from when it gives a function that answers them
-(`prompt … (candidates := function)`), and the commands that accept and
+chosen from when it gives completion sources that answer them
+(`prompt … (sources := [.given source, .named "name"])`,
+`Editor/Completion.lean`); a source is registered by name with
+`defineSource` (`Editor/Setup.lean`). The commands that accept and
 cancel a prompt and move through its candidates and the minibuffer's mode
 are here as well
 (`Editor/Minibuffer.lean`); their registrations

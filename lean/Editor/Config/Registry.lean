@@ -413,7 +413,8 @@ added as its source entries, in their order. -/
 def replaceSources (registry : Registry) (owner : Owner) (sources : Array Completion.Source) :
     Registry :=
   { registry with
-    sources := registry.sources.filter (·.owner != owner) ++ sources.map fun source => { owner, source } }
+    sources :=
+      registry.sources.filter (·.owner != owner) ++ sources.map fun source => { owner, source } }
 
 /-- The completion source registered under `name`: the latest entry of that
 name. -/

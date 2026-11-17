@@ -2284,7 +2284,8 @@ decided 2026-11-13 by its phase 2):
     status out as one row at the bottom of its rectangle.
   - **A prompt's candidates are fields of that status line** (built by the
     command loop's phase 14; `Loop.promptStatus`). After the label comes
-    one field for each candidate the typed text matches, every one, in
+    one field for each candidate the typed text matches, its text (its
+    label, annotation and group are not drawn yet), every one, in
     the fuzzy matcher's order, in the face `minibuffer.candidate`
     (`Loop.candidateFace`); the chosen one, if one is chosen, is in
     `minibuffer.chosen` (`Loop.chosenFace`) instead. With nothing listed,

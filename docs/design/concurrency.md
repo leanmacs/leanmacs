@@ -1042,7 +1042,8 @@ transaction through. Where those come from is open.
 ### Prompts
 
 Status: decided 2026-11-14 and built, by the command loop's phase 10; a
-prompt's candidates by its phase 14 ("Candidates", below).
+prompt's candidates by its phase 14 ("Candidates", below), and the
+sources they come from by completion's phase 1.
 
 | Built | Where |
 |---|---|
@@ -1054,18 +1055,23 @@ prompt's candidates by its phase 14 ("Candidates", below).
 | `open-file` asking for its path | `lean/Editor/Files.lean` (`openCommand`) |
 | An invocation a command asks to be run after it, with no prompt | `lean/Editor/State/Request.lean` (`StateRequest.invoke`), `lean/Editor/Api.lean` (`invoke`) |
 | `ex` asking for its line, and running the answer's command | `lean/Editor/Ex.lean` (`exCommand`, `run`) |
-| A prompt's candidates, their listing and the choice; setting them and choosing | `lean/Editor/State.lean` ("Prompts": `Candidates`), `lean/Editor/State/Request.lean` |
-| `prompt` with candidates from a function, `setCandidates`, `chooseCandidate`; accepting the chosen candidate | `lean/Editor/Api.lean` ("Prompts") |
+| A prompt's candidates, records, their listing and the choice; setting them and choosing | `lean/Editor/State.lean` ("Prompts": `Candidates`), `lean/Editor/State/Request.lean` |
+| Completion sources, the query and the candidate record; their model, fake and contract | `lean/Editor/Completion.lean`, `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Fake.lean`, `lean/Editor/Completion/Contract.lean` |
+| Sources registered by name; a named source run inside the asking command | `lean/Editor/Config/Registry.lean` ("Sources"), `lean/Editor/Setup.lean` (`defineSource`), `lean/Editor/Command/Dispatch.lean` (`StateRequest.askSource`) |
+| `prompt` with candidates from sources, `setCandidates`, `chooseCandidate`; accepting the chosen candidate | `lean/Editor/Api.lean` ("Prompts") |
 | The listing, made before each scene from what the fuzzy matcher answers | `lean/Editor/Loop.lean` ("Prompts": `Loop.listed`), `lean/Editor/Fuzzy.lean` |
 | `minibuffer-next`, `minibuffer-previous` and the roles the mode fills with them | `lean/Editor/Minibuffer.lean` |
-| The ex names as the ex line's candidates | `lean/Editor/Ex.lean` (`exCommand`), `lean/Editor/Api.lean` (`exNames`) |
+| The `:!` history and the ex names as the ex line's candidates, from two sources | `lean/Editor/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
 | An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `lean/Editor/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
 
 Pinned on the models by `ModelTest.stateChecks` and `stateRequestChecks`
 (the state's operations), `promptChecks` (the loop, its host on the
 models, the commands and the mode: the acceptance criteria),
-`candidateChecks` (the listing, the scene's fields for it, and choosing
-and accepting by keys) and
+`candidateChecks` (the listing, the scene's fields for it, choosing
+and accepting by keys, and the sources a prompt is asked with),
+`sourceContractChecks` (the sources' contract), `setupChecks` and
+`registryChecks` (sources registered by name), `dispatchStateChecks` (a
+named source run inside the asking command) and
 `dispatchGiveUpChecks` (what is given up); on the models and the real text
 binding by the cases of `lean/Editor/Api/Cases.lean`; through the headless
 host over the real library and the real elaborator by
@@ -1322,27 +1328,36 @@ prompt.** Built by the command loop's phase 12.
 - **A reload leaves the prompt open.** It is compiled state. Its
   continuation is a name, looked up when the answer arrives.
 
-**Candidates.** A prompt may be asked with candidates: strings the answer
-may be chosen from. While it is open the scene lists the candidates the
+**Candidates.** A prompt may be asked with candidates: records the answer
+may be chosen from, each the text accepting it gives with what a display
+may show beside it. While it is open the scene lists the candidates the
 typed text matches, two commands move a choice through that list, and
 accepting hands the continuation the chosen candidate.
 
-- **They come from a function the asking command's `prompt` runs once**:
-  `prompt label continuation initial (candidates := …)`, where the
-  function is a program over the editor's port that answers the strings.
-  It may ask what a command may: the state's buffers, the bound ex names.
-  - It is run inside the asking command, after the two refusals that make
-    nothing and before the minibuffer's text is made, and what it answers
-    is what the open prompt holds, as plain data. If it is refused the
-    asking command is refused and rolled back like any, and no prompt
-    opens.
+- **They come from sources, asked once by the asking command's
+  `prompt`**: `prompt label continuation initial (sources := …)`, where a
+  source is a name, a category and a program over the editor's port from
+  a query (the text typed so far and the asking view) to candidates
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's sources"). It
+  may ask what a command may: the state's buffers, the bound ex names.
+  - A source is given as a value, which `prompt` runs, or named, which the
+    loop runs from the registered sources (`StateRequest.askSource`): a
+    request cannot carry the program, so the name crosses. A name no source
+    is registered under refuses the prompt with `noSuchSource`.
+  - Each is asked inside the asking command, in order, after the two
+    refusals that make nothing and before the minibuffer's text is made,
+    and what they answer is what the open prompt holds, as plain data,
+    each in its source's group. If one is refused the asking command is
+    refused and rolled back like any, and no prompt opens.
   - It has no `IO` and cannot wait. A list that needs the file system is
-    made by a job, whose command asks with the result
-    (`candidates := pure names`).
-  - This is how a function supplies candidates though a prompt holds no
-    function ("A function kept by the loop or by the registry", above):
-    the function is the asking command's, and is gone when the prompt is
-    open.
+    made by a job, whose command asks with a source of the result
+    (`.given (.ofTexts name category names)`).
+  - This is how a source supplies candidates though a prompt holds no
+    program ("A function kept by the loop or by the registry", above):
+    the source is asked by the asking command, and what the prompt keeps
+    is its answer. A registered source is the registry's, by owner, as a
+    command is, so a reload replaces config's and none of its code is kept
+    past one.
 - **The list is then fixed**, but for `setCandidates`, which replaces an
   open prompt's candidates and forgets its listing and its choice. A job's
   command can bring a list that way.
@@ -1386,12 +1401,14 @@ accepting hands the continuation the chosen candidate.
   user who types and accepts gets what was typed. Set aside: the first
   match when nothing is chosen. `:r` and the accept key would then run
   `reload`.
-- **Set aside: a completer registered by name and called at each change**
-  of the text, as a continuation is named. It needs a fourth kind of
-  registration by owner, a rule for running config's code inside the
-  publish, and what a refusal or an interrupt there means. Nothing built
-  needs a list that changes with the text. File names do, since they
-  depend on the directory typed so far: `open-file` has no candidates.
+- **Sources are registered by name, and asked once.** Completion's phase
+  1 built the registration by owner and the asking inside the asking
+  command. **Set aside until its phase 3: asking a source again at each
+  change** of the text. It needs a rule for running config's code inside
+  the publish, what a refusal or an interrupt there means, and answers that
+  come later from a job. Nothing built needs a list that changes with the
+  text. File names do, since they depend on the directory typed so far:
+  `open-file` has no candidates until phase 6.
 
 How the scene shows the candidates is in
 [text-and-display.md](text-and-display.md), "Views as built", and the keys
@@ -1402,8 +1419,9 @@ that move through them in [keymaps-and-modes.md](keymaps-and-modes.md),
 argument, asks `Open file: ` with itself as the continuation, so the
 answer is the path it opens, in the view it was asked from ("Getting
 results back"). `ex`, run with no line as its first argument, asks `:`
-with itself as the continuation and the bound ex names as its candidates,
-so the answer is the line it runs
+with itself as the continuation and the `:!` history and the bound ex
+names as its candidates, from two sources, so the answer is the line it
+runs
 ([keymaps-and-modes.md](keymaps-and-modes.md), "The ex command line").
 `save-buffer` does not ask: a buffer with a file needs no
 name, and one with no file needs a file that is not there yet, which is

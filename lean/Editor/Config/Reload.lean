@@ -19,11 +19,13 @@ the model tests run it with outcomes built by hand
   what was just installed, and two reloads cannot install out of order.
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the chunks, replaces the config's entries in the registry,
-  commands, jobs, key bindings, modes, ex bindings, faces, themes and
-  segments (`Registry.replace`, `Registry.replaceJobs`,
-  `Registry.replaceBindings`, `Registry.replaceModes`, `Registry.replaceEx`,
-  `Registry.replaceFaces`, `Registry.replaceThemes`,
-  `Registry.replaceSegments`, never an append), sets the registry's process
+  commands, jobs, key bindings, modes, ex bindings, faces, themes,
+  segments, languages, compile contributions and completion sources
+  (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
+  `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
+  `Registry.replaceThemes`, `Registry.replaceSegments`,
+  `Registry.replaceLanguages`, `Registry.replaceContributions`,
+  `Registry.replaceSources`, never an append), sets the registry's process
   environment to the one the config set, `none` when it set none
   (`Registry.environment`), and meets the config's stores with the cells
   there are (`Cells.install`). A rejected outcome changes none of them: the config that
@@ -337,16 +339,15 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         registry :=
           {
             ((((((((((state.registry.replace .config built.registrations.commands).replaceJobs
-                                              .config built.registrations.jobs).replaceBindings
-                                          .config built.registrations.bindings).replaceModes
-                                      .config built.registrations.modes).replaceEx
-                                  .config built.registrations.ex).replaceFaces
-                              .config built.registrations.faces).replaceThemes
-                          .config built.registrations.themes).replaceSegments
-                      .config built.registrations.segments).replaceLanguages
-                  .config built.registrations.languages).replaceContributions
-              .config
-              built.registrations.contributions).replaceSources
+                                                  .config built.registrations.jobs).replaceBindings
+                                              .config built.registrations.bindings).replaceModes
+                                          .config built.registrations.modes).replaceEx
+                                      .config built.registrations.ex).replaceFaces
+                                  .config built.registrations.faces).replaceThemes
+                              .config built.registrations.themes).replaceSegments
+                          .config built.registrations.segments).replaceLanguages
+                      .config built.registrations.languages).replaceContributions
+                  .config built.registrations.contributions).replaceSources
               .config
               built.registrations.sources with
             environment := built.registrations.environment
