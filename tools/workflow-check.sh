@@ -60,7 +60,9 @@
 #   release-gating     a `release` job that needs ci, build-id, build and
 #                      secrets-scan, on main pushes only, calling
 #                      release.yml with the ID and `github.sha` as commit
-#                      and ref, with permissions exactly contents: write
+#                      and ref, with permissions exactly contents: write,
+#                      pages: write and id-token: write (the union of
+#                      release.yml's jobs': a called job can't exceed it)
 #   release-concurrency  the `release` job's concurrency is exactly the
 #                      group nightly-release, never cancelled in progress
 #   write-scope        the top-level permissions are exactly contents:
@@ -85,9 +87,10 @@
 #
 #   release-trigger    `workflow_call` alone, with exactly the inputs
 #                      build-id, commit and ref, each a required string
-#   release-job        one job, `publish`, on macos-26, a leg of ci.yml's
-#                      matrix; top-level permissions {} and the job's
-#                      exactly contents: write; LEANMACS_BUILD_ID and
+#   release-job        two jobs, `publish` and `pages`; `publish` on
+#                      macos-26, a leg of ci.yml's matrix; top-level
+#                      permissions {} and `publish`'s exactly
+#                      contents: write; LEANMACS_BUILD_ID and
 #                      LEANMACS_COMMIT from the inputs, no MISE_ENV; one
 #                      checkout of the `ref` input, and every checkout
 #                      with persist-credentials false
@@ -103,6 +106,19 @@
 #                      (where it falls among the steps is release-steps')
 #   release-cache      no rust-cache and no actions/cache step: the only
 #                      cache is mise-action's, saved from main only
+#   release-page       `publish` renders the page in exactly one step,
+#                      `mise run site -- target/nightly/build.json
+#                      target/site`, after `mise run nightly`, and uploads
+#                      it in exactly one actions/upload-pages-artifact of
+#                      target/site, after the render (that the publish
+#                      stays last is release-steps')
+#   pages-job          `pages` needs exactly publish, has no if:, runs on a
+#                      leg of ci.yml's matrix, with permissions exactly
+#                      pages: write and id-token: write, in the
+#                      github-pages environment, and has one step: an
+#                      actions/deploy-pages with id deployment
+#   pages-concurrency  `pages`' concurrency is exactly the group pages,
+#                      never cancelled in progress
 #
 # The other files, ci.yml for build.yml's and release.yml's rules among
 # them, are read from
@@ -416,8 +432,8 @@ ci_rules() {
         fail release-gating "jobs.release.with.$input must be \${{ github.sha }}"
       fi
     done
-    if [ "$(q '.jobs.release.permissions')" != '{"contents":"write"}' ]; then
-      fail release-gating 'jobs.release.permissions must be exactly contents: write'
+    if [ "$(q '.jobs.release.permissions | to_entries | sort_by(.key) | from_entries')" != '{"contents":"write","id-token":"write","pages":"write"}' ]; then
+      fail release-gating 'jobs.release.permissions must be exactly contents: write, pages: write and id-token: write'
     fi
   fi
 
@@ -541,10 +557,11 @@ release_rules() {
   fi
 
   # ---- release-job
-  # One job on a leg of ci.yml's matrix, writing contents alone, stamped
-  # from the inputs, with no credentials left on disk.
-  if [ "$(q '.jobs | keys')" != '["publish"]' ]; then
-    fail release-job 'jobs must be exactly publish'
+  # The publish and the page's deploy. `publish` runs on a leg of ci.yml's
+  # matrix, writing contents alone, stamped from the inputs, with no
+  # credentials left on disk; `pages` is pages-job's.
+  if [ "$(q '.jobs | keys | sort')" != '["pages","publish"]' ]; then
+    fail release-job 'jobs must be exactly pages and publish'
   fi
   runs_on=$(q '.jobs.publish["runs-on"]')
   if [ "$runs_on" != macos-26 ]; then
@@ -629,6 +646,80 @@ release_rules() {
   # stays, saved from main only (the common mise-action rule).
   if [ "$(q '[.jobs[].steps[]? | select(.uses // "" | test("^(Swatinem/rust-cache|actions/cache)(/[a-z]+)?@"))] | length')" != 0 ]; then
     fail release-cache 'release.yml must have no rust-cache and no actions/cache step'
+  fi
+
+  # ---- release-page
+  # The page is rendered from the build.json `nightly` prepared in this job,
+  # the one the publish uploads, and uploaded for `pages`, both before the
+  # publish (release-steps keeps that last).
+  render_run='mise run site -- target/nightly/build.json target/site'
+  export render_run
+  render=$(q '[.jobs.publish.steps | to_entries | .[] | select(.value.run == strenv(render_run)) | .key] | join(" ")')
+  upload=$(q '[.jobs.publish.steps | to_entries | .[] | select(.value.uses // "" | test("^actions/upload-pages-artifact@")) | .key] | join(" ")')
+  upload_path=$(q '[.jobs.publish.steps[]? | select(.uses // "" | test("^actions/upload-pages-artifact@")) | .with.path] | join(" ")')
+  case $render in
+  '' | *' '*) fail release-page "jobs.publish must have exactly one step whose run is \`$render_run\`" ;;
+  *)
+    case $prepare in
+    '' | *' '*) ;;
+    *)
+      if [ "$render" -le "$prepare" ]; then
+        fail release-page "the \`$render_run\` step must come after \`mise run nightly\`"
+      fi
+      ;;
+    esac
+    ;;
+  esac
+  case $upload in
+  '' | *' '*) fail release-page 'jobs.publish must have exactly one actions/upload-pages-artifact' ;;
+  *)
+    if [ "$upload_path" != target/site ]; then
+      fail release-page "the actions/upload-pages-artifact step's path must be target/site, not $upload_path"
+    fi
+    case $render in
+    '' | *' '*) ;;
+    *)
+      if [ "$upload" -le "$render" ]; then
+        fail release-page "the actions/upload-pages-artifact step must come after \`$render_run\`"
+      fi
+      ;;
+    esac
+    ;;
+  esac
+
+  # ---- pages-job
+  # Deploys only what a successful publish uploaded, with the two scopes
+  # deploy-pages needs and nothing else, into the main-only environment,
+  # running one GitHub-owned action and no code of this repository.
+  if [ "$(q '.jobs | has("pages")')" != true ]; then
+    fail pages-job 'jobs must have pages'
+  else
+    if [ "$(q '[.jobs.pages.needs] | flatten')" != '["publish"]' ]; then
+      fail pages-job 'jobs.pages.needs must be exactly publish'
+    fi
+    if [ "$(q '.jobs.pages | has("if")')" != false ]; then
+      fail pages-job 'jobs.pages must have no if:, so it never deploys after a failed publish'
+    fi
+    pages_on=$(q '.jobs.pages["runs-on"]')
+    if [ "$(R=$pages_on yq '.jobs.ci.strategy.matrix.os | contains([strenv(R)])' "$ci_wf")" != true ]; then
+      fail pages-job "jobs.pages.runs-on $pages_on is not a leg of ci.yml's matrix"
+    fi
+    if [ "$(q '.jobs.pages.permissions // {} | to_entries | sort_by(.key) | from_entries')" != '{"id-token":"write","pages":"write"}' ]; then
+      fail pages-job 'jobs.pages.permissions must be exactly pages: write and id-token: write'
+    fi
+    if [ "$(q '.jobs.pages.environment.name')" != github-pages ]; then
+      fail pages-job 'jobs.pages.environment.name must be github-pages'
+    fi
+    if [ "$(q '[.jobs.pages.steps[]?] | length')" != 1 ] ||
+      [ "$(q '.jobs.pages.steps[0] | ((.uses // "" | test("^actions/deploy-pages@")) and .id == "deployment")')" != true ]; then
+      fail pages-job 'jobs.pages must have exactly one step, an actions/deploy-pages with id: deployment, and no checkout'
+    fi
+  fi
+
+  # ---- pages-concurrency
+  # One deploy at a time, never cut off halfway.
+  if [ "$(q '.jobs.pages.concurrency')" != '{"group":"pages","cancel-in-progress":false}' ]; then
+    fail pages-concurrency 'jobs.pages.concurrency must be exactly group: pages, cancel-in-progress: false'
   fi
 }
 

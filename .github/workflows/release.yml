@@ -3,9 +3,19 @@ name: Release
 # The rolling nightly (docs/dev-practices/ci.md, "`release`: the nightly"):
 # the prerelease tagged `nightly`, holding the run's .dmg as Leanmacs.dmg
 # and as Leanmacs-<build-id>.dmg, Leanmacs.dmg.sha256 and build.json, with
-# the tag moved to the run's commit. ci.yml calls it from main pushes only,
-# after both legs of the gate, the build and the secret scan, in a
-# concurrency group that is never cancelled; nothing else does.
+# the tag moved to the run's commit; and the download page
+# (https://leanmacs.github.io/leanmacs/) for that build. ci.yml calls it
+# from main pushes only, after both legs of the gate, the build and the
+# secret scan, in a concurrency group that is never cancelled; nothing else
+# does.
+#
+# Two jobs. `publish` prepares the nightly, renders the page from the
+# build.json it is about to publish and uploads it as the Pages artifact,
+# all with no token, then publishes. `pages` needs it, so it deploys only
+# after a publish that succeeded, and runs one GitHub-owned action and no
+# code of this repository. The caller's job grants contents: write,
+# pages: write and id-token: write, the most either job needs; each job
+# names exactly its own.
 on:
   workflow_call:
     inputs:
@@ -22,7 +32,7 @@ on:
         required: true
         type: string
 
-# Nothing at the top: the one job names the one scope it needs.
+# Nothing at the top: each job names the scopes it needs.
 permissions: {}
 
 jobs:
@@ -74,6 +84,20 @@ jobs:
       - name: Prepare the nightly
         run: mise run nightly
         shell: bash
+      # The download page, with no token, from target/nightly/build.json:
+      # the very file the publish step below re-reads and uploads, so the
+      # page names the build this run publishes, and never one a newer run
+      # put up (crates/editor-release, `site`). The minimum macOS is
+      # mise.toml's MACOSX_DEPLOYMENT_TARGET. Before the publish, so a page
+      # that cannot be rendered stops the nightly too.
+      - name: Render the download page
+        run: mise run site -- target/nightly/build.json target/site
+        shell: bash
+      # The page as the github-pages artifact, which `pages` deploys. Still
+      # no token: an artifact upload needs none.
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: target/site
       # The one step with the token, and the last. It runs the binary the
       # step above built and compiles nothing. It refuses anything but a
       # push to main, re-checks the images' SHA-256, uploads the build-ID
@@ -85,3 +109,31 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # Deploys the page `publish` rendered and uploaded, after that publish
+  # succeeded (`needs`, and no if:, so it never runs after a failure). The
+  # one job with pages: write and id-token: write, which deploy-pages needs;
+  # it checks out nothing and runs no code of this repository. The
+  # github-pages environment lets only main deploy
+  # (infra/github/pages.tf). Its own group, never cancelled in progress, as
+  # deploy-pages recommends; ci.yml's nightly-release group already keeps
+  # one run's deploy finished before the next run's publish starts.
+  pages:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    env:
+      # The common rule's: this job runs no mise.
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

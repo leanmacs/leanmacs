@@ -176,6 +176,7 @@ mutate build-gating 'build-id with no if' 'del(.jobs["build-id"].if)'
 mutate release-gating 'release not needing secrets-scan' '.jobs.release.needs = ["ci", "build-id", "build"]'
 mutate release-gating "release's if not limited to main" ".jobs.release.if = \"\${{ github.event_name == 'push' }}\""
 mutate release-gating "release's token reading contents only" '.jobs.release.permissions.contents = "read"'
+mutate release-gating "release's token without id-token" 'del(.jobs.release.permissions["id-token"])'
 mutate release-concurrency 'the nightly cancelled in progress' '.jobs.release.concurrency["cancel-in-progress"] = true'
 mutate release-concurrency 'the nightly group renamed' '.jobs.release.concurrency.group = "release"'
 mutate write-scope 'build-id writing contents' '.jobs["build-id"].permissions = {"contents": "write"}'
@@ -198,10 +199,18 @@ mutate_build build-cache "Lake's restore key not ci.yml's" "($build_lake | .with
 mutate_build sha-pin 'upload-artifact pinned by a tag' "($upload | .uses) = \"actions/upload-artifact@v7.0.2\""
 mutate_build mise-env 'no MISE_AUTO_INSTALL in the build job' 'del(.jobs.build.env.MISE_AUTO_INSTALL)'
 
-# release.yml. Its steps: the prepare, the publish (last, with the token)
-# and the download.
+# release.yml. Its steps: the prepare, the publish (last, with the token),
+# the download, the page's render and its upload, and the deploy.
 prepare='.jobs.publish.steps[] | select(.run == "mise run nightly")'
 download='.jobs.publish.steps[] | select(.uses // "" | test("^actions/download-artifact@"))'
+render='.jobs.publish.steps[] | select(.run == "mise run site -- target/nightly/build.json target/site")'
+page_upload='.jobs.publish.steps[] | select(.uses // "" | test("^actions/upload-pages-artifact@"))'
+deploy='.jobs.pages.steps[] | select(.uses // "" | test("^actions/deploy-pages@"))'
+# step_index <run>: the index of the publish step running <run> in the
+# checkout's release.yml.
+step_index() {
+  R=$1 yq '.jobs.publish.steps | to_entries | .[] | select(.value.run == strenv(R)) | .key' "$root/.github/workflows/release.yml"
+}
 mutate_release release-trigger 'release.yml also run on push' '.on.push = {}'
 mutate_release release-job 'a checkout that keeps its credentials' 'del(.jobs.publish.steps[] | select(.uses // "" | test("^actions/checkout@")) | .with["persist-credentials"])'
 mutate_release release-job 'the job also writing pages' '.jobs.publish.permissions.pages = "write"'
@@ -214,6 +223,29 @@ mutate_release release-token 'GH_TOKEN in the prepare too' "($prepare).env.GH_TO
 mutate_release release-token 'GH_TOKEN in the job env' ".jobs.publish.env.GH_TOKEN = \"\${{ github.token }}\""
 mutate_release release-cache 'a rust-cache, saving from main only' ".jobs.publish.steps |= (.[:2] + [{\"uses\": \"Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0\", \"with\": {\"save-if\": \"\${{ github.ref == 'refs/heads/main' }}\"}}] + .[2:]) | .jobs.publish.steps[2].uses line_comment = \"v2.9.3\""
 mutate_release sha-pin 'download-artifact pinned by a tag' "($download | .uses) = \"actions/download-artifact@v8.0.2\""
+mutate_release sha-pin 'deploy-pages pinned by a tag' "($deploy | .uses) = \"actions/deploy-pages@v5.0.1\""
+mutate_release release-job 'a third job' '.jobs.extra = {"runs-on": "ubuntu-24.04", "env": {"MISE_AUTO_INSTALL": "false"}, "steps": [{"run": "true"}]}'
+
+# The page: rendered from the prepared build.json, after the prepare, and
+# uploaded after the render. Moving a step moves it to another index: the
+# step is taken out and put back at that index.
+prepare_at=$(step_index 'mise run nightly')
+render_at=$(step_index 'mise run site -- target/nightly/build.json target/site')
+mutate_release release-page 'the render deleted' "del($render)"
+mutate_release release-page 'the render reading a re-downloaded build.json' "($render).run = \"mise run site -- dist/build.json target/site\""
+mutate_release release-page 'the render moved before the prepare' "($render) as \$r | del($render) | .jobs.publish.steps |= (.[:$prepare_at] + [\$r] + .[$prepare_at:])"
+mutate_release release-page 'the upload moved before the render' "($page_upload) as \$u | del($page_upload) | .jobs.publish.steps |= (.[:$render_at] + [\$u] + .[$render_at:])"
+mutate_release release-page "the upload's path target" "($page_upload | .with.path) = \"target\""
+
+# The deploy.
+mutate_release pages-job 'pages not needing publish' 'del(.jobs.pages.needs)'
+mutate_release pages-job 'pages deploying always' ".jobs.pages.if = \"\${{ always() }}\""
+mutate_release pages-job 'pages also reading contents' '.jobs.pages.permissions.contents = "read"'
+mutate_release pages-job 'pages without id-token' 'del(.jobs.pages.permissions["id-token"])'
+mutate_release pages-job 'pages in another environment' '.jobs.pages.environment.name = "pages"'
+mutate_release pages-job 'a checkout in pages' '.jobs.pages.steps = [{"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "with": {"persist-credentials": false}}] + .jobs.pages.steps | .jobs.pages.steps[0].uses line_comment = "v7.0.1"'
+mutate_release pages-concurrency 'the deploy cancelled in progress' '.jobs.pages.concurrency["cancel-in-progress"] = true'
+mutate_release pages-concurrency 'the pages group renamed' '.jobs.pages.concurrency.group = "deploy"'
 
 # The unbroken copies, rewritten by the same yq as the mutations.
 n=$((n + 1))

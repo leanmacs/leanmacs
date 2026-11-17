@@ -9,8 +9,8 @@ on:
   pull_request:
 
 # The token reads the checkout and nothing more. Only `release` writes,
-# with the one scope it names (contents: write, for the nightly's assets
-# and tag).
+# with the scopes it names (contents: write, for the nightly's assets and
+# tag; pages: write and id-token: write, for the download page's deploy).
 permissions:
   contents: read
 
@@ -178,16 +178,24 @@ jobs:
 
   # The rolling nightly (.github/workflows/release.yml): the prerelease
   # tagged `nightly` gets the build's .dmg, its build-ID copy, its checksum
-  # and build.json, and the tag moves to this commit. Main pushes only,
-  # after both legs of the gate, the build and the secret scan, so a branch
-  # or a pull request publishes nothing and moves no tag. The one job in
-  # the workflow that writes. Its own concurrency group, never cancelled in
-  # progress, keeps two nightlies from publishing at once even across runs.
+  # and build.json, the tag moves to this commit, and the download page is
+  # deployed for that build. Main pushes only, after both legs of the gate,
+  # the build and the secret scan, so a branch or a pull request publishes
+  # nothing, moves no tag and deploys no page. The one job in the workflow
+  # that writes. Its own concurrency group, never cancelled in progress,
+  # keeps two nightlies from publishing at once even across runs, and holds
+  # for both of release.yml's jobs, so one run's deploy finishes before the
+  # next run's publish starts.
   release:
     needs: [ci, build-id, build, secrets-scan]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    # A called workflow's jobs can never hold more than this job grants, so
+    # it is the union of release.yml's two: `publish` narrows it to
+    # contents: write, `pages` to pages: write and id-token: write.
     permissions:
       contents: write
+      pages: write
+      id-token: write
     concurrency:
       group: nightly-release
       cancel-in-progress: false
