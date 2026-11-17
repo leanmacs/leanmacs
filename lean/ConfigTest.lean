@@ -1344,14 +1344,15 @@ def withRecordedSyntaxTree (context : Context)
           { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock
             watches := stage.watches, log := stage.log } asked published
 
-/-- The faces the shipped default draws the captures of the library's
-shipped highlights query for `grammar` in, by name, `-` for none, as
-`recordedRequest` writes a highlight: read from the library, so no check
-repeats its query. -/
-def shippedDefaultFaces (grammar : String) : IO String := do
+/-- The faces the captures of the library's shipped highlights query for
+`grammar` are drawn in, by name, `-` for none, as `recordedRequest` writes a
+highlight: by the shipped default over the language's `captures`, none by
+default. Read from the library, so no check repeats its query. -/
+def shippedFaces (grammar : String) (captures : List (String × Option FaceName) := []) :
+    IO String := do
   let .ok source ← Ffi.syntaxShippedQuery grammar 0 | return "none shipped"
   let .ok query ← Ffi.SyntaxQuery.new grammar source | return "does not compile"
-  let faces := Highlight.faces [] (← query.captureNames)
+  let faces := Highlight.faces captures (← query.captureNames)
   return s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
 
 /-- The Rust text of `rustObjectsChunk`: a method in an `impl`, after a
@@ -1590,9 +1591,8 @@ def jobChecks (context : Context) : List Check :=
           return joined == .settled && (← session.output.get).contains "job 1 highlight: ok" &&
               (← asked.get) ==
                 #["refreshAfter 500", "attach json", "shippedQuery json highlights", "compile json",
-                  "captureNames", ← shippedDefaultFaces "json", "release",
-                  "shippedQuery json injections", "shippedQuery json textObjects",
-                  "shippedQuery json indents"] &&
+                  "captureNames", ← shippedFaces "json", "release", "shippedQuery json injections",
+                  "shippedQuery json textObjects", "shippedQuery json indents"] &&
               scene.any fun line =>
                 line.startsWith "scene " && (line.splitOn "highlights:").length == 1 },
     { name :=
@@ -3849,11 +3849,12 @@ def noHighlightsRefusal (session : Session) : IO Bool := do
 
 /-- The requests the entry of a buffer's mode makes of the syntax tree
 port before its injections, for a language parsed with `grammar` and
-highlighted with the grammar's shipped query, as `recordedRequest` writes
-them. -/
-def shippedHighlightRequests (grammar : String) : IO (Array String) :=
+highlighted with the grammar's shipped query, its captures mapped by
+`captures` over the shipped default, as `recordedRequest` writes them. -/
+def shippedHighlightRequests (grammar : String) (captures : List (String × Option FaceName) := []) :
+    IO (Array String) :=
   return #["refreshAfter 500", s!"attach {grammar}", s!"shippedQuery {grammar} highlights",
-      s!"compile {grammar}", "captureNames", ← shippedDefaultFaces grammar, "release"]
+      s!"compile {grammar}", "captureNames", ← shippedFaces grammar captures, "release"]
 
 /-- The checks of a file's language through the headless host
 (`Editor/Files.lean`, "Open"; `Editor/Language.lean`): the file commands
@@ -3896,6 +3897,26 @@ def languageChecks (context : Context) : List Check :=
                     requests.contains "injectLanguage markdown_inline" &&
                     (← noHighlightsRefusal session)
           return jsonHeld && markdownHeld },
+    { name :=
+        "opening a .toml file and a file named Cargo.lock gives each buffer the language toml and the major mode code, and highlights its text with TOML's shipped query, keys and table headers in the type face, strings in the string face, brackets in the punctuation face and booleans in the constant face, with no refusal said"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let toml := files / "mise.toml"
+          let lock := files / "Cargo.lock"
+          IO.FS.writeFile toml "[tools]\nrust = \"1.91\"\nenabled = true\n"
+          IO.FS.writeFile lock "version = 4\n\n[[package]]\nname = \"cc\"\n"
+          let expected ← shippedHighlightRequests "toml" Language.toml.syntaxTree.captures
+          let faces := ((expected[5]?.getD "").replace "highlight " "").splitOn ", "
+          let drawn :=
+            ["syntax.type", "syntax.string", "syntax.punctuation", "syntax.operator",
+                  "syntax.constant"].all
+              faces.contains
+          let opened (name : String) (path : System.FilePath) : IO Bool :=
+            withLanguageHost context "" [(name, path)] fun session asked => do
+              let report ← reportedAfter session name
+              return report == some "toml code".quote && (← asked.get).extract 0 7 == expected &&
+                  (← noHighlightsRefusal session)
+          return drawn && (← opened "open-toml" toml) && (← opened "open-lock" lock) },
     { name :=
         "opening a file whose name matches no language gives its buffer no language and no major mode, and asks the syntax tree port nothing"
       run :=
@@ -4851,7 +4872,7 @@ keymap of its bindings. Its services are a fake clock's over a table of
 waits of its own, which no pump reads: nothing here starts a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
-        "the executable's hosts start with the code mode and the languages rust, json and markdown, in that order, registered for the owner compiled"
+        "the executable's hosts start with the code mode and the languages rust, json, markdown and toml, in that order, registered for the owner compiled"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -4863,7 +4884,7 @@ def shippedChecks (_ : Unit) : List Check :=
               (fun entry => entry.mode.name == Language.codeName && entry.owner == .compiled) &&
             (registry.mode? Language.codeName).any (·.syntaxTreeOfLanguage) &&
             registry.languages.map (fun entry => (entry.language.name, entry.owner == .compiled)) ==
-              #[("rust", true), ("json", true), ("markdown", true)] },
+              #[("rust", true), ("json", true), ("markdown", true), ("toml", true)] },
     { name :=
         "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, each registered for the owner compiled; with switch-buffer, list-buffers and close-buffer registered for it, and the ex names b, ls and bd bound to them"
       run := do

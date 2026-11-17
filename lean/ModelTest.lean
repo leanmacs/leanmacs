@@ -4025,7 +4025,8 @@ def reloadChecks : List Check :=
           state.registry.registered.languages.find? (·.name == "rust")
         pure
           (rustOf start == some Language.rust && rustOf loaded == some mine &&
-            loaded.registry.registered.languages.map (·.name) == ["rust", "json", "markdown"] &&
+            loaded.registry.registered.languages.map (·.name) ==
+              ["rust", "json", "markdown", "toml"] &&
             rustOf kept == some mine &&
             rustOf bare == some Language.rust) },
     { name :=
@@ -14834,12 +14835,15 @@ over an earlier owner's, and the shipped table. -/
 def languageMatchChecks : List Check :=
   let shipped := Language.shipped.toList
   [{  name :=
-        "the shipped table chooses rust for a .rs path, json for a .json path and markdown for a .md path, by extension"
+        "the shipped table chooses rust for a .rs path, json for a .json path, markdown for a .md path and toml for a .toml path, by extension, and toml for a file named Cargo.lock, by name"
       run :=
         pure
           (chosenIn shipped "/p/src/main.rs" == some "rust" &&
             chosenIn shipped "/p/data.json" == some "json" &&
-            chosenIn shipped "/p/notes.md" == some "markdown") },
+            chosenIn shipped "/p/notes.md" == some "markdown" &&
+            chosenIn shipped "/p/Cargo.toml" == some "toml" &&
+            chosenIn shipped "/p/mise.toml" == some "toml" &&
+            chosenIn shipped "/p/Cargo.lock" == some "toml") },
     { name :=
         "an exact base-name pattern beats an extension pattern, even an earlier entry's, and the extension entry still has the paths the name does not"
       run :=
@@ -14871,11 +14875,12 @@ def languageMatchChecks : List Check :=
             chosenIn table "/p/x.rlib" == some "rust" &&
             Language.over [] shipped == shipped) },
     { name :=
-        "a path that matches no entry has no language: another extension, no extension, a base name that is only the extension with or without its dot, an extension in another case, and a path with no base name"
+        "a path that matches no entry has no language: another extension, no extension, a base name that is only the extension with or without its dot, an extension in another case, a lock file not named Cargo.lock, Cargo.lock in another case or with more after it, and a path with no base name"
       run :=
         pure
-          (["/p/notes.txt", "/p/Makefile", "/p/rs", "/p/.rs", "/p/main.RS", "/"].all fun path =>
-            chosenIn shipped path == none) },
+          (["/p/notes.txt", "/p/Makefile", "/p/rs", "/p/.rs", "/p/main.RS", "/p/yarn.lock",
+                "/p/cargo.lock", "/p/Cargo.lock.bak", "/"].all
+            fun path => chosenIn shipped path == none) },
     { name :=
         "the registry's language table is each owner's entries over the earlier owners', the latest owner's first and in its order: config's entry of a shipped language's name replaces it whole, config's entry beats a shipped one of equal pattern, and the loop is told the table"
       run :=
@@ -14886,8 +14891,8 @@ def languageMatchChecks : List Check :=
         let registry := compiled.replaceLanguages .config #[rusty, mine]
         let names (table : List Language) : List String := table.map (·.name)
         pure
-          (names compiled.languageTable == ["rust", "json", "markdown"] &&
-            names registry.languageTable == ["rusty", "rust", "json", "markdown"] &&
+          (names compiled.languageTable == ["rust", "json", "markdown", "toml"] &&
+            names registry.languageTable == ["rusty", "rust", "json", "markdown", "toml"] &&
             registry.languageTable[1]? == some mine &&
             chosenIn registry.languageTable "/p/main.rs" == some "rusty" &&
             chosenIn (compiled.replaceLanguages .config #[mine]).languageTable "/p/main.rs" ==
@@ -14895,15 +14900,21 @@ def languageMatchChecks : List Check :=
             registry.registered.languages == registry.languageTable &&
             (registry.replaceLanguages .config #[]).languageTable == compiled.languageTable) },
     { name :=
-        "the shipped table is rust, json and markdown, each parsed with the grammar of its name and the grammar's own queries, rust indented by four spaces and json and markdown by two"
+        "the shipped table is rust, json, markdown and toml, each parsed with the grammar of its name and the grammar's own queries, toml's booleans drawn in the constant face and no other capture of any mapped; rust indented by four spaces and json, markdown and toml by two; toml for *.toml and Cargo.lock"
       run :=
         pure
-          (Language.shipped.map (·.name) == #["rust", "json", "markdown"] &&
+          (Language.shipped.map (·.name) == #["rust", "json", "markdown", "toml"] &&
             Language.shipped.all
-              (fun language => language.syntaxTree == { grammar := language.name }) &&
+              (fun language =>
+                language.syntaxTree ==
+                  { grammar := language.name, captures := language.syntaxTree.captures }) &&
+            [Language.rust, Language.json, Language.markdown].all (·.syntaxTree.captures.isEmpty) &&
+            Language.toml.syntaxTree.captures == [("boolean", some ⟨"syntax.constant"⟩)] &&
+            Language.toml.patterns == [.extension "toml", .name "Cargo.lock"] &&
             Language.rust.indentUnit == .spaces 4 &&
             Language.json.indentUnit == .spaces 2 &&
-            Language.markdown.indentUnit == .spaces 2) },
+            Language.markdown.indentUnit == .spaces 2 &&
+            Language.toml.indentUnit == .spaces 2) },
     { name := "an entry that says no indent unit is indented by the default unit, four spaces"
       run :=
         pure

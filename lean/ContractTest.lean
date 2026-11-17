@@ -2054,6 +2054,47 @@ def syntaxTreeChecks : List Check :=
         -- Each row starts with `fn`: its first run, two bytes, in red.
         return reported && published.isOk && (frame.splitOn "runs 0..2:cc0000ff/").length == 3 },
     { name :=
+        "a TOML text entered with the toml language's tree is drawn by the real display with its table header's key and its key in the type face's colour, its string in the string face's colour and the header's brackets in the punctuation face's colour"
+      run := do
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let syntaxTree := settlingAttach table real.handle
+        let red := Color.rgb 0xcc 0 0
+        let green := Color.rgb 0 0xcc 0
+        let blue := Color.rgb 0 0 0xcc
+        let display ← Ffi.Display.newCells 8 16
+        let shown ←
+          RealDisplay.over display table.reader
+              #[{ name := ⟨"syntax.type"⟩, face := { foreground := some red } },
+                { name := ⟨"syntax.string"⟩, face := { foreground := some green } },
+                { name := ⟨"syntax.punctuation"⟩, face := { foreground := some blue } }]
+        let entered : EditorM (SnapshotId × MarkerId) := do
+          let text ← createText "[package]\nname = \"x\"\n"
+          Highlight.enter "toml" text Language.toml.syntaxTree
+          return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
+        let (.ok (snapshot, scroll), texts) ←
+          entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
+        let some found ← table.find? snapshot | return false
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        discard drainedParsed
+        let scene : Scene :=
+          { size := { width := 160, height := 64 }
+            views :=
+              #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 160, height := 64 }, snapshot
+                  scroll, selections := #[], cursor := { shape := .block, face := ⟨"cursor"⟩ }
+                  decorations := #[], status := #[] }]
+            focused := none, echo := "", pending := "", preedit := none }
+        let publish : EditorM Unit := Display.publish scene
+        let (published, _) ← publish.runReal texts shown.handle
+        let frame ← display.frameText
+        -- `[package]`: the brackets blue, the key red; `name = "x"`: the key
+        -- red, ` = ` in no face of these, the string green.
+        let header := "runs 0..1:0000ccff/ffffffff 1..8:cc0000ff/ffffffff 8..9:0000ccff/ffffffff\n"
+        let pair := "runs 0..4:cc0000ff/ffffffff 4..7:000000ff/ffffffff 7..10:00cc00ff/ffffffff\n"
+        return published.isOk && (frame.splitOn header).length == 2 &&
+            (frame.splitOn pair).length == 2 },
+    { name :=
         "a Markdown text with a fenced Rust block, entered with the shipped default, is drawn by the real display with the fence's `fn` in the keyword face's colour"
       run := do
         let table ← Snapshots.new

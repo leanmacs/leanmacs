@@ -35,9 +35,17 @@ entries (`Language.forPath`); config only supplies entries.
 ## The shipped table
 
 `Language.shipped` is `rust` (`*.rs`, four spaces), `json` (`*.json`, two
-spaces) and `markdown` (`*.md`, two spaces), each parsed with the grammar of
-its name and that grammar's shipped queries. Each is a named definition, so
-config can write `{ Language.rust with … }`.
+spaces), `markdown` (`*.md`, two spaces) and `toml` (`*.toml` and
+`Cargo.lock`, two spaces), each parsed with the grammar of its name and that
+grammar's shipped queries. Each is a named definition, so config can write
+`{ Language.rust with … }`.
+
+`toml` maps one capture: its grammar's highlights capture booleans as
+`boolean`, which the face vocabulary has no face for, so the entry draws them
+in `syntax.constant`, as Rust's `true` and `false` are drawn. Other TOML
+files with no `.toml` extension (`uv.lock`, `poetry.lock`, `Pipfile`) are
+not in the shipped table; config adds one in a line:
+`defineLanguage { Language.toml with patterns := Language.toml.patterns ++ [.name "uv.lock"] }`.
 
 ## The matching rule (`forPath`)
 
@@ -123,9 +131,16 @@ def markdown : Language :=
   { name := "markdown", patterns := [.extension "md"], syntaxTree := { grammar := "markdown" }
     indentUnit := .spaces 2 }
 
+/-- TOML: `*.toml` and `Cargo.lock`, the grammar `toml`, two spaces; its
+booleans drawn as constants. -/
+def toml : Language :=
+  { name := "toml", patterns := [.extension "toml", .name "Cargo.lock"]
+    syntaxTree := { grammar := "toml", captures := [("boolean", some ⟨"syntax.constant"⟩)] }
+    indentUnit := .spaces 2 }
+
 /-- The languages that ship, in their order. -/
 def shipped : Array Language :=
-  #[rust, json, markdown]
+  #[rust, json, markdown, toml]
 
 /-- The name of the one major mode a buffer with a language is put in. -/
 def codeName : String :=
