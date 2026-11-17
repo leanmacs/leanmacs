@@ -10320,7 +10320,40 @@ def tabChecks : List Check :=
                 after.frame.tabsAfter.map (·.floats.size) == #[0] &&
                 (after.window? ⟨2⟩).isNone &&
                 after.wellFormed
-            | _ => false }]
+            | _ => false },
+    { name :=
+        "criterion 2, on the model: config's layout chosen through monocle, manual splits and the default rearranges the tab in view and keeps every window of it, the docked window joining the tiles when the edge goes, the split tree fitting them; the hidden tab is unchanged at every step, and every state is well formed"
+      run :=
+        pure <|
+          match onTextModel (dockedUnder 4 [.left] (.edge .left 25 Layout.default)) with
+          | none => false
+          | some state =>
+            let start : EditorState :=
+              { state with
+                frame :=
+                  { state.frame with
+                    windows := #[⟨0⟩, ⟨1⟩, ⟨2⟩],
+                    layout := (Layout.edge .left 25 Layout.default).fits 3
+                    tabsAfter := #[{ windows := #[⟨3⟩], focused := ⟨3⟩ }] } }
+            let chosen (state : EditorState) (layout : Layout) : EditorState :=
+              { state with frame := state.frame.choose layout }
+            let monocle := chosen start .monocle
+            let manual := chosen monocle Layout.manual
+            let back := chosen manual Layout.default
+            let kept (state : EditorState) : Bool :=
+              state.frame.all.toList.mergeSort (·.index ≤ ·.index) == [⟨0⟩, ⟨1⟩, ⟨2⟩, ⟨4⟩] &&
+                state.frame.tabsAfter == start.frame.tabsAfter &&
+                state.wellFormed
+            start.wellFormed && start.frame.docked == #[(⟨4⟩, .left)] && kept monocle &&
+              monocle.frame.windows == #[⟨0⟩, ⟨1⟩, ⟨2⟩, ⟨4⟩] &&
+              monocle.frame.docked.isEmpty &&
+              kept manual &&
+              manual.frame.layout.fitted 4 &&
+              (match manual.frame.layout with
+              | .splits tree => tree.size == 4
+              | _ => false) &&
+              kept back &&
+              back.frame.layout == Layout.default }]
 
 /-- The requests a well-formed state is seen to stay well formed under, on
 `hiddenBuffer`, whose buffers' texts are 0, 1 and 2: each kind of request,
@@ -29440,7 +29473,27 @@ def tabCommandChecks : List Check :=
               tabOrder made.loop.state == [[0], [1], [3], [2]] &&
               made.loop.state.frame.tabIndex == 2 &&
               made.loop.state.frame.focused == ⟨3⟩ &&
-              [closed, renamed, moved, next, made].all (·.loop.state.wellFormed) }]
+              [closed, renamed, moved, next, made].all (·.loop.state.wellFormed) },
+    { name :=
+        "criterion 2 in the loop: a publish handed another layout rearranges the tab in view only; after C-w p a publish handed the same layout keeps the first tab under its own; C-w c then makes a tab under it"
+      run :=
+        pure <|
+          match tabsAfter "C-w s C-w c C-w s" with
+          | none => false
+          | some driver =>
+            let chosen := evilFed { driver with keys := tabHanded .monocle } "<Escape>"
+            let back := evilFed chosen "C-w p <Escape>"
+            let made := evilFed back "C-w c"
+            let before := driver.loop.state.frame
+            chosen.loop.state.frame.tabIndex == 1 && chosen.loop.state.frame.layout == .monocle &&
+              chosen.loop.state.frame.windows == before.windows &&
+              chosen.loop.state.frame.tabsBefore == before.tabsBefore &&
+              back.loop.state.frame.tabIndex == 0 &&
+              back.loop.state.frame.layout == Layout.default &&
+              back.loop.state.frame.windows == before.tabsBefore.flatMap (·.windows) &&
+              made.loop.state.frame.tabIndex == 1 &&
+              made.loop.state.frame.layout == .monocle &&
+              [chosen, back, made].all (·.loop.state.wellFormed) }]
 
 /-- The checks of the window commands (`Editor/WindowCommands.lean`), by
 key, on the loop's driver over the editor's models, under the Vim scheme
