@@ -739,6 +739,20 @@ run = "cargo run --locked --package editor-ffi --example window -- --until-close
 description = "Opt-in, never part of ci: hold the Parley shaper over this machine's fonts to the shaper port's contract. Its result depends on the fonts installed"
 run = "cargo run --locked --package editor-shape-parley --example system"
 
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It times
+# the syntax rounds on the largest Lean file, a release build of the real
+# adapter (crates/editor-syntax-treesitter/examples/round.rs), and asserts
+# nothing: its figures are this machine's, recorded dated in
+# docs/design/rust-library.md (docs/dev-practices/on-demand-checks.md). The
+# file is the largest by `find lean tests -name '*.lean' -not -path
+# '*/.lake/*' | xargs ls -S | head -1`.
+#
+# Run it on a quiet machine when the Lean grammar is updated, or the round
+# changes.
+[tasks.syntax-bench]
+description = "Time one syntax round and an idle refresh on the largest Lean file (docs/design/rust-library.md); asserts nothing"
+run = "cargo run --release --locked -p editor-syntax-treesitter --example round -- lean/ModelTest.lean lean"
+
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It writes
 # a file of the repository, which no gate may do.
 #

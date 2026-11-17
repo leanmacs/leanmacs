@@ -49,4 +49,8 @@ for f in Cargo.toml LICENSE grammar.js \
   cp "/tmp/tree-sitter-lean/$f" "vendor/tree-sitter-lean/$f"
 done
 cargo test -p editor-syntax-treesitter --test contract
+mise run syntax-bench
 ```
+
+`mise run syntax-bench` re-measures a round on the largest Lean file; record
+its figures, dated, in `docs/design/rust-library.md`.
