@@ -1,3 +1,4 @@
+import Editor.Invocation
 import Editor.Process.Environment
 import Editor.Value
 
@@ -197,6 +198,22 @@ def decode? : Value → Option Location
   | .record [("reachable", .list [.str kind, .str target, .str root])] =>
     some (.reachable kind target root)
   | .record [("branchOnly", .list [.str remote, .str branch])] => some (.branchOnly remote branch)
+  | _ => none
+
+/-- A location as the arguments a job is started with: its kind, then its
+parts. -/
+def arguments : Location → List Argument
+  | .local root => [.str "local", .str root.toString]
+  | .reachable kind target root => [.str "reachable", .str kind, .str target, .str root.toString]
+  | .branchOnly remote branch => [.str "branchOnly", .str remote, .str branch]
+
+/-- The location `arguments` start with (`arguments`), and the rest. -/
+def of? : List Argument → Option (Location × List Argument)
+  | .str "local" :: .str root :: rest => some (.local root, rest)
+  | .str "reachable" :: .str kind :: .str target :: .str root :: rest =>
+    some (.reachable kind target root, rest)
+  | .str "branchOnly" :: .str remote :: .str branch :: rest =>
+    some (.branchOnly remote branch, rest)
   | _ => none
 
 /-- A location for a person. -/

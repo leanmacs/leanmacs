@@ -2922,7 +2922,7 @@ def projectModeChecks (services : Job.Services) (compile workspaces : System.Fil
             | none => #[]
           let offered :=
             Compile.offers Compile.shipped #[] modes
-              (Compile.listedCommands state (some (base / "mise")))
+              (Compile.listedCommands state (some (.local (base / "mise"))))
           let crate := base / "mise" / "crate"
           let mise := base / "mise"
           return modes ==

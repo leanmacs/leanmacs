@@ -30883,7 +30883,7 @@ def listingChecks : List Check :=
               startedCount first (tList "/t") == 1 &&
               again.contains Compile.listJob &&
               startedCount second (tList "/t") == 1 &&
-              (Compile.entriesOf second.loop.state (some "/t")).size == 1 },
+              (Compile.entriesOf second.loop.state (some (.local "/t"))).size == 1 },
     { name :=
         "compile-command offers the listed commands after the contribution's own, a listed name in place of its own: build runs t-build in /t, and sub, listed in sub, runs t-sub in /t/sub"
       run :=
@@ -30997,7 +30997,7 @@ def listingChecks : List Check :=
               | some job => (dropped.finish job.id).1
               | none => dropped
             startedCount listed (tList "/t") == 1 &&
-              (Compile.entriesOf listed.loop.state (some "/t")).isEmpty },
+              (Compile.entriesOf listed.loop.state (some (.local "/t"))).isEmpty },
     { name :=
         "a file in a directory holding t.toml and no repository has t-mode on there: its listing runs there once, is kept in the unscoped store, and compile-command offers and runs what it lists"
       run :=
@@ -31040,12 +31040,15 @@ def listingChecks : List Check :=
       run :=
         let stamp : File.Stamp := { seconds := -3, nanoseconds := 4, size := 5 }
         let orders : List Compile.ListOrder :=
-          [{ place := some "/t", mode := "t-mode", root := "/t/a", generation := 2,
+          [{ place := some (.local "/t"), mode := "t-mode", root := "/t/a", generation := 2,
              markers := #["t.toml", "u.toml"], held := some #[some stamp, none],
              program := "t-list", programArguments := #["a", "b c"] },
             { place := none, mode := "m", root := "/x", generation := 0, markers := #[],
               held := none
-              program := "p", programArguments := #[] }]
+              program := "p", programArguments := #[] },
+            { place := some (.reachable "kube" "pod" "/app"), mode := "m", root := "/app",
+              generation := 1, markers := #["m.toml"], held := none, program := "p"
+              programArguments := #["q"] }]
         let entries : Array Compile.Listing.Entry :=
           #[{ mode := "t-mode", root := "/t", generation := 1, stamps := #[some stamp, none],
               outcome :=
@@ -31056,7 +31059,9 @@ def listingChecks : List Check :=
         pure
           (orders.all (fun order => Compile.ListOrder.ofArguments? order.arguments == some order) &&
             [[], [.str "unscoped", .str "m"],
-                  [.str "unscoped", .str "m", .str "/x", .nat 0, .nat 1]].all
+                  [.str "unscoped", .str "m", .str "/x", .nat 0, .nat 1],
+                  [.str "workspace", .str "/t", .str "m", .str "/x", .nat 0, .nat 0, .bool false,
+                    .str "p"]].all
               (Compile.ListOrder.ofArguments? · == none) &&
             Compile.listingStore.decode (Compile.listingStore.encode entries) == some entries &&
             Compile.listingStore.name == "compile-listings" &&
@@ -31244,7 +31249,7 @@ def projectModeChecks : List Check :=
               built.jobs.processes.started.back? == some (shellCommand "/m" "mise run build") &&
               linted.jobs.processes.started.back? == some (shellCommand "/m/sub" "mise run lint") &&
               Compile.offers Compile.shipped #[] #[{ mode := "mise-mode", root := "/m" }]
-                  (Compile.listedCommands opened.loop.state (some "/m")) ==
+                  (Compile.listedCommands opened.loop.state (some (.local "/m"))) ==
                 #[offer "build" "mise run build" "/m", offer "test" "mise run test" "/m",
                   offer "lint" "mise run lint" "/m/sub"] },
     { name :=
@@ -31263,8 +31268,8 @@ def projectModeChecks : List Check :=
               offeredAfter inW "C-k i" == some #["wt-only (mise-mode)"] &&
               offeredAfter back "C-k i" ==
                 some #["build (mise-mode)", "test (mise-mode)", "lint (mise-mode)"] &&
-              (Compile.entriesOf state (some "/m")).map (·.root.toString) == #["/m"] &&
-              (Compile.entriesOf state (some "/mw")).map (·.root.toString) == #["/mw"] &&
+              (Compile.entriesOf state (some (.local "/m"))).map (·.root.toString) == #["/m"] &&
+              (Compile.entriesOf state (some (.local "/mw"))).map (·.root.toString) == #["/mw"] &&
               (Compile.entriesOf state none).isEmpty },
     { name :=
         "modes criterion 6: a listing that fails offers no task and says why once: compile-command then says no mode gives commands, and its check runs nothing and says nothing; a list that is not one says so"

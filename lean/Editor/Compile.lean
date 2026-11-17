@@ -367,10 +367,10 @@ def Scope.place : Scope → Place
   | .workspace found _ => .workspace found.location
   | .directory path => .directory path
 
-/-- The scope's listing place (`Editor/Compile/Listing.lean`): its local
-workspace's root, `some none` for a directory scope, and none for a
-workspace where commands cannot run. -/
-def Scope.listingPlace : Scope → Option (Option System.FilePath)
+/-- The scope's listing place (`Editor/Compile/Listing.lean`): its
+workspace's location, `some none` for a directory scope, and none for a
+workspace whose location cannot run commands (`Location.can`). -/
+def Scope.listingPlace : Scope → Option (Option Location)
   | .workspace found _ => placeOfLocation found.location
   | .directory _ => some none
 
@@ -393,13 +393,13 @@ def Place.jobKey : Place → String
 
 /-- A place as arguments: its kind, then its parts. -/
 def Place.arguments : Place → List Argument
-  | .workspace location => .str "workspace" :: Shell.locationArguments location
+  | .workspace location => .str "workspace" :: location.arguments
   | .directory path => [.str "directory", .str path.toString]
 
 /-- The place `arguments` start with (`Place.arguments`), and the rest. -/
 def Place.of? : List Argument → Option (Place × List Argument)
   | .str "workspace" :: rest => do
-    let (location, rest) ← Shell.locationOf? rest
+    let (location, rest) ← Location.of? rest
     return (.workspace location, rest)
   | .str "directory" :: .str path :: rest => some (.directory path, rest)
   | _ => none

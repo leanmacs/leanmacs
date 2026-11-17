@@ -26,10 +26,11 @@ can start a check when a mode turns on.
   in the root, in marker order, read before the run, and what came of it,
   the commands listed or why none were.
 - **Where entries live** (`listingStore`, `compile-listings`): a buffer's
-  place (`placeOfBuffer`) is the root of its local workspace, whose store
-  holds them, so each worktree keeps its own; a buffer outside any
-  workspace's are in the unscoped store; a workspace whose location cannot
-  run commands has none.
+  place (`placeOfBuffer`) is its workspace's location, whose store holds
+  them, so each worktree keeps its own; a buffer outside any workspace's
+  are in the unscoped store; a workspace whose location cannot run
+  commands (`Location.can`, the rule `compile` and the shell ask too) has
+  none, so no listing is started there.
 - **A check** (`refreshListings`) starts the job `compile-list` for each
   on-mode whose contribution has a listing, under the key `compile-list
   <mode> <root>`, so a later check of the same mode and root replaces one
@@ -148,24 +149,23 @@ def listingStore : Store (Array Listing.Entry) :=
       | .list items => (·.toArray) <$> items.mapM Listing.Entry.decode?
       | _ => none }
 
-/-- The listing place of a workspace at `location`: its root, for a local
-one; none for one where commands cannot run ("Where entries live", in the
-module docs). -/
-def placeOfLocation : Location → Option (Option System.FilePath)
-  | .local root => some (some root)
-  | _ => none
+/-- The listing place of a workspace at `location`: the location, where it
+can run commands (`Location.can`); none where it cannot ("Where entries
+live", in the module docs). -/
+def placeOfLocation (location : Location) : Option (Option Location) :=
+  if location.can.runCommands then some (some location) else none
 
-/-- The listing place of the buffer `id` in `state`: its local workspace's
-root, `some none` outside any workspace, and none in a workspace where
-commands cannot run ("Where entries live", in the module docs). -/
-def placeOfBuffer (state : EditorState) (id : BufferId) : Option (Option System.FilePath) :=
+/-- The listing place of the buffer `id` in `state`: its workspace's
+location, `some none` outside any workspace, and none in a workspace whose
+location cannot run commands ("Where entries live", in the module docs). -/
+def placeOfBuffer (state : EditorState) (id : BufferId) : Option (Option Location) :=
   match state.workspaceOf? id with
   | some (workspace, _) => placeOfLocation workspace.location
   | none => some none
 
 /-- The entries `place` keeps in `state`. -/
-def entriesOf (state : EditorState) : Option System.FilePath → Array Listing.Entry
-  | some root => state.workspaces.get listingStore (.local root)
+def entriesOf (state : EditorState) : Option Location → Array Listing.Entry
+  | some location => state.workspaces.get listingStore location
   | none => state.workspaces.getUnscoped listingStore
 
 /-- The entry of `mode` at `root` among `entries`. -/
@@ -174,7 +174,7 @@ def entryOf? (entries : Array Listing.Entry) (mode : String) (root : System.File
   entries.find? fun entry => entry.mode == mode && entry.root == root
 
 /-- Has `place` keep `entry`, in place of its mode's at its root. -/
-def keepEntry (place : Option System.FilePath) (entry : Listing.Entry) : EditorM Unit := do
+def keepEntry (place : Option Location) (entry : Listing.Entry) : EditorM Unit := do
   let entries := entriesOf (← editorState) place
   let entries :=
     if (entryOf? entries entry.mode entry.root).isSome then
@@ -182,15 +182,15 @@ def keepEntry (place : Option System.FilePath) (entry : Listing.Entry) : EditorM
         if kept.mode == entry.mode && kept.root == entry.root then entry else kept
     else entries.push entry
   match place with
-  | some root =>
-    discard <| Workspace.set listingStore (.local root) entries
+  | some location =>
+    discard <| Workspace.set listingStore location entries
   | none =>
     Workspace.setUnscoped listingStore entries
 
 /-- The commands `place`'s entry of a mode at a root lists in `state`; none
 for no entry or a failed one ("What is offered", in the module docs). This
 is what `offers` is handed. -/
-def listedCommands (state : EditorState) (place : Option System.FilePath) (mode : String)
+def listedCommands (state : EditorState) (place : Option Location) (mode : String)
     (root : System.FilePath) : Array NamedCommand :=
   match (entryOf? (entriesOf state place) mode root).map (·.outcome) with
   | some (Listing.Outcome.listed commands) => commands
@@ -215,7 +215,7 @@ def listingTime : Nat :=
 /-- What the listing job is started with ("A check", in the module docs). -/
 structure ListOrder where
   /-- The place whose entry it writes. -/
-  place : Option System.FilePath
+  place : Option Location
   /-- The minor mode. -/
   mode : String
   /-- Its root, where the listing runs. -/
@@ -243,7 +243,7 @@ the root, the generation, the number of markers and each marker, the held
 stamps, the program and each argument. -/
 def ListOrder.arguments (order : ListOrder) : List Argument :=
   (match order.place with
-    | some root => [.str "workspace", .str root.toString]
+    | some location => .str "workspace" :: location.arguments
     | none => [.str "unscoped"]) ++
     [.str order.mode, .str order.root.toString, .nat order.generation, .nat order.markers.size] ++
     order.markers.toList.map .str ++
@@ -276,8 +276,8 @@ def stampsOf? : Nat → List Argument → Option (Array (Option File.Stamp) × L
 def ListOrder.ofArguments? (arguments : List Argument) : Option ListOrder := do
   let (place, rest) ←
     match arguments with
-    | .str "workspace" :: .str root :: rest =>
-      some (some (root : System.FilePath), rest)
+    | .str "workspace" :: rest =>
+      (Location.of? rest).map fun (location, rest) => (some location, rest)
     | .str "unscoped" :: rest =>
       some (none, rest)
     | _ =>
@@ -357,8 +357,7 @@ def listWork (arguments : List Argument) : Work := fun _ => do
 
 /-- Checks the listing of each of the on-modes `modes` in `place` ("A
 check", in the module docs). -/
-def refreshListings (place : Option System.FilePath) (modes : Array Workspace.OnMode) :
-    EditorM Unit := do
+def refreshListings (place : Option Location) (modes : Array Workspace.OnMode) : EditorM Unit := do
   let hook ← EditorState.ask .compileHook
   let (_, generation) ← EditorState.ask .workspaceSettings
   let entries := entriesOf (← editorState) place
